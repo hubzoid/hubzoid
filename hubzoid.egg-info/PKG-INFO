@@ -1,0 +1,33 @@
+Metadata-Version: 2.4
+Name: hubzoid
+Version: 0.1.0
+Summary: Drop a folder of markdown files, get a chat agent with a polished web UI.
+Author: HubZoid contributors
+License: MIT
+Project-URL: Homepage, https://github.com/your-org/hubzoid
+Project-URL: Issues, https://github.com/your-org/hubzoid/issues
+Keywords: agents,llm,openai,anthropic,openrouter,markdown,agents.md,mcp
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Topic :: Software Development :: Libraries
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: openai-agents[litellm]>=0.14.7
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: httpx>=0.27
+Requires-Dist: pydantic>=2.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13
+Requires-Dist: jinja2>=3.1
+Provides-Extra: ui
+Requires-Dist: open-webui>=0.6; extra == "ui"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Dynamic: license-file
