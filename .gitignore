@@ -1,2 +1,21 @@
 .DS_Store
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Test + tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Open WebUI per hub state
+.openwebui-data/
+
+# Per session hub outputs
+**/output/
