@@ -1,0 +1,21 @@
+# docker-compose for hubzoid.
+#
+# Mount your hub folder as a volume. The HUB_DIR env var below points to its
+# path inside the container.
+#
+#   HUB_PATH=/path/to/your/hub docker compose up
+
+services:
+  hubzoid:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3080:3080"   # Open WebUI
+      - "8000:8000"   # FastAPI bridge
+    volumes:
+      - ${HUB_PATH:-../my-hub}:/hub
+    environment:
+      PORT: 3080
+      BRIDGE_PORT: 8000
+    restart: unless-stopped

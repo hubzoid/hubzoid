@@ -1,0 +1,2 @@
+[console_scripts]
+hubzoid = hubzoid.cli:app
