@@ -18,12 +18,23 @@ Folder names are flexible. `Skills/`, `skill/`, `Skill/` all work.
 
 ## `AGENTS.md`. required
 
-The hub's "main agent". Frontmatter + markdown body.
+The hub's "main agent". A plain markdown file. Frontmatter is optional.
+
+The simplest form is just markdown:
+
+```markdown
+You are a helpful, concise assistant. Reply in under 4 sentences.
+```
+
+With no frontmatter, `name` defaults to the hub folder name and
+`description` is derived from the first non heading line of the body.
+
+If you want to control them explicitly, add a YAML frontmatter block:
 
 ```markdown
 ---
-name: my-bot                                 # required; shown in /v1/models
-description: A helpful, concise assistant.   # required; one-line
+name: my-bot                                 # optional; shown in /v1/models
+description: A helpful, concise assistant.   # optional; used as handoff trigger for sub agents
 model: openrouter/anthropic/claude-haiku-4.5 # optional; overrides .env MODEL
 ---
 

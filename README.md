@@ -45,21 +45,30 @@ cd hubzoid
 pip install -r requirements.txt
 ```
 
-The repo ships with `my-hub/` at the repo root. Set it up before running:
+The repo ships with `my-hub/` at the repo root. Set it up before running.
+Stay at the repo root for these commands.
 
 ```bash
 cp my-hub/.env.example my-hub/.env
-# Open my-hub/.env, paste a key from OpenRouter, OpenAI, or Anthropic, pick a model.
-# Then open my-hub/AGENTS.md and write your agent (or keep the starter prompt).
 ```
 
-See [Editing your hub](#editing-your-hub) below for everything you can change.
+Now edit two files in `my-hub/`.
 
-Now run:
+1. `my-hub/.env`. Paste a key from OpenRouter, OpenAI, or Anthropic. Pick a
+   model. The file shows you how.
+2. `my-hub/AGENTS.md`. The body is your system prompt. Edit it or keep the
+   starter.
+
+See [Editing your hub](#editing-your-hub) below for everything else you can
+change.
+
+Run from the repo root:
 
 ```bash
 python -m hubzoid run my-hub
 ```
+
+(If you `cd` into `my-hub/` first, run `python -m hubzoid run .` instead.)
 
 Open http://localhost:3080.
 
