@@ -40,8 +40,8 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 hubzoid = "hubzoid.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/your-org/hubzoid"
-Issues = "https://github.com/your-org/hubzoid/issues"
+Homepage = "https://github.com/hubzoid/hubzoid"
+Issues = "https://github.com/hubzoid/hubzoid/issues"
 
 [tool.setuptools]
 packages = ["hubzoid", "hubzoid.loaders", "hubzoid.tools"]
