@@ -5,24 +5,40 @@ Two paths, equivalent end state.
 ## Clone
 
 ```bash
-git clone https://github.com/your-org/hubzoid.git
+git clone https://github.com/hubzoid/hubzoid.git
 cd hubzoid
 pip install -r requirements.txt
+```
+
+The repo ships with `my-hub/` already populated. Set it up before running:
+
+```bash
+cp my-hub/.env.example my-hub/.env
+```
+
+1. Open `my-hub/.env`. Paste a key from OpenRouter, OpenAI, or Anthropic. Pick a model. The file shows you how.
+2. Open `my-hub/AGENTS.md`. The body is your system prompt. Edit it or keep the starter.
+3. (Optional) Drop more files into `my-hub/agents/`, `skills/`, `knowledge/`.
+
+Now run:
+
+```bash
 python -m hubzoid run my-hub
 ```
 
-The repo ships with `my-hub/` already populated. Open `my-hub/` and edit:
-
-1. Copy `.env.example` → `.env`. Paste a key. Pick a model.
-2. Edit `AGENTS.md`. The body is your system prompt.
-
-Restart with the same command.
+Restart with the same command after any change.
 
 ## Pip
 
 ```bash
 pip install 'hubzoid[ui]'
 hubzoid init my-hub
+cp my-hub/.env.example my-hub/.env
+```
+
+Then edit `my-hub/.env` (key + model) and `my-hub/AGENTS.md` (your prompt). Run:
+
+```bash
 hubzoid run my-hub
 ```
 

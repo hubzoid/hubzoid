@@ -40,24 +40,45 @@ Requires Python 3.10 or newer.
 ### Clone
 
 ```bash
-git clone https://github.com/your-org/hubzoid.git
+git clone https://github.com/hubzoid/hubzoid.git
 cd hubzoid
 pip install -r requirements.txt
+```
+
+The repo ships with `my-hub/` at the repo root. Set it up before running:
+
+```bash
+cp my-hub/.env.example my-hub/.env
+# Open my-hub/.env, paste a key from OpenRouter, OpenAI, or Anthropic, pick a model.
+# Then open my-hub/AGENTS.md and write your agent (or keep the starter prompt).
+```
+
+See [Editing your hub](#editing-your-hub) below for everything you can change.
+
+Now run:
+
+```bash
 python -m hubzoid run my-hub
 ```
 
-Open http://localhost:3080. The `my-hub/` folder is at the repo root. Edit it
-directly to make it yours. See [Editing your hub](#editing-your-hub).
+Open http://localhost:3080.
 
 ### Pip
 
 ```bash
 pip install 'hubzoid[ui]'
 hubzoid init my-hub
+```
+
+`hubzoid init` writes the same starter files anywhere on disk. Then:
+
+```bash
+cp my-hub/.env.example my-hub/.env
+# Edit my-hub/.env (key + model) and my-hub/AGENTS.md (your prompt).
 hubzoid run my-hub
 ```
 
-Same starter content, anywhere on disk.
+Same starter content, same result.
 
 > **Note.** The `[ui]` extra bundles Open WebUI (about 500 MB on first boot
 > for its embedding model). If you only need the HTTP API, install bare

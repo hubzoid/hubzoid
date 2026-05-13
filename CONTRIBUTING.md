@@ -5,7 +5,7 @@ Thanks for considering a contribution.
 ## Dev setup
 
 ```bash
-git clone https://github.com/your-org/hubzoid.git
+git clone https://github.com/hubzoid/hubzoid.git
 cd hubzoid
 pip install -e '.[ui,dev]'
 pytest
