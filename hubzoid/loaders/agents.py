@@ -4,16 +4,23 @@ Convention:
   <hub>/AGENTS.md                          -> main agent
   <hub>/agents/<name>/AGENTS.md            -> sub-agent (handoff)
 
-Frontmatter schema for both:
-  name:        agent identifier; required
-  description: one-line summary used as handoff trigger; required
+Frontmatter is OPTIONAL. AGENTS.md is a plain markdown file by default.
+When frontmatter is missing, defaults are derived:
+  name:        main agent  -> the hub folder name
+               sub agent   -> the sub-agent's parent folder name
+  description: first non-blank, non-heading line of the body (truncated at 200 chars)
+
+Frontmatter schema when present:
+  name:        agent identifier (optional)
+  description: one-line summary used as handoff trigger for sub-agents (optional)
   model:       optional LiteLLM model id; overrides .env MODEL
   tools:       optional list of tool names (whitelist). Only meaningful on sub-agents
-               in v1 — the main agent always has the full pre-shipped + tools_local set
-               plus the dynamic load_skill/read_knowledge tools.
+               in v1. The main agent always has the full pre-shipped plus tools_local set
+               plus the dynamic load_skill / read_knowledge tools.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,14 +44,18 @@ class LoadedAgent:
 
 
 def load_main(hub_dir: Path) -> LoadedAgent:
-    """Load <hub>/AGENTS.md as the main agent."""
+    """Load <hub>/AGENTS.md as the main agent.
+
+    name defaults to the hub folder name; description defaults to a derived
+    summary from the body. Both can be overridden via frontmatter.
+    """
     path = hub_dir / "AGENTS.md"
     if not path.is_file():
         raise FileNotFoundError(
             f"No AGENTS.md at {path}. "
             f"Every hub needs an AGENTS.md at its root."
         )
-    return _load_one(path)
+    return _load_one(path, default_name=_safe_id(hub_dir.name))
 
 
 def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
@@ -72,19 +83,47 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                 match = mds[0]
         if match is None:
             continue
-        out.append(_load_one(match))
+        out.append(_load_one(match, default_name=_safe_id(child.name)))
     return out
 
 
-def _load_one(path: Path) -> LoadedAgent:
+def _load_one(path: Path, *, default_name: str) -> LoadedAgent:
     fm, body = frontmatter.read(path)
     if not body:
-        raise ValueError(f"{path} has no body — write instructions below the frontmatter.")
+        raise ValueError(f"{path} has no body. Write instructions in the file.")
+
+    # Fill in optional fields with derived defaults so plain markdown works.
+    fm = dict(fm)
+    fm.setdefault("name", default_name)
+    fm.setdefault("description", _derive_description(body, default_name))
+
     try:
         spec = AgentSpec(**fm)
     except ValidationError as exc:
         raise ValueError(
-            f"{path}: invalid frontmatter — {exc.errors()[0]['msg']} "
+            f"{path}: invalid frontmatter. {exc.errors()[0]['msg']} "
             f"(field: {'.'.join(str(p) for p in exc.errors()[0]['loc'])})"
         ) from exc
     return LoadedAgent(spec=spec, instructions=body, source_path=path)
+
+
+def _safe_id(name: str) -> str:
+    """Turn an arbitrary folder name into a clean identifier."""
+    out = re.sub(r"[^A-Za-z0-9_\-]+", "-", name.strip().lower())
+    out = re.sub(r"-+", "-", out).strip("-")
+    return out or "agent"
+
+
+def _derive_description(body: str, fallback_name: str) -> str:
+    """Pick the first non-blank, non-heading line as a one-line description."""
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            continue
+        # Strip leading markdown decorators.
+        line = re.sub(r"^[>*\-]+\s*", "", line)
+        if line:
+            return line[:200]
+    return f"Agent: {fallback_name}."

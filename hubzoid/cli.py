@@ -91,6 +91,18 @@ def run(
     hub = hub.resolve()
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
+        # If the user is currently inside a hub folder, point that out.
+        cwd = Path.cwd()
+        if (cwd / "AGENTS.md").is_file():
+            console.print(
+                f"[yellow]Your current directory ({cwd}) looks like a hub. "
+                f"Try:[/yellow]\n  python -m hubzoid run .   (or just: hubzoid run .)"
+            )
+        else:
+            console.print(
+                "[yellow]Tip:[/yellow] paths are resolved against the current "
+                f"directory ({cwd}). Run from the repo root, or pass `.` from inside the hub folder."
+            )
         raise typer.Exit(2)
     if not (hub / "AGENTS.md").is_file():
         console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
