@@ -209,6 +209,7 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
         mcp_servers=mcp_servers,
         agents=sub_defs or None,
         setting_sources=[],  # explicit: no Claude Code config discovery
+        include_partial_messages=True,  # token-level deltas via StreamEvent
     )
     if model_pin is not None:
         opts_kwargs["model"] = model_pin
@@ -246,35 +247,42 @@ class ClaudeRuntime:
         self._options = options
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ResultMessage,
-            TextBlock,
-            query,
-        )
+        """Yield text deltas as they arrive.
 
+        With `include_partial_messages=True` (set in options), the SDK emits
+        `StreamEvent` messages carrying raw Anthropic API events. We pull
+        `content_block_delta` -> `text_delta` -> `text` and yield each chunk.
+
+        Fallback: if partial events somehow don't arrive (older SDK?), we
+        surface the final `ResultMessage.result` so the user still sees the
+        reply — late, but not lost.
+        """
+        from claude_agent_sdk import ResultMessage, query
+        from claude_agent_sdk.types import StreamEvent
+
+        streamed_any = False
+        final_result: str | None = None
         try:
             async for message in query(prompt=prompt, options=self._options):
-                # We surface (a) live assistant text blocks as they arrive,
-                # (b) the final result string if the streamed assistant text
-                #     never materialized (e.g. tool-only final turn).
-                if isinstance(message, AssistantMessage):
-                    for block in getattr(message, "content", []) or []:
-                        if isinstance(block, TextBlock):
-                            text = getattr(block, "text", "")
+                if isinstance(message, StreamEvent):
+                    event = getattr(message, "event", None) or {}
+                    if event.get("type") == "content_block_delta":
+                        delta = event.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text") or ""
                             if text:
+                                streamed_any = True
                                 yield text
-                elif isinstance(message, ResultMessage):
-                    result = getattr(message, "result", None)
-                    if result:
-                        # ResultMessage arrives once at end; only yield if we
-                        # haven't already streamed equivalent assistant text.
-                        # The SDK guarantees ResultMessage.result is the final
-                        # assistant turn, which is usually already streamed.
-                        pass
+                    continue
+                if isinstance(message, ResultMessage):
+                    final_result = getattr(message, "result", None)
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
+            return
+
+        if not streamed_any and final_result:
+            yield final_result
 
     async def run(self, prompt: str) -> str:
         pieces: list[str] = []
