@@ -27,27 +27,27 @@ import os
 import re
 from pathlib import Path
 
-from agents.mcp import MCPServerSse, MCPServerStdio
-
 from .._fs import resolve_bucket
 
 log = logging.getLogger(__name__)
 _VAR_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
-def load_all(hub_dir: Path) -> list:
-    """Return a list of MCP server objects ready to attach to an Agent.
+def load_all_raw(hub_dir: Path) -> dict[str, dict]:
+    """Return runtime-neutral MCP server configs: `{name: spec}`.
 
-    Empty list if no connectors/.mcp.json file or no `mcpServers` block.
+    Each spec is the parsed, env-interpolated dict (command/args/env, or
+    transport/url/headers). Runtime adapters wrap these into engine-specific
+    objects. Empty dict if no config file is present.
     """
     cdir = resolve_bucket(hub_dir, "connectors")
     if cdir is None:
-        return []
+        return {}
     mcp_file = cdir / ".mcp.json"
     if not mcp_file.is_file():
         mcp_file = cdir / "mcp.json"  # fallback without leading dot
     if not mcp_file.is_file():
-        return []
+        return {}
 
     try:
         cfg = json.loads(mcp_file.read_text(encoding="utf-8"))
@@ -58,11 +58,22 @@ def load_all(hub_dir: Path) -> list:
     if not isinstance(servers_cfg, dict):
         raise ValueError(f"{mcp_file}: `mcpServers` must be a mapping.")
 
+    return {
+        name: _interpolate(spec)
+        for name, spec in servers_cfg.items()
+        if isinstance(spec, dict)
+    }
+
+
+def load_all(hub_dir: Path) -> list:
+    """OpenAI Agents SDK wrapper around `load_all_raw`.
+
+    Returns MCPServerSse / MCPServerStdio objects ready to attach to an Agent.
+    """
+    from agents.mcp import MCPServerSse, MCPServerStdio
+
     out: list = []
-    for name, spec in servers_cfg.items():
-        if not isinstance(spec, dict):
-            continue
-        spec = _interpolate(spec)
+    for name, spec in load_all_raw(hub_dir).items():
         transport = (spec.get("transport") or "stdio").lower()
         try:
             if transport == "sse" or spec.get("url"):

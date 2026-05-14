@@ -1,12 +1,14 @@
-"""FastAPI bridge — exposes an OpenAI-compatible HTTP API in front of build_agent().
+"""FastAPI bridge — exposes an OpenAI-compatible HTTP API in front of a Runtime.
 
 Endpoints:
   GET  /healthz                       liveness probe
   GET  /v1/models                     [{ id, object, created, owned_by }]
   POST /v1/chat/completions           streaming SSE (OpenAI SSE shape) + non-stream
 
-The bridge is built around a single agent per process (one hub). Open WebUI,
-LibreChat, the OpenAI SDK, or curl can all hit /v1/chat/completions.
+The bridge is built around a single Runtime per process (one hub). The
+Runtime is selected based on `MODEL` in <hub>/.env — see `hubzoid/runtime.py`.
+Open WebUI, LibreChat, the OpenAI SDK, or curl can all hit /v1/chat/completions
+without caring which backend (OpenAI Agents SDK vs Claude Agent SDK) is below.
 
 Run:
   HUBZOID_HUB_DIR=/path/to/hub uvicorn hubzoid.server:app --port 8000
@@ -26,11 +28,8 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agents import ItemHelpers, Runner
-from openai.types.responses import ResponseTextDeltaEvent
-
+from . import runtime as runtime_lib
 from . import settings as settingslib
-from .factory import build_agent
 
 log = logging.getLogger("hubzoid.server")
 
@@ -45,13 +44,14 @@ def _hub_dir() -> Path:
 def build_app() -> FastAPI:
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
-    agent = build_agent(hub_dir)
+    rt = runtime_lib.build(hub_dir)
 
-    # Model label shown in /v1/models. Falls back to the agent's name.
-    model_label = settings.model_label or _slugify(agent.name)
+    # Model label shown in /v1/models. Falls back to the runtime's name
+    # (which itself defaults to the main agent's name).
+    model_label = settings.model_label or _slugify(rt.name)
     api_keys = set(settings.bridge_api_keys)
 
-    app = FastAPI(title=f"hubzoid · {agent.name}", version="0.1.0")
+    app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0")
 
     def _auth(request: Request) -> None:
         auth = request.headers.get("authorization", "")
@@ -61,7 +61,7 @@ def build_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
-        return {"status": "ok", "hub": hub_dir.name, "agent": agent.name}
+        return {"status": "ok", "hub": hub_dir.name, "agent": rt.name}
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> JSONResponse:
@@ -93,12 +93,12 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(agent, prompt, model_label),
+                _stream(rt, prompt, model_label),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        text = await _run_blocking(agent, prompt)
+        text = await rt.run(prompt)
         return JSONResponse(_blocking_envelope(text, model_label))
 
     return app
@@ -140,54 +140,18 @@ def _chunk(content_delta: str | None, *, finish_reason: str | None = None, model
     }
 
 
-async def _stream(agent, prompt: str, model: str) -> AsyncIterator[bytes]:
+async def _stream(rt, prompt: str, model: str) -> AsyncIterator[bytes]:
     # Role chunk first (OpenAI convention).
     first = _chunk("", model=model)
     first["choices"][0]["delta"] = {"role": "assistant", "content": ""}
     yield f"data: {json.dumps(first)}\n\n".encode()
 
-    text_accumulated = False
-    try:
-        result = Runner.run_streamed(agent, prompt, max_turns=20)
-        async for event in result.stream_events():
-            if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
-                if event.data.delta:
-                    text_accumulated = True
-                    yield f"data: {json.dumps(_chunk(event.data.delta, model=model))}\n\n".encode()
-                continue
-            if event.type == "run_item_stream_event":
-                item = event.item
-                if item.type == "message_output_item" and not text_accumulated:
-                    text = ItemHelpers.text_message_output(item)
-                    if text:
-                        yield f"data: {json.dumps(_chunk(text, model=model))}\n\n".encode()
-    except Exception as exc:  # noqa: BLE001
-        log.exception("agent stream failed")
-        err = f"\n\n[agent error: {type(exc).__name__}: {exc}]"
-        yield f"data: {json.dumps(_chunk(err, model=model))}\n\n".encode()
+    async for delta in rt.stream(prompt):
+        if delta:
+            yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
 
     yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
     yield b"data: [DONE]\n\n"
-
-
-async def _run_blocking(agent, prompt: str) -> str:
-    pieces: list[str] = []
-    try:
-        result = Runner.run_streamed(agent, prompt, max_turns=20)
-        async for event in result.stream_events():
-            if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
-                if event.data.delta:
-                    pieces.append(event.data.delta)
-            elif event.type == "run_item_stream_event":
-                item = event.item
-                if item.type == "message_output_item" and not pieces:
-                    text = ItemHelpers.text_message_output(item)
-                    if text:
-                        pieces.append(text)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("agent run failed")
-        pieces.append(f"\n\n[agent error: {type(exc).__name__}: {exc}]")
-    return "".join(pieces)
 
 
 def _blocking_envelope(text: str, model: str) -> dict[str, Any]:
