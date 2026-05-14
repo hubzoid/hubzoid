@@ -1,9 +1,9 @@
 # Core deps for the no-install / clone path:
 #   git clone hubzoid && cd hubzoid && pip install -r requirements.txt
 #
-# To also get the bundled Open WebUI chat front-end:
-#   pip install open-webui
-# (or `pip install -e '.[ui]'` from the repo root)
+# Optional extras (install on demand):
+#   pip install open-webui          # bundled web chat UI
+#   pip install claude-agent-sdk    # required only if MODEL=claude-local
 
 openai-agents[litellm]>=0.14.7
 fastapi>=0.115

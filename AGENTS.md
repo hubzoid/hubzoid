@@ -30,6 +30,25 @@ is a different thing. that's the runtime prompt for the hub's main agent.
   hub root.
 - Keep the package importable without the `[ui]` extra. Open WebUI is invoked
   as a subprocess; the package must not `import open_webui` at module load.
+- **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
+  execution backends (today: OpenAI Agents SDK and Claude Agent SDK). A
+  single hub folder must produce identical manual-testing surface across
+  backends — same tool names, same input schemas, same outputs, same skills,
+  same knowledge. To keep that invariant:
+    - `hubzoid/loaders/*` (except `tools_local.py`) must not import from any
+      runtime SDK. They return plain dataclasses / pydantic models.
+    - `hubzoid/tools/*` and `loaders/tools_local.py` may use the OpenAI
+      Agents SDK `FunctionTool` shape (name, description, params_json_schema,
+      on_invoke_tool) as the canonical tool representation. Other runtimes
+      consume those four fields via a thin adapter
+      (`hubzoid/factory_claude.py: to_claude_tool`).
+    - Runtime-specific construction (`Agent(...)`, `ClaudeAgentOptions(...)`,
+      `Runner.run_streamed(...)`, `query(...)`) lives ONLY in
+      `factory.py`, `factory_claude.py`, `runtime.py`, `server.py`,
+      and `cli.py`. Adding it elsewhere is a review-blocking smell.
+    - Before adding a new tool or loader, ask: "would this behave the same
+      under either backend?" If no, redesign or push the divergence into
+      the runtime adapter.
 
 ## Testing rules
 
