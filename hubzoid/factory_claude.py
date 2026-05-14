@@ -196,21 +196,43 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     main_instructions = main_spec.instructions
 
     allowed = _allowed_tool_names(registry, has_subagents=bool(sub_defs), mcp_specs=external_mcp)
+    model_pin = _parse_model_pin(settings.model)
 
     from claude_agent_sdk import ClaudeAgentOptions
 
     # We deliberately do NOT pass setting_sources — hubzoid is the source of
     # truth for what a hub means. Filesystem auto-discovery from .claude/
     # is disabled to keep parity with the OpenAI backend.
-    options = ClaudeAgentOptions(
+    opts_kwargs: dict[str, Any] = dict(
         system_prompt=main_instructions,
         allowed_tools=allowed,
         mcp_servers=mcp_servers,
         agents=sub_defs or None,
         setting_sources=[],  # explicit: no Claude Code config discovery
     )
+    if model_pin is not None:
+        opts_kwargs["model"] = model_pin
+    options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(name=main_name, options=options)
+
+
+def _parse_model_pin(model_setting: str | None) -> str | None:
+    """Extract the model suffix from `MODEL=claude-local[/<pin>]`.
+
+    Returns None when no suffix is set (lets the `claude` CLI's default win).
+    Examples:
+      claude-local                -> None
+      claude-local/sonnet         -> "sonnet"
+      claude-local/opus           -> "opus"
+      claude-local/claude-opus-4-7 -> "claude-opus-4-7"   (full ids pass through)
+    """
+    if not model_setting:
+        return None
+    if "/" not in model_setting:
+        return None
+    suffix = model_setting.split("/", 1)[1].strip()
+    return suffix or None
 
 
 # ---------------------------------------------------------------------------
