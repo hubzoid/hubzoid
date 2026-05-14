@@ -1,4 +1,4 @@
-"""Bridge tests using FastAPI TestClient. No real LLM calls (we mock Runner)."""
+"""Bridge tests using FastAPI TestClient. No real LLM calls (we mock the runtime)."""
 from __future__ import annotations
 
 import os
@@ -57,12 +57,12 @@ def test_chat_empty_messages_400(client):
 
 
 def test_chat_blocking_returns_assistant_message(client):
-    """Replace _run_blocking with an async function that returns 'pong'."""
+    """Patch the runtime's run() with an async stub that returns 'pong'."""
 
-    async def fake_run(*_a, **_k):
+    async def fake_run(self, _prompt):
         return "pong"
 
-    with patch("hubzoid.server._run_blocking", new=fake_run):
+    with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=fake_run):
         r = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer dev"},

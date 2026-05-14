@@ -210,10 +210,18 @@ MODEL=openai/gpt-4o-mini
 # OR Anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 MODEL=anthropic/claude-haiku-4-5
+
+# OR Claude local (your installed `claude` CLI + subscription auth, no key)
+# Requires: `claude login` already done, and pip install 'hubzoid[claude-local]'
+MODEL=claude-local
 ```
 
 The `MODEL` string tells LiteLLM which provider to call. The matching key
-must be set.
+must be set. The one exception is `MODEL=claude-local`: instead of LiteLLM,
+hubzoid runs the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)
+against your locally-installed `claude` CLI, so auth and billing flow through
+your existing Pro/Max subscription. Same hub folder, same tools, same skills
+— only the LLM and auth path differ.
 
 ## What you get out of the box
 

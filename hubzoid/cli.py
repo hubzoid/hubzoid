@@ -144,7 +144,10 @@ def run(
                 model_label=settings.model_label or _read_main_agent_name(hub),
                 webui_name=settings.webui_name,
             )
-            console.print(f"[cyan]→ webui [/cyan]  http://127.0.0.1:{ui_port}  (booting, ~30-60s first time)")
+            log_path = getattr(ui_proc, "_log_path", None)
+            console.print(f"[cyan]→ webui [/cyan]  http://127.0.0.1:{ui_port}  (booting, first start takes 1-2 min while it downloads its embedding model)")
+            if log_path:
+                console.print(f"            log: {log_path}")
         except FileNotFoundError as exc:
             console.print(f"[yellow]{exc}[/yellow]")
             console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
@@ -189,13 +192,15 @@ def doctor(
     if not env_path.is_file():
         notes.append(f"no .env at {env_path} (copy .env.example -> .env and add a key)")
 
-    # Try to actually build the agent — this is the most thorough check.
+    # Try to actually build the runtime — this is the most thorough check.
+    # Picks the backend based on MODEL (openai-agents by default,
+    # claude-local when MODEL=claude-local).
     try:
-        from .factory import build_agent
-        agent = build_agent(hub)
-        notes.append(f"agent built: {agent.name!r} with {len(agent.handoffs)} sub-agent(s), {len(agent.tools)} tool(s)")
+        from . import runtime as runtime_lib
+        rt = runtime_lib.build(hub)
+        notes.append(f"runtime built: {rt.name!r} via {type(rt).__name__}")
     except Exception as exc:  # noqa: BLE001
-        problems.append(f"build_agent failed: {type(exc).__name__}: {exc}")
+        problems.append(f"runtime build failed: {type(exc).__name__}: {exc}")
 
     for n in notes:
         console.print(f"[green]✓[/green] {n}")
@@ -215,21 +220,22 @@ def test_hub(
 ) -> None:
     """Send one prompt to the hub's agent and print the response.
 
-    Runs in-process (no bridge / no UI). Requires a working .env with a model key.
+    Runs in-process (no bridge / no UI). Backend is picked from MODEL in .env:
+    `claude-local` -> Claude Agent SDK; anything else -> OpenAI Agents SDK.
     """
+    import asyncio
+
     hub = hub.resolve()
     settings = settingslib.load(hub)
     if not settings.model:
         console.print("[red]MODEL is not set in .env. Cannot run test.[/red]")
         raise typer.Exit(2)
 
-    from .factory import build_agent
-    from agents import Runner
+    from . import runtime as runtime_lib
 
-    agent = build_agent(hub)
+    rt = runtime_lib.build(hub)
     console.print(f"[cyan]→[/cyan] {prompt}")
-    result = Runner.run_sync(agent, prompt, max_turns=4)
-    text = result.final_output if hasattr(result, "final_output") else str(result)
+    text = asyncio.run(rt.run(prompt))
     console.print(f"[green]←[/green] {text}")
 
 
