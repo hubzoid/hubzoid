@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.2.2"
+version = "0.2.3"
 description = "Drop a folder of markdown files, get a chat agent with a polished web UI."
 readme = "README.md"
 license = { text = "MIT" }
