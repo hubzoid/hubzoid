@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/v/hubzoid.svg?color=E5572A&label=pypi" alt="PyPI"></a>
-  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/pyversions/hubzoid.svg?color=0B0B0C" alt="Python"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0B0B0C.svg" alt="MIT License"></a>
-  <a href="https://hubzoid.com"><img src="https://img.shields.io/badge/website-hubzoid.com-E5572A.svg" alt="hubzoid.com"></a>
+  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/v/hubzoid?color=E5572A&label=pypi" alt="PyPI"></a>
+  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/pyversions/hubzoid?color=0B0B0C" alt="Python"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0B0B0C" alt="MIT License"></a>
+  <a href="https://hubzoid.com"><img src="https://img.shields.io/badge/website-hubzoid.com-E5572A" alt="hubzoid.com"></a>
 </p>
 
 ---
