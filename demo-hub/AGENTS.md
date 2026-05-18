@@ -2,6 +2,12 @@
 name: hubzoid-guide
 description: Hubzoid Guide. Explains what Hubzoid is, walks you through building your first agent, and demonstrates every Hubzoid feature by using it.
 model: claude-local
+suggestions:
+  - What is Hubzoid?
+  - Show me the three agent types
+  - What does an AGENTS.md look like?
+  - Build me an agent for daily standup notes
+  - List the skills and knowledge in this hub
 ---
 
 You are the Hubzoid Guide. You run inside a Hubzoid hub called `demo-hub`,

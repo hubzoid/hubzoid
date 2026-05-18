@@ -6,14 +6,63 @@ lives under `<hub>/.openwebui-data/` so each hub has isolated history.
 
 `open-webui` is a required dep of hubzoid (`pip install hubzoid` bundles it).
 If the binary is not on PATH we tell the user how to repair the install.
+
+Hubzoid sets ~24 env vars on the OWUI subprocess to strip platform surfaces
+(community sharing, code interpreter, etc.) so the UI looks like a single
+product, not "Open WebUI hosting a model". Every default is applied via
+`setdefault` semantics, so a user `.env` value always wins. See
+docs/branding.md for the full list and why each is set the way it is.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Default Open WebUI env vars (strip platform surfaces).
+# Every entry here is overridable from the operator's .env: we use
+# env.setdefault, so anything already set in os.environ (loaded from .env)
+# takes precedence. Documented end-to-end in docs/branding.md.
+# ---------------------------------------------------------------------------
+_OFF = "False"
+_ON = "True"
+
+_DEFAULT_OWUI_ENV: dict[str, str] = {
+    # --- Strip platform / branding leaks --------------------------------
+    "ENABLE_COMMUNITY_SHARING": _OFF,        # "Share to Open WebUI Community" CTA
+    "ENABLE_DIRECT_CONNECTIONS": _OFF,       # users plug in their own provider keys
+    "ENABLE_EVALUATION_ARENA_MODELS": _OFF,  # multi-model A/B
+    "ENABLE_NOTES": _OFF,                    # parallel notes product
+    "ENABLE_CHANNELS": _OFF,                 # slack-style channels
+    "ENABLE_CODE_INTERPRETER": _OFF,         # bypasses hubzoid's tool model
+    "ENABLE_IMAGE_GENERATION": _OFF,         # per-hub opt-in later
+    "ENABLE_RAG_WEB_SEARCH": _OFF,           # hubzoid has its own web_search
+    "ENABLE_USER_WEBHOOKS": _OFF,
+    "ENABLE_TAGS_GENERATION": _OFF,          # extra LLM call, marginal benefit today
+    "ENABLE_API_KEY": _OFF,                  # per-user API keys defeat auth
+    "ENABLE_VERSION_UPDATE_CHECK": _OFF,     # do not phone home from customer prod
+    "ENABLE_MEMORY": _OFF,                   # OWUI's user-memory conflicts with hubzoid memory
+    "ENABLE_OLLAMA_API": _OFF,               # we do not proxy ollama
+    "SHOW_ADMIN_DETAILS": _OFF,
+    "ENABLE_PERSISTENT_CONFIG": _OFF,        # CRITICAL: keep env-vars authoritative
+
+    # --- Workspace permissions: hide tabs from non-admins ---------------
+    "USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS": _OFF,
+    "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS": _OFF,
+    "USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS": _OFF,
+    "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS": _OFF,
+    "USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS": _OFF,
+
+    # --- Real UX wins, kept on ------------------------------------------
+    "ENABLE_MESSAGE_RATING": _ON,            # thumbs up/down
+    "ENABLE_TITLE_GENERATION": _ON,          # auto chat titles
+    "ENABLE_ADMIN_EXPORT": _ON,              # chat-history export for admins
+    "ENABLE_FOLLOW_UP_GENERATION": _ON,      # 2-3 "what to ask next" prompts after each reply
+}
 
 
 def _find_binary() -> str | None:
@@ -32,8 +81,23 @@ def is_available() -> bool:
     return _find_binary() is not None
 
 
-def start(*, hub_dir: Path, bridge_port: int, ui_port: int, api_key: str, model_label: str, webui_name: str | None) -> subprocess.Popen:
-    """Spawn Open WebUI as a subprocess. Returns the Popen handle."""
+def start(
+    *,
+    hub_dir: Path,
+    bridge_port: int,
+    ui_port: int,
+    api_key: str,
+    model_label: str,
+    webui_name: str | None,
+    suggestions: list[str] | None = None,
+    response_watermark: str | None = None,
+) -> subprocess.Popen:
+    """Spawn Open WebUI as a subprocess. Returns the Popen handle.
+
+    `suggestions` populates the new-chat quick-start buttons. Sourced from
+    the main agent's AGENTS.md frontmatter (`suggestions:` field).
+    `response_watermark` defaults to the hub folder name when None.
+    """
     binary = _find_binary()
     if binary is None:
         raise FileNotFoundError(
@@ -48,18 +112,33 @@ def start(*, hub_dir: Path, bridge_port: int, ui_port: int, api_key: str, model_
     data_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env.update(
-        {
-            "DATA_DIR": str(data_dir),
-            "OPENAI_API_BASE_URL": f"http://127.0.0.1:{bridge_port}/v1",
-            "OPENAI_API_KEY": api_key,
-            "WEBUI_AUTH": env.get("WEBUI_AUTH", "False"),
-            "ENABLE_OLLAMA_API": "False",
-            "DEFAULT_MODELS": model_label,
-        }
-    )
+
+    # 1. Wiring + per-hub state. These are not operator-overridable; they
+    # are how hubzoid joins the bridge to OWUI.
+    env["DATA_DIR"] = str(data_dir)
+    env["OPENAI_API_BASE_URL"] = f"http://127.0.0.1:{bridge_port}/v1"
+    env["OPENAI_API_KEY"] = api_key
+    env["DEFAULT_MODELS"] = model_label
+
+    # 2. Auth default off for local dev. Operator overrides via .env.
+    env.setdefault("WEBUI_AUTH", "False")
+
+    # 3. Branding. WEBUI_NAME cascades via the cli's resolver; we just pass
+    # the resolved value. RESPONSE_WATERMARK defaults to the hub folder
+    # name silently (not surfaced in .env; rarely changed).
     if webui_name:
-        env["WEBUI_NAME"] = webui_name
+        env.setdefault("WEBUI_NAME", webui_name)
+    env.setdefault("RESPONSE_WATERMARK", response_watermark or hub_dir.name)
+
+    # 4. Quick-start prompt suggestions, from AGENTS.md frontmatter.
+    # OWUI expects a JSON array of objects with `content` keys.
+    if suggestions:
+        payload = [{"content": s} for s in suggestions if s]
+        env.setdefault("DEFAULT_PROMPT_SUGGESTIONS", json.dumps(payload))
+
+    # 5. The big strip. Apply hubzoid defaults; operator .env wins.
+    for key, value in _DEFAULT_OWUI_ENV.items():
+        env.setdefault(key, value)
 
     log_path = data_dir / "openwebui.log"
     log_file = log_path.open("ab", buffering=0)
