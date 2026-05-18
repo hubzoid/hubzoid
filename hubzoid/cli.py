@@ -190,14 +190,43 @@ def run(
     ui_proc = None
     if not no_ui:
         try:
-            from . import webui
+            from . import branding, webui
+            from .loaders import agents as agents_loader
+
+            # Apply per-hub branding into OWUI's static dir. No-op when
+            # <hub>/branding/ is absent or empty.
+            static_dir = branding.static_dir()
+            if static_dir is not None:
+                branding.apply(hub, static_dir)
+
+            # Pull suggestions from the main agent's frontmatter so the
+            # empty-chat screen has quick-start buttons.
+            try:
+                main_agent = agents_loader.load_main(hub)
+                suggestions = list(main_agent.spec.suggestions)
+                main_name = main_agent.spec.name
+            except Exception:
+                suggestions = []
+                main_name = _read_main_agent_name(hub)
+
+            # WEBUI_NAME cascade: operator .env -> MODEL_LABEL -> main
+            # agent's name -> "Hubzoid" (final fallback so it never reads
+            # as bare "Open WebUI" to a customer).
+            resolved_webui_name = (
+                settings.webui_name
+                or settings.model_label
+                or main_name
+                or "Hubzoid"
+            )
+
             ui_proc = webui.start(
                 hub_dir=hub,
                 bridge_port=br_port,
                 ui_port=ui_port,
                 api_key=settings.first_api_key,
-                model_label=settings.model_label or _read_main_agent_name(hub),
-                webui_name=settings.webui_name,
+                model_label=settings.model_label or main_name,
+                webui_name=resolved_webui_name,
+                suggestions=suggestions,
             )
             log_path = getattr(ui_proc, "_log_path", None)
             console.print(f"[cyan]→ webui [/cyan]  http://127.0.0.1:{ui_port}  (booting, first start takes 1-2 min while it downloads its embedding model)")
@@ -332,13 +361,24 @@ MODEL=claude-local
 # ANTHROPIC_API_KEY=
 # MODEL=anthropic/claude-haiku-4-5
 
-# --- Bridge / UI knobs (all optional) --------------------------------------
+# --- Branding / UI ---------------------------------------------------------
 WEBUI_NAME=Hubzoid Guide
+# Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
+# RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
+# DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
+
+# --- Bridge / UI knobs (all optional) --------------------------------------
 # BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees
 # MODEL_LABEL=                  # what /v1/models reports; blank = derived from AGENTS.md name
 # PORT=3080                     # Open WebUI port
 # BRIDGE_PORT=8000              # FastAPI bridge port
 # HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
+
+# --- Strip flags (advanced) -----------------------------------------------
+# Hubzoid sets ~24 Open WebUI flags by default to strip platform surfaces
+# (code interpreter, community sharing, etc.). To override any, just add the
+# line here. See https://github.com/hubzoid/hubzoid/blob/main/docs/branding.md
+# for the full list and what each does.
 """
 
 
