@@ -35,6 +35,10 @@ Claude work out of the box.
 
 **3 steps if you have `claude` CLI installed and logged in, 4 otherwise.**
 
+> Python 3.11 or 3.12 (Open WebUI does not yet support 3.13+). On recent macOS,
+> the default `python3` is too new; create your venv with `python3.12 -m venv`
+> explicitly.
+
 ```bash
 pip install hubzoid
 hubzoid init demo-hub                  # scaffolds a starter hub + agents-repo wrapper

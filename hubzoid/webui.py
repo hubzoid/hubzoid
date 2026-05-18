@@ -65,6 +65,48 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
 }
 
 
+_OWUI_SUFFIX_NEEDLE = "    WEBUI_NAME += ' (Open WebUI)'"
+_OWUI_SUFFIX_PATCH = "    pass  # hubzoid: suffix stripped (set HUBZOID_KEEP_OWUI_SUFFIX=True to restore)"
+
+
+def _patch_owui_suffix(strip: bool) -> None:
+    """Patch open_webui/env.py to remove the ' (Open WebUI)' suffix.
+
+    Open WebUI's license permits removing built-in branding for deployments
+    under 50 unique end users in any rolling 30-day window, or with an
+    enterprise license. Hubzoid's target deployments (Samarth, early Isha)
+    are well under that threshold; the patch is enabled by default.
+
+    Operators with deployments that exceed 50 users in a 30-day window
+    must set ``HUBZOID_KEEP_OWUI_SUFFIX=True`` in ``.env`` to restore the
+    OWUI-mandated branding.
+
+    Idempotent: detects whether the file is already patched and no-ops.
+    ``pip install --upgrade open-webui`` reverts the patch; hubzoid
+    re-applies on next ``hubzoid run``.
+    """
+    try:
+        import open_webui  # type: ignore
+    except ImportError:
+        return
+
+    env_py = Path(open_webui.__file__).resolve().parent / "env.py"
+    if not env_py.is_file():
+        return
+
+    try:
+        text = env_py.read_text()
+    except OSError:
+        return
+
+    if strip:
+        if _OWUI_SUFFIX_NEEDLE in text:
+            env_py.write_text(text.replace(_OWUI_SUFFIX_NEEDLE, _OWUI_SUFFIX_PATCH))
+    else:
+        if _OWUI_SUFFIX_PATCH in text:
+            env_py.write_text(text.replace(_OWUI_SUFFIX_PATCH, _OWUI_SUFFIX_NEEDLE))
+
+
 def _find_binary() -> str | None:
     """Locate the open-webui executable.
 
@@ -98,6 +140,12 @@ def start(
     the main agent's AGENTS.md frontmatter (`suggestions:` field).
     `response_watermark` defaults to the hub folder name when None.
     """
+    # Strip the OWUI "(Open WebUI)" suffix from WEBUI_NAME before launching
+    # the subprocess. License-permitted for deployments <50 users / 30 days.
+    # Operator can opt out by setting HUBZOID_KEEP_OWUI_SUFFIX=True.
+    keep_suffix = os.environ.get("HUBZOID_KEEP_OWUI_SUFFIX", "").lower() in ("true", "1", "yes")
+    _patch_owui_suffix(strip=not keep_suffix)
+
     binary = _find_binary()
     if binary is None:
         raise FileNotFoundError(

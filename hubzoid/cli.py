@@ -193,11 +193,11 @@ def run(
             from . import branding, webui
             from .loaders import agents as agents_loader
 
-            # Apply per-hub branding into OWUI's static dir. No-op when
-            # <hub>/branding/ is absent or empty.
-            static_dir = branding.static_dir()
-            if static_dir is not None:
-                branding.apply(hub, static_dir)
+            # Apply per-hub branding into every OWUI static dir
+            # (frontend/ and static/, see branding.static_dirs). No-op
+            # when <hub>/branding/ is absent or empty.
+            for sd in branding.static_dirs():
+                branding.apply(hub, sd)
 
             # Pull suggestions from the main agent's frontmatter so the
             # empty-chat screen has quick-start buttons.
@@ -366,6 +366,9 @@ WEBUI_NAME=Hubzoid Guide
 # Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
 # RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
 # DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
+# HUBZOID_KEEP_OWUI_SUFFIX=True # set if your deployment exceeds 50 users in 30 days
+                                # (Open WebUI license requires the "(Open WebUI)" suffix
+                                # to remain visible above that threshold)
 
 # --- Bridge / UI knobs (all optional) --------------------------------------
 # BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees
