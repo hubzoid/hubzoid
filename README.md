@@ -6,7 +6,8 @@
 </p>
 
 <p align="center">
-  <strong>Drop a folder of markdown files. Get a chat agent with a polished web UI.</strong>
+  <strong>An open-source framework for production AI agents.</strong><br>
+  <sub>Defined in markdown. Deployed inside your perimeter. The substrate behind <a href="https://hubzoid.com">Hubzoid</a> customer deployments.</sub>
 </p>
 
 <p align="center">
@@ -112,8 +113,9 @@ Your hub is one folder. Six things to know.
    needed if `claude login` is done). To switch to OpenRouter / OpenAI /
    Anthropic, uncomment a stanza in `.env` and paste a key.
 2. **Write the main agent.** Open `AGENTS.md`. The body is the system
-   prompt. YAML frontmatter sets `name`, `description`, and optional
-   `model`.
+   prompt. YAML frontmatter sets `name`, `description`, optional `model`,
+   and optional `suggestions:` (a list of quick-start prompts shown as
+   buttons on the empty chat screen).
 3. **Sub-agents.** One folder per sub-agent under `agents/`. Each has its
    own `AGENTS.md`. Frontmatter `tools: [...]` whitelists which tools the
    sub-agent may call.
@@ -231,6 +233,23 @@ Edit `demo-hub/connectors/.mcp.json` (or whatever your hub is named):
 `${VAR}` references in any string field resolve against the environment at
 boot. The same `.mcp.json` is honored by both the OpenAI Agents and
 Claude Agent runtimes.
+
+## Branding and UI
+
+Hubzoid passes ~24 env vars to Open WebUI to strip platform surfaces
+(community sharing, code interpreter, multi-model arena, etc.) so the UI
+reads as a single product. All flags are overridable from `.env`.
+
+Per-hub identity has three knobs:
+
+| Surface | Source |
+|---|---|
+| Top-bar name + tab title | `WEBUI_NAME` in `.env` (cascades to agent name, then `"Hubzoid"`) |
+| Logo, favicon, splash | Drop files in `<hub>/branding/` (case-insensitive, multi-extension) |
+| Quick-start prompts on the empty chat screen | `suggestions:` field in `AGENTS.md` frontmatter |
+
+Full reference, including the override list for all 24 OWUI flags:
+[docs/branding.md](docs/branding.md).
 
 ## CLI
 
