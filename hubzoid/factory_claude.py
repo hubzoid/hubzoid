@@ -54,11 +54,22 @@ def _to_claude_tool(ft):
       - params_json_schema   -> Claude tool input schema (raw JSON Schema)
       - on_invoke_tool(ctx, json_args_str) -> the actual work
 
-    We pass `None` as the run-context wrapper because hubzoid's tools close
-    over their HubContext at construction time (see `tools/*.py make(ctx)`)
-    and do not consult the run-context at call time.
+    Hubzoid's tools close over their HubContext at construction time and do
+    not consult the run-context at call time. BUT the openai-agents
+    FunctionTool dispatcher and error-reporter chain reach for
+    ``ctx.run_config.trace_include_sensitive_data`` even on the happy path
+    in some code paths. Passing ``None`` crashes inner errors with
+    ``'NoneType' object has no attribute 'run_config'``.
+
+    We construct a minimal valid ToolContext per call: real tool_name,
+    a generated tool_call_id, the raw args JSON, and ``run_config=None``
+    (which the dispatcher handles gracefully — only a missing attribute
+    is the problem).
     """
+    from agents import RunConfig
+    from agents.tool_context import ToolContext
     from claude_agent_sdk import tool
+    import uuid
 
     name = ft.name
     description = ft.description or f"Tool: {name}"
@@ -66,8 +77,16 @@ def _to_claude_tool(ft):
 
     @tool(name, description, schema)
     async def _wrapper(args: dict[str, Any]) -> dict[str, Any]:
+        args_json = json.dumps(args or {})
+        ctx = ToolContext(
+            context=None,
+            tool_name=name,
+            tool_call_id=f"hubzoid-{uuid.uuid4().hex[:12]}",
+            tool_arguments=args_json,
+            run_config=RunConfig(),
+        )
         try:
-            result = await ft.on_invoke_tool(None, json.dumps(args or {}))
+            result = await ft.on_invoke_tool(ctx, args_json)
         except Exception as exc:  # noqa: BLE001
             log.exception("tool %s failed", name)
             text = f"[tool {name} error: {type(exc).__name__}: {exc}]"
