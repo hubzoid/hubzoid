@@ -3,7 +3,7 @@
 A hub is one folder. The shape:
 
 ```
-my-hub/
+demo-hub/
 ├── .env                          keys + model id (gitignored)
 ├── AGENTS.md                     main agent: prompt + frontmatter
 ├── agents/<name>/AGENTS.md       sub-agent (handoff target)

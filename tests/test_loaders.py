@@ -58,11 +58,11 @@ def test_load_main_with_no_body_raises(tmp_path):
 
 def test_load_main_no_frontmatter_uses_folder_name(tmp_path):
     """Plain markdown with no frontmatter should still load."""
-    hub = tmp_path / "my-hub"
+    hub = tmp_path / "demo-hub"
     hub.mkdir()
     (hub / "AGENTS.md").write_text("You are a helpful assistant. Be concise.")
     loaded = agents_loader.load_main(hub)
-    assert loaded.spec.name == "my-hub"
+    assert loaded.spec.name == "demo-hub"
     assert "helpful assistant" in loaded.spec.description
 
 

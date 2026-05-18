@@ -14,7 +14,7 @@ services:
       - "3080:3080"   # Open WebUI
       - "8000:8000"   # FastAPI bridge
     volumes:
-      - ${HUB_PATH:-../my-hub}:/hub
+      - ${HUB_PATH:-../demo-hub}:/hub
     environment:
       PORT: 3080
       BRIDGE_PORT: 8000

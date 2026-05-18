@@ -7,7 +7,7 @@ Thanks for considering a contribution.
 ```bash
 git clone https://github.com/hubzoid/hubzoid.git
 cd hubzoid
-pip install -e '.[ui,dev]'
+pip install -e '.[dev]'
 pytest
 ```
 
@@ -15,10 +15,11 @@ pytest
 
 ```bash
 pytest                       # unit + integration (no LLM calls)
-pytest -m e2e                # also run real-LLM end-to-end (needs OPENROUTER_API_KEY)
+pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
+pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 ```
 
-The e2e tests boot the FastAPI bridge against `my-hub/` and hit a real
+The e2e tests boot the FastAPI bridge against `demo-hub/` and hit a real
 provider. They are skipped automatically if no provider key is set.
 
 ## Code conventions
