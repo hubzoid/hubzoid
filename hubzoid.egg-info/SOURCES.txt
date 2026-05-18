@@ -4,6 +4,7 @@ pyproject.toml
 hubzoid/__init__.py
 hubzoid/__main__.py
 hubzoid/_fs.py
+hubzoid/branding.py
 hubzoid/cli.py
 hubzoid/factory.py
 hubzoid/factory_claude.py
@@ -29,6 +30,14 @@ hubzoid/loaders/tools_local.py
 hubzoid/templates/starter/.gitignore
 hubzoid/templates/starter/AGENTS.md
 hubzoid/templates/starter/agents/builder/AGENTS.md
+hubzoid/templates/starter/branding/README.md
+hubzoid/templates/starter/branding/apple-touch-icon.png
+hubzoid/templates/starter/branding/favicon-96x96.png
+hubzoid/templates/starter/branding/favicon.png
+hubzoid/templates/starter/branding/favicon.svg
+hubzoid/templates/starter/branding/logo.svg
+hubzoid/templates/starter/branding/splash-dark.png
+hubzoid/templates/starter/branding/splash.png
 hubzoid/templates/starter/connectors/.mcp.json
 hubzoid/templates/starter/knowledge/agents-md-format.md
 hubzoid/templates/starter/knowledge/hub-folder-layout.md
@@ -48,9 +57,11 @@ hubzoid/tools/memory.py
 hubzoid/tools/render.py
 hubzoid/tools/skills_tool.py
 hubzoid/tools/web_http.py
+tests/test_branding.py
 tests/test_factory.py
 tests/test_frontmatter.py
 tests/test_fs.py
 tests/test_init.py
 tests/test_loaders.py
 tests/test_server.py
+tests/test_webui_env.py
