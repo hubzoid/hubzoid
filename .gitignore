@@ -19,3 +19,14 @@ dist/
 
 # Per session hub outputs
 **/output/
+
+# Playwright MCP local cache (test artifacts; never tracked)
+.playwright-mcp/
+
+# Stray E2E screenshots Playwright drops in the repo root when called
+# from a Claude session whose cwd is here. Intentional copies live in
+# ../HubzoidTests/reports/ (a separate folder, outside this repo).
+# The leading slash anchors the pattern to repo root only, so
+# demo-hub/branding/*.png and hubzoid/templates/starter/branding/*.png
+# are NOT excluded.
+/demo-hub-*.png
