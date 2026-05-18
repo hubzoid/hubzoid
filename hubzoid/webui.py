@@ -4,8 +4,8 @@ We start `open-webui serve` as a child process and point it at the hubzoid
 bridge as its OpenAI-compatible upstream. Per-hub state (SQLite DB, uploads)
 lives under `<hub>/.openwebui-data/` so each hub has isolated history.
 
-`open-webui` is an optional dep (`pip install 'hubzoid[ui]'`). If the binary
-is not on PATH we tell the user how to install it.
+`open-webui` is a required dep of hubzoid (`pip install hubzoid` bundles it).
+If the binary is not on PATH we tell the user how to repair the install.
 """
 from __future__ import annotations
 
@@ -38,10 +38,10 @@ def start(*, hub_dir: Path, bridge_port: int, ui_port: int, api_key: str, model_
     if binary is None:
         raise FileNotFoundError(
             "open-webui not found next to the running Python or on PATH. "
-            "Install with:\n"
-            "    pip install open-webui\n"
-            "or:\n"
-            "    pip install 'hubzoid[ui]'"
+            "It is bundled with hubzoid; reinstall to repair:\n"
+            "    pip install --force-reinstall hubzoid\n"
+            "or install it directly:\n"
+            "    pip install open-webui"
         )
 
     data_dir = hub_dir / ".openwebui-data"

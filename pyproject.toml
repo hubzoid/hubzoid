@@ -4,23 +4,46 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drop a folder of markdown files, get a chat agent with a polished web UI."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "HubZoid contributors" }]
-keywords = ["agents", "llm", "openai", "anthropic", "openrouter", "markdown", "agents.md", "mcp"]
+authors = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
+maintainers = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
+keywords = [
+  "agents",
+  "ai",
+  "llm",
+  "openai",
+  "anthropic",
+  "claude",
+  "openrouter",
+  "open-webui",
+  "markdown",
+  "agents.md",
+  "mcp",
+]
 classifiers = [
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3 :: Only",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
-  "Topic :: Software Development :: Libraries",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 
+# Everything needed to run `hubzoid run <hub>` is a required dep.
+# No optional extras for the runtime — `pip install hubzoid` is enough.
 dependencies = [
   "openai-agents[litellm]>=0.14.7",
+  "claude-agent-sdk>=0.1.0",
+  "open-webui>=0.6",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "httpx>=0.27",
@@ -33,19 +56,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ui = ["open-webui>=0.6"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
-claude-local = ["claude-agent-sdk>=0.1.0"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "build>=1.2",
+  "twine>=5.0",
+]
 
 [project.scripts]
 hubzoid = "hubzoid.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/hubzoid/hubzoid"
+Repository = "https://github.com/hubzoid/hubzoid"
 Issues = "https://github.com/hubzoid/hubzoid/issues"
+Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
 packages = ["hubzoid", "hubzoid.loaders", "hubzoid.tools"]
+include-package-data = true
 
 [tool.setuptools.package-data]
 hubzoid = ["templates/starter/**/*", "templates/starter/**/.*"]
@@ -53,5 +82,6 @@ hubzoid = ["templates/starter/**/*", "templates/starter/**/.*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-  "e2e: end-to-end test that requires a real LLM provider key",
+  "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
+  "e2e_ui: end-to-end test that drives Open WebUI in a real browser via Playwright",
 ]

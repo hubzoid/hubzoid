@@ -1,154 +1,186 @@
-# hubzoid
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg">
+    <img alt="/hubzoid" src="assets/mark-light.svg" width="220">
+  </picture>
+</p>
 
-> Drop a folder of markdown files, get a chat agent with a polished web UI.
+<p align="center">
+  <strong>Drop a folder of markdown files. Get a chat agent with a polished web UI.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/v/hubzoid.svg?color=E5572A&label=pypi" alt="PyPI"></a>
+  <a href="https://pypi.org/project/hubzoid/"><img src="https://img.shields.io/pypi/pyversions/hubzoid.svg?color=0B0B0C" alt="Python"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0B0B0C.svg" alt="MIT License"></a>
+  <a href="https://hubzoid.com"><img src="https://img.shields.io/badge/website-hubzoid.com-E5572A.svg" alt="hubzoid.com"></a>
+</p>
+
+---
 
 hubzoid reads `AGENTS.md`, `agents/`, `skills/`, and `knowledge/` from a folder
-and turns it into a running AI agent, backed by the [OpenAI Agents
-SDK](https://openai.github.io/openai-agents-python/), served over an
-OpenAI compatible HTTP API, and chattable through a bundled
-[Open WebUI](https://openwebui.com) front end. You write the markdown.
-hubzoid handles the runtime, the API, the UI, the streaming, and the
-sub agent routing. Provider agnostic via [LiteLLM](https://docs.litellm.ai).
-OpenRouter, OpenAI, and Anthropic are supported out of the box.
+and turns it into a running AI agent. Backed by the [OpenAI Agents
+SDK](https://openai.github.io/openai-agents-python/) or the [Claude Agent
+SDK](https://code.claude.com/docs/en/agent-sdk/overview), served over an
+OpenAI-compatible HTTP API, and chattable through a bundled
+[Open WebUI](https://openwebui.com) front end.
 
-Two equivalent ways to start. Both give you the same `my-hub/` folder with
-the same starter content. Pick whichever fits your workflow.
+You write the markdown. hubzoid handles the runtime, the API, the UI, the
+streaming, and the sub-agent routing. Provider-agnostic via
+[LiteLLM](https://docs.litellm.ai): OpenRouter, OpenAI, Anthropic, and local
+Claude work out of the box.
+
+## Quickstart
+
+**3 steps if you have `claude` CLI installed and logged in, 4 otherwise.**
+
+```bash
+pip install hubzoid
+hubzoid init demo-hub                  # scaffolds a starter hub + agents-repo wrapper
+*  edit demo-hub/.env                  # ← optional. skip if using claude-local.
+hubzoid run demo-hub
+```
+
+Open <http://localhost:3080>. The scaffolded `demo-hub` is a working **Hubzoid
+Guide** agent.
+
+**\* Step 3 (the optional one).** Default `MODEL=claude-local` uses your
+installed `claude` CLI subscription. If you already ran `claude login`,
+skip this step and go straight to `hubzoid run`. Otherwise, open
+`demo-hub/.env`, comment out the `MODEL=claude-local` line, and uncomment
+one of the provider stanzas (OpenRouter, OpenAI, Anthropic) with your key
+pasted in.
+
+The two files you edit later as you customize:
+
+1. `demo-hub/.env`: keys, model selection, UI knobs.
+2. `demo-hub/AGENTS.md`: the system prompt body. YAML frontmatter sets
+   `name`, `description`, and optional `model`.
+
+## How it works
 
 ```
 ┌─────────────────────────────┐
 │  Open WebUI                 │  http://localhost:3080
-│  (web chat, white label)    │
+│  (web chat, white-label)    │
 └──────────────┬──────────────┘
-               │ OpenAI compatible HTTP
+               │ OpenAI-compatible HTTP
 ┌──────────────┴──────────────┐
 │  FastAPI bridge             │  /v1/chat/completions  /v1/models
 └──────────────┬──────────────┘
-               │ in process
+               │ in-process
 ┌──────────────┴──────────────┐
-│  OpenAI Agents SDK          │  sub agents, tools, handoffs, MCP
+│  Agent runtime              │  OpenAI Agents SDK  |  Claude Agent SDK
 └──────────────┬──────────────┘
-               │ LiteLLM
+               │ LiteLLM (or claude CLI subprocess)
 ┌──────────────┴──────────────┐
-│  Your model                 │  OpenRouter, OpenAI, Anthropic, others
+│  Your model                 │  OpenRouter · OpenAI · Anthropic · claude-local
 └─────────────────────────────┘
 ```
 
-## Quickstart
-
-Requires Python 3.10 or newer.
-
-### Clone
-
-```bash
-git clone https://github.com/hubzoid/hubzoid.git
-cd hubzoid
-pip install -r requirements.txt
-```
-
-The repo ships with `my-hub/` at the repo root. Set it up before running.
-Stay at the repo root for these commands.
-
-```bash
-cp my-hub/.env.example my-hub/.env
-```
-
-Now edit two files in `my-hub/`.
-
-1. `my-hub/.env`. Paste a key from OpenRouter, OpenAI, or Anthropic. Pick a
-   model. The file shows you how.
-2. `my-hub/AGENTS.md`. The body is your system prompt. Edit it or keep the
-   starter.
-
-See [Editing your hub](#editing-your-hub) below for everything else you can
-change.
-
-Run from the repo root:
-
-```bash
-python -m hubzoid run my-hub
-```
-
-(If you `cd` into `my-hub/` first, run `python -m hubzoid run .` instead.)
-
-Open http://localhost:3080.
-
-### Pip
-
-```bash
-pip install 'hubzoid[ui]'
-hubzoid init my-hub
-```
-
-`hubzoid init` writes the same starter files anywhere on disk. Then:
-
-```bash
-cp my-hub/.env.example my-hub/.env
-# Edit my-hub/.env (key + model) and my-hub/AGENTS.md (your prompt).
-hubzoid run my-hub
-```
-
-Same starter content, same result.
-
-> **Note.** The `[ui]` extra bundles Open WebUI (about 500 MB on first boot
-> for its embedding model). If you only need the HTTP API, install bare
-> `hubzoid` and start with `hubzoid run --no-ui my-hub`.
-
-## Editing your hub
-
-Your hub is one folder. Open `my-hub/`. Six things to know.
-
-1. **Add your API key.** Copy `.env.example` to `.env` and paste a key from
-   OpenRouter, OpenAI, or Anthropic. Pick a model (the file shows you how).
-2. **Write the main agent.** Open `AGENTS.md`. The body is the system prompt.
-   The YAML frontmatter sets `name`, `description`, and an optional `model`.
-3. **(Optional) Sub agents.** One folder per sub agent under `agents/`. Each
-   has its own `AGENTS.md`. Frontmatter `tools: [...]` whitelists which
-   tools the sub agent may call.
-4. **(Optional) Skills.** One folder per playbook under `skills/`, each with
-   a `SKILL.md`. The main agent loads them on demand via `load_skill(name)`.
-5. **(Optional) Knowledge.** One markdown file per topic under `knowledge/`.
-   Reached via `read_knowledge(name)`.
-6. **(Optional) Tools and connectors.** Drop Python files with
-   `@function_tool` in `tools_local/`. Edit `connectors/.mcp.json` to plug
-   in [MCP](https://modelcontextprotocol.io) servers.
-
-Folder names are case and plural flexible. `skills/`, `Skills/`, and
-`skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
-`connectors/`.
-
-Restart with the same command. Your changes are picked up on the next start.
+One install command. Open WebUI, the Claude Agent SDK, the OpenAI Agents
+SDK, LiteLLM, and FastAPI are all bundled as required dependencies. No
+optional extras for the runtime.
 
 ## A minimal AGENTS.md
 
 ```markdown
 ---
-name: my-bot
-description: A helpful, concise assistant.
+name: code-reviewer
+description: Reviews a code diff. Ranks the top three issues by severity.
 model: openrouter/anthropic/claude-haiku-4.5
 ---
 
-You are a helpful assistant. Be concise. Cite sources when you use the web.
+You review code. When the user pastes a diff or a file, identify the top
+three issues ranked by severity: correctness first, then security, then
+readability.
+
+For each issue, cite the line number and explain the fix in one sentence.
+Skip style nits unless the user asks for them. If the code looks clean,
+say so in one line and stop.
 ```
 
-That is the whole hub if you do not need sub agents, skills, or knowledge.
+That is the whole hub. One file. No sub-agents, no skills, no knowledge
+needed. Drop it in a folder, run `hubzoid run .`, and you have a code
+reviewer at <http://localhost:3080>.
 
-## CLI
+## Editing your hub
 
+Your hub is one folder. Six things to know.
+
+1. **Pick your model.** Default `.env` uses `MODEL=claude-local` (no key
+   needed if `claude login` is done). To switch to OpenRouter / OpenAI /
+   Anthropic, uncomment a stanza in `.env` and paste a key.
+2. **Write the main agent.** Open `AGENTS.md`. The body is the system
+   prompt. YAML frontmatter sets `name`, `description`, and optional
+   `model`.
+3. **Sub-agents.** One folder per sub-agent under `agents/`. Each has its
+   own `AGENTS.md`. Frontmatter `tools: [...]` whitelists which tools the
+   sub-agent may call.
+4. **Skills.** One folder per playbook under `skills/`, each with a
+   `SKILL.md`. The main agent loads them on demand via `load_skill(name)`.
+5. **Knowledge.** One markdown file per topic under `knowledge/`. Reached
+   via `read_knowledge(name)`.
+6. **Tools and connectors.** Drop Python files with `@function_tool` in
+   `tools_local/`. Edit `connectors/.mcp.json` to plug in
+   [MCP](https://modelcontextprotocol.io) servers.
+
+Folder names are case- and plural-flexible. `skills/`, `Skills/`, and
+`skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
+`connectors/`. Restart with the same command. Changes are picked up on
+the next start.
+
+## Multi-hub agents repo
+
+Run `hubzoid init` more than once in the same directory and you get a
+Samarth-style multi-hub layout with one parent `requirements.txt`:
+
+```bash
+mkdir my-agents && cd my-agents
+hubzoid init devops-agent       # creates ./devops-agent + ./requirements.txt + ./.gitignore + ./README.md
+hubzoid init support-agent      # creates ./support-agent only; parent files left alone
+hubzoid init research-agent     # creates ./research-agent only
 ```
-hubzoid init [PATH]              Scaffold a hub from the bundled starter template.
-hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a hub.
-  --port INT                       Open WebUI port (default 3080).
-  --bridge-port INT                FastAPI bridge port (default 8000).
-  --no-ui                          Bridge only, no Open WebUI.
-hubzoid doctor [PATH]            Validate hub config and report issues.
-hubzoid test [PATH]              Send one prompt to the agent and print the response.
-hubzoid version
-hubzoid --help
+
+Each hub is independent: its own `.env`, its own port, its own user
+database. The parent files are written **only** on the first init in a
+fresh directory (empty or containing only dotfiles / README /
+requirements.txt / LICENSE). Idempotent and non-destructive afterward.
+
+## Providers
+
+Pick one stanza in `.env`. See [docs/providers.md](docs/providers.md) for
+more detail.
+
+```bash
+# OpenRouter (one key, many models)
+OPENROUTER_API_KEY=sk-or-v1-...
+MODEL=openrouter/anthropic/claude-haiku-4.5
+
+# OR OpenAI
+OPENAI_API_KEY=sk-...
+MODEL=openai/gpt-4o-mini
+
+# OR Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+MODEL=anthropic/claude-haiku-4-5
+
+# OR Claude local (uses your installed `claude` CLI + Pro/Max subscription)
+# Requires `claude login` first. No API key needed.
+MODEL=claude-local
+# MODEL=claude-local/sonnet       # pin Sonnet
+# MODEL=claude-local/opus         # pin Opus
+# MODEL=claude-local/haiku        # pin Haiku
 ```
 
-PATH defaults to `.` everywhere.
+The `MODEL` string tells LiteLLM which provider to call, and the matching
+key must be set. The exception is `MODEL=claude-local`: instead of
+LiteLLM, hubzoid drives the Claude Agent SDK against your locally
+installed `claude` CLI, so auth and billing flow through your existing
+Pro/Max subscription. Same hub folder, same tools, same skills. Only the
+LLM and auth path differ.
 
-## Pre shipped tools
+## Pre-shipped tools
 
 Every hub gets these tools for free.
 
@@ -168,11 +200,17 @@ Every hub gets these tools for free.
 | `http_get(url)` | Fetch a URL (honors `HTTP_ALLOWLIST`). |
 | `web_search(query)` | DuckDuckGo search. No API key. |
 
-Custom tools dropped into `tools_local/*.py` are auto discovered.
+Custom tools dropped into `tools_local/*.py` are auto-discovered.
 
-## Adding MCP connectors
+## MCP connectors
 
-Edit `connectors/.mcp.json`.
+MCP connectors are **per-hub**. Each hub has its own
+`<hub>/connectors/.mcp.json` alongside its `AGENTS.md`. Two hubs in the
+same agents-repo connect to completely different MCP servers because each
+loads its own config independently. There is no parent-level shared MCP
+file by design: agents are independent products with their own scope.
+
+Edit `demo-hub/connectors/.mcp.json` (or whatever your hub is named):
 
 ```json
 {
@@ -191,59 +229,44 @@ Edit `connectors/.mcp.json`.
 ```
 
 `${VAR}` references in any string field resolve against the environment at
-boot.
+boot. The same `.mcp.json` is honored by both the OpenAI Agents and
+Claude Agent runtimes.
 
-## Providers
+## CLI
 
-Pick one stanza in `.env`. See [docs/providers.md](docs/providers.md) for
-more.
-
-```bash
-# OpenRouter (one key, many models)
-OPENROUTER_API_KEY=sk-or-v1-...
-MODEL=openrouter/anthropic/claude-haiku-4.5
-
-# OR OpenAI
-OPENAI_API_KEY=sk-...
-MODEL=openai/gpt-4o-mini
-
-# OR Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-MODEL=anthropic/claude-haiku-4-5
-
-# OR Claude local (your installed `claude` CLI + subscription auth, no key)
-# Requires: `claude login` already done, and pip install 'hubzoid[claude-local]'
-MODEL=claude-local
+```
+hubzoid init [NAME]              Scaffold a new hub folder under the current directory.
+                                   NAME defaults to "demo-hub".
+                                   Also drops requirements.txt / .gitignore / README.md
+                                   at the parent on first run if the directory looks fresh.
+hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a hub.
+  --port INT                       Open WebUI port (default 3080).
+  --bridge-port INT                FastAPI bridge port (default 8000).
+  --no-ui                          Bridge only, no Open WebUI.
+hubzoid doctor [PATH]            Validate hub config and report issues.
+hubzoid test [PATH]              Send one prompt to the agent and print the response.
+hubzoid version
+hubzoid --help
 ```
 
-The `MODEL` string tells LiteLLM which provider to call. The matching key
-must be set. The one exception is `MODEL=claude-local`: instead of LiteLLM,
-hubzoid runs the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)
-against your locally-installed `claude` CLI, so auth and billing flow through
-your existing Pro/Max subscription. Same hub folder, same tools, same skills
-— only the LLM and auth path differ.
+PATH defaults to `.` for run / doctor / test. `python -m hubzoid ...` also
+works as an alternative invocation.
 
-## What you get out of the box
+## Run from source
 
-* **Web chat** (Open WebUI). Multi user, file uploads, conversation history,
-  code rendering. White label via `WEBUI_NAME` env.
-* **HTTP API** at `/v1/chat/completions`. Any OpenAI client just works.
-* **Sub agents and handoffs.** Markdown definition, OpenAI Agents SDK
-  runtime.
-* **Tool calls.** File ops, knowledge, skills, HTTP, web search, render,
-  memory are pre shipped. Bring your own with `tools_local/`.
-* **Skills.** Progressive playbooks via `load_skill`.
-* **MCP.** Any MCP server works as a tool source.
-* **Persistent memory.** Per session filesystem memory.
-* **Provider agnostic.** Anything LiteLLM speaks.
+For contributors or anyone who wants to read or extend the framework code.
 
-## What you do not write
+```bash
+git clone https://github.com/hubzoid/hubzoid.git
+cd hubzoid
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'
+hubzoid run demo-hub
+```
 
-* No runtime code.
-* No FastAPI wiring.
-* No chat UI work.
-* No prompt engineering scaffolding.
-* No tool registration boilerplate.
+The repo ships with `demo-hub/` at the root as a working starter. Its
+`.env` is git-ignored but the template includes sensible defaults
+(`MODEL=claude-local`).
 
 ## Open standards
 
@@ -256,18 +279,29 @@ your existing Pro/Max subscription. Same hub folder, same tools, same skills
 Hubs are portable across any tool that adopts these specs (Claude Code,
 Cursor, Codex, Copilot, Gemini CLI, VS Code).
 
-## Status and roadmap
+## Roadmap
 
-* **v0.1.** This release. CLI, bridge, Open WebUI, AGENTS.md, SKILL.md, MCP
-  loaders, OpenRouter, OpenAI, Anthropic.
-* **v1.1.** Docker bundle, Slack, Telegram, email digest adapters.
-* **v1.2.** Mem0 and Zep memory backends.
-* **v1.3.** Hosted multi tenancy.
+* **v0.2** Current. PyPI release with bundled Open WebUI + Claude Agent
+  SDK; OpenAI Agents and Claude Agent runtimes; AGENTS.md, SKILL.md, MCP
+  loaders; OpenRouter, OpenAI, Anthropic, claude-local providers.
+* **v0.3** Per-hub branding, auth-on path, native-venv production
+  deployment docs, Playwright UI test tier.
+* **v0.4** Background and scheduled workflows via WaveAssist Cloud
+  (separate product, opt-in).
+* **Later** Slack and Telegram chat surfaces. Mem0 / Zep memory backends.
 
-## Non goals
+Non-goals: voice and realtime, visual agent builder.
 
-* Voice and realtime.
-* Visual agent builder. Markdown is the IDE.
+## Hubzoid as a service
+
+This is the open-source framework. [hubzoid.com](https://hubzoid.com) is
+the consulting practice that deploys role-scoped hubs for mid-enterprise
+organizations in six weeks, fixed scope, fixed price. The framework is
+the substrate; the practice ships the deployment.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome.
 
 ## License
 

@@ -143,8 +143,9 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
         import claude_agent_sdk  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
-            "MODEL=claude-local requires the claude-agent-sdk package.\n"
-            "Install with:  pip install 'hubzoid[claude-local]'"
+            "MODEL=claude-local requires the claude-agent-sdk package, which is\n"
+            "bundled with hubzoid. Reinstall to repair:\n"
+            "    pip install --force-reinstall hubzoid"
         ) from exc
 
     hub_dir = Path(hub_dir).resolve()
