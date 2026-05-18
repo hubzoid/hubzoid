@@ -1,7 +1,7 @@
 # AGENTS.md. for AI editors working on the hubzoid platform
 
 This file guides AI coding tools (Claude Code, Cursor, Codex, Copilot, Gemini
-CLI, etc.) editing the hubzoid platform source. The per-hub `my-hub/AGENTS.md`
+CLI, etc.) editing the hubzoid platform source. The per-hub `demo-hub/AGENTS.md`
 is a different thing. that's the runtime prompt for the hub's main agent.
 
 ## Project layout
@@ -12,7 +12,7 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
 | `hubzoid/templates/starter/` | Bundled template used by `hubzoid init`. |
-| `my-hub/` | The canonical starter hub at the repo root (mirrors the template). |
+| `demo-hub/` | The canonical starter hub at the repo root (mirrors the template). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models`. |
 | `cli.py` | Typer-based CLI. |
 | `factory.py` | `build_agent(hub_dir)`. composes everything. |
@@ -28,8 +28,9 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 - Pre-shipped tools must scope writes to `<hub>/output/<session>/`. Reads
   may go anywhere under the hub directory. No filesystem access outside the
   hub root.
-- Keep the package importable without the `[ui]` extra. Open WebUI is invoked
-  as a subprocess; the package must not `import open_webui` at module load.
+- Open WebUI is a required dep but is invoked as a subprocess; the package
+  must not `import open_webui` at module load (keeps cold-start fast and lets
+  the bridge run headless via `--no-ui`).
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
   execution backends (today: OpenAI Agents SDK and Claude Agent SDK). A
   single hub folder must produce identical manual-testing surface across

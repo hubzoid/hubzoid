@@ -1,11 +1,15 @@
-# Core deps for the no-install / clone path:
-#   git clone hubzoid && cd hubzoid && pip install -r requirements.txt
+# Runtime dependencies, mirrored from pyproject.toml [project.dependencies].
 #
-# Optional extras (install on demand):
-#   pip install open-webui          # bundled web chat UI
-#   pip install claude-agent-sdk    # required only if MODEL=claude-local
+# Most users do NOT need this file. Two preferred install paths:
+#   - Product use:        pip install hubzoid
+#   - From a clone:       pip install -e .          (or -e '.[dev]' for tests)
+#
+# This file exists only as a convenience for `pip install -r requirements.txt`
+# from a fresh clone when you don't want an editable install.
 
 openai-agents[litellm]>=0.14.7
+claude-agent-sdk>=0.1.0
+open-webui>=0.6
 fastapi>=0.115
 uvicorn[standard]>=0.30
 httpx>=0.27

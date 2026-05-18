@@ -40,25 +40,53 @@ console = Console()
 # ---------------------------------------------------------------------------
 @app.command()
 def init(
-    path: Path = typer.Argument(Path("."), help="Where to scaffold the hub. Default: current dir."),
-    force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
+    name: Path = typer.Argument(
+        Path("demo-hub"),
+        help="Name of the new hub folder. Created under the current directory. Default: demo-hub.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
 ) -> None:
-    """Scaffold a new hub from the bundled starter template."""
-    path = path.resolve()
-    path.mkdir(parents=True, exist_ok=True)
+    """Scaffold a new hub. Also drops agents-repo wrapper files if the parent looks fresh.
+
+    First run in an empty directory:
+      $ hubzoid init devops-agent
+      → writes ./requirements.txt, ./.gitignore, ./README.md, ./devops-agent/...
+
+    Second run in the same directory:
+      $ hubzoid init irs-agent
+      → writes ./irs-agent/... only. Parent files are left alone.
+
+    The result is a Samarth-style multi-hub agents repo built one hub at a time.
+    """
+    # Resolve. If `name` is just a folder name, drop it under cwd. If it is
+    # `.`, init in cwd itself (legacy / "I am already in my hub dir" case).
+    if str(name) == ".":
+        hub_dir = Path.cwd().resolve()
+        is_in_place = True
+    else:
+        hub_dir = (Path.cwd() / name).resolve() if not name.is_absolute() else name.resolve()
+        is_in_place = False
 
     template_root = _template_root()
     if template_root is None:
         console.print("[red]Bundled template not found in the installed package.[/red]")
         raise typer.Exit(2)
 
+    parent = hub_dir.parent
+    # Check parent freshness BEFORE creating the hub folder, so the hub we are
+    # about to create does not itself disqualify the parent.
+    parent_is_fresh = (not is_in_place) and _parent_looks_fresh(parent, ignore=hub_dir.name)
+
+    hub_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Scaffold the hub folder from the bundled template.
     written: list[Path] = []
     skipped: list[Path] = []
     for src in template_root.rglob("*"):
         if src.is_dir():
             continue
         rel = src.relative_to(template_root)
-        dst = path / rel
+        dst = hub_dir / rel
         if dst.exists() and not force:
             skipped.append(dst)
             continue
@@ -66,15 +94,33 @@ def init(
         shutil.copy2(src, dst)
         written.append(dst)
 
-    console.print(f"[green]Initialized hub at[/green] {path}")
+    # 2. If the parent looks fresh and we are scaffolding a sub-folder, drop
+    # the agents-repo wrapper files. Never overwrite existing ones, with or
+    # without --force (parent files are not the hub's concern).
+    parent_written: list[Path] = []
+    if parent_is_fresh:
+        version_str = _installed_version()
+        wrapper = _wrapper_files(parent, hub_dir.name, version_str)
+        for dst, content in wrapper.items():
+            if dst.exists():
+                continue
+            dst.write_text(content)
+            parent_written.append(dst)
+
+    # 3. Report.
+    console.print(f"[green]Initialized hub at[/green] {hub_dir}")
     if written:
-        console.print(f"  wrote {len(written)} files")
+        console.print(f"  wrote {len(written)} hub files")
     if skipped:
         console.print(f"  skipped {len(skipped)} existing files (use --force to overwrite)")
+    if parent_written:
+        console.print(f"\n[green]Bootstrapped agents-repo wrapper at[/green] {parent}")
+        for p in parent_written:
+            console.print(f"  + {p.name}")
+
     console.print("\nNext:")
-    console.print(f"  1. cp {path}/.env.example {path}/.env  # then add your API key")
-    console.print(f"  2. edit {path}/AGENTS.md")
-    console.print(f"  3. hubzoid run {path if path != Path.cwd() else '.'}")
+    console.print(f"  1. edit {hub_dir.name}/.env if you do not have `claude` CLI logged in")
+    console.print(f"  2. hubzoid run {hub_dir.name}")
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +236,7 @@ def doctor(
 
     env_path = hub / ".env"
     if not env_path.is_file():
-        notes.append(f"no .env at {env_path} (copy .env.example -> .env and add a key)")
+        notes.append(f"no .env at {env_path} (run `hubzoid init` to scaffold one, or create it by hand)")
 
     # Try to actually build the runtime — this is the most thorough check.
     # Picks the backend based on MODEL (openai-agents by default,
@@ -251,6 +297,98 @@ def version() -> None:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+def _installed_version() -> str:
+    """Return the installed hubzoid version, or the source-tree version as a fallback."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version as _ver
+        try:
+            return _ver("hubzoid")
+        except PackageNotFoundError:
+            pass
+    except ImportError:
+        pass
+    return __version__
+
+
+def _parent_looks_fresh(parent: Path, *, ignore: str) -> bool:
+    """Heuristic: parent is empty enough to be a fresh agents-repo wrapper.
+
+    Empty parent → fresh. Parent that contains only dotfiles, a README, a
+    requirements.txt, a LICENSE, a `.venv`, or the hub folder we are about
+    to create → also fresh. Anything else (sibling hub folders, src/, etc.)
+    means this is an existing project; do not write parent files.
+    """
+    if not parent.exists():
+        return True
+    allowed = {"README.md", "requirements.txt", "LICENSE", "LICENSE.md", ".env"}
+    for entry in parent.iterdir():
+        if entry.name == ignore:
+            continue
+        if entry.name.startswith("."):
+            continue
+        if entry.name in allowed:
+            continue
+        return False
+    return True
+
+
+def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, str]:
+    """The agents-repo wrapper files to drop at the parent level on first init."""
+    requirements_txt = (
+        "# Hubzoid agents repo. One hub per sibling folder.\n"
+        "# Replace the pin below with your version. For private mirrors, swap to:\n"
+        "#   git+ssh://git@github.com/<org>/<your-mirror>@v<version>#egg=hubzoid\n"
+        f"hubzoid=={version_str}\n"
+    )
+    gitignore = (
+        "# Hubzoid\n"
+        ".env\n"
+        "output/\n"
+        ".openwebui-data/\n"
+        "\n"
+        "# Python\n"
+        "__pycache__/\n"
+        "*.pyc\n"
+        ".venv/\n"
+        ".pytest_cache/\n"
+        "\n"
+        "# OS\n"
+        ".DS_Store\n"
+    )
+    readme = (
+        f"# {parent.name}\n"
+        "\n"
+        "Hubzoid agents repo. Each subfolder is a hub.\n"
+        "\n"
+        "## Run a hub\n"
+        "\n"
+        "```bash\n"
+        "python -m venv .venv && source .venv/bin/activate\n"
+        "pip install -r requirements.txt\n"
+        f"hubzoid run {hub_name}\n"
+        "```\n"
+        "\n"
+        "## Add another hub\n"
+        "\n"
+        "```bash\n"
+        "hubzoid init <hub-name>\n"
+        "```\n"
+        "\n"
+        "Each hub gets its own `.env`, its own port, and its own user database.\n"
+        "Agents are independent products.\n"
+        "\n"
+        "## Where the framework lives\n"
+        "\n"
+        "Installed from PyPI via `requirements.txt`. Framework source is at\n"
+        "[github.com/hubzoid/hubzoid](https://github.com/hubzoid/hubzoid).\n"
+    )
+    return {
+        parent / "requirements.txt": requirements_txt,
+        parent / ".gitignore": gitignore,
+        parent / "README.md": readme,
+    }
+
+
 def _template_root() -> Path | None:
     """Return the on-disk path of the bundled starter template, or None."""
     try:
