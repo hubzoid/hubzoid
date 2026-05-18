@@ -34,6 +34,9 @@ class AgentSpec(BaseModel):
     description: str = Field(..., min_length=1)
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
+    # Quick-start prompts shown on the empty new-chat screen as click-to-send
+    # buttons. Only honored on the main agent; ignored on sub-agents.
+    suggestions: list[str] = Field(default_factory=list)
 
 
 @dataclass
