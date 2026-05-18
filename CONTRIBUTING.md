@@ -24,7 +24,7 @@ provider. They are skipped automatically if no provider key is set.
 
 ## Code conventions
 
-- Python 3.10+.
+- Python 3.11+. Upper bound is whatever open-webui supports today.
 - Keep the public API small. The blast radius of a breaking change in
   `factory.build_agent` or the CLI is large.
 - Loaders go in `hubzoid/loaders/`, tools in `hubzoid/tools/`.
