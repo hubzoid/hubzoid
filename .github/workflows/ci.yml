@@ -1,10 +1,6 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   release:
     types: [published]
 
@@ -16,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +26,6 @@ jobs:
 
   build:
     needs: test
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +43,6 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment:
       name: pypi

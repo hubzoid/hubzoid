@@ -60,7 +60,7 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 
 ## Style
 
-- Python 3.10+. Use `from __future__ import annotations`.
+- Python 3.11+. Effective upper bound is whatever open-webui currently supports (today: 3.12). Use `from __future__ import annotations`.
 - Stdlib + pinned deps only (see `pyproject.toml`).
 - Logging via `logging.getLogger(__name__)`; level is set by the CLI.
 - No print statements in library code (CLI is allowed to use `rich.console`).
