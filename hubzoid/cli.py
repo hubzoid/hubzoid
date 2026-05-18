@@ -94,7 +94,16 @@ def init(
         shutil.copy2(src, dst)
         written.append(dst)
 
-    # 2. If the parent looks fresh and we are scaffolding a sub-folder, drop
+    # 2. Write .env from a Python constant (not part of the template tree
+    # because .env is gitignored). Same skip rules as template files.
+    env_dst = hub_dir / ".env"
+    if env_dst.exists() and not force:
+        skipped.append(env_dst)
+    else:
+        env_dst.write_text(_STARTER_ENV)
+        written.append(env_dst)
+
+    # 3. If the parent looks fresh and we are scaffolding a sub-folder, drop
     # the agents-repo wrapper files. Never overwrite existing ones, with or
     # without --force (parent files are not the hub's concern).
     parent_written: list[Path] = []
@@ -297,6 +306,42 @@ def version() -> None:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+_STARTER_ENV = """\
+# demo-hub configuration. This file is git-ignored.
+#
+# The default below uses your installed `claude` CLI and Pro/Max subscription
+# for inference. No API key needed. Requires `claude login` already done.
+#
+# To use a hosted provider instead, comment out MODEL=claude-local and
+# uncomment one of the alternative stanzas. Set the matching API key.
+
+MODEL=claude-local
+# MODEL=claude-local/sonnet     # pin Sonnet
+# MODEL=claude-local/opus       # pin Opus
+# MODEL=claude-local/haiku      # pin Haiku
+
+# --- OpenRouter (one key, many models) -------------------------------------
+# OPENROUTER_API_KEY=
+# MODEL=openrouter/anthropic/claude-haiku-4.5
+
+# --- OpenAI -----------------------------------------------------------------
+# OPENAI_API_KEY=
+# MODEL=openai/gpt-4o-mini
+
+# --- Anthropic --------------------------------------------------------------
+# ANTHROPIC_API_KEY=
+# MODEL=anthropic/claude-haiku-4-5
+
+# --- Bridge / UI knobs (all optional) --------------------------------------
+WEBUI_NAME=Hubzoid Guide
+# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees
+# MODEL_LABEL=                  # what /v1/models reports; blank = derived from AGENTS.md name
+# PORT=3080                     # Open WebUI port
+# BRIDGE_PORT=8000              # FastAPI bridge port
+# HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
+"""
+
+
 def _installed_version() -> str:
     """Return the installed hubzoid version, or the source-tree version as a fallback."""
     try:
