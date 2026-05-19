@@ -43,6 +43,9 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_RAG_WEB_SEARCH": _OFF,           # hubzoid has its own web_search
     "ENABLE_USER_WEBHOOKS": _OFF,
     "ENABLE_TAGS_GENERATION": _OFF,          # extra LLM call, marginal benefit today
+    "ENABLE_FOLLOW_UP_GENERATION": _OFF,     # post-reply suggestion chips: extra LLM call per turn + on refresh
+    "ENABLE_AUTOCOMPLETE_GENERATION": _OFF,  # input-box autocomplete: extra LLM call on typing pause
+    "ENABLE_RETRIEVAL_QUERY_GENERATION": _OFF, # RAG query rewriter: not used (hubzoid doesn't RAG)
     "ENABLE_API_KEY": _OFF,                  # per-user API keys defeat auth
     "ENABLE_VERSION_UPDATE_CHECK": _OFF,     # do not phone home from customer prod
     "ENABLE_MEMORY": _OFF,                   # OWUI's user-memory conflicts with hubzoid memory
@@ -61,7 +64,6 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_MESSAGE_RATING": _ON,            # thumbs up/down
     "ENABLE_TITLE_GENERATION": _ON,          # auto chat titles
     "ENABLE_ADMIN_EXPORT": _ON,              # chat-history export for admins
-    "ENABLE_FOLLOW_UP_GENERATION": _ON,      # 2-3 "what to ask next" prompts after each reply
 }
 
 
