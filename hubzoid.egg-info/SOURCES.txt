@@ -5,6 +5,7 @@ hubzoid/__init__.py
 hubzoid/__main__.py
 hubzoid/_fs.py
 hubzoid/branding.py
+hubzoid/caching.py
 hubzoid/cli.py
 hubzoid/factory.py
 hubzoid/factory_claude.py

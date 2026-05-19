@@ -187,6 +187,13 @@ installed `claude` CLI, so auth and billing flow through your existing
 Pro/Max subscription. Same hub folder, same tools, same skills. Only the
 LLM and auth path differ.
 
+**OpenRouter tip.** If using `openrouter/anthropic/*`, pin Anthropic as the
+preferred provider at [openrouter.ai/settings/preferences](https://openrouter.ai/settings/preferences)
+(with fallbacks allowed). Hubzoid uses Anthropic prompt caching for ~70%
+input-cost savings on multi-turn chats, but each upstream (Anthropic,
+Vertex, Bedrock) has a separate cache pool, so cross-provider routing
+fragments cache hits.
+
 ## Pre-shipped tools
 
 Every hub gets these tools for free.

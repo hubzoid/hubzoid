@@ -48,11 +48,13 @@ class Settings:
 def load(hub_dir: Path) -> Settings:
     """Load .env from the hub directory (if present) and bind a Settings object.
 
-    Existing OS env vars take precedence over .env values (12-factor friendly).
+    `.env` is the operator's authoritative config and wins over shell env.
+    Deployments that want shell-env precedence (systemd EnvironmentFile, k8s)
+    simply don't ship a `.env` file.
     """
     env_path = hub_dir / ".env"
     if env_path.is_file():
-        load_dotenv(env_path, override=False)
+        load_dotenv(env_path, override=True)
 
     keys_raw = os.environ.get("BRIDGE_API_KEYS", "dev")
     keys = tuple(k.strip() for k in keys_raw.split(",") if k.strip()) or ("dev",)

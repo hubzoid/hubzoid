@@ -86,7 +86,7 @@ def build_agent(hub_dir: Path) -> Agent:
     log.info("hub %s: %d sub-agent(s)", hub_dir.name, len(handoffs))
 
     main_spec = agents_loader.load_main(hub_dir)
-    main_model_id = main_spec.spec.model or settings.model
+    main_model_id = settings.model or main_spec.spec.model
     if not main_model_id:
         raise RuntimeError(
             "no model configured. Set MODEL in <hub>/.env or `model:` in AGENTS.md frontmatter."
@@ -108,7 +108,7 @@ def build_agent(hub_dir: Path) -> Agent:
 
 
 def _build_one(loaded: agents_loader.LoadedAgent, *, registry: dict[str, FunctionTool], default_model: str | None) -> Agent:
-    model_id = loaded.spec.model or default_model
+    model_id = default_model or loaded.spec.model
     if not model_id:
         raise RuntimeError(
             f"{loaded.source_path}: no model. Set `model:` in frontmatter or MODEL in <hub>/.env."

@@ -81,7 +81,8 @@ Claude work out of the box.
 
 > Python 3.11 or 3.12 (Open WebUI does not yet support 3.13+). On recent macOS,
 > the default `python3` is too new; create your venv with `python3.12 -m venv`
-> explicitly.
+> explicitly. If pip tries to build `av` (PyAV) from source, run
+> `brew install pkg-config ffmpeg` first.
 
 ```bash
 pip install hubzoid

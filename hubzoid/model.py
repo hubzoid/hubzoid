@@ -14,6 +14,8 @@ import os
 
 from agents.extensions.models.litellm_model import LitellmModel
 
+from . import caching
+
 
 class MissingProviderKey(RuntimeError):
     pass
@@ -45,6 +47,7 @@ def _base_url_for(model_id: str) -> str | None:
 
 def build(model_id: str) -> LitellmModel:
     """Build a LitellmModel for the given id, surfacing missing-key errors clearly."""
+    caching.install()
     key = _api_key_for(model_id)
     provider = _provider_for(model_id)
     if key is None and provider in {"openrouter", "openai", "anthropic"}:

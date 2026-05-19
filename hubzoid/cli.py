@@ -229,9 +229,13 @@ def run(
                 suggestions=suggestions,
             )
             log_path = getattr(ui_proc, "_log_path", None)
-            console.print(f"[cyan]→ webui [/cyan]  http://127.0.0.1:{ui_port}  (booting, first start takes 1-2 min while it downloads its embedding model)")
+            console.print(f"[cyan]→ webui [/cyan]  starting (first run takes 1-2 min while it downloads its embedding model)")
             if log_path:
                 console.print(f"            log: {log_path}")
+            if _wait_for(f"http://127.0.0.1:{ui_port}/", timeout=240):
+                console.print(f"[green]→ webui [/green]  ready    http://127.0.0.1:{ui_port}")
+            else:
+                console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: http://127.0.0.1:{ui_port}")
         except FileNotFoundError as exc:
             console.print(f"[yellow]{exc}[/yellow]")
             console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
@@ -352,6 +356,9 @@ MODEL=claude-local
 # --- OpenRouter (one key, many models) -------------------------------------
 # OPENROUTER_API_KEY=
 # MODEL=openrouter/anthropic/claude-haiku-4.5
+# Tip: at https://openrouter.ai/settings/preferences pin Anthropic first
+# (allow fallbacks). Otherwise OpenRouter splits calls across Anthropic /
+# Vertex / Bedrock and prompt cache hits get fragmented.
 
 # --- OpenAI -----------------------------------------------------------------
 # OPENAI_API_KEY=
