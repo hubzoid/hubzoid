@@ -33,7 +33,7 @@ app = typer.Typer(
     name="hubzoid",
     add_completion=False,
     no_args_is_help=True,
-    help="Drop a folder of markdown files, get a chat agent with a polished web UI.",
+    help="An open-source framework for production AI agents.",
 )
 console = Console()
 
