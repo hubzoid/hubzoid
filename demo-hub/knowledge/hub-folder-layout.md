@@ -26,7 +26,7 @@ demo-hub/
 │   ├── mcp-and-connectors.md
 │   └── welcome.md
 ├── tools_local/           # custom Python tools. Optional.
-│   └── current_time.py
+│   └── word_count.py
 ├── connectors/            # MCP server config. Optional.
 │   └── .mcp.json
 ├── branding/              # logo / favicon / splash. Optional.
