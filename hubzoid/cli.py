@@ -1,11 +1,14 @@
 """hubzoid CLI — typer app.
 
 Commands:
-  hubzoid init [PATH]    Scaffold a hub from the bundled template.
-  hubzoid run [PATH]     Start FastAPI bridge + Open WebUI for a hub.
-  hubzoid doctor [PATH]  Validate hub config and report issues.
-  hubzoid test [PATH]    Send a hello prompt and assert non-empty response.
-  hubzoid version        Print version.
+  hubzoid init [PATH]              Scaffold a hub from the bundled template.
+  hubzoid run [PATH]               Start FastAPI bridge + Open WebUI for a hub.
+  hubzoid slack run [PATH]         Start the Slack adapter (Socket Mode).
+  hubzoid slack manifest [PATH]    Print a Slack App Manifest YAML.
+  hubzoid slack systemd [PATH]     Print a systemd unit template.
+  hubzoid doctor [PATH]            Validate hub config and report issues.
+  hubzoid test [PATH]              Send a hello prompt and assert non-empty response.
+  hubzoid version                  Print version.
 
 Path defaults to `.` (the current directory) everywhere.
 """
@@ -141,6 +144,12 @@ def run(
     port: int = typer.Option(None, "--port", help="Open WebUI port. Default: 3080 (or PORT env)."),
     bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port. Default: 8000 (or BRIDGE_PORT env)."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Skip Open WebUI; bridge only."),
+    slack: bool = typer.Option(
+        False,
+        "--slack", "-s",
+        help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
+        "SLACK_APP_TOKEN from .env. Soft-fails with a warning if either is missing.",
+    ),
 ) -> None:
     """Start the bridge (+ Open WebUI) for a hub."""
     hub = hub.resolve()
@@ -240,9 +249,23 @@ def run(
             console.print(f"[yellow]{exc}[/yellow]")
             console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
 
+    # Optional: spawn the Slack adapter as a third child. Soft-warn if the
+    # operator asked for --slack but the .env is missing the tokens — the
+    # bridge + UI keep running either way.
+    slack_proc = None
+    if slack:
+        from .slack.env import should_start_slack
+        ok, warn = should_start_slack(want_slack=True, env=os.environ)
+        if not ok:
+            console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
+        else:
+            slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
+            slack_proc = subprocess.Popen(slack_cmd, env=bridge_env)
+            console.print(f"[cyan]→ slack [/cyan]  starting (Socket Mode)")
+
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
-        for p in (ui_proc, bridge_proc):
+        for p in (ui_proc, slack_proc, bridge_proc):
             if p is not None and p.poll() is None:
                 p.terminate()
         sys.exit(0)
@@ -253,8 +276,9 @@ def run(
     try:
         bridge_proc.wait()
     finally:
-        if ui_proc is not None and ui_proc.poll() is None:
-            ui_proc.terminate()
+        for p in (ui_proc, slack_proc):
+            if p is not None and p.poll() is None:
+                p.terminate()
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +352,99 @@ def test_hub(
 
 
 # ---------------------------------------------------------------------------
+# slack
+# ---------------------------------------------------------------------------
+slack_app = typer.Typer(
+    help="Slack chat surface: run the adapter or generate config artifacts.",
+    no_args_is_help=True,
+)
+
+
+@slack_app.command("run")
+def slack_run(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Start the Slack adapter (Socket Mode). Foreground; ^C to stop.
+
+    Requires the hub's bridge to be running separately (`hubzoid run <hub>`).
+    Reads SLACK_BOT_TOKEN and SLACK_APP_TOKEN from <hub>/.env.
+    """
+    from . import slack as slack_pkg
+    from .slack.adapter import run as run_adapter
+    from .slack.env import EnvError
+
+    hub = hub.resolve()
+    if not (hub / "AGENTS.md").is_file():
+        console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
+        raise typer.Exit(2)
+
+    # Trigger .env load so SLACK_* vars are visible to the adapter and
+    # settings.load() sees the same picture as `hubzoid run`.
+    settingslib.load(hub)
+
+    try:
+        rc = run_adapter(hub)
+        raise typer.Exit(rc)
+    except EnvError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+
+@slack_app.command("manifest")
+def slack_manifest(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    format: str = typer.Option(
+        "json",
+        "--format", "-f",
+        help="Output format: json (default, terminal-friendly) or yaml.",
+        case_sensitive=False,
+    ),
+) -> None:
+    """Print a Slack App Manifest pre-filled from <hub>/AGENTS.md.
+
+    Paste the output into https://api.slack.com/apps -> "Create New App"
+    -> "From a manifest" to scaffold the bot. Then copy SLACK_BOT_TOKEN and
+    SLACK_APP_TOKEN into <hub>/.env and run `hubzoid slack run <hub>`.
+    """
+    from .slack.manifest import manifest_for_hub
+
+    hub = hub.resolve()
+    if not (hub / "AGENTS.md").is_file():
+        console.print(f"[red]No AGENTS.md in {hub}.[/red]")
+        raise typer.Exit(2)
+    fmt = format.lower()
+    if fmt not in ("json", "yaml"):
+        console.print(f"[red]--format must be json or yaml, got {format!r}[/red]")
+        raise typer.Exit(2)
+    # Print to stdout (not console) so the output round-trips through `> file.json`.
+    typer.echo(manifest_for_hub(hub, format=fmt))
+
+
+@slack_app.command("systemd")
+def slack_systemd(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    user: str = typer.Option("hubzoid", "--user", help="Linux user to run the service as."),
+    python: Path = typer.Option(
+        None, "--python", help="Python interpreter path. Default: detect from current sys.executable."
+    ),
+) -> None:
+    """Print a systemd unit for hubzoid-slack@<hub>.service to stdout."""
+    from .slack.service import systemd_unit_for_hub
+
+    hub = hub.resolve()
+    python_path = python or Path(sys.executable).resolve()
+    typer.echo(systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user))
+
+
+app.add_typer(
+    slack_app,
+    name="slack",
+    help="Slack chat surface: run the adapter or generate config artifacts.",
+    rich_help_panel="Commands",
+)
+
+
+# ---------------------------------------------------------------------------
 # version
 # ---------------------------------------------------------------------------
 @app.command()
@@ -348,10 +465,10 @@ _STARTER_ENV = """\
 # To use a hosted provider instead, comment out MODEL=claude-local and
 # uncomment one of the alternative stanzas. Set the matching API key.
 
-MODEL=claude-local
-# MODEL=claude-local/sonnet     # pin Sonnet
-# MODEL=claude-local/opus       # pin Opus
-# MODEL=claude-local/haiku      # pin Haiku
+MODEL=claude-local              # defaults to Haiku 4.5 (~3x faster TTFT than Sonnet)
+# MODEL=claude-local/sonnet     # opt in to Sonnet (slower, smarter on hard tasks)
+# MODEL=claude-local/opus       # opt in to Opus
+# MODEL=claude-local/haiku      # explicit; same as bare `claude-local`
 
 # --- OpenRouter (one key, many models) -------------------------------------
 # OPENROUTER_API_KEY=
@@ -383,6 +500,41 @@ WEBUI_NAME=Hubzoid Guide
 # PORT=3080                     # Open WebUI port
 # BRIDGE_PORT=8000              # FastAPI bridge port
 # HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
+# HUBZOID_DISABLE_HTTP_GET=true # remove http_get from the tool registry entirely
+# HUBZOID_DISABLE_WEB_SEARCH=true  # remove web_search from the tool registry entirely
+
+# --- Auth (default: off, single user) --------------------------------------
+# Uncomment ONE block below to require login. Full walkthrough + Google /
+# Microsoft / GitHub / OIDC / LDAP details: docs/auth.md.
+
+# Mode B: email + password, admin invites users.
+# WEBUI_AUTH=true
+# ENABLE_SIGNUP=false
+# DEFAULT_USER_ROLE=user
+# WEBUI_SECRET_KEY=               # openssl rand -hex 32
+# WEBUI_URL=https://your.host     # required behind a reverse proxy
+# WEBUI_ADMIN_EMAIL=you@you.com   # one-shot: seeds first admin on a fresh DB
+# WEBUI_ADMIN_PASSWORD=           # one-shot: delete both ADMIN lines after first boot
+
+# Mode C: Google SSO (use alongside Mode B's lines above).
+# ENABLE_OAUTH_SIGNUP=true
+# DEFAULT_USER_ROLE=pending       # new Google users wait for admin approval
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# Authorized redirect URI in Google Console: <WEBUI_URL>/oauth/google/callback
+
+# Opt-in: let users curate per-user memories in OWUI's UI; OWUI injects the
+# top matches into the agent's system prompt on every chat. Off by default
+# because OWUI flags this feature as Beta and storage format may change.
+# ENABLE_MEMORY=true
+
+# --- Slack chat surface (optional, opt-in per agent) ----------------------
+# Run `hubzoid slack manifest .` to generate an App Manifest you can paste
+# into https://api.slack.com/apps. After installing the app to your workspace
+# copy the two tokens here, then run `hubzoid slack run .` next to your hub.
+# Full walkthrough: docs/slack.md.
+# SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
+# SLACK_APP_TOKEN=xapp-...        # App-Level Token, scope connections:write
 
 # --- Strip flags (advanced) -----------------------------------------------
 # Hubzoid sets ~24 Open WebUI flags by default to strip platform surfaces

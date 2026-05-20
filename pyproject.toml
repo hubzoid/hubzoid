@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.3.2"
+version = "0.4.0"
 description = "Drop a folder of markdown files, get a chat agent with a polished web UI."
 readme = "README.md"
 license = { text = "MIT" }
@@ -52,6 +52,7 @@ dependencies = [
   "typer>=0.12",
   "rich>=13",
   "jinja2>=3.1",
+  "slack-bolt>=1.21",
 ]
 
 [project.optional-dependencies]
@@ -72,7 +73,7 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.loaders", "hubzoid.tools"]
+packages = ["hubzoid", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools"]
 include-package-data = true
 
 [tool.setuptools.package-data]

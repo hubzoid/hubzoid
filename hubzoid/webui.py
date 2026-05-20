@@ -52,6 +52,7 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_OLLAMA_API": _OFF,               # we do not proxy ollama
     "SHOW_ADMIN_DETAILS": _OFF,
     "ENABLE_PERSISTENT_CONFIG": _OFF,        # CRITICAL: keep env-vars authoritative
+    "ENABLE_OAUTH_PERSISTENT_CONFIG": _OFF,  # same idea for OAuth settings (admin-panel-edited values would otherwise win)
 
     # --- Workspace permissions: hide tabs from non-admins ---------------
     "USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS": _OFF,
@@ -107,6 +108,45 @@ def _patch_owui_suffix(strip: bool) -> None:
     else:
         if _OWUI_SUFFIX_PATCH in text:
             env_py.write_text(text.replace(_OWUI_SUFFIX_PATCH, _OWUI_SUFFIX_NEEDLE))
+
+
+_TRUTHY = {"true", "1", "yes", "on"}
+_OAUTH_CLIENT_ID_KEYS = (
+    "GOOGLE_CLIENT_ID",
+    "MICROSOFT_CLIENT_ID",
+    "GITHUB_CLIENT_ID",
+    "OAUTH_CLIENT_ID",
+)
+
+
+def _validate_auth_env(env: dict[str, str]) -> None:
+    """Refuse to boot if auth is enabled with an unsafe config.
+
+    OWUI silently falls back to a public default `WEBUI_SECRET_KEY` and
+    builds OAuth callback URLs from `WEBUI_URL` (default localhost). Both
+    are footguns in any real deployment. We catch them at boot.
+    """
+    if env.get("WEBUI_AUTH", "").strip().lower() not in _TRUTHY:
+        return
+
+    secret = env.get("WEBUI_SECRET_KEY", "").strip()
+    if not secret or secret == "t0p-s3cr3t":
+        raise RuntimeError(
+            "WEBUI_AUTH=true requires WEBUI_SECRET_KEY to be set to a random "
+            "32+ char string. Generate one with:\n"
+            "    openssl rand -hex 32\n"
+            "Then add WEBUI_SECRET_KEY=<value> to your hub's .env. "
+            "See docs/auth.md."
+        )
+
+    has_oauth = any(env.get(k, "").strip() for k in _OAUTH_CLIENT_ID_KEYS)
+    if has_oauth and not env.get("WEBUI_URL", "").strip():
+        raise RuntimeError(
+            "OAuth client IDs are set but WEBUI_URL is not. OAuth callbacks "
+            "are built from WEBUI_URL; without it the IdP will redirect to "
+            "http://localhost and the sign-in flow will fail. Set "
+            "WEBUI_URL=https://your.host in your hub's .env. See docs/auth.md."
+        )
 
 
 def _find_binary() -> str | None:
@@ -189,6 +229,9 @@ def start(
     # 5. The big strip. Apply hubzoid defaults; operator .env wins.
     for key, value in _DEFAULT_OWUI_ENV.items():
         env.setdefault(key, value)
+
+    # 6. Refuse to boot if auth is on with an unsafe config.
+    _validate_auth_env(env)
 
     log_path = data_dir / "openwebui.log"
     log_file = log_path.open("ab", buffering=0)
