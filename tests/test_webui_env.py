@@ -86,12 +86,26 @@ def test_strip_flags_default_off(captured_env, tmp_path, flag, monkeypatch):
     "ENABLE_MESSAGE_RATING",
     "ENABLE_TITLE_GENERATION",
     "ENABLE_ADMIN_EXPORT",
-    "ENABLE_FOLLOW_UP_GENERATION",
 ])
 def test_ux_flags_default_on(captured_env, tmp_path, flag, monkeypatch):
     monkeypatch.delenv(flag, raising=False)
     env = _start(captured_env, tmp_path)
     assert env[flag] == "True"
+
+
+# ENABLE_FOLLOW_UP_GENERATION moved off-by-default in v0.3.2 (extra LLM call
+# per turn, plus another on every chat refresh - too much for the marginal UX).
+# ENABLE_AUTOCOMPLETE_GENERATION and ENABLE_RETRIEVAL_QUERY_GENERATION are
+# off for the same reason.
+@pytest.mark.parametrize("flag", [
+    "ENABLE_FOLLOW_UP_GENERATION",
+    "ENABLE_AUTOCOMPLETE_GENERATION",
+    "ENABLE_RETRIEVAL_QUERY_GENERATION",
+])
+def test_generation_flags_default_off(captured_env, tmp_path, flag, monkeypatch):
+    monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env[flag] == "False"
 
 
 # ---------------------------------------------------------------------------

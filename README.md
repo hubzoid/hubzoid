@@ -174,10 +174,10 @@ MODEL=anthropic/claude-haiku-4-5
 
 # OR Claude local (uses your installed `claude` CLI + Pro/Max subscription)
 # Requires `claude login` first. No API key needed.
-MODEL=claude-local
-# MODEL=claude-local/sonnet       # pin Sonnet
-# MODEL=claude-local/opus         # pin Opus
-# MODEL=claude-local/haiku        # pin Haiku
+MODEL=claude-local              # defaults to Haiku 4.5 (~3x faster TTFT than Sonnet)
+# MODEL=claude-local/sonnet     # opt in to Sonnet
+# MODEL=claude-local/opus       # opt in to Opus
+# MODEL=claude-local/haiku      # explicit; same as bare `claude-local`
 ```
 
 The `MODEL` string tells LiteLLM which provider to call, and the matching
@@ -186,6 +186,11 @@ LiteLLM, hubzoid drives the Claude Agent SDK against your locally
 installed `claude` CLI, so auth and billing flow through your existing
 Pro/Max subscription. Same hub folder, same tools, same skills. Only the
 LLM and auth path differ.
+
+**Latency note on `claude-local`.** Requests go through the Claude Code
+CLI, which adds ~1-2s per turn of harness overhead. If latency matters
+more than subscription billing, use `anthropic/...` or
+`openrouter/anthropic/...` with an API key — same models, no harness.
 
 **OpenRouter tip.** If using `openrouter/anthropic/*`, pin Anthropic as the
 preferred provider at [openrouter.ai/settings/preferences](https://openrouter.ai/settings/preferences)
@@ -207,12 +212,10 @@ Every hub gets these tools for free.
 | `load_skill(name)` | Read a skill's full body on demand. |
 | `list_knowledge()` | Menu of knowledge documents. |
 | `read_knowledge(name)` | Read a knowledge document's full body. |
-| `remember(fact, scope)` | Save a fact to durable memory. |
-| `recall(query, scope)` | Look up saved facts. |
-| `forget(id, scope)` | Delete a saved fact. |
 | `render_jinja(template, context_json)` | Render a Jinja2 template. |
-| `http_get(url)` | Fetch a URL (honors `HTTP_ALLOWLIST`). |
-| `web_search(query)` | DuckDuckGo search. No API key. |
+| `http_get(url)` | Fetch a URL (honors `HTTP_ALLOWLIST`, disable with `HUBZOID_DISABLE_HTTP_GET=true`). |
+| `web_search(query)` | DuckDuckGo search. No API key. Disable with `HUBZOID_DISABLE_WEB_SEARCH=true`. |
+| `current_time(zone)` | ISO 8601 timestamp in the given IANA timezone (default UTC). |
 
 Custom tools dropped into `tools_local/*.py` are auto-discovered.
 
@@ -263,6 +266,38 @@ Per-hub identity has three knobs:
 Full reference, including the override list for all 24 OWUI flags:
 [docs/branding.md](docs/branding.md).
 
+## Authentication
+
+Default is single-user with no login - one user, localhost, no friction. For
+multi-user or production, set `WEBUI_AUTH=true` and pick email + password or
+an SSO provider: Google, Microsoft, GitHub, generic OIDC (Okta, Auth0,
+Keycloak), or LDAP. Each agent runs its own user database, so adding a user
+to one agent does not grant access to the others.
+
+Full walkthrough including the Google Cloud Console click-path and the env
+vars for every provider: [docs/auth.md](docs/auth.md).
+
+## Deploying to production
+
+`hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
+
+## Slack chat surface
+
+Run any hub as a Slack bot. Users `@mention` it in a channel, DM it, or
+chat from Slack's AI-assistant sidebar — same agent, same skills, same
+knowledge, same `.env`. Uses **Socket Mode**, so no public URL or inbound
+firewall changes are required.
+
+```bash
+hubzoid slack manifest my-hub > /tmp/manifest.json   # paste into api.slack.com
+# drop SLACK_BOT_TOKEN and SLACK_APP_TOKEN into my-hub/.env, then one of:
+hubzoid run my-hub --slack       # inline with the bridge + UI (one terminal)
+hubzoid slack run my-hub         # or as a separate process (prod / systemd)
+```
+
+Full walkthrough (manifest, install, tokens, updating an existing app,
+production systemd unit, troubleshooting): [docs/slack.md](docs/slack.md).
+
 ## CLI
 
 ```
@@ -274,8 +309,14 @@ hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a 
   --port INT                       Open WebUI port (default 3080).
   --bridge-port INT                FastAPI bridge port (default 8000).
   --no-ui                          Bridge only, no Open WebUI.
+  --slack, -s                      Also start the Slack adapter inline.
+                                     Soft-warns if SLACK_BOT_TOKEN / SLACK_APP_TOKEN
+                                     are missing; bridge + UI still come up.
 hubzoid doctor [PATH]            Validate hub config and report issues.
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
+hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.
+hubzoid slack manifest [PATH]    Print a Slack App Manifest (JSON by default).
+hubzoid slack systemd [PATH]     Print a systemd unit for the Slack adapter.
 hubzoid version
 hubzoid --help
 ```
@@ -317,9 +358,10 @@ Cursor, Codex, Copilot, Gemini CLI, VS Code).
   loaders; OpenRouter, OpenAI, Anthropic, claude-local providers.
 * **v0.3** Per-hub branding, auth-on path, native-venv production
   deployment docs, Playwright UI test tier.
-* **v0.4** Background and scheduled workflows via WaveAssist Cloud
-  (separate product, opt-in).
-* **Later** Slack and Telegram chat surfaces. Mem0 / Zep memory backends.
+* **v0.4** Slack chat surface (shipped — `hubzoid slack run`, see
+  [docs/slack.md](docs/slack.md)). Background and scheduled workflows via
+  WaveAssist Cloud (separate product, opt-in).
+* **Later** Telegram chat surface. Mem0 / Zep memory backends.
 
 Non-goals: voice and realtime, visual agent builder.
 

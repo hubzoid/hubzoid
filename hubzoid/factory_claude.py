@@ -238,21 +238,33 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     return ClaudeRuntime(name=main_name, options=options)
 
 
+_CLAUDE_LOCAL_DEFAULT = "haiku"
+
+
 def _parse_model_pin(model_setting: str | None) -> str | None:
     """Extract the model suffix from `MODEL=claude-local[/<pin>]`.
 
-    Returns None when no suffix is set (lets the `claude` CLI's default win).
+    Bare `claude-local` (no suffix) defaults to **Haiku 4.5** for low TTFT —
+    Haiku is ~3x faster than Sonnet on first-token latency and matches Sonnet
+    quality on most agent tasks. Operators who want Sonnet/Opus opt in
+    explicitly via `claude-local/sonnet` etc.
+
+    Returns None when MODEL isn't set or isn't a claude-local variant.
     Examples:
-      claude-local                -> None
+      claude-local                -> "haiku"             (default for speed)
+      claude-local/haiku          -> "haiku"             (explicit, same effect)
       claude-local/sonnet         -> "sonnet"
       claude-local/opus           -> "opus"
-      claude-local/claude-opus-4-7 -> "claude-opus-4-7"   (full ids pass through)
+      claude-local/claude-opus-4-7 -> "claude-opus-4-7"  (full ids pass through)
     """
     if not model_setting:
         return None
-    if "/" not in model_setting:
+    stripped = model_setting.strip()
+    if stripped == "claude-local":
+        return _CLAUDE_LOCAL_DEFAULT
+    if "/" not in stripped:
         return None
-    suffix = model_setting.split("/", 1)[1].strip()
+    suffix = stripped.split("/", 1)[1].strip()
     return suffix or None
 
 

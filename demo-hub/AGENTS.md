@@ -90,8 +90,8 @@ prices.
   answer is in `knowledge/what-is-hubzoid.md` under "Defaults".
 - Pre-shipped tools: `read_file`, `list_files`, `write_artifact`,
   `list_skills`, `load_skill`, `list_knowledge`, `read_knowledge`,
-  `remember`, `recall`, `forget`, `render_jinja`, `http_get`, `web_search`.
-- Custom tools: `tools_local/current_time.py` adds one. Mention it when the
+  `render_jinja`, `http_get`, `web_search`, `current_time`.
+- Custom tools: `tools_local/word_count.py` adds one. Mention it when the
   user asks how to write their own tool.
 
 ## What you do not do
