@@ -1,8 +1,14 @@
 """Top-level: build_agent(hub_dir) -> Agent.
 
 Walks a hub folder, loads everything, and assembles an OpenAI Agents SDK
-Agent with sub-agents (as handoffs), pre-shipped tools, hub-local tools,
-skills/knowledge tools, and MCP servers.
+Agent with pre-shipped tools, hub-local tools, skills + knowledge tools,
+and MCP servers.
+
+Sub-agents under `<hub>/agents/<name>/` are NOT wired as handoffs anymore.
+They are promoted to skills at load time and loaded inline by the main
+agent via `load_skill(<name>)`. See `loaders.agents.promote_to_skills`
+for the rationale (handoff state didn't survive Hubzoid's stateless HTTP
+bridge across turns).
 """
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from agents.tool import FunctionTool
 from . import memory as memlib
 from . import model as modellib
 from . import settings as settingslib
+from . import system_addendum
 from .loaders import agents as agents_loader
 from .loaders import knowledge as knowledge_loader
 from .loaders import mcp as mcp_loader
@@ -39,9 +46,14 @@ class HubContext:
 def build_agent(hub_dir: Path) -> Agent:
     """Build and return the main Agent for the hub at `hub_dir`.
 
-    Sub-agents are wired as handoffs. Tools are scoped per sub-agent based on
-    each one's `tools:` frontmatter whitelist. Missing tool names raise with a
-    list of valid names.
+    All sub-agents from `<hub>/agents/<name>/` are promoted to skills and
+    appended to the skill registry. On name collisions with real skills
+    from `<hub>/skills/`, the explicit skill wins and a warning is logged.
+
+    The main agent gets the full tool registry (pre-shipped + hub-local +
+    MCP). The system prompt is the user's `AGENTS.md` body followed by a
+    Hubzoid-generated addendum (knowledge index, skills index, generic
+    tool guidance) — see `hubzoid.system_addendum`.
     """
     hub_dir = Path(hub_dir).resolve()
     if not hub_dir.is_dir():
@@ -51,7 +63,7 @@ def build_agent(hub_dir: Path) -> Agent:
     session_id = memlib.make_session_id()
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
-    skills = skills_loader.load_all(hub_dir)
+    skills = _load_skills_and_promoted_agents(hub_dir)
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
         "hub %s: %d skill(s), %d knowledge doc(s)",
@@ -68,7 +80,7 @@ def build_agent(hub_dir: Path) -> Agent:
     )
 
     # Tool registry: pre-shipped (with closures over ctx) + hub-local.
-    builtin: dict[str, FunctionTool] = make_builtin_tools(ctx)  # name -> tool
+    builtin: dict[str, FunctionTool] = make_builtin_tools(ctx)
     local: dict[str, FunctionTool] = tools_local_loader.load_all(hub_dir)
     overlap = set(builtin) & set(local)
     if overlap:
@@ -76,14 +88,6 @@ def build_agent(hub_dir: Path) -> Agent:
     registry: dict[str, FunctionTool] = {**builtin, **local}
 
     mcp_servers = mcp_loader.load_all(hub_dir)
-
-    # Sub-agents first; the main agent needs them as `handoffs=[...]`.
-    sub_specs = agents_loader.load_subagents(hub_dir)
-    handoffs: list[Agent] = [
-        _build_one(spec, registry=registry, default_model=settings.model)
-        for spec in sub_specs
-    ]
-    log.info("hub %s: %d sub-agent(s)", hub_dir.name, len(handoffs))
 
     main_spec = agents_loader.load_main(hub_dir)
     main_model_id = settings.model or main_spec.spec.model
@@ -93,43 +97,47 @@ def build_agent(hub_dir: Path) -> Agent:
         )
     main_model = modellib.build(main_model_id)
 
-    # The main agent gets ALL tools (whitelist on the main agent is treated as full access).
-    main_tools = list(registry.values())
+    instructions = _compose_instructions(main_spec.instructions, ctx, backend="openai-agents")
 
     main = Agent(
         name=main_spec.spec.name,
-        instructions=main_spec.instructions,
+        instructions=instructions,
         model=main_model,
-        tools=main_tools,
-        handoffs=handoffs,
+        tools=list(registry.values()),
         mcp_servers=mcp_servers,
     )
     return main
 
 
-def _build_one(loaded: agents_loader.LoadedAgent, *, registry: dict[str, FunctionTool], default_model: str | None) -> Agent:
-    model_id = default_model or loaded.spec.model
-    if not model_id:
-        raise RuntimeError(
-            f"{loaded.source_path}: no model. Set `model:` in frontmatter or MODEL in <hub>/.env."
-        )
+# ---------------------------------------------------------------------------
+# Helpers shared with factory_claude.
+# ---------------------------------------------------------------------------
+def _load_skills_and_promoted_agents(hub_dir: Path) -> list:
+    """Return real skills + promoted-agent skills, deduped by name.
 
-    tools: list[FunctionTool] = []
-    if loaded.spec.tools:
-        unknown = [t for t in loaded.spec.tools if t not in registry]
-        if unknown:
-            available = ", ".join(sorted(registry)) or "(none)"
-            raise RuntimeError(
-                f"{loaded.source_path}: tools reference unknown names: {unknown}. "
-                f"Available: {available}"
+    Real skills from `<hub>/skills/` win on conflicts. A warning is logged
+    so the operator notices a name collision.
+    """
+    real = skills_loader.load_all(hub_dir)
+    promoted = agents_loader.promote_to_skills(hub_dir)
+    by_name: dict[str, object] = {s.spec.name: s for s in real}
+    for s in promoted:
+        if s.spec.name in by_name:
+            log.warning(
+                "skill name collision: %r exists in both skills/ and agents/. "
+                "skills/ wins (%s).",
+                s.spec.name, by_name[s.spec.name].source_path,
             )
-        tools = [registry[t] for t in loaded.spec.tools]
-    # If no tools specified, sub-agent gets none (explicit-default-deny).
+            continue
+        by_name[s.spec.name] = s
+    return list(by_name.values())
 
-    return Agent(
-        name=loaded.spec.name,
-        handoff_description=loaded.spec.description,
-        instructions=loaded.instructions,
-        model=modellib.build(model_id),
-        tools=tools,
-    )
+
+def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
+    """Append the Hubzoid runtime addendum to the user's AGENTS.md body.
+
+    Honours the `auto_addendum: false` opt-out on the main agent.
+    """
+    if not system_addendum.is_enabled(ctx.hub_dir):
+        return body
+    return body.rstrip() + "\n\n" + system_addendum.build(ctx, backend=backend)

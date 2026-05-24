@@ -47,6 +47,14 @@ def init(
         Path("demo-hub"),
         help="Name of the new hub folder. Created under the current directory. Default: demo-hub.",
     ),
+    template: str = typer.Option(
+        "minimal",
+        "--template", "-t",
+        help="Which bundled template to use. 'minimal' (default) scaffolds a tiny, "
+        "runnable hub with one example of each file type. 'demo' scaffolds the full "
+        "guided tour with a Hubzoid Guide agent, four teaching skills, and six "
+        "knowledge pages.",
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
 ) -> None:
     """Scaffold a new hub. Also drops agents-repo wrapper files if the parent looks fresh.
@@ -59,6 +67,9 @@ def init(
       $ hubzoid init irs-agent
       → writes ./irs-agent/... only. Parent files are left alone.
 
+    Get the full guided tour instead:
+      $ hubzoid init my-hub --template demo
+
     The result is a Samarth-style multi-hub agents repo built one hub at a time.
     """
     # Resolve. If `name` is just a folder name, drop it under cwd. If it is
@@ -70,9 +81,13 @@ def init(
         hub_dir = (Path.cwd() / name).resolve() if not name.is_absolute() else name.resolve()
         is_in_place = False
 
-    template_root = _template_root()
+    template_root = _template_root(template)
     if template_root is None:
-        console.print("[red]Bundled template not found in the installed package.[/red]")
+        available = ", ".join(_available_templates())
+        console.print(
+            f"[red]Template '{template}' not found.[/red] "
+            f"Available: {available or '(none)'}."
+        )
         raise typer.Exit(2)
 
     parent = hub_dir.parent
@@ -133,6 +148,11 @@ def init(
     console.print("\nNext:")
     console.print(f"  1. edit {hub_dir.name}/.env if you do not have `claude` CLI logged in")
     console.print(f"  2. hubzoid run {hub_dir.name}")
+    if template == "minimal":
+        console.print(
+            "\n[dim]Want the guided tour instead? "
+            f"hubzoid init {hub_dir.name} --template demo --force[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +163,7 @@ def run(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     port: int = typer.Option(None, "--port", help="Open WebUI port. Default: 3080 (or PORT env)."),
     bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port. Default: 8000 (or BRIDGE_PORT env)."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface Open WebUI binds to. Use 0.0.0.0 to expose on LAN."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Skip Open WebUI; bridge only."),
     slack: bool = typer.Option(
         False,
@@ -232,6 +253,7 @@ def run(
                 hub_dir=hub,
                 bridge_port=br_port,
                 ui_port=ui_port,
+                ui_host=host,
                 api_key=settings.first_api_key,
                 model_label=settings.model_label or main_name,
                 webui_name=resolved_webui_name,
@@ -241,10 +263,13 @@ def run(
             console.print(f"[cyan]→ webui [/cyan]  starting (first run takes 1-2 min while it downloads its embedding model)")
             if log_path:
                 console.print(f"            log: {log_path}")
-            if _wait_for(f"http://127.0.0.1:{ui_port}/", timeout=240):
-                console.print(f"[green]→ webui [/green]  ready    http://127.0.0.1:{ui_port}")
+            # Probe via localhost regardless of bind address (0.0.0.0 isn't a routable target).
+            probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+            display_url = f"http://{host}:{ui_port}"
+            if _wait_for(f"http://{probe_host}:{ui_port}/", timeout=240):
+                console.print(f"[green]→ webui [/green]  ready    {display_url}")
             else:
-                console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: http://127.0.0.1:{ui_port}")
+                console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
         except FileNotFoundError as exc:
             console.print(f"[yellow]{exc}[/yellow]")
             console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
@@ -465,10 +490,10 @@ _STARTER_ENV = """\
 # To use a hosted provider instead, comment out MODEL=claude-local and
 # uncomment one of the alternative stanzas. Set the matching API key.
 
-MODEL=claude-local              # defaults to Haiku 4.5 (~3x faster TTFT than Sonnet)
-# MODEL=claude-local/sonnet     # opt in to Sonnet (slower, smarter on hard tasks)
+MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)
+# MODEL=claude-local/sonnet     # explicit; same as bare `claude-local`
 # MODEL=claude-local/opus       # opt in to Opus
-# MODEL=claude-local/haiku      # explicit; same as bare `claude-local`
+# MODEL=claude-local/haiku      # opt in to Haiku (~3x faster TTFT, but tends to ask before executing documented workflows)
 
 # --- OpenRouter (one key, many models) -------------------------------------
 # OPENROUTER_API_KEY=
@@ -499,6 +524,12 @@ WEBUI_NAME=Hubzoid Guide
 # MODEL_LABEL=                  # what /v1/models reports; blank = derived from AGENTS.md name
 # PORT=3080                     # Open WebUI port
 # BRIDGE_PORT=8000              # FastAPI bridge port
+# HUBZOID_PUBLIC_URL=           # public base URL for the bridge — used to build
+                                # download links emitted by write_artifact. Set
+                                # this when behind a reverse proxy or on a
+                                # different host than the user's browser.
+                                # Default: http://127.0.0.1:<BRIDGE_PORT>
+                                # Example: https://hub.example.com
 # HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
 # HUBZOID_DISABLE_HTTP_GET=true # remove http_get from the tool registry entirely
 # HUBZOID_DISABLE_WEB_SEARCH=true  # remove web_search from the tool registry entirely
@@ -636,16 +667,31 @@ def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, 
     }
 
 
-def _template_root() -> Path | None:
-    """Return the on-disk path of the bundled starter template, or None."""
+def _template_root(name: str = "minimal") -> Path | None:
+    """Return the on-disk path of a bundled template, or None.
+
+    Templates live at `hubzoid/templates/<name>/`. The two shipped today
+    are `minimal` (the runnable starter) and `demo` (the guided tour).
+    """
     try:
-        root = resources.files("hubzoid") / "templates" / "starter"
+        root = resources.files("hubzoid") / "templates" / name
     except (ModuleNotFoundError, FileNotFoundError):
         return None
     # `resources.files` returns a Traversable; we need a real Path. For files
     # installed normally (not zipped), this just works.
     p = Path(str(root))
-    return p if p.exists() else None
+    return p if p.exists() and p.is_dir() else None
+
+
+def _available_templates() -> list[str]:
+    """List bundled template names. Used for error messages."""
+    try:
+        root = Path(str(resources.files("hubzoid") / "templates"))
+    except (ModuleNotFoundError, FileNotFoundError):
+        return []
+    if not root.exists():
+        return []
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 def _wait_for(url: str, timeout: float = 60.0) -> bool:

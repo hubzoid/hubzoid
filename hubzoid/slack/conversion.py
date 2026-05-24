@@ -20,9 +20,38 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
-# Slack hard caps chat.postMessage / chat.update text at 40k chars.
-_SLACK_TEXT_LIMIT = 40_000
-_TRUNCATION_MARKER = "\n\n_… response truncated to Slack's 40k char limit_"
+# Markdown table detection: a `|...|` header row immediately followed by a
+# `|---|...|` separator row (optionally with `:` alignment markers), then
+# zero or more body rows. We wrap the whole block in a ``` fence so Slack
+# at least renders it as monospace text instead of raw pipe characters.
+_TABLE_BLOCK_RE = re.compile(
+    r"""
+    (?:^|\n)                          # start of input or new line
+    (?P<table>
+        \|[^\n]*\|[ \t]*\n            # header row
+        \|[ \t]*:?-+:?[ \t]*          # separator: first column
+        (?:\|[ \t]*:?-+:?[ \t]*)+     # separator: more columns
+        \|[ \t]*\n                    # end of separator
+        (?:\|[^\n]*\|[ \t]*(?:\n|$))* # body rows (zero or more)
+    )
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
+SLACK_FORMAT_HINT = (
+    "Your reply is rendered in Slack. Slack does not display markdown tables — "
+    "for tabular data, prefer bullet lists with `*label:* value` pairs over "
+    "`| col | col |` rows."
+)
+
+# Slack documents chat.postMessage at 40k chars, but chat.update returns
+# `msg_too_long` for `text` payloads well below that (Slack auto-promotes
+# long text into block elements which max out at 3000 chars each). 3500
+# is the safe envelope that works for both endpoints across workspace
+# tiers without silent drops mid-stream.
+_SLACK_TEXT_LIMIT = 3500
+_TRUNCATION_MARKER = "\n\n_… response truncated to fit Slack's per-message limit. Ask me to continue if you need the rest._"
 
 
 def messages_from_thread(
@@ -30,6 +59,7 @@ def messages_from_thread(
     *,
     bot_user_id: str | None,
     bot_id: str | None = None,
+    attached_files_by_ts: dict[str, list[str]] | None = None,
 ) -> list[dict[str, str]]:
     """Turn a Slack `conversations.replies` payload into OpenAI-style messages.
 
@@ -44,7 +74,13 @@ def messages_from_thread(
         are skipped — they have no semantic value.
       - `<@BOT_ID>` mention prefixes are stripped from user text so the model
         sees the actual question.
+      - If `attached_files_by_ts` is provided, each message whose `ts` is
+        in the map gets `[User attached file: X. Read with read_upload('X').]`
+        notes appended to its content. Empty-text messages that have
+        attached files are surfaced (text-only filter is bypassed when
+        attachments exist) so the agent sees the upload.
     """
+    files_map = attached_files_by_ts or {}
     out: list[dict[str, str]] = []
     for m in raw_messages:
         if not isinstance(m, dict):
@@ -52,7 +88,9 @@ def messages_from_thread(
         if m.get("subtype"):
             continue
         text = (m.get("text") or "").strip()
-        if not text:
+        ts = m.get("ts") or ""
+        attached = files_map.get(ts) or []
+        if not text and not attached:
             continue
         is_bot = False
         if bot_user_id and m.get("user") == bot_user_id:
@@ -61,6 +99,12 @@ def messages_from_thread(
             is_bot = True
 
         cleaned = _MENTION_RE.sub("", text).strip()
+        if attached:
+            notes = "\n".join(
+                f"[User attached file: {name}. Read with read_upload('{name}').]"
+                for name in attached
+            )
+            cleaned = f"{cleaned}\n{notes}" if cleaned else notes
         if not cleaned:
             continue
         out.append({"role": "assistant" if is_bot else "user", "content": cleaned})
@@ -106,6 +150,7 @@ def to_slack_mrkdwn(text: str) -> str:
       `**bold**`         -> `*bold*`
       `[label](url)`     -> `<url|label>`
       `# Heading`        -> `*Heading*`
+      `| col | col |...` -> ``` ... ``` (Slack does not render md tables)
 
     Fenced code blocks (```...```) are preserved verbatim so code with
     asterisks or brackets doesn't get mangled. Inline `code` is already
@@ -113,6 +158,10 @@ def to_slack_mrkdwn(text: str) -> str:
     """
     if not text:
         return text
+    # First pass: wrap any unfenced markdown tables in code fences. After
+    # this, `_FENCE_SPLIT_RE` below sees them as code blocks and the
+    # downstream conversions skip their content.
+    text = _wrap_markdown_tables(text)
     out_parts: list[str] = []
     for chunk in _FENCE_SPLIT_RE.split(text):
         if chunk.startswith("```"):
@@ -123,6 +172,42 @@ def to_slack_mrkdwn(text: str) -> str:
         chunk = _HEADING_RE.sub(r"*\2*", chunk)
         out_parts.append(chunk)
     return "".join(out_parts)
+
+
+def _wrap_markdown_tables(text: str) -> str:
+    """Find every markdown table block outside existing ``` fences and wrap
+    it in ``` so Slack renders the columns as monospace.
+
+    Tables inside an existing fence are left alone (already formatted as the
+    model intended). Tables outside any fence get wrapped, preserving any
+    surrounding prose.
+    """
+    out_parts: list[str] = []
+    for chunk in _FENCE_SPLIT_RE.split(text):
+        if chunk.startswith("```"):
+            # Already a code fence — don't touch.
+            out_parts.append(chunk)
+            continue
+
+        def _wrap(match: "re.Match[str]") -> str:
+            table = match.group("table").rstrip("\n")
+            # Preserve the leading whitespace/newline the regex consumed,
+            # if any, so we don't glue the fence onto preceding prose.
+            lead = match.group(0)[: -len(match.group("table"))]
+            return f"{lead}```\n{table}\n```\n"
+
+        out_parts.append(_TABLE_BLOCK_RE.sub(_wrap, chunk))
+    return "".join(out_parts)
+
+
+def with_slack_format_hint(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Prepend a `role=system` formatting hint for Slack-bound replies.
+
+    Slack-only by design: keeps the constraint out of Open WebUI / API
+    consumers which DO render markdown tables correctly. Returns a new
+    list — the caller's `messages` is not mutated.
+    """
+    return [{"role": "system", "content": SLACK_FORMAT_HINT}, *messages]
 
 
 def truncate_for_slack(text: str, *, limit: int = _SLACK_TEXT_LIMIT) -> str:

@@ -68,6 +68,8 @@ class OpenAIAgentsRuntime:
         from agents import ItemHelpers, Runner
         from openai.types.responses import ResponseTextDeltaEvent
 
+        from . import tool_events
+
         text_accumulated = False
         try:
             result = Runner.run_streamed(self._agent, prompt, max_turns=20)
@@ -83,6 +85,20 @@ class OpenAIAgentsRuntime:
                         text = ItemHelpers.text_message_output(item)
                         if text:
                             yield text
+                    elif item.type == "tool_call_item":
+                        # One line per tool call. No matching "returned" line.
+                        raw = getattr(item, "raw_item", None)
+                        name = getattr(raw, "name", None) or "tool"
+                        args = getattr(raw, "arguments", None)
+                        if isinstance(args, str) and args:
+                            try:
+                                import json as _json
+                                args = _json.loads(args)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        yield tool_events.format_call(
+                            tool_events.short_name(name), args,
+                        )
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"

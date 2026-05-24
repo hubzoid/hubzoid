@@ -12,12 +12,12 @@ A Hubzoid hub is one folder on disk. Here is what each entry does.
 demo-hub/
 ├── AGENTS.md              # main agent. Required.
 ├── agents/                # sub-agents. Optional.
-│   └── builder/AGENTS.md
+│   └── builder.md
 ├── skills/                # on-demand playbooks. Optional.
-│   ├── explain-skills/SKILL.md
-│   ├── build-first-agent/SKILL.md
-│   ├── inspect-this-hub/SKILL.md
-│   └── find-the-docs/SKILL.md
+│   ├── explain-skills.md
+│   ├── build-first-agent.md
+│   ├── inspect-this-hub.md
+│   └── find-the-docs.md
 ├── knowledge/             # long-form domain content. Optional.
 │   ├── what-is-hubzoid.md
 │   ├── three-agent-types.md
@@ -39,8 +39,8 @@ demo-hub/
 
 | Folder | What lives there | Reached by |
 |---|---|---|
-| `agents/` | Sub-agents. One folder per sub-agent. | Handoff from main agent. |
-| `skills/` | Playbooks. One folder per skill with a `SKILL.md`. | `load_skill(name)` at run time. |
+| `agents/` | Sub-agents. One `<name>.md` per sub-agent, or a `<name>/AGENTS.md` folder when it ships supporting files. | Handoff from main agent. |
+| `skills/` | Playbooks. One `<name>.md` per skill, or a `<name>/SKILL.md` folder when it ships supporting files. | `load_skill(name)` at run time. |
 | `knowledge/` | Reference content. One markdown file per topic. | `read_knowledge(name)` at run time. |
 | `tools_local/` | Python tools. Any `@function_tool` callable. | Auto-discovered at boot. |
 | `connectors/` | `.mcp.json` configuring MCP servers. | Loaded at boot. |

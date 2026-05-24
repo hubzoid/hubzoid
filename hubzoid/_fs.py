@@ -23,6 +23,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "tools_local": ("tools_local", "tool_local", "tools", "local_tools"),
     "connectors": ("connectors", "connector"),
     "output": ("output", "outputs"),
+    "raw_data": ("raw_data", "raw-data", "rawdata"),
 }
 
 

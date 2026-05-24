@@ -36,6 +36,21 @@ def test_multiple_picks_alphabetical_and_warns(tmp_path, caplog):
     assert "multiple folders match" in caplog.text
 
 
+def test_raw_data_lowercase(tmp_path):
+    hub = _make(tmp_path, ["raw_data"])
+    assert resolve_bucket(hub, "raw_data").name == "raw_data"
+
+
+def test_raw_data_hyphen(tmp_path):
+    hub = _make(tmp_path, ["raw-data"])
+    assert resolve_bucket(hub, "raw_data").name == "raw-data"
+
+
+def test_raw_data_runtogether(tmp_path):
+    hub = _make(tmp_path, ["rawdata"])
+    assert resolve_bucket(hub, "raw_data").name == "rawdata"
+
+
 def test_unknown_bucket_raises(tmp_path):
     try:
         resolve_bucket(tmp_path, "not-a-bucket")

@@ -11,8 +11,9 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 | `hubzoid/` | The installable Python package. |
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
-| `hubzoid/templates/starter/` | Bundled template used by `hubzoid init`. |
-| `demo-hub/` | The canonical starter hub at the repo root (mirrors the template). |
+| `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
+| `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
+| `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models`. |
 | `cli.py` | Typer-based CLI. |
 | `factory.py` | `build_agent(hub_dir)`. composes everything. |

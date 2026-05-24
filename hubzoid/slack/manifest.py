@@ -35,6 +35,7 @@ _BOT_SCOPES = [
     "channels:history",   # public channel threads (where bot is invited)
     "chat:write",
     "chat:write.public",
+    "files:read",         # download attachments via files.info + url_private_download
     "groups:history",     # private channel threads
     "im:history",         # DMs
     "im:read",
