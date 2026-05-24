@@ -62,7 +62,18 @@ def load_main(hub_dir: Path) -> LoadedAgent:
 
 
 def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
-    """Discover every <hub>/agents/<name>/AGENTS.md and load it as a sub-agent."""
+    """Discover sub-agent definitions under <hub>/agents/.
+
+    Two layouts are supported, matching the skills loader's conventions:
+
+      * Folder layout:  agents/<name>/AGENTS.md  (or agents/<name>/<anything>.md)
+      * Flat layout:    agents/<name>.md
+
+    The flat layout is useful for small specialist prompts where a whole
+    folder per agent is overkill — the same way `skills/<name>.md` already
+    works on the skills side. Folder layout is preferred when the agent
+    has supporting files (templates, examples, scripts).
+    """
     from .._fs import resolve_bucket
     agents_dir = resolve_bucket(hub_dir, "agents")
     if agents_dir is None:
@@ -70,23 +81,64 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
 
     out: list[LoadedAgent] = []
     for child in sorted(agents_dir.iterdir(), key=lambda p: p.name.lower()):
-        if not child.is_dir() or child.name.startswith("."):
+        if child.name.startswith("."):
             continue
-        # Sub-agent files: AGENTS.md, or <child>.md (case-insensitive)
-        candidates = [
-            child / "AGENTS.md",
-            child / "agents.md",
-            child / "Agents.md",
-        ]
-        match = next((c for c in candidates if c.is_file()), None)
-        if match is None:
-            # Allow a single .md file at this depth
-            mds = sorted(child.glob("*.md"))
-            if mds:
-                match = mds[0]
-        if match is None:
-            continue
-        out.append(_load_one(match, default_name=_safe_id(child.name)))
+
+        if child.is_dir():
+            # Folder layout. Prefer the conventional AGENTS.md; fall back
+            # to any *.md if the author named the file differently.
+            candidates = [
+                child / "AGENTS.md",
+                child / "agents.md",
+                child / "Agents.md",
+            ]
+            match = next((c for c in candidates if c.is_file()), None)
+            if match is None:
+                mds = sorted(child.glob("*.md"))
+                if mds:
+                    match = mds[0]
+            if match is None:
+                continue
+            out.append(_load_one(match, default_name=_safe_id(child.name)))
+        elif child.is_file() and child.suffix.lower() == ".md":
+            # Flat layout. The stem becomes the default name; frontmatter
+            # `name:` still wins if present (handled in _load_one).
+            out.append(_load_one(child, default_name=_safe_id(child.stem)))
+    return out
+
+
+def promote_to_skills(hub_dir: Path):
+    """Load every <hub>/agents/<name>/AGENTS.md as a LoadedSkill.
+
+    Hubzoid no longer treats `agents/` as a distinct primitive. Each
+    sub-agent's body is loaded inline by the main agent when invoked via
+    `load_skill(<name>)` — identical in mechanics to a real skill. This
+    avoids handoff state bugs and gives the main agent stable control of
+    the conversation across turns.
+
+    The sub-agent's `tools:` whitelist is discarded with a log warning if
+    present (skills do not gate tools; the main agent owns the registry).
+    """
+    import logging
+
+    from .skills import LoadedSkill, SkillSpec
+
+    log = logging.getLogger("hubzoid.loaders.agents")
+    out: list = []
+    for loaded in load_subagents(hub_dir):
+        if loaded.spec.tools:
+            log.warning(
+                "%s: tools whitelist %r is ignored — agents/ are loaded as "
+                "skills; the main agent owns all tools.",
+                loaded.source_path, loaded.spec.tools,
+            )
+        spec = SkillSpec(
+            name=loaded.spec.name,
+            description=loaded.spec.description,
+        )
+        out.append(
+            LoadedSkill(spec=spec, body=loaded.instructions, source_path=loaded.source_path)
+        )
     return out
 
 

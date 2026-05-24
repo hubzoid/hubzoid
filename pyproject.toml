@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.4.1"
+version = "0.4.2"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -53,6 +53,7 @@ dependencies = [
   "rich>=13",
   "jinja2>=3.1",
   "slack-bolt>=1.21",
+  "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "build>=1.2",
   "twine>=5.0",
+  "reportlab>=4.0",
 ]
 
 [project.scripts]
@@ -77,11 +79,12 @@ packages = ["hubzoid", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-hubzoid = ["templates/starter/**/*", "templates/starter/**/.*"]
+hubzoid = ["templates/**/*", "templates/**/.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
+  "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
   "e2e_ui: end-to-end test that drives Open WebUI in a real browser via Playwright",
 ]

@@ -85,3 +85,59 @@ def test_load_subagent_no_frontmatter_uses_folder_name(tmp_path):
     subs = agents_loader.load_subagents(hub)
     assert len(subs) == 1
     assert subs[0].spec.name == "scout"
+
+
+def test_load_subagent_flat_md_layout(tmp_path):
+    """`agents/<name>.md` (flat) should load just like the folder layout."""
+    hub = tmp_path / "hub"
+    (hub / "agents").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("main")
+    (hub / "agents" / "scribe.md").write_text(
+        "---\nname: scribe\ndescription: writes things down\n---\n"
+        "You are the scribe."
+    )
+    subs = agents_loader.load_subagents(hub)
+    assert len(subs) == 1
+    assert subs[0].spec.name == "scribe"
+    assert "You are the scribe" in subs[0].instructions
+
+
+def test_load_subagent_flat_md_without_frontmatter(tmp_path):
+    """Flat agents/foo.md with no frontmatter falls back to the file stem."""
+    hub = tmp_path / "hub"
+    (hub / "agents").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("main")
+    (hub / "agents" / "echo-flat.md").write_text("You just echo.")
+    subs = agents_loader.load_subagents(hub)
+    assert len(subs) == 1
+    assert subs[0].spec.name == "echo-flat"
+
+
+def test_load_subagent_mixed_flat_and_folder_layouts(tmp_path):
+    """Both layouts can coexist in the same agents/ folder."""
+    hub = tmp_path / "hub"
+    (hub / "agents" / "beta").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("main")
+    (hub / "agents" / "alpha.md").write_text(
+        "---\nname: alpha\ndescription: flat one\n---\nA"
+    )
+    (hub / "agents" / "beta" / "AGENTS.md").write_text(
+        "---\nname: beta\ndescription: folder one\n---\nB"
+    )
+    subs = agents_loader.load_subagents(hub)
+    names = sorted(s.spec.name for s in subs)
+    assert names == ["alpha", "beta"]
+
+
+def test_flat_agent_promoted_to_skill(tmp_path):
+    """A flat agents/<name>.md should also be promoted to the skill registry."""
+    hub = tmp_path / "hub"
+    (hub / "agents").mkdir(parents=True)
+    (hub / "AGENTS.md").write_text("main")
+    (hub / "agents" / "summary.md").write_text(
+        "---\nname: summary\ndescription: summarizer\n---\nSummarize."
+    )
+    skills = agents_loader.promote_to_skills(hub)
+    assert len(skills) == 1
+    assert skills[0].spec.name == "summary"
+    assert "Summarize" in skills[0].body

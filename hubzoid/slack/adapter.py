@@ -21,19 +21,22 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import httpx
 from slack_bolt import App, Assistant
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from .. import settings as settingslib
 from .conversion import (
     messages_from_thread,
     parse_sse_delta,
     to_slack_mrkdwn,
     truncate_for_slack,
+    with_slack_format_hint,
 )
 from .env import validate_env
+from .files import download_message_files
 
 
 log = logging.getLogger("hubzoid.slack")
@@ -63,22 +66,28 @@ def stream_reply(
     model: str,
     messages: list[dict[str, str]],
     on_delta: Callable[[str], None],
+    chat_id: str | None = None,
     http_client: httpx.Client | None = None,
     timeout: float | None = None,
 ) -> None:
     """POST to the bridge's /chat/completions with stream=true; forward content deltas.
 
     `bridge_url` should be the `/v1` base (e.g. `http://127.0.0.1:8000/v1`).
+    `chat_id`, when provided, is forwarded in the body so the bridge
+    scopes artifacts + uploads to the same Slack thread on every turn.
     Raises on HTTP error.
     """
     client = http_client or httpx.Client(timeout=timeout)
     owns_client = http_client is None
+    body: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    if chat_id:
+        body["chat_id"] = chat_id
     try:
         with client.stream(
             "POST",
             f"{bridge_url}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": model, "messages": messages, "stream": True},
+            json=body,
         ) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -151,6 +160,7 @@ def build_app(
     suggestions: list[str] | None,
     bot_user_id: str | None = None,
     verify_token: bool = True,
+    max_upload_bytes: int = settingslib.DEFAULT_MAX_UPLOAD_BYTES,
 ) -> App:
     """Construct a configured slack_bolt App. Does not start any sockets.
 
@@ -168,6 +178,69 @@ def build_app(
     assistant = Assistant()
 
     suggestions = list(suggestions or [])
+
+    # Per-chat memo of every Slack file we've uploaded to the bridge.
+    # Maps file_id -> (ts, filename). `conversations.replies` returns the
+    # full thread on every turn, so without this we'd re-download every
+    # attachment every message — wastes Slack rate budget AND re-pays
+    # bridge ingest. We also re-emit the attachment notes for previously
+    # seen files on every turn so the agent never loses track of what
+    # was uploaded earlier in the thread.
+    seen_files_by_chat: dict[str, dict[str, tuple[str, str]]] = {}
+
+    def _gather_messages(client, context, channel: str, thread_ts: str) -> tuple[list[dict[str, str]], str]:
+        """Common path: fetch history, download any Slack files, build messages.
+
+        Returns (messages, chat_id). The chat_id is `slack-{channel}-{thread_ts}`
+        and is sent to the bridge so artifacts/uploads scope to this thread.
+        """
+        history = client.conversations_replies(channel=channel, ts=thread_ts).get("messages") or []
+        chat_id = f"slack-{channel}-{thread_ts}"
+        bot_uid = bot_user_id or context.bot_user_id
+        seen_map = seen_files_by_chat.setdefault(chat_id, {})
+        already_seen_ids = set(seen_map.keys())
+        with httpx.Client(timeout=30.0) as http:
+            download_message_files(
+                history=history,
+                slack_client=client,
+                http=http,
+                bridge_url=bridge_url,
+                api_key=api_key,
+                chat_id=chat_id,
+                bot_token=bot_token,
+                max_upload_bytes=max_upload_bytes,
+                already_seen=already_seen_ids,
+            )
+        # Walk this turn's history to backfill (file_id -> ts, filename) for
+        # everything the download succeeded on. `already_seen_ids` was
+        # mutated by download_message_files to include newly uploaded ids.
+        for msg in history:
+            if not isinstance(msg, dict):
+                continue
+            ts = msg.get("ts") or ""
+            for f in (msg.get("files") or []):
+                if not isinstance(f, dict):
+                    continue
+                fid = f.get("id")
+                fname = f.get("name") or fid
+                if fid and fid in already_seen_ids and fid not in seen_map:
+                    seen_map[fid] = (ts, fname)
+        # Rebuild full attached_files_by_ts from the complete memo so the
+        # agent sees attachments on their original turn even after dedup
+        # skips the re-download.
+        attached: dict[str, list[str]] = {}
+        for ts, fname in seen_map.values():
+            attached.setdefault(ts, []).append(fname)
+        msgs = messages_from_thread(
+            history,
+            bot_user_id=bot_uid,
+            bot_id=context.bot_id,
+            attached_files_by_ts=attached,
+        )
+        # Slack-only formatting guidance — kept out of Open WebUI / API
+        # consumers which render markdown tables natively.
+        msgs = with_slack_format_hint(msgs)
+        return msgs, chat_id
 
     @assistant.thread_started
     def _on_thread_started(say, set_suggested_prompts, **_):
@@ -191,9 +264,7 @@ def build_app(
         thread_ts = payload["thread_ts"]
         try:
             set_status("Thinking...")
-            history = client.conversations_replies(channel=channel, ts=thread_ts).get("messages") or []
-            bot_uid = bot_user_id or context.bot_user_id
-            msgs = messages_from_thread(history, bot_user_id=bot_uid, bot_id=context.bot_id)
+            msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 say("(no question detected — try asking something specific)")
                 return
@@ -211,6 +282,7 @@ def build_app(
                 model=model_label,
                 messages=msgs,
                 on_delta=writer.feed,
+                chat_id=chat_id,
             )
             final = writer.done()
             if not final:
@@ -226,9 +298,7 @@ def build_app(
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
         try:
-            history = client.conversations_replies(channel=channel, ts=thread_ts).get("messages") or []
-            bot_uid = bot_user_id or context.bot_user_id
-            msgs = messages_from_thread(history, bot_user_id=bot_uid, bot_id=context.bot_id)
+            msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 say(text="(empty mention)", thread_ts=thread_ts)
                 return
@@ -246,6 +316,7 @@ def build_app(
                 model=model_label,
                 messages=msgs,
                 on_delta=writer.feed,
+                chat_id=chat_id,
             )
             final = writer.done()
             if not final:
@@ -275,9 +346,7 @@ def build_app(
         channel = event["channel"]
         thread_ts = event.get("thread_ts") or event["ts"]
         try:
-            history = client.conversations_replies(channel=channel, ts=thread_ts).get("messages") or []
-            bot_uid = bot_user_id or context.bot_user_id
-            msgs = messages_from_thread(history, bot_user_id=bot_uid, bot_id=context.bot_id)
+            msgs, chat_id = _gather_messages(client, context, channel, thread_ts)
             if not msgs:
                 return
             placeholder = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="…")
@@ -293,6 +362,7 @@ def build_app(
                 model=model_label,
                 messages=msgs,
                 on_delta=writer.feed,
+                chat_id=chat_id,
             )
             final = writer.done()
             if not final:
@@ -317,7 +387,6 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
     Returns a CLI-friendly exit code. Logs a clear message before blocking so
     operators know the adapter is up.
     """
-    from .. import settings as settingslib
     from ..loaders import agents as agents_loader
 
     env = env if env is not None else os.environ
@@ -342,6 +411,7 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
         model_label=model_label,
         bot_token=env["SLACK_BOT_TOKEN"],
         suggestions=suggestions,
+        max_upload_bytes=settings.max_upload_bytes,
     )
 
     log.info("hubzoid slack adapter starting (hub=%s, bridge=%s)", hub_dir.name, bridge_url)

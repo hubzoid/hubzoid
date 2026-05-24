@@ -74,15 +74,48 @@ def test_fresh_when_only_the_target_hub_exists(tmp_path):
 # ---------------------------------------------------------------------------
 # Init: default name + hub folder content
 # ---------------------------------------------------------------------------
-def test_init_default_creates_demo_hub(tmp_path):
+def test_init_default_creates_minimal_hub(tmp_path):
+    """Default `hubzoid init` ships the minimal template: one worked example per surface."""
     res = _run_init(tmp_path)
     assert res.exit_code == 0, res.output
     hub = tmp_path / "demo-hub"
     assert (hub / "AGENTS.md").is_file()
     assert (hub / ".env").is_file()
+    # Each surface has exactly one flat-layout example.
+    assert (hub / "skills" / "hello.md").is_file()
+    assert (hub / "knowledge" / "about.md").is_file()
+    assert (hub / "agents" / "helper.md").is_file()
+    assert (hub / "tools_local" / "hello.py").is_file()
+    assert (hub / "connectors" / ".mcp.json").is_file()
+    assert (hub / "raw_data" / "README.md").is_file()
+    # Demo-only content must NOT be present.
+    assert not (hub / "knowledge" / "welcome.md").exists()
+    assert not (hub / "skills" / "explain-skills.md").exists()
+
+
+def test_init_template_demo_creates_guided_tour(tmp_path):
+    """`--template demo` ships the full Hubzoid Guide hub with teaching content."""
+    res = _run_init(tmp_path, "guide-hub", "--template", "demo")
+    assert res.exit_code == 0, res.output
+    hub = tmp_path / "guide-hub"
+    assert (hub / "AGENTS.md").is_file()
+    # Flattened skill layout (one .md per skill, no SKILL.md subfolders).
+    assert (hub / "skills" / "explain-skills.md").is_file()
+    assert (hub / "skills" / "build-first-agent.md").is_file()
+    assert (hub / "skills" / "inspect-this-hub.md").is_file()
+    assert (hub / "skills" / "find-the-docs.md").is_file()
+    assert (hub / "agents" / "builder.md").is_file()
     assert (hub / "knowledge" / "welcome.md").is_file()
-    assert (hub / "skills" / "explain-skills" / "SKILL.md").is_file()
-    assert (hub / "agents" / "builder" / "AGENTS.md").is_file()
+    assert (hub / "tools_local" / "word_count.py").is_file()
+    # The old folder layout is gone.
+    assert not (hub / "skills" / "explain-skills").exists()
+    assert not (hub / "agents" / "builder").exists()
+
+
+def test_init_unknown_template_fails(tmp_path):
+    res = _run_init(tmp_path, "x", "--template", "no-such-template")
+    assert res.exit_code != 0
+    assert "no-such-template" in res.output
 
 
 def test_init_named_hub(tmp_path):

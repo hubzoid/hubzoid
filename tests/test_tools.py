@@ -103,13 +103,31 @@ def test_read_file_missing(ctx):
     assert "not found" in _call(read_file, path="nope.txt")
 
 
-def test_read_file_truncates_large(ctx):
-    big = "x" * 250_000
+def test_read_file_truncates_large_and_writes_overflow(ctx):
+    big = "x" * 50_000
     (ctx.hub_dir / "big.txt").write_text(big, encoding="utf-8")
     read_file = _by_name(files_mod.make(ctx), "read_file")
     out = _call(read_file, path="big.txt")
-    assert "[truncated]" in out
-    assert len(out) <= 200_000 + 20
+    assert "truncated at 25,000" in out
+    assert "Full output saved to" in out
+    assert "read-overflow-" in out
+    # Truncated head + footer is well under the original size.
+    assert len(out) < 30_000
+
+
+def test_read_file_offset_and_limit(ctx):
+    (ctx.hub_dir / "abc.txt").write_text("abcdefghij", encoding="utf-8")
+    read_file = _by_name(files_mod.make(ctx), "read_file")
+    assert _call(read_file, path="abc.txt", offset=3, limit=4) == "defg"
+
+
+def test_list_files_caps_with_refine_hint(ctx):
+    for i in range(120):
+        (ctx.hub_dir / f"f{i:03d}.txt").write_text("x")
+    list_files = _by_name(files_mod.make(ctx), "list_files")
+    out = _call(list_files, glob="*.txt")
+    assert "Showing 100 of 120" in out
+    assert "Refine" in out
 
 
 def test_list_files_globs(ctx):
@@ -126,23 +144,30 @@ def test_list_files_empty(ctx):
     assert _call(list_files, glob="nothing*") == ""
 
 
-def test_write_artifact_writes_under_output(ctx):
+def test_write_artifact_writes_under_output_when_no_chat_in_scope(ctx):
+    """No chat scope -> writes to the legacy session output dir."""
     write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
     result = _call(write_artifact, filename="result.txt", content="ok")
-    assert "wrote:" in result
+    assert "Saved" in result  # new response format
     assert (ctx.output_dir / "result.txt").read_text() == "ok"
 
 
-def test_write_artifact_refuses_traversal(ctx):
+def test_write_artifact_refuses_invalid_filename(ctx):
+    """`../../etc/passwd` sanitises to `passwd` (basename), but we test ../
+    in isolation which leaves nothing."""
     write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
-    result = _call(write_artifact, filename="../../../etc/passwd", content="x")
-    assert "refused" in result or "escapes" in result
+    result = _call(write_artifact, filename="../..", content="x")
+    assert "refused" in result.lower() or "empty filename" in result.lower()
 
 
-def test_write_artifact_creates_subdirs(ctx):
+def test_write_artifact_strips_directory_components(ctx):
+    """Directory components in filename are stripped; only basename survives."""
     write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
     _call(write_artifact, filename="nested/dir/file.md", content="hi")
-    assert (ctx.output_dir / "nested" / "dir" / "file.md").read_text() == "hi"
+    # Lands at the artifact root (no chat scope -> session output dir).
+    assert (ctx.output_dir / "file.md").read_text() == "hi"
+    # And NOT in any subdirectory.
+    assert not (ctx.output_dir / "nested").exists()
 
 
 # ---------------------------------------------------------------------------

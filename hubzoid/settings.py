@@ -18,6 +18,18 @@ Environment variables explicitly supported:
                          WebUI uses its default.
   PORT                   Open WebUI port. Default: 3080.
   BRIDGE_PORT            FastAPI bridge port. Default: 8000.
+  HUBZOID_PUBLIC_URL     Public base URL the bridge is reachable at, used to
+                         build download links emitted by `write_artifact`.
+                         Set this when running behind a reverse proxy / on a
+                         different host than the user's browser. Defaults to
+                         http://127.0.0.1:<BRIDGE_PORT> for localhost dev.
+                         Example: HUBZOID_PUBLIC_URL=https://hub.example.com
+  HUBZOID_MAX_UPLOAD_BYTES  Per-file ingress cap, in bytes. Applies to both
+                         `data:` URLs decoded from chat-completion message
+                         content and POSTs to `/uploads/{chat_id}/{filename}`.
+                         A request whose attachment exceeds this returns 413
+                         instead of being silently truncated. Default:
+                         25 MiB (26214400).
   HUB_LOG_LEVEL          info | debug | warning. Default: info.
 """
 from __future__ import annotations
@@ -27,6 +39,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+
+DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 
 @dataclass(frozen=True)
@@ -39,6 +54,7 @@ class Settings:
     ui_port: int
     bridge_port: int
     log_level: str
+    max_upload_bytes: int
 
     @property
     def first_api_key(self) -> str:
@@ -68,4 +84,16 @@ def load(hub_dir: Path) -> Settings:
         ui_port=int(os.environ.get("PORT", "3080")),
         bridge_port=int(os.environ.get("BRIDGE_PORT", "8000")),
         log_level=os.environ.get("HUB_LOG_LEVEL", "info"),
+        max_upload_bytes=_int_env("HUBZOID_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
     )
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        n = int(raw)
+    except ValueError:
+        return default
+    return n if n > 0 else default

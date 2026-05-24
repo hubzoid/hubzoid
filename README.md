@@ -42,13 +42,23 @@ Claude work out of the box.
 
 ```bash
 pip install hubzoid
-hubzoid init demo-hub                  # scaffolds a starter hub + agents-repo wrapper
-*  edit demo-hub/.env                  # ← optional. skip if using claude-local.
-hubzoid run demo-hub
+hubzoid init my-hub                    # minimal runnable hub + agents-repo wrapper
+*  edit my-hub/.env                    # ← optional. skip if using claude-local.
+hubzoid run my-hub
 ```
 
-Open <http://localhost:3080>. The scaffolded `demo-hub` is a working **Hubzoid
-Guide** agent.
+Open <http://localhost:3080>. You get a generic assistant with one example
+of every Hubzoid surface (one skill, one knowledge file, one sub-agent, one
+custom tool) so the folder layout is obvious. Edit `my-hub/AGENTS.md` to
+make it yours.
+
+Want the guided tour instead? Add `--template demo` to get a **Hubzoid
+Guide** agent that explains the framework as you chat:
+
+```bash
+hubzoid init my-hub --template demo
+hubzoid run my-hub
+```
 
 **\* Step 3 (the optional one).** Default `MODEL=claude-local` uses your
 installed `claude` CLI subscription. If you already ran `claude login`,
@@ -131,11 +141,15 @@ Your hub is one folder. Six things to know.
 6. **Tools and connectors.** Drop Python files with `@function_tool` in
    `tools_local/`. Edit `connectors/.mcp.json` to plug in
    [MCP](https://modelcontextprotocol.io) servers.
+7. **Unstructured data.** Drop code repos, document dumps, or any source
+   material into `raw_data/`. The agent searches it with `grep_data` and
+   reads specific files with `read_file`. No indexing step — the folder
+   ships with the hub.
 
 Folder names are case- and plural-flexible. `skills/`, `Skills/`, and
 `skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
-`connectors/`. Restart with the same command. Changes are picked up on
-the next start.
+`connectors/`, `raw_data/`. Restart with the same command. Changes are
+picked up on the next start.
 
 ## Multi-hub agents repo
 
@@ -279,7 +293,7 @@ vars for every provider: [docs/auth.md](docs/auth.md).
 
 ## Deploying to production
 
-`hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
+`hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Set `HUBZOID_PUBLIC_URL=https://your.host` in `<hub>/.env` so `write_artifact` download links resolve. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
 
 ## Slack chat surface
 
@@ -305,6 +319,9 @@ hubzoid init [NAME]              Scaffold a new hub folder under the current dir
                                    NAME defaults to "demo-hub".
                                    Also drops requirements.txt / .gitignore / README.md
                                    at the parent on first run if the directory looks fresh.
+  --template, -t NAME              Which bundled template. "minimal" (default) =
+                                     tiny runnable hub. "demo" = full guided tour
+                                     with the Hubzoid Guide agent.
 hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a hub.
   --port INT                       Open WebUI port (default 3080).
   --bridge-port INT                FastAPI bridge port (default 8000).

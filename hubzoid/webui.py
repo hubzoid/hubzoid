@@ -170,6 +170,7 @@ def start(
     hub_dir: Path,
     bridge_port: int,
     ui_port: int,
+    ui_host: str = "127.0.0.1",
     api_key: str,
     model_label: str,
     webui_name: str | None,
@@ -235,7 +236,7 @@ def start(
 
     log_path = data_dir / "openwebui.log"
     log_file = log_path.open("ab", buffering=0)
-    cmd = [binary, "serve", "--host", "127.0.0.1", "--port", str(ui_port)]
+    cmd = [binary, "serve", "--host", ui_host, "--port", str(ui_port)]
     proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
     proc._log_path = log_path  # type: ignore[attr-defined]
     return proc
