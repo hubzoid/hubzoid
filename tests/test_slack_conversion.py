@@ -153,6 +153,113 @@ def test_to_slack_mrkdwn_returns_empty_for_empty_input():
 
 
 # ---------------------------------------------------------------------------
+# Markdown table auto-wrap (Slack does not render | tables natively)
+# ---------------------------------------------------------------------------
+def test_to_slack_mrkdwn_wraps_markdown_table_in_code_fence():
+    """Models reach for tables on structured comparisons. Slack mrkdwn just
+    renders them as raw pipe characters with no column alignment. Wrapping
+    in ``` makes the model's intent at least readable (monospace columns)."""
+    src = (
+        "Here is a comparison:\n"
+        "| name | value |\n"
+        "|------|-------|\n"
+        "| a    | 1     |\n"
+        "| b    | 2     |\n"
+        "After table."
+    )
+    out = to_slack_mrkdwn(src)
+    assert "```\n| name | value |" in out
+    assert "| b    | 2     |\n```" in out
+    # Prose around the table is unchanged.
+    assert "Here is a comparison:\n" in out
+    assert "After table." in out
+
+
+def test_to_slack_mrkdwn_wraps_table_with_alignment_markers():
+    """Separator row with `:---:` / `:---` / `---:` still recognised."""
+    src = (
+        "| col1 | col2 |\n"
+        "|:-----|-----:|\n"
+        "| x    | y    |"
+    )
+    out = to_slack_mrkdwn(src)
+    assert out.startswith("```\n")
+    assert out.rstrip().endswith("```")
+
+
+def test_to_slack_mrkdwn_lone_pipe_line_is_not_wrapped():
+    """A pipe character in prose without a separator row is not a table."""
+    src = "use `foo | bar` to pipe output."
+    out = to_slack_mrkdwn(src)
+    assert "```" not in out
+
+
+def test_to_slack_mrkdwn_does_not_double_wrap_table_already_in_fence():
+    """If the model already wrapped a table in ``` for us, leave it alone."""
+    src = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```"
+    out = to_slack_mrkdwn(src)
+    # Exactly one opening + one closing fence — no double-wrap.
+    assert out.count("```") == 2
+
+
+def test_to_slack_mrkdwn_handles_multiple_tables_in_one_message():
+    src = (
+        "First:\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+        "between\n"
+        "Second:\n| c | d |\n|---|---|\n| 3 | 4 |"
+    )
+    out = to_slack_mrkdwn(src)
+    assert out.count("```") == 4  # two opens + two closes
+    assert "between" in out
+
+
+def test_to_slack_mrkdwn_does_not_mangle_bold_inside_table_after_wrap():
+    """Once a table is fenced, asterisks inside it must stay literal."""
+    src = (
+        "| name | desc |\n"
+        "|------|------|\n"
+        "| x    | **important** |"
+    )
+    out = to_slack_mrkdwn(src)
+    # The `**important**` must NOT have been converted to `*important*`
+    # because it's now inside a fence.
+    assert "**important**" in out
+
+
+# ---------------------------------------------------------------------------
+# with_slack_format_hint
+# ---------------------------------------------------------------------------
+def test_with_slack_format_hint_prepends_system_message():
+    from hubzoid.slack.conversion import with_slack_format_hint
+
+    msgs = [{"role": "user", "content": "hi"}]
+    out = with_slack_format_hint(msgs)
+    assert len(out) == 2
+    assert out[0]["role"] == "system"
+    assert out[1] == msgs[0]
+
+
+def test_with_slack_format_hint_mentions_slack_and_bullets():
+    from hubzoid.slack.conversion import with_slack_format_hint
+
+    out = with_slack_format_hint([{"role": "user", "content": "hi"}])
+    hint = out[0]["content"]
+    # Names the surface so the model understands the constraint.
+    assert "Slack" in hint
+    # Steers toward bullet alternative for tabular data.
+    assert "bullet" in hint.lower() or "list" in hint.lower()
+    assert "table" in hint.lower()
+
+
+def test_with_slack_format_hint_returns_new_list_not_mutating_input():
+    from hubzoid.slack.conversion import with_slack_format_hint
+
+    msgs = [{"role": "user", "content": "hi"}]
+    _ = with_slack_format_hint(msgs)
+    assert len(msgs) == 1
+
+
+# ---------------------------------------------------------------------------
 # truncate_for_slack
 # ---------------------------------------------------------------------------
 def test_truncate_for_slack_under_limit_unchanged():
@@ -160,10 +267,12 @@ def test_truncate_for_slack_under_limit_unchanged():
 
 
 def test_truncate_for_slack_over_limit_truncated_with_marker():
+    """Default cap is Slack's safe envelope (3500 chars). Anything longer
+    gets cut with a marker so we never trip msg_too_long mid-stream."""
     text = "x" * 50_000
     out = truncate_for_slack(text)
-    assert len(out) <= 40_000
-    assert out.endswith("\n\n_… response truncated to Slack's 40k char limit_")
+    assert len(out) <= 3500
+    assert "truncated" in out
 
 
 def test_truncate_for_slack_respects_custom_limit():

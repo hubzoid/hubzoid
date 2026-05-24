@@ -171,3 +171,55 @@ def test_suggestions_filters_empty_strings(captured_env, tmp_path, monkeypatch):
     env = _start(captured_env, tmp_path, suggestions=["x", "", "y"])
     payload = json.loads(env["DEFAULT_PROMPT_SUGGESTIONS"])
     assert payload == [{"content": "x"}, {"content": "y"}]
+
+
+# ---------------------------------------------------------------------------
+# --host plumbing (bind address for `open-webui serve`)
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def captured_cmd(tmp_path, monkeypatch):
+    """Like captured_env, but yields the cmd list passed to Popen."""
+    monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
+    captured: list[list[str]] = []
+
+    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+        captured.append(list(cmd))
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        return proc
+
+    with patch("hubzoid.webui.subprocess.Popen", fake_popen):
+        yield captured
+
+
+def _start_for_cmd(tmp_path, **overrides):
+    hub = tmp_path / "my-hub"
+    hub.mkdir(exist_ok=True)
+    webui.start(
+        hub_dir=hub,
+        bridge_port=8000,
+        ui_port=3080,
+        api_key="dev",
+        model_label="my-hub",
+        webui_name="My Hub",
+        **overrides,
+    )
+
+
+def test_default_ui_host_is_loopback(captured_cmd, tmp_path):
+    _start_for_cmd(tmp_path)
+    cmd = captured_cmd[0]
+    assert "--host" in cmd
+    assert cmd[cmd.index("--host") + 1] == "127.0.0.1"
+
+
+def test_ui_host_override_passed_to_owui(captured_cmd, tmp_path):
+    _start_for_cmd(tmp_path, ui_host="0.0.0.0")
+    cmd = captured_cmd[0]
+    assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
+
+
+def test_ui_host_arbitrary_address(captured_cmd, tmp_path):
+    _start_for_cmd(tmp_path, ui_host="192.168.1.42")
+    cmd = captured_cmd[0]
+    assert cmd[cmd.index("--host") + 1] == "192.168.1.42"

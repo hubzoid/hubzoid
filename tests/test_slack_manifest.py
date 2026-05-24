@@ -79,6 +79,17 @@ def test_manifest_for_hub_history_scopes_for_all_channel_types(tmp_path):
     } <= scopes
 
 
+def test_manifest_for_hub_includes_files_read_scope(tmp_path):
+    """Required by `download_message_files` to call files.info on Slack
+    attachments. Without it, every user-uploaded file in a thread fails
+    with `missing_scope` and the agent never sees the attachment."""
+    hub = tmp_path / "alpha"
+    hub.mkdir()
+    (hub / "AGENTS.md").write_text("---\nname: a\ndescription: d\n---\n\nbody\n")
+    scopes = set(yaml.safe_load(manifest_for_hub(hub))["oauth_config"]["scopes"]["bot"])
+    assert "files:read" in scopes
+
+
 def test_manifest_for_hub_enables_messages_tab(tmp_path):
     """Without this the 'Sending messages to this app has been turned off'
     error blocks DMs entirely. Regression test."""

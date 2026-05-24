@@ -1,24 +1,25 @@
 """Claude Agent SDK backend — same hub folder, same loaders, same tools.
 
 When `MODEL=claude-local` is set, `runtime.build(hub_dir)` returns a
-`ClaudeRuntime` from this file instead of an `OpenAIAgentsRuntime`. The whole
-point of this module is to keep the user-facing surface (tool names, schemas,
-outputs, skills, knowledge, sub-agents) identical between backends — the only
-genuine difference is which LLM is doing the deciding.
+`ClaudeRuntime` from this file instead of an `OpenAIAgentsRuntime`. The
+point of this module is to keep the user-facing surface (tool names,
+schemas, outputs, skills, knowledge) identical between backends — the
+only genuine difference is which LLM is deciding.
 
 How identity is preserved:
-  * Skills, knowledge, agents specs, MCP configs    -> same loaders, unchanged.
-  * Tools (pre-shipped + hub-local)                  -> same FunctionTool
-    registry from `make_builtin_tools(ctx)` + `tools_local_loader.load_all`.
-    Each FunctionTool is wrapped via `_to_claude_tool` and bundled into a
+  * Skills, knowledge, MCP configs    -> same loaders, unchanged.
+  * `agents/` folder                  -> promoted to skills by the shared
+    `_load_skills_and_promoted_agents` helper; no Claude SDK sub-agents
+    are wired. The main agent loads them inline via `load_skill(<name>)`.
+  * Tools (pre-shipped + hub-local)   -> same FunctionTool registry from
+    `make_builtin_tools(ctx)` + `tools_local_loader.load_all`. Each
+    FunctionTool is wrapped via `_to_claude_tool` and bundled into a
     single in-process MCP server named "hubzoid". The model sees them as
-    `mcp__hubzoid__<name>`; we strip the prefix in log/trace lines.
-  * Sub-agents                                       -> `AgentDefinition`
-    objects with the same name, description, instructions, and tool whitelist.
+    `mcp__hubzoid__<name>`.
 
-Auth: the Claude Agent SDK shells out to the local `claude` CLI subprocess,
-which authenticates via `claude login` (subscription) or `ANTHROPIC_API_KEY`,
-in that order. No hubzoid-managed key.
+Auth: the Claude Agent SDK shells out to the local `claude` CLI
+subprocess, which authenticates via `claude login` (subscription) or
+`ANTHROPIC_API_KEY`, in that order. No hubzoid-managed key.
 """
 from __future__ import annotations
 
@@ -29,11 +30,11 @@ from typing import Any, AsyncIterator
 
 from . import memory as memlib
 from . import settings as settingslib
-from .factory import HubContext
+from . import tool_events
+from .factory import HubContext, _compose_instructions, _load_skills_and_promoted_agents
 from .loaders import agents as agents_loader
 from .loaders import knowledge as knowledge_loader
 from .loaders import mcp as mcp_loader
-from .loaders import skills as skills_loader
 from .loaders import tools_local as tools_local_loader
 from .tools import make_all as make_builtin_tools
 
@@ -105,53 +106,21 @@ def _build_mcp_server(registry: dict):
     return create_sdk_mcp_server(name=_MCP_NAMESPACE, version="0.1.0", tools=tools)
 
 
-def _allowed_tool_names(registry: dict, has_subagents: bool, mcp_specs: dict[str, dict]) -> list[str]:
+def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]:
     """Build the `allowed_tools` whitelist Claude sees.
 
     Includes:
       - mcp__hubzoid__<name> for every wrapped FunctionTool
       - mcp__<server>__* for every external MCP server (let the SDK expand)
-      - 'Agent' if any sub-agents are defined
+
+    No 'Agent' entry. Hubzoid no longer wires Claude SDK sub-agents — the
+    `agents/` folder is promoted to skills, which the main agent loads
+    inline via `load_skill`.
     """
     out = [f"mcp__{_MCP_NAMESPACE}__{name}" for name in registry]
     for server in mcp_specs:
         out.append(f"mcp__{server}__*")
-    if has_subagents:
-        out.append("Agent")
     return out
-
-
-# ---------------------------------------------------------------------------
-# Sub-agent translation: LoadedAgent -> AgentDefinition
-# ---------------------------------------------------------------------------
-def _build_subagent_defs(sub_specs, registry):
-    """Translate hubzoid sub-agent specs into Claude SDK AgentDefinitions.
-
-    The sub-agent's `tools:` whitelist applies the same way as in the OpenAI
-    path — empty list = no tools (deny-by-default).
-    """
-    from claude_agent_sdk import AgentDefinition
-
-    defs: dict = {}
-    for spec in sub_specs:
-        if spec.spec.tools:
-            unknown = [t for t in spec.spec.tools if t not in registry]
-            if unknown:
-                available = ", ".join(sorted(registry)) or "(none)"
-                raise RuntimeError(
-                    f"{spec.source_path}: tools reference unknown names: {unknown}. "
-                    f"Available: {available}"
-                )
-            tool_names = [f"mcp__{_MCP_NAMESPACE}__{t}" for t in spec.spec.tools]
-        else:
-            tool_names = []
-
-        defs[spec.spec.name] = AgentDefinition(
-            description=spec.spec.description,
-            prompt=spec.instructions,
-            tools=tool_names,
-        )
-    return defs
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +144,7 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     session_id = memlib.make_session_id()
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
-    skills = skills_loader.load_all(hub_dir)
+    skills = _load_skills_and_promoted_agents(hub_dir)
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
         "hub %s (claude-local): %d skill(s), %d knowledge doc(s)",
@@ -207,15 +176,11 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     hubzoid_mcp = _build_mcp_server(registry)
     mcp_servers = {**external_mcp, _MCP_NAMESPACE: hubzoid_mcp}
 
-    sub_specs = agents_loader.load_subagents(hub_dir)
-    sub_defs = _build_subagent_defs(sub_specs, registry)
-    log.info("hub %s (claude-local): %d sub-agent(s)", hub_dir.name, len(sub_defs))
-
     main_spec = agents_loader.load_main(hub_dir)
     main_name = main_spec.spec.name
-    main_instructions = main_spec.instructions
+    main_instructions = _compose_instructions(main_spec.instructions, ctx, backend="claude-local")
 
-    allowed = _allowed_tool_names(registry, has_subagents=bool(sub_defs), mcp_specs=external_mcp)
+    allowed = _allowed_tool_names(registry, mcp_specs=external_mcp)
     model_pin = _parse_model_pin(settings.model)
 
     from claude_agent_sdk import ClaudeAgentOptions
@@ -223,11 +188,21 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     # We deliberately do NOT pass setting_sources — hubzoid is the source of
     # truth for what a hub means. Filesystem auto-discovery from .claude/
     # is disabled to keep parity with the OpenAI backend.
+    #
+    # `tools=[]` disables every SDK built-in (Bash, Read, Edit, Write, Task,
+    # WebFetch, Grep, Glob, ...). Without this, the SDK falls back to its
+    # `claude_code` preset and the agent has the FULL Claude Code tool
+    # surface, which (a) breaks parity with the OpenAI backend that has
+    # none of those, and (b) is the bug behind the rabbit hole where the
+    # agent escapes `read_upload` and tries to Bash/Read uploaded files
+    # on hallucinated paths under ~/.claude/projects/. `allowed_tools`
+    # is NOT a restriction list — it only controls permission prompting;
+    # `tools` is the gate. See test_factory_claude_tool_gating.py.
     opts_kwargs: dict[str, Any] = dict(
         system_prompt=main_instructions,
+        tools=[],
         allowed_tools=allowed,
         mcp_servers=mcp_servers,
-        agents=sub_defs or None,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
@@ -238,22 +213,26 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     return ClaudeRuntime(name=main_name, options=options)
 
 
-_CLAUDE_LOCAL_DEFAULT = "haiku"
+_CLAUDE_LOCAL_DEFAULT = "sonnet"
 
 
 def _parse_model_pin(model_setting: str | None) -> str | None:
     """Extract the model suffix from `MODEL=claude-local[/<pin>]`.
 
-    Bare `claude-local` (no suffix) defaults to **Haiku 4.5** for low TTFT —
-    Haiku is ~3x faster than Sonnet on first-token latency and matches Sonnet
-    quality on most agent tasks. Operators who want Sonnet/Opus opt in
-    explicitly via `claude-local/sonnet` etc.
+    Bare `claude-local` (no suffix) defaults to **Sonnet 4.x**. We
+    originally defaulted to Haiku for low TTFT, but Haiku tends to ask
+    the user to choose between options instead of executing documented
+    workflows — reproducibly broke the IRS-hub QA pipeline that the
+    prs-agent Claude Code session handled cleanly on Sonnet. Sonnet's
+    decisiveness on routing rules matters more than Haiku's latency for
+    agentic hubs. Operators who specifically want Haiku speed opt in
+    explicitly via `claude-local/haiku`.
 
     Returns None when MODEL isn't set or isn't a claude-local variant.
     Examples:
-      claude-local                -> "haiku"             (default for speed)
-      claude-local/haiku          -> "haiku"             (explicit, same effect)
-      claude-local/sonnet         -> "sonnet"
+      claude-local                -> "sonnet"            (default)
+      claude-local/sonnet         -> "sonnet"            (explicit, same effect)
+      claude-local/haiku          -> "haiku"             (opt in for low TTFT)
       claude-local/opus           -> "opus"
       claude-local/claude-opus-4-7 -> "claude-opus-4-7"  (full ids pass through)
     """
@@ -279,23 +258,31 @@ class ClaudeRuntime:
         self._options = options
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
-        """Yield text deltas as they arrive.
+        """Yield text deltas + inline tool-activity markers as they arrive.
 
-        With `include_partial_messages=True` (set in options), the SDK emits
-        `StreamEvent` messages carrying raw Anthropic API events. We pull
-        `content_block_delta` -> `text_delta` -> `text` and yield each chunk.
+        Three event streams are interleaved into one text stream:
 
-        Fallback: if partial events somehow don't arrive (older SDK?), we
-        surface the final `ResultMessage.result` so the user still sees the
-        reply — late, but not lost.
+        1. **Assistant text**: token-level deltas from `StreamEvent`.
+        2. **Tool calls**: a single blockquote line per `ToolUseBlock`,
+           emitted at call start. No matching "returned" line.
+        3. **Tool errors**: a ⚠ blockquote line for any `ToolResultBlock`
+           that arrives with `is_error=True`.
+
+        Fallback: if partial events don't arrive (older SDK?), we surface
+        the final `ResultMessage.result` so the user still sees the reply.
         """
-        from claude_agent_sdk import ResultMessage, query
-        from claude_agent_sdk.types import StreamEvent
+        from claude_agent_sdk import AssistantMessage, ResultMessage, UserMessage, query
+        from claude_agent_sdk.types import StreamEvent, TextBlock, ToolResultBlock, ToolUseBlock
 
         streamed_any = False
         final_result: str | None = None
+        # tool_use_id -> short name. Used only to identify error result blocks
+        # so we can surface them with a ⚠ marker. Successful results emit
+        # nothing — the call line was already shown.
+        tool_use_names: dict[str, str] = {}
         try:
             async for message in query(prompt=prompt, options=self._options):
+                # --- Token-level text deltas ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}
                     if event.get("type") == "content_block_delta":
@@ -306,6 +293,34 @@ class ClaudeRuntime:
                                 streamed_any = True
                                 yield text
                     continue
+
+                # --- Tool calls announced as full assistant message blocks ---
+                if isinstance(message, AssistantMessage):
+                    for block in getattr(message, "content", []) or []:
+                        if isinstance(block, ToolUseBlock):
+                            tid = getattr(block, "id", None) or ""
+                            if tid in tool_use_names:
+                                continue
+                            short = tool_events.short_name(block.name)
+                            tool_use_names[tid] = short
+                            yield tool_events.format_call(
+                                short, getattr(block, "input", None),
+                            )
+                    continue
+
+                # --- Tool results: emit a line only on error. Success is
+                #     implicit (the call line was already shown).
+                if isinstance(message, UserMessage):
+                    for block in getattr(message, "content", []) or []:
+                        if isinstance(block, ToolResultBlock):
+                            if not bool(getattr(block, "is_error", False)):
+                                continue
+                            tid = getattr(block, "tool_use_id", "") or ""
+                            tool_name = tool_use_names.get(tid, "tool")
+                            yield tool_events.format_error(tool_name)
+                    continue
+
+                # --- Final aggregate (fallback if partials are missing) ---
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
         except Exception as exc:  # noqa: BLE001
@@ -321,3 +336,5 @@ class ClaudeRuntime:
         async for chunk in self.stream(prompt):
             pieces.append(chunk)
         return "".join(pieces)
+
+
