@@ -5,6 +5,6 @@ with a polished web UI. See README.md.
 """
 from __future__ import annotations
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 from .factory import build_agent  # noqa: E402,F401  (public re-export)
