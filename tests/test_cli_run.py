@@ -1,24 +1,22 @@
 """Surface-level tests for `hubzoid run` CLI flags.
 
-We don't actually start the bridge or OWUI here. We use Typer's CliRunner
-against --help to confirm the option is exposed, and inspect the function
-signature to confirm the default.
+We don't actually start the bridge or OWUI here. We inspect the command's
+option declarations and function signature to confirm flags are exposed and
+have the right defaults.
 """
 from __future__ import annotations
 
 import inspect
 
-from typer.testing import CliRunner
-
 from hubzoid import cli
 
 
-def test_run_help_lists_host_flag():
-    runner = CliRunner()
-    # Pin a wide terminal so Rich doesn't truncate the option-name column.
-    result = runner.invoke(cli.app, ["run", "--help"], env={"COLUMNS": "200"})
-    assert result.exit_code == 0
-    assert "--host" in result.output
+def test_run_exposes_host_flag():
+    # Inspect the option declaration directly rather than scraping Rich-rendered
+    # --help text: that output is ANSI-styled and terminal-width dependent, so the
+    # literal "--host" substring isn't reliably present across Rich/Typer versions.
+    opt = inspect.signature(cli.run).parameters["host"].default
+    assert "--host" in opt.param_decls
 
 
 def test_run_host_defaults_to_loopback():
