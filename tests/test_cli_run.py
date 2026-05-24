@@ -15,7 +15,8 @@ from hubzoid import cli
 
 def test_run_help_lists_host_flag():
     runner = CliRunner()
-    result = runner.invoke(cli.app, ["run", "--help"])
+    # Pin a wide terminal so Rich doesn't truncate the option-name column.
+    result = runner.invoke(cli.app, ["run", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
     assert "--host" in result.output
 
