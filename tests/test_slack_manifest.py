@@ -19,6 +19,22 @@ MINIMAL = FIXTURES / "minimal_hub"
 # ---------------------------------------------------------------------------
 # manifest_for_hub
 # ---------------------------------------------------------------------------
+def test_manifest_warns_when_description_exceeds_144_chars(tmp_path):
+    from unittest.mock import patch
+    import hubzoid.slack.manifest as mod
+
+    hub = tmp_path / "alpha"
+    hub.mkdir()
+    long_desc = "A" * 200
+    (hub / "AGENTS.md").write_text(
+        f"---\nname: a\ndescription: {long_desc}\n---\n\nbody\n"
+    )
+    with patch.object(mod.log, "warning") as mock_warn:
+        manifest_for_hub(hub)
+    mock_warn.assert_called_once()
+    assert 144 in mock_warn.call_args[0]
+
+
 def test_manifest_for_hub_uses_main_agent_name(tmp_path):
     hub = tmp_path / "alpha"
     hub.mkdir()
