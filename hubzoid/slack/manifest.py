@@ -11,12 +11,18 @@ AGENTS.md frontmatter so the operator does not have to copy fields by hand.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 
 from ..loaders import agents as agents_loader
+
+log = logging.getLogger("hubzoid.slack.manifest")
+
+# Slack rejects manifests where description / assistant_description exceed 144 chars.
+_SLACK_DESC_LIMIT = 144
 
 
 ManifestFormat = Literal["json", "yaml"]
@@ -61,6 +67,18 @@ def manifest_for_hub(hub_dir: Path, *, format: ManifestFormat = "json") -> str:
     to the hub folder name if AGENTS.md is malformed.
     """
     name, description, suggestions = _read_agent_meta(hub_dir)
+
+    try:
+        if len(description) > _SLACK_DESC_LIMIT:
+            log.warning(
+                "description in %s/AGENTS.md is %d characters — Slack's limit is %d. "
+                "Shorten it to avoid manifest submission errors.",
+                hub_dir,
+                len(description),
+                _SLACK_DESC_LIMIT,
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     assistant_view: dict[str, Any] = {
         "assistant_description": description,
