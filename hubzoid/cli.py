@@ -239,13 +239,14 @@ def run(
                 suggestions = []
                 main_name = _read_main_agent_name(hub)
 
-            # WEBUI_NAME cascade: operator .env -> MODEL_LABEL -> main
-            # agent's name -> "Hubzoid" (final fallback so it never reads
-            # as bare "Open WebUI" to a customer).
+            # Display-name cascade: the agent's name: from AGENTS.md wins,
+            # then the operator's WEBUI_NAME, then "Hubzoid" (final fallback
+            # so it never reads as bare "Open WebUI" to a customer). Anchoring
+            # on the agent name keeps the login page, the sidebar, and the
+            # chat-center model label all showing the same hub name.
             resolved_webui_name = (
-                settings.webui_name
-                or settings.model_label
-                or main_name
+                main_name
+                or settings.webui_name
                 or "Hubzoid"
             )
 
@@ -511,7 +512,12 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # MODEL=anthropic/claude-haiku-4-5
 
 # --- Branding / UI ---------------------------------------------------------
-WEBUI_NAME=Hubzoid Guide
+# WEBUI_NAME=                   # Login page, sidebar, and chat title. Leave
+                                # blank to use the agent's `name:` from
+                                # AGENTS.md, so all three read the same hub
+                                # name. Set this only to override with a
+                                # different display brand. Final fallback when
+                                # neither is set: "Hubzoid".
 # Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
 # RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
 # DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
