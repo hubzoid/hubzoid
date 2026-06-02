@@ -17,6 +17,12 @@ dist/
 # Open WebUI per hub state
 .openwebui-data/
 
+# Per-hub chat/runtime state (uploads, per-chat artifacts)
+.hubzoid/
+
+# Shared Open WebUI state created in cwd by `hubzoid gateway`
+.hubzoid-gateway/
+
 # Per session hub outputs
 **/output/
 
@@ -30,3 +36,5 @@ dist/
 # demo-hub/branding/*.png and hubzoid/templates/starter/branding/*.png
 # are NOT excluded.
 /demo-hub-*.png
+/manual-*.png
+/*-snap.yml

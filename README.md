@@ -293,7 +293,7 @@ vars for every provider: [docs/auth.md](docs/auth.md).
 
 ## Deploying to production
 
-`hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Set `HUBZOID_PUBLIC_URL=https://your.host` in `<hub>/.env` so `write_artifact` download links resolve. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
+`hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Only the one Open WebUI port needs to be exposed — the built-in edge router serves artifact downloads (`/artifacts`) off the loopback bridge through that same port, so set `HUBZOID_PUBLIC_URL=https://your.host` in `<hub>/.env` and download links just work. Running a hub per team on one box? `hubzoid gateway` puts them behind a single Open WebUI. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
 
 ## Slack chat surface
 
@@ -323,12 +323,27 @@ hubzoid init [NAME]              Scaffold a new hub folder under the current dir
                                      tiny runnable hub. "demo" = full guided tour
                                      with the Hubzoid Guide agent.
 hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a hub.
-  --port INT                       Open WebUI port (default 3080).
-  --bridge-port INT                FastAPI bridge port (default 8000).
-  --no-ui                          Bridge only, no Open WebUI.
+                                   An edge router binds the public port and serves
+                                   /artifacts off the bridge, so download links work
+                                   behind one exposed port (set HUBZOID_DISABLE_EDGE=1
+                                   to opt out).
+  --port INT                       Public Open WebUI port (default 3080).
+  --bridge-port INT                FastAPI bridge port (default 8000, loopback).
+  --no-ui                          Bridge only, no Open WebUI / edge.
   --slack, -s                      Also start the Slack adapter inline.
                                      Soft-warns if SLACK_BOT_TOKEN / SLACK_APP_TOKEN
                                      are missing; bridge + UI still come up.
+hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges
+                                   (one --no-ui bridge per hub; each is a selectable
+                                   model). Lighter than one `run` per hub; gate access
+                                   with Open WebUI Groups. See docs/DEPLOYING.md.
+  --port INT                       Public port (default 3080).
+  --public-url URL                 Base URL for per-hub artifact download links.
+  --no-bridges                     Front bridges already running as separate units.
+hubzoid knowledge plan [PATH]    Pull source repos and list commits to fold into knowledge.
+hubzoid knowledge refresh [PATH] Update knowledge/ from new commits via claude /goal.
+hubzoid knowledge status [PATH]  Show the per-repo sync cursor and pending count.
+                                   See docs/knowledge.md.
 hubzoid doctor [PATH]            Validate hub config and report issues.
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.

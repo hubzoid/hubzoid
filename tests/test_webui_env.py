@@ -109,6 +109,38 @@ def test_generation_flags_default_off(captured_env, tmp_path, flag, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# Slim runtime: never load the local ~500MB embedding model.
+# Setting RAG_EMBEDDING_ENGINE to a non-empty value makes OWUI skip the
+# local SentenceTransformers load entirely. hubzoid strips OWUI's RAG, so
+# the engine is never actually contacted — this purely frees the RAM.
+# ---------------------------------------------------------------------------
+def test_rag_embedding_engine_default_offloaded(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("RAG_EMBEDDING_ENGINE", raising=False)
+    env = _start(captured_env, tmp_path)
+    # Non-empty => local all-MiniLM-L6-v2 is never loaded into the process.
+    assert env["RAG_EMBEDDING_ENGINE"] == "openai"
+
+
+def test_audio_stt_engine_default_webapi(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("AUDIO_STT_ENGINE", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["AUDIO_STT_ENGINE"] == "webapi"
+
+
+def test_offline_mode_default_on(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("OFFLINE_MODE", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["OFFLINE_MODE"] == "True"
+
+
+def test_operator_can_re_enable_local_embeddings(captured_env, tmp_path, monkeypatch):
+    # Empty string is the OWUI signal to load the local model; operator wins.
+    monkeypatch.setenv("RAG_EMBEDDING_ENGINE", "")
+    env = _start(captured_env, tmp_path)
+    assert env["RAG_EMBEDDING_ENGINE"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Operator override wins
 # ---------------------------------------------------------------------------
 def test_operator_env_overrides_default(captured_env, tmp_path, monkeypatch):

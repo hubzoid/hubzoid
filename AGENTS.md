@@ -14,7 +14,10 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 | `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
-| `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models`. |
+| `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
+| `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |
+| `gateway.py` | Plans one shared Open WebUI over many hub bridges (`hubzoid gateway`). |
+| `knowledge_sync.py` | Git-cursor engine behind `hubzoid knowledge` (enumerate commits → worklist → claude /goal worker updates `knowledge/`). |
 | `cli.py` | Typer-based CLI. |
 | `factory.py` | `build_agent(hub_dir)`. composes everything. |
 

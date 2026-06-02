@@ -2,7 +2,9 @@
 
 Commands:
   hubzoid init [PATH]              Scaffold a hub from the bundled template.
-  hubzoid run [PATH]               Start FastAPI bridge + Open WebUI for a hub.
+  hubzoid run [PATH]               Start FastAPI bridge + edge + Open WebUI for a hub.
+  hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges.
+  hubzoid knowledge ...            Refresh a hub's knowledge/ from source commits.
   hubzoid slack run [PATH]         Start the Slack adapter (Socket Mode).
   hubzoid slack manifest [PATH]    Print a Slack App Manifest YAML.
   hubzoid slack systemd [PATH]     Print a systemd unit template.
@@ -15,6 +17,7 @@ Path defaults to `.` (the current directory) everywhere.
 from __future__ import annotations
 
 import importlib.resources as resources
+import json
 import os
 import shutil
 import signal
@@ -218,6 +221,7 @@ def run(
     console.print("[green]→ bridge[/green]  ready")
 
     ui_proc = None
+    edge_proc = None
     if not no_ui:
         try:
             from . import branding, webui
@@ -250,27 +254,62 @@ def run(
                 or "Hubzoid"
             )
 
+            # The edge router (hubzoid/edge.py) binds the PUBLIC port and
+            # routes /artifacts -> bridge, everything else -> Open WebUI, so
+            # artifact download links work behind a single exposed port (the
+            # report-download fix; the bridge port need not be exposed). When
+            # the edge is on, OWUI moves to a loopback internal port and the
+            # edge takes the public bind. Opt out with HUBZOID_DISABLE_EDGE=1.
+            edge_enabled = os.environ.get("HUBZOID_DISABLE_EDGE", "").lower() not in ("1", "true", "yes")
+            owui_port = _owui_internal_port(ui_port) if edge_enabled else ui_port
+            owui_host = "127.0.0.1" if edge_enabled else host
+
             ui_proc = webui.start(
                 hub_dir=hub,
                 bridge_port=br_port,
-                ui_port=ui_port,
-                ui_host=host,
+                ui_port=owui_port,
+                ui_host=owui_host,
                 api_key=settings.first_api_key,
                 model_label=settings.model_label or main_name,
                 webui_name=resolved_webui_name,
                 suggestions=suggestions,
             )
             log_path = getattr(ui_proc, "_log_path", None)
-            console.print(f"[cyan]→ webui [/cyan]  starting (first run takes 1-2 min while it downloads its embedding model)")
+            console.print(f"[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
             if log_path:
                 console.print(f"            log: {log_path}")
-            # Probe via localhost regardless of bind address (0.0.0.0 isn't a routable target).
+
+            # Wait for OWUI on its (now possibly internal) bind before fronting it.
+            owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
+            owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
+
             probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
             display_url = f"http://{host}:{ui_port}"
-            if _wait_for(f"http://{probe_host}:{ui_port}/", timeout=240):
-                console.print(f"[green]→ webui [/green]  ready    {display_url}")
+            if edge_enabled:
+                # Start the public-facing edge router in front of bridge + OWUI.
+                edge_env = os.environ.copy()
+                edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
+                edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps([
+                    {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"}
+                ])
+                edge_cmd = [
+                    sys.executable, "-m", "uvicorn",
+                    "hubzoid.edge:_factory", "--factory",
+                    "--host", host, "--port", str(ui_port),
+                    "--log-level", settings.log_level,
+                ]
+                console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  (/artifacts → bridge :{br_port}, else → owui :{owui_port})")
+                edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+                edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
+                if owui_ready and edge_ready and edge_proc.poll() is None:
+                    console.print(f"[green]→ webui [/green]  ready    {display_url}")
+                else:
+                    console.print(f"[yellow]→ webui [/yellow]  did not become ready in time; check log above. URL: {display_url}")
             else:
-                console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
+                if owui_ready:
+                    console.print(f"[green]→ webui [/green]  ready    {display_url}")
+                else:
+                    console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
         except FileNotFoundError as exc:
             console.print(f"[yellow]{exc}[/yellow]")
             console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
@@ -291,7 +330,7 @@ def run(
 
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
-        for p in (ui_proc, slack_proc, bridge_proc):
+        for p in (edge_proc, ui_proc, slack_proc, bridge_proc):
             if p is not None and p.poll() is None:
                 p.terminate()
         sys.exit(0)
@@ -302,8 +341,142 @@ def run(
     try:
         bridge_proc.wait()
     finally:
-        for p in (ui_proc, slack_proc):
+        for p in (edge_proc, ui_proc, slack_proc):
             if p is not None and p.poll() is None:
+                p.terminate()
+
+
+# ---------------------------------------------------------------------------
+# gateway — one Open WebUI fronting many hub bridges
+# ---------------------------------------------------------------------------
+@app.command()
+def gateway(
+    hubs: list[Path] = typer.Argument(..., help="Hub directories to front with one shared Open WebUI."),
+    port: int = typer.Option(None, "--port", help="Public port the shared UI is reached on. Default: 3080 (or PORT env)."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface the public edge binds to. Use 0.0.0.0 to expose."),
+    public_url: str = typer.Option(None, "--public-url", help="Public base URL (e.g. https://hub.example.com); used to build per-hub artifact download links. Falls back to HUBZOID_PUBLIC_URL."),
+    name: str = typer.Option("Hubzoid", "--name", help="Shared Open WebUI display name."),
+    data_dir: Path = typer.Option(None, "--data-dir", help="Shared Open WebUI state dir. Default: ./.hubzoid-gateway."),
+    launch_bridges: bool = typer.Option(True, "--launch-bridges/--no-bridges", help="Launch each hub's headless bridge. --no-bridges fronts bridges already running as separate units."),
+) -> None:
+    """Run ONE Open WebUI over many hubs — one headless bridge per hub.
+
+    Lighter than one `hubzoid run` per hub (a single OWUI process instead of
+    N). Each hub surfaces as a selectable model; gate per-team access with
+    OWUI Groups + per-model Private ACL. Artifact downloads route per hub via
+    `/b/<slug>/artifacts`. See docs/DEPLOYING.md.
+    """
+    from . import gateway as gateway_lib
+    from . import webui
+
+    hub_dirs = [h.resolve() for h in hubs]
+    for h in hub_dirs:
+        if not (h / "AGENTS.md").is_file():
+            console.print(f"[red]Not a hub (no AGENTS.md):[/red] {h}")
+            raise typer.Exit(2)
+
+    try:
+        gp = gateway_lib.plan(hub_dirs)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
+
+    ui_port = port or int(os.environ.get("PORT", "3080"))
+    pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
+    gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
+    log_level = os.environ.get("HUB_LOG_LEVEL", "info")
+
+    procs: list[subprocess.Popen] = []
+
+    # 1. Launch each hub's headless bridge (unless they already run elsewhere).
+    if launch_bridges:
+        for b in gp.backends:
+            bridge_env = os.environ.copy()
+            # Per-hub public base so this bridge's artifact links resolve
+            # through the edge back to itself. Only injected when the hub's
+            # own .env doesn't already pin HUBZOID_PUBLIC_URL.
+            if pub:
+                bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
+            cmd = [
+                sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
+                "--no-ui", "--bridge-port", str(b.bridge_port),
+            ]
+            procs.append(subprocess.Popen(cmd, env=bridge_env))
+            console.print(f"[cyan]→ bridge[/cyan]  {b.slug}  http://127.0.0.1:{b.bridge_port}")
+
+    # 2. Wait for every bridge to be healthy.
+    for b in gp.backends:
+        if not _wait_for(f"http://127.0.0.1:{b.bridge_port}/healthz", timeout=60):
+            console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up[/red]")
+            for p in procs:
+                p.terminate()
+            raise typer.Exit(1)
+    console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
+
+    # 3. One shared Open WebUI, on a loopback internal port behind the edge.
+    edge_enabled = os.environ.get("HUBZOID_DISABLE_EDGE", "").lower() not in ("1", "true", "yes")
+    owui_port = _owui_internal_port(ui_port) if edge_enabled else ui_port
+    owui_host = "127.0.0.1" if edge_enabled else host
+    try:
+        owui_proc = webui.start_gateway(
+            data_dir=gw_data,
+            ui_port=owui_port,
+            ui_host=owui_host,
+            connection_env=gp.connection_env(),
+            webui_name=name,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        for p in procs:
+            p.terminate()
+        raise typer.Exit(1)
+    procs.append(owui_proc)
+    log_path = getattr(owui_proc, "_log_path", None)
+    console.print(f"[cyan]→ webui [/cyan]  shared, fronting {len(gp.backends)} hubs (first run downloads nothing — embedding model is off)")
+    if log_path:
+        console.print(f"            log: {log_path}")
+    owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
+    owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
+
+    # 4. The public edge: per-hub artifact prefixes -> bridges, rest -> OWUI.
+    edge_proc = None
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    display_url = f"http://{host}:{ui_port}"
+    if edge_enabled:
+        edge_env = os.environ.copy()
+        edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
+        edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gp.edge_routes())
+        edge_cmd = [
+            sys.executable, "-m", "uvicorn",
+            "hubzoid.edge:_factory", "--factory",
+            "--host", host, "--port", str(ui_port),
+            "--log-level", log_level,
+        ]
+        edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+        procs.append(edge_proc)
+        edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
+        if owui_ready and edge_ready:
+            console.print(f"[green]→ gateway[/green]  ready    {display_url}")
+        else:
+            console.print(f"[yellow]→ gateway[/yellow]  not fully ready; check logs. URL: {display_url}")
+    else:
+        console.print(f"[green]→ gateway[/green]  ready    {display_url}" if owui_ready else f"[yellow]→ gateway[/yellow]  OWUI not ready; check logs.")
+
+    def _shutdown(signum, frame):  # noqa: ARG001
+        console.print("\n[cyan]shutting down gateway...[/cyan]")
+        for p in reversed(procs):
+            if p.poll() is None:
+                p.terminate()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+    # Block on the shared OWUI; its exit ends the gateway.
+    try:
+        owui_proc.wait()
+    finally:
+        for p in procs:
+            if p is not owui_proc and p.poll() is None:
                 p.terminate()
 
 
@@ -471,6 +644,161 @@ app.add_typer(
 
 
 # ---------------------------------------------------------------------------
+# knowledge — refresh <hub>/knowledge/ from source commits via claude /goal
+# ---------------------------------------------------------------------------
+knowledge_app = typer.Typer(
+    help="Keep a hub's knowledge/ docs in step with its source code.",
+    no_args_is_help=True,
+)
+
+
+_WORKER_PROMPT = """/goal `hubzoid knowledge pending {hub}` reports 0 pending commits
+
+You maintain the markdown docs in {hub}/knowledge/ so they reflect the source
+code under {hub}/raw_data/. Clear the pending commit worklist:
+
+1. Run: hubzoid knowledge pending {hub} --format json
+2. For each pending commit, inspect its diff in the owning repo under
+   {hub}/raw_data/ (git -C <repo> show <sha>), decide which knowledge/*.md
+   files it affects, and update them so they stay accurate. Preserve each
+   doc's frontmatter. A commit that needs no knowledge change is fine.
+3. After handling a commit, mark it: hubzoid knowledge mark-done {hub} <sha>
+4. Repeat until `hubzoid knowledge pending {hub}` is empty.
+
+Only edit files under {hub}/knowledge/. Do not git-commit; a human reviews the
+diff afterward.
+"""
+
+
+def _invoke_worker(hub: Path) -> int:
+    """Run one headless claude /goal session over the pending worklist.
+
+    Module-level so tests can patch it. The /goal keeps the session working
+    until nothing is pending; the caller loops fresh sessions for resilience.
+
+    Headless autonomy: `--permission-mode acceptEdits` auto-applies the doc
+    edits, and `--allowedTools` lets it run the `hubzoid knowledge` verbs +
+    `git show` to read diffs without an interactive prompt. The job is scoped
+    to the hub via `--add-dir`, and the prompt restricts edits to knowledge/.
+    Operators who want a tighter allowlist can narrow these.
+    """
+    prompt = _WORKER_PROMPT.format(hub=str(hub))
+    return subprocess.run([
+        "claude", "-p", prompt,
+        "--add-dir", str(hub),
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Read", "Edit", "Write", "Bash",
+    ]).returncode
+
+
+@knowledge_app.command("plan")
+def knowledge_plan(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`; use the checked-out source as-is."),
+) -> None:
+    """Pull source repos and build the commit worklist (no LLM)."""
+    from . import knowledge_sync as ks
+    hub = hub.resolve()
+    commits, _ = ks.build_worklist(hub, pull=not no_pull)
+    repos = sorted({c.repo for c in commits})
+    console.print(f"[green]{len(commits)}[/green] commit(s) to fold into knowledge across {len(repos)} repo(s): {', '.join(repos) or '—'}")
+
+
+@knowledge_app.command("pending")
+def knowledge_pending(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    format: str = typer.Option("text", "--format", help="text or json."),
+) -> None:
+    """List commits still to be folded into knowledge (used by the worker)."""
+    from . import knowledge_sync as ks
+    pend = ks.SyncState(hub.resolve()).pending()
+    if format.lower() == "json":
+        import json as _json
+        typer.echo(_json.dumps([{"repo": c.repo, "sha": c.sha, "subject": c.subject} for c in pend]))
+        return
+    for c in pend:
+        typer.echo(f"{c.repo} {c.sha[:10]} {c.subject}")
+    if not pend:
+        typer.echo("")  # empty => the /goal condition is satisfied
+
+
+@knowledge_app.command("mark-done")
+def knowledge_mark_done(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    shas: list[str] = typer.Argument(..., help="Commit SHAs that have been folded in."),
+) -> None:
+    """Mark commits handled (called by the worker after updating docs)."""
+    from . import knowledge_sync as ks
+    n = ks.SyncState(hub.resolve()).mark_done(shas)
+    console.print(f"marked {n} commit(s) done")
+
+
+@knowledge_app.command("status")
+def knowledge_status(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+) -> None:
+    """Show the per-repo cursor and how many commits are pending."""
+    from . import knowledge_sync as ks
+    state = ks.SyncState(hub.resolve())
+    cursor = state.cursor()
+    pend = state.pending()
+    console.print(f"pending: {len(pend)}")
+    for repo, sha in cursor.items():
+        console.print(f"  {repo}: synced @ {sha[:10]}")
+
+
+@knowledge_app.command("refresh")
+def knowledge_refresh(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    max_rounds: int = typer.Option(10, "--max-rounds", help="Max fresh claude sessions before giving up."),
+    no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`."),
+) -> None:
+    """Refresh knowledge from new commits via looped claude /goal sessions.
+
+    Builds the worklist, then runs fresh `claude -p` /goal sessions until the
+    worklist is clear (each session has a clean context, so a single one
+    hitting a limit never drops commits). Advances the cursor only when every
+    commit is done. Review the diff and restart the hub afterward.
+    """
+    from . import knowledge_sync as ks
+    hub = hub.resolve()
+    state = ks.SyncState(hub)
+    commits, heads = ks.build_worklist(hub, pull=not no_pull)
+    if not commits:
+        state.advance_cursor(heads)
+        console.print("[green]knowledge already up to date.[/green]")
+        return
+
+    repos = sorted({c.repo for c in commits})
+    console.print(f"[cyan]{len(commits)}[/cyan] commit(s) across {len(repos)} repo(s) → folding into knowledge")
+    rounds = 0
+    while state.pending() and rounds < max_rounds:
+        rounds += 1
+        before = len(state.pending())
+        console.print(f"[cyan]round {rounds}[/cyan]: {before} pending → claude /goal session")
+        _invoke_worker(hub)
+        after = len(state.pending())
+        if after >= before:
+            console.print(f"[yellow]no progress ({after} still pending); stopping to avoid a loop.[/yellow]")
+            break
+
+    if state.is_complete():
+        state.advance_cursor(state.worklist_heads())
+        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] Review the diff, commit, and restart the hub.")
+    else:
+        console.print(f"[yellow]{len(state.pending())} commit(s) still pending; cursor NOT advanced. Re-run to continue.[/yellow]")
+        raise typer.Exit(1)
+
+
+app.add_typer(
+    knowledge_app,
+    name="knowledge",
+    help="Keep a hub's knowledge/ docs in step with its source code.",
+    rich_help_panel="Commands",
+)
+
+
+# ---------------------------------------------------------------------------
 # version
 # ---------------------------------------------------------------------------
 @app.command()
@@ -495,6 +823,12 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # MODEL=claude-local/sonnet     # explicit; same as bare `claude-local`
 # MODEL=claude-local/opus       # opt in to Opus
 # MODEL=claude-local/haiku      # opt in to Haiku (~3x faster TTFT, but tends to ask before executing documented workflows)
+
+# Headless / server (no interactive `claude login` on the box): paste a
+# subscription token minted with `claude setup-token`. It is NOT an API key
+# and is NOT billed per-token — usage draws on your Pro/Max subscription.
+# The `claude` CLI reads it automatically. See docs/DEPLOYING.md §5b.
+# CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 
 # --- OpenRouter (one key, many models) -------------------------------------
 # OPENROUTER_API_KEY=
@@ -698,6 +1032,20 @@ def _available_templates() -> list[str]:
     if not root.exists():
         return []
     return sorted(p.name for p in root.iterdir() if p.is_dir())
+
+
+def _owui_internal_port(ui_port: int) -> int:
+    """Loopback port Open WebUI binds to when the edge router fronts it.
+
+    The edge takes the public `ui_port`; OWUI moves here. Deterministic so
+    ops can reason about it, overridable via HUBZOID_OWUI_PORT. The +40000
+    offset keeps it clear of the operator's PORT range (typically ~3080).
+    """
+    override = os.environ.get("HUBZOID_OWUI_PORT")
+    if override and override.isdigit() and 0 < int(override) <= 65535:
+        return int(override)
+    candidate = ui_port + 40000
+    return candidate if candidate <= 65000 else ui_port + 1
 
 
 def _wait_for(url: str, timeout: float = 60.0) -> bool:
