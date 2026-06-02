@@ -79,9 +79,13 @@ $EDITOR .env
 
 Required for production:
 
-- `MODEL=` set to a portable provider with an API key. `MODEL=claude-local`
-  works only on a logged-in developer laptop; it does not work in
-  non-interactive prod.
+- `MODEL=` — either a portable hosted provider with an API key
+  (`MODEL=anthropic/claude-haiku-4-5` + `ANTHROPIC_API_KEY`,
+  `MODEL=openrouter/...` + `OPENROUTER_API_KEY`, etc.), **or**
+  `MODEL=claude-local` to run on your Claude Pro/Max **subscription** with no
+  per-token API billing. `claude-local` works in non-interactive prod via a
+  long-lived subscription token — no interactive laptop login required. See
+  [§5b "Running claude-local in production"](#5b-running-claude-local-in-production-subscription-no-api-key).
 - `WEBUI_AUTH=true` plus the auth block from
   [docs/auth.md](auth.md).
 - `WEBUI_SECRET_KEY=` set to a random 32-char value (`openssl rand -hex 32`).
@@ -112,7 +116,10 @@ User=hubzoid
 Group=hubzoid
 WorkingDirectory=/opt/hubzoid/agents
 ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run %i
-Restart=on-failure
+# claude-local shells out to the `claude` CLI; the systemd default PATH
+# excludes ~/.local/bin, so name it here. Harmless for API-key hubs.
+Environment=PATH=/opt/hubzoid/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
 RestartSec=10s
 TimeoutStopSec=30
 StandardOutput=journal
@@ -121,8 +128,11 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/hubzoid/agents
-ProtectHome=true
+# /opt/hubzoid (the service user's home) must be writable: hubs keep state
+# under agents/, and claude-local writes session/cache under ~/.claude.
+ReadWritePaths=/opt/hubzoid
+# NOTE: do NOT enable ProtectHome here — hiding ~/.claude breaks
+# MODEL=claude-local (the CLI can't read its token/config). Left off on purpose.
 ProtectKernelTunables=true
 ProtectKernelModules=true
 RestrictSUIDSGID=true
@@ -149,6 +159,51 @@ Live logs:
 ```bash
 journalctl -u hubzoid@devops-agent -f
 ```
+
+### 5b. Running claude-local in production (subscription, no API key)
+
+`MODEL=claude-local` runs inference on your Claude Pro/Max **subscription**
+instead of a metered API key. It works headless — no interactive laptop
+login — via a long-lived subscription token:
+
+1. On any machine logged into your Claude subscription, mint a token:
+
+   ```bash
+   claude setup-token        # prints a ~1-year OAuth token (sk-ant-oat01-…)
+   ```
+
+   This is **not** an API key (`sk-ant-api03-…`) and is **not** billed
+   per-token — usage draws on your subscription's limits. Treat it as a
+   secret; rotate by re-running `claude setup-token`.
+
+2. Put it in the hub's `.env` (already `chmod 600`) next to the model:
+
+   ```bash
+   MODEL=claude-local
+   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-…
+   ```
+
+   hubzoid loads `.env` into the environment, and the `claude` CLI it shells
+   out to reads `CLAUDE_CODE_OAUTH_TOKEN` automatically. Nothing is passed on
+   the command line, and no `claude login` is needed on the box.
+
+3. The shipped `hubzoid@.service` is already claude-local-ready (PATH set,
+   `ReadWritePaths=/opt/hubzoid`, no `ProtectHome`). Two prerequisites the
+   default hardening would otherwise break, called out so you can verify:
+
+   - The `claude` CLI must be **installed for the service user and on the
+     unit's PATH** (the `Environment=PATH=` line in the unit). Install it as
+     the `hubzoid` user: `sudo -iu hubzoid` then your usual Claude Code
+     install, and confirm `which claude` resolves under `~/.local/bin` or
+     `/usr/local/bin`.
+   - `claude` writes session/cache under `$HOME/.claude`, so the service
+     user's home must be writable (`ReadWritePaths=/opt/hubzoid`) and not
+     hidden (`ProtectHome` left unset).
+
+The token lasts ~1 year; re-mint when it expires. Heavy automated use shares
+your subscription's rate limits with interactive Claude Code use — if latency
+or limits bite, `MODEL=claude-local/haiku` is ~3× faster TTFT, or switch that
+hub to a metered API-key provider.
 
 ### 6. Reverse proxy + TLS (optional, recommended)
 
@@ -291,7 +346,7 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 
 | Symptom | Check |
 |---|---|
-| `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the OWUI ready line. First boot can take 1-2 min while the embedding model is fetched. |
+| `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the OWUI ready line. hubzoid disables Open WebUI's local embedding model, so boot is quick (tens of seconds), not the minutes it would take while fetching that model. |
 | Boot fails with `WEBUI_AUTH=true requires WEBUI_SECRET_KEY` | Hubzoid is refusing to start with an unsafe config; set the key in `.env`. |
 | Boot fails with `OAuth client IDs are set but WEBUI_URL is not` | Set `WEBUI_URL=https://your.host` in `.env`. |
 | TLS certificate never issues | DNS for the hostname is not yet propagated, or the box can't reach the certificate issuer; check your reverse proxy's logs (e.g. `journalctl -u caddy`, `/var/log/nginx/error.log`). |
@@ -299,12 +354,52 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 | User chats vanish after upgrade | `webui.db` schema migration ran; restore from the pre-upgrade backup and report. |
 | Slack adapter loops on restart | `journalctl -u hubzoid-slack@<name>` — usually a missing token or a stale bot token after re-installing the app. See [docs/slack.md](slack.md). |
 
+## Multi-hub on one Open WebUI (`hubzoid gateway`)
+
+`hubzoid run` is one Open WebUI per hub — full isolation, but N heavy OWUI
+processes. When you have a hub per team (IRS, GPMS, …) on one box, want them
+**light**, share branding, and need per-team *access* (not per-team URLs),
+run one shared Open WebUI over many headless bridges instead:
+
+```bash
+hubzoid gateway irs-agent gpms-agent finance-agent \
+  --host 0.0.0.0 --port 3080 \
+  --public-url https://hub.example.com
+```
+
+This launches one headless bridge per hub (`hubzoid run <hub> --no-ui`, each
+on its hub's `BRIDGE_PORT` — keep them unique), then one Open WebUI connected
+to all of them, fronted by the edge router. Each hub becomes a selectable
+model. If the bridges already run as their own systemd units, add
+`--no-bridges` so the gateway only starts the shared UI.
+
+**Per-team access (RBAC).** One OWUI, but each team sees only its agent:
+
+1. Turn on auth (`WEBUI_AUTH=true` + the block from [docs/auth.md](auth.md))
+   on the gateway — set these in the environment the `hubzoid gateway`
+   process inherits.
+2. In **Admin Panel → Users → Groups**, create a group per team (`IRS`,
+   `GPMS`, …) and add members.
+3. In **Workspace → Models**, open each agent's model, set **Access Control
+   → Private**, and assign its team's group. Users outside the group won't
+   see it. (Leave `BYPASS_MODEL_ACCESS_CONTROL` at its default `False`.)
+
+These ACLs live in the shared OWUI database, so they survive restarts
+independently of `ENABLE_PERSISTENT_CONFIG`.
+
+**Artifact downloads** route per hub: each bridge advertises
+`<public-url>/b/<hub-slug>` so its download links come back through the edge
+to the right bridge. Leave `HUBZOID_PUBLIC_URL` unset in each hub's `.env`
+when using the gateway — `--public-url` injects the per-hub value. (Hard
+per-team URL isolation — separate login realms — still needs separate
+instances; the gateway shares one login surface by design.)
+
 ## Path B: Docker
 
 If `pip install hubzoid` fails on your target OS (PyAV build issues,
 Python-version traps, missing system libraries), build the Docker image
-from the `Dockerfile` at the repo root and run it instead. The image
-pre-bakes the Open WebUI embedding model so first boot is fast.
+from the `Dockerfile` at the repo root and run it instead. hubzoid disables
+Open WebUI's local embedding model, so first boot is fast regardless.
 
 ```bash
 docker build --build-arg HUBZOID_VERSION=0.4.0 -t hubzoid:0.4.0 .

@@ -81,6 +81,20 @@ to flip one back on.
 | `SHOW_ADMIN_DETAILS` | Shows admin emails to regular users. |
 | `ENABLE_PERSISTENT_CONFIG` | **Critical, do not flip.** When true, OWUI pins settings to SQLite on first boot and ignores env-var changes forever. Breaks hubzoid's entire env-var-as-source-of-truth model. |
 
+### Slim runtime (3 flags)
+
+Open WebUI loads a local ~500MB embedding model (`all-MiniLM-L6-v2`) at
+startup for its RAG features. hubzoid strips OWUI's RAG entirely and reads
+documents itself, so the embedder is dead weight. These defaults stop it
+loading — and because hubzoid never triggers an OWUI RAG operation, the
+external engine is never actually called, so no key or service is needed.
+
+| Flag | Default | Why |
+|---|---|---|
+| `RAG_EMBEDDING_ENGINE` | `openai` | Any non-empty value makes OWUI skip the local embedding-model load (~500MB RAM saved). hubzoid never calls it. |
+| `OFFLINE_MODE` | `True` | Don't phone HuggingFace for model updates at boot. |
+| `AUDIO_STT_ENGINE` | `webapi` | Browser-side speech-to-text — 0 server RAM. |
+
 ### Workspace permissions off for non-admins (5 flags)
 
 Admin users still see all tabs. These four hide them from regular users.

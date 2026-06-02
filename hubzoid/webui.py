@@ -61,6 +61,22 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS": _OFF,
     "USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS": _OFF,
 
+    # --- Slim runtime: never load the local ~500MB embedding model ------
+    # OWUI loads a local SentenceTransformers model (all-MiniLM-L6-v2,
+    # ~500MB RAM) eagerly at startup whenever RAG_EMBEDDING_ENGINE is empty
+    # — and "never using RAG" does NOT prevent it (it's loaded in main.py's
+    # startup, not lazily). hubzoid strips OWUI's RAG entirely (see
+    # server.py's rewrite_owui_prompt + ENABLE_RAG_WEB_SEARCH off), so the
+    # embedder is dead weight. Setting the engine to a non-empty value makes
+    # OWUI's get_ef() skip the local load; because hubzoid never triggers a
+    # RAG operation, the remote engine is never actually contacted, so no
+    # key/endpoint/service is required. This is the single deterministic
+    # lever (there is no RAG_EMBEDDING_ENGINE=none). Pairs with
+    # ENABLE_PERSISTENT_CONFIG off above so the env value wins every boot.
+    "RAG_EMBEDDING_ENGINE": "openai",        # non-empty => local MiniLM never loads
+    "OFFLINE_MODE": _ON,                     # don't phone HuggingFace for model updates at boot
+    "AUDIO_STT_ENGINE": "webapi",            # browser-side speech-to-text => 0 server RAM
+
     # --- Real UX wins, kept on ------------------------------------------
     "ENABLE_MESSAGE_RATING": _ON,            # thumbs up/down
     "ENABLE_TITLE_GENERATION": _ON,          # auto chat titles
@@ -183,6 +199,69 @@ def start(
     the main agent's AGENTS.md frontmatter (`suggestions:` field).
     `response_watermark` defaults to the hub folder name when None.
     """
+    # Single-hub wiring: one bridge, one model. These OPENAI_* values are
+    # not operator-overridable — they are how hubzoid joins the bridge to
+    # OWUI (applied via direct assignment in _spawn_owui).
+    connection_env = {
+        "OPENAI_API_BASE_URL": f"http://127.0.0.1:{bridge_port}/v1",
+        "OPENAI_API_KEY": api_key,
+        "DEFAULT_MODELS": model_label,
+    }
+    return _spawn_owui(
+        data_dir=hub_dir / ".openwebui-data",
+        ui_host=ui_host,
+        ui_port=ui_port,
+        connection_env=connection_env,
+        webui_name=webui_name,
+        response_watermark=response_watermark or hub_dir.name,
+        suggestions=suggestions,
+    )
+
+
+def start_gateway(
+    *,
+    data_dir: Path,
+    ui_port: int,
+    connection_env: dict[str, str],
+    ui_host: str = "127.0.0.1",
+    webui_name: str | None = None,
+    response_watermark: str | None = None,
+    suggestions: list[str] | None = None,
+) -> subprocess.Popen:
+    """Spawn ONE Open WebUI fronting many bridges (the `hubzoid gateway` path).
+
+    `connection_env` carries OWUI's multi-connection wiring
+    (`OPENAI_API_BASE_URLS` / `OPENAI_API_KEYS`, semicolon-separated) built by
+    `hubzoid.gateway.GatewayPlan.connection_env`. Same strip/branding/auth
+    hardening as `start`; only the connection shape differs.
+    """
+    return _spawn_owui(
+        data_dir=Path(data_dir),
+        ui_host=ui_host,
+        ui_port=ui_port,
+        connection_env=connection_env,
+        webui_name=webui_name,
+        response_watermark=response_watermark or "hubzoid",
+        suggestions=suggestions,
+    )
+
+
+def _spawn_owui(
+    *,
+    data_dir: Path,
+    ui_host: str,
+    ui_port: int,
+    connection_env: dict[str, str],
+    webui_name: str | None,
+    response_watermark: str,
+    suggestions: list[str] | None,
+) -> subprocess.Popen:
+    """Shared Open WebUI launcher for both `start` and `start_gateway`.
+
+    `connection_env` is applied with direct assignment (hubzoid owns the
+    bridge wiring); everything else is `setdefault` so the operator's `.env`
+    wins.
+    """
     # Strip the OWUI "(Open WebUI)" suffix from WEBUI_NAME before launching
     # the subprocess. License-permitted for deployments <50 users / 30 days.
     # Operator can opt out by setting HUBZOID_KEEP_OWUI_SUFFIX=True.
@@ -199,30 +278,23 @@ def start(
             "    pip install open-webui"
         )
 
-    data_dir = hub_dir / ".openwebui-data"
     data_dir.mkdir(parents=True, exist_ok=True)
-
     env = os.environ.copy()
 
-    # 1. Wiring + per-hub state. These are not operator-overridable; they
-    # are how hubzoid joins the bridge to OWUI.
+    # 1. Wiring + per-hub state. Not operator-overridable.
     env["DATA_DIR"] = str(data_dir)
-    env["OPENAI_API_BASE_URL"] = f"http://127.0.0.1:{bridge_port}/v1"
-    env["OPENAI_API_KEY"] = api_key
-    env["DEFAULT_MODELS"] = model_label
+    env.update(connection_env)
 
     # 2. Auth default off for local dev. Operator overrides via .env.
     env.setdefault("WEBUI_AUTH", "False")
 
     # 3. Branding. WEBUI_NAME cascades via the cli's resolver; we just pass
-    # the resolved value. RESPONSE_WATERMARK defaults to the hub folder
-    # name silently (not surfaced in .env; rarely changed).
+    # the resolved value. RESPONSE_WATERMARK defaults silently.
     if webui_name:
         env.setdefault("WEBUI_NAME", webui_name)
-    env.setdefault("RESPONSE_WATERMARK", response_watermark or hub_dir.name)
+    env.setdefault("RESPONSE_WATERMARK", response_watermark)
 
-    # 4. Quick-start prompt suggestions, from AGENTS.md frontmatter.
-    # OWUI expects a JSON array of objects with `content` keys.
+    # 4. Quick-start prompt suggestions. OWUI expects a JSON array of objects.
     if suggestions:
         payload = [{"content": s} for s in suggestions if s]
         env.setdefault("DEFAULT_PROMPT_SUGGESTIONS", json.dumps(payload))
