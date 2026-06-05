@@ -68,12 +68,19 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     # startup, not lazily). hubzoid strips OWUI's RAG entirely (see
     # server.py's rewrite_owui_prompt + ENABLE_RAG_WEB_SEARCH off), so the
     # embedder is dead weight. Setting the engine to a non-empty value makes
-    # OWUI's get_ef() skip the local load; because hubzoid never triggers a
-    # RAG operation, the remote engine is never actually contacted, so no
-    # key/endpoint/service is required. This is the single deterministic
+    # OWUI's get_ef() skip the local load. This is the single deterministic
     # lever (there is no RAG_EMBEDDING_ENGINE=none). Pairs with
     # ENABLE_PERSISTENT_CONFIG off above so the env value wins every boot.
+    #
+    # CAVEAT (broke file attach in v0.4.x): chat never embeds, but OWUI's
+    # process_file embeds every *file upload* through the configured engine
+    # — with engine=openai and no key that's a 401 from api.openai.com and
+    # the file is never marked processed. BYPASS_EMBEDDING_AND_RETRIEVAL
+    # makes process_file extract text only (no vector store, no embedding
+    # call), and at chat time the full file content flows through the same
+    # <context>/<source> template that rewrite_owui_prompt strips anyway.
     "RAG_EMBEDDING_ENGINE": "openai",        # non-empty => local MiniLM never loads
+    "BYPASS_EMBEDDING_AND_RETRIEVAL": _ON,   # uploads: extract text, never embed
     "OFFLINE_MODE": _ON,                     # don't phone HuggingFace for model updates at boot
     "AUDIO_STT_ENGINE": "webapi",            # browser-side speech-to-text => 0 server RAM
 
