@@ -111,14 +111,27 @@ def test_generation_flags_default_off(captured_env, tmp_path, flag, monkeypatch)
 # ---------------------------------------------------------------------------
 # Slim runtime: never load the local ~500MB embedding model.
 # Setting RAG_EMBEDDING_ENGINE to a non-empty value makes OWUI skip the
-# local SentenceTransformers load entirely. hubzoid strips OWUI's RAG, so
-# the engine is never actually contacted — this purely frees the RAM.
+# local SentenceTransformers load entirely. Chat never contacts the engine
+# (hubzoid strips OWUI's RAG), but file *uploads* would — hence the
+# BYPASS_EMBEDDING_AND_RETRIEVAL pairing tested below.
 # ---------------------------------------------------------------------------
 def test_rag_embedding_engine_default_offloaded(captured_env, tmp_path, monkeypatch):
     monkeypatch.delenv("RAG_EMBEDDING_ENGINE", raising=False)
     env = _start(captured_env, tmp_path)
     # Non-empty => local all-MiniLM-L6-v2 is never loaded into the process.
     assert env["RAG_EMBEDDING_ENGINE"] == "openai"
+
+
+def test_bypass_embedding_and_retrieval_default_on(captured_env, tmp_path, monkeypatch):
+    # RAG_EMBEDDING_ENGINE="openai" (above) frees the MiniLM RAM, but OWUI's
+    # process_file still embeds every *file upload* through that engine —
+    # with no key configured that's a 401 from api.openai.com and the file
+    # is never marked processed. Bypass skips upload-time embedding entirely;
+    # full file content flows through the same <context>/<source> template
+    # that rewrite_owui_prompt already strips.
+    monkeypatch.delenv("BYPASS_EMBEDDING_AND_RETRIEVAL", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["BYPASS_EMBEDDING_AND_RETRIEVAL"] == "True"
 
 
 def test_audio_stt_engine_default_webapi(captured_env, tmp_path, monkeypatch):
