@@ -137,7 +137,12 @@ Your hub is one folder. Six things to know.
 4. **Skills.** One folder per playbook under `skills/`, each with a
    `SKILL.md`. The main agent loads them on demand via `load_skill(name)`.
 5. **Knowledge.** One markdown file per topic under `knowledge/`. Reached
-   via `read_knowledge(name)`.
+   via `read_knowledge(name)`. When the code in `raw_data/` moves on,
+   `hubzoid knowledge refresh` keeps these docs in step: it enumerates the new
+   commits per source repo (tracking a per-repo SHA cursor under
+   `.knowledge-sync/`) and runs a headless `claude /goal` worker that folds each
+   diff into the affected docs. `--commit`/`--push` make it self-contained for a
+   weekly on-prod timer. See [docs/knowledge.md](docs/knowledge.md).
 6. **Tools and connectors.** Drop Python files with `@function_tool` in
    `tools_local/`. Edit `connectors/.mcp.json` to plug in
    [MCP](https://modelcontextprotocol.io) servers.
@@ -342,8 +347,13 @@ hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges
   --no-bridges                     Front bridges already running as separate units.
 hubzoid knowledge plan [PATH]    Pull source repos and list commits to fold into knowledge.
 hubzoid knowledge refresh [PATH] Update knowledge/ from new commits via claude /goal.
+  --since-days INT                 First refresh of a repo (no cursor yet): fold in only
+                                     the last N days, not its whole history (default 7).
+  --commit                         On success, git-commit the knowledge/ change (and the
+                                     tracked cursor) — keeps the tree clean for scheduled runs.
+  --push                           Implies --commit, then pull --rebase + push to the remote.
 hubzoid knowledge status [PATH]  Show the per-repo sync cursor and pending count.
-                                   See docs/knowledge.md.
+                                   See docs/knowledge.md (incl. weekly on-prod timer).
 hubzoid doctor [PATH]            Validate hub config and report issues.
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.

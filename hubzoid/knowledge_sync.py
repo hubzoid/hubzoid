@@ -20,6 +20,7 @@ all-or-nothing per run and safe to re-run.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -61,10 +62,22 @@ def git_pull(repo: Path) -> bool:
     return r.returncode == 0
 
 
-def list_commits(repo: Path, since: str | None) -> list[tuple[str, str]]:
-    """(sha, subject) for `since..HEAD`, oldest first. Whole history if no cursor."""
-    rng = f"{since}..HEAD" if since else "HEAD"
-    out = _git(repo, "log", "--no-merges", "--reverse", f"--format=%H{_UNIT_SEP}%s", rng)
+def list_commits(repo: Path, since: str | None, since_days: int | None = None) -> list[tuple[str, str]]:
+    """(sha, subject) for the commits to fold in, oldest first.
+
+    With a cursor (`since`), that's `since..HEAD`. With **no** cursor the first
+    refresh would otherwise be the repo's *entire* history; `since_days` bounds
+    it to commits from the last N days so a first run is a sane window, not all
+    of history. No cursor and no `since_days` => whole history.
+    """
+    args = ["log", "--no-merges", "--reverse", f"--format=%H{_UNIT_SEP}%s"]
+    if since:
+        args.append(f"{since}..HEAD")
+    else:
+        if since_days is not None:
+            args.append(f"--since={since_days} days ago")
+        args.append("HEAD")
+    out = _git(repo, *args)
     rows: list[tuple[str, str]] = []
     for line in out.splitlines():
         if not line.strip():
@@ -166,12 +179,19 @@ class SyncState:
 # ---------------------------------------------------------------------------
 # Prep: build the worklist from the repos
 # ---------------------------------------------------------------------------
-def build_worklist(hub_dir: Path, *, pull: bool = True) -> tuple[list[Commit], dict[str, str]]:
+def build_worklist(
+    hub_dir: Path, *, pull: bool = True, since_days: int | None = None
+) -> tuple[list[Commit], dict[str, str]]:
     """Pull each source repo and enumerate commits since the cursor.
 
     Writes the worklist to disk and returns (commits, heads). Heads are the
     HEAD shas captured now; the cursor advances to them only once every
     commit is marked done (see `SyncState.advance_cursor`).
+
+    `since_days` only applies to repos with **no cursor yet** (a first refresh,
+    or a repo newly added to `raw_data/`): it bounds that initial enumeration to
+    the last N days instead of the repo's whole history. Repos with a cursor
+    always use `cursor..HEAD` regardless.
     """
     state = SyncState(hub_dir)
     repos = discover_repos(hub_dir)
@@ -182,7 +202,110 @@ def build_worklist(hub_dir: Path, *, pull: bool = True) -> tuple[list[Commit], d
         if pull:
             git_pull(path)
         heads[name] = head_sha(path)
-        for sha, subject in list_commits(path, cursor.get(name)):
+        for sha, subject in list_commits(path, cursor.get(name), since_days=since_days):
             commits.append(Commit(repo=name, sha=sha, subject=subject))
     state.write_worklist(commits, heads)
     return commits, heads
+
+
+# ---------------------------------------------------------------------------
+# Capture the result: commit (and optionally push) the knowledge/ changes
+# ---------------------------------------------------------------------------
+def repo_toplevel(path: Path) -> Path | None:
+    """The git work-tree root containing `path`, or None if not in a repo.
+
+    The hub may *be* the repo root or a subdir of a larger agents repo; either
+    way the commit targets the enclosing repo and scopes to `<hub>/knowledge/`.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=False,
+    )
+    return Path(r.stdout.strip()) if r.returncode == 0 else None
+
+
+def _committable_paths(hub_dir: Path, top: Path) -> list[str]:
+    """Repo-relative paths a refresh commit covers.
+
+    Always `knowledge/`. Plus the cursor (`.knowledge-sync/state.json`) **when
+    it's tracked in the repo** (i.e. not gitignored): a refresh advances the
+    cursor every run, so committing it alongside the docs keeps the working
+    tree clean even when no doc changed. If the cursor is gitignored (the
+    runtime-state model), it's left out and only `knowledge/` is committed.
+    """
+    hub_dir = Path(hub_dir)
+    paths = [os.path.relpath(hub_dir / "knowledge", top)]
+    state = hub_dir / SYNC_DIR / "state.json"
+    if state.exists():
+        rel = os.path.relpath(state, top)
+        ignored = subprocess.run(
+            ["git", "-C", str(top), "check-ignore", "-q", rel],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+        if not ignored:
+            paths.append(rel)
+    return paths
+
+
+def _paths_dirty(top: Path, paths: list[str]) -> bool:
+    return bool(_git(top, "status", "--porcelain", "--", *paths).strip())
+
+
+def knowledge_dirty(hub_dir: Path) -> bool:
+    """True if the refresh result (knowledge/, + tracked cursor) is uncommitted."""
+    top = repo_toplevel(hub_dir)
+    if top is None:
+        return False
+    return _paths_dirty(top, _committable_paths(hub_dir, top))
+
+
+def commit_knowledge(hub_dir: Path, message: str, *, push: bool = False) -> str | None:
+    """Commit `<hub>/knowledge/` (and only that path), optionally push.
+
+    Returns the new commit sha, or None if there was nothing to commit. Commits
+    `knowledge/` plus the cursor (`.knowledge-sync/state.json`) when that's
+    tracked — and only those paths, so a dirty working tree elsewhere (raw_data
+    clones, unrelated local edits) is never swept in.
+
+    With `push`, integrates the remote first via `pull --rebase` so the push
+    fast-forwards — prod's knowledge commit replays on top of any code commits
+    devs pushed meanwhile (different files, so no conflict in practice). A
+    rebase conflict is aborted cleanly and raised: the commit stays local,
+    nothing is pushed, and a human resolves it.
+    """
+    hub_dir = Path(hub_dir)
+    top = repo_toplevel(hub_dir)
+    if top is None:
+        raise RuntimeError(
+            f"{hub_dir} is not inside a git repository; cannot commit. "
+            "Init/clone the agents repo, or drop --commit."
+        )
+    paths = _committable_paths(hub_dir, top)
+    if not _paths_dirty(top, paths):
+        return None
+    _git(top, "add", "--", *paths)                   # stage modified + new files
+    _git(top, "commit", "-m", message, "--", *paths)  # commit ONLY these paths
+    sha = head_sha(top)
+    if push:
+        pr = subprocess.run(
+            ["git", "-C", str(top), "pull", "--rebase"],
+            capture_output=True, text=True, check=False,
+        )
+        if pr.returncode != 0:
+            subprocess.run(["git", "-C", str(top), "rebase", "--abort"],
+                           capture_output=True, text=True, check=False)
+            raise RuntimeError(
+                "git pull --rebase failed (conflict on a shared file?). Knowledge "
+                "was committed locally but NOT pushed; resolve and push by hand.\n"
+                + pr.stderr.strip()
+            )
+        ps = subprocess.run(
+            ["git", "-C", str(top), "push"],
+            capture_output=True, text=True, check=False,
+        )
+        if ps.returncode != 0:
+            raise RuntimeError(
+                "git push failed. Knowledge was committed locally but NOT pushed.\n"
+                + ps.stderr.strip()
+            )
+    return sha

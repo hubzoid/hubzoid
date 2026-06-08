@@ -695,11 +695,12 @@ def _invoke_worker(hub: Path) -> int:
 def knowledge_plan(
     hub: Path = typer.Argument(..., help="Hub directory."),
     no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`; use the checked-out source as-is."),
+    since_days: int = typer.Option(7, "--since-days", help="First refresh of a repo (no cursor yet): only fold in commits from the last N days, not its whole history."),
 ) -> None:
     """Pull source repos and build the commit worklist (no LLM)."""
     from . import knowledge_sync as ks
     hub = hub.resolve()
-    commits, _ = ks.build_worklist(hub, pull=not no_pull)
+    commits, _ = ks.build_worklist(hub, pull=not no_pull, since_days=since_days)
     repos = sorted({c.repo for c in commits})
     console.print(f"[green]{len(commits)}[/green] commit(s) to fold into knowledge across {len(repos)} repo(s): {', '.join(repos) or '—'}")
 
@@ -752,18 +753,31 @@ def knowledge_refresh(
     hub: Path = typer.Argument(..., help="Hub directory."),
     max_rounds: int = typer.Option(10, "--max-rounds", help="Max fresh claude sessions before giving up."),
     no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`."),
+    since_days: int = typer.Option(7, "--since-days", help="First refresh of a repo (no cursor yet): only fold in commits from the last N days, not its whole history."),
+    commit: bool = typer.Option(False, "--commit", help="On success, git-commit the knowledge/ changes (only that path) — for unattended/scheduled runs that keep the working tree clean."),
+    push: bool = typer.Option(False, "--push", help="Implies --commit: pull --rebase then push the knowledge commit to the agents repo remote."),
 ) -> None:
     """Refresh knowledge from new commits via looped claude /goal sessions.
 
     Builds the worklist, then runs fresh `claude -p` /goal sessions until the
     worklist is clear (each session has a clean context, so a single one
     hitting a limit never drops commits). Advances the cursor only when every
-    commit is done. Review the diff and restart the hub afterward.
+    commit is done.
+
+    On a repo's first refresh there's no cursor, so `--since-days` (default 7)
+    bounds the initial fold-in to recent commits instead of all of history.
+
+    Interactive use: omit `--commit`, review the diff, then commit by hand.
+    Unattended/scheduled (e.g. a weekly on-prod timer): add `--commit` (or
+    `--push`) so the run captures its own result and the working tree stays
+    clean for the next code deploy. Restart the hub afterward to load the new
+    knowledge — that's a deploy concern, left to the caller (e.g. systemd
+    `ExecStartPost`), not this command.
     """
     from . import knowledge_sync as ks
     hub = hub.resolve()
     state = ks.SyncState(hub)
-    commits, heads = ks.build_worklist(hub, pull=not no_pull)
+    commits, heads = ks.build_worklist(hub, pull=not no_pull, since_days=since_days)
     if not commits:
         state.advance_cursor(heads)
         console.print("[green]knowledge already up to date.[/green]")
@@ -782,12 +796,27 @@ def knowledge_refresh(
             console.print(f"[yellow]no progress ({after} still pending); stopping to avoid a loop.[/yellow]")
             break
 
-    if state.is_complete():
-        state.advance_cursor(state.worklist_heads())
-        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] Review the diff, commit, and restart the hub.")
-    else:
+    if not state.is_complete():
         console.print(f"[yellow]{len(state.pending())} commit(s) still pending; cursor NOT advanced. Re-run to continue.[/yellow]")
         raise typer.Exit(1)
+
+    state.advance_cursor(state.worklist_heads())
+    if not (commit or push):
+        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] Review the diff, commit, and restart the hub.")
+        return
+
+    import datetime
+    msg = f"knowledge: auto-refresh {len(commits)} commit(s) on {datetime.date.today().isoformat()}"
+    try:
+        sha = ks.commit_knowledge(hub, msg, push=push)
+    except RuntimeError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        raise typer.Exit(1)
+    if sha is None:
+        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] No doc changes to commit.")
+    else:
+        tail = " and pushed" if push else ""
+        console.print(f"[green]✓ knowledge refreshed and committed @ {sha[:10]}{tail}.[/green] Restart the hub to load it.")
 
 
 app.add_typer(

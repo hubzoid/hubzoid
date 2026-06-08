@@ -8,6 +8,7 @@ guards against a no-progress infinite loop.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -57,6 +58,33 @@ def test_list_commits_since_cursor(tmp_path):
     assert [subj for _, subj in allc] == ["one", "two", "three"]
     since_first = ks.list_commits(repo, since=shas[0])
     assert [s for s, _ in since_first] == shas[1:]     # only newer than cursor
+
+
+def test_first_run_bounded_by_since_days(tmp_path):
+    """No cursor yet: a `since_days` window keeps the first refresh to recent
+    commits instead of the repo's entire history. No window => whole history."""
+    repo = tmp_path / "r"
+    repo.mkdir(parents=True)
+    _run(["git", "init", "-q"], repo)
+    _run(["git", "config", "user.email", "t@t.dev"], repo)
+    _run(["git", "config", "user.name", "tester"], repo)
+
+    def commit(subj: str, date: str | None = None) -> None:
+        (repo / f"{subj}.txt").write_text(subj)
+        _run(["git", "add", "-A"], repo)
+        env = dict(os.environ)
+        if date:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", subj],
+                       env=env, check=True, capture_output=True, text=True)
+
+    commit("old", "2020-01-01T00:00:00")   # well outside any sane window
+    commit("recent")                        # real now -> inside the window
+
+    windowed = ks.list_commits(repo, since=None, since_days=7)
+    assert [subj for _, subj in windowed] == ["recent"]    # old one excluded
+    allc = ks.list_commits(repo, since=None)
+    assert [subj for _, subj in allc] == ["old", "recent"]  # no window => all
 
 
 def test_discover_repos_finds_raw_data_checkouts(tmp_path):
@@ -139,6 +167,88 @@ def test_refresh_aborts_on_no_progress(tmp_path, monkeypatch):
     state = ks.SyncState(hub)
     assert len(state.pending()) == 2
     assert state.cursor() == {}                     # cursor NOT advanced
+
+
+# ---------------------------------------------------------------------------
+# --commit: capture only the knowledge/ changes
+# ---------------------------------------------------------------------------
+def _capture(args, cwd):
+    return subprocess.run(args, cwd=str(cwd), check=True,
+                          capture_output=True, text=True).stdout
+
+
+def test_refresh_commit_captures_only_knowledge(tmp_path, monkeypatch):
+    hub, _ = _hub_with_repo(tmp_path, ["a"])
+    # Make the hub itself a git repo; ignore raw_data/ and the sync state.
+    (hub / ".gitignore").write_text("raw_data/\n.knowledge-sync/\n")
+    (hub / "knowledge" / "about.md").write_text("orig\n")
+    (hub / "AGENTS.md").write_text("root\n")
+    _run(["git", "init", "-q"], hub)
+    _run(["git", "config", "user.email", "t@t.dev"], hub)
+    _run(["git", "config", "user.name", "tester"], hub)
+    _run(["git", "add", "-A"], hub)
+    _run(["git", "commit", "-q", "-m", "init"], hub)
+
+    # Worker updates a knowledge doc AND touches a stray tracked file.
+    def worker(h):
+        (h / "knowledge" / "about.md").write_text("updated by worker\n")
+        (h / "AGENTS.md").write_text("stray edit\n")
+        st = ks.SyncState(h)
+        st.mark_done([c.sha for c in st.pending()])
+        return 0
+    monkeypatch.setattr(cli, "_invoke_worker", worker)
+
+    res = CliRunner().invoke(cli.app, ["knowledge", "refresh", str(hub), "--no-pull", "--commit"])
+    assert res.exit_code == 0, res.output
+
+    changed = _capture(["git", "show", "--name-only", "--format=", "HEAD"], hub).split()
+    assert "knowledge/about.md" in changed     # the doc change was committed
+    assert "AGENTS.md" not in changed          # ...the stray edit was NOT
+    porc = _capture(["git", "status", "--porcelain"], hub)
+    assert "AGENTS.md" in porc                  # stray still uncommitted in the tree
+
+
+def test_refresh_commit_includes_tracked_cursor(tmp_path, monkeypatch):
+    """When .knowledge-sync/state.json is tracked (only worklist.json ignored),
+    --commit captures the advanced cursor too, so no dirty file is left behind."""
+    hub, _ = _hub_with_repo(tmp_path, ["a"])
+    (hub / ".gitignore").write_text("raw_data/\n.knowledge-sync/worklist.json\n")
+    (hub / "knowledge" / "about.md").write_text("orig\n")
+    _run(["git", "init", "-q"], hub)
+    _run(["git", "config", "user.email", "t@t.dev"], hub)
+    _run(["git", "config", "user.name", "tester"], hub)
+    _run(["git", "add", "-A"], hub)
+    _run(["git", "commit", "-q", "-m", "init"], hub)
+
+    def worker(h):
+        (h / "knowledge" / "about.md").write_text("updated\n")
+        st = ks.SyncState(h)
+        st.mark_done([c.sha for c in st.pending()])
+        return 0
+    monkeypatch.setattr(cli, "_invoke_worker", worker)
+
+    res = CliRunner().invoke(cli.app, ["knowledge", "refresh", str(hub), "--no-pull", "--commit"])
+    assert res.exit_code == 0, res.output
+
+    changed = _capture(["git", "show", "--name-only", "--format=", "HEAD"], hub).split()
+    assert "knowledge/about.md" in changed              # doc change committed
+    assert ".knowledge-sync/state.json" in changed      # cursor advanced AND committed
+    # The whole tree is clean — nothing left dirty to block the next git pull.
+    assert _capture(["git", "status", "--porcelain"], hub).strip() == ""
+
+
+def test_refresh_commit_outside_repo_fails_cleanly(tmp_path, monkeypatch):
+    hub, _ = _hub_with_repo(tmp_path, ["a"])    # hub is NOT a git repo
+
+    def worker(h):
+        st = ks.SyncState(h)
+        st.mark_done([c.sha for c in st.pending()])
+        return 0
+    monkeypatch.setattr(cli, "_invoke_worker", worker)
+
+    res = CliRunner().invoke(cli.app, ["knowledge", "refresh", str(hub), "--no-pull", "--commit"])
+    assert res.exit_code == 1
+    assert "not inside a git repository" in res.output
 
 
 # ---------------------------------------------------------------------------
