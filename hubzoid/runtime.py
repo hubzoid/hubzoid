@@ -36,11 +36,18 @@ class Runtime(Protocol):
     async def run(self, prompt: str) -> str: ...
 
 
-def build(hub_dir: Path) -> Runtime:
+def build(hub_dir: Path, *, extra_tools: dict | None = None,
+          max_turns: int | None = None) -> Runtime:
     """Pick the backend for this hub based on `MODEL` in <hub>/.env.
 
     `MODEL=claude-local` -> Claude Agent SDK (subprocess + `claude` login).
     anything else        -> OpenAI Agents SDK + LiteLLM (existing behavior).
+
+    `extra_tools` ({name: FunctionTool}) are merged into the registry on top
+    of built-ins + hub-local — used by scheduled-task runs to inject their
+    internal tools (run_git, write_hub_file) without leaking them into chat.
+    `max_turns` overrides the per-call agent-turn cap (default 20) — long
+    unattended runs need more headroom than a chat turn.
     """
     hub_dir = Path(hub_dir).resolve()
     settings = settingslib.load(hub_dir)
@@ -48,10 +55,12 @@ def build(hub_dir: Path) -> Runtime:
 
     if model_id.startswith("claude-local"):
         from .factory_claude import build_claude_runtime
-        return build_claude_runtime(hub_dir)
+        return build_claude_runtime(hub_dir, extra_tools=extra_tools,
+                                    max_turns=max_turns)
 
     from .factory import build_agent
-    return OpenAIAgentsRuntime(build_agent(hub_dir))
+    return OpenAIAgentsRuntime(build_agent(hub_dir, extra_tools=extra_tools),
+                               max_turns=max_turns)
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +69,9 @@ def build(hub_dir: Path) -> Runtime:
 class OpenAIAgentsRuntime:
     """Wraps an `agents.Agent` + `Runner.run_streamed` behind the Runtime API."""
 
-    def __init__(self, agent):
+    def __init__(self, agent, *, max_turns: int | None = None):
         self._agent = agent
+        self._max_turns = max_turns or 20
         self.name = agent.name
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
@@ -72,7 +82,7 @@ class OpenAIAgentsRuntime:
 
         text_accumulated = False
         try:
-            result = Runner.run_streamed(self._agent, prompt, max_turns=20)
+            result = Runner.run_streamed(self._agent, prompt, max_turns=self._max_turns)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:

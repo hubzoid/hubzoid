@@ -7,9 +7,15 @@ Environment variables explicitly supported:
                            openrouter/anthropic/claude-haiku-4.5
                            openai/gpt-4o-mini
                            anthropic/claude-haiku-4-5
+                           azure/<deployment-name>
   OPENROUTER_API_KEY     Key for OpenRouter (used when MODEL starts with openrouter/).
   OPENAI_API_KEY         Key for OpenAI direct.
   ANTHROPIC_API_KEY      Key for Anthropic direct.
+  AZURE_API_KEY          Key for Azure OpenAI (when MODEL starts with azure/).
+  AZURE_API_BASE         Azure resource endpoint, e.g.
+                         https://<resource>.openai.azure.com
+  AZURE_API_VERSION      Azure REST API version, e.g. 2024-10-21. Optional;
+                         LiteLLM falls back to a default if unset.
   BRIDGE_API_KEYS        Comma-separated list of API keys the FastAPI bridge
                          will accept. Default: "dev".
   MODEL_LABEL            Optional name shown to OpenAI-compatible clients in

@@ -43,7 +43,7 @@ class HubContext:
     knowledge: list = field(default_factory=list)
 
 
-def build_agent(hub_dir: Path) -> Agent:
+def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None) -> Agent:
     """Build and return the main Agent for the hub at `hub_dir`.
 
     All sub-agents from `<hub>/agents/<name>/` are promoted to skills and
@@ -54,6 +54,9 @@ def build_agent(hub_dir: Path) -> Agent:
     MCP). The system prompt is the user's `AGENTS.md` body followed by a
     Hubzoid-generated addendum (knowledge index, skills index, generic
     tool guidance) — see `hubzoid.system_addendum`.
+
+    `extra_tools` are caller-injected internals (scheduled-task runs) that
+    win over both built-ins and hub-local tools on name conflicts.
     """
     hub_dir = Path(hub_dir).resolve()
     if not hub_dir.is_dir():
@@ -85,7 +88,7 @@ def build_agent(hub_dir: Path) -> Agent:
     overlap = set(builtin) & set(local)
     if overlap:
         log.info("hub-local tools override built-ins: %s", sorted(overlap))
-    registry: dict[str, FunctionTool] = {**builtin, **local}
+    registry: dict[str, FunctionTool] = {**builtin, **local, **(extra_tools or {})}
 
     mcp_servers = mcp_loader.load_all(hub_dir)
 

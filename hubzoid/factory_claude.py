@@ -126,7 +126,8 @@ def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]
 # ---------------------------------------------------------------------------
 # Public entry: build a ClaudeRuntime for the hub.
 # ---------------------------------------------------------------------------
-def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
+def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
+                         max_turns: int | None = None) -> "ClaudeRuntime":
     try:
         import claude_agent_sdk  # noqa: F401
     except ImportError as exc:
@@ -161,13 +162,14 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     )
 
     # Same registry as the OpenAI path. Built-ins + hub-local; local shadows
-    # built-ins on name conflicts.
+    # built-ins on name conflicts; caller-injected extras (scheduled-task
+    # internals) win over both.
     builtin = make_builtin_tools(ctx)
     local = tools_local_loader.load_all(hub_dir)
     overlap = set(builtin) & set(local)
     if overlap:
         log.info("hub-local tools override built-ins: %s", sorted(overlap))
-    registry: dict = {**builtin, **local}
+    registry: dict = {**builtin, **local, **(extra_tools or {})}
 
     # MCP: external servers from the hub's connectors/.mcp.json (raw dicts;
     # Claude SDK accepts the same JSON shape) plus our in-process hubzoid
@@ -208,7 +210,14 @@ def build_claude_runtime(hub_dir: Path) -> "ClaudeRuntime":
     )
     if model_pin is not None:
         opts_kwargs["model"] = model_pin
-    options = ClaudeAgentOptions(**opts_kwargs)
+    if max_turns is not None:
+        opts_kwargs["max_turns"] = max_turns
+    try:
+        options = ClaudeAgentOptions(**opts_kwargs)
+    except TypeError:
+        # Older claude-agent-sdk without max_turns — drop it rather than die.
+        opts_kwargs.pop("max_turns", None)
+        options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(name=main_name, options=options)
 

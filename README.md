@@ -137,12 +137,7 @@ Your hub is one folder. Six things to know.
 4. **Skills.** One folder per playbook under `skills/`, each with a
    `SKILL.md`. The main agent loads them on demand via `load_skill(name)`.
 5. **Knowledge.** One markdown file per topic under `knowledge/`. Reached
-   via `read_knowledge(name)`. When the code in `raw_data/` moves on,
-   `hubzoid knowledge refresh` keeps these docs in step: it enumerates the new
-   commits per source repo (tracking a per-repo SHA cursor under
-   `.knowledge-sync/`) and runs a headless `claude /goal` worker that folds each
-   diff into the affected docs. `--commit`/`--push` make it self-contained for a
-   weekly on-prod timer. See [docs/knowledge.md](docs/knowledge.md).
+   via `read_knowledge(name)`.
 6. **Tools and connectors.** Drop Python files with `@function_tool` in
    `tools_local/`. Edit `connectors/.mcp.json` to plug in
    [MCP](https://modelcontextprotocol.io) servers.
@@ -150,11 +145,18 @@ Your hub is one folder. Six things to know.
    material into `raw_data/`. The agent searches it with `grep_data` and
    reads specific files with `read_file`. No indexing step — the folder
    ships with the hub.
+8. **Scheduled tasks.** One markdown file per background job under
+   `schedule/`. Frontmatter sets the cron cadence (plus what the run may
+   commit/push); the body is plain-English instructions the hub's own agent
+   executes unattended, in bounded rounds, while `hubzoid run` is up — e.g.
+   "every Monday, fold last week's `raw_data/` commits into `knowledge/`".
+   Works on any backend (claude-local or OpenAI/LiteLLM). See
+   [docs/schedule.md](docs/schedule.md).
 
 Folder names are case- and plural-flexible. `skills/`, `Skills/`, and
 `skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
-`connectors/`, `raw_data/`. Restart with the same command. Changes are
-picked up on the next start.
+`connectors/`, `raw_data/`, `schedule/`. Restart with the same command.
+Changes are picked up on the next start.
 
 ## Multi-hub agents repo
 
@@ -345,15 +347,15 @@ hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges
   --port INT                       Public port (default 3080).
   --public-url URL                 Base URL for per-hub artifact download links.
   --no-bridges                     Front bridges already running as separate units.
-hubzoid knowledge plan [PATH]    Pull source repos and list commits to fold into knowledge.
-hubzoid knowledge refresh [PATH] Update knowledge/ from new commits via claude /goal.
-  --since-days INT                 First refresh of a repo (no cursor yet): fold in only
-                                     the last N days, not its whole history (default 7).
-  --commit                         On success, git-commit the knowledge/ change (and the
-                                     tracked cursor) — keeps the tree clean for scheduled runs.
-  --push                           Implies --commit, then pull --rebase + push to the remote.
-hubzoid knowledge status [PATH]  Show the per-repo sync cursor and pending count.
-                                   See docs/knowledge.md (incl. weekly on-prod timer).
+hubzoid schedule list [PATH]     List the hub's scheduled tasks + next fire times.
+hubzoid schedule run PATH TASK   Fire one task NOW, in-process — for testing and
+                                   manual runs. Exit 0 = the agent reported DONE.
+  --timeout INT                    Override the task's per-round timeout (seconds).
+  --max-rounds INT                 Override the task's round cap.
+  --dry-run                        Print the exact round-1 prompt; no LLM call.
+hubzoid schedule status [PATH]   Show recorded fire history per task.
+                                   Tasks fire automatically inside `hubzoid run`;
+                                   see docs/schedule.md.
 hubzoid doctor [PATH]            Validate hub config and report issues.
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.
