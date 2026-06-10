@@ -17,7 +17,10 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |
 | `gateway.py` | Plans one shared Open WebUI over many hub bridges (`hubzoid gateway`). |
-| `knowledge_sync.py` | Git-cursor engine behind `hubzoid knowledge` (enumerate commits → worklist → claude /goal worker updates `knowledge/`). |
+| `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
+| `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
+| `schedule_runner.py` | Executes one task: fresh-context rounds via the hub Runtime until `STATUS: DONE`, then scoped commit/push. |
+| `tools/schedule_tools.py` | `run_git` + `write_hub_file` — internal tools injected only into scheduled runs, never chat. |
 | `cli.py` | Typer-based CLI. |
 | `factory.py` | `build_agent(hub_dir)`. composes everything. |
 

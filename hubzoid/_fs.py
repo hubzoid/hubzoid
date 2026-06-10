@@ -24,6 +24,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "connectors": ("connectors", "connector"),
     "output": ("output", "outputs"),
     "raw_data": ("raw_data", "raw-data", "rawdata"),
+    "schedule": ("schedule", "schedules", "scheduled"),
 }
 
 

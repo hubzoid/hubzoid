@@ -4,7 +4,7 @@ Commands:
   hubzoid init [PATH]              Scaffold a hub from the bundled template.
   hubzoid run [PATH]               Start FastAPI bridge + edge + Open WebUI for a hub.
   hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges.
-  hubzoid knowledge ...            Refresh a hub's knowledge/ from source commits.
+  hubzoid schedule ...             Inspect / manually fire <hub>/schedule/*.md tasks.
   hubzoid slack run [PATH]         Start the Slack adapter (Socket Mode).
   hubzoid slack manifest [PATH]    Print a Slack App Manifest YAML.
   hubzoid slack systemd [PATH]     Print a systemd unit template.
@@ -513,6 +513,18 @@ def doctor(
     except Exception as exc:  # noqa: BLE001
         problems.append(f"runtime build failed: {type(exc).__name__}: {exc}")
 
+    # Scheduled tasks: parse + cron-validate <hub>/schedule/*.md.
+    try:
+        from . import scheduling as sch
+        stasks, sproblems = sch.load_tasks(hub)
+        enabled = [t for t in stasks if t.enabled]
+        if stasks:
+            extra = f", {len(stasks) - len(enabled)} disabled" if len(stasks) != len(enabled) else ""
+            notes.append(f"schedule: {len(enabled)} enabled task(s){extra}")
+        problems.extend(f"schedule/{p}" for p in sproblems)
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"schedule load failed: {type(exc).__name__}: {exc}")
+
     for n in notes:
         console.print(f"[green]✓[/green] {n}")
     for p in problems:
@@ -644,185 +656,144 @@ app.add_typer(
 
 
 # ---------------------------------------------------------------------------
-# knowledge — refresh <hub>/knowledge/ from source commits via claude /goal
+# schedule — hub-owned background tasks under <hub>/schedule/*.md
 # ---------------------------------------------------------------------------
-knowledge_app = typer.Typer(
-    help="Keep a hub's knowledge/ docs in step with its source code.",
+schedule_app = typer.Typer(
+    help="Hub-owned scheduled tasks: one md file per job under <hub>/schedule/. "
+    "They fire automatically inside `hubzoid run`; these commands inspect and "
+    "manually fire them.",
     no_args_is_help=True,
 )
 
 
-_WORKER_PROMPT = """/goal `hubzoid knowledge pending {hub}` reports 0 pending commits
-
-You maintain the markdown docs in {hub}/knowledge/ so they reflect the source
-code under {hub}/raw_data/. Clear the pending commit worklist:
-
-1. Run: hubzoid knowledge pending {hub} --format json
-2. For each pending commit, inspect its diff in the owning repo under
-   {hub}/raw_data/ (git -C <repo> show <sha>), decide which knowledge/*.md
-   files it affects, and update them so they stay accurate. Preserve each
-   doc's frontmatter. A commit that needs no knowledge change is fine.
-3. After handling a commit, mark it: hubzoid knowledge mark-done {hub} <sha>
-4. Repeat until `hubzoid knowledge pending {hub}` is empty.
-
-Only edit files under {hub}/knowledge/. Do not git-commit; a human reviews the
-diff afterward.
-"""
-
-
-def _invoke_worker(hub: Path) -> int:
-    """Run one headless claude /goal session over the pending worklist.
-
-    Module-level so tests can patch it. The /goal keeps the session working
-    until nothing is pending; the caller loops fresh sessions for resilience.
-
-    Headless autonomy: `--permission-mode acceptEdits` auto-applies the doc
-    edits, and `--allowedTools` lets it run the `hubzoid knowledge` verbs +
-    `git show` to read diffs without an interactive prompt. The job is scoped
-    to the hub via `--add-dir`, and the prompt restricts edits to knowledge/.
-    Operators who want a tighter allowlist can narrow these.
-    """
-    prompt = _WORKER_PROMPT.format(hub=str(hub))
-    return subprocess.run([
-        "claude", "-p", prompt,
-        "--add-dir", str(hub),
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Read", "Edit", "Write", "Bash",
-    ]).returncode
-
-
-@knowledge_app.command("plan")
-def knowledge_plan(
-    hub: Path = typer.Argument(..., help="Hub directory."),
-    no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`; use the checked-out source as-is."),
-    since_days: int = typer.Option(7, "--since-days", help="First refresh of a repo (no cursor yet): only fold in commits from the last N days, not its whole history."),
+@schedule_app.command("list")
+def schedule_list(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
 ) -> None:
-    """Pull source repos and build the commit worklist (no LLM)."""
-    from . import knowledge_sync as ks
+    """List the hub's scheduled tasks, their cadence and next fire time."""
+    from datetime import datetime
+
+    from . import scheduling as sch
+
     hub = hub.resolve()
-    commits, _ = ks.build_worklist(hub, pull=not no_pull, since_days=since_days)
-    repos = sorted({c.repo for c in commits})
-    console.print(f"[green]{len(commits)}[/green] commit(s) to fold into knowledge across {len(repos)} repo(s): {', '.join(repos) or '—'}")
-
-
-@knowledge_app.command("pending")
-def knowledge_pending(
-    hub: Path = typer.Argument(..., help="Hub directory."),
-    format: str = typer.Option("text", "--format", help="text or json."),
-) -> None:
-    """List commits still to be folded into knowledge (used by the worker)."""
-    from . import knowledge_sync as ks
-    pend = ks.SyncState(hub.resolve()).pending()
-    if format.lower() == "json":
-        import json as _json
-        typer.echo(_json.dumps([{"repo": c.repo, "sha": c.sha, "subject": c.subject} for c in pend]))
+    tasks, problems = sch.load_tasks(hub)
+    state = sch.ScheduleState(hub)
+    now = datetime.now()
+    if not tasks and not problems:
+        console.print(f"no tasks — add markdown files under {hub / 'schedule'}/")
         return
-    for c in pend:
-        typer.echo(f"{c.repo} {c.sha[:10]} {c.subject}")
-    if not pend:
-        typer.echo("")  # empty => the /goal condition is satisfied
-
-
-@knowledge_app.command("mark-done")
-def knowledge_mark_done(
-    hub: Path = typer.Argument(..., help="Hub directory."),
-    shas: list[str] = typer.Argument(..., help="Commit SHAs that have been folded in."),
-) -> None:
-    """Mark commits handled (called by the worker after updating docs)."""
-    from . import knowledge_sync as ks
-    n = ks.SyncState(hub.resolve()).mark_done(shas)
-    console.print(f"marked {n} commit(s) done")
-
-
-@knowledge_app.command("status")
-def knowledge_status(
-    hub: Path = typer.Argument(..., help="Hub directory."),
-) -> None:
-    """Show the per-repo cursor and how many commits are pending."""
-    from . import knowledge_sync as ks
-    state = ks.SyncState(hub.resolve())
-    cursor = state.cursor()
-    pend = state.pending()
-    console.print(f"pending: {len(pend)}")
-    for repo, sha in cursor.items():
-        console.print(f"  {repo}: synced @ {sha[:10]}")
-
-
-@knowledge_app.command("refresh")
-def knowledge_refresh(
-    hub: Path = typer.Argument(..., help="Hub directory."),
-    max_rounds: int = typer.Option(10, "--max-rounds", help="Max fresh claude sessions before giving up."),
-    no_pull: bool = typer.Option(False, "--no-pull", help="Skip `git pull`."),
-    since_days: int = typer.Option(7, "--since-days", help="First refresh of a repo (no cursor yet): only fold in commits from the last N days, not its whole history."),
-    commit: bool = typer.Option(False, "--commit", help="On success, git-commit the knowledge/ changes (only that path) — for unattended/scheduled runs that keep the working tree clean."),
-    push: bool = typer.Option(False, "--push", help="Implies --commit: pull --rebase then push the knowledge commit to the agents repo remote."),
-) -> None:
-    """Refresh knowledge from new commits via looped claude /goal sessions.
-
-    Builds the worklist, then runs fresh `claude -p` /goal sessions until the
-    worklist is clear (each session has a clean context, so a single one
-    hitting a limit never drops commits). Advances the cursor only when every
-    commit is done.
-
-    On a repo's first refresh there's no cursor, so `--since-days` (default 7)
-    bounds the initial fold-in to recent commits instead of all of history.
-
-    Interactive use: omit `--commit`, review the diff, then commit by hand.
-    Unattended/scheduled (e.g. a weekly on-prod timer): add `--commit` (or
-    `--push`) so the run captures its own result and the working tree stays
-    clean for the next code deploy. Restart the hub afterward to load the new
-    knowledge — that's a deploy concern, left to the caller (e.g. systemd
-    `ExecStartPost`), not this command.
-    """
-    from . import knowledge_sync as ks
-    hub = hub.resolve()
-    state = ks.SyncState(hub)
-    commits, heads = ks.build_worklist(hub, pull=not no_pull, since_days=since_days)
-    if not commits:
-        state.advance_cursor(heads)
-        console.print("[green]knowledge already up to date.[/green]")
-        return
-
-    repos = sorted({c.repo for c in commits})
-    console.print(f"[cyan]{len(commits)}[/cyan] commit(s) across {len(repos)} repo(s) → folding into knowledge")
-    rounds = 0
-    while state.pending() and rounds < max_rounds:
-        rounds += 1
-        before = len(state.pending())
-        console.print(f"[cyan]round {rounds}[/cyan]: {before} pending → claude /goal session")
-        _invoke_worker(hub)
-        after = len(state.pending())
-        if after >= before:
-            console.print(f"[yellow]no progress ({after} still pending); stopping to avoid a loop.[/yellow]")
-            break
-
-    if not state.is_complete():
-        console.print(f"[yellow]{len(state.pending())} commit(s) still pending; cursor NOT advanced. Re-run to continue.[/yellow]")
+    for t in tasks:
+        nxt = sch.next_fire_for(t, state, now)
+        entry = state.get(t.name)
+        last = entry.get("last_fired_iso")
+        last_s = f"last: {entry.get('last_result', '?')} @ {last}" if last else "never fired"
+        flags = []
+        if t.commit:
+            flags.append(f"commit: {', '.join(t.commit)}" + (" + push" if t.push else ""))
+        if not t.enabled:
+            console.print(f"[dim]⏸ {t.name}  ({t.schedule})  disabled[/dim]")
+            continue
+        console.print(
+            f"[green]●[/green] [bold]{t.name}[/bold]  {t.schedule} ({sch.cron_to_human(t.cron)})"
+            f"  →  next {nxt.strftime('%Y-%m-%d %H:%M') if nxt else 'never'}  ·  {last_s}"
+            + (f"  ·  {'; '.join(flags)}" if flags else "")
+        )
+    for p in problems:
+        console.print(f"[red]✗ {p}[/red]")
+    if problems:
         raise typer.Exit(1)
 
-    state.advance_cursor(state.worklist_heads())
-    if not (commit or push):
-        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] Review the diff, commit, and restart the hub.")
+
+@schedule_app.command("run")
+def schedule_run(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    task_name: str = typer.Argument(..., metavar="TASK", help="Task name (the md filename stem)."),
+    timeout: int = typer.Option(None, "--timeout", help="Override the task's per-round timeout (seconds)."),
+    max_rounds: int = typer.Option(None, "--max-rounds", help="Override the task's round cap."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the round-1 prompt and exit (no LLM)."),
+) -> None:
+    """Fire one task NOW, in-process — for testing and manual runs.
+
+    Uses the hub's configured MODEL (claude-local or any OpenAI/LiteLLM id),
+    the same as a scheduler fire. Ignores the cron schedule and the idle
+    gate, but still takes the run lock, so it can't overlap a scheduler run.
+    Exit 0 = the agent reported DONE; 1 = incomplete/error.
+    """
+    import asyncio
+    import logging as _logging
+
+    from . import schedule_runner as runner
+    from . import scheduling as sch
+
+    hub = hub.resolve()
+    tasks, problems = sch.load_tasks(hub)
+    by_name = {t.name: t for t in tasks}
+    if task_name not in by_name:
+        known = ", ".join(sorted(by_name)) or "(none)"
+        console.print(f"[red]no task {task_name!r} under {hub / 'schedule'}/. Known: {known}[/red]")
+        for p in problems:
+            console.print(f"[red]✗ {p}[/red]")
+        raise typer.Exit(2)
+    task = by_name[task_name]
+    if timeout:
+        task.timeout = timeout
+    if max_rounds:
+        task.max_rounds = max_rounds
+
+    if dry_run:
+        typer.echo(runner.build_prompt(task, hub, round_no=1))
         return
 
-    import datetime
-    msg = f"knowledge: auto-refresh {len(commits)} commit(s) on {datetime.date.today().isoformat()}"
+    # Manual runs should be observable in the terminal.
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    lock = sch.RunLock(hub)
+    if not lock.acquire(task.name):
+        console.print("[red]another scheduled run is in progress (lock held); try again later.[/red]")
+        raise typer.Exit(1)
     try:
-        sha = ks.commit_knowledge(hub, msg, push=push)
-    except RuntimeError as e:
-        console.print(f"[red]✗ {e}[/red]")
-        raise typer.Exit(1)
-    if sha is None:
-        console.print("[green]✓ knowledge refreshed; cursor advanced.[/green] No doc changes to commit.")
+        console.print(f"[cyan]→ running {task.name}[/cyan] (timeout {task.timeout}s/round, ≤{task.max_rounds} rounds)")
+        result = asyncio.run(runner.run_task(hub, task))
+    finally:
+        lock.release()
+
+    console.print(f"[dim]run log: {result.run_log}[/dim]")
+    if result.ok:
+        sha = f" · committed {result.commit_sha[:10]}" if result.commit_sha else ""
+        console.print(f"[green]✓ done in {result.rounds} round(s)[/green]: {result.summary or '(no summary)'}{sha}")
     else:
-        tail = " and pushed" if push else ""
-        console.print(f"[green]✓ knowledge refreshed and committed @ {sha[:10]}{tail}.[/green] Restart the hub to load it.")
+        console.print(f"[red]✗ {result.result} after {result.rounds} round(s)[/red] {result.error}")
+        raise typer.Exit(1)
+
+
+@schedule_app.command("status")
+def schedule_status(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Show each task's recorded fire history (anchors, last result, last log)."""
+    from . import scheduling as sch
+
+    hub = hub.resolve()
+    tasks, _ = sch.load_tasks(hub)
+    state = sch.ScheduleState(hub)
+    if not tasks:
+        console.print(f"no tasks — add markdown files under {hub / 'schedule'}/")
+        return
+    for t in tasks:
+        entry = state.get(t.name)
+        console.print(f"[bold]{t.name}[/bold]" + ("" if t.enabled else " [dim](disabled)[/dim]"))
+        if not entry:
+            console.print("  never seen by a scheduler yet")
+            continue
+        for key in ("first_seen_iso", "last_fired_iso", "last_result", "last_run_log"):
+            if entry.get(key):
+                console.print(f"  {key.removesuffix('_iso')}: {entry[key]}")
 
 
 app.add_typer(
-    knowledge_app,
-    name="knowledge",
-    help="Keep a hub's knowledge/ docs in step with its source code.",
+    schedule_app,
+    name="schedule",
+    help="Inspect / manually fire the hub's scheduled background tasks.",
     rich_help_panel="Commands",
 )
 

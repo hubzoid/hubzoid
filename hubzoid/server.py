@@ -65,7 +65,26 @@ def build_app() -> FastAPI:
     api_keys = set(settings.bridge_api_keys)
     max_upload_bytes = settings.max_upload_bytes
 
-    app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0")
+    # In-flight chat counter: the scheduler's idle gate. Scheduled tasks only
+    # start when no chat request is being served (they then run concurrently
+    # with whatever arrives next — the gate is at start, not for the duration).
+    inflight = _InFlight()
+
+    from contextlib import asynccontextmanager
+
+    from . import scheduler as scheduler_lib
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
+        sched.start()   # no-op when <hub>/schedule/ is empty or disabled
+        app.state.scheduler = sched
+        try:
+            yield
+        finally:
+            await sched.stop()
+
+    app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
 
     def _auth(request: Request) -> None:
         auth = request.headers.get("authorization", "")
@@ -134,13 +153,17 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id),
+                _stream(rt, prompt, model_label, chat_id, inflight),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        with _request_ctx.chat_scope(chat_id):
-            text = await rt.run(prompt)
+        inflight.enter()
+        try:
+            with _request_ctx.chat_scope(chat_id):
+                text = await rt.run(prompt)
+        finally:
+            inflight.leave()
         return JSONResponse(_blocking_envelope(text, model_label))
 
     # ------------------------------------------------------------------
@@ -207,22 +230,46 @@ def build_app() -> FastAPI:
 
 
 # ---------------------------------------------------------------------------
+# In-flight tracking (the scheduler's idle gate)
+# ---------------------------------------------------------------------------
+class _InFlight:
+    def __init__(self) -> None:
+        self.n = 0
+
+    def enter(self) -> None:
+        self.n += 1
+
+    def leave(self) -> None:
+        self.n = max(0, self.n - 1)
+
+    def busy(self) -> bool:
+        return self.n > 0
+
+
+# ---------------------------------------------------------------------------
 # Streaming response (text/event-stream)
 # ---------------------------------------------------------------------------
-async def _stream(rt, prompt: str, model: str, chat_id: str) -> AsyncIterator[bytes]:
-    # Role chunk first (OpenAI convention).
-    first = _chunk("", model=model)
-    first["choices"][0]["delta"] = {"role": "assistant", "content": ""}
-    yield f"data: {json.dumps(first)}\n\n".encode()
+async def _stream(rt, prompt: str, model: str, chat_id: str,
+                  inflight: _InFlight | None = None) -> AsyncIterator[bytes]:
+    if inflight:
+        inflight.enter()
+    try:
+        # Role chunk first (OpenAI convention).
+        first = _chunk("", model=model)
+        first["choices"][0]["delta"] = {"role": "assistant", "content": ""}
+        yield f"data: {json.dumps(first)}\n\n".encode()
 
-    # Set chat scope so tools resolve to this chat's dirs.
-    with _request_ctx.chat_scope(chat_id):
-        async for delta in rt.stream(prompt):
-            if delta:
-                yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
+        # Set chat scope so tools resolve to this chat's dirs.
+        with _request_ctx.chat_scope(chat_id):
+            async for delta in rt.stream(prompt):
+                if delta:
+                    yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
 
-    yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
-    yield b"data: [DONE]\n\n"
+        yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+    finally:
+        if inflight:
+            inflight.leave()
 
 
 # ---------------------------------------------------------------------------
