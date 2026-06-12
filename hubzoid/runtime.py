@@ -70,9 +70,45 @@ class OpenAIAgentsRuntime:
     """Wraps an `agents.Agent` + `Runner.run_streamed` behind the Runtime API."""
 
     def __init__(self, agent, *, max_turns: int | None = None):
+        import asyncio
+
         self._agent = agent
         self._max_turns = max_turns or 20
         self.name = agent.name
+        # MCP servers come back from the loader unconnected. The Agents SDK
+        # requires `await server.connect()` before it will list their tools
+        # (the Claude backend manages this itself, hence this is OpenAI-only).
+        # Connect lazily, once, on first run — and reuse across calls so the
+        # long-running bridge doesn't respawn subprocesses per request.
+        self._mcp_servers = list(getattr(agent, "mcp_servers", []) or [])
+        self._mcp_connected = False
+        self._mcp_lock = asyncio.Lock()
+
+    async def _ensure_mcp(self) -> None:
+        """Connect MCP servers once. A server that fails to connect is dropped
+        (with a warning) rather than crashing the whole agent — a broken
+        connector shouldn't take down chat or a scheduled run."""
+        if self._mcp_connected:
+            return
+        async with self._mcp_lock:
+            if self._mcp_connected:
+                return
+            live = []
+            for s in self._mcp_servers:
+                name = getattr(s, "name", "?")
+                try:
+                    await s.connect()
+                    live.append(s)
+                    log.info("MCP server %r connected", name)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "MCP server %r failed to connect; disabling it for "
+                        "this run: %s", name, exc,
+                    )
+            # Keep only servers that actually connected, so the SDK never tries
+            # to list_tools() on a dead one ("Server not initialized" error).
+            self._agent.mcp_servers = live
+            self._mcp_connected = True
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         from agents import ItemHelpers, Runner
@@ -80,6 +116,7 @@ class OpenAIAgentsRuntime:
 
         from . import tool_events
 
+        await self._ensure_mcp()
         text_accumulated = False
         try:
             result = Runner.run_streamed(self._agent, prompt, max_turns=self._max_turns)
