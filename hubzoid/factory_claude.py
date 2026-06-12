@@ -266,6 +266,13 @@ class ClaudeRuntime:
         self.name = name
         self._options = options
 
+    async def aopen(self) -> None:
+        """No-op: the Claude Agent SDK manages MCP lifecycle internally.
+        Present so callers can drive both backends uniformly."""
+
+    async def aclose(self) -> None:
+        """No-op counterpart to aopen() — see above."""
+
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Yield text deltas + inline tool-activity markers as they arrive.
 

@@ -35,6 +35,10 @@ class Runtime(Protocol):
 
     async def run(self, prompt: str) -> str: ...
 
+    async def aopen(self) -> None: ...
+
+    async def aclose(self) -> None: ...
+
 
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
           max_turns: int | None = None) -> Runtime:
@@ -70,45 +74,61 @@ class OpenAIAgentsRuntime:
     """Wraps an `agents.Agent` + `Runner.run_streamed` behind the Runtime API."""
 
     def __init__(self, agent, *, max_turns: int | None = None):
-        import asyncio
-
         self._agent = agent
         self._max_turns = max_turns or 20
         self.name = agent.name
         # MCP servers come back from the loader unconnected. The Agents SDK
-        # requires `await server.connect()` before it will list their tools
-        # (the Claude backend manages this itself, hence this is OpenAI-only).
-        # Connect lazily, once, on first run — and reuse across calls so the
-        # long-running bridge doesn't respawn subprocesses per request.
+        # requires they be connected before it will list their tools (the
+        # Claude backend manages this itself, hence this is OpenAI-only). The
+        # connection MUST be opened and closed in the SAME asyncio task — an
+        # MCP stdio server binds an anyio task group / cancel scope to the
+        # opening task, so connecting inside a per-request stream() and tearing
+        # down elsewhere raises "cancel scope in a different task" /
+        # ClosedResourceError. So callers open once in a stable task (the
+        # bridge lifespan, or a one-shot CLI coroutine) via aopen()/aclose();
+        # request tasks then just *use* the already-connected servers.
         self._mcp_servers = list(getattr(agent, "mcp_servers", []) or [])
-        self._mcp_connected = False
-        self._mcp_lock = asyncio.Lock()
+        self._stack = None
+        self._opened = False
 
-    async def _ensure_mcp(self) -> None:
-        """Connect MCP servers once. A server that fails to connect is dropped
-        (with a warning) rather than crashing the whole agent — a broken
-        connector shouldn't take down chat or a scheduled run."""
-        if self._mcp_connected:
+    async def aopen(self) -> None:
+        """Connect MCP servers within the calling task. A server that fails to
+        connect is dropped (with a warning) rather than crashing the agent —
+        a broken connector shouldn't take down chat or a scheduled run.
+
+        Idempotent. Pair every aopen() with an aclose() in the SAME task."""
+        if self._opened:
             return
-        async with self._mcp_lock:
-            if self._mcp_connected:
-                return
-            live = []
-            for s in self._mcp_servers:
-                name = getattr(s, "name", "?")
-                try:
-                    await s.connect()
-                    live.append(s)
-                    log.info("MCP server %r connected", name)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "MCP server %r failed to connect; disabling it for "
-                        "this run: %s", name, exc,
-                    )
-            # Keep only servers that actually connected, so the SDK never tries
-            # to list_tools() on a dead one ("Server not initialized" error).
-            self._agent.mcp_servers = live
-            self._mcp_connected = True
+        self._opened = True
+        if not self._mcp_servers:
+            self._agent.mcp_servers = []
+            return
+        from contextlib import AsyncExitStack
+
+        self._stack = AsyncExitStack()
+        live = []
+        for s in self._mcp_servers:
+            name = getattr(s, "name", "?")
+            try:
+                await self._stack.enter_async_context(s)  # __aenter__ = connect
+                live.append(s)
+                log.info("MCP server %r connected", name)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("MCP server %r failed to connect; disabling it: %s",
+                            name, exc)
+        # Keep only servers that actually connected, so the SDK never tries to
+        # list_tools() on a dead one ("Server not initialized" error).
+        self._agent.mcp_servers = live
+
+    async def aclose(self) -> None:
+        """Tear down MCP connections. Must run in the same task as aopen()."""
+        if self._stack is not None:
+            try:
+                await self._stack.aclose()
+            except Exception as exc:  # noqa: BLE001 — teardown best-effort
+                log.warning("MCP cleanup error (ignored): %s", exc)
+            self._stack = None
+        self._opened = False
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         from agents import ItemHelpers, Runner
@@ -116,7 +136,6 @@ class OpenAIAgentsRuntime:
 
         from . import tool_events
 
-        await self._ensure_mcp()
         text_accumulated = False
         try:
             result = Runner.run_streamed(self._agent, prompt, max_turns=self._max_turns)
