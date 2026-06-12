@@ -284,6 +284,12 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     consecutive_errors = 0
     done = False
     try:
+        # Open MCP here and close it in the finally below — same task, so the
+        # stdio connection's cancel scope is entered/exited consistently even
+        # though each rt.run() executes in a wait_for child task. Guarded with
+        # hasattr because runtime_factory is a public extension point.
+        if hasattr(rt, "aopen"):
+            await rt.aopen()
         for round_no in range(1, task.max_rounds + 1):
             result.rounds = round_no
             prompt = build_prompt(task, hub_dir, round_no=round_no, carry=carry)
@@ -372,6 +378,9 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
         rlog.emit(event="error", where="run_loop", error=result.error,
                   traceback=traceback.format_exc())
         log.exception("schedule[%s] run crashed", task.name)
+    finally:
+        if hasattr(rt, "aclose"):
+            await rt.aclose()
 
     result.duration_s = time.monotonic() - started
     state.record_fired(task.name, started_dt, result=result.result,

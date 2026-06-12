@@ -558,7 +558,16 @@ def test_hub(
 
     rt = runtime_lib.build(hub)
     console.print(f"[cyan]→[/cyan] {prompt}")
-    text = asyncio.run(rt.run(prompt))
+
+    async def _go() -> str:
+        # Open/use/close MCP in one task — see runtime.aopen() for why.
+        await rt.aopen()
+        try:
+            return await rt.run(prompt)
+        finally:
+            await rt.aclose()
+
+    text = asyncio.run(_go())
     console.print(f"[green]←[/green] {text}")
 
 

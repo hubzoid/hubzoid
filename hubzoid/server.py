@@ -76,6 +76,11 @@ def build_app() -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
+        # Connect MCP servers here, in the long-lived lifespan task, so the
+        # connection is opened and closed in the SAME task (request handlers
+        # run in their own tasks and only *use* the servers). Connecting per
+        # request instead raises ClosedResourceError / cancel-scope errors.
+        await rt.aopen()
         sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
         sched.start()   # no-op when <hub>/schedule/ is empty or disabled
         app.state.scheduler = sched
@@ -83,6 +88,7 @@ def build_app() -> FastAPI:
             yield
         finally:
             await sched.stop()
+            await rt.aclose()
 
     app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
 
