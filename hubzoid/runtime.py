@@ -134,15 +134,17 @@ class OpenAIAgentsRuntime:
         from agents import ItemHelpers, Runner
         from openai.types.responses import ResponseTextDeltaEvent
 
-        from . import tool_events
+        from . import _request_ctx, tool_events
 
         text_accumulated = False
+        shown: list[str] = []
         try:
             result = Runner.run_streamed(self._agent, prompt, max_turns=self._max_turns)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
                         text_accumulated = True
+                        shown.append(event.data.delta)
                         yield event.data.delta
                     continue
                 if event.type == "run_item_stream_event":
@@ -150,6 +152,7 @@ class OpenAIAgentsRuntime:
                     if item.type == "message_output_item" and not text_accumulated:
                         text = ItemHelpers.text_message_output(item)
                         if text:
+                            shown.append(text)
                             yield text
                     elif item.type == "tool_call_item":
                         # One line per tool call. No matching "returned" line.
@@ -165,6 +168,11 @@ class OpenAIAgentsRuntime:
                         yield tool_events.format_call(
                             tool_events.short_name(name), args,
                         )
+            # Surface any download link the model did not echo itself.
+            footer = tool_events.format_artifact_footer(
+                _request_ctx.drain_artifacts(), "".join(shown))
+            if footer:
+                yield footer
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"

@@ -204,8 +204,8 @@ def _tools_section() -> str:
         "  relevant source is listed above.\n"
         "- When you intend to call multiple tools and there are no dependencies\n"
         "  between them, call them in parallel.\n"
-        "- After a tool produces a file or link for the user, surface that link\n"
-        "  in your reply so the user can open it.\n"
+        "- When a tool saves a file for the user, its download link is added to\n"
+        "  your reply automatically — just say what you made.\n"
         "- If a tool returns an error, read it and adjust; do not retry the same\n"
         "  call unchanged.\n"
     )

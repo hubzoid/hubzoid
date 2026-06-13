@@ -45,6 +45,30 @@ def format_call(name: str, args: object | None = None) -> str:
     return f"\n\n> ✓ {body}\n\n"
 
 
+def format_artifact_footer(artifacts: list, shown_text: str = "") -> str:
+    """Append download links the model did not surface itself.
+
+    The model is not required to repeat a `write_artifact` link; the runtime
+    drains the per-request registry (`_request_ctx.drain_artifacts`) at end of
+    turn and passes the entries here so the link reaches the user on every
+    backend and surface. Links whose URL already appears in `shown_text` (the
+    model echoed it) are skipped so we never double-post. The markdown link
+    format is what the Slack adapter rewrites to `<url|label>` mrkdwn.
+    """
+    if not artifacts:
+        return ""
+    lines = []
+    for art in artifacts:
+        url = (art or {}).get("url")
+        name = (art or {}).get("name") or "file"
+        if not url or url in shown_text:
+            continue
+        lines.append(f"[Download {name}]({url})")
+    if not lines:
+        return ""
+    return "\n\n" + "\n".join(lines) + "\n"
+
+
 def format_error(name: str, message: str | None = None) -> str:
     """`> ⚠ **tool_name** {short error}` — emitted when a tool errors.
 
