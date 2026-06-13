@@ -27,6 +27,13 @@ from typing import Iterator
 # bridge sanitizes incoming ids before set().
 _current_chat_id: ContextVar[str | None] = ContextVar("hubzoid_chat_id", default=None)
 
+# Download links produced this request (e.g. by `write_artifact`). The runtime
+# drains these at end of turn and surfaces any the model did not echo itself,
+# so the link reaches the user regardless of backend or model. The list is set
+# fresh per request by `chat_scope`; tools mutate it in place (append) so the
+# record survives the context copy the SDK makes when running tool calls.
+_current_artifacts: ContextVar[list | None] = ContextVar("hubzoid_artifacts", default=None)
+
 
 def get_chat_id() -> str | None:
     return _current_chat_id.get()
@@ -36,11 +43,36 @@ def set_chat_id(chat_id: str | None) -> None:
     _current_chat_id.set(chat_id)
 
 
+def record_artifact(name: str, url: str) -> None:
+    """Register a downloadable artifact produced during this request.
+
+    Append-in-place (not reassign) so the entry is visible from the parent
+    context that drains it, even though tool calls run in a copied context.
+    See `hubzoid.tool_events.format_artifact_footer` for how it is surfaced.
+    """
+    items = _current_artifacts.get()
+    if items is None:
+        items = []
+        _current_artifacts.set(items)
+    items.append({"name": name, "url": url})
+
+
+def drain_artifacts() -> list:
+    """Return artifacts recorded this request and clear the registry."""
+    items = _current_artifacts.get()
+    if not items:
+        return []
+    _current_artifacts.set([])
+    return list(items)
+
+
 @contextmanager
 def chat_scope(chat_id: str | None) -> Iterator[None]:
-    """Set the chat id for the duration of a `with` block."""
+    """Set the chat id (and a fresh artifact registry) for a `with` block."""
     token = _current_chat_id.set(chat_id)
+    art_token = _current_artifacts.set([])
     try:
         yield
     finally:
         _current_chat_id.reset(token)
+        _current_artifacts.reset(art_token)

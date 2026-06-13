@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from . import _request_ctx
 from . import memory as memlib
 from . import settings as settingslib
 from . import tool_events
@@ -292,6 +293,7 @@ class ClaudeRuntime:
 
         streamed_any = False
         final_result: str | None = None
+        shown: list[str] = []
         # tool_use_id -> short name. Used only to identify error result blocks
         # so we can surface them with a ⚠ marker. Successful results emit
         # nothing — the call line was already shown.
@@ -307,6 +309,7 @@ class ClaudeRuntime:
                             text = delta.get("text") or ""
                             if text:
                                 streamed_any = True
+                                shown.append(text)
                                 yield text
                     continue
 
@@ -345,7 +348,14 @@ class ClaudeRuntime:
             return
 
         if not streamed_any and final_result:
+            shown.append(final_result)
             yield final_result
+
+        # Surface any download link the model did not echo itself.
+        footer = tool_events.format_artifact_footer(
+            _request_ctx.drain_artifacts(), "".join(shown))
+        if footer:
+            yield footer
 
     async def run(self, prompt: str) -> str:
         pieces: list[str] = []

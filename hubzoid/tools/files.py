@@ -128,6 +128,9 @@ def make(ctx) -> list:
         url = _artifact_url(safe_name)
         size_label = _format_size(size)
         if url:
+            # Record the link so the runtime surfaces it to the user even if
+            # the model never echoes this result (see tool_events.format_artifact_footer).
+            _request_ctx.record_artifact(safe_name, url)
             return f"Saved **{safe_name}** ({size_label})\n\n[Download {safe_name}]({url})"
         return f"Saved **{safe_name}** ({size_label}) at `{target}`"
 
@@ -334,6 +337,21 @@ def _artifact_url(filename: str) -> str | None:
         f"{base}/artifacts/{quote(chat_id, safe='')}/{quote(filename, safe='')}"
         f"?t={token}"
     )
+
+
+def surface_artifact(filename: str) -> bool:
+    """Register a file already saved in the current chat's artifacts directory
+    so the runtime surfaces its download link to the user.
+
+    For files written by something other than `write_artifact` — e.g. a
+    hub-local validator that emits an encoded sidecar next to the JSON it
+    validated. Returns False when no chat is in scope (no link is possible).
+    """
+    url = _artifact_url(filename)
+    if not url:
+        return False
+    _request_ctx.record_artifact(filename, url)
+    return True
 
 
 def _safe_filename(raw: str) -> str:
