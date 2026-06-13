@@ -58,11 +58,15 @@ def format_artifact_footer(artifacts: list, shown_text: str = "") -> str:
     if not artifacts:
         return ""
     lines = []
+    seen: set[str] = set()
     for art in artifacts:
         url = (art or {}).get("url")
         name = (art or {}).get("name") or "file"
-        if not url or url in shown_text:
+        # Skip blanks, links the model already echoed, and repeats — the same
+        # file written more than once this turn shares one URL.
+        if not url or url in shown_text or url in seen:
             continue
+        seen.add(url)
         lines.append(f"[Download {name}]({url})")
     if not lines:
         return ""
