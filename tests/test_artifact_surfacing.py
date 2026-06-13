@@ -167,6 +167,23 @@ def test_footer_empty_when_no_artifacts():
     assert tool_events.format_artifact_footer([], shown_text="x") == ""
 
 
+def test_footer_dedupes_repeated_link_from_multiple_write_calls():
+    # write_artifact called twice for the same file (e.g. a revision after a
+    # validation error) records the same URL twice — surface it only once.
+    url = "http://h/artifacts/c/form.json?t=ab"
+    enc = "http://h/artifacts/c/form.json.encoded.txt?t=cd"
+    footer = tool_events.format_artifact_footer(
+        [
+            {"name": "form.json", "url": url},
+            {"name": "form.json", "url": url},
+            {"name": "form.json.encoded.txt", "url": enc},
+        ],
+        shown_text="",
+    )
+    assert footer.count(f"[Download form.json]({url})") == 1
+    assert footer.count(f"[Download form.json.encoded.txt]({enc})") == 1
+
+
 # ---------------------------------------------------------------------------
 # Runtime wiring: the link is surfaced even when the model never echoes it
 # ---------------------------------------------------------------------------
