@@ -37,6 +37,12 @@ Environment variables explicitly supported:
                          instead of being silently truncated. Default:
                          25 MiB (26214400).
   HUB_LOG_LEVEL          info | debug | warning. Default: info.
+  REASONING_EFFORT       low | medium | high. Optional. Maps to the backend's
+                         reasoning control: OpenAI/Azure reasoning models get
+                         `reasoning_effort`; Claude gets an extended-thinking
+                         token budget. Unset = the model's own default (Azure
+                         keeps its built-in effort; Claude does no extended
+                         thinking). Invalid values are ignored.
 """
 from __future__ import annotations
 
@@ -45,6 +51,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from . import reasoning as reasoninglib
 
 
 DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
@@ -61,6 +69,7 @@ class Settings:
     bridge_port: int
     log_level: str
     max_upload_bytes: int
+    reasoning_effort: str | None = None
 
     @property
     def first_api_key(self) -> str:
@@ -91,6 +100,7 @@ def load(hub_dir: Path) -> Settings:
         bridge_port=int(os.environ.get("BRIDGE_PORT", "8000")),
         log_level=os.environ.get("HUB_LOG_LEVEL", "info"),
         max_upload_bytes=_int_env("HUBZOID_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
+        reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
     )
 
 

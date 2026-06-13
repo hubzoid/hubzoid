@@ -102,12 +102,25 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
 
     instructions = _compose_instructions(main_spec.instructions, ctx, backend="openai-agents")
 
+    # Only override model_settings when an effort is configured, so the unset
+    # case keeps the Agent's default ModelSettings (reasoning=None) and the
+    # provider's own default applies.
+    extra: dict = {}
+    if settings.reasoning_effort:
+        from agents import ModelSettings
+        from openai.types.shared import Reasoning
+
+        extra["model_settings"] = ModelSettings(
+            reasoning=Reasoning(effort=settings.reasoning_effort)
+        )
+
     main = Agent(
         name=main_spec.spec.name,
         instructions=instructions,
         model=main_model,
         tools=list(registry.values()),
         mcp_servers=mcp_servers,
+        **extra,
     )
     return main
 
