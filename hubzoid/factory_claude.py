@@ -30,6 +30,7 @@ from typing import Any, AsyncIterator
 
 from . import _request_ctx
 from . import memory as memlib
+from . import reasoning as reasoninglib
 from . import settings as settingslib
 from . import tool_events
 from .factory import HubContext, _compose_instructions, _load_skills_and_promoted_agents
@@ -213,11 +214,17 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         opts_kwargs["model"] = model_pin
     if max_turns is not None:
         opts_kwargs["max_turns"] = max_turns
+    # REASONING_EFFORT -> extended-thinking budget (Claude has no low/med/high).
+    # Unset leaves the field absent so the model's default applies.
+    thinking_budget = reasoninglib.claude_thinking_budget(settings.reasoning_effort)
+    if thinking_budget is not None:
+        opts_kwargs["max_thinking_tokens"] = thinking_budget
     try:
         options = ClaudeAgentOptions(**opts_kwargs)
     except TypeError:
-        # Older claude-agent-sdk without max_turns — drop it rather than die.
+        # Older claude-agent-sdk without these fields — drop rather than die.
         opts_kwargs.pop("max_turns", None)
+        opts_kwargs.pop("max_thinking_tokens", None)
         options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(name=main_name, options=options)
