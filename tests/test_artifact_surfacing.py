@@ -184,6 +184,24 @@ def test_footer_dedupes_repeated_link_from_multiple_write_calls():
     assert footer.count(f"[Download form.json.encoded.txt]({enc})") == 1
 
 
+def test_repeated_write_then_footer_yields_one_link_per_file(ctx, monkeypatch):
+    # End-to-end through the real record->drain->format path: the agent writes
+    # the form, the first validate fails, it rewrites the same file, then a
+    # successful validate surfaces the encoded sidecar. The footer must show
+    # exactly one link per distinct file (the bug from the live IRS chat).
+    monkeypatch.setenv("BRIDGE_PORT", "9000")
+    monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
+    write = _by_name(files_mod.make(ctx), "write_artifact")
+    with _request_ctx.chat_scope("chat-dup"):
+        _call(write, filename="form.json", content="{}")        # first write
+        _call(write, filename="form.json", content='{"v": 2}')  # rewrite after a validation error
+        files_mod.surface_artifact("form.json.encoded.txt")     # validator emitted the encoded payload
+        footer = tool_events.format_artifact_footer(
+            _request_ctx.drain_artifacts(), shown_text="")
+    assert footer.count("[Download form.json](") == 1
+    assert footer.count("[Download form.json.encoded.txt](") == 1
+
+
 # ---------------------------------------------------------------------------
 # Runtime wiring: the link is surfaced even when the model never echoes it
 # ---------------------------------------------------------------------------
