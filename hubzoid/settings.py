@@ -27,8 +27,10 @@ Environment variables explicitly supported:
   HUBZOID_PUBLIC_URL     Public base URL the bridge is reachable at, used to
                          build download links emitted by `write_artifact`.
                          Set this when running behind a reverse proxy / on a
-                         different host than the user's browser. Defaults to
-                         http://127.0.0.1:<BRIDGE_PORT> for localhost dev.
+                         different host than the user's browser. If unset,
+                         falls back to WEBUI_URL (same public host fronts both
+                         behind a proxy), then to http://127.0.0.1:<BRIDGE_PORT>
+                         for localhost dev.
                          Example: HUBZOID_PUBLIC_URL=https://hub.example.com
   HUBZOID_MAX_UPLOAD_BYTES  Per-file ingress cap, in bytes. Applies to both
                          `data:` URLs decoded from chat-completion message
