@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.6.6"
+version = "0.6.7"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
