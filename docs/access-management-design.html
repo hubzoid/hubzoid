@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Management for Hubzoid Hubs — Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#15171c; --ink-soft:#3b4048; --ink-faint:#6b7280;
+    --line:#e6e8ec; --line-soft:#f0f1f4; --bg:#ffffff; --panel:#fafbfc;
+    --accent:#1f2937; --accent-bar:#111827;
+    --red:#b42318; --red-bg:#fef3f2; --amber:#b54708; --amber-bg:#fffaeb;
+    --green:#067647; --green-bg:#ecfdf3; --blue:#175cd3; --blue-bg:#eff6ff;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:var(--ink); background:var(--bg); margin:0;
+    line-height:1.62; font-size:16px; font-feature-settings:"cv02","cv03","cv04","ss01";
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:0 28px 120px}
+  header.doc{padding:64px 0 40px; border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint)}
+  h1{font-size:42px; line-height:1.08; font-weight:800; letter-spacing:-.022em; margin:.32em 0 .26em}
+  .lede{font-size:18px; color:var(--ink-soft); max-width:62ch; margin:0}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 26px; margin-top:26px; font-size:13.5px; color:var(--ink-faint)}
+  .meta b{color:var(--ink); font-weight:600}
+  h2{font-size:13px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); margin:64px 0 4px}
+  h2 .n{color:var(--accent-bar)}
+  h3{font-size:25px; font-weight:700; letter-spacing:-.02em; margin:.2em 0 .5em}
+  h4{font-size:17px; font-weight:700; letter-spacing:-.01em; margin:30px 0 6px}
+  p{margin:0 0 16px}
+  a{color:var(--blue); text-decoration:none}
+  .section{scroll-margin-top:24px}
+  .rule{height:3px; width:46px; background:var(--accent-bar); border-radius:2px; margin:6px 0 18px}
+  strong{font-weight:650}
+  code{font-family:var(--mono); font-size:.86em; background:var(--line-soft); padding:1px 5px; border-radius:4px; color:#9333ea}
+  .lead-quote{font-size:21px; line-height:1.5; font-weight:600; letter-spacing:-.015em; color:var(--ink); border-left:3px solid var(--accent-bar); padding:4px 0 4px 22px; margin:8px 0 24px}
+  ul,ol{margin:0 0 18px; padding-left:22px}
+  li{margin:7px 0}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line); border-radius:12px; padding:18px 20px; background:var(--panel)}
+  .card h4{margin:0 0 6px}
+  .card p{margin:0; font-size:14.5px; color:var(--ink-soft)}
+  .doctrine{counter-reset:d; list-style:none; padding:0; margin:18px 0 8px}
+  .doctrine li{position:relative; padding:16px 18px 16px 58px; border:1px solid var(--line); border-radius:12px; margin:10px 0; background:var(--bg)}
+  .doctrine li::before{counter-increment:d; content:counter(d); position:absolute; left:16px; top:15px; width:28px; height:28px; border-radius:8px; background:var(--accent-bar); color:#fff; font-weight:700; font-size:14px; display:grid; place-items:center}
+  .doctrine b{display:block; font-weight:700; letter-spacing:-.01em; margin-bottom:1px}
+  .doctrine span{color:var(--ink-soft); font-size:14.5px}
+  /* flow diagram */
+  .flow{margin:22px 0 8px}
+  .node{border:1px solid var(--line); border-radius:12px; padding:14px 16px 14px 16px; background:var(--bg); display:grid; grid-template-columns:64px 1fr; gap:14px; align-items:start}
+  .node .lab{font-family:var(--mono); font-weight:600; font-size:13px; color:#fff; background:var(--accent-bar); border-radius:7px; padding:5px 0; text-align:center; letter-spacing:.02em}
+  .node .lab.idp{background:#3730a3}
+  .node .lab.db{background:#065f46}
+  .node .ttl{font-weight:700; letter-spacing:-.01em}
+  .node .desc{font-size:14px; color:var(--ink-soft); margin-top:2px}
+  .node .who{font-size:12px; color:var(--ink-faint); margin-top:5px; font-weight:500}
+  .arrow{height:18px; display:grid; place-items:center; color:var(--ink-faint)}
+  .arrow::after{content:"\2193"; font-size:16px}
+  /* tables */
+  .tbl-wrap{overflow-x:auto; margin:18px 0 8px; border:1px solid var(--line); border-radius:12px}
+  table{border-collapse:collapse; width:100%; font-size:14px}
+  th,td{text-align:left; padding:11px 14px; vertical-align:top; border-bottom:1px solid var(--line-soft)}
+  thead th{background:var(--panel); font-weight:600; color:var(--ink-soft); font-size:12.5px; letter-spacing:.02em; border-bottom:1px solid var(--line)}
+  tbody tr:last-child td{border-bottom:none}
+  td b{font-weight:650}
+  .role td:first-child{font-weight:650; white-space:nowrap}
+  /* pills */
+  .pill{display:inline-block; font-size:11.5px; font-weight:600; padding:2px 9px; border-radius:999px; letter-spacing:.01em; white-space:nowrap}
+  .pill.red{color:var(--red); background:var(--red-bg)}
+  .pill.green{color:var(--green); background:var(--green-bg)}
+  .pill.amber{color:var(--amber); background:var(--amber-bg)}
+  .pill.blue{color:var(--blue); background:var(--blue-bg)}
+  /* callout */
+  .callout{border:1px solid var(--line); border-left:3px solid var(--amber); background:var(--amber-bg); border-radius:10px; padding:16px 18px; margin:18px 0; font-size:14.5px}
+  .callout.red{border-left-color:var(--red); background:var(--red-bg)}
+  .callout.blue{border-left-color:var(--blue); background:var(--blue-bg)}
+  .callout b{font-weight:700}
+  .gap{display:grid; grid-template-columns:1fr; gap:0}
+  .gap .row{display:grid; grid-template-columns:200px 1fr; gap:18px; padding:13px 0; border-bottom:1px solid var(--line-soft)}
+  .gap .row:last-child{border-bottom:none}
+  .gap .f{font-family:var(--mono); font-size:12.5px; color:var(--ink); font-weight:500}
+  .gap .d{font-size:14px; color:var(--ink-soft)}
+  @media(max-width:680px){.gap .row{grid-template-columns:1fr; gap:3px} .node{grid-template-columns:54px 1fr}}
+  /* phases */
+  .phase{border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:11px 0; background:var(--bg); position:relative}
+  .phase .tag{display:inline-block; font-family:var(--mono); font-size:12px; font-weight:600; color:#fff; background:var(--accent-bar); border-radius:6px; padding:2px 8px; margin-right:10px}
+  .phase .tag.now{background:var(--red)}
+  .phase h4{display:inline; margin:0; font-size:16.5px}
+  .phase p{margin:9px 0 0; font-size:14.5px; color:var(--ink-soft)}
+  footer.doc{margin-top:72px; padding-top:24px; border-top:1px solid var(--line); font-size:13px; color:var(--ink-faint)}
+  .cites{font-size:13px; color:var(--ink-soft); columns:2; column-gap:34px}
+  .cites div{break-inside:avoid; margin:0 0 9px; padding-left:14px; text-indent:-14px}
+  @media(max-width:680px){.cites{columns:1}}
+  .toc{display:flex; flex-wrap:wrap; gap:8px 10px; margin:26px 0 0}
+  .toc a{font-size:13px; color:var(--ink-soft); border:1px solid var(--line); border-radius:999px; padding:4px 12px}
+  .toc a:hover{border-color:var(--ink-faint); color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="eyebrow">Hubzoid Runtime · Security Architecture</div>
+  <h1>Access management for Hubzoid hubs</h1>
+  <p class="lede">A never-breakable design for per-role tool and data access, where every authorization decision lives in deterministic code outside the model, with the database as the floor.</p>
+  <div class="meta">
+    <span><b>Status</b> Design for review</span>
+    <span><b>Scope</b> Productize in HubZoid runtime</span>
+    <span><b>Anchor</b> Samarth Jewellery (Ornate ERP, multi-store)</span>
+    <span><b>Date</b> 18 June 2026</span>
+  </div>
+  <div class="toc">
+    <a href="#summary">Summary</a>
+    <a href="#doctrine">Doctrine</a>
+    <a href="#answers">Your questions</a>
+    <a href="#research">How others do it</a>
+    <a href="#arch">Architecture</a>
+    <a href="#matrix">Role matrix</a>
+    <a href="#db">DB behind tools</a>
+    <a href="#threat">Threat model</a>
+    <a href="#today">Where we are</a>
+    <a href="#rollout">Rollout</a>
+    <a href="#residual">Residual risk</a>
+    <a href="#next">Next steps</a>
+  </div>
+</header>
+
+<section class="section" id="summary">
+  <h2><span class="n">01</span> &nbsp;Executive summary</h2>
+  <div class="rule"></div>
+  <p class="lead-quote">The bar is "100 percent, never breakable." The only honest way to meet it is to remove every access decision from the language model and place it in deterministic code that runs on every path, with the database as the last line.</p>
+  <p>Hubzoid hubs today are single tenant and single role, and that is fine. Adding multiple roles to one hub (an owner, a store manager, a sales associate, an accountant, all reading from the same Ornate ERP) requires a real access-management layer, because a language model cannot be trusted to keep one user out of another user's data. A jailbreak or a single piece of injected content would be enough.</p>
+  <p>This document sets out the doctrine, the seven enforcement layers from login to data and back, a concrete role to tool to data matrix for Samarth, the exact way Ornate and ERPNext get hidden behind tools, an honest threat model, the live gaps in the current runtime, and a phased rollout. The decision is to build this as a HubZoid runtime capability so every customer hub inherits it.</p>
+  <div class="callout blue"><b>One line to remember.</b> OpenWebUI owns login and does it well, but login is layer 1 of 7. It controls who gets in and which tool is offered. It can never control what a tool returns once it runs. Everything hard happens after login.</div>
+</section>
+
+<section class="section" id="doctrine">
+  <h2><span class="n">02</span> &nbsp;The doctrine</h2>
+  <div class="rule"></div>
+  <p>Five rules. They are not preferences. Every layer below is an instance of one of these.</p>
+  <ol class="doctrine">
+    <li><b>Authorization lives outside the model.</b><span>A tool call is a request, never a decision. Every allow or deny verdict is computed by deterministic code before any side effect. A line in the system prompt ("only show this user their own store") is a usability nudge, not a control.</span></li>
+    <li><b>The agent holds zero standing credentials.</b><span>The agent process gets no password to Ornate, ERPNext, or any tool server. It acts only with a short-lived, single-audience token minted from the logged-in user (delegation: subject is the user, actor is the agent).</span></li>
+    <li><b>Identity is a verified signed claim, never a request field.</b><span>The per-request principal comes from a signed, audience-bound assertion validated server side. It is never read from a value the caller can set, such as a chat id or a user field in the request body.</span></li>
+    <li><b>Filter before context.</b><span>No row, file, cell, citation, or download link enters the model's context unless deterministic retrieval has already proven the caller may see it, on every path.</span></li>
+    <li><b>The database is the floor.</b><span>A non-owner, read-only database role with row-level security keyed to the user backstops everything above it. Even a perfectly crafted malicious query returns only the caller's rows.</span></li>
+  </ol>
+</section>
+
+<section class="section" id="answers">
+  <h2><span class="n">03</span> &nbsp;Your four questions, answered</h2>
+  <div class="rule"></div>
+  <div class="grid2">
+    <div class="card"><h4>Login managed by OpenWebUI?</h4><p>Yes, and it already does this well: OIDC and SSO (Google, Microsoft, Okta, Auth0, Keycloak), LDAP, groups and roles synced from the identity provider, per-agent user databases. Keep login here. Its ceiling: it gates which agent and which tool, never what a tool returns.</p></div>
+    <div class="card"><h4>Hide DB and Ornate behind tools?</h4><p>Correct, and one step further. The agent holds no Ornate credential at all. It calls a named query by name. A separate layer attaches the caller's verified identity and scope, then talks to a read-only copy of the database. The model never writes raw SQL.</p></div>
+    <div class="card"><h4>Each role gets specific tool access?</h4><p>Yes, but tool-name gating alone is not enough. Two roles can share a tool name and still must see different rows. The model is role to tool-set, plus row-level data scope, plus column redaction. Three controls acting together.</p></div>
+    <div class="card"><h4>How can it be 100 percent, never breakable?</h4><p>Put every decision in deterministic code outside the model, on every path, with the database as the floor. Then a fully jailbroken agent still cannot exceed the caller's authority, because the model never makes the decision.</p></div>
+  </div>
+</section>
+
+<section class="section" id="research">
+  <h2><span class="n">04</span> &nbsp;How the strongest systems do it</h2>
+  <div class="rule"></div>
+  <p>The same pattern recurs everywhere the stakes are real. This design is an application of it, not an invention.</p>
+  <ul>
+    <li><b>Permission-aware retrieval (Glean, Microsoft 365 Copilot).</b> They never invent permissions. They mirror each source system's access list and trim results at retrieval time, in code, so the model is only ever handed data the asking user could already see.</li>
+    <li><b>Tool servers as resource servers (MCP authorization spec, 2025).</b> Each tool server validates the token and its audience on every call, with per-tool authorization. Checking the audience, so that a token minted for one service cannot be replayed at another, is the single highest-leverage control.</li>
+    <li><b>The capability doctrine (OWASP LLM Top 10, the "lethal trifecta", Google CaMeL, AWS Cedar and Open Policy Agent).</b> The model is untrusted. Authorization is enforced downstream by a policy decision point and a policy enforcement point. Each request carries a short-lived, narrowly scoped capability token derived from the end user, never a shared standing credential.</li>
+    <li><b>The database as the backstop.</b> Row-level security keyed to the requesting identity means the query planner injects the scope predicate, so even a malicious query returns only the caller's rows.</li>
+  </ul>
+  <div class="callout"><b>The lethal trifecta.</b> Private-data access, untrusted content, and the ability to send data out, all in one agent, is structurally exploitable. A turn that has touched private data must not be allowed to make an outbound call. This single rule shapes much of the design.</div>
+</section>
+
+<section class="section" id="arch">
+  <h2><span class="n">05</span> &nbsp;Architecture: the request path</h2>
+  <div class="rule"></div>
+  <p>Every step below is a checkpoint the model cannot influence. The model only proposes. Deterministic infrastructure disposes. Only redacted, identity-trimmed data and re-checked links flow back up.</p>
+  <div class="flow">
+    <div class="node"><div class="lab idp">L0</div><div><div class="ttl">Employee logs in (OpenWebUI + identity provider)</div><div class="desc">OIDC or SSO. Role, groups, and store id come from the identity provider and are re-synced on every login, so revoking access is instant.</div><div class="who">Enforces: who is calling. Model uninvolved.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab">L1</div><div><div class="ttl">OpenWebUI access control</div><div class="desc">Per-model and per-tool private access lists decide which agent a group may select and which tools are offered to the model, before any tool spec reaches it.</div><div class="who">Enforces: which tool is offered. Does not enforce data rows.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab">L2</div><div><div class="ttl">Token broker</div><div class="desc">Validates the signed user assertion and mints a minutes-long, single-audience, minimally scoped delegation token (subject is the user, actor is the agent). The agent gets no standing secret.</div><div class="who">Enforces: caps the agent at the user's authority.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab">L3</div><div><div class="ttl">Hub bridge validates identity</div><div class="desc">Validates the signed assertion (signature, audience, expiry) and derives the principal of user, role, and store in code. Ignores any caller-supplied chat id or user field for authorization.</div><div class="who">Enforces: verified identity binding.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab">L4</div><div><div class="ttl">In-runtime policy gate</div><div class="desc">A fail-closed pre-tool-use hook runs before every tool dispatch: default-deny on any error, a per-role tool-name allowlist, and the rule that no outbound call is permitted in a turn that has read private data.</div><div class="who">Enforces: even a misconfigured hub cannot run an un-entitled tool.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab">L5</div><div><div class="ttl">Named-query catalog and tool gateway</div><div class="desc">No free-form SQL, no free regex over a shared corpus. The model picks a named operation with typed parameters. The server injects the verified identity into each query's filter and scans outbound argument values. This is the only network egress route.</div><div class="who">Enforces: out-of-scope requests are impossible to express.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab db">L6</div><div><div class="ttl">Read-only Ornate replica with row-level security</div><div class="desc">A non-owner, read-only database login with a column allowlist. A security policy filters every query on the caller's store id, set by trusted middleware. The query planner enforces the row scope.</div><div class="who">Enforces: only the caller's rows return, regardless of the query.</div></div></div>
+    <div class="arrow"></div>
+    <div class="node"><div class="lab db">L7</div><div><div class="ttl">Egress, links, approvals, audit</div><div class="desc">Every download link is re-checked for permission at render time. Irreversible or unattended actions need human approval. A tamper-proof audit log records the principal, the tool, the decision, and the result, written where the model cannot reach it.</div><div class="who">Enforces: a successful read cannot become an exfiltration.</div></div></div>
+  </div>
+  <div class="callout blue"><b>Why this is never-breakable.</b> If a sales associate's session is fully injected with "dump every store's margins and the owner's cashflow," the request dies at four independent layers: the margin tools were never offered (L1), they are not in her query catalog (L5), her token is store-scoped (L2), and the database role returns zero out-of-store rows with the cost columns absent (L6). No single bug opens all four.</div>
+</section>
+
+<section class="section" id="matrix">
+  <h2><span class="n">06</span> &nbsp;Role to tool to data: the Samarth matrix</h2>
+  <div class="rule"></div>
+  <p>This is the concrete shape of "each role gets specific access." The same tool name can appear in several rows because the row scope and the visible columns differ, enforced at L5 and L6, not by the prompt.</p>
+  <div class="tbl-wrap">
+  <table class="role">
+    <thead><tr><th>Role</th><th>Tools offered</th><th>Row scope</th><th>Columns</th><th>Writes</th></tr></thead>
+    <tbody>
+      <tr><td>Owner</td><td>Sales, stock, invoices, margin, supplier cost, cashflow, export</td><td>All stores</td><td>Margin, cost, and PII visible</td><td>Export goes to the approval queue</td></tr>
+      <tr><td>Store manager</td><td>Sales, stock, invoices, staff sales, stock-adjust request</td><td>Their store only</td><td>Retail price and quantity only. No cost or margin</td><td>Adjustment is a request, not a direct write</td></tr>
+      <tr><td>Sales associate</td><td>Stock (own store), product details, order lookup, start quote</td><td>Own store. Customer PII limited to her own orders</td><td>No cost or margin columns at all</td><td>None</td></tr>
+      <tr><td>Accountant</td><td>Invoices, GST, cashflow, ledger, aged receivables</td><td>All stores, financial rows</td><td>Hides individual customer contact PII</td><td>Exports go to approval and audit</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:14px;color:var(--ink-faint)">The same model applies to ERPNext data (walk-ins, schemes, app customers): a branch manager sees their branch's walk-ins, not the group's.</p>
+</section>
+
+<section class="section" id="db">
+  <h2><span class="n">07</span> &nbsp;Hiding Ornate and ERPNext behind tools</h2>
+  <div class="rule"></div>
+  <p>This is the heart of the instinct, made concrete for the real stack. Ornate runs on <b>SQL Server</b>, not Postgres, so the controls map to specific Microsoft SQL Server features.</p>
+  <h4>1. No raw SQL from the model</h4>
+  <p>Today <code>query_ornate(sql)</code> takes an arbitrary SQL string. Replace it with a finite <b>named-query catalog</b>: <code>get_sales_summary(period)</code>, <code>get_stock_for_store()</code>, <code>get_margin_report()</code>, with typed, bound parameters. The model picks a name and fills typed slots. SQL injection becomes structurally impossible, and an out-of-scope request becomes impossible to even express.</p>
+  <h4>2. The agent holds no database login</h4>
+  <p>Each named query runs through a data gateway that connects as a dedicated <b>read-only, non-owner SQL Server login</b> with column-level <code>GRANT</code>. Cost and margin columns are simply not granted to the manager and associate logins, so they are unreadable even if a query names them.</p>
+  <h4>3. Row-level security is the floor</h4>
+  <p>A SQL Server <b>security policy</b> with a predicate function filters every query on <code>SESSION_CONTEXT('store_id')</code>. The gateway sets it with <code>sp_set_session_context @key='store_id', @value=&lt;verified store&gt;, @read_only=1</code>. The read-only flag means nothing later in the session can change it, and the model has no tool that emits a raw <code>SET</code>, so it cannot re-point the tenant. <b>Dynamic Data Masking</b> on phone, date of birth, and anniversary masks PII for roles that should see only the last digits.</p>
+  <h4>4. A read-only copy, not the live ERP</h4>
+  <p>Point the gateway at an Always On readable secondary, or a nightly-synced read-only copy if a true replica is impractical on the customer's on-premise box. Writes (stock adjustments, exports) become <b>requests</b> queued for human approval, never direct mutations.</p>
+  <h4>5. ERPNext gets the same medicine</h4>
+  <p>Stop using one global token. Frappe has <b>Role Permissions plus User Permissions</b> that restrict records by linked value (for example, restrict a user to Branch = Visnagar) and supports per-user API keys. So the ERP itself trims rows by branch for the calling identity.</p>
+  <h4>6. Spreadsheets and files too</h4>
+  <p>Today <code>grep_data</code> runs a free regex over one flat <code>raw_data/</code> shared by every role. Re-scope it to an identity-keyed subtree (<code>raw_data/&lt;store_id&gt;/</code>) with per-file access lists stamped at ingestion and default-deny when an access list is missing. Free-form search is acceptable only once the search root is identity-bound.</p>
+</section>
+
+<section class="section" id="threat">
+  <h2><span class="n">08</span> &nbsp;Threat model</h2>
+  <div class="rule"></div>
+  <p>Eight attack vectors were run by red-team agents against both the design and the current code. The pattern is consistent and honest: <b>the target design blocks every vector, the code today blocks none of them.</b> That gap is the entire reason to build this.</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th style="width:23%">Vector</th><th style="width:14%">Target design</th><th style="width:13%">Code today</th><th>Control that closes it</th></tr></thead>
+    <tbody>
+      <tr><td><b>Prompt injection</b> drives read then exfiltrate</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Default-deny egress; no outbound call in a turn that read private data; strip injected URLs at render time.</td></tr>
+      <tr><td><b>Confused deputy</b> via the shared bridge key</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Verified signed user identity at the bridge; stop deriving identity from request fields.</td></tr>
+      <tr><td><b>Tool misuse</b>: jailbreak calls an un-entitled tool</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Fail-closed pre-tool-use hook with a per-role tool-name allowlist; remove the wildcard tool grant.</td></tr>
+      <tr><td><b>Scope escape</b>: read rows outside the caller</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Identity-scoped named queries plus row-level security; until then, do not colocate roles in one hub.</td></tr>
+      <tr><td><b>Exfil via arguments</b>: smuggle data into a URL</td><td><span class="pill amber">Reduced</span></td><td><span class="pill red">Live</span></td><td>Egress allowlist at the gateway, outbound argument-value scanning, split the trifecta per task.</td></tr>
+      <tr><td><b>Privilege escalation</b>: associate to owner</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Server-verified principal; tenancy never derived from client fields; row-level security floor.</td></tr>
+      <tr><td><b>MCP compromise</b>: malicious server, over-scoped token</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Per-user delegation tokens, audience validation, a single gateway, content-hash pinned connectors.</td></tr>
+      <tr><td><b>Token theft</b>: replay a long-lived link token</td><td><span class="pill green">Blocked</span></td><td><span class="pill red">Live</span></td><td>Bind link tokens to identity and expiry, separate signing key, ownership re-check at render time.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:13.5px;color:var(--ink-faint)">"Reduced" rather than "Blocked" for exfil via arguments is deliberate: a user's own authorized data can always be smuggled into an outbound argument across turns. The gateway scan and trifecta splitting shrink this surface but do not eliminate it. See residual risk.</p>
+</section>
+
+<section class="section" id="today">
+  <h2><span class="n">09</span> &nbsp;Where the runtime is today</h2>
+  <div class="rule"></div>
+  <p>Of the seven layers, only one weak control exists in the code (<code>factory_claude.py</code> sets <code>tools=[]</code>, which strips the SDK built-in tools, not the tools being abused). The rest is documentation, not code. There are also live holes that must close before any two roles or two tenants share one hub.</p>
+  <div class="gap">
+    <div class="row"><div class="f">server.py · _auth</div><div class="d">Trusts one shared static bridge key, and takes the user principal from a caller-supplied chat id. Anyone with the shared key can impersonate anyone.</div></div>
+    <div class="row"><div class="f">_signing.py</div><div class="d">Reuses that same key (default literally <code>dev</code>) as the download-link signing secret. 64 bit, no expiry, no ownership check. One leak forges any user's links and bypasses the login stack.</div></div>
+    <div class="row"><div class="f">tools/web_http.py</div><div class="d">Allows all outbound HTTP when the allowlist is empty, and is registered unconditionally. Private read plus untrusted content plus open egress is a live lethal trifecta.</div></div>
+    <div class="row"><div class="f">tools/grep_data.py</div><div class="d">Free regex over one flat <code>raw_data/</code> shared by every role. Blocks path traversal only, never reads identity. Any role can read any role's files.</div></div>
+    <div class="row"><div class="f">loaders/mcp.py</div><div class="d">Injects long-lived, full-scope tool-server tokens shared by every user, and the agent connects directly to tool servers with no gateway in front.</div></div>
+    <div class="row"><div class="f">whole runtime</div><div class="d">No row-level security, no pre-tool-use hook, no identity propagation past the bridge. The four-layer defense reduces to one coarse layer.</div></div>
+  </div>
+  <div class="callout red"><b>Operating rule until L5 and L6 ship.</b> Do not place multiple roles or multiple tenants in one hub. Single-tenant single-role hubs remain safe. One bridge per privilege tier.</div>
+</section>
+
+<section class="section" id="rollout">
+  <h2><span class="n">10</span> &nbsp;Phased rollout</h2>
+  <div class="rule"></div>
+  <div class="phase"><span class="tag now">Phase 0</span><h4>Stop the bleeding (days, no new infrastructure)</h4><p>Invert the egress allowlist to default-deny and make it mandatory whenever a private-data tool is loaded. Strip outbound and injected URLs from model replies at render time. Separate the link signing key from the API key, widen it, add expiry and an ownership re-check. Forbid colocating roles or tenants in one hub. Land negative authorization tests (run-as-associate, cross-user link replay, injection drives egress) in the pre-release walkthrough.</p></div>
+  <div class="phase"><span class="tag">Phase 1</span><h4>Verified identity at the bridge</h4><p>OpenWebUI forwards the signed login token. The bridge validates it and derives the principal of user, role, and store from verified claims. The chat id stops being an authorization principal.</p></div>
+  <div class="phase"><span class="tag">Phase 2</span><h4>In-runtime policy gate (L4)</h4><p>A fail-closed pre-tool-use hook: default-deny on error, a per-role tool-name allowlist, and the no-egress-after-private-read rule. Replace the wildcard tool grant with enumerated per-identity tool names. Put hard denies in managed settings the hub holder cannot edit.</p></div>
+  <div class="phase"><span class="tag">Phase 3</span><h4>Identity-scoped data tools (L5)</h4><p>The named-query catalog. Identity-keyed file buckets. PII and margin redaction before anything re-enters the model context.</p></div>
+  <div class="phase"><span class="tag">Phase 4</span><h4>Broker and gateway (L2 and L5 egress)</h4><p>The delegation-token broker and the single tool gateway as the only egress route, with audience validation, outbound argument scanning, and per-call scoped credentials.</p></div>
+  <div class="phase"><span class="tag">Phase 5</span><h4>Database floor and Ornate cutover (L6)</h4><p>The read-only replica, the non-owner login with a column allowlist, the security policy keyed to session context, and a regression test that connects as the agent login and proves a cross-store query returns zero rows. Only after this passes does the catalog touch real Ornate data.</p></div>
+  <div class="phase"><span class="tag">Phase 6</span><h4>Approvals and continuous red-teaming</h4><p>Human approval for irreversible and scheduled actions, sender-constrained tokens on the highest-value paths, and a standing negative-test corpus (poisoned tool-server mock, exfil via arguments, run as lower role) gating every release.</p></div>
+</section>
+
+<section class="section" id="residual">
+  <h2><span class="n">11</span> &nbsp;Residual risk (the honest part)</h2>
+  <div class="rule"></div>
+  <ul>
+    <li><b>Implementation gap is the risk today.</b> Until Phases 1 to 5 ship, the four layers reduce to one, and a single injection or a single holder of the shared key achieves a full read then exfiltrate.</li>
+    <li><b>Prompt injection is contained, not solved.</b> The design makes injection unable to grant access, because access never depends on the model. It cannot stop the model from being manipulated. Tool descriptions and outputs must be version-pinned, schema-hardened, and sanitized. This is a speed bump on the reasoning, a wall on the access.</li>
+    <li><b>Exfil of in-scope data via arguments.</b> Even fully hardened, a user's own authorized data can be smuggled into an outbound argument across turns. Reduced by the gateway scan and trifecta splitting, not eliminated.</li>
+    <li><b>The gateway and broker are crown jewels.</b> Their compromise is high blast radius, mitigated only partly by per-backend scoped credentials and mutual TLS.</li>
+    <li><b>OpenWebUI residuals.</b> Admin is all or nothing and bypasses access lists by default; permissions are additive with no explicit deny; some legacy resource fields default to public when unset; only one OIDC provider at a time; trusted-header login without network isolation is a full bypass. Each is a configuration hole OpenWebUI itself does not close, so each must be set explicitly.</li>
+  </ul>
+</section>
+
+<section class="section" id="next">
+  <h2><span class="n">12</span> &nbsp;Decisions and next steps</h2>
+  <div class="rule"></div>
+  <div class="grid2">
+    <div class="card"><h4>Decided</h4><p>Build the access-management layer as a HubZoid runtime capability, so Samarth, Isha and IRS, and future logos all inherit it rather than each hub solving it bespoke.</p></div>
+    <div class="card"><h4>Recommended first move</h4><p>Begin Phase 0 immediately. It closes the live holes, needs no new infrastructure, and is low risk. It also makes multi-role hubs safe to pilot behind the one-bridge-per-tier rule.</p></div>
+  </div>
+  <h4>Open questions to settle before Phase 4</h4>
+  <ul>
+    <li>Which identity provider per customer (Google Workspace and Microsoft 365 are the likely defaults for a mid-enterprise Indian customer).</li>
+    <li>Whether Ornate can expose an Always On readable secondary, or whether a nightly-synced read-only copy is the practical path for Phase 5.</li>
+    <li>Where the token broker and tool gateway run (alongside the bridge, or as a shared Hubzoid service across hubs).</li>
+  </ul>
+</section>
+
+<section class="section" id="cites">
+  <h2><span class="n">13</span> &nbsp;Key references</h2>
+  <div class="rule"></div>
+  <div class="cites">
+    <div>Runtime code: <code>hubzoid/factory_claude.py</code>, <code>server.py</code>, <code>_signing.py</code>, <code>tools/web_http.py</code>, <code>tools/grep_data.py</code>, <code>loaders/mcp.py</code>, <code>_request_ctx.py</code>, <code>gateway.py</code></div>
+    <div>OpenWebUI access control: roles, groups, per-model and per-tool private access grants, OIDC group and role sync</div>
+    <div>MCP authorization spec (2025): OAuth resource server, audience validation (RFC 8707)</div>
+    <div>Delegation tokens: RFC 8693 token exchange, the on-behalf-of flow</div>
+    <div>SQL Server: row-level security policies, SESSION_CONTEXT and sp_set_session_context, column-level GRANT, Dynamic Data Masking, Always On readable secondary</div>
+    <div>Frappe and ERPNext: Role Permissions and User Permissions, per-user API keys</div>
+    <div>Doctrine: OWASP LLM Top 10 (excessive agency, insecure output handling), the lethal trifecta, Google CaMeL, AWS Cedar and Open Policy Agent</div>
+  </div>
+</section>
+
+<footer class="doc">
+  Prepared for the Hubzoid runtime. Internal architecture document, draft for review. Generated 18 June 2026 from a research and red-team pass over the HubZoid runtime code and the access-control literature.
+</footer>
+
+</div>
+</body>
+</html>

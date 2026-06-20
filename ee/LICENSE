@@ -1,0 +1,62 @@
+Hubzoid Enterprise License, Version 1.0
+
+DRAFT. This text has not yet been reviewed by legal counsel. It is not legal
+advice. Have a lawyer review and adapt it (governing law, entity name,
+disclaimers) before relying on it.
+
+Copyright (c) 2026 WaveAssist Technologies Pvt Ltd (operating as Hubzoid).
+
+This license governs the contents of the "ee/" directory (the "Enterprise
+Software"). The rest of the Hubzoid repository (the "Core") is licensed
+separately under the MIT License (see the top-level LICENSE file) and is not
+affected by this license.
+
+1. DEFINITIONS.
+   "Licensor" means WaveAssist Technologies Pvt Ltd.
+   "Enterprise Software" means the source code and other files in the "ee/"
+   directory of the Hubzoid repository.
+   "Subscription" means a current, paid commercial agreement with the Licensor
+   that grants the right to use the Enterprise Software in production, together
+   with a valid license key issued by the Licensor.
+   "Production Use" means any use of the Enterprise Software other than local
+   development, evaluation, or testing.
+
+2. SOURCE AVAILABILITY. The Licensor makes the source of the Enterprise
+   Software available so that customers can read, audit, and modify it. This is
+   not an open-source license, and the availability of the source does not by
+   itself grant any of the rights below.
+
+3. GRANT FOR DEVELOPMENT AND TESTING. Subject to this license, you may use,
+   copy, and modify the Enterprise Software solely for local development,
+   evaluation, and testing, without a Subscription.
+
+4. PRODUCTION USE REQUIRES A SUBSCRIPTION. You may use the Enterprise Software
+   in Production Use only while you hold a valid Subscription and a valid
+   license key issued by the Licensor, and only within the seat, customer,
+   feature, and expiry limits encoded in that license key.
+
+5. NO REDISTRIBUTION. You may not distribute, sublicense, resell, offer as a
+   hosted or managed service to third parties, or otherwise make the Enterprise
+   Software available to any third party, except as expressly permitted by your
+   Subscription.
+
+6. NO CIRCUMVENTION. You may not remove, disable, or circumvent the license-key
+   check or any other technical measure that conditions access to the
+   Enterprise Software or any of its features.
+
+7. TRADEMARKS. This license grants no rights to the "Hubzoid" name, logo, or
+   other Licensor trademarks.
+
+8. TERMINATION. Your rights under Sections 3 and 4 terminate automatically if
+   you breach this license or if your Subscription lapses or is terminated.
+
+9. NO WARRANTY. THE ENTERPRISE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY
+   OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+   OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE ENTERPRISE SOFTWARE
+   OR ITS USE.
+
+10. GOVERNING LAW. To be set by counsel (intended: the laws of India).
+
+For a commercial license, contact: hello@hubzoid.com

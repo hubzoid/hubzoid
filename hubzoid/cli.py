@@ -806,6 +806,149 @@ app.add_typer(
 
 
 # ---------------------------------------------------------------------------
+# license — open-core enterprise license keys (see hubzoid/licensing.py)
+# ---------------------------------------------------------------------------
+license_app = typer.Typer(
+    help="Show, issue, and verify Hubzoid enterprise license keys.",
+    invoke_without_command=True,
+)
+
+
+def _resolve_license_inputs(key, hub, pubkey):
+    """Resolve (token, public_key) from explicit args, then a hub's .env."""
+    token, pub = key, pubkey
+    if (token is None or pub is None) and hub is not None:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(hub / ".env")
+        if token is None:
+            token = values.get("LICENSE_KEY")
+        if pub is None:
+            pub = values.get("HUBZOID_LICENSE_PUBKEY")
+    return token, pub
+
+
+@license_app.callback(invoke_without_command=True)
+def license_status(
+    ctx: typer.Context,
+    key: str = typer.Option(None, "--key", help="License token. Default: $LICENSE_KEY."),
+    hub: Path = typer.Option(None, "--hub", help="Read LICENSE_KEY from this hub's .env."),
+    pubkey: str = typer.Option(None, "--pubkey", help="Override the verification public key."),
+) -> None:
+    """Show which license this deployment is on (tier, customer, features, expiry)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from rich.table import Table
+
+    from . import licensing
+
+    token, pub = _resolve_license_inputs(key, hub, pubkey)
+    lic = licensing.load_license(token=token, public_key_b64=pub)
+
+    table = Table(show_header=False, box=None)
+    table.add_row("Tier", lic.tier)
+    table.add_row("Customer", lic.customer or "-")
+    table.add_row("Features", ", ".join(lic.features) if lic.features else "-")
+    table.add_row("Expires", lic.expiry.isoformat() if lic.expiry else "perpetual")
+    if lic.tier == "community":
+        status = "[green]community[/green]"
+    elif lic.valid:
+        status = "[green]valid[/green]"
+    else:
+        status = f"[red]invalid[/red] ({lic.reason})"
+    table.add_row("Status", status)
+    console.print(table)
+
+
+@license_app.command("keygen")
+def license_keygen() -> None:
+    """Generate an ED25519 keypair. Keep the private key SECRET; embed the public key."""
+    from . import licensing
+
+    priv, pub = licensing.generate_keypair()
+    console.print(
+        "[bold]Keep the PRIVATE key secret[/bold] (secret manager, never in the repo):"
+    )
+    typer.echo(f"PRIVATE_KEY={priv}")
+    console.print(
+        "\n[bold]Embed the PUBLIC key[/bold] "
+        "(licensing.EMBEDDED_PUBLIC_KEY, or $HUBZOID_LICENSE_PUBKEY):"
+    )
+    typer.echo(f"PUBLIC_KEY={pub}")
+
+
+@license_app.command("issue")
+def license_issue(
+    customer: str = typer.Option(..., "--customer", help="Customer name recorded in the key."),
+    private_key: str = typer.Option(None, "--private-key", help="Base64 ED25519 private key."),
+    private_key_file: Path = typer.Option(
+        None, "--private-key-file", help="File holding the base64 private key."
+    ),
+    tier: str = typer.Option("enterprise", "--tier", help="License tier."),
+    feature: list[str] = typer.Option(
+        None, "--feature", "-f", help="Granted feature (repeatable). Use '*' for all."
+    ),
+    expiry: str = typer.Option(
+        None, "--expiry", help="Expiry date YYYY-MM-DD. Omit for perpetual."
+    ),
+) -> None:
+    """Sign and print a customer license token. Run this with YOUR private key."""
+    from datetime import date
+
+    from . import licensing
+
+    priv = private_key
+    if priv is None and private_key_file is not None:
+        priv = private_key_file.read_text().strip()
+    if not priv:
+        console.print("[red]Provide --private-key or --private-key-file.[/red]")
+        raise typer.Exit(2)
+    if expiry:
+        try:
+            date.fromisoformat(expiry)
+        except ValueError:
+            console.print(f"[red]Bad --expiry '{expiry}'. Use YYYY-MM-DD.[/red]")
+            raise typer.Exit(2)
+
+    payload: dict = {"customer": customer, "tier": tier, "features": feature or []}
+    if expiry:
+        payload["expiry"] = expiry
+    typer.echo(licensing.issue(payload, priv))
+
+
+@license_app.command("verify")
+def license_verify(
+    key: str = typer.Option(None, "--key", help="License token. Default: $LICENSE_KEY."),
+    pubkey: str = typer.Option(None, "--pubkey", help="Override the verification public key."),
+) -> None:
+    """Verify a token offline and print its claims. Exit 1 if invalid."""
+    from . import licensing
+
+    token = key if key is not None else os.environ.get("LICENSE_KEY", "").strip()
+    if not token:
+        console.print("[red]No token. Pass --key or set LICENSE_KEY.[/red]")
+        raise typer.Exit(2)
+    lic = licensing.load_license(token=token, public_key_b64=pubkey)
+    if lic.valid:
+        console.print(
+            f"[green]valid[/green]: {lic.tier} for {lic.customer or '-'}, "
+            f"features={list(lic.features) or '-'}, "
+            f"expires={lic.expiry.isoformat() if lic.expiry else 'perpetual'}"
+        )
+    else:
+        console.print(f"[red]invalid[/red]: {lic.reason}")
+        raise typer.Exit(1)
+
+
+app.add_typer(
+    license_app,
+    name="license",
+    help="Show, issue, and verify Hubzoid enterprise license keys.",
+    rich_help_panel="Commands",
+)
+
+
+# ---------------------------------------------------------------------------
 # version
 # ---------------------------------------------------------------------------
 @app.command()
