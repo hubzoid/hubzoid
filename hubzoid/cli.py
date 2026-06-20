@@ -853,7 +853,7 @@ def license_status(
     table.add_row("Features", ", ".join(lic.features) if lic.features else "-")
     table.add_row("Expires", lic.expiry.isoformat() if lic.expiry else "perpetual")
     if lic.tier == "community":
-        status = "[yellow]community[/yellow] (no enterprise features)"
+        status = "[green]community[/green]"
     elif lic.valid:
         status = "[green]valid[/green]"
     else:

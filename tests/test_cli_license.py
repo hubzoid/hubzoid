@@ -49,6 +49,7 @@ def test_status_without_key_reports_community():
     res = runner.invoke(cli.app, ["license"])
     assert res.exit_code == 0
     assert "community" in res.output.lower()
+    assert "no enterprise features" not in res.output.lower()
 
 
 def test_verify_flags_tampered_token():

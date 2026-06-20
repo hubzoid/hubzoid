@@ -40,7 +40,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 # runs `hubzoid license keygen`, keeps the private key secret, and pastes the
 # public key here (or sets HUBZOID_LICENSE_PUBKEY). With no public key
 # configured, the runtime is community-only and cannot validate any key.
-EMBEDDED_PUBLIC_KEY = ""
+EMBEDDED_PUBLIC_KEY = "xYfzpDv9InktZ294WzDqfQMfrgpwZbJdIvaSj7dj-gI"
 
 
 class InvalidLicense(Exception):
