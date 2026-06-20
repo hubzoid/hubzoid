@@ -23,7 +23,7 @@ def _audit(user, action, resource, decision):
 def guarded_tool_call(authz, user, tool, fn, args):
     """
     authz is any object with .check(user, action, resource). It could be the mock,
-    Permit, Casbin, OpenFGA. This function does not know or care which.
+    Casbin, OpenFGA, or anything else. This function does not know or care which.
     """
     allowed = authz.check(user, "execute", tool)
     _audit(user, "execute", tool, "allow" if allowed else "deny")

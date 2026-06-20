@@ -1,7 +1,7 @@
 """
 Access-control POC scenario. The provider is chosen by AUTHZ_PROVIDER (default mock).
-The body of this file is identical whether you run on mock or real Permit. That is
-the swappability the design guarantees.
+The body of this file is identical whatever engine sits behind the authz interface.
+That is the swappability the design guarantees.
 """
 import os
 import json
@@ -37,8 +37,8 @@ def main():
     authz = get_authorizer()
     print("Provider:", os.environ.get("AUTHZ_PROVIDER", "mock"))
 
-    # In mock mode, seed the policy an admin would otherwise set in Permit's web UI.
-    # In permit mode the policy already lives in Permit, so there is nothing to seed.
+    # In mock mode, seed the policy an admin would otherwise manage in the UI
+    # (which group grants which tool). A real engine loads this from its own store.
     if isinstance(authz, MockAuthorizer):
         authz.assign_role("priya", "owner")
         authz.assign_role("anjali", "sales_associate")

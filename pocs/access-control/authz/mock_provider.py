@@ -1,7 +1,8 @@
 """
-Local mock adapter. No dependencies. Mirrors Permit's model:
+Local in-memory authorizer. No dependencies. The standard RBAC model:
   users -> role, role -> set of (action, resource) it may perform.
 Used so the POC (and your test suite) runs with no account and no network.
+A real engine (Casbin, OpenFGA, ...) drops in behind the same .check() interface.
 """
 from __future__ import annotations
 
