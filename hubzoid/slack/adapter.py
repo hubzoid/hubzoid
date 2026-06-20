@@ -86,7 +86,10 @@ def stream_reply(
         with client.stream(
             "POST",
             f"{bridge_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
+            # Declare the surface so the access guard refuses restricted tools
+            # over Slack: it carries no per-person login, so a restricted door
+            # is never reachable here. See hubzoid.access.policy.
+            headers={"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": "slack"},
             json=body,
         ) as r:
             r.raise_for_status()

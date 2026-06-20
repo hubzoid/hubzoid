@@ -22,6 +22,7 @@ from pathlib import Path
 
 from agents import function_tool
 
+from .. import _fs
 from .._fs import resolve_bucket
 from ._caps import truncate_with_overflow
 
@@ -72,6 +73,8 @@ def make(ctx) -> list:
         target = _resolve_inside_hub(hub_dir, path)
         if target is None:
             return f"[grep_data refused: {path!r} is outside the hub directory]"
+        if _fs.is_under_restricted(hub_dir, target):
+            return f"[grep_data refused: {path!r} is in the restricted/ folder]"
         if not target.exists():
             return f"[grep_data: {path!r} not found]"
 

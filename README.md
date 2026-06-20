@@ -298,6 +298,21 @@ to one agent does not grant access to the others.
 Full walkthrough including the Google Cloud Console click-path and the env
 vars for every provider: [docs/auth.md](docs/auth.md).
 
+## Access control
+
+Authentication decides who logs in. Access control decides what they can do once
+inside: which tools they can call. Put a sensitive tool in a `restricted/` folder
+and its file name becomes a permission; an Open WebUI group of the same name is
+the key. The runtime hides tools a user may not use and fails closed if one is
+reached anyway, logging every decision (`hubzoid audit <hub>`). Secrets live in
+`restricted/.env`, which the model's file tools refuse to read. A hub with no
+`restricted/` folder is unaffected, so this is entirely opt-in. Full guide:
+[docs/access-management.md](docs/access-management.md).
+
+Access management is a Hubzoid Enterprise feature: source-available and free to
+run for development, licensed for production use. It is not blocked without a
+license, only flagged. See [LICENSING.md](LICENSING.md).
+
 ## Deploying to production
 
 `hubzoid run` is the production entry point. Wrap it in systemd (or a container) and put a reverse proxy in front for TLS. Only the one Open WebUI port needs to be exposed — the built-in edge router serves artifact downloads (`/artifacts`) off the loopback bridge through that same port, so set `HUBZOID_PUBLIC_URL=https://your.host` in `<hub>/.env` and download links just work. Running a hub per team on one box? `hubzoid gateway` puts them behind a single Open WebUI. Full walkthrough: [docs/DEPLOYING.md](docs/DEPLOYING.md).
@@ -357,6 +372,11 @@ hubzoid schedule status [PATH]   Show recorded fire history per task.
                                    Tasks fire automatically inside `hubzoid run`;
                                    see docs/schedule.md.
 hubzoid doctor [PATH]            Validate hub config and report issues.
+hubzoid audit [PATH]             Show the access log: who called which restricted
+                                   tool, allowed or denied. See docs/access-management.md.
+  --denied                         Only refused attempts.
+  --user TEXT                      Filter to one user.
+  -n, --limit INT                  How many recent decisions (default 50).
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.
 hubzoid slack manifest [PATH]    Print a Slack App Manifest (JSON by default).

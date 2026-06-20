@@ -25,6 +25,7 @@ from urllib.parse import quote
 
 from agents import function_tool
 
+from .. import _fs
 from .. import _request_ctx
 from .. import _signing
 from .. import memory as memlib
@@ -57,6 +58,8 @@ def make(ctx) -> list:
         target = (hub_dir / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
         if hub_dir.resolve() not in target.parents and target != hub_dir.resolve():
             return f"[read_file refused: {path!r} is outside the hub directory]"
+        if _fs.is_under_restricted(hub_dir, target):
+            return f"[read_file refused: {path!r} is in the restricted/ folder]"
         if not target.is_file():
             return f"[read_file: {path!r} not found]"
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -84,7 +87,10 @@ def make(ctx) -> list:
             Newline-separated list of relative paths, capped at 100 entries.
             Footer hints at how to narrow if more entries exist.
         """
-        matches = sorted(p for p in hub_dir.glob(glob) if p.is_file())
+        matches = sorted(
+            p for p in hub_dir.glob(glob)
+            if p.is_file() and not _fs.is_under_restricted(hub_dir, p)
+        )
         if not matches:
             return ""
         rels = [str(p.relative_to(hub_dir)) for p in matches]

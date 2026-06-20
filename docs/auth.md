@@ -212,6 +212,11 @@ WEBUI_AUTH_TRUSTED_ROLE_HEADER=X-Forwarded-Role
 > otherwise any browser can impersonate any user by setting the header
 > itself. Bind OWUI to `127.0.0.1` and accept traffic only from the proxy.
 
+The same proxy is the natural place to forward identity and groups on to the
+hub bridge as `X-Hubzoid-User` / `X-Hubzoid-Groups`, which is what per-role tool
+access reads. Login (this document) decides who gets in; access control decides
+what they can call once inside. See [access-management.md](access-management.md).
+
 ## Per-agent vs shared SSO
 
 Each agent has its own user DB. Two real options when you roll out multiple

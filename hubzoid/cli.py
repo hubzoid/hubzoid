@@ -9,6 +9,7 @@ Commands:
   hubzoid slack manifest [PATH]    Print a Slack App Manifest YAML.
   hubzoid slack systemd [PATH]     Print a systemd unit template.
   hubzoid doctor [PATH]            Validate hub config and report issues.
+  hubzoid audit [PATH]             Show the access log (who called which tool).
   hubzoid test [PATH]              Send a hello prompt and assert non-empty response.
   hubzoid version                  Print version.
 
@@ -525,12 +526,60 @@ def doctor(
     except Exception as exc:  # noqa: BLE001
         problems.append(f"schedule load failed: {type(exc).__name__}: {exc}")
 
+    # Access management (Enterprise feature) — note only when unlicensed, never blocks.
+    try:
+        from . import access, licensing
+        restricted = access.load_restricted(hub)
+        if restricted and not licensing.load_license().has_feature("access"):
+            notes.append(
+                f"access management: {len(restricted)} restricted tool(s) · "
+                f"Enterprise feature, unlicensed (license for production, see LICENSING.md)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"access check failed: {type(exc).__name__}: {exc}")
+
     for n in notes:
         console.print(f"[green]✓[/green] {n}")
     for p in problems:
         console.print(f"[red]✗[/red] {p}")
     if problems:
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# audit
+# ---------------------------------------------------------------------------
+@app.command()
+def audit(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    limit: int = typer.Option(50, "--limit", "-n", help="Show the most recent N decisions."),
+    user: str = typer.Option(None, "--user", help="Filter to one user."),
+    denied: bool = typer.Option(False, "--denied", help="Show only denied attempts."),
+) -> None:
+    """Show the access log: who called which restricted tool, allowed or denied.
+
+    Reads `<hub>/logs/access-*.jsonl`, the append-only trail the runtime writes
+    for every access decision. Open WebUI does not record tool-level access, so
+    this is the only place it exists.
+    """
+    from .access import audit as auditlib
+
+    hub = hub.resolve()
+    rows = auditlib.read(hub, limit=limit, user=user, decision=("deny" if denied else None))
+    if not rows:
+        console.print("[dim]no access decisions logged yet[/dim]")
+        return
+    for r in rows:
+        ok = r.get("decision") == "allow"
+        colour = "green" if ok else "red"
+        console.print(
+            f"[dim]{r.get('ts', '')}[/dim]  "
+            f"{(r.get('user') or '?'):22.22}  "
+            f"[{colour}]{r.get('decision', '?').upper():5}[/{colour}]  "
+            f"{(r.get('tool') or '?'):22.22}  "
+            f"[dim]{r.get('surface', '')}·{r.get('reason', '')}[/dim]"
+        )
+    console.print(f"[dim]{len(rows)} entr{'y' if len(rows) == 1 else 'ies'} shown[/dim]")
 
 
 # ---------------------------------------------------------------------------

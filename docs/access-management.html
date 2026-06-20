@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Management · Hubzoid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#15171c;--soft:#5a616b;--faint:#8b929c;--line:#e7e9ed;--bg:#f7f8fa;--panel:#fff;--dark:#13151a;
+        --green:#067647;--green-bg:#ecfdf3;--blue:#175cd3;--blue-bg:#eff6ff;--amber:#b54708;--amber-bg:#fffaeb;--red:#b42318;--red-bg:#fef3f2;--mono:'JetBrains Mono',monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:780px;margin:0 auto;padding:48px 26px 80px}
+  .eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}
+  h1{font-size:31px;font-weight:800;letter-spacing:-.02em;margin:.3em 0 .15em}
+  .sub{color:var(--soft);margin:0 0 26px;font-size:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0}
+  .card h2{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);margin:0 0 4px}
+  .card h3{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0 0 10px}
+  .card p{margin:0 0 10px}
+  .card p:last-child{margin-bottom:0}
+  .who{display:inline-block;font-size:11.5px;font-weight:600;color:var(--blue);background:var(--blue-bg);border-radius:999px;padding:2px 10px;margin-bottom:9px}
+  .who.hz{color:#6941c6;background:#f4f3ff}
+  .who.lock{color:var(--green);background:var(--green-bg)}
+  .who.later{color:var(--amber);background:var(--amber-bg)}
+  .who.sec{color:var(--red);background:var(--red-bg)}
+  code{font-family:var(--mono);font-size:.85em;background:#f1f2f5;border-radius:5px;padding:1px 6px;color:#9333ea}
+  .flow{font-family:var(--mono);font-size:12.5px;color:var(--soft);background:#fafbfc;border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin:12px 0 2px;line-height:1.95;overflow-x:auto;white-space:nowrap}
+  .flow b{color:var(--ink)}
+  ul{margin:6px 0 0;padding-left:20px}
+  li{margin:6px 0}
+  .lead{font-size:17px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin:0 0 6px}
+  .note{font-size:13px;color:var(--soft);border-left:3px solid var(--green);background:var(--green-bg);border-radius:8px;padding:12px 15px;margin:14px 0 0}
+  .step{font-family:var(--mono);font-size:12.5px;color:var(--soft);margin:7px 0;padding-left:22px;position:relative}
+  .step::before{content:attr(data-n);position:absolute;left:0;top:0;color:var(--amber);font-weight:600}
+  .small{font-size:13px;color:var(--soft)}
+  .foot{margin-top:24px;font-size:12.5px;color:var(--faint);border-top:1px solid var(--line);padding-top:16px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;background:var(--dark);border-radius:6px;padding:2px 8px;margin-right:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Hubzoid · Access Management</div>
+  <h1>How access works</h1>
+  <p class="sub">The finalized model. One convention does the work: a tool lives in a file, the file name is the permission, and an OpenWebUI group of the same name is the key. Everything else is enforcement around that.</p>
+
+  <div class="card">
+    <h2>The model</h2>
+    <p class="lead">A file is a door. Its name is the permission. The matching OpenWebUI group is the key.</p>
+    <p>A critical tool lives in a file inside <code>restricted/</code>. The file name is the permission name. An OpenWebUI group of the same name unlocks every tool in that file. Nothing in <code>restricted/</code> loads for a person who is not in the matching group.</p>
+    <div class="flow"><b>restricted/sales.py</b> &nbsp;→&nbsp; group <b>sales</b> &nbsp;&nbsp;→&nbsp; unlocks every tool in sales.py<br><b>restricted/finance.py</b> &nbsp;→&nbsp; group <b>finance</b> &nbsp;→&nbsp; unlocks every tool in finance.py</div>
+    <p class="small" style="margin-top:12px">The match is case insensitive and whitespace trimmed, so <code>Sales</code>, <code>sales</code>, and <code>" sales "</code> all map to the same door. A casing or spacing slip never silently locks someone out.</p>
+  </div>
+
+  <div class="card">
+    <span class="who hz">Hubzoid, once at setup</span>
+    <h3>Set up the doors</h3>
+    <ul>
+      <li><b>One file per door.</b> Name it by what it should mean to the client: <code>sales</code>, <code>finance</code>, <code>inventory</code>. The file name is yours, so friendly names are free.</li>
+      <li><b>Seed matching groups.</b> We create OpenWebUI groups with the same names. The group list the client sees is exactly the list of permissions available.</li>
+      <li><b>A new door later is a deploy.</b> A new system, or a narrower view of an old one, means a new file plus its group. The door has to exist before a key can open it.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <span class="who">Client admin, any time</span>
+    <h3>Run it day to day</h3>
+    <p><b>Add a person and grant access.</b> Open OpenWebUI, add Meera, put her in the groups she needs: <code>sales</code>, <code>finance</code>, or both. Group membership is the grant. Two groups means both.</p>
+    <p><b>Open a new door.</b> Create a group whose name matches a file. Matching the name is the whole link. Nothing else to configure.</p>
+    <p>No roles, and no separate grant screen. OpenWebUI's own group management is the admin tool. The client never logs into anything else.</p>
+  </div>
+
+  <div class="note"><b>Fixed vs editable.</b> Hubzoid fixes the files at deploy, and therefore the permissions. The client edits the groups and who is in them, live in OpenWebUI, with no developer. So who has access is always the client's to change, and what doors exist is always a deploy.</div>
+
+  <div class="card">
+    <span class="who lock">How it is enforced</span>
+    <h3>Two layers, and the model is never the gate</h3>
+    <p>Authorization runs in code, before any tool executes. The model is never asked for permission. A jailbreak cannot grant what was not granted.</p>
+    <p><b>1. The offered list is filtered per person.</b> Each session is built from the logged in user's groups, so the agent is handed only the tools that person may use. An ungranted tool is not refused, it is simply not there. No wasted turn, no confusing denial, and the names of sensitive tools are never shown to people who cannot use them.</p>
+    <p><b>2. Every restricted call is re checked at dispatch, and fails closed.</b> If a call reaches the dispatch anyway, through a prompt injection naming a tool or a quirk of the agent SDK, the check denies it and writes the attempt to the audit log. The filtered list is the clean path. This is the wall.</p>
+    <p>The check lives in the shared tool dispatch, so the Claude Agent SDK and the OpenAI Agents SDK are covered by one rule. Every allow and every deny is recorded, which the audit log makes readable.</p>
+  </div>
+
+  <div class="card">
+    <span class="who lock">Audit log</span>
+    <h3>Every decision, written where the decision is made</h3>
+    <p>The allow or deny happens in the runtime dispatch, so the log is written there, not in OpenWebUI, which never sees a tool call. One append per decision: <code>{ts, user, surface, tool, decision, reason}</code>. Read it with <code>hubzoid audit &lt;hub&gt;</code>. This is the one view OpenWebUI does not give you.</p>
+    <p><b>One file does not grow forever.</b> Logs are date partitioned, one file per month: <code>logs/access-2026-06.jsonl</code>. The writer picks the file from the date, so rotation needs no trigger and no extra dependency. <code>hubzoid audit</code> reads across the months and filters by date, person, or decision. Switch to daily files if a hub is high volume.</p>
+    <p class="small">Retention is a policy knob: default keep twelve months, archive instead of delete for clients with compliance retention rules. Append only by design, so the trail is never rewritten. A searchable UI (self hosted Langfuse) is the later upgrade, not needed for this.</p>
+  </div>
+
+  <div class="card">
+    <span class="who lock">Surfaces</span>
+    <h3>A restricted door needs a verified person behind it</h3>
+    <p>The principal is who, on which surface. OpenWebUI carries a verified login, so it can reach restricted tools. Slack, Telegram, and scheduled runs carry no per person identity, so they get the non restricted set only. <b>A restricted door is never reachable from Slack.</b></p>
+    <p>If one specific Slack user truly needs a restricted tool, map that single user to an identity and group by hand. Do not build general per user access on Slack.</p>
+  </div>
+
+  <div class="card">
+    <span class="who sec">Secrets</span>
+    <h3>Credentials live where the model cannot read them</h3>
+    <p>Secrets are never written into tool code, so they are never in git and never greppable. They live in <code>restricted/</code> (for example <code>restricted/.env</code>) and load into the process environment at startup.</p>
+    <p>The file reading tools, <code>read_file</code> and <code>list_files</code> and <code>grep</code>, refuse any path under <code>restricted/</code>. This is a resolved path check in code, backed by a test that proves <code>read_file("restricted/.env")</code> is refused. A system instruction also tells the agent to stay out of the folder. <b>The code block is the control. The instruction is the reminder.</b></p>
+    <p>A restricted tool's own code still reads the credential to do its work. The model only ever receives the result rows, never the secret. Outbound HTTP is held to an allowlist, so even a leaked string has nowhere to go.</p>
+    <p class="small">Stronger option, for a crown jewel like an SSH key into a client's production system: hold it in a separate gateway process under a different operating system user, so the kernel, not a denylist, keeps the agent out. Optional, decided per secret.</p>
+  </div>
+
+  <div class="card">
+    <span class="who later">Rows and columns · the data layer</span>
+    <h3>The second axis files cannot express</h3>
+    <p>A file and its group decide which tool a person may call and which columns everyone in that group shares. They cannot decide which rows each person sees, because a file is the same for everyone in its group while rows differ per person. A branch manager who may see only their own store is this axis.</p>
+    <p>It is enforced at the data layer from the verified identity, never in files or groups:</p>
+    <div class="step" data-n="1.">the person carries an attribute, for example <code>store = BLR-01</code>, held as user metadata.</div>
+    <div class="step" data-n="2.">the bridge passes that identity into the tool as a verified claim. The model never supplies it.</div>
+    <div class="step" data-n="3.">where the source system has its own access model, ride it (for example field privilege groups). Where it does not, impose a database floor.</div>
+    <div class="step" data-n="4.">the database filters every query by that scope (SQL Server row level security on the session context). Columns are limited by <code>GRANT</code> or masking.</div>
+    <div class="step" data-n="5.">one file, one group, but two people calling the same tool get different rows, enforced by the database.</div>
+    <p style="margin-top:12px"><b>The rule:</b> the file decides the door and the shared columns. The database decides each person's rows. This is needed on day one wherever the client is multi branch.</p>
+  </div>
+
+  <div class="foot"><span class="tag">finalized</span>One foundation underpins all of this: the logged in identity and groups must reach the runtime as a verified claim. Tool access rides the file and group convention. Row and column scope rides the data layer. Secrets live outside the model's reach.</div>
+</div>
+</body>
+</html>
