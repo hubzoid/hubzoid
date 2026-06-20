@@ -32,6 +32,25 @@ mark in both top-bar and tab positions.
 The demo-hub template ships sample Hubzoid SVGs. Replace them with your
 own, or delete them to fall back to Open WebUI's defaults.
 
+### Static surfaces (tab title, link previews, PWA name)
+
+`WEBUI_NAME` only renames what the SPA re-renders in the browser at
+runtime. Three surfaces are served as **static files** that ship as
+"Open WebUI" and never see `WEBUI_NAME`:
+
+- the `<title>` a browser tab shows before the app hydrates,
+- the `<meta>` description/OpenGraph a link-preview crawler reads when
+  someone pastes the hub URL into Slack/iMessage/etc.,
+- the PWA `site.webmanifest` name.
+
+Hubzoid rewrites all three on every `hubzoid run`, using the same
+resolved name as the cascade above (so the default is `"Hubzoid"`, never
+bare "Open WebUI"). This is the same license-gated debrand as the
+`(Open WebUI)` suffix: operators above Open WebUI's 50-user threshold set
+`HUBZOID_KEEP_OWUI_SUFFIX=True`, which keeps the OWUI title/meta/manifest
+intact too. The patch is idempotent and reverts cleanly on a
+`pip install --upgrade open-webui`.
+
 ## Quick-start prompt suggestions
 
 The empty new-chat screen can show 3 to 5 click-to-send buttons. They are
