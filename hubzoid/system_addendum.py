@@ -62,6 +62,10 @@ def build(ctx: "HubContext", *, backend: str) -> str:
     if raw_data_section:
         parts.append(raw_data_section)
 
+    restricted_section = _restricted_section(ctx)
+    if restricted_section:
+        parts.append(restricted_section)
+
     parts.append(_uploads_section())
     parts.append(_tools_section())
 
@@ -155,6 +159,34 @@ def _raw_data_section(ctx: "HubContext") -> str:
         "the rest. Refine and continue.",
         "",
     ])
+
+
+def _restricted_section(ctx: "HubContext") -> str:
+    """Emitted only when <hub>/restricted/ exists.
+
+    A reminder, not a control. The real enforcement is in code: the file tools
+    refuse to read under restricted/, and access-controlled tools are gated by
+    the runtime regardless of what the model is told here. This just removes the
+    reflex to poke at the folder or to claim a tool that was filtered out.
+    """
+    from ._fs import resolve_bucket
+    if resolve_bucket(ctx.hub_dir, "restricted") is None:
+        return ""
+    return (
+        "## Restricted folder and tools\n"
+        "\n"
+        "This hub has a `restricted/` folder holding access-controlled tools\n"
+        "and secrets.\n"
+        "\n"
+        "- Never try to read anything under `restricted/` (for example with\n"
+        "  `read_file` or `grep_data`). Those calls are refused by the runtime,\n"
+        "  and the credentials there are not yours to read.\n"
+        "- Some tools are available only to certain users. Your tool list is\n"
+        "  already filtered to what the current user may use. If a tool is not\n"
+        "  in your list, treat it as nonexistent; do not claim it or hint at it.\n"
+        "- If a tool returns an access-denied message, relay that plainly to the\n"
+        "  user. Do not attempt to work around it.\n"
+    )
 
 
 def _uploads_section() -> str:

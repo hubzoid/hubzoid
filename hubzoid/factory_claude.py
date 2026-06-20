@@ -173,6 +173,12 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         log.info("hub-local tools override built-ins: %s", sorted(overlap))
     registry: dict = {**builtin, **local, **(extra_tools or {})}
 
+    # Gate access-controlled tools from <hub>/restricted/ (same shared registry
+    # as the OpenAI path). The deny check runs at on_invoke, which the Claude
+    # adapter calls, so it holds here too. No-op when there is no restricted/.
+    from . import access
+    registry = access.apply(hub_dir, registry)
+
     # MCP: external servers from the hub's connectors/.mcp.json (raw dicts;
     # Claude SDK accepts the same JSON shape) plus our in-process hubzoid
     # server that exposes the FunctionTool registry.

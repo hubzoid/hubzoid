@@ -338,6 +338,11 @@ def start(
         "OPENAI_API_BASE_URL": f"http://127.0.0.1:{bridge_port}/v1",
         "OPENAI_API_KEY": api_key,
         "DEFAULT_MODELS": model_label,
+        # Forward the logged-in user's identity to the bridge so per-role tool
+        # access can resolve their groups. OWUI sends X-OpenWebUI-User-Email
+        # (+ id/name/role); the bridge maps the email to the user's OWUI groups.
+        # See hubzoid.access.owui_groups.
+        "ENABLE_FORWARD_USER_INFO_HEADERS": "true",
     }
     return _spawn_owui(
         data_dir=hub_dir / ".openwebui-data",

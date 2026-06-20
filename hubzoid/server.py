@@ -38,6 +38,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import _request_ctx
 from . import _signing
+from . import access
 from . import memory as memlib
 from . import owui as owui_lib
 from . import runtime as runtime_lib
@@ -130,6 +131,7 @@ def build_app() -> FastAPI:
         # of the first user message so multi-turn chats from clients that
         # don't send an id still get a consistent directory.
         chat_id = _derive_chat_id(body, request, messages)
+        identity = _derive_identity(body, request, hub_dir)
 
         # Extract attachments from message content[] arrays and persist
         # them to the chat's uploads dir before flattening to text.
@@ -159,7 +161,7 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id, inflight),
+                _stream(rt, prompt, model_label, chat_id, inflight, identity),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -167,7 +169,8 @@ def build_app() -> FastAPI:
         inflight.enter()
         try:
             with _request_ctx.chat_scope(chat_id):
-                text = await rt.run(prompt)
+                with access.identity_scope(identity):
+                    text = await rt.run(prompt)
         finally:
             inflight.leave()
         return JSONResponse(_blocking_envelope(text, model_label))
@@ -256,7 +259,8 @@ class _InFlight:
 # Streaming response (text/event-stream)
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
-                  inflight: _InFlight | None = None) -> AsyncIterator[bytes]:
+                  inflight: _InFlight | None = None,
+                  identity=None) -> AsyncIterator[bytes]:
     if inflight:
         inflight.enter()
     try:
@@ -265,8 +269,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         first["choices"][0]["delta"] = {"role": "assistant", "content": ""}
         yield f"data: {json.dumps(first)}\n\n".encode()
 
-        # Set chat scope so tools resolve to this chat's dirs.
-        with _request_ctx.chat_scope(chat_id):
+        # Set chat scope so tools resolve to this chat's dirs, and bind the
+        # caller's identity so the access guard sees who is running each tool.
+        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
                 if delta:
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
@@ -276,6 +281,49 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
     finally:
         if inflight:
             inflight.leave()
+
+
+# ---------------------------------------------------------------------------
+# Identity derivation
+# ---------------------------------------------------------------------------
+def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | None = None):
+    """Resolve the caller's verified identity for this request.
+
+    The user, groups, and surface come from headers the trusted front sets;
+    they are trusted because reaching the bridge already requires its API key
+    (``_auth``), and end users talk to Open WebUI, never to the bridge directly.
+
+    Groups are resolved in priority order:
+
+      1. ``X-Hubzoid-Groups`` (comma-separated) — an explicit override, set by a
+         reverse proxy or used in testing. Wins when present.
+      2. Open WebUI's forwarded ``X-OpenWebUI-User-Email`` — the bridge looks up
+         that user's groups in OWUI's own database (where the admin manages them
+         on the Groups screen). This is what makes adding a person to a group in
+         Open WebUI grant the matching permission, with no proxy and no logout.
+
+    A request with no groups reaches no restricted tool (fail-closed). A
+    non-Open-WebUI surface (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``)
+    is refused restricted tools regardless. ``body["user"]`` is only a display
+    fallback for the user id; it never carries groups.
+    """
+    headers = request.headers
+    owui_email = headers.get("x-openwebui-user-email")
+    user = headers.get("x-hubzoid-user") or owui_email
+    if not user:
+        u = body.get("user")
+        user = u if isinstance(u, str) and u.strip() else None
+
+    groups_raw = headers.get("x-hubzoid-groups")
+    if groups_raw is not None:
+        groups = [g for g in groups_raw.split(",") if g.strip()]
+    elif owui_email and hub_dir is not None:
+        groups = access.owui_groups.resolve_groups(hub_dir, owui_email)
+    else:
+        groups = []
+
+    surface = headers.get("x-hubzoid-surface") or "owui"
+    return access.Identity.make(user=user, groups=groups, surface=surface)
 
 
 # ---------------------------------------------------------------------------

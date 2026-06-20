@@ -25,6 +25,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "output": ("output", "outputs"),
     "raw_data": ("raw_data", "raw-data", "rawdata"),
     "schedule": ("schedule", "schedules", "scheduled"),
+    "restricted": ("restricted",),
 }
 
 
@@ -56,3 +57,25 @@ def resolve_bucket(hub_dir: Path, bucket: str) -> Path | None:
             bucket, names, matches[0].name,
         )
     return matches[0]
+
+
+def is_under_restricted(hub_dir: Path, target: Path) -> bool:
+    """True if `target` resolves inside the hub's `restricted/` folder.
+
+    The `restricted/` folder holds access-controlled tools and secrets (for
+    example `restricted/.env`). The file-reading tools call this to refuse any
+    path under it, so the model cannot read a credential by reading the file —
+    the door it locks (a tool call) is not the door this closes (a file read).
+
+    Matches both the conventional `<hub>/restricted` and whatever case variant
+    actually exists on disk, so the refusal cannot be sidestepped by casing.
+    """
+    try:
+        resolved = target.resolve() if not target.is_absolute() else Path(target).resolve()
+    except OSError:
+        return False
+    roots: list[Path] = [(hub_dir / "restricted").resolve()]
+    actual = resolve_bucket(hub_dir, "restricted")
+    if actual is not None:
+        roots.append(actual.resolve())
+    return any(resolved == r or r in resolved.parents for r in roots)

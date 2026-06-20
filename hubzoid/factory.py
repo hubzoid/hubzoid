@@ -19,6 +19,7 @@ from pathlib import Path
 from agents import Agent
 from agents.tool import FunctionTool
 
+from . import access
 from . import memory as memlib
 from . import model as modellib
 from . import settings as settingslib
@@ -89,6 +90,10 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     if overlap:
         log.info("hub-local tools override built-ins: %s", sorted(overlap))
     registry: dict[str, FunctionTool] = {**builtin, **local, **(extra_tools or {})}
+
+    # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
+    # has no restricted/ folder, so existing hubs are unchanged.
+    registry = access.apply(hub_dir, registry)
 
     mcp_servers = mcp_loader.load_all(hub_dir)
 

@@ -89,6 +89,14 @@ def load(hub_dir: Path) -> Settings:
     if env_path.is_file():
         load_dotenv(env_path, override=True)
 
+    # Secrets for access-controlled tools live in <hub>/restricted/.env — the
+    # restricted/ folder the file-reading tools refuse, so the model cannot read
+    # them. Load it (after the main .env) into the process env, where only the
+    # restricted tools' own code reads them. See hubzoid.access.
+    restricted_env = hub_dir / "restricted" / ".env"
+    if restricted_env.is_file():
+        load_dotenv(restricted_env, override=True)
+
     keys_raw = os.environ.get("BRIDGE_API_KEYS", "dev")
     keys = tuple(k.strip() for k in keys_raw.split(",") if k.strip()) or ("dev",)
 
