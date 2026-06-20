@@ -319,8 +319,11 @@ def _artifact_url(filename: str) -> str | None:
     Bearer header. See `hubzoid._signing` for the token scheme.
 
     Pulls the public base URL from HUBZOID_PUBLIC_URL (operator override
-    when the bridge is fronted by a reverse proxy). Falls back to the
-    bridge's listen address derived from BRIDGE_PORT.
+    when the bridge is fronted by a reverse proxy). Falls back to WEBUI_URL
+    — behind a proxy the same public host fronts both Open WebUI and the
+    edge's `/artifacts` route, and operators routinely set WEBUI_URL (for
+    OAuth callbacks) while forgetting HUBZOID_PUBLIC_URL. Final fallback is
+    the bridge's loopback listen address derived from BRIDGE_PORT.
 
     Returns None when no chat is in scope — in that case the agent should
     show the user the local path instead (handled by the caller).
@@ -328,7 +331,10 @@ def _artifact_url(filename: str) -> str | None:
     chat_id = _request_ctx.get_chat_id()
     if not chat_id:
         return None
-    base = os.environ.get("HUBZOID_PUBLIC_URL", "").rstrip("/")
+    base = (
+        os.environ.get("HUBZOID_PUBLIC_URL", "")
+        or os.environ.get("WEBUI_URL", "")
+    ).rstrip("/")
     if not base:
         port = os.environ.get("BRIDGE_PORT", "8000")
         base = f"http://127.0.0.1:{port}"
