@@ -549,13 +549,11 @@ def test_hub(
     import asyncio
 
     hub = hub.resolve()
-    settings = settingslib.load(hub)
-    if not settings.model:
-        console.print("[red]MODEL is not set in .env. Cannot run test.[/red]")
-        raise typer.Exit(2)
 
     from . import runtime as runtime_lib
 
+    # No MODEL in .env is fine — runtime.build() defaults to claude-local
+    # (Claude Agent SDK on Sonnet via the bundled `claude` login).
     rt = runtime_lib.build(hub)
     console.print(f"[cyan]→[/cyan] {prompt}")
 

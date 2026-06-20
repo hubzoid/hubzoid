@@ -132,12 +132,12 @@ in a sub-agent's `tools:` list.
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-...
-MODEL=openrouter/anthropic/claude-haiku-4.5
+MODEL=openrouter/anthropic/claude-haiku-4.5   # unset => defaults to claude-local (Claude Agent SDK, Sonnet)
 
 # Optional knobs:
-BRIDGE_API_KEYS=dev               # first key is what Open WebUI sends
+BRIDGE_API_KEYS=dev               # first key is what the UI sends
 MODEL_LABEL=                      # what /v1/models shows; blank = derive from AGENTS.md name
-WEBUI_NAME=                       # Open WebUI title; blank = default
+WEBUI_NAME=                       # tab/top-bar title; blank = derive from AGENTS.md name, else "Hubzoid"
 PORT=3080                         # UI port
 BRIDGE_PORT=8000                  # bridge port
 HTTP_ALLOWLIST=                   # comma-separated hostnames for http_get

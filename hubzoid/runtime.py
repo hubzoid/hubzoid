@@ -40,12 +40,34 @@ class Runtime(Protocol):
     async def aclose(self) -> None: ...
 
 
+def _resolve_model_id(hub_dir: Path, settings) -> str:
+    """The effective MODEL for a hub.
+
+    Precedence: ``.env`` MODEL -> AGENTS.md ``model:`` frontmatter -> the
+    bundled Claude Agent SDK backend (``claude-local``). The final default
+    means a hub with no model configured anywhere still runs (Claude SDK on
+    Sonnet via the bundled ``claude`` login) instead of erroring at build
+    time — operators don't have to set MODEL just to get started.
+    """
+    model_id = (settings.model or "").strip()
+    if model_id:
+        return model_id
+    try:
+        from .loaders import agents as agents_loader
+        model_id = (agents_loader.load_main(hub_dir).spec.model or "").strip()
+    except Exception:  # noqa: BLE001 — missing/invalid AGENTS.md falls through to default
+        model_id = ""
+    return model_id or "claude-local"
+
+
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
           max_turns: int | None = None) -> Runtime:
     """Pick the backend for this hub based on `MODEL` in <hub>/.env.
 
     `MODEL=claude-local` -> Claude Agent SDK (subprocess + `claude` login).
     anything else        -> OpenAI Agents SDK + LiteLLM (existing behavior).
+    `MODEL` unset (and no AGENTS.md `model:`) -> claude-local default; see
+    `_resolve_model_id`. We never error on a missing model.
 
     `extra_tools` ({name: FunctionTool}) are merged into the registry on top
     of built-ins + hub-local — used by scheduled-task runs to inject their
@@ -55,9 +77,14 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
     """
     hub_dir = Path(hub_dir).resolve()
     settings = settingslib.load(hub_dir)
-    model_id = (settings.model or "").strip().lower()
+    model_id = _resolve_model_id(hub_dir, settings)
+    if not (settings.model or "").strip():
+        log.info(
+            "hub %s: no MODEL in .env; defaulting to %s",
+            hub_dir.name, model_id,
+        )
 
-    if model_id.startswith("claude-local"):
+    if model_id.lower().startswith("claude-local"):
         from .factory_claude import build_claude_runtime
         return build_claude_runtime(hub_dir, extra_tools=extra_tools,
                                     max_turns=max_turns)
@@ -188,7 +215,6 @@ class OpenAIAgentsRuntime:
 # a hub resolved to (used by `hubzoid doctor`).
 def describe(hub_dir: Path) -> str:
     settings = settingslib.load(hub_dir)
-    model = (settings.model or "").strip()
-    if model.lower().startswith("claude-local"):
-        return json.dumps({"backend": "claude-local", "model": model})
-    return json.dumps({"backend": "openai-agents", "model": model or "(unset)"})
+    model = _resolve_model_id(hub_dir, settings)
+    backend = "claude-local" if model.lower().startswith("claude-local") else "openai-agents"
+    return json.dumps({"backend": backend, "model": model})

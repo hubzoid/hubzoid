@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from . import branding
 
 # ---------------------------------------------------------------------------
 # Default Open WebUI env vars (strip platform surfaces).
@@ -131,6 +134,128 @@ def _patch_owui_suffix(strip: bool) -> None:
     else:
         if _OWUI_SUFFIX_PATCH in text:
             env_py.write_text(text.replace(_OWUI_SUFFIX_PATCH, _OWUI_SUFFIX_NEEDLE))
+
+
+_OWUI_DEFAULT_NAME = "Open WebUI"
+
+# Markers around the meta block hubzoid injects into OWUI's static index.html.
+# Used to find/replace it idempotently on every launch (and to remove it on
+# restore). OWUI's shipped index.html has a hardcoded <title>Open WebUI</title>
+# and no link-share meta at all — so browser tabs and link-preview crawlers
+# (which never run the JS that applies WEBUI_NAME) read "Open WebUI". This
+# block fixes both surfaces statically.
+_BRANDING_START = "<!-- hubzoid-branding:start -->"
+_BRANDING_END = "<!-- hubzoid-branding:end -->"
+_TITLE_RE = re.compile(r"<title>.*?</title>", re.IGNORECASE | re.DOTALL)
+_BRANDING_BLOCK_RE = re.compile(
+    re.escape(_BRANDING_START) + r".*?" + re.escape(_BRANDING_END),
+    re.DOTALL,
+)
+
+
+def _html_escape(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _branding_meta_block(brand: str) -> str:
+    """The link-share meta tags hubzoid injects, all keyed to `brand`."""
+    esc = _html_escape(brand)
+    return (
+        f"{_BRANDING_START}\n"
+        f'\t\t<meta name="description" content="{esc}" />\n'
+        f'\t\t<meta property="og:title" content="{esc}" />\n'
+        f'\t\t<meta property="og:description" content="{esc}" />\n'
+        f'\t\t<meta property="og:site_name" content="{esc}" />\n'
+        f'\t\t<meta name="twitter:title" content="{esc}" />\n'
+        f'\t\t<meta name="twitter:description" content="{esc}" />\n'
+        f"\t\t{_BRANDING_END}"
+    )
+
+
+def _patch_index_html(path: Path, brand: str, *, strip: bool) -> None:
+    """Rewrite <title> and the hubzoid meta block in one OWUI index.html.
+
+    `strip=True` rebrands to `brand`; `strip=False` restores OWUI's default
+    title and removes the injected meta block. Idempotent either way.
+    """
+    try:
+        text = path.read_text()
+    except OSError:
+        return
+    original = text
+
+    if strip:
+        title = f"<title>{_html_escape(brand)}</title>"
+        if _TITLE_RE.search(text):
+            text = _TITLE_RE.sub(lambda _m: title, text, count=1)
+        block = _branding_meta_block(brand)
+        if _BRANDING_START in text:
+            text = _BRANDING_BLOCK_RE.sub(lambda _m: block, text, count=1)
+        else:
+            # Drop the block right after the (now rebranded) <title>.
+            text = text.replace(title, f"{title}\n\t\t{block}", 1)
+    else:
+        text = _TITLE_RE.sub(
+            lambda _m: f"<title>{_OWUI_DEFAULT_NAME}</title>", text, count=1
+        )
+        # Remove our block plus the trailing whitespace/newline we added.
+        text = re.sub(r"\n\t\t" + _BRANDING_BLOCK_RE.pattern, "", text)
+        text = _BRANDING_BLOCK_RE.sub("", text)
+
+    if text != original:
+        try:
+            path.write_text(text)
+        except OSError:
+            return
+
+
+def _patch_webmanifest(path: Path, brand: str, *, strip: bool) -> None:
+    """Rewrite name/short_name in one OWUI site.webmanifest."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    target = brand if strip else _OWUI_DEFAULT_NAME
+    short = brand if strip else "WebUI"
+    if data.get("name") == target and data.get("short_name") == short:
+        return
+    data["name"] = target
+    data["short_name"] = short
+    try:
+        path.write_text(json.dumps(data, indent=2))
+    except OSError:
+        return
+
+
+def _patch_owui_branding(brand: str, *, strip: bool) -> None:
+    """Replace OWUI's static "Open WebUI" branding with `brand`.
+
+    Covers the surfaces WEBUI_NAME does NOT reach because they are served
+    as static files (no runtime substitution): the index.html <title> a
+    browser tab shows before the SPA hydrates, the link-preview meta a
+    crawler reads, and the PWA site.webmanifest name. Gated on the same
+    license decision as the "(Open WebUI)" suffix patch — when an operator
+    opts to keep OWUI branding (`HUBZOID_KEEP_OWUI_SUFFIX=True`), this
+    restores the defaults instead. Idempotent; reverted by a pip upgrade
+    and re-applied on the next `hubzoid run`.
+    """
+    for static_dir in branding.static_dirs():
+        index = static_dir / "index.html"
+        if index.is_file():
+            _patch_index_html(index, brand, strip=strip)
+        for manifest in (
+            static_dir / "site.webmanifest",
+            static_dir / "static" / "site.webmanifest",
+        ):
+            if manifest.is_file():
+                _patch_webmanifest(manifest, brand, strip=strip)
 
 
 _TRUTHY = {"true", "1", "yes", "on"}
@@ -274,6 +399,9 @@ def _spawn_owui(
     # Operator can opt out by setting HUBZOID_KEEP_OWUI_SUFFIX=True.
     keep_suffix = os.environ.get("HUBZOID_KEEP_OWUI_SUFFIX", "").lower() in ("true", "1", "yes")
     _patch_owui_suffix(strip=not keep_suffix)
+    # Static surfaces WEBUI_NAME can't reach (tab title before hydration,
+    # link-preview meta, PWA manifest). Default to "Hubzoid" when unnamed.
+    _patch_owui_branding(webui_name or "Hubzoid", strip=not keep_suffix)
 
     binary = _find_binary()
     if binary is None:
