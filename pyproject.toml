@@ -42,7 +42,7 @@ classifiers = [
 dependencies = [
   "openai-agents[litellm]>=0.14.7",
   "claude-agent-sdk>=0.1.0",
-  "open-webui>=0.6",
+  "open-webui==0.6.5",     # pinned: last BSD-3 release (0.6.6+ restricts white-labeling)
   "fastapi>=0.115",
   "starlette>=0.37",        # edge.py reverse-proxy app
   "uvicorn[standard]>=0.30",

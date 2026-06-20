@@ -1,0 +1,4 @@
+# Needed ONLY when AUTHZ_PROVIDER=permit (and for real_check.py).
+# The default (mock) provider uses the Python standard library only.
+# To drop Permit entirely: delete authz/permit_provider.py and this line.
+permit
