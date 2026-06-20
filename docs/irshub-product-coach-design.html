@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IRS Hub — Product Sense Coach &amp; Business-to-Dev Wall — Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#15171c; --ink-soft:#3b4048; --ink-faint:#6b7280;
+    --line:#e6e8ec; --line-soft:#f0f1f4; --bg:#ffffff; --panel:#fafbfc;
+    --accent:#1f2937; --accent-bar:#111827;
+    --red:#b42318; --red-bg:#fef3f2; --amber:#b54708; --amber-bg:#fffaeb;
+    --green:#067647; --green-bg:#ecfdf3; --blue:#175cd3; --blue-bg:#eff6ff;
+    --purple:#6d28d9; --purple-bg:#f5f3ff;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%; scroll-behavior:smooth}
+  body{
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:var(--ink); background:var(--bg); margin:0;
+    line-height:1.62; font-size:16px; font-feature-settings:"cv02","cv03","cv04","ss01";
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:0 28px 120px}
+  header.doc{padding:64px 0 40px; border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint)}
+  h1{font-size:42px; line-height:1.08; font-weight:800; letter-spacing:-.022em; margin:.32em 0 .26em}
+  .lede{font-size:18px; color:var(--ink-soft); max-width:64ch; margin:0}
+  .meta{display:flex; flex-wrap:wrap; gap:8px 26px; margin-top:26px; font-size:13.5px; color:var(--ink-faint)}
+  .meta b{color:var(--ink); font-weight:600}
+  h2{font-size:13px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); margin:64px 0 4px}
+  h2 .n{color:var(--accent-bar)}
+  h3{font-size:25px; font-weight:700; letter-spacing:-.02em; margin:.2em 0 .5em}
+  h4{font-size:17px; font-weight:700; letter-spacing:-.01em; margin:30px 0 6px}
+  p{margin:0 0 16px}
+  a{color:var(--blue); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .section{scroll-margin-top:24px}
+  .rule{height:3px; width:46px; background:var(--accent-bar); border-radius:2px; margin:6px 0 18px}
+  strong{font-weight:650}
+  code{font-family:var(--mono); font-size:.86em; background:var(--line-soft); padding:1px 5px; border-radius:4px; color:#9333ea}
+  pre{font-family:var(--mono); font-size:13px; line-height:1.6; background:#0f1117; color:#e7e9ee; padding:18px 20px; border-radius:12px; overflow:auto; margin:14px 0 20px}
+  pre code{background:none; color:inherit; padding:0; font-size:inherit}
+  pre .c{color:#6b7280}
+  pre .k{color:#c4b5fd}
+  pre .g{color:#86efac}
+  .lead-quote{font-size:21px; line-height:1.5; font-weight:600; letter-spacing:-.015em; color:var(--ink); border-left:3px solid var(--accent-bar); padding:4px 0 4px 22px; margin:8px 0 24px}
+  ul,ol{margin:0 0 18px; padding-left:22px}
+  li{margin:7px 0}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px}
+  @media(max-width:680px){.grid2,.grid3{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line); border-radius:12px; padding:18px 20px; background:var(--panel)}
+  .card h4{margin:0 0 6px}
+  .card p{margin:0; font-size:14.5px; color:var(--ink-soft)}
+  /* numbered doctrine list */
+  .doctrine{counter-reset:d; list-style:none; padding:0; margin:18px 0 8px}
+  .doctrine li{position:relative; padding:16px 18px 16px 58px; border:1px solid var(--line); border-radius:12px; margin:10px 0; background:var(--bg)}
+  .doctrine li::before{counter-increment:d; content:counter(d); position:absolute; left:16px; top:15px; width:28px; height:28px; border-radius:8px; background:var(--accent-bar); color:#fff; font-weight:700; font-size:14px; display:grid; place-items:center}
+  .doctrine b{display:block; font-weight:700; letter-spacing:-.01em; margin-bottom:1px}
+  .doctrine span{color:var(--ink-soft); font-size:14.5px}
+  /* callouts */
+  .callout{border:1px solid var(--line); border-left-width:3px; border-radius:10px; padding:14px 18px; margin:16px 0; font-size:14.5px}
+  .callout p{margin:0 0 8px} .callout p:last-child{margin:0}
+  .callout .tag{font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; display:block; margin-bottom:5px}
+  .c-red{border-left-color:var(--red); background:var(--red-bg)} .c-red .tag{color:var(--red)}
+  .c-amber{border-left-color:var(--amber); background:var(--amber-bg)} .c-amber .tag{color:var(--amber)}
+  .c-green{border-left-color:var(--green); background:var(--green-bg)} .c-green .tag{color:var(--green)}
+  .c-blue{border-left-color:var(--blue); background:var(--blue-bg)} .c-blue .tag{color:var(--blue)}
+  .c-purple{border-left-color:var(--purple); background:var(--purple-bg)} .c-purple .tag{color:var(--purple)}
+  /* tables */
+  table{width:100%; border-collapse:collapse; margin:16px 0 22px; font-size:14px}
+  th,td{text-align:left; padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:11.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); border-bottom:2px solid var(--line)}
+  td code{font-size:12px}
+  tr:last-child td{border-bottom:none}
+  .prim{font-family:var(--mono); font-size:12px; color:var(--purple); white-space:nowrap}
+  /* gate flow */
+  .gates{counter-reset:g; list-style:none; padding:0; margin:18px 0}
+  .gates li{position:relative; padding:14px 16px 14px 56px; border:1px solid var(--line); border-radius:11px; margin:9px 0; background:var(--bg)}
+  .gates li::before{counter-increment:g; content:"G"counter(g); position:absolute; left:14px; top:13px; width:30px; height:26px; border-radius:7px; background:var(--blue-bg); color:var(--blue); font-weight:700; font-size:12px; font-family:var(--mono); display:grid; place-items:center; border:1px solid #bcd4f7}
+  .gates b{font-weight:700}
+  .gates .enf{display:block; margin-top:4px; font-size:13px; color:var(--ink-faint)}
+  .gates .enf code{font-size:11.5px}
+  /* pills */
+  .pill{display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px; border:1px solid var(--line); color:var(--ink-soft); background:var(--bg); margin:0 4px 4px 0}
+  .pill.v{background:var(--green-bg); color:var(--green); border-color:#a6e9c8}
+  /* phases */
+  .phase{display:grid; grid-template-columns:54px 1fr; gap:16px; padding:16px 0; border-top:1px solid var(--line)}
+  .phase:first-of-type{border-top:none}
+  .phase .pn{font-family:var(--mono); font-weight:700; font-size:13px; color:#fff; background:var(--accent-bar); border-radius:9px; height:34px; display:grid; place-items:center}
+  .phase h4{margin:0 0 4px}
+  .phase p{margin:0; font-size:14.5px; color:var(--ink-soft)}
+  .deliver{font-size:13px; color:var(--green); font-weight:600; margin-top:5px}
+  /* toc */
+  nav.toc{margin:30px 0 0; padding:18px 22px; border:1px solid var(--line); border-radius:12px; background:var(--panel); font-size:14px; columns:2; column-gap:30px}
+  @media(max-width:680px){nav.toc{columns:1}}
+  nav.toc a{display:block; padding:3px 0; color:var(--ink-soft)}
+  nav.toc a:hover{color:var(--blue)}
+  .vmark{font-size:11px; color:var(--green); font-weight:700; font-family:var(--mono)}
+  footer{margin-top:80px; padding-top:24px; border-top:1px solid var(--line); font-size:13px; color:var(--ink-faint)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="eyebrow">IRS Hub · Design Spec</div>
+  <h1>Product Sense Coach &amp; the Business-to-Dev Wall</h1>
+  <p class="lede">A new module on the existing IRS Hub (Hubzoid) that coaches PMs through structured product reasoning — build vs. extend vs. reuse — and turns the result into a signed, filtered development-request ticket. Its real job: act as a product strategist that sits between the business/PM team and developers, so only well-reasoned requests get through.</p>
+  <div class="meta">
+    <span><b>Status:</b> Proposed — awaiting approval</span>
+    <span><b>Platform:</b> Hubzoid (IRSHub instance)</span>
+    <span><b>Ticketing:</b> ClickUp via MCP</span>
+    <span><b>Scope:</b> Full spec, phased build</span>
+    <span><b>Evidence base:</b> 6-month request-board + commit analysis</span>
+  </div>
+  <nav class="toc">
+    <a href="#objective">1 · Objective, principles &amp; evidence</a>
+    <a href="#feasibility">2 · Feasibility verdict</a>
+    <a href="#truths">3 · Three framework truths <span class="vmark">verified</span></a>
+    <a href="#architecture">4 · Architecture &amp; layout</a>
+    <a href="#components">5 · Components</a>
+    <a href="#coaching">6 · The coaching engine (7 gates)</a>
+    <a href="#capability">7 · Capability Index</a>
+    <a href="#context">8 · Context Store (vision/KPI)</a>
+    <a href="#brief">9 · The Brief &amp; validator</a>
+    <a href="#wall">10 · Ticketing &amp; the Wall</a>
+    <a href="#guardrails">11 · Guardrails</a>
+    <a href="#metrics">12 · Success metrics</a>
+    <a href="#buildorder">13 · Build order</a>
+    <a href="#risks">14 · Risks</a>
+    <a href="#open">15 · Open questions</a>
+  </nav>
+</header>
+
+<!-- 1 -->
+<section class="section" id="objective">
+  <h2><span class="n">01</span> &nbsp;Objective, principles &amp; evidence</h2>
+  <div class="rule"></div>
+  <p>Add a coaching capability to IRS Hub that, given a requirement or initiative, guides a PM through structured product reasoning to decide whether to <strong>build new, extend existing, or reuse</strong> a capability — and to articulate the expected outcome and a rough cost-vs-benefit view. It then emits a structured brief and, on the PM's say-so, a development-request ticket. The coach <strong>asks the right questions and nudges</strong>; it never issues a build / no-build verdict.</p>
+  <p>The deeper goal is organisational: a <strong>wall between the business/PM team and the development team</strong>. The coach is the product-strategist front door, so the only requests that reach developers are evidence-backed, reuse-checked, and outcome-anchored.</p>
+  <ul class="doctrine">
+    <li><b>Coach, not oracle.</b><span>Never opens with a recommendation. Nudges through questions; ends by reflecting the PM's own reasoning back as a brief plus open risks. Optimises for building judgement, not replacing it.</span></li>
+    <li><b>Derive the capability map.</b><span>Ground "could you reuse/extend what you already have?" in the actual product codebases, and ground outcome reasoning in vision/KPI docs.</span></li>
+    <li><b>Outcome before build.</b><span>Every session surfaces the target metric and its current baseline before any build discussion. A missing baseline is flagged, never invented.</span></li>
+    <li><b>The wall filters; it does not gatekeep arbitrarily.</b><span>What passes is a signed brief that survived all gates. The signature — not a human's mood — is what unlocks a ticket.</span></li>
+    <li><b>Necessity &amp; deflection before a ticket.</b><span>Establish whether a request is needed to launch (must-have) or merely nice-to-have, and whether an existing self-serve capability already covers it. Nice-to-haves are parked; config / how-to is deflected to self-serve; only launch-relevant, non-reusable needs become dev tickets.</span></li>
+  </ul>
+
+  <h4 style="margin-top:34px">Why now — what the board and the code already show</h4>
+  <p>This is not a hypothetical risk. A read of the live business-request board (every ticket, last six months) and the matching code commits shows the exact failure mode the wall is built to stop: the platform is <strong>barely live</strong> — only a small share of programmes run on it and new programmes are not going live — yet the request queue is dominated by internal convenience, not launch-critical work.</p>
+  <div class="grid3">
+    <div class="card"><h4>~15% must-have to launch</h4><p>Only ~15% of business-board tickets are genuinely required to put a programme live or let a participant register &amp; pay. ~63% are nice-to-have, ~22% not-needed / edge. Of the open backlog, ~10 of ~110 are real launch-blockers — buried under ~100 non-essential requests competing for the same engineers.</p></div>
+    <div class="card"><h4>~68% serve internal teams</h4><p>By audience, ~68% of requests serve operators / finance / platform; only ~32% the participant. The single biggest category is operator preference; only ~19% are real core defects. Code agrees — roughly twice as much commit effort lands on internal / admin surfaces as on the participant experience, and that gap is widening.</p></div>
+    <div class="card"><h4>The cost is tech-lead time</h4><p>The technical leads each personally touched ~30 business tickets — ~85% non-launch and roughly half BA-handleable (config / data / preference) — on top of already-full coding loads. The most expensive engineers are being used as a triage queue while the few real launch-blockers wait.</p></div>
+  </div>
+  <p>Fragmentation of the clean, configurable platform is still <strong>contained</strong> (only a low single-digit share of requests actively risk it, and explicit "rebuild the old system" parity is small) — but it is trending the wrong way, and most of those fragmenting requests sit unnoticed inside the "nice-to-have" pile. A gate is what keeps "contained" from becoming "characteristic."</p>
+  <div class="callout c-green">
+    <span class="tag">The deflect target already exists</span>
+    <p>Roughly half the queue is BA-handleable — config, policy, template, data and how-to requests that need no developer. The IRS Hub <em>already</em> offers these as self-serve (Template Builder, Config Helper, Support Agent). So the coach's first job is often not to write a better ticket but to <strong>deflect</strong> the request into an existing self-serve capability — no dev ticket created at all.</p>
+  </div>
+  <div class="callout c-red">
+    <span class="tag">Caveat · used wrong, this makes it worse</span>
+    <p>An intake agent without a hard gate is a <strong>faster fragmentation engine</strong>: ask it for a ticket and it will happily produce a plausible-looking one, so volume <em>rises</em>. It only helps if it can say <em>no / defer / "do it yourself,"</em> never creates a ticket that hasn't passed the necessity + reuse check, and is judged by <strong>deflection rate and new programmes launched — not tickets created</strong>. Build the gate first, the ticket-writer second.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="section" id="feasibility">
+  <h2><span class="n">02</span> &nbsp;Feasibility verdict</h2>
+  <div class="rule"></div>
+  <p class="lead-quote">Yes — it's buildable as a module inside the existing IRS Hub, with ClickUp as the ticket destination. Two realities shaped the entire design.</p>
+  <div class="grid2">
+    <div class="callout c-amber" style="margin:0">
+      <span class="tag">Reality 1 · No internal ticketing to reuse</span>
+      <p><strong>"PRS" is the Program Registration System</strong> — the event-registration platform itself (Litestar <code>prs-facade</code> + Odoo <code>prs-backend</code> + Celery <code>prs-worker</code> + React <code>prs-frontend</code>), <em>not</em> a product-request tool. Its "request" APIs create participant registrations. So development tickets go to <strong>ClickUp</strong>.</p>
+    </div>
+    <div class="callout c-amber" style="margin:0">
+      <span class="tag">Reality 2 · No per-tool access control</span>
+      <p>Hubzoid has <strong>no in-hub RBAC</strong>. A sub-agent's <code>tools:</code> whitelist is discarded on load and the single agent gets the full tool registry. So the wall <strong>cannot</strong> be a tool-visibility boundary in v1 — it is a code-validated choke point plus a dev-team SLA, instrumented to harden into the access-management L4/L5 gate later.</p>
+    </div>
+  </div>
+  <p>Everything else the spec asks for maps cleanly onto Hubzoid primitives: a sub-agent for the persona, skills for procedures, knowledge files for the capability map and vision docs, a couple of Python tools for the deterministic spine, the ClickUp MCP connector for the write, and two scheduled jobs for refresh + metrics.</p>
+</section>
+
+<!-- 3 -->
+<section class="section" id="truths">
+  <h2><span class="n">03</span> &nbsp;Three framework truths that decided the architecture <span class="vmark">read from source</span></h2>
+  <div class="rule"></div>
+  <p>The design was re-grounded against the Hubzoid source rather than assumptions. Three findings overturned the "obvious" approach:</p>
+
+  <h4>① Guardrails must live <em>inside a tool at call time</em>, not in tool visibility</h4>
+  <p>In <code>hubzoid/loaders/agents.py</code>, <code>promote_to_skills</code> discards a sub-agent's <code>tools:</code> whitelist (with a log warning); <code>hubzoid/factory.py</code> hands the single agent <code>tools=list(registry.values())</code> — the whole registry. <strong>There is no per-agent tool scope.</strong> So the gate and the wall can't be enforced by hiding a "create ticket" tool. They are enforced by a deterministic validator that writes a <em>signature</em>, and a skill that refuses to file without it.</p>
+
+  <h4>② <code>tools_local</code> Python cannot call MCP tools in-process</h4>
+  <p>MCP servers attach to the Agent and are invoked by the <em>model</em>; <code>@function_tool</code> Python functions are a separate registry. A Python tool can't call <code>clickup_create_task</code> directly. <strong>Resolution:</strong> split the concern — Python does the deterministic part (validate, sign, dedupe-check, audit); the <em>model</em> makes the actual ClickUp write from a skill, but only after the signature exists in session state.</p>
+
+  <h4>③ Session state needs a tool-owned file, not a hand-written artifact</h4>
+  <p><code>write_artifact</code> strips directory parts and is per-chat; chats are fresh-context each turn. A model re-reading a hand-written <code>state.json</code> is fragile (it may not know the chat-specific path). <strong>Resolution:</strong> a <code>tools_local</code> tool owns <code>coach-state.json</code>, resolving the per-chat dir itself via <code>get_chat_id()</code> + <code>memory.chat_artifact_dir()</code> — the exact mechanism the built-in artifact writer uses. State survives fresh context deterministically.</p>
+
+  <div class="callout c-blue">
+    <span class="tag">Why this matters</span>
+    <p>These three truths convert a naive "prompt-the-agent-nicely" design into one with a single <strong>deterministic choke point</strong> (the signature) and an honest account of what is and isn't enforceable today — which is exactly what makes the wall credible to a dev team and forward-compatible with your access-management rollout.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="section" id="architecture">
+  <h2><span class="n">04</span> &nbsp;Architecture &amp; module layout</h2>
+  <div class="rule"></div>
+  <p>One <strong>front-door sub-agent</strong> runs a 7-gate Socratic flow whose ledger lives in a code-enforced session-state machine, grounded in a grep-backed capability index and a vision/KPI context store, ending in a validated brief whose signature a deterministic check requires before a ClickUp ticket can be filed. All of it lives inside the existing IRSHub folder, beside the current Template Builder / Config Helper / Support Agent.</p>
+<pre><code><span class="c"># everything below is added inside the existing IRSHub hub folder</span>
+agents/product-coach/AGENTS.md        <span class="c"># 7-gate coaching persona + guardrails (the bulk of the prose)</span>
+
+skills/
+  run-product-coaching/SKILL.md       <span class="c"># session entry, gate sequencing, stop-and-name-the-gap</span>
+  gate-capability-check/SKILL.md      <span class="c"># gate 4: lookup -&gt; grep-verify -&gt; phrase lever as a question</span>
+  synthesize-brief/SKILL.md           <span class="c"># gate 7: build brief, validate, write artifacts</span>
+  file-coach-ticket/SKILL.md          <span class="c"># require signature -&gt; dedupe -&gt; clickup_create_task -&gt; audit</span>
+
+knowledge/
+  coach-doctrine.md  coach-rubric.md  brief-schema.md   <span class="c"># single source of truth for gates/guardrails</span>
+  capability-index.yaml               <span class="c"># structured lever spine; citations baked in</span>
+  capabilities/prs-facade.md  prs-backend.md  prs-worker.md
+              prs-frontend.md  irs-admin.md  cross-cutting-levers.md
+  capability-index-method.md          <span class="c"># the regex/path catalog the refresh job uses</span>
+  vision/INDEX.md  north-star.md  okrs-current.md  kpi-baselines.md   <span class="c"># Context Store (ships NOT-YET-WIRED)</span>
+  wall-policy.md  clickup-mapping.md  <span class="c"># dev SLA + pinned ClickUp IDs/field map</span>
+
+tools_local/
+  coach_session.py                    <span class="c"># THE gate-ledger state machine (close_gate enforces order + shape)</span>
+  capability_lookup.py                <span class="c"># returns only levers present in the yaml, each pre-cited</span>
+  brief_validate.py                   <span class="c"># deterministic validator -&gt; emits synthesis_signature</span>
+  coach_audit.py                      <span class="c"># append-only JSONL (Hubzoid doesn't auto-log interactive calls)</span>
+
+connectors/.mcp.json                  <span class="c"># + ClickUp MCP server, token via ${CLICKUP_API_TOKEN}</span>
+
+schedule/
+  capability-refresh.md               <span class="c"># weekly: re-derive capability map from raw_data repos</span>
+  coach-metrics-rollup.md             <span class="c"># weekly: roll audit JSONL -&gt; metrics dashboard</span>
+
+AGENTS.md (hub main)                  <span class="c"># route build requests -&gt; coach; never file tickets itself</span></code></pre>
+  <p style="font-size:13.5px;color:var(--ink-faint)">Almost no framework change: the only edits to existing files are one <code>.mcp.json</code> block and a routing rule in the hub's main <code>AGENTS.md</code>.</p>
+</section>
+
+<!-- 5 -->
+<section class="section" id="components">
+  <h2><span class="n">05</span> &nbsp;Components</h2>
+  <div class="rule"></div>
+  <table>
+    <thead><tr><th>Component</th><th>Hubzoid primitive</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><b>Product Sense Coach</b><br>(the front door)</td><td class="prim">agents/product-coach/<br>AGENTS.md</td><td>Holds the persona &amp; non-negotiable gate ordering. One question (or ≤3 tightly-related) per turn; never a verdict; levers as questions; cite everything; on an unanswerable early gate, STOP and name the gap. First action every turn: rehydrate session state.</td></tr>
+      <tr><td><b>Session-state / gate machine</b></td><td class="prim">tools_local/<br>coach_session.py</td><td>The authoritative, fresh-context-surviving gate ledger. <code>close_gate(N)</code> refuses unless gates 1..N-1 are closed <em>and</em> the payload meets that gate's minimum shape. Only a successful call advances — the model's narrative is never sufficient.</td></tr>
+      <tr><td><b>Coaching doctrine</b></td><td class="prim">knowledge/coach-doctrine.md<br>knowledge/coach-rubric.md</td><td>Single source of truth for the 7 gates + 4 guardrails + per-gate acceptance tests, cited by the sub-agent and every skill so wording never drifts. The rubric also drives the transcript-review metric.</td></tr>
+      <tr><td><b>Capability Index</b></td><td class="prim">knowledge/capability-index.yaml<br>+ capability_lookup.py<br>+ grep_data</td><td>Gate-4 grounding. Lookup returns only levers in the YAML, each with a citation; the coach then grep-verifies the cited signal in <code>raw_data/</code> before surfacing it. Self-correcting: a stale entry that no longer greps is caught in-session.</td></tr>
+      <tr><td><b>Context Store</b></td><td class="prim">knowledge/vision/*.md</td><td>Grounds gate 3 (outcome + baseline). Ships NOT-YET-WIRED; gate 3 pulls baseline from <code>vision/</code>, else asks the PM, else flags <code>baseline_missing</code> — never invents. Resolves with zero code change as real docs land.</td></tr>
+      <tr><td><b>Brief Generator + Validator</b></td><td class="prim">synthesize-brief/SKILL.md<br>+ brief_validate.py</td><td>Reflects the PM's reasoning back as a 7-section brief built strictly from session state; deterministic validation; emits the <code>synthesis_signature</code>; writes <code>brief.md</code> (human) + <code>brief.json</code> (machine) as downloads.</td></tr>
+      <tr><td><b>Ticket Filer</b><br>(wall enforcement point)</td><td class="prim">file-coach-ticket/SKILL.md<br>+ ClickUp MCP (model-called)<br>+ coach_audit.py</td><td>Requires a valid signature + the PM's explicit "file this"; dedupes via <code>clickup_filter_tasks</code>; the model calls <code>clickup_create_task</code> mapping brief → custom fields/tags; writes the audit row; returns the URL.</td></tr>
+      <tr><td><b>The Wall</b><br>(v1 procedural, instrumented)</td><td class="prim">knowledge/wall-policy.md<br>+ tag/field signature<br>+ audit JSONL</td><td>Dev-team SLA to accept work only from the dedicated list bearing <code>coach-generated</code> + a non-empty Session Signature. Backed by the only producer of a valid signature + identity/role/tag/audit instrumentation the future L4/L5 gate keys on.</td></tr>
+      <tr><td><b>Capability Refresh</b></td><td class="prim">schedule/<br>capability-refresh.md</td><td>Weekly: <code>run_git</code> pull each repo, grep the signal catalog, regenerate <code>capabilities/*.md</code> + the YAML with a per-repo SHA, commit only those declared paths.</td></tr>
+      <tr><td><b>Metrics Rollup</b></td><td class="prim">schedule/<br>coach-metrics-rollup.md</td><td>Weekly: roll the audit JSONL into <code>knowledge/coach-metrics.md</code> — the 4 success metrics + the missing-KPI-source rate.</td></tr>
+      <tr><td><b>ClickUp connector</b></td><td class="prim">connectors/.mcp.json</td><td>Write-capable ClickUp MCP server; token via <code>${CLICKUP_API_TOKEN}</code>. Surfaces create/filter/get-custom-fields/update to the model in interactive chat.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 6 -->
+<section class="section" id="coaching">
+  <h2><span class="n">06</span> &nbsp;The coaching engine — seven gates, code-enforced</h2>
+  <div class="rule"></div>
+  <p>The gates run in order; you cannot skip to "build it." Integrity is not just prompt text — it is a state machine in <code>coach_session.py</code>. Every turn the sub-agent's first action is <code>coach_session_state(get)</code> to rehydrate, then it works <strong>only the lowest gate not yet closed-or-blocked</strong>.</p>
+  <ol class="gates">
+    <li><b>Problem &amp; user</b> — who hurts, in what job? <span class="enf">close requires a stated problem + affected user.</span></li>
+    <li><b>Evidence</b> — real signals (data / tickets / interviews / observation), not anecdote. <span class="enf">close requires <code>≥1 evidence item with a source</code>; anecdote-only is labelled weak.</span></li>
+    <li><b>Target outcome &amp; baseline</b> — which KPI moves, and what is it today? <span class="enf">close requires <code>baseline_value</code> XOR <code>baseline_missing=true</code>. Pulled from <code>vision/</code>, else asked, else flagged — never invented.</span></li>
+    <li><b>Existing-capability check</b> — could config/extension of something you already have meet the goal? <span class="enf">MUST call <code>coach_capability_lookup</code>, grep-verify the cited signal, and phrase levers as questions. close requires <code>≥1 cited lever</code> OR an explicit no-lever record with a reason.</span></li>
+    <li><b>Smallest viable test</b> — the cheapest experiment that produces signal. <span class="enf">close requires a described test + the signal it would produce.</span></li>
+    <li><b>Cost &amp; maintenance</b> — build + ongoing + opportunity, as rough buckets with explicit assumptions. <span class="enf">close requires each cost to carry an <code>assumptions[]</code> entry (no fabricated ROI).</span></li>
+    <li><b>Synthesis</b> — reflect the PM's reasoning back as the brief: build/extend/reuse options with rough cost + open risks. <span class="enf">no verdict; runs <code>brief_validate</code>; emits the signature.</span></li>
+  </ol>
+
+  <div class="grid2">
+    <div class="callout c-green" style="margin:0">
+      <span class="tag">Why skipping is impossible</span>
+      <p>Defense in depth: (1) the prompt states the gates as a hard ordered ladder; (2) <code>close_gate(N)</code> refuses out-of-order or under-specified closes. The brief validator and ticket skill both read gate status from the same ledger, so a skipped gate cannot ship downstream.</p>
+    </div>
+    <div class="callout c-purple" style="margin:0">
+      <span class="tag">Stop-and-name-the-gap</span>
+      <p>When the PM can't answer an early gate, the coach calls <code>flag_gate(N, reason)</code>, stops advancing, and states the gap. Synthesis still runs in "gaps mode": the brief leads with the gap as the primary finding, validates as <code>status=needs-info</code>, and any ticket is tagged <code>needs-info</code> / <code>baseline-missing</code> — never <code>ready-for-dev</code>. The gap is a valid terminal output.</p>
+    </div>
+  </div>
+  <div class="callout c-amber">
+    <span class="tag">Deflect, don't ticket — and one question carries most of it</span>
+    <p>Gate 4 is also the <strong>deflection point</strong>: if the goal can be met by an existing self-serve capability (config, policy, template, data, how-to), the coach routes the PM there and <strong>no dev ticket is created</strong>. Synthesis additionally classifies each surviving request by <strong>launch-criticality</strong> (must-have / nice-to-have / not-needed) and <strong>audience</strong> (participant vs internal), so the queue is sortable by what actually launches programmes. The single question that does most of the filtering: <em>"Does this put a new programme live, or let a participant register &amp; pay? If not, why now?"</em></p>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="section" id="capability">
+  <h2><span class="n">07</span> &nbsp;Capability Index — grep + knowledge files, no parser service</h2>
+  <div class="rule"></div>
+  <p>Three cooperating layers, deliberately pragmatic (honouring the "grep + knowledge files + anything else as needed" decision). No separate parser service.</p>
+  <div class="grid3">
+    <div class="card"><h4>A · Structured spine</h4><p><code>capability-index.yaml</code> — one entry per capability: <code>id, product, kind (route|odoo_model|celery_task|fe_route|fe_api|config_flag), name, signal_path, signal_regex, summary, config_surface, extends_via, keywords[], source_repo, last_refreshed_sha</code>. Hand-seeded for the top ~15–20 PRS capabilities, then maintained by the refresh job.</p></div>
+    <div class="card"><h4>B · Deterministic query</h4><p><code>capability_lookup.py</code> ranks goal terms against the YAML and returns candidates <strong>with citations</strong>. Critical property: it can only return levers present in the file — the model cannot fabricate a lever. This is the structured value-add over raw grep.</p></div>
+    <div class="card"><h4>C · Live verification</h4><p>At gate 4 the coach runs <code>grep_data</code> with the candidate's <code>signal_regex</code> scoped to its <code>signal_path</code> (one repo at a time, under the 100-match / 25k-char caps) to confirm the lever still exists and quote the exact route/model/task — citing both the narrative file and the live line.</p></div>
+  </div>
+  <p>PRS offers strong machine-readable signals that make this high-yield: <span class="pill">~110 <code>@get/@post</code> route decorators in prs-facade</span> <span class="pill">Odoo <code>_name=</code> models across 20+ addons</span> <span class="pill">14 Celery <code>@app.task</code></span> <span class="pill">routers.ts / api.ts enums</span> <span class="pill">db-schema-reference.md</span></p>
+  <div class="callout c-amber">
+    <span class="tag">Honest limit</span>
+    <p>Grep catches decorators and model names but misses behaviour expressed in config, data, or Odoo dynamic dispatch. The coach may miss a lever or surface one that doesn't quite fit — which is exactly why every lever is <strong>cited (checkable)</strong> and <strong>phrased as a question (the PM corrects it)</strong>, never asserted as fact. The weekly <code>capability-refresh</code> keeps the spine current; its commit pathspec is kept strictly to <code>capabilities/</code> + the YAML so it never collides with the existing <code>knowledge-refresh</code> job.</p>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="section" id="context">
+  <h2><span class="n">08</span> &nbsp;Context Store — vision &amp; KPI grounding</h2>
+  <div class="rule"></div>
+  <p>Plain markdown under <code>knowledge/vision/</code>, grounded via <code>read_knowledge</code> + <code>grep_data</code> (Hubzoid has no vector DB, and the corpus is small and human-curated, so RAG isn't needed). The IRS product lead drops <code>north-star.md</code>, <code>okrs-current.md</code>, and <code>kpi-baselines.md</code> (one metric per row: metric, baseline value, as-of date, source, owner) into the folder — the same mechanism as the existing 38 knowledge docs. For just-arrived material a PM can drag a doc into the chat and the coach reads it that session.</p>
+  <div class="callout c-red">
+    <span class="tag">The no-docs reality (today)</span>
+    <p>No vision/KPI/OKR docs are wired into IRSHub yet. The module ships <code>vision/</code> as <strong>templates</strong> with an <code>INDEX.md</code> banner: <em>"NOT-YET-WIRED — no KPI baselines available; gate 3 will flag missing baselines as findings."</em> Gate 3 then flags <code>baseline_missing</code> on most early sessions — which is correct behaviour, not a failure.</p>
+  </div>
+  <p>That gap is reframed as the headline output: the <strong>missing-KPI-source rate</strong> on the metrics dashboard becomes the measured business case for wiring one OKR doc in early. As real docs land, the same machinery resolves baselines and cites them with zero code change.</p>
+</section>
+
+<!-- 9 -->
+<section class="section" id="brief">
+  <h2><span class="n">09</span> &nbsp;The Brief &amp; its validator</h2>
+  <div class="rule"></div>
+  <p>Gate 7 produces two artifacts: <code>brief.md</code> (human, the PM reviews) and <code>brief.json</code> (machine, the ClickUp field source + signature input). <code>brief_validate.py</code> enforces the schema deterministically and, on pass, computes <code>synthesis_signature = sha256(canonical brief + gate ledger)</code> — the only thing that unlocks ticketing.</p>
+<pre><code><span class="k">brief.json</span> (shape, abridged)
+{
+  schema_version, session_id, pm_identity, created_at,
+  status: <span class="g">"ready" | "needs-info"</span>,
+  initiative_title,
+  launch_criticality: <span class="g">"must_have | nice_to_have | not_needed"</span>,
+  audience: <span class="g">"participant | operator | finance | platform"</span>,
+  problem_and_user: { statement, who_is_affected, citations[] },
+  evidence: [{ claim, type, source, strength: <span class="g">"strong|weak"</span> }],
+  target_outcome: { metric, baseline_value|null, baseline_missing, baseline_source,
+                    target_value, owner },
+  existing_lever_assessment: { levers:[{ capability_id, name, product,
+                    kind:<span class="g">"config|extend|reuse|code"</span>, source_ref, fit, why }],
+                    lever_identified },
+  options: [{ approach:<span class="g">"reuse|extend|build_new"</span>, sketch,
+              rough_cost:{build,ongoing,opportunity}, assumptions[] }],   <span class="c"># >=2 options</span>
+  smallest_viable_test: { description, signal_it_would_produce, effort },
+  open_risks[], named_gaps[], gate_ledger[],
+  provenance: { reflected_from, model_added_assumptions[], capabilities_cited[] },
+  synthesis_signature,            <span class="c"># set by brief_validate on pass</span>
+  verdict: <span class="g">null</span>                  <span class="c"># hard-nulled. there is no decision field.</span>
+}</code></pre>
+  <p><strong>Validation rules:</strong> every assertion-bearing field carries ≥1 citation; <code>target_outcome</code> has <code>baseline_value</code> XOR <code>baseline_missing</code>; <code>options</code> has ≥2 entries and <strong>no</strong> decision/verdict field; every <code>rough_cost</code> has a parallel <code>assumptions[]</code>; <code>provenance.model_added_assumptions</code> captures anything not traceable to the user, keeping the brief a faithful mirror.</p>
+</section>
+
+<!-- 10 -->
+<section class="section" id="wall">
+  <h2><span class="n">10</span> &nbsp;Ticketing &amp; the Wall</h2>
+  <div class="rule"></div>
+  <h4>Destination &amp; write path</h4>
+  <p>ClickUp via the write-capable MCP server. One-time bootstrap (recorded in <code>clickup-mapping.md</code> as the single source of truth): a dedicated Folder <em>"Product Requests (Coach)"</em> → List <em>"Coach Intake"</em>, pre-created space-level tags, and custom fields with pinned IDs. The actual <code>clickup_create_task</code> call is made by the <strong>model</strong> from <code>file-coach-ticket</code> (because Python can't call MCP in-process) — gated by the signature the Python validator produced.</p>
+  <h4>Filing procedure</h4>
+  <ol>
+    <li>Confirm session state holds a valid <code>synthesis_signature</code> — refuse otherwise, naming what's incomplete.</li>
+    <li>Require the PM's explicit "file this." The coach never auto-files; the brief is a mirror first, a ticket second.</li>
+    <li>Dedupe: <code>clickup_filter_tasks</code> on the Session Signature field — update instead of duplicate; surface near-duplicate open requests as a reuse question.</li>
+    <li><code>clickup_create_task</code> mapping <code>brief.json</code> → name, full brief as description, tags (<code>coach-generated</code> + <code>ready-for-dev</code>|<code>needs-info</code> + product + <code>baseline-missing</code>), and custom fields (Problem, <strong>Launch-Criticality</strong>, <strong>Audience</strong>, Target Metric, Baseline, Existing-Lever Verdict, Smallest Test, Rough Cost, Open Risks, Requesting PM, Coach Session ID, <strong>Session Signature</strong>).</li>
+    <li><code>coach_audit_append</code> the create/update; return the URL.</li>
+  </ol>
+  <h4>The wall — v1 process gate, instrumented</h4>
+  <p>The IRS dev team agrees (in <code>wall-policy.md</code> + a pinned note on the list) to accept build/product work <strong>only</strong> from <em>Coach Intake</em> bearing <code>coach-generated</code> + a non-empty Session Signature. Anything hand-filed without those is bounced: "please run it through the coach." The hub's main agent routes raw build requests to the coach and refuses to file tickets itself.</p>
+  <div class="callout c-red">
+    <span class="tag">Honest residual gap</span>
+    <p>Because every chat user sees every tool and there is no per-tool gating, a determined user <em>could</em> hand-call <code>clickup_create_task</code> mid-chat. A bare call has no valid signature, so the dev SLA + signature check catches it — but it is <strong>not fail-closed</strong>. True enforcement waits for the access-management L4 PreToolUse gate.</p>
+  </div>
+  <div class="callout c-green">
+    <span class="tag">Forward-compatible — no rework</span>
+    <p>Every ticket + audit row already stamps <strong>identity</strong> (pm_identity → later the L3 bridge-validated principal), <strong>role</strong> via tags, <strong>audit</strong> (append-only JSONL = L7's record), and a <strong>named-operation</strong> shape (filing is one typed flow = the L5 pattern). When Hubzoid ships the L4 fail-closed hook, it gates <code>clickup_create_task</code> on "valid signature AND verified principal" — and the v1 fields <em>are</em> the schema it checks. The procedural wall becomes the policy wall with zero schema change.</p>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="section" id="guardrails">
+  <h2><span class="n">11</span> &nbsp;Guardrails</h2>
+  <div class="rule"></div>
+  <table>
+    <thead><tr><th>Guardrail</th><th>How it's enforced</th></tr></thead>
+    <tbody>
+      <tr><td><b>Never a verdict</b></td><td>Doctrine forbids decision verbs; <code>brief-schema.md</code> has <code>options[]</code> and no decision field; <code>brief_validate</code> rejects any brief carrying a recommendation/verdict and hard-nulls <code>verdict</code>. Options are always a trade-off set; the smallest test is framed as an experiment, not a go-ahead.</td></tr>
+      <tr><td><b>Cite sources</b></td><td>Every capability claim carries <code>capabilities/*.md</code> + a live <code>grep_data</code> line; lookup only returns cited levers; a lever with no citation can't enter the assessment. KPI claims cite the <code>vision/</code> filename. Validation fails on any uncited populated claim.</td></tr>
+      <tr><td><b>Flag missing KPI, don't invent</b></td><td>Gate 3 accepts <code>baseline_value</code> XOR <code>baseline_missing=true</code> — there is no code path to a number that wasn't read from a doc or supplied by the PM. A miss becomes an open risk + named gap + <code>baseline-missing</code> tag + a dashboard finding.</td></tr>
+      <tr><td><b>No fabricated ROI</b></td><td>Costs are rough buckets (S/M/L); validation refuses any cost without an <code>assumptions[]</code>; <code>provenance.model_added_assumptions</code> lists every figure the model introduced, keeping ROI labelled as assumption.</td></tr>
+      <tr><td><b>Pacing &amp; faithful reflection</b></td><td>One question (or ≤3 tightly-related) per turn; levers as questions; the brief's provenance block structurally separates user reasoning from model additions so reviewers can audit faithfulness.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout c-amber">
+    <span class="tag">The single choke point — and its honest limit</span>
+    <p><code>file-coach-ticket</code> does a final read of session state before any write: missing/invalid signature, missing citation, non-null verdict, or a cost without an assumption → it refuses and returns the PM to the relevant gate. This is exactly where the future L4 hook attaches. <strong>Limit:</strong> the model still writes the prose, so subtle verdict-leaning or unlabelled assumptions can slip past a <em>structural</em> validator — provenance + rubric-based transcript review are the control, and that is human judgement, not proof.</p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="section" id="metrics">
+  <h2><span class="n">12</span> &nbsp;Success metrics</h2>
+  <div class="rule"></div>
+  <p>All of these derive from data the system already writes — the <code>coach-audit</code> JSONL (written by <code>coach_audit.py</code>, since Hubzoid doesn't auto-log interactive side effects) plus ClickUp fields. <code>coach-metrics-rollup.md</code> rolls them weekly into a versioned <code>knowledge/coach-metrics.md</code>.</p>
+  <table>
+    <thead><tr><th>Metric</th><th>Definition</th></tr></thead>
+    <tbody>
+      <tr><td><b>1 · Reuse-over-build rate</b></td><td>Sessions where <code>existing_lever_assessment.fit ∈ {meets, partial}</code> and the leading option ≠ <code>build_new</code>, over total synthesized sessions. Cross-checkable via the ClickUp Existing-Lever Verdict field.</td></tr>
+      <tr><td><b>2 · Outcome-with-baseline rate</b></td><td>Sessions reaching a target metric <em>with</em> a real baseline (not flagged), over total. Honest by construction because gate 3 forces the flag.</td></tr>
+      <tr><td><b>3 · Bypass reduction</b> (the wall's KPI)</td><td>Count of ClickUp tasks in dev lists lacking the <code>coach-generated</code> tag, trended week-over-week against coach volume. The dedicated list + signature is what makes bypass countable.</td></tr>
+      <tr><td><b>4 · PM growth</b></td><td>Each session's <code>coach-state.json</code> (gate answers + citations + gaps) is the transcript corpus, linked from the ticket via Coach Session ID. The rollup samples N per PM; a human scores depth, evidence quality, and lever-engagement against <code>coach-rubric.md</code> over time.</td></tr>
+      <tr><td><b>5 · Deflection rate</b></td><td>Requests resolved via an existing self-serve capability or parked as nice-to-have <em>without</em> a dev ticket, over total intake. The primary signal that the wall is <em>removing</em> load rather than reformatting it — the metric that distinguishes a gate from a faster ticket-writer.</td></tr>
+      <tr><td><b>6 · Launch-criticality of promoted tickets</b></td><td>Share of tickets that <em>do</em> reach the dev board classified must-have-to-launch. Rising = the wall is letting through what launches programmes. North-star pairing: <strong>new programmes gone live</strong>.</td></tr>
+    </tbody>
+  </table>
+  <p>Plus a leading indicator the dashboard surfaces explicitly: the <strong>missing-KPI-source finding rate</strong> — the measured case for wiring KPI docs in.</p>
+</section>
+
+<!-- 13 -->
+<section class="section" id="buildorder">
+  <h2><span class="n">13</span> &nbsp;Build order</h2>
+  <div class="rule"></div>
+  <p>Full spec is the goal; this internal order makes each layer independently testable, delivers a usable coach before any ClickUp wiring exists, and isolates the only write side-effect to last. The integrity spine is built before anything can write.</p>
+  <div class="phase"><div class="pn">1</div><div><h4>Contracts + gate machine</h4><p>Write <code>coach-doctrine.md</code>, <code>coach-rubric.md</code>, <code>brief-schema.md</code>, then <code>coach_session.py</code> with the ledger, ordering enforcement, per-gate shape checks, and per-chat persistence. Unit-test gate-skip refusal and fresh-context reload.</p><div class="deliver">→ a provably un-skippable state machine, no integrations</div></div></div>
+  <div class="phase"><div class="pn">2</div><div><h4>The coach persona</h4><p>Write <code>agents/product-coach/AGENTS.md</code> + <code>run-product-coaching</code>, wired to session state only. Run a full 7-gate session via <code>hubzoid run</code> against a hand-written capability description; verify never-verdict and stop-and-name-the-gap. Pilot with 2–3 friendly PMs; tune pacing.</p><div class="deliver">→ a coach that produces a brief end-to-end with zero external deps</div></div></div>
+  <div class="phase"><div class="pn">3</div><div><h4>Capability grounding</h4><p>Hand-seed <code>capability-index.yaml</code> + <code>capabilities/*.md</code> for the top ~15–20 PRS capabilities, add <code>capability_lookup.py</code>, write <code>gate-capability-check</code>, wire gate 4 to lookup + grep verification. Add <code>vision/</code> templates + INDEX stub so gate 3 degrades honestly day one.</p><div class="deliver">→ the coach surfaces real, cited reuse levers</div></div></div>
+  <div class="phase"><div class="pn">4</div><div><h4>Brief generator + validator + audit</h4><p>Write <code>synthesize-brief</code> + <code>brief_validate.py</code> (the signature) + <code>coach_audit.py</code>. Metrics begin accruing even before tickets exist.</p><div class="deliver">→ validated, signed, downloadable briefs + the audit corpus</div></div></div>
+  <div class="phase"><div class="pn">5</div><div><h4>Ticket + wall</h4><p>Edit <code>.mcp.json</code> for ClickUp; run the one-time bootstrap (folder/list/tags/fields), pin IDs into <code>clickup-mapping.md</code>; write <code>file-coach-ticket</code> with refuse-without-signature, dedupe, field map, audit. Write <code>wall-policy.md</code> and get the dev-team SLA in writing. Route build requests in the main <code>AGENTS.md</code>.</p><div class="deliver">→ requirement → coached session → signed brief → tagged ClickUp ticket; wall live</div></div></div>
+  <div class="phase"><div class="pn">6</div><div><h4>Durability + instrumentation</h4><p>Write <code>capability-refresh.md</code> (narrow commit pathspec) and <code>coach-metrics-rollup.md</code>; dry-run then bounded real run. Confirm the 4 metrics report. Run the standard <code>HubzoidTests</code> install-to-UI walkthrough before release.</p><div class="deliver">→ self-maintaining capability map + a live metrics dashboard</div></div></div>
+</section>
+
+<!-- 14 -->
+<section class="section" id="risks">
+  <h2><span class="n">14</span> &nbsp;Risks &amp; mitigations</h2>
+  <div class="rule"></div>
+  <table>
+    <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td><b>No per-tool gating</b> (verified) — the wall is persuasion + one validation choke point.</td><td>Signature is required + verifiable; dev SLA bounces unsigned tickets; true fail-closed enforcement waits for L4, whose schema is already built.</td></tr>
+      <tr><td><b>Model writes the brief prose</b> — subtle verdict-leaning can pass a structural validator.</td><td>Provenance block + rubric transcript review (human judgement, not proof).</td></tr>
+      <tr><td><b>Fresh-context reliance</b> on rehydrating state every turn.</td><td>Rehydrate-first is the first instruction everywhere; the tool owns the per-chat dir via <code>get_chat_id()</code>. If <code>get_chat_id()</code> is None (some CLI/Slack paths), bind session to chat_id at gate 1 and refuse ticketing when null.</td></tr>
+      <tr><td><b>No KPI docs today</b> — metric 2 starts near 0%.</td><td>Frame as a measured organizational finding via the missing-KPI-source dashboard; wire one OKR doc early.</td></tr>
+      <tr><td><b>Capability index staleness</b> — grep misses config/dynamic behaviour.</td><td>Every lever cited (checkable) + phrased as a question (PM corrects); co-cited live grep line self-corrects a stale entry in-session; weekly refresh.</td></tr>
+      <tr><td><b>ClickUp IDs are environment-specific</b>; tags must pre-exist to apply at create.</td><td><code>clickup-mapping.md</code> as single source of truth + a first-run <code>clickup_get_custom_fields</code> verification; fail loud (return the brief + error, never silently drop a request).</td></tr>
+      <tr><td><b>Two weekly jobs touch knowledge/</b> — commit-scope overlap risks rebase conflicts.</td><td>Keep <code>capability-refresh</code>'s pathspec strictly to <code>capabilities/</code> + the YAML; stagger the cron times.</td></tr>
+      <tr><td><b>Identity is forgeable today</b> (no L3 bridge).</td><td>Document as instrumentation-only; bind the signature so the reasoning is tamper-evident; source pm_identity from the WEBUI_AUTH principal where exposed.</td></tr>
+      <tr><td><b>Used wrong, the agent raises volume</b> — an LLM intake will happily generate plausible tickets on request, becoming a faster fragmentation engine.</td><td>Hard gate that can say no / defer / deflect; never create without a passed necessity + reuse check; judge by deflection rate &amp; programmes launched, not tickets created; ship the gate before the ticket-writer.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 15 -->
+<section class="section" id="open">
+  <h2><span class="n">15</span> &nbsp;Open questions</h2>
+  <div class="rule"></div>
+  <p>These genuinely shape the build. Sensible defaults are noted; the spec proceeds on them unless overridden.</p>
+  <ol class="doctrine">
+    <li><b>ClickUp provisioning</b><span>Is <code>CLICKUP_API_TOKEN</code> provisioned for IRSHub, is the MCP server the write-capable build, and should I create the folder/list/tags/fields via MCP during the build or will an admin hand me the IDs? <em>Default: script creation via MCP and pin IDs.</em></span></li>
+    <li><b>First KPI doc</b><span>Can the IRS product lead commit even one real OKR/KPI doc into <code>knowledge/vision/</code> pre-launch, and which metric first? <em>Default: ship templates only; gate 3 flags baseline-missing by design.</em></span></li>
+    <li><b>PM identity source</b><span>Take the verified Open WebUI principal automatically, or ask at session start? <em>Default: use the WEBUI_AUTH principal where exposed, else ask.</em></span></li>
+    <li><b>Wall owner &amp; bounce policy</b><span>Who on the dev team signs the SLA, and where does the bounce policy live — ClickUp list description, pinned Slack message, or both? <em>Default: both.</em></span></li>
+    <li><b>Ticket priority policy</b><span>Should the coach ever set priority above normal? <em>Default: normal unless the PM explicitly says otherwise.</em></span></li>
+    <li><b>First capability seed</b><span>Confirm the top ~15–20 PRS capabilities to hand-author first. <em>Default: registration, event_flow, form_form, payment_transaction, event_inventory, event_coupon, the facade routes, and the Celery tasks.</em></span></li>
+  </ol>
+</section>
+
+<footer>
+  IRS Hub · Product Sense Coach &amp; Business-to-Dev Wall — design spec · Proposed, awaiting approval.<br>
+  Grounded against the Hubzoid framework source, the IRSHub instance, the IRS/PRS codebases, and a six-month analysis of the live request board + commit history. Items marked <span class="vmark">verified</span> were read from source.
+</footer>
+
+</div>
+</body>
+</html>
