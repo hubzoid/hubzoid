@@ -1,5 +1,0 @@
-# The default (mock) provider uses the Python standard library only, so this
-# POC has no third-party dependencies. Run it with: python3 demo.py
-#
-# A future engine adapter (Casbin, OpenFGA, ...) would add its own line here and
-# live in its own authz/<name>_provider.py file. Free / open source only.
