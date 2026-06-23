@@ -64,6 +64,10 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS": _OFF,
     "USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS": _OFF,
 
+    # NOTE: BYPASS_MODEL_ACCESS_CONTROL is NOT set here. It is launch-mode
+    # specific (single hub vs gateway), so _spawn_owui sets its default — see
+    # the `bypass_model_access_control` param below.
+
     # --- Slim runtime: never load the local ~500MB embedding model ------
     # OWUI loads a local SentenceTransformers model (all-MiniLM-L6-v2,
     # ~500MB RAM) eagerly at startup whenever RAG_EMBEDDING_ENGINE is empty
@@ -352,6 +356,11 @@ def start(
         webui_name=webui_name,
         response_watermark=response_watermark or hub_dir.name,
         suggestions=suggestions,
+        # One model per hub: OWUI 0.9.6 hides base/connection models (no
+        # Workspace DB row) from non-admin users, so without this every invited
+        # user gets an empty model selector → "Model not selected". Nothing to
+        # scope at the model level in a single hub, so bypass by default.
+        bypass_model_access_control=True,
     )
 
 
@@ -380,6 +389,11 @@ def start_gateway(
         webui_name=webui_name,
         response_watermark=response_watermark or "hubzoid",
         suggestions=suggestions,
+        # Gateway fronts MANY models and its whole purpose is per-team isolation
+        # (per-model Private ACLs + group assignment — see docs/DEPLOYING.md).
+        # Bypassing model access control would let every user see every team's
+        # model, so it stays OFF here. Operators can override in the env.
+        bypass_model_access_control=False,
     )
 
 
@@ -392,6 +406,7 @@ def _spawn_owui(
     webui_name: str | None,
     response_watermark: str,
     suggestions: list[str] | None,
+    bypass_model_access_control: bool = False,
 ) -> subprocess.Popen:
     """Shared Open WebUI launcher for both `start` and `start_gateway`.
 
@@ -442,6 +457,14 @@ def _spawn_owui(
     # 5. The big strip. Apply hubzoid defaults; operator .env wins.
     for key, value in _DEFAULT_OWUI_ENV.items():
         env.setdefault(key, value)
+
+    # 5b. Model-list visibility for non-admin (role=user) accounts. OWUI 0.9.6
+    # filters base/connection models (those without a Workspace DB row) out of
+    # the list for users, leaving them with "Model not selected". Single hubs
+    # have exactly one model and nothing to scope, so they bypass the filter;
+    # the gateway keeps it on so per-team model ACLs stay enforced. setdefault
+    # => an operator's explicit .env value wins either way.
+    env.setdefault("BYPASS_MODEL_ACCESS_CONTROL", _ON if bypass_model_access_control else _OFF)
 
     # 6. Refuse to boot if auth is on with an unsafe config.
     _validate_auth_env(env)

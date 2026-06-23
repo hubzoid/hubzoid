@@ -124,6 +124,27 @@ Admin users still see all tabs. These four hide them from regular users.
 - `USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS`
 - `USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS`
 
+### Model visibility for non-admins (launch-mode specific)
+
+`BYPASS_MODEL_ACCESS_CONTROL` is **not** one of the fixed strip flags above —
+its default depends on how OWUI is launched, so it is set in `_spawn_owui`
+rather than `_DEFAULT_OWUI_ENV`.
+
+OWUI (>= 0.5; confirmed on 0.9.6) filters the chat model list for `role=user`
+accounts: `routers/openai.py` `get_filtered_models` keeps only models that have
+a Workspace > Models DB row the user can access. Hubzoid surfaces a hub's model
+as a *connection/base* model with no such row, so without a bypass every
+invited non-admin user gets an empty model selector and "Model not selected"
+(admins skip the filter, so they see it fine).
+
+| Launch mode | Default | Why |
+|---|---|---|
+| Single hub (`hubzoid run`) | `True` | One model per hub, nothing to scope — every user should see it. |
+| Gateway (`hubzoid gateway`) | `False` | Fronts many models; per-team isolation relies on per-model Private ACLs (see [DEPLOYING.md](DEPLOYING.md)). A bypass would let every user see every team's model. |
+
+Overridable from `.env` either way (`setdefault` semantics; the operator's
+explicit value wins).
+
 ### On by default (4 flags)
 
 | Flag | Why kept on |
