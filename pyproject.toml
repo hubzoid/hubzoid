@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.7.0"
+version = "0.7.1"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -77,7 +77,7 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools"]
+packages = ["hubzoid", "hubzoid.access", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools"]
 include-package-data = true
 
 [tool.setuptools.package-data]
