@@ -382,7 +382,10 @@ model. If the bridges already run as their own systemd units, add
    `GPMS`, …) and add members.
 3. In **Workspace → Models**, open each agent's model, set **Access Control
    → Private**, and assign its team's group. Users outside the group won't
-   see it. (Leave `BYPASS_MODEL_ACCESS_CONTROL` at its default `False`.)
+   see it. (The gateway keeps `BYPASS_MODEL_ACCESS_CONTROL=False` by default so
+   these ACLs are enforced — do not set it to `True` here. Single-hub `hubzoid
+   run` defaults it to `True` instead, since a lone hub has one model and
+   nothing to scope.)
 
 These ACLs live in the shared OWUI database, so they survive restarts
 independently of `ENABLE_PERSISTENT_CONFIG`.

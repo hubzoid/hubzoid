@@ -169,6 +169,39 @@ def test_operator_can_disable_kept_on_flag(captured_env, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Model-list visibility for non-admin users (BYPASS_MODEL_ACCESS_CONTROL).
+# OWUI 0.9.6 hides base/connection models (no Workspace DB row) from role=user
+# accounts, leaving invited users with "Model not selected". A single hub has
+# one model and nothing to scope, so it bypasses the filter; the gateway fronts
+# many models and keeps the filter on so per-team ACLs stay enforced.
+# ---------------------------------------------------------------------------
+def test_single_hub_bypasses_model_access_control(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("BYPASS_MODEL_ACCESS_CONTROL", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "True"
+
+
+def test_gateway_keeps_model_access_control(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("BYPASS_MODEL_ACCESS_CONTROL", raising=False)
+    webui.start_gateway(
+        data_dir=tmp_path / "gw-data",
+        ui_port=3080,
+        connection_env={
+            "OPENAI_API_BASE_URLS": "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1",
+            "OPENAI_API_KEYS": "a;b",
+        },
+    )
+    assert captured_env["BYPASS_MODEL_ACCESS_CONTROL"] == "False"
+
+
+def test_operator_can_override_model_access_control(captured_env, tmp_path, monkeypatch):
+    # Operator wins on a single hub: re-enable per-model gating with =False.
+    monkeypatch.setenv("BYPASS_MODEL_ACCESS_CONTROL", "False")
+    env = _start(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "False"
+
+
+# ---------------------------------------------------------------------------
 # Wiring + branding cascade
 # ---------------------------------------------------------------------------
 def test_wiring_uses_provided_ports(captured_env, tmp_path):
