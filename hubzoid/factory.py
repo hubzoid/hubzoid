@@ -19,7 +19,6 @@ from pathlib import Path
 from agents import Agent
 from agents.tool import FunctionTool
 
-from . import access
 from . import memory as memlib
 from . import model as modellib
 from . import settings as settingslib
@@ -93,6 +92,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
 
     # Gate access-controlled tools from <hub>/restricted/. No-op when the hub
     # has no restricted/ folder, so existing hubs are unchanged.
+    from . import access  # deferred to avoid circular import via __init__.py
     registry = access.apply(hub_dir, registry)
 
     mcp_servers = mcp_loader.load_all(hub_dir)
