@@ -45,6 +45,16 @@ Environment variables explicitly supported:
                          token budget. Unset = the model's own default (Azure
                          keeps its built-in effort; Claude does no extended
                          thinking). Invalid values are ignored.
+  SHOW_THINKING          off | indicator | full. Claude backend only. Controls
+                         how Claude's thinking is surfaced in chat. Opus already
+                         thinks by default but hides the text, leaving a dead
+                         spinner during the reasoning gap.
+                           indicator (default) -> show a "Thinking…" panel for
+                             the reasoning duration, without exposing the text.
+                           full -> stream the summarized reasoning text.
+                           off -> surface nothing (legacy behaviour).
+                         Aliases: true->full, false->off. Independent of
+                         REASONING_EFFORT (which only sets how *much* it thinks).
 """
 from __future__ import annotations
 
@@ -72,6 +82,7 @@ class Settings:
     log_level: str
     max_upload_bytes: int
     reasoning_effort: str | None = None
+    thinking_mode: str = "indicator"
 
     @property
     def first_api_key(self) -> str:
@@ -111,6 +122,7 @@ def load(hub_dir: Path) -> Settings:
         log_level=os.environ.get("HUB_LOG_LEVEL", "info"),
         max_upload_bytes=_int_env("HUBZOID_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
         reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
+        thinking_mode=reasoninglib.normalize_thinking(os.environ.get("SHOW_THINKING")),
     )
 
 

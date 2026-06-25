@@ -220,20 +220,33 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         opts_kwargs["model"] = model_pin
     if max_turns is not None:
         opts_kwargs["max_turns"] = max_turns
-    # REASONING_EFFORT -> extended-thinking budget (Claude has no low/med/high).
-    # Unset leaves the field absent so the model's default applies.
-    thinking_budget = reasoninglib.claude_thinking_budget(settings.reasoning_effort)
-    if thinking_budget is not None:
-        opts_kwargs["max_thinking_tokens"] = thinking_budget
+    # REASONING_EFFORT (how much) + SHOW_THINKING (how much to surface) ->
+    # extended-thinking config. `display="summarized"` is what makes the
+    # reasoning text streamable; without it Opus 4.7+ returns signature-only
+    # thinking and the panel stays empty. See hubzoid.reasoning.
+    thinking_mode = settings.thinking_mode  # off | indicator | full
+    thinking_cfg = reasoninglib.claude_thinking_config(
+        settings.reasoning_effort, thinking_mode
+    )
+    if thinking_cfg is not None:
+        opts_kwargs["thinking"] = thinking_cfg
+    else:
+        # mode 'off': keep the legacy budget-only knob if an effort is set.
+        budget = reasoninglib.claude_thinking_budget(settings.reasoning_effort)
+        if budget is not None:
+            opts_kwargs["max_thinking_tokens"] = budget
     try:
         options = ClaudeAgentOptions(**opts_kwargs)
     except TypeError:
         # Older claude-agent-sdk without these fields — drop rather than die.
         opts_kwargs.pop("max_turns", None)
         opts_kwargs.pop("max_thinking_tokens", None)
+        opts_kwargs.pop("thinking", None)
         options = ClaudeAgentOptions(**opts_kwargs)
 
-    return ClaudeRuntime(name=main_name, options=options)
+    return ClaudeRuntime(
+        name=main_name, options=options, thinking_mode=thinking_mode
+    )
 
 
 _CLAUDE_LOCAL_DEFAULT = "sonnet"
@@ -273,12 +286,60 @@ def _parse_model_pin(model_setting: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Runtime implementation.
 # ---------------------------------------------------------------------------
+class _ThinkStream:
+    """Wrap interleaved thinking/answer text into Open WebUI `<think>` blocks.
+
+    Open WebUI renders any text between `<think>` and `</think>` as a collapsible
+    "Thinking…" panel with a live timer. We open the block on the first thinking
+    delta and close it as soon as visible output (answer text or a tool line)
+    arrives, so the dead reasoning gap shows activity.
+
+    mode:
+      - 'full'      -> stream the model's summarized reasoning text verbatim.
+      - 'indicator' -> emit a single placeholder line per block (panel + timer,
+                       no reasoning content exposed).
+    A new block opens for each reasoning burst (e.g. after a tool call), which
+    Open WebUI renders as separate panels.
+    """
+
+    _PLACEHOLDER = "_Thinking…_"
+
+    def __init__(self, mode: str):
+        self.mode = mode  # 'indicator' | 'full' (never 'off' — no deltas then)
+        self._open = False
+        self._placeholder_done = False
+
+    def thinking(self, text: str) -> str:
+        out = ""
+        if not self._open:
+            out += "<think>\n"
+            self._open = True
+            self._placeholder_done = False
+        if self.mode == "full":
+            out += text
+        elif not self._placeholder_done:
+            out += self._PLACEHOLDER
+            self._placeholder_done = True
+        return out
+
+    def visible(self, text: str) -> str:
+        """Return `text` for display, closing any open thinking block first."""
+        return self.close() + text
+
+    def close(self) -> str:
+        if self._open:
+            self._open = False
+            return "\n</think>\n"
+        return ""
+
+
 class ClaudeRuntime:
     """Thin async-iterator adapter around `claude_agent_sdk.query(...)`."""
 
-    def __init__(self, *, name: str, options):
+    def __init__(self, *, name: str, options, thinking_mode: str = "indicator"):
         self.name = name
         self._options = options
+        self._thinking_mode = thinking_mode
 
     async def aopen(self) -> None:
         """No-op: the Claude Agent SDK manages MCP lifecycle internally.
@@ -307,23 +368,32 @@ class ClaudeRuntime:
         streamed_any = False
         final_result: str | None = None
         shown: list[str] = []
+        # Surface Claude's thinking as an Open WebUI <think> panel. 'off' never
+        # opens one (and build() requests no thinking deltas in that mode).
+        tw = _ThinkStream(self._thinking_mode)
+        surface_thinking = self._thinking_mode != "off"
         # tool_use_id -> short name. Used only to identify error result blocks
         # so we can surface them with a ⚠ marker. Successful results emit
         # nothing — the call line was already shown.
         tool_use_names: dict[str, str] = {}
         try:
             async for message in query(prompt=prompt, options=self._options):
-                # --- Token-level text deltas ---
+                # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}
                     if event.get("type") == "content_block_delta":
                         delta = event.get("delta") or {}
-                        if delta.get("type") == "text_delta":
+                        dtype = delta.get("type")
+                        if dtype == "thinking_delta" and surface_thinking:
+                            chunk = tw.thinking(delta.get("thinking") or "")
+                            if chunk:
+                                yield chunk
+                        elif dtype == "text_delta":
                             text = delta.get("text") or ""
                             if text:
                                 streamed_any = True
                                 shown.append(text)
-                                yield text
+                                yield tw.visible(text)
                     continue
 
                 # --- Tool calls announced as full assistant message blocks ---
@@ -335,9 +405,9 @@ class ClaudeRuntime:
                                 continue
                             short = tool_events.short_name(block.name)
                             tool_use_names[tid] = short
-                            yield tool_events.format_call(
+                            yield tw.visible(tool_events.format_call(
                                 short, getattr(block, "input", None),
-                            )
+                            ))
                     continue
 
                 # --- Tool results: emit a line only on error. Success is
@@ -349,7 +419,7 @@ class ClaudeRuntime:
                                 continue
                             tid = getattr(block, "tool_use_id", "") or ""
                             tool_name = tool_use_names.get(tid, "tool")
-                            yield tool_events.format_error(tool_name)
+                            yield tw.visible(tool_events.format_error(tool_name))
                     continue
 
                 # --- Final aggregate (fallback if partials are missing) ---
@@ -357,8 +427,13 @@ class ClaudeRuntime:
                     final_result = getattr(message, "result", None)
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
-            yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
+            yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
             return
+
+        # Close any thinking block left open (e.g. reasoning with no final text).
+        closing = tw.close()
+        if closing:
+            yield closing
 
         if not streamed_any and final_result:
             shown.append(final_result)
