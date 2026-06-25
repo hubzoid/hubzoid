@@ -31,6 +31,7 @@ from .. import settings as settingslib
 from .conversion import (
     messages_from_thread,
     parse_sse_delta,
+    strip_thinking,
     to_slack_mrkdwn,
     truncate_for_slack,
     with_slack_format_hint,
@@ -54,6 +55,31 @@ def _format_for_slack(text: str) -> str:
     visual format and length safeguards stay consistent.
     """
     return truncate_for_slack(to_slack_mrkdwn(text))
+
+
+# Shown while Claude is reasoning but no answer text has streamed yet. Slack
+# can't render Open WebUI's <think> panels, so we strip the reasoning and show
+# this lightweight indicator instead — covering the dead gap without leaking
+# the reasoning text into the (length-capped) Slack message.
+_THINKING_STATUS = "💭 _Thinking…_"
+
+
+def _slack_render(cumulative: str) -> str:
+    """Map the cumulative agent stream to what Slack should display right now.
+
+    Reasoning is stripped either way. While the model is still reasoning we
+    append a "Thinking…" indicator after whatever is already visible (tool
+    lines, partial answer); once the answer streams, only the answer shows.
+    Returns "" when there is nothing to show yet (caller falls back to "…").
+    """
+    visible, active = strip_thinking(cumulative)
+    visible = visible.strip()
+    if active:
+        body = f"{visible}\n\n{_THINKING_STATUS}" if visible else _THINKING_STATUS
+        return _format_for_slack(body)
+    if visible:
+        return _format_for_slack(visible)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -275,10 +301,10 @@ def build_app(
             placeholder = say(text="…")
             ts = placeholder["ts"]
 
-            def _update(text: str) -> None:
-                client.chat_update(channel=channel, ts=ts, text=_format_for_slack(text) or "…")
+            def _post(text: str) -> None:
+                client.chat_update(channel=channel, ts=ts, text=text or "…")
 
-            writer = _ThrottledWriter(_update)
+            writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
             stream_reply(
                 bridge_url=bridge_url,
                 api_key=api_key,
@@ -288,8 +314,8 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not final:
-                _update("(no response)")
+            if not strip_thinking(final)[0].strip():
+                _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("assistant user_message handler failed")
             say(f":warning: error: {type(exc).__name__}: {exc}")
@@ -309,10 +335,10 @@ def build_app(
             placeholder = say(text="…", thread_ts=thread_ts)
             ts = placeholder["ts"]
 
-            def _update(text: str) -> None:
-                client.chat_update(channel=channel, ts=ts, text=_format_for_slack(text) or "…")
+            def _post(text: str) -> None:
+                client.chat_update(channel=channel, ts=ts, text=text or "…")
 
-            writer = _ThrottledWriter(_update)
+            writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
             stream_reply(
                 bridge_url=bridge_url,
                 api_key=api_key,
@@ -322,8 +348,8 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not final:
-                _update("(no response)")
+            if not strip_thinking(final)[0].strip():
+                _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("app_mention handler failed")
             say(text=f":warning: error: {type(exc).__name__}: {exc}", thread_ts=thread_ts)
@@ -355,10 +381,10 @@ def build_app(
             placeholder = client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="…")
             ts = placeholder["ts"]
 
-            def _update(text: str) -> None:
-                client.chat_update(channel=channel, ts=ts, text=_format_for_slack(text) or "…")
+            def _post(text: str) -> None:
+                client.chat_update(channel=channel, ts=ts, text=text or "…")
 
-            writer = _ThrottledWriter(_update)
+            writer = _ThrottledWriter(lambda cum: _post(_slack_render(cum)))
             stream_reply(
                 bridge_url=bridge_url,
                 api_key=api_key,
@@ -368,8 +394,8 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not final:
-                _update("(no response)")
+            if not strip_thinking(final)[0].strip():
+                _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("im handler failed")
             client.chat_postMessage(

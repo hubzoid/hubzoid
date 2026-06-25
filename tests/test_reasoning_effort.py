@@ -104,14 +104,35 @@ def _claude_env(monkeypatch):
 def test_build_claude_runtime_sets_thinking_budget(_claude_env, monkeypatch):
     from hubzoid.factory_claude import build_claude_runtime
 
+    # Default SHOW_THINKING mode (indicator) routes the budget through the
+    # `thinking` config with display=summarized, not the deprecated knob.
     monkeypatch.setenv("REASONING_EFFORT", "medium")
+    monkeypatch.delenv("SHOW_THINKING", raising=False)
     rt = build_claude_runtime(MINIMAL)
-    assert rt._options.max_thinking_tokens == 12000
+    assert rt._options.thinking == {
+        "type": "enabled", "budget_tokens": 12000, "display": "summarized",
+    }
+    assert rt._options.max_thinking_tokens is None
 
 
-def test_build_claude_runtime_without_effort_leaves_budget_none(_claude_env, monkeypatch):
+def test_build_claude_runtime_off_mode_uses_legacy_budget_knob(_claude_env, monkeypatch):
     from hubzoid.factory_claude import build_claude_runtime
 
-    monkeypatch.delenv("REASONING_EFFORT", raising=False)
+    # SHOW_THINKING=off preserves the legacy behaviour: budget only, no display.
+    monkeypatch.setenv("REASONING_EFFORT", "medium")
+    monkeypatch.setenv("SHOW_THINKING", "off")
     rt = build_claude_runtime(MINIMAL)
+    assert rt._options.max_thinking_tokens == 12000
+    assert rt._options.thinking is None
+
+
+def test_build_claude_runtime_without_effort_thinks_adaptively(_claude_env, monkeypatch):
+    from hubzoid.factory_claude import build_claude_runtime
+
+    # No effort + default mode: surface the adaptive thinking the model already
+    # does, with no forced budget.
+    monkeypatch.delenv("REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("SHOW_THINKING", raising=False)
+    rt = build_claude_runtime(MINIMAL)
+    assert rt._options.thinking == {"type": "adaptive", "display": "summarized"}
     assert rt._options.max_thinking_tokens is None

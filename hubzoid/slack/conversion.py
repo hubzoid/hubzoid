@@ -143,6 +143,35 @@ def parse_sse_delta(line: bytes | str) -> str | None:
     return content
 
 
+# Open WebUI renders <think>…</think> as a reasoning panel; Slack shows the raw
+# tags instead. We strip them from Slack-bound text and let the caller surface a
+# status while reasoning is still streaming. Matches the markers emitted by
+# hubzoid.factory_claude._ThinkStream.
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
+
+
+def strip_thinking(text: str) -> tuple[str, bool]:
+    """Remove `<think>…</think>` reasoning blocks from Slack-bound text.
+
+    Returns `(visible, thinking_active)`:
+      - completed `<think>…</think>` blocks are removed entirely;
+      - an unclosed trailing `<think>` (reasoning still streaming) is removed
+        and `thinking_active=True`, so the caller can show a "Thinking…"
+        indicator until the answer arrives.
+    Tool-activity lines and the answer are preserved — only reasoning is cut.
+    """
+    if "<think>" not in text.lower():
+        return text, False
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    active = False
+    m = _THINK_OPEN_RE.search(cleaned)
+    if m:
+        cleaned = cleaned[: m.start()]
+        active = True
+    return cleaned, active
+
+
 def to_slack_mrkdwn(text: str) -> str:
     """Convert standard markdown into Slack's `mrkdwn` flavor.
 
