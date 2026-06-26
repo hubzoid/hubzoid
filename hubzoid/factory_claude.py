@@ -245,7 +245,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(
-        name=main_name, options=options, thinking_mode=thinking_mode
+        name=main_name, options=options, thinking_mode=thinking_mode,
+        tool_mode=settings.show_tools,
     )
 
 
@@ -336,10 +337,12 @@ class _ThinkStream:
 class ClaudeRuntime:
     """Thin async-iterator adapter around `claude_agent_sdk.query(...)`."""
 
-    def __init__(self, *, name: str, options, thinking_mode: str = "indicator"):
+    def __init__(self, *, name: str, options, thinking_mode: str = "indicator",
+                 tool_mode: str = "compact"):
         self.name = name
         self._options = options
         self._thinking_mode = thinking_mode
+        self._tool_mode = tool_mode
 
     async def aopen(self) -> None:
         """No-op: the Claude Agent SDK manages MCP lifecycle internally.
@@ -405,9 +408,12 @@ class ClaudeRuntime:
                                 continue
                             short = tool_events.short_name(block.name)
                             tool_use_names[tid] = short
-                            yield tw.visible(tool_events.format_call(
+                            line = tool_events.format_call(
                                 short, getattr(block, "input", None),
-                            ))
+                                mode=self._tool_mode,
+                            )
+                            if line:
+                                yield tw.visible(line)
                     continue
 
                 # --- Tool results: emit a line only on error. Success is

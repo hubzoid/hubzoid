@@ -60,6 +60,38 @@ def normalize_thinking(raw: str | None) -> str:
     return "indicator"
 
 
+# How tool-call activity is surfaced in the chat stream. Independent of
+# SHOW_THINKING; mirrors its off|x|y shape:
+#   compact -> a collapsible <details> dropdown per call (web folds it; the
+#              Slack adapter strips it). Short label visible, args on expand.
+#              Default — keeps provenance without burying the answer.
+#   full    -> the legacy inline `> ✓ **tool** \`args\`` blockquote on every
+#              surface (verbose; useful for debugging).
+#   off     -> emit nothing.
+TOOL_MODES = ("off", "compact", "full")
+
+
+def normalize_tools(raw: str | None) -> str:
+    """Canonicalise SHOW_TOOLS to off|compact|full (default: compact).
+
+    Aliases: false/none/no/0/hide/hidden/disabled -> off;
+    true/on/yes/dropdown/details -> compact;
+    inline/legacy/blockquote/verbose -> full. Unset/unrecognised -> compact.
+    """
+    if raw is None:
+        return "compact"
+    value = raw.strip().lower()
+    if value in TOOL_MODES:
+        return value
+    if value in ("false", "none", "no", "0", "hide", "hidden", "disabled"):
+        return "off"
+    if value in ("true", "on", "yes", "dropdown", "details"):
+        return "compact"
+    if value in ("inline", "legacy", "blockquote", "verbose"):
+        return "full"
+    return "compact"
+
+
 def claude_thinking_config(effort: str | None, mode: str) -> dict | None:
     """Build the `ClaudeAgentOptions.thinking` dict for a mode + effort.
 

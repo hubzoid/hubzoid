@@ -50,6 +50,43 @@ def test_format_call_strips_backticks():
 
 
 # ---------------------------------------------------------------------------
+# SHOW_TOOLS modes: compact (collapsible dropdown) is the product default,
+# full is the legacy inline blockquote, off emits nothing.
+# ---------------------------------------------------------------------------
+def test_format_call_full_mode_is_inline_blockquote():
+    out = tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="full")
+    assert out.startswith("\n\n> ✓ ")
+    assert "**read_knowledge**" in out
+
+
+def test_format_call_default_mode_is_full_blockquote():
+    """Back-compat: callers that don't pass a mode get the legacy blockquote."""
+    out = tool_events.format_call("list_skills")
+    assert out.startswith("\n\n> ✓ ")
+
+
+def test_format_call_compact_mode_is_collapsible_details():
+    out = tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="compact")
+    assert "<details>" in out and "</details>" in out
+    assert "<summary>" in out and "</summary>" in out
+    assert "read_knowledge" in out
+    # A fold, not a raw blockquote line.
+    assert not out.lstrip().startswith(">")
+
+
+def test_format_call_compact_keeps_args_in_body_not_summary():
+    """Short label visible (tool name); args revealed only on expand."""
+    out = tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="compact")
+    summary = out[out.index("<summary>") : out.index("</summary>")]
+    assert "name=jexl" not in summary
+    assert "name=jexl" in out
+
+
+def test_format_call_off_mode_emits_nothing():
+    assert tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="off") == ""
+
+
+# ---------------------------------------------------------------------------
 # format_error: still emitted for failed calls so the user sees the failure
 # ---------------------------------------------------------------------------
 def test_format_error_with_message():

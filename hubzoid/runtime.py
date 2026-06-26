@@ -91,7 +91,7 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
 
     from .factory import build_agent
     return OpenAIAgentsRuntime(build_agent(hub_dir, extra_tools=extra_tools),
-                               max_turns=max_turns)
+                               max_turns=max_turns, tool_mode=settings.show_tools)
 
 
 # ---------------------------------------------------------------------------
@@ -100,9 +100,11 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
 class OpenAIAgentsRuntime:
     """Wraps an `agents.Agent` + `Runner.run_streamed` behind the Runtime API."""
 
-    def __init__(self, agent, *, max_turns: int | None = None):
+    def __init__(self, agent, *, max_turns: int | None = None,
+                 tool_mode: str = "compact"):
         self._agent = agent
         self._max_turns = max_turns or 20
+        self._tool_mode = tool_mode
         self.name = agent.name
         # MCP servers come back from the loader unconnected. The Agents SDK
         # requires they be connected before it will list their tools (the
@@ -192,9 +194,12 @@ class OpenAIAgentsRuntime:
                                 args = _json.loads(args)
                             except Exception:  # noqa: BLE001
                                 pass
-                        yield tool_events.format_call(
+                        line = tool_events.format_call(
                             tool_events.short_name(name), args,
+                            mode=self._tool_mode,
                         )
+                        if line:
+                            yield line
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
                 _request_ctx.drain_artifacts(), "".join(shown))

@@ -8,9 +8,51 @@ from __future__ import annotations
 from hubzoid.slack.conversion import (
     messages_from_thread,
     parse_sse_delta,
+    strip_tool_calls,
     to_slack_mrkdwn,
     truncate_for_slack,
 )
+
+
+# ---------------------------------------------------------------------------
+# strip_tool_calls: compact tool-call dropdowns (<details>) are web-only;
+# Slack can't render them, so they are removed from Slack-bound text.
+# ---------------------------------------------------------------------------
+def test_strip_tool_calls_removes_details_block():
+    text = (
+        "Here is the answer.\n\n"
+        "<details>\n<summary>✓ read_knowledge</summary>\n\n`name=jexl`\n\n</details>\n\n"
+        "And some more."
+    )
+    out = strip_tool_calls(text)
+    assert "<details>" not in out
+    assert "read_knowledge" not in out
+    assert "Here is the answer." in out
+    assert "And some more." in out
+
+
+def test_strip_tool_calls_no_details_is_unchanged():
+    text = "Just a normal answer, no tool activity."
+    assert strip_tool_calls(text) == text
+
+
+def test_strip_tool_calls_removes_multiple_blocks():
+    text = (
+        "<details>\n<summary>✓ a</summary>\n\n`x=1`\n\n</details>\n"
+        "Middle.\n"
+        "<details>\n<summary>✓ b</summary>\n\n`y=2`\n\n</details>"
+    )
+    out = strip_tool_calls(text)
+    assert "✓ a" not in out and "✓ b" not in out
+    assert "Middle." in out
+
+
+def test_strip_tool_calls_drops_unclosed_trailing_block():
+    """Mid-stream a <details> may have opened but not closed yet."""
+    text = "Answer so far.\n\n<details>\n<summary>✓ grep_data"
+    out = strip_tool_calls(text)
+    assert "<details>" not in out
+    assert "Answer so far." in out
 
 
 # ---------------------------------------------------------------------------
