@@ -55,6 +55,14 @@ Environment variables explicitly supported:
                            off -> surface nothing (legacy behaviour).
                          Aliases: true->full, false->off. Independent of
                          REASONING_EFFORT (which only sets how *much* it thinks).
+  SHOW_TOOLS             off | compact | full. Controls how tool-call activity
+                         (e.g. `read_knowledge`, `grep_data`) is surfaced.
+                           compact (default) -> a collapsible dropdown per call
+                             on the web UI; hidden on Slack.
+                           full -> the legacy inline `> ✓ tool` blockquote on
+                             every surface (verbose; useful for debugging).
+                           off -> emit nothing.
+                         Aliases: true->compact, false/hide->off, inline->full.
 """
 from __future__ import annotations
 
@@ -83,6 +91,7 @@ class Settings:
     max_upload_bytes: int
     reasoning_effort: str | None = None
     thinking_mode: str = "indicator"
+    show_tools: str = "compact"
 
     @property
     def first_api_key(self) -> str:
@@ -123,6 +132,7 @@ def load(hub_dir: Path) -> Settings:
         max_upload_bytes=_int_env("HUBZOID_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
         reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
         thinking_mode=reasoninglib.normalize_thinking(os.environ.get("SHOW_THINKING")),
+        show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
     )
 
 

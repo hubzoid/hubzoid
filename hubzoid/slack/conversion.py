@@ -172,6 +172,31 @@ def strip_thinking(text: str) -> tuple[str, bool]:
     return cleaned, active
 
 
+# Compact tool-call activity is emitted as a `<details>` dropdown the web UI
+# folds (see hubzoid.tool_events.format_call mode="compact"). Slack can't render
+# `<details>`, so we strip these blocks from Slack-bound text — tool calls are
+# hidden on Slack by design. (SHOW_TOOLS=full uses `> ✓` blockquotes instead,
+# which are not `<details>` and pass through unchanged.)
+_TOOL_BLOCK_RE = re.compile(r"<details\b[^>]*>.*?</details>", re.DOTALL | re.IGNORECASE)
+_TOOL_OPEN_RE = re.compile(r"<details\b[^>]*>", re.IGNORECASE)
+
+
+def strip_tool_calls(text: str) -> str:
+    """Remove compact tool-call `<details>` dropdowns from Slack-bound text.
+
+    Completed `<details>…</details>` blocks are removed entirely. An unclosed
+    trailing `<details>` (the dropdown is still streaming) is dropped along with
+    everything after it, so a half-open tag never leaks into Slack.
+    """
+    if "<details" not in text.lower():
+        return text
+    cleaned = _TOOL_BLOCK_RE.sub("", text)
+    m = _TOOL_OPEN_RE.search(cleaned)
+    if m:
+        cleaned = cleaned[: m.start()]
+    return cleaned
+
+
 def to_slack_mrkdwn(text: str) -> str:
     """Convert standard markdown into Slack's `mrkdwn` flavor.
 

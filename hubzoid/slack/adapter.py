@@ -32,6 +32,7 @@ from .conversion import (
     messages_from_thread,
     parse_sse_delta,
     strip_thinking,
+    strip_tool_calls,
     to_slack_mrkdwn,
     truncate_for_slack,
     with_slack_format_hint,
@@ -67,12 +68,14 @@ _THINKING_STATUS = "💭 _Thinking…_"
 def _slack_render(cumulative: str) -> str:
     """Map the cumulative agent stream to what Slack should display right now.
 
-    Reasoning is stripped either way. While the model is still reasoning we
-    append a "Thinking…" indicator after whatever is already visible (tool
-    lines, partial answer); once the answer streams, only the answer shows.
-    Returns "" when there is nothing to show yet (caller falls back to "…").
+    Reasoning is stripped either way. Compact tool-call dropdowns (<details>)
+    are stripped too — tool activity is hidden on Slack by design. While the
+    model is still reasoning we append a "Thinking…" indicator after whatever
+    is already visible (partial answer); once the answer streams, only the
+    answer shows. Returns "" when there is nothing to show yet (caller falls
+    back to "…").
     """
-    visible, active = strip_thinking(cumulative)
+    visible, active = strip_thinking(strip_tool_calls(cumulative))
     visible = visible.strip()
     if active:
         body = f"{visible}\n\n{_THINKING_STATUS}" if visible else _THINKING_STATUS
@@ -314,7 +317,7 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not strip_thinking(final)[0].strip():
+            if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("assistant user_message handler failed")
@@ -348,7 +351,7 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not strip_thinking(final)[0].strip():
+            if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("app_mention handler failed")
@@ -394,7 +397,7 @@ def build_app(
                 chat_id=chat_id,
             )
             final = writer.done()
-            if not strip_thinking(final)[0].strip():
+            if not strip_thinking(strip_tool_calls(final))[0].strip():
                 _post("(no response)")
         except Exception as exc:  # noqa: BLE001
             log.exception("im handler failed")

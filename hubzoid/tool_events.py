@@ -29,16 +29,28 @@ from __future__ import annotations
 _ARG_PREVIEW_MAX = 80
 
 
-def format_call(name: str, args: object | None = None) -> str:
-    """Single line per call. Format: ``> ✓ **tool_name** `args``` .
+def format_call(name: str, args: object | None = None, *, mode: str = "full") -> str:
+    """One row per tool call, emitted at call start. No matching "returned" line.
 
-    Emitted at call start. There is no matching "returned" line — the
-    user sees one row per tool invocation, then the model's reply.
+    `mode` (the ``SHOW_TOOLS`` setting) chooses the rendering:
+
+      * ``full``    -> legacy inline blockquote ``> ✓ **tool_name** `args``` .
+                       Shown verbatim on every surface (verbose / debug).
+      * ``compact`` -> a collapsible ``<details>`` dropdown: a short ``✓ name``
+                       summary the web UI folds, with the args in the body
+                       (revealed on expand). The Slack adapter strips it.
+      * ``off``     -> emit nothing (returns ``""``).
 
     `args` may be a dict (most callers), a JSON-stringified body (Claude
     SDK), or None (no preview).
     """
+    if mode == "off":
+        return ""
     preview = _preview(args)
+    if mode == "compact":
+        summary = f"✓ {_escape(name)}"
+        body = f"`{preview}`" if preview else "_(no arguments)_"
+        return f"\n\n<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>\n\n"
     body = f"**{_escape(name)}**"
     if preview:
         body = f"{body} `{preview}`"
