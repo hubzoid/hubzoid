@@ -201,6 +201,55 @@ def test_no_delegates_leaves_tool_list_unchanged():
     assert not any(n.startswith("handover_") for n in tool_names)
 
 
+def test_delegate_build_error_falls_back_to_skill(tmp_path, monkeypatch, caplog):
+    # A non-MissingProviderKey build error must NOT crash the hub; degrade to skill.
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    hub = _write_hub_with_delegate(tmp_path, "openrouter/anthropic/claude-3-opus")
+
+    import hubzoid.model as modellib
+    real_build = modellib.build
+
+    def _selective(model_id):
+        # Main model builds fine; only the delegate's model explodes.
+        if model_id == "openrouter/anthropic/claude-3-opus":
+            raise ValueError("adapter exploded")
+        return real_build(model_id)
+
+    monkeypatch.setattr("hubzoid.factory.modellib.build", _selective)
+
+    import logging
+    from hubzoid.factory import build_agent
+    with caplog.at_level(logging.WARNING, logger="hubzoid"):
+        agent = build_agent(hub)
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert "handover_opusguy" not in tool_names
+    assert any("failed to build" in r.message for r in caplog.records)
+
+
+def test_delegate_slug_collision_deduped(tmp_path, monkeypatch, caplog):
+    # Two delegates whose names slug to the same handover tool -> first wins.
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    (tmp_path / "AGENTS.md").write_text("---\nname: m\ndescription: d\n---\nbody")
+    for folder in ("opus-helper", "opus_helper"):
+        sub = tmp_path / "agents" / folder
+        sub.mkdir(parents=True)
+        (sub / "AGENTS.md").write_text(
+            f"---\nname: {folder}\ndescription: d\n"
+            f"model: openrouter/anthropic/claude-3-opus\n---\nbody"
+        )
+
+    import logging
+    from hubzoid.factory import build_agent
+    with caplog.at_level(logging.WARNING, logger="hubzoid"):
+        agent = build_agent(tmp_path)
+    handover_tools = [n for t in agent.tools
+                      if (n := getattr(t, "name", "")).startswith("handover_")]
+    assert handover_tools == ["handover_opus_helper"]
+    assert any("collision" in r.message for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # _parse_model_pin — bare claude-local now defaults to Sonnet. Haiku saved
 # wall-clock TTFT but routinely asked the user to choose instead of executing

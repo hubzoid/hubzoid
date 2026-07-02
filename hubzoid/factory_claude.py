@@ -200,7 +200,10 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     main_instructions = _compose_instructions(main_spec.instructions, ctx, backend="claude-local")
 
     allowed = _allowed_tool_names(registry, mcp_specs=external_mcp)
-    model_pin = _parse_model_pin(settings.model)
+    # Pin from the SAME resolved model used for delegate classification (honors
+    # AGENTS.md `model:` frontmatter, not just .env MODEL) so the tier we
+    # classify against is the tier the main agent actually runs on.
+    model_pin = _parse_model_pin(hub_model)
 
     # Delegates: sub-agents whose model differs from the hub. Each becomes a
     # native Claude subagent on its own tier, dispatched via the Agent tool.
@@ -276,7 +279,16 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         opts_kwargs.pop("max_turns", None)
         opts_kwargs.pop("max_thinking_tokens", None)
         opts_kwargs.pop("thinking", None)
-        opts_kwargs.pop("agents", None)
+        # If the SDK is too old for `agents`, delegates can't be dispatched.
+        # Revert the spawn-tool gate too, so we never leave the Agent tool
+        # enabled with no AgentDefinitions behind it (which would let the model
+        # spawn a default subagent with the full Claude Code tool surface).
+        if opts_kwargs.pop("agents", None) is not None:
+            opts_kwargs["tools"] = []
+            opts_kwargs["allowed_tools"] = [
+                t for t in opts_kwargs.get("allowed_tools", [])
+                if t != SUBAGENT_SPAWN_TOOL
+            ]
         options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(
