@@ -41,6 +41,7 @@ class HubContext:
     settings: "settingslib.Settings"
     skills: list = field(default_factory=list)
     knowledge: list = field(default_factory=list)
+    delegates: list = field(default_factory=list)
 
 
 def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None) -> Agent:
@@ -66,11 +67,24 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     session_id = memlib.make_session_id()
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
-    skills = _load_skills_and_promoted_agents(hub_dir)
+    # Resolve the hub model first — it decides which sub-agents are delegates.
+    main_spec = agents_loader.load_main(hub_dir)
+    main_model_id = settings.model or main_spec.spec.model
+    if not main_model_id:
+        raise RuntimeError(
+            "no model configured. Set MODEL in <hub>/.env or `model:` in AGENTS.md frontmatter."
+        )
+
+    skills, delegate_agents = _load_skills_and_delegates(hub_dir, main_model_id)
+    # Build each delegate's model up front so a missing provider key degrades
+    # it to an inline skill (hub still boots) rather than crashing the build.
+    kept, fallbacks = _prepare_delegates(delegate_agents)
+    for loaded in fallbacks:
+        skills.append(agents_loader.to_skill(loaded))
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
-        "hub %s: %d skill(s), %d knowledge doc(s)",
-        hub_dir.name, len(skills), len(knowledge),
+        "hub %s: %d skill(s), %d delegate(s), %d knowledge doc(s)",
+        hub_dir.name, len(skills), len(kept), len(knowledge),
     )
 
     ctx = HubContext(
@@ -80,6 +94,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
         settings=settings,
         skills=skills,
         knowledge=knowledge,
+        delegates=[loaded for loaded, _ in kept],
     )
 
     # Tool registry: pre-shipped (with closures over ctx) + hub-local.
@@ -97,12 +112,11 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
 
     mcp_servers = mcp_loader.load_all(hub_dir)
 
-    main_spec = agents_loader.load_main(hub_dir)
-    main_model_id = settings.model or main_spec.spec.model
-    if not main_model_id:
-        raise RuntimeError(
-            "no model configured. Set MODEL in <hub>/.env or `model:` in AGENTS.md frontmatter."
-        )
+    # Delegates run as within-turn subagents the main agent calls (as_tool),
+    # each on its own model. Built from the gated registry so their tool scope
+    # respects restricted/.
+    delegate_tools = _build_delegate_tools(kept, registry)
+
     main_model = modellib.build(main_model_id)
 
     instructions = _compose_instructions(main_spec.instructions, ctx, backend="openai-agents")
@@ -123,7 +137,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
         name=main_spec.spec.name,
         instructions=instructions,
         model=main_model,
-        tools=list(registry.values()),
+        tools=list(registry.values()) + delegate_tools,
         mcp_servers=mcp_servers,
         **extra,
     )
@@ -133,16 +147,18 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
 # ---------------------------------------------------------------------------
 # Helpers shared with factory_claude.
 # ---------------------------------------------------------------------------
-def _load_skills_and_promoted_agents(hub_dir: Path) -> list:
-    """Return real skills + promoted-agent skills, deduped by name.
+def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
+    """Return (skills, delegate_agents).
 
-    Real skills from `<hub>/skills/` win on conflicts. A warning is logged
-    so the operator notices a name collision.
+    skills = real skills/ + skill-classified sub-agents, deduped by name (real
+    skills/ win on conflict, with a warning). delegate_agents = LoadedAgent
+    objects whose `model:` differs from the hub on the same engine.
     """
     real = skills_loader.load_all(hub_dir)
-    promoted = agents_loader.promote_to_skills(hub_dir)
+    skill_agents, delegate_agents = agents_loader.split_subagents(hub_dir, hub_model)
     by_name: dict[str, object] = {s.spec.name: s for s in real}
-    for s in promoted:
+    for loaded in skill_agents:
+        s = agents_loader.to_skill(loaded)
         if s.spec.name in by_name:
             log.warning(
                 "skill name collision: %r exists in both skills/ and agents/. "
@@ -151,7 +167,58 @@ def _load_skills_and_promoted_agents(hub_dir: Path) -> list:
             )
             continue
         by_name[s.spec.name] = s
-    return list(by_name.values())
+    return list(by_name.values()), delegate_agents
+
+
+def _load_skills_and_promoted_agents(hub_dir: Path) -> list:
+    """Back-compat: skills view with no delegate detection (all agents -> skills)."""
+    return _load_skills_and_delegates(hub_dir, None)[0]
+
+
+def _prepare_delegates(delegate_agents: list):
+    """Build each delegate's model up front. Returns (kept, fallbacks).
+
+    kept = [(LoadedAgent, LitellmModel)]; fallbacks = LoadedAgents whose model
+    could not be built (e.g. missing provider key) — the caller demotes them to
+    inline skills so the hub still boots.
+    """
+    kept: list = []
+    fallbacks: list = []
+    for loaded in delegate_agents:
+        try:
+            m = modellib.build(loaded.spec.model)
+        except modellib.MissingProviderKey as exc:
+            log.warning("delegate %r cannot run (%s); loading it as a skill instead.",
+                        loaded.spec.name, exc)
+            fallbacks.append(loaded)
+        else:
+            kept.append((loaded, m))
+    return kept, fallbacks
+
+
+def _build_delegate_tools(kept: list, registry: dict):
+    """Wrap each kept delegate as an Agent.as_tool FunctionTool.
+
+    The sub-agent runs on its own model in an isolated context; its final
+    message returns as the tool result and the main agent keeps control.
+    """
+    from . import handover
+
+    tools: list = []
+    reg_names = list(registry.keys())
+    for loaded, model in kept:
+        scoped = handover.scoped_tool_names(loaded.spec.tools, reg_names)
+        sub = Agent(
+            name=loaded.spec.name,
+            instructions=loaded.instructions,
+            model=model,
+            tools=[registry[n] for n in scoped],
+        )
+        tools.append(sub.as_tool(
+            tool_name=handover.tool_name(loaded.spec.name),
+            tool_description=loaded.spec.description,
+        ))
+    return tools
 
 
 def _compose_instructions(body: str, ctx: HubContext, *, backend: str) -> str:
