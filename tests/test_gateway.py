@@ -156,3 +156,54 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
     edge_env = next(c["env"] for c in popen_calls if "hubzoid.edge:_factory" in c["cmd"])
     assert "/b/irs/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
     assert "/b/gpms/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
+
+
+def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
+    """Each bridge is told where the SHARED gateway DB lives (HUBZOID_OWUI_DB),
+    so the restricted-tool group lookup (access.owui_groups) reads the gateway's
+    webui.db — not the nonexistent per-hub .openwebui-data/webui.db. Without
+    this, restricted-tool access is dead in gateway mode."""
+    irs, gpms = tmp_path / "irs", tmp_path / "gpms"
+    for h in (irs, gpms):
+        h.mkdir()
+        (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
+
+    fake_plan = gateway.GatewayPlan(backends=(
+        gateway.GatewayBackend(hub_dir=irs, slug="irs", bridge_port=8000, api_key="irs-key", model_label="irs-agent"),
+        gateway.GatewayBackend(hub_dir=gpms, slug="gpms", bridge_port=8001, api_key="gpms-key", model_label="gpms-agent"),
+    ))
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+
+    from hubzoid import webui
+
+    def fake_start_gateway(**kwargs):
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        return proc
+    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
+
+    popen_calls = []
+
+    def fake_popen(cmd, env=None, **kw):
+        popen_calls.append({"cmd": cmd, "env": env or {}})
+        proc = MagicMock()
+        proc.poll.return_value = None
+        return proc
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
+
+    gwdata = tmp_path / "gwdata"
+    result = CliRunner().invoke(
+        cli.app,
+        ["gateway", str(irs), str(gpms), "--data-dir", str(gwdata), "--port", "3080"],
+    )
+    assert result.exit_code == 0, result.output
+
+    expected = str(gwdata.resolve() / "webui.db")
+    bridge_envs = [c["env"] for c in popen_calls if "run" in c["cmd"]]
+    assert bridge_envs, "no bridges launched"
+    for e in bridge_envs:
+        assert e.get("HUBZOID_OWUI_DB") == expected

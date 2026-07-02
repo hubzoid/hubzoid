@@ -54,6 +54,13 @@ class GatewayPlan:
             "ENABLE_OPENAI_API": "True",
             "OPENAI_API_BASE_URLS": ";".join(self.base_urls),
             "OPENAI_API_KEYS": ";".join(self.api_keys),
+            # Forward the logged-in user's identity to every bridge, exactly as
+            # the single-hub path does (webui.start). Without it OWUI never sends
+            # X-OpenWebUI-User-Email, so the bridge derives an anonymous identity
+            # and every restricted tool is denied ("anonymous") — access control
+            # is dead in gateway mode. See hubzoid.server._derive_identity and
+            # hubzoid.access.owui_groups.
+            "ENABLE_FORWARD_USER_INFO_HEADERS": "true",
         }
         labels = [b.model_label for b in self.backends if b.model_label]
         if labels:
