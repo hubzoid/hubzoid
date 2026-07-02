@@ -57,11 +57,30 @@ model: openrouter/anthropic/claude-haiku-4.5           # optional
 You are the researcher sub-agent. ...
 ```
 
-`tools:` is a whitelist. The agent refuses to start if a name isn't in the
-combined registry of pre-shipped + `tools_local/` tools.
+`tools:` is a whitelist over the combined registry of pre-shipped +
+`tools_local/` tools. It scopes a **delegate** (see below); for a plain
+inline sub-agent it is ignored (the main agent owns all tools).
 
-When `description` reads like a "when" sentence, the main agent uses it as
-the handoff trigger condition. Make it specific to avoid wrong routing.
+When `description` reads like a "when" sentence, the main agent uses it to
+decide when to reach for this sub-agent. Make it specific to avoid wrong
+routing.
+
+### Sub-agent models (delegation)
+
+A sub-agent is loaded inline by the main agent (as a skill) by default. If
+its frontmatter declares a `model:` that **differs** from the hub's model
+*on the same engine*, it instead becomes a **delegate**: the main agent
+calls it as a subagent running on that model, gets its answer, and continues
+— the main agent stays in control the whole time.
+
+- claude-local hub + `model: claude-local/opus` sub-agent → delegate on Opus.
+- OpenAI/LiteLLM hub + a different LiteLLM `model:` → delegate on that model.
+- Same model as the hub, a different *engine* (e.g. `gpt-4o` inside a
+  claude-local hub), or no `model:` → stays an inline skill.
+
+A delegate's `tools:` whitelist scopes which hub tools it may use. If the
+delegate's model needs a provider key that is missing, it falls back to an
+inline skill so the hub still boots.
 
 ## Skills
 

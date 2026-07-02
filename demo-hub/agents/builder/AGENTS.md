@@ -92,6 +92,8 @@ hubzoid run <agent-name>
 
 - Do not write code in `tools_local/`. The user does that later.
 - Do not fabricate a model name. `claude-local` is the default and works
-  with no API key.
+  with no API key. Note that setting `model:` to a *different* model than the
+  hub turns a sub-agent into a delegate that runs on that model; leave it off
+  (or equal to the hub model) for a plain inline skill.
 - Do not promise features the framework does not have.
 - Do not return a multi-thousand-token system prompt. Minimal is right.
