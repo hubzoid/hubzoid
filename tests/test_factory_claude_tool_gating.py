@@ -112,3 +112,35 @@ def test_delegate_hub_still_blocks_dangerous_builtins(monkeypatch):
     forbidden = {"Bash", "Read", "Edit", "Write", "WebFetch", "Grep", "Glob"}
     assert not (forbidden & set(runtime._options.tools))
     assert not (forbidden & set(runtime._options.allowed_tools))
+
+
+def test_frontmatter_model_pins_main_tier_and_classification(tmp_path, monkeypatch):
+    """With no .env MODEL, AGENTS.md `model:` must pin the main tier AND be the
+    baseline for delegate classification (so a same-tier sub-agent stays a skill).
+    """
+    monkeypatch.delenv("MODEL", raising=False)
+    (tmp_path / "AGENTS.md").write_text(
+        "---\nname: m\ndescription: d\nmodel: claude-local/opus\n---\nbody"
+    )
+    # same tier as the (frontmatter) hub -> stays a skill, not a delegate.
+    same = tmp_path / "agents" / "twin"
+    same.mkdir(parents=True)
+    (same / "AGENTS.md").write_text(
+        "---\nname: twin\ndescription: d\nmodel: claude-local/opus\n---\nbody"
+    )
+    # different tier -> delegate.
+    diff = tmp_path / "agents" / "speedy"
+    diff.mkdir(parents=True)
+    (diff / "AGENTS.md").write_text(
+        "---\nname: speedy\ndescription: d\nmodel: claude-local/haiku\n---\nbody"
+    )
+
+    from hubzoid.factory_claude import build_claude_runtime
+    runtime = build_claude_runtime(tmp_path)
+    opts = runtime._options
+    # Main agent actually runs opus (frontmatter honored, not None/CLI-default).
+    assert opts.model == "opus"
+    # twin (same tier as hub) is NOT a delegate; speedy is.
+    assert "twin" not in (opts.agents or {})
+    assert "speedy" in opts.agents
+    assert opts.agents["speedy"].model == "haiku"

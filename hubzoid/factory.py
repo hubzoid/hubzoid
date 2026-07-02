@@ -154,8 +154,10 @@ def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
     skills/ win on conflict, with a warning). delegate_agents = LoadedAgent
     objects whose `model:` differs from the hub on the same engine.
     """
+    from . import handover
+
     real = skills_loader.load_all(hub_dir)
-    skill_agents, delegate_agents = agents_loader.split_subagents(hub_dir, hub_model)
+    skill_agents, raw_delegates = agents_loader.split_subagents(hub_dir, hub_model)
     by_name: dict[str, object] = {s.spec.name: s for s in real}
     for loaded in skill_agents:
         s = agents_loader.to_skill(loaded)
@@ -167,6 +169,22 @@ def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
             )
             continue
         by_name[s.spec.name] = s
+
+    # Dedupe delegates by their handover tool-name (names can slug-collide,
+    # e.g. "opus-helper" and "opus_helper"). First wins, mirroring skills.
+    delegate_agents: list = []
+    seen_tools: dict[str, object] = {}
+    for loaded in raw_delegates:
+        tname = handover.tool_name(loaded.spec.name)
+        if tname in seen_tools:
+            log.warning(
+                "delegate tool-name collision: %r yields %r, already used by %s. "
+                "keeping the first (%s).",
+                loaded.spec.name, tname, seen_tools[tname], loaded.source_path,
+            )
+            continue
+        seen_tools[tname] = loaded.source_path
+        delegate_agents.append(loaded)
     return list(by_name.values()), delegate_agents
 
 
@@ -189,6 +207,11 @@ def _prepare_delegates(delegate_agents: list):
             m = modellib.build(loaded.spec.model)
         except modellib.MissingProviderKey as exc:
             log.warning("delegate %r cannot run (%s); loading it as a skill instead.",
+                        loaded.spec.name, exc)
+            fallbacks.append(loaded)
+        except Exception as exc:  # noqa: BLE001 — an optional delegate must never
+            # harder-fail than the old skill path; degrade so the hub still boots.
+            log.warning("delegate %r failed to build (%s); loading it as a skill instead.",
                         loaded.spec.name, exc)
             fallbacks.append(loaded)
         else:
