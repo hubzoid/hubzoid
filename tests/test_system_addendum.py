@@ -19,6 +19,7 @@ class _Ctx:
     settings: Any
     skills: list = field(default_factory=list)
     knowledge: list = field(default_factory=list)
+    delegates: list = field(default_factory=list)
     output_dir: Path = None
     session_id: str = "test"
 
@@ -184,3 +185,30 @@ def test_raw_data_section_present_for_hyphen_variant(tmp_path):
     ctx = _Ctx(hub_dir=tmp_path, settings=_S())
     out = system_addendum.build(ctx, backend="openai-agents")
     assert "## Searching raw_data/" in out
+
+
+# ---------------------------------------------------------------------------
+# Delegate agents section.
+# ---------------------------------------------------------------------------
+def _delegate(name: str, description: str, model: str):
+    from hubzoid.loaders.agents import AgentSpec, LoadedAgent
+    spec = AgentSpec(name=name, description=description, model=model)
+    return LoadedAgent(spec=spec, instructions="body",
+                       source_path=Path(f"/tmp/agents/{name}/AGENTS.md"))
+
+
+def test_delegates_section_present_when_delegates_exist(tmp_path):
+    ctx = _Ctx(
+        hub_dir=tmp_path, settings=_S(),
+        delegates=[_delegate("opus-helper", "Deep specialist", "claude-local/opus")],
+    )
+    out = system_addendum.build(ctx, backend="claude-local")
+    assert "## Delegate agents available" in out
+    assert "handover_opus_helper" in out
+    assert "Deep specialist" in out
+
+
+def test_delegates_section_absent_when_none(tmp_path):
+    ctx = _Ctx(hub_dir=tmp_path, settings=_S(), delegates=[])
+    out = system_addendum.build(ctx, backend="openai-agents")
+    assert "## Delegate agents available" not in out
