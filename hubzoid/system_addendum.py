@@ -58,6 +58,10 @@ def build(ctx: "HubContext", *, backend: str) -> str:
     if skills_section:
         parts.append(skills_section)
 
+    delegates_section = _delegates_section(ctx)
+    if delegates_section:
+        parts.append(delegates_section)
+
     raw_data_section = _raw_data_section(ctx)
     if raw_data_section:
         parts.append(raw_data_section)
@@ -104,6 +108,28 @@ def _knowledge_section(ctx: "HubContext") -> str:
     ]
     for doc in ctx.knowledge:
         lines.append(f"- {doc.name}: {doc.description}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _delegates_section(ctx: "HubContext") -> str:
+    delegates = getattr(ctx, "delegates", None) or []
+    if not delegates:
+        return ""
+    from . import handover
+
+    lines = [
+        "## Delegate agents available",
+        "",
+        "Each runs on its own model as a subagent. Call its tool with a clear "
+        "brief; it works in isolation and returns a result. Relay its answer "
+        "faithfully — do not rewrite or shorten it — then continue:",
+        "",
+    ]
+    for d in delegates:
+        model = d.spec.model or "(hub model)"
+        lines.append(f"- {handover.tool_name(d.spec.name)}: {d.spec.description} "
+                     f"(model: {model})")
     lines.append("")
     return "\n".join(lines)
 
