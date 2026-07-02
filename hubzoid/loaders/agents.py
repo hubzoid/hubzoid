@@ -107,39 +107,56 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
     return out
 
 
-def promote_to_skills(hub_dir: Path):
-    """Load every <hub>/agents/<name>/AGENTS.md as a LoadedSkill.
+def to_skill(loaded: "LoadedAgent"):
+    """Convert one sub-agent into a LoadedSkill (loaded inline by the main agent).
 
-    Hubzoid no longer treats `agents/` as a distinct primitive. Each
-    sub-agent's body is loaded inline by the main agent when invoked via
-    `load_skill(<name>)` — identical in mechanics to a real skill. This
-    avoids handoff state bugs and gives the main agent stable control of
-    the conversation across turns.
-
-    The sub-agent's `tools:` whitelist is discarded with a log warning if
-    present (skills do not gate tools; the main agent owns the registry).
+    A `tools:` whitelist is meaningless for a skill (the main agent owns the
+    whole registry), so it is dropped with a log warning if present — this
+    mirrors the historical behavior for promoted agents.
     """
     import logging
 
     from .skills import LoadedSkill, SkillSpec
 
     log = logging.getLogger("hubzoid.loaders.agents")
-    out: list = []
+    if loaded.spec.tools:
+        log.warning(
+            "%s: tools whitelist %r is ignored — this agent is loaded as a "
+            "skill; the main agent owns all tools.",
+            loaded.source_path, loaded.spec.tools,
+        )
+    spec = SkillSpec(name=loaded.spec.name, description=loaded.spec.description)
+    return LoadedSkill(spec=spec, body=loaded.instructions,
+                       source_path=loaded.source_path)
+
+
+def promote_to_skills(hub_dir: Path):
+    """Load every <hub>/agents/<name>/AGENTS.md as a LoadedSkill (all sub-agents).
+
+    Kept for callers that want the flat all-skills view. Delegate-aware
+    loading (a differing `model:` becomes a within-turn subagent instead of a
+    skill) goes through `split_subagents`.
+    """
+    return [to_skill(loaded) for loaded in load_subagents(hub_dir)]
+
+
+def split_subagents(hub_dir: Path, hub_model: str | None):
+    """Partition sub-agents into (skill_agents, delegate_agents) LoadedAgents.
+
+    A sub-agent whose `model:` differs from `hub_model` on the same engine is a
+    delegate; everything else is a skill. `hub_model=None` -> all skills (the
+    backward-compatible no-delegate view).
+    """
+    from .. import handover
+
+    skill_agents: list[LoadedAgent] = []
+    delegate_agents: list[LoadedAgent] = []
     for loaded in load_subagents(hub_dir):
-        if loaded.spec.tools:
-            log.warning(
-                "%s: tools whitelist %r is ignored — agents/ are loaded as "
-                "skills; the main agent owns all tools.",
-                loaded.source_path, loaded.spec.tools,
-            )
-        spec = SkillSpec(
-            name=loaded.spec.name,
-            description=loaded.spec.description,
-        )
-        out.append(
-            LoadedSkill(spec=spec, body=loaded.instructions, source_path=loaded.source_path)
-        )
-    return out
+        if handover.classify(loaded.spec.model, hub_model) == "delegate":
+            delegate_agents.append(loaded)
+        else:
+            skill_agents.append(loaded)
+    return skill_agents, delegate_agents
 
 
 def _load_one(path: Path, *, default_name: str) -> LoadedAgent:
