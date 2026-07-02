@@ -141,3 +141,37 @@ def test_flat_agent_promoted_to_skill(tmp_path):
     assert len(skills) == 1
     assert skills[0].spec.name == "summary"
     assert "Summarize" in skills[0].body
+
+
+def test_split_subagents_no_model_is_skill():
+    # minimal_hub's `echo` sub-agent has no model -> skill bucket, empty delegates.
+    skills, delegates = agents_loader.split_subagents(MINIMAL, "claude-local")
+    assert [a.spec.name for a in skills] == ["echo"]
+    assert delegates == []
+
+
+def test_split_subagents_different_tier_is_delegate(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("---\nname: m\ndescription: d\n---\nbody")
+    sub = tmp_path / "agents" / "opusguy"
+    sub.mkdir(parents=True)
+    (sub / "AGENTS.md").write_text(
+        "---\nname: opusguy\ndescription: hard stuff\nmodel: claude-local/opus\n"
+        "tools: [read_file]\n---\nYou are the opus specialist."
+    )
+    skills, delegates = agents_loader.split_subagents(tmp_path, "claude-local")
+    assert skills == []
+    assert [a.spec.name for a in delegates] == ["opusguy"]
+    assert delegates[0].spec.model == "claude-local/opus"
+    assert delegates[0].spec.tools == ["read_file"]
+
+
+def test_split_subagents_none_hub_model_all_skills(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("---\nname: m\ndescription: d\n---\nbody")
+    sub = tmp_path / "agents" / "opusguy"
+    sub.mkdir(parents=True)
+    (sub / "AGENTS.md").write_text(
+        "---\nname: opusguy\ndescription: d\nmodel: claude-local/opus\n---\nbody"
+    )
+    skills, delegates = agents_loader.split_subagents(tmp_path, None)
+    assert [a.spec.name for a in skills] == ["opusguy"]
+    assert delegates == []
