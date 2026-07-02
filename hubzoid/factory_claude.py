@@ -33,7 +33,7 @@ from . import memory as memlib
 from . import reasoning as reasoninglib
 from . import settings as settingslib
 from . import tool_events
-from .factory import HubContext, _compose_instructions, _load_skills_and_promoted_agents
+from .factory import HubContext, _compose_instructions, _load_skills_and_delegates
 from .loaders import agents as agents_loader
 from .loaders import knowledge as knowledge_loader
 from .loaders import mcp as mcp_loader
@@ -43,6 +43,12 @@ from .tools import make_all as make_builtin_tools
 log = logging.getLogger("hubzoid.claude")
 
 _MCP_NAMESPACE = "hubzoid"
+
+# The Claude CLI's subagent-spawn tool. Renamed Task -> Agent at CLI v2.1.63;
+# the bundled CLI is 2.x. Enabling ONLY this (not the claude_code preset) lets
+# the model dispatch our AgentDefinition delegates while Bash/Read/etc. stay
+# off — verified live on claude CLI 2.1.198.
+SUBAGENT_SPAWN_TOOL = "Agent"
 
 
 # ---------------------------------------------------------------------------
@@ -147,11 +153,14 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     session_id = memlib.make_session_id()
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
-    skills = _load_skills_and_promoted_agents(hub_dir)
+    # Resolve the hub model first — it decides which sub-agents are delegates.
+    main_spec = agents_loader.load_main(hub_dir)
+    hub_model = settings.model or main_spec.spec.model or "claude-local"
+    skills, delegate_agents = _load_skills_and_delegates(hub_dir, hub_model)
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
-        "hub %s (claude-local): %d skill(s), %d knowledge doc(s)",
-        hub_dir.name, len(skills), len(knowledge),
+        "hub %s (claude-local): %d skill(s), %d delegate(s), %d knowledge doc(s)",
+        hub_dir.name, len(skills), len(delegate_agents), len(knowledge),
     )
 
     ctx = HubContext(
@@ -161,6 +170,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         settings=settings,
         skills=skills,
         knowledge=knowledge,
+        delegates=delegate_agents,
     )
 
     # Same registry as the OpenAI path. Built-ins + hub-local; local shadows
@@ -186,12 +196,34 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     hubzoid_mcp = _build_mcp_server(registry)
     mcp_servers = {**external_mcp, _MCP_NAMESPACE: hubzoid_mcp}
 
-    main_spec = agents_loader.load_main(hub_dir)
     main_name = main_spec.spec.name
     main_instructions = _compose_instructions(main_spec.instructions, ctx, backend="claude-local")
 
     allowed = _allowed_tool_names(registry, mcp_specs=external_mcp)
     model_pin = _parse_model_pin(settings.model)
+
+    # Delegates: sub-agents whose model differs from the hub. Each becomes a
+    # native Claude subagent on its own tier, dispatched via the Agent tool.
+    # We enable ONLY the Agent tool (not the claude_code preset), so Bash/Read/
+    # etc. stay disabled — the tools=[] safety gate is otherwise intact.
+    from . import handover
+    from claude_agent_sdk import AgentDefinition
+
+    reg_names = list(registry.keys())
+    agent_defs: dict[str, Any] = {}
+    for loaded in delegate_agents:
+        scoped = handover.scoped_tool_names(loaded.spec.tools, reg_names)
+        agent_defs[loaded.spec.name] = AgentDefinition(
+            description=loaded.spec.description,
+            prompt=loaded.instructions,
+            model=handover.resolve_tier(loaded.spec.model),
+            tools=[f"mcp__{_MCP_NAMESPACE}__{n}" for n in scoped],
+        )
+
+    base_tools: list[str] = []
+    if agent_defs:
+        base_tools = [SUBAGENT_SPAWN_TOOL]
+        allowed = [*allowed, SUBAGENT_SPAWN_TOOL]
 
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -210,12 +242,14 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # `tools` is the gate. See test_factory_claude_tool_gating.py.
     opts_kwargs: dict[str, Any] = dict(
         system_prompt=main_instructions,
-        tools=[],
+        tools=base_tools,
         allowed_tools=allowed,
         mcp_servers=mcp_servers,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
+    if agent_defs:
+        opts_kwargs["agents"] = agent_defs
     if model_pin is not None:
         opts_kwargs["model"] = model_pin
     if max_turns is not None:
@@ -242,6 +276,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         opts_kwargs.pop("max_turns", None)
         opts_kwargs.pop("max_thinking_tokens", None)
         opts_kwargs.pop("thinking", None)
+        opts_kwargs.pop("agents", None)
         options = ClaudeAgentOptions(**opts_kwargs)
 
     return ClaudeRuntime(
