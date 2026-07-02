@@ -149,6 +149,59 @@ def test_missing_model_raises(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Model-triggered delegation: a sub-agent whose model differs from the hub
+# (same engine) becomes a `handover_<name>` tool instead of an inline skill.
+# ---------------------------------------------------------------------------
+def _write_hub_with_delegate(tmp_path, sub_model):
+    (tmp_path / "AGENTS.md").write_text("---\nname: m\ndescription: d\n---\nbody")
+    sub = tmp_path / "agents" / "opusguy"
+    sub.mkdir(parents=True)
+    (sub / "AGENTS.md").write_text(
+        f"---\nname: opusguy\ndescription: hard questions\nmodel: {sub_model}\n"
+        f"tools: [read_file]\n---\nYou are the specialist."
+    )
+    return tmp_path
+
+
+def test_delegate_becomes_handover_tool(tmp_path, monkeypatch):
+    # hub on haiku, delegate on a DIFFERENT same-engine model -> a handover tool.
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    hub = _write_hub_with_delegate(tmp_path, "openrouter/anthropic/claude-3-opus")
+
+    from hubzoid.factory import build_agent
+    agent = build_agent(hub)
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert "handover_opusguy" in tool_names
+    # It must NOT also be wired as a handoff.
+    assert not agent.handoffs
+
+
+def test_delegate_missing_key_falls_back_to_skill(tmp_path, monkeypatch, caplog):
+    # delegate model needs OPENAI_API_KEY which is absent -> skill fallback.
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    hub = _write_hub_with_delegate(tmp_path, "openai/gpt-4o")  # cross-provider, same engine
+
+    import logging
+    from hubzoid.factory import build_agent
+    with caplog.at_level(logging.WARNING, logger="hubzoid"):
+        agent = build_agent(hub)
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert "handover_opusguy" not in tool_names
+    assert any("opusguy" in r.message for r in caplog.records)
+
+
+def test_no_delegates_leaves_tool_list_unchanged():
+    # Regression: minimal_hub (echo has no model) has NO handover tools.
+    from hubzoid.factory import build_agent
+    agent = build_agent(MINIMAL)
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert not any(n.startswith("handover_") for n in tool_names)
+
+
+# ---------------------------------------------------------------------------
 # _parse_model_pin — bare claude-local now defaults to Sonnet. Haiku saved
 # wall-clock TTFT but routinely asked the user to choose instead of executing
 # documented workflows (the prs-agent QA pipeline reproducibly failed on Haiku
