@@ -207,3 +207,53 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
     assert bridge_envs, "no bridges launched"
     for e in bridge_envs:
         assert e.get("HUBZOID_OWUI_DB") == expected
+
+
+def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
+    """The gateway stamps its OWN logo into OWUI's static dirs at boot (so the
+    chrome logo is deterministic, not a leftover from a prior single-hub run),
+    using the gateway baseline CSS that keeps Workspace visible for admins."""
+    from hubzoid import branding, webui
+
+    irs = tmp_path / "irs"
+    irs.mkdir()
+    (irs / "AGENTS.md").write_text("---\nname: x\n---\nbody")
+
+    fake_plan = gateway.GatewayPlan(backends=(
+        gateway.GatewayBackend(hub_dir=irs, slug="irs", bridge_port=8000, api_key="k", model_label="irs-agent"),
+    ))
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+
+    def fake_start_gateway(**kwargs):
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        return proc
+    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
+
+    def fake_popen(cmd, env=None, **kw):
+        proc = MagicMock()
+        proc.poll.return_value = None
+        return proc
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
+
+    # Fake OWUI static dir + the gateway's own branding source.
+    static = tmp_path / "owui_static"
+    static.mkdir()
+    monkeypatch.setattr(branding, "static_dirs", lambda: [static])
+    gwdata = tmp_path / "gwdata"
+    (gwdata / "branding").mkdir(parents=True)
+    (gwdata / "branding" / "logo.png").write_bytes(b"GWLOGO")
+
+    result = CliRunner().invoke(
+        cli.app, ["gateway", str(irs), "--data-dir", str(gwdata), "--port", "3080"],
+    )
+    assert result.exit_code == 0, result.output
+
+    # The gateway's logo became OWUI's favicon (deterministic chrome branding).
+    assert (static / "favicon.png").read_bytes() == b"GWLOGO"
+    # Gateway CSS keeps Workspace visible (admins manage groups/ACLs there).
+    assert 'a[href="/workspace"]' not in (static / "custom.css").read_text()

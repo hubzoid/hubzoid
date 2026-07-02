@@ -387,6 +387,19 @@ def gateway(
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")
 
+    # Deterministic gateway chrome branding. Stamp the gateway's own logo /
+    # favicon (from <data_dir>/branding/) into OWUI's static dirs so the login
+    # page and tab title show a chosen mark, not whatever a prior single-hub
+    # `run` last left in the shared OWUI install. Uses the GATEWAY baseline CSS,
+    # which keeps the Workspace nav visible (gateway admins manage per-team
+    # Groups + per-model ACLs there) — unlike the single-hub baseline, which
+    # hides it. No-op beyond baseline CSS when <data_dir>/branding/ is absent.
+    # Per-hub identity belongs on the model avatar, not here: one shared chrome
+    # fronts N hubs, so the global logo is org-level by design.
+    from . import branding
+    for sd in branding.static_dirs():
+        branding.apply(gw_data, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+
     procs: list[subprocess.Popen] = []
 
     # 1. Launch each hub's headless bridge (unless they already run elsewhere).
