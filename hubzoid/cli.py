@@ -393,6 +393,15 @@ def gateway(
     if launch_bridges:
         for b in gp.backends:
             bridge_env = os.environ.copy()
+            # Point each bridge's access-control group lookup at the SHARED
+            # gateway DB. Each bridge is launched as `hubzoid run <hub> --no-ui`,
+            # so by default access.owui_groups would read <hub>/.openwebui-data/
+            # webui.db — which never exists in gateway mode (users/groups live in
+            # the one shared OWUI DB at <gw_data>/webui.db). Without this override
+            # every restricted tool is denied for every gateway user. Only
+            # relevant in --launch-bridges mode; external bridges (--no-bridges)
+            # must set HUBZOID_OWUI_DB themselves. See docs/DEPLOYING.md.
+            bridge_env["HUBZOID_OWUI_DB"] = str(gw_data / "webui.db")
             # Per-hub public base so this bridge's artifact links resolve
             # through the edge back to itself. Only injected when the hub's
             # own .env doesn't already pin HUBZOID_PUBLIC_URL.
