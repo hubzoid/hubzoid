@@ -70,3 +70,45 @@ def test_claude_runtime_does_not_allow_builtin_tool_names_in_allowed_tools():
                 "NotebookEdit", "NotebookRead"}
     leaked = builtins & set(runtime._options.allowed_tools)
     assert not leaked, f"built-ins leaked into allowed_tools: {leaked}"
+
+
+# ---------------------------------------------------------------------------
+# Model-delegate wiring: enabling the Agent spawn tool must be narrow — it
+# must NOT re-admit Bash/Read/etc. And a hub with no delegates must keep the
+# exact tools=[] gate (regression).
+# ---------------------------------------------------------------------------
+DELEGATE_HUB = FIXTURES / "delegate_claude_hub"
+
+
+def test_no_delegates_keeps_tools_empty():
+    """Regression: a hub with no delegates keeps the tools=[] gate exactly."""
+    runtime = _build()  # MINIMAL, echo has no model
+    assert runtime._options.tools == []
+    assert not runtime._options.agents
+
+
+def test_delegate_hub_enables_only_the_agent_spawn_tool(monkeypatch):
+    monkeypatch.setenv("MODEL", "claude-local")  # hub = sonnet default
+    from hubzoid.factory_claude import build_claude_runtime, SUBAGENT_SPAWN_TOOL
+    runtime = build_claude_runtime(DELEGATE_HUB)
+    opts = runtime._options
+    # Only the spawn tool is enabled — Bash/Read/etc. stay off.
+    assert opts.tools == [SUBAGENT_SPAWN_TOOL]
+    assert SUBAGENT_SPAWN_TOOL in opts.allowed_tools
+    # The delegate is registered as a native subagent on its own tier.
+    assert "opus-helper" in opts.agents
+    assert opts.agents["opus-helper"].model == "opus"
+    # Its tool scope is the hubzoid MCP form of its whitelist.
+    assert opts.agents["opus-helper"].tools == ["mcp__hubzoid__read_knowledge"]
+    # hubzoid MCP tools still present in allowed_tools.
+    assert any(t.startswith("mcp__hubzoid__") for t in opts.allowed_tools)
+
+
+def test_delegate_hub_still_blocks_dangerous_builtins(monkeypatch):
+    """Enabling Agent must NOT re-admit Bash/Read/Edit/Write etc."""
+    monkeypatch.setenv("MODEL", "claude-local")
+    from hubzoid.factory_claude import build_claude_runtime
+    runtime = build_claude_runtime(DELEGATE_HUB)
+    forbidden = {"Bash", "Read", "Edit", "Write", "WebFetch", "Grep", "Glob"}
+    assert not (forbidden & set(runtime._options.tools))
+    assert not (forbidden & set(runtime._options.allowed_tools))
