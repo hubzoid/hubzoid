@@ -81,6 +81,32 @@ button[aria-label="Voice Input"] {
 """
 
 
+# Gateway variant of the baseline. Same voice/mic hiding, but it deliberately
+# KEEPS the Workspace nav item: a gateway fronts many hubs and its admins manage
+# per-team Groups and per-model access on the Workspace screens. Hiding it (as
+# the single-hub baseline does) would lock admins out of the very controls the
+# gateway's per-team isolation depends on. Operators still override by dropping
+# their own custom.css into the gateway branding dir.
+GATEWAY_BASELINE_CSS = """\
+/* hubzoid gateway baseline overrides. Override by placing your own
+   custom.css in the gateway branding dir. Workspace stays visible on
+   purpose — gateway admins manage Groups + per-model ACLs there. */
+
+/* Hide the in-chat voice-mode button (full-duplex call).
+   The feature is unreliable (OWUI Issue #22684) and confuses users. */
+button[aria-label="Voice mode"] {
+  display: none !important;
+}
+
+/* Hide the mic / voice-input button.
+   Browser STT quality is uneven and the button often does nothing on
+   first click while permissions resolve. Disable until reliable. */
+button[aria-label="Voice Input"] {
+  display: none !important;
+}
+"""
+
+
 def baseline_custom_css() -> str:
     """The hubzoid baseline custom.css. Exposed for tests."""
     return _BASELINE_CUSTOM_CSS
@@ -122,7 +148,7 @@ def _build_source_index(branding_dir: Path) -> dict[str, Path]:
     return index
 
 
-def apply(hub_dir: Path, static_dir: Path) -> dict[str, Path | str]:
+def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -> dict[str, Path | str]:
     """Copy hub branding into one OWUI static root. Idempotent.
 
     Returns a dict of {canonical_filename: source_path | "<baseline>"}
@@ -150,11 +176,13 @@ def apply(hub_dir: Path, static_dir: Path) -> dict[str, Path | str]:
         log.info("branding: %s -> %s", src.name, canonical)
 
     # Baseline custom.css. Only written when the hub did not provide its
-    # own (per-hub custom.css already landed in the loop above).
+    # own (per-hub custom.css already landed in the loop above). Callers may
+    # pass a `baseline_css` override (the gateway does, to keep Workspace).
     if "custom.css" not in applied:
+        css = baseline_css or _BASELINE_CUSTOM_CSS
         for dst in (static_dir / "custom.css", static_dir / "static" / "custom.css"):
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(_BASELINE_CUSTOM_CSS)
+            dst.write_text(css)
         applied["custom.css"] = "<baseline>"
         log.info("branding: baseline custom.css -> custom.css")
 

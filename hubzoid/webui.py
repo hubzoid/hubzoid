@@ -16,6 +16,7 @@ docs/branding.md for the full list and why each is set the way it is.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -24,6 +25,8 @@ import sys
 from pathlib import Path
 
 from . import branding
+
+log = logging.getLogger("hubzoid.webui")
 
 # ---------------------------------------------------------------------------
 # Default Open WebUI env vars (strip platform surfaces).
@@ -417,7 +420,9 @@ def start_gateway(
         # Gateway fronts MANY models and its whole purpose is per-team isolation
         # (per-model Private ACLs + group assignment — see docs/DEPLOYING.md).
         # Bypassing model access control would let every user see every team's
-        # model, so it stays OFF here. Operators can override in the env.
+        # model, so it is FORCED off here (even over an inherited env value —
+        # see _spawn_owui 5b). Operators opt out of isolation with
+        # HUBZOID_GATEWAY_ALLOW_BYPASS=1.
         bypass_model_access_control=False,
         enable_api_keys=enable_api_keys,
     )
@@ -495,10 +500,31 @@ def _spawn_owui(
     # 5b. Model-list visibility for non-admin (role=user) accounts. OWUI 0.9.6
     # filters base/connection models (those without a Workspace DB row) out of
     # the list for users, leaving them with "Model not selected". Single hubs
-    # have exactly one model and nothing to scope, so they bypass the filter;
-    # the gateway keeps it on so per-team model ACLs stay enforced. setdefault
-    # => an operator's explicit .env value wins either way.
-    env.setdefault("BYPASS_MODEL_ACCESS_CONTROL", _ON if bypass_model_access_control else _OFF)
+    # have exactly one model and nothing to scope, so they bypass the filter
+    # (setdefault => the operator's .env value wins). The gateway is different:
+    # per-team isolation IS its point, and BYPASS...=True is the documented
+    # single-hub fix, so it leaks into gateway environments easily — where it
+    # would silently show every team every other team's agent. The gateway
+    # therefore FORCES the filter on, warning if it had to override; an
+    # operator who really wants the bypass sets HUBZOID_GATEWAY_ALLOW_BYPASS=1.
+    if bypass_model_access_control:
+        env.setdefault("BYPASS_MODEL_ACCESS_CONTROL", _ON)
+    else:
+        allow = os.environ.get("HUBZOID_GATEWAY_ALLOW_BYPASS", "").strip().lower() in _TRUTHY
+        if allow:
+            # Operator explicitly wants an open gateway: the flag alone
+            # suffices (defaults the bypass ON); an explicit
+            # BYPASS_MODEL_ACCESS_CONTROL value still wins over the default.
+            env.setdefault("BYPASS_MODEL_ACCESS_CONTROL", _ON)
+        else:
+            if env.get("BYPASS_MODEL_ACCESS_CONTROL", "").strip().lower() in _TRUTHY:
+                log.warning(
+                    "BYPASS_MODEL_ACCESS_CONTROL=True found in the environment — "
+                    "that is the single-hub fix and would disable per-team model "
+                    "isolation in gateway mode; forcing it off. Set "
+                    "HUBZOID_GATEWAY_ALLOW_BYPASS=1 for an open gateway."
+                )
+            env["BYPASS_MODEL_ACCESS_CONTROL"] = _OFF
 
     # 7. Refuse to boot if auth is on with an unsafe config.
     _validate_auth_env(env)

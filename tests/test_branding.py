@@ -134,6 +134,37 @@ def test_apply_no_branding_dir_writes_only_baseline_css(tmp_path):
     assert css_top == css_nested
 
 
+def test_apply_accepts_custom_baseline_css(tmp_path):
+    """apply() takes a baseline_css override so the gateway can keep the
+    Workspace tab (its admins manage groups/ACLs there) while single-hub
+    keeps the default. A hub-supplied custom.css still wins over it."""
+    hub = tmp_path / "hub"
+    static = tmp_path / "static"
+    hub.mkdir()
+    static.mkdir()
+
+    branding.apply(hub, static, baseline_css="/* gateway css */")
+
+    assert (static / "custom.css").read_text() == "/* gateway css */"
+    assert (static / "static" / "custom.css").read_text() == "/* gateway css */"
+
+
+def test_gateway_baseline_css_keeps_workspace_hides_voice():
+    """The gateway baseline must NOT hide Workspace (admins need it to manage
+    per-team groups + model ACLs), but still hides the unreliable voice/mic
+    buttons like the single-hub baseline does."""
+    css = branding.GATEWAY_BASELINE_CSS
+    # No Workspace-hiding selectors (the word may appear in an explanatory
+    # comment; what matters is that neither hide rule is present).
+    assert 'a[href="/workspace"]' not in css
+    assert 'aria-label="Workspace"' not in css
+    # Voice + mic are still hidden, same as the single-hub baseline.
+    assert 'aria-label="Voice mode"' in css
+    assert 'aria-label="Voice Input"' in css
+    # Sanity: the single-hub baseline DOES hide Workspace, proving they differ.
+    assert 'a[href="/workspace"]' in branding._BASELINE_CUSTOM_CSS
+
+
 def test_apply_custom_css_override_wins(tmp_path):
     """A hub-supplied custom.css replaces the baseline entirely."""
     hub = tmp_path / "hub"

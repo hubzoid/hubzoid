@@ -375,9 +375,12 @@ def gateway(
     """Run ONE Open WebUI over many hubs — one headless bridge per hub.
 
     Lighter than one `hubzoid run` per hub (a single OWUI process instead of
-    N). Each hub surfaces as a selectable model; gate per-team access with
-    OWUI Groups + per-model Private ACL. Artifact downloads route per hub via
-    `/b/<slug>/artifacts`. See docs/DEPLOYING.md.
+    N). Each hub surfaces as a selectable model. With
+    HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD set, each hub's model entry (name,
+    description, suggestions, avatar) and team group + read ACL are
+    provisioned automatically on boot; admins then only add users to groups.
+    Gateway chrome branding comes from <data-dir>/branding/. Artifact
+    downloads route per hub via `/b/<slug>/artifacts`. See docs/DEPLOYING.md.
     """
     from . import gateway as gateway_lib
     from . import webui
@@ -399,12 +402,44 @@ def gateway(
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")
 
+    # Deterministic gateway chrome branding. Stamp the gateway's own logo /
+    # favicon (from <data_dir>/branding/) into OWUI's static dirs so the login
+    # page and tab title show a chosen mark, not whatever a prior single-hub
+    # `run` last left in the shared OWUI install. Uses the GATEWAY baseline CSS,
+    # which keeps the Workspace nav visible (gateway admins manage per-team
+    # Groups + per-model ACLs there) — unlike the single-hub baseline, which
+    # hides it. No-op beyond baseline CSS when <data_dir>/branding/ is absent.
+    # Per-hub identity belongs on the model avatar, not here: one shared chrome
+    # fronts N hubs, so the global logo is org-level by design. Best-effort:
+    # a read-only OWUI install (root-owned site-packages) must not stop the
+    # gateway from booting.
+    from . import branding
+    try:
+        for sd in branding.static_dirs():
+            branding.apply(gw_data, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+    except OSError as exc:
+        console.print(f"[yellow]→ branding[/yellow]  skipped ({exc}); default look kept")
+
+    # Whether this boot starts from a fresh OWUI state dir. Decided BEFORE
+    # OWUI runs (it creates webui.db on boot): only a truly fresh dir may
+    # bootstrap the first admin account during provisioning below.
+    fresh_owui_db = not (gw_data / "webui.db").exists()
+
     procs: list[subprocess.Popen] = []
 
     # 1. Launch each hub's headless bridge (unless they already run elsewhere).
     if launch_bridges:
         for b in gp.backends:
             bridge_env = os.environ.copy()
+            # Point each bridge's access-control group lookup at the SHARED
+            # gateway DB. Each bridge is launched as `hubzoid run <hub> --no-ui`,
+            # so by default access.owui_groups would read <hub>/.openwebui-data/
+            # webui.db — which never exists in gateway mode (users/groups live in
+            # the one shared OWUI DB at <gw_data>/webui.db). Without this override
+            # every restricted tool is denied for every gateway user. Only
+            # relevant in --launch-bridges mode; external bridges (--no-bridges)
+            # must set HUBZOID_OWUI_DB themselves. See docs/DEPLOYING.md.
+            bridge_env["HUBZOID_OWUI_DB"] = str(gw_data / "webui.db")
             # Per-hub public base so this bridge's artifact links resolve
             # through the edge back to itself. Only injected when the hub's
             # own .env doesn't already pin HUBZOID_PUBLIC_URL.
@@ -465,6 +500,62 @@ def gateway(
         console.print(f"            log: {log_path}")
     owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
     owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
+
+    # 3b. Per-hub provisioning (opt-in). With admin credentials in the env,
+    # seed each hub's OWUI model entry (picker name, description, suggestions,
+    # avatar) and its team group + read ACL, so a new hub works for its team
+    # on next boot with no manual admin steps. Without credentials this is
+    # skipped entirely. Fail-safe: any error logs and the gateway boots on.
+    # See hubzoid/gateway_provision.py for the overwrite policy.
+    admin_email = os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL", "").strip()
+    admin_password = os.environ.get("HUBZOID_GATEWAY_ADMIN_PASSWORD", "").strip()
+    auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in ("true", "1", "yes", "on")
+    if admin_email and admin_password:
+        if not auth_on:
+            # HARD prerequisite: with WEBUI_AUTH off, OWUI's signin ignores
+            # credentials and mints the well-known admin@localhost/'admin'
+            # account — a booby trap the moment auth is later enabled. Never
+            # provision in that mode.
+            console.print(
+                "[yellow]→ provision[/yellow]  skipped: provisioning needs "
+                "WEBUI_AUTH=true (see docs/auth.md); with auth off, Open WebUI "
+                "would create the default admin@localhost account instead of yours"
+            )
+        elif not owui_ready:
+            console.print(
+                "[yellow]→ provision[/yellow]  skipped: Open WebUI is not ready; "
+                "will run on next boot"
+            )
+        else:
+            from . import gateway_provision as gwp
+            specs = [
+                gwp.HubSpec(
+                    model_id=b.model_label,
+                    name=b.display_name or b.slug,
+                    group=b.slug,
+                    suggestions=b.suggestions,
+                    description=b.description,
+                    logo=b.logo,
+                )
+                for b in gp.backends
+            ]
+            try:
+                actions = gwp.provision(
+                    base_url=f"http://{owui_probe}:{owui_port}",
+                    email=admin_email,
+                    password=admin_password,
+                    hubs=specs,
+                    allow_bootstrap=fresh_owui_db,
+                )
+                for a in actions:
+                    console.print(f"[cyan]→ provision[/cyan]  {a}")
+            except Exception as exc:  # noqa: BLE001 — provisioning never kills the boot
+                console.print(f"[yellow]→ provision[/yellow]  skipped: {exc}")
+    elif admin_email or admin_password:
+        console.print(
+            "[yellow]→ provision[/yellow]  skipped: set BOTH "
+            "HUBZOID_GATEWAY_ADMIN_EMAIL and HUBZOID_GATEWAY_ADMIN_PASSWORD"
+        )
 
     # 4. The public edge: per-hub artifact prefixes -> bridges, rest -> OWUI.
     edge_proc = None
