@@ -34,6 +34,14 @@ class GatewayBackend:
     bridge_port: int
     api_key: str       # the bridge's first BRIDGE_API_KEYS entry
     model_label: str   # what /v1/models reports (best-effort, for display)
+    # Per-hub display identity, read from AGENTS.md frontmatter + branding/.
+    # Consumed by gateway_provision to seed each hub's Open WebUI model entry
+    # (picker name, description, quick-start suggestions, avatar). All optional;
+    # empty defaults mean "provision skips that field", never an error.
+    display_name: str = ""       # AGENTS.md `name:`, falls back to folder name
+    description: str = ""        # AGENTS.md `description:`
+    suggestions: tuple[str, ...] = ()  # AGENTS.md `suggestions:` list
+    logo: Path | None = None     # <hub>/branding/ logo file, if any
 
 
 @dataclass(frozen=True)
@@ -122,22 +130,52 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         seen_slugs[base_slug] = n + 1
         slug = base_slug if n == 0 else f"{base_slug}-{n + 1}"
 
+        meta = _agent_meta(hub_dir)
         backends.append(GatewayBackend(
             hub_dir=hub_dir,
             slug=slug,
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
-            model_label=s.model_label or _slugify(_agent_name(hub_dir)),
+            model_label=s.model_label or _slugify(meta["name"]),
+            display_name=meta["name"],
+            description=meta["description"],
+            suggestions=meta["suggestions"],
+            logo=_find_logo(hub_dir),
         ))
     return GatewayPlan(backends=tuple(backends))
 
 
-def _agent_name(hub_dir: Path) -> str:
-    """Best-effort hub agent name from AGENTS.md frontmatter; falls back to
-    the folder name. Used only as a display label."""
+def _agent_meta(hub_dir: Path) -> dict:
+    """Best-effort hub identity from AGENTS.md frontmatter. Never raises:
+    a missing/broken AGENTS.md yields folder-name + empty fields, matching
+    the fail-safe posture of everything provisioning-related."""
     from . import frontmatter as fm
+    name, description, suggestions = hub_dir.name, "", ()
     try:
         data, _ = fm.read(hub_dir / "AGENTS.md")
-        return str(data.get("name") or hub_dir.name)
+        name = str(data.get("name") or hub_dir.name)
+        description = str(data.get("description") or "")
+        raw = data.get("suggestions") or []
+        if isinstance(raw, list):
+            suggestions = tuple(str(s) for s in raw if str(s).strip())
     except Exception:  # noqa: BLE001
-        return hub_dir.name
+        pass
+    return {"name": name, "description": description, "suggestions": suggestions}
+
+
+def _find_logo(hub_dir: Path) -> Path | None:
+    """The hub's raster logo for use as its Open WebUI model avatar.
+
+    Only raster formats OWUI's profile-image validator accepts (it rejects
+    SVG data-URIs as script-capable). Prefers logo.* over favicon.*.
+    """
+    branding_dir = hub_dir / "branding"
+    if not branding_dir.is_dir():
+        return None
+    files = {e.name.lower(): e for e in branding_dir.iterdir() if e.is_file()}
+    for stem in ("logo", "favicon"):
+        for ext in ("png", "webp", "jpg", "jpeg", "gif"):
+            match = files.get(f"{stem}.{ext}")
+            if match is not None:
+                return match
+    return None

@@ -201,6 +201,46 @@ def test_operator_can_override_model_access_control(captured_env, tmp_path, monk
     assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "False"
 
 
+def _start_gateway(captured_env, tmp_path):
+    webui.start_gateway(
+        data_dir=tmp_path / "gw-data",
+        ui_port=3080,
+        connection_env={
+            "OPENAI_API_BASE_URLS": "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1",
+            "OPENAI_API_KEYS": "a;b",
+        },
+    )
+    return captured_env
+
+
+def test_gateway_forces_access_control_over_inherited_bypass(captured_env, tmp_path, monkeypatch):
+    """BYPASS_MODEL_ACCESS_CONTROL=True in the environment (the documented
+    single-hub fix for the empty model list) must NOT leak into a gateway —
+    it would let every team see every other team's agent. The gateway forces
+    it off rather than letting setdefault silently keep the inherited value."""
+    monkeypatch.setenv("BYPASS_MODEL_ACCESS_CONTROL", "True")
+    monkeypatch.delenv("HUBZOID_GATEWAY_ALLOW_BYPASS", raising=False)
+    env = _start_gateway(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "False"
+
+
+def test_gateway_bypass_escape_hatch(captured_env, tmp_path, monkeypatch):
+    """An operator who explicitly accepts every-user-sees-every-model can keep
+    the bypass with HUBZOID_GATEWAY_ALLOW_BYPASS=1."""
+    monkeypatch.setenv("BYPASS_MODEL_ACCESS_CONTROL", "True")
+    monkeypatch.setenv("HUBZOID_GATEWAY_ALLOW_BYPASS", "1")
+    env = _start_gateway(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "True"
+
+
+def test_single_hub_inherited_bypass_still_wins(captured_env, tmp_path, monkeypatch):
+    """The gateway forcing must NOT change single-hub semantics: there the
+    operator's env value continues to win (setdefault behavior)."""
+    monkeypatch.setenv("BYPASS_MODEL_ACCESS_CONTROL", "True")
+    env = _start(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "True"
+
+
 # ---------------------------------------------------------------------------
 # Wiring + branding cascade
 # ---------------------------------------------------------------------------
