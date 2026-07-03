@@ -84,6 +84,40 @@ def test_plan_dedupes_colliding_slugs(tmp_path):
     assert [x.slug for x in gp.backends] == ["hub", "hub-2"]
 
 
+def test_plan_captures_per_hub_identity(tmp_path):
+    """The plan carries each hub's display identity (name, description,
+    suggestions from AGENTS.md frontmatter, logo from branding/) so the
+    gateway can provision per-model config in Open WebUI."""
+    irs = tmp_path / "irs"
+    irs.mkdir()
+    (irs / "AGENTS.md").write_text(
+        "---\nname: IRS Agent\ndescription: Tax filing helper\n"
+        "suggestions:\n  - How do I file?\n  - What is TDS?\n---\nbody"
+    )
+    (irs / "branding").mkdir()
+    (irs / "branding" / "logo.png").write_bytes(b"png-bytes")
+
+    gp = gateway.plan([irs], load=_loader({str(irs): _settings(irs, 8000)}))
+    b = gp.backends[0]
+    assert b.display_name == "IRS Agent"
+    assert b.description == "Tax filing helper"
+    assert b.suggestions == ("How do I file?", "What is TDS?")
+    assert b.logo == irs / "branding" / "logo.png"
+
+
+def test_plan_identity_defaults_are_empty(tmp_path):
+    """A hub with no AGENTS.md frontmatter extras and no branding/ dir gets
+    safe empty defaults — never an error."""
+    a = tmp_path / "a"
+    a.mkdir()
+    gp = gateway.plan([a], load=_loader({str(a): _settings(a, 8000)}))
+    b = gp.backends[0]
+    assert b.display_name == "a"          # falls back to folder name
+    assert b.description == ""
+    assert b.suggestions == ()
+    assert b.logo is None
+
+
 def test_plan_rejects_duplicate_bridge_ports(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(); b.mkdir()
@@ -207,6 +241,107 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
     assert bridge_envs, "no bridges launched"
     for e in bridge_envs:
         assert e.get("HUBZOID_OWUI_DB") == expected
+
+
+def _gateway_harness(tmp_path, monkeypatch):
+    """Shared fake-process harness for gateway CLI wiring tests."""
+    from hubzoid import webui
+
+    irs = tmp_path / "irs"
+    irs.mkdir()
+    (irs / "AGENTS.md").write_text(
+        "---\nname: IRS Agent\ndescription: Tax helper\nsuggestions:\n  - How do I file?\n---\nbody"
+    )
+    fake_plan = gateway.GatewayPlan(backends=(
+        gateway.GatewayBackend(
+            hub_dir=irs, slug="irs", bridge_port=8000, api_key="k",
+            model_label="irs-agent", display_name="IRS Agent",
+            description="Tax helper", suggestions=("How do I file?",),
+        ),
+    ))
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+
+    def fake_start_gateway(**kwargs):
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        return proc
+    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
+
+    def fake_popen(cmd, env=None, **kw):
+        proc = MagicMock()
+        proc.poll.return_value = None
+        return proc
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
+    return irs
+
+
+def test_gateway_provisions_when_admin_creds_set(tmp_path, monkeypatch):
+    """With HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD in the env, the gateway
+    provisions per-hub OWUI entries after OWUI is up — passing each hub's
+    identity from the plan."""
+    from hubzoid import gateway_provision as gwp
+
+    irs = _gateway_harness(tmp_path, monkeypatch)
+    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
+    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
+
+    calls = {}
+
+    def fake_provision(*, base_url, email, password, hubs, client=None):
+        calls.update(base_url=base_url, email=email, password=password, hubs=hubs)
+        return ["irs-agent: created (group 'irs' has read access)"]
+    monkeypatch.setattr(gwp, "provision", fake_provision)
+
+    result = CliRunner().invoke(
+        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls["email"] == "admin@org.com"
+    assert calls["password"] == "s3cret"
+    spec = calls["hubs"][0]
+    assert spec.model_id == "irs-agent"
+    assert spec.group == "irs"
+    assert spec.suggestions == ("How do I file?",)
+    assert "created" in result.output
+
+
+def test_gateway_skips_provisioning_without_creds(tmp_path, monkeypatch):
+    """No admin creds -> provisioning is skipped entirely (today's behavior),
+    and the boot proceeds normally."""
+    from hubzoid import gateway_provision as gwp
+
+    irs = _gateway_harness(tmp_path, monkeypatch)
+    monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(gwp, "provision",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
+
+    result = CliRunner().invoke(
+        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_gateway_provisioning_failure_never_kills_boot(tmp_path, monkeypatch):
+    """Provisioning blowing up (bad creds, OWUI hiccup) logs a warning and the
+    gateway keeps running — it must never take the boot down."""
+    from hubzoid import gateway_provision as gwp
+
+    irs = _gateway_harness(tmp_path, monkeypatch)
+    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
+    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "wrong")
+    monkeypatch.setattr(gwp, "provision",
+                        lambda **kw: (_ for _ in ()).throw(gwp.ProvisionError("bad creds")))
+
+    result = CliRunner().invoke(
+        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "provision" in result.output.lower()
 
 
 def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):

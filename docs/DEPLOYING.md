@@ -371,9 +371,43 @@ This launches one headless bridge per hub (`hubzoid run <hub> --no-ui`, each
 on its hub's `BRIDGE_PORT` — keep them unique), then one Open WebUI connected
 to all of them, fronted by the edge router. Each hub becomes a selectable
 model. If the bridges already run as their own systemd units, add
-`--no-bridges` so the gateway only starts the shared UI.
+`--no-bridges` so the gateway only starts the shared UI — and set
+`HUBZOID_OWUI_DB=<data-dir>/webui.db` in each bridge's environment yourself
+(the gateway injects it automatically for bridges it launches; without it,
+restricted-tool group lookups read a per-hub DB that doesn't exist in
+gateway mode and every restricted tool is denied).
 
-**Per-team access (RBAC).** One OWUI, but each team sees only its agent:
+**Auto-provisioning (recommended).** Give the gateway an admin login and it
+sets each hub up in Open WebUI by itself, on every boot:
+
+```bash
+# in the environment the `hubzoid gateway` process inherits
+HUBZOID_GATEWAY_ADMIN_EMAIL=admin@example.com
+HUBZOID_GATEWAY_ADMIN_PASSWORD=<strong password>
+```
+
+On a fresh data dir this account is created as the first (admin) user; after
+that the same credentials are used to sign in. Once Open WebUI is up, the
+gateway then creates for every hub:
+
+* its **model entry** — picker name and `description:` from `AGENTS.md`,
+  quick-start **`suggestions:`** from `AGENTS.md`, and its avatar from
+  `<hub>/branding/logo.png` (raster formats only; SVG is not accepted as an
+  avatar) — so each agent looks like itself instead of a bare model id;
+* a **team group** named after the hub (its slug), with **read access** to
+  that model only.
+
+Your only manual step is adding people to their team's group in
+**Admin Panel → Users → Groups**. New hub in the command line → provisioned
+on next boot. Provisioning is idempotent and deliberately conservative:
+identity fields (name, description, suggestions, avatar) are refreshed from
+the hub every boot, but **access is only seeded when the model is first
+created** — ACL changes you make in the UI are never overwritten. It is also
+fail-safe: if provisioning can't run (bad credentials, OWUI hiccup), the
+gateway logs a warning and boots normally. Leave both variables unset to
+skip provisioning entirely.
+
+**Manual setup (no admin credentials).** The same result by hand:
 
 1. Turn on auth (`WEBUI_AUTH=true` + the block from [docs/auth.md](auth.md))
    on the gateway — set these in the environment the `hubzoid gateway`
@@ -382,13 +416,29 @@ model. If the bridges already run as their own systemd units, add
    `GPMS`, …) and add members.
 3. In **Workspace → Models**, open each agent's model, set **Access Control
    → Private**, and assign its team's group. Users outside the group won't
-   see it. (The gateway keeps `BYPASS_MODEL_ACCESS_CONTROL=False` by default so
-   these ACLs are enforced — do not set it to `True` here. Single-hub `hubzoid
-   run` defaults it to `True` instead, since a lone hub has one model and
-   nothing to scope.)
+   see it.
 
 These ACLs live in the shared OWUI database, so they survive restarts
 independently of `ENABLE_PERSISTENT_CONFIG`.
+
+**Model access control is forced on.** The gateway keeps
+`BYPASS_MODEL_ACCESS_CONTROL=False` so per-team ACLs are enforced — and it
+now *forces* that even if `BYPASS_MODEL_ACCESS_CONTROL=True` is in the
+inherited environment (that setting is the single-hub fix for the non-admin
+empty-model-list problem and must not leak into a gateway, where it would
+show every team every other team's agent; the gateway warns when it
+overrides). If you truly want an open gateway, set
+`HUBZOID_GATEWAY_ALLOW_BYPASS=1`. Single-hub `hubzoid run` is unchanged: it
+defaults the bypass to `True`, since a lone hub has one model and nothing to
+scope.
+
+**Gateway branding.** The shared chrome (login page, favicon, tab title) is
+org-level — one look for the whole gateway. Drop the same files a hub's
+`branding/` folder takes (see [docs/branding.md](branding.md)) into
+`<data-dir>/branding/` (default `./.hubzoid-gateway/branding/`). Unlike the
+single-hub chrome, the gateway keeps the **Workspace** nav visible — that is
+where admins manage groups and model access. Per-hub logos appear as each
+agent's avatar (from auto-provisioning above), not in the shared chrome.
 
 **Artifact downloads** route per hub: each bridge advertises
 `<public-url>/b/<hub-slug>` so its download links come back through the edge
