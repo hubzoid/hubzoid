@@ -398,10 +398,20 @@ def gateway(
     # Groups + per-model ACLs there) — unlike the single-hub baseline, which
     # hides it. No-op beyond baseline CSS when <data_dir>/branding/ is absent.
     # Per-hub identity belongs on the model avatar, not here: one shared chrome
-    # fronts N hubs, so the global logo is org-level by design.
+    # fronts N hubs, so the global logo is org-level by design. Best-effort:
+    # a read-only OWUI install (root-owned site-packages) must not stop the
+    # gateway from booting.
     from . import branding
-    for sd in branding.static_dirs():
-        branding.apply(gw_data, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+    try:
+        for sd in branding.static_dirs():
+            branding.apply(gw_data, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+    except OSError as exc:
+        console.print(f"[yellow]→ branding[/yellow]  skipped ({exc}); default look kept")
+
+    # Whether this boot starts from a fresh OWUI state dir. Decided BEFORE
+    # OWUI runs (it creates webui.db on boot): only a truly fresh dir may
+    # bootstrap the first admin account during provisioning below.
+    fresh_owui_db = not (gw_data / "webui.db").exists()
 
     procs: list[subprocess.Popen] = []
 
@@ -472,30 +482,48 @@ def gateway(
     # See hubzoid/gateway_provision.py for the overwrite policy.
     admin_email = os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL", "").strip()
     admin_password = os.environ.get("HUBZOID_GATEWAY_ADMIN_PASSWORD", "").strip()
-    if admin_email and admin_password and owui_ready:
-        from . import gateway_provision as gwp
-        specs = [
-            gwp.HubSpec(
-                model_id=b.model_label,
-                name=b.display_name or b.slug,
-                group=b.slug,
-                suggestions=b.suggestions,
-                description=b.description,
-                logo=b.logo,
+    auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in ("true", "1", "yes", "on")
+    if admin_email and admin_password:
+        if not auth_on:
+            # HARD prerequisite: with WEBUI_AUTH off, OWUI's signin ignores
+            # credentials and mints the well-known admin@localhost/'admin'
+            # account — a booby trap the moment auth is later enabled. Never
+            # provision in that mode.
+            console.print(
+                "[yellow]→ provision[/yellow]  skipped: provisioning needs "
+                "WEBUI_AUTH=true (see docs/auth.md); with auth off, Open WebUI "
+                "would create the default admin@localhost account instead of yours"
             )
-            for b in gp.backends
-        ]
-        try:
-            actions = gwp.provision(
-                base_url=f"http://{owui_probe}:{owui_port}",
-                email=admin_email,
-                password=admin_password,
-                hubs=specs,
+        elif not owui_ready:
+            console.print(
+                "[yellow]→ provision[/yellow]  skipped: Open WebUI is not ready; "
+                "will run on next boot"
             )
-            for a in actions:
-                console.print(f"[cyan]→ provision[/cyan]  {a}")
-        except Exception as exc:  # noqa: BLE001 — provisioning never kills the boot
-            console.print(f"[yellow]→ provision[/yellow]  skipped: {exc}")
+        else:
+            from . import gateway_provision as gwp
+            specs = [
+                gwp.HubSpec(
+                    model_id=b.model_label,
+                    name=b.display_name or b.slug,
+                    group=b.slug,
+                    suggestions=b.suggestions,
+                    description=b.description,
+                    logo=b.logo,
+                )
+                for b in gp.backends
+            ]
+            try:
+                actions = gwp.provision(
+                    base_url=f"http://{owui_probe}:{owui_port}",
+                    email=admin_email,
+                    password=admin_password,
+                    hubs=specs,
+                    allow_bootstrap=fresh_owui_db,
+                )
+                for a in actions:
+                    console.print(f"[cyan]→ provision[/cyan]  {a}")
+            except Exception as exc:  # noqa: BLE001 — provisioning never kills the boot
+                console.print(f"[yellow]→ provision[/yellow]  skipped: {exc}")
     elif admin_email or admin_password:
         console.print(
             "[yellow]→ provision[/yellow]  skipped: set BOTH "

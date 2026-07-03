@@ -107,10 +107,11 @@ def _specs(tmp_path, *, logo=False):
     ]
 
 
-def _provision(fake, hubs):
+def _provision(fake, hubs, *, allow_bootstrap=True):
     client = httpx.Client(transport=fake.transport(), base_url="http://gw:8080")
     return gwp.provision(base_url="http://gw:8080", email="a@x.com",
-                         password="pw", hubs=hubs, client=client)
+                         password="pw", hubs=hubs, client=client,
+                         allow_bootstrap=allow_bootstrap)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +216,43 @@ def test_provision_bad_credentials_raise(tmp_path):
     fake = FakeOWUI(users={"a@x.com": "OTHER"})   # wrong pw, signup refused
     with pytest.raises(gwp.ProvisionError):
         _provision(fake, _specs(tmp_path))
+
+
+def test_provision_established_gateway_never_signs_up(tmp_path):
+    """allow_bootstrap=False (data dir already had a webui.db): a failed signin
+    must raise a clear credential error WITHOUT attempting signup — otherwise a
+    typo'd password quietly creates a stray login-capable account."""
+    fake = FakeOWUI(users={"a@x.com": "OTHER"})
+    with pytest.raises(gwp.ProvisionError, match="sign in"):
+        _provision(fake, _specs(tmp_path), allow_bootstrap=False)
+    assert ("POST", "/api/v1/auths/signup") not in fake.requests
+
+
+def test_probe_error_takes_neither_create_nor_update_path(tmp_path):
+    """A transient probe failure (500) must NOT be read as 'model missing':
+    the create path re-sends access_grants and could clobber an admin's
+    hand-tightened ACL. Skip the hub this boot instead."""
+    fake = FakeOWUI(users={"a@x.com": "pw"}, fail_paths={"/api/v1/models/model"})
+    actions = _provision(fake, [gwp.HubSpec(model_id="irs-agent", name="IRS", group="irs")])
+    assert "irs-agent" not in fake.models
+    assert ("POST", "/api/v1/models/create") not in fake.requests
+    assert any("skip" in a.lower() for a in actions)
+
+
+def test_provision_update_removes_stale_identity_fields(tmp_path):
+    """AGENTS.md is the source of truth for identity: a description or
+    suggestions REMOVED from the hub disappear from OWUI on next boot
+    (admin-owned keys like capabilities still survive — see the merge test)."""
+    fake = FakeOWUI(users={"a@x.com": "pw"})
+    _provision(fake, _specs(tmp_path))       # seeds description + suggestions
+    fake.models["irs-agent"]["meta"]["capabilities"] = {"vision": True}
+
+    bare = [gwp.HubSpec(model_id="irs-agent", name="IRS Agent", group="irs")]
+    _provision(fake, bare)
+    meta = fake.models["irs-agent"]["meta"]
+    assert "description" not in meta
+    assert "suggestion_prompts" not in meta
+    assert meta["capabilities"] == {"vision": True}
 
 
 def test_provision_one_bad_hub_does_not_block_others(tmp_path):

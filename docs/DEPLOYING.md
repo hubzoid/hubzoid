@@ -375,19 +375,28 @@ model. If the bridges already run as their own systemd units, add
 `HUBZOID_OWUI_DB=<data-dir>/webui.db` in each bridge's environment yourself
 (the gateway injects it automatically for bridges it launches; without it,
 restricted-tool group lookups read a per-hub DB that doesn't exist in
-gateway mode and every restricted tool is denied).
+gateway mode and every restricted tool is denied). The gateway forwards the
+logged-in user's identity headers to bridges by default (access control
+needs them); set `ENABLE_FORWARD_USER_INFO_HEADERS=false` in the gateway's
+environment if your external bridges must not receive user emails.
 
 **Auto-provisioning (recommended).** Give the gateway an admin login and it
 sets each hub up in Open WebUI by itself, on every boot:
 
 ```bash
 # in the environment the `hubzoid gateway` process inherits
+WEBUI_AUTH=true                 # required — see docs/auth.md for the full block
+WEBUI_SECRET_KEY=<openssl rand -hex 32>
 HUBZOID_GATEWAY_ADMIN_EMAIL=admin@example.com
 HUBZOID_GATEWAY_ADMIN_PASSWORD=<strong password>
 ```
 
-On a fresh data dir this account is created as the first (admin) user; after
-that the same credentials are used to sign in. Once Open WebUI is up, the
+Provisioning **requires `WEBUI_AUTH=true`** (with auth off, Open WebUI
+ignores credentials and would mint its default `admin@localhost` account —
+hubzoid refuses to provision in that mode and says so at boot). On a fresh
+data dir the configured account is created as the first (admin) user; on an
+established gateway the same credentials sign in — a wrong password fails
+loudly rather than creating stray accounts. Once Open WebUI is up, the
 gateway then creates for every hub:
 
 * its **model entry** — picker name and `description:` from `AGENTS.md`,
@@ -401,11 +410,17 @@ Your only manual step is adding people to their team's group in
 **Admin Panel → Users → Groups**. New hub in the command line → provisioned
 on next boot. Provisioning is idempotent and deliberately conservative:
 identity fields (name, description, suggestions, avatar) are refreshed from
-the hub every boot, but **access is only seeded when the model is first
-created** — ACL changes you make in the UI are never overwritten. It is also
-fail-safe: if provisioning can't run (bad credentials, OWUI hiccup), the
-gateway logs a warning and boots normally. Leave both variables unset to
-skip provisioning entirely.
+the hub every boot — including removals, so deleting a `suggestions:` block
+or a logo clears it in Open WebUI too — but **access is only seeded when the
+model is first created**: ACL changes you make in the UI are never
+overwritten. It is also fail-safe: if provisioning can't run (bad
+credentials, OWUI hiccup), the gateway logs a warning and boots normally.
+Leave both variables unset to skip provisioning entirely.
+
+Every hub must surface as a **unique model id** (from its `AGENTS.md`
+`name:` or its `.env` `MODEL_LABEL`) — the gateway refuses to start when two
+hubs collide, because they would otherwise share one model entry and one
+team's chats could route to the other team's agent.
 
 **Manual setup (no admin credentials).** The same result by hand:
 

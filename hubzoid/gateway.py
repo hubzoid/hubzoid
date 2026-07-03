@@ -21,6 +21,7 @@ This module is pure planning — no processes are launched here. The CLI
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,13 +63,15 @@ class GatewayPlan:
             "ENABLE_OPENAI_API": "True",
             "OPENAI_API_BASE_URLS": ";".join(self.base_urls),
             "OPENAI_API_KEYS": ";".join(self.api_keys),
-            # Forward the logged-in user's identity to every bridge, exactly as
-            # the single-hub path does (webui.start). Without it OWUI never sends
+            # Forward the logged-in user's identity to every bridge, as the
+            # single-hub path does (webui.start). Without it OWUI never sends
             # X-OpenWebUI-User-Email, so the bridge derives an anonymous identity
             # and every restricted tool is denied ("anonymous") — access control
-            # is dead in gateway mode. See hubzoid.server._derive_identity and
-            # hubzoid.access.owui_groups.
-            "ENABLE_FORWARD_USER_INFO_HEADERS": "true",
+            # is dead in gateway mode. Defaults on, but an operator's explicit
+            # environment value wins (e.g. --no-bridges fronting external
+            # bridges that must not receive user PII).
+            "ENABLE_FORWARD_USER_INFO_HEADERS":
+                os.environ.get("ENABLE_FORWARD_USER_INFO_HEADERS", "true"),
         }
         labels = [b.model_label for b in self.backends if b.model_label]
         if labels:
@@ -114,6 +117,7 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     backends: list[GatewayBackend] = []
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
+    seen_labels: dict[str, Path] = {}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
         s = load(hub_dir)
@@ -131,13 +135,23 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         slug = base_slug if n == 0 else f"{base_slug}-{n + 1}"
 
         meta = _agent_meta(hub_dir)
+        label = s.model_label or _bridge_model_label(meta["fm_name"], hub_dir)
+        if label in seen_labels:
+            raise ValueError(
+                f"gateway: hubs {seen_labels[label].name} and {hub_dir.name} "
+                f"both surface as model '{label}'. Each hub must expose a "
+                "unique model id, or one team's chats would silently route to "
+                "the other team's agent. Give one of them a distinct `name:` "
+                "in AGENTS.md or a MODEL_LABEL in its .env."
+            )
+        seen_labels[label] = hub_dir
         backends.append(GatewayBackend(
             hub_dir=hub_dir,
             slug=slug,
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
-            model_label=s.model_label or _slugify(meta["name"]),
-            display_name=meta["name"],
+            model_label=label,
+            display_name=meta["fm_name"] or hub_dir.name,
             description=meta["description"],
             suggestions=meta["suggestions"],
             logo=_find_logo(hub_dir),
@@ -145,22 +159,35 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     return GatewayPlan(backends=tuple(backends))
 
 
+def _bridge_model_label(fm_name: str | None, hub_dir: Path) -> str:
+    """The model id THE BRIDGE will report at /v1/models, derived with the
+    bridge's own functions (loaders.agents name fallback + server slugify) so
+    the provisioned OWUI entry and the live connection model can never drift
+    apart on fallback names."""
+    from .loaders.agents import _safe_id
+    from .server import _slugify as server_slugify
+    return server_slugify(fm_name or _safe_id(hub_dir.name))
+
+
 def _agent_meta(hub_dir: Path) -> dict:
     """Best-effort hub identity from AGENTS.md frontmatter. Never raises:
-    a missing/broken AGENTS.md yields folder-name + empty fields, matching
-    the fail-safe posture of everything provisioning-related."""
+    a missing/broken AGENTS.md yields fm_name=None + empty fields, matching
+    the fail-safe posture of everything provisioning-related. fm_name stays
+    None when frontmatter has no `name:` so callers can apply the SAME
+    fallback the bridge applies (see _bridge_model_label)."""
     from . import frontmatter as fm
-    name, description, suggestions = hub_dir.name, "", ()
+    fm_name, description, suggestions = None, "", ()
     try:
         data, _ = fm.read(hub_dir / "AGENTS.md")
-        name = str(data.get("name") or hub_dir.name)
+        raw_name = data.get("name")
+        fm_name = str(raw_name) if raw_name else None
         description = str(data.get("description") or "")
         raw = data.get("suggestions") or []
         if isinstance(raw, list):
             suggestions = tuple(str(s) for s in raw if str(s).strip())
     except Exception:  # noqa: BLE001
         pass
-    return {"name": name, "description": description, "suggestions": suggestions}
+    return {"fm_name": fm_name, "description": description, "suggestions": suggestions}
 
 
 def _find_logo(hub_dir: Path) -> Path | None:
