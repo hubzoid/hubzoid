@@ -34,6 +34,8 @@ class GatewayBackend:
     bridge_port: int
     api_key: str       # the bridge's first BRIDGE_API_KEYS entry
     model_label: str   # what /v1/models reports (best-effort, for display)
+    mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
+    mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
 
 
 @dataclass(frozen=True)
@@ -61,10 +63,13 @@ class GatewayPlan:
         return env
 
     def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
-        """Per-hub artifact routes for the edge: /b/<slug>/artifacts -> bridge.
+        """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
+        /b/<slug>/mcp for MCP-enabled hubs.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
-        `/artifacts/...` path.
+        `/artifacts/...` (or `/mcp`) path. Only MCP-enabled hubs get an /mcp
+        route — the bridge wouldn't serve it anyway, but the edge should not
+        even forward the path.
         """
         routes = []
         for b in self.backends:
@@ -74,7 +79,20 @@ class GatewayPlan:
                 "upstream": f"http://127.0.0.1:{b.bridge_port}",
                 "strip_prefix": base,
             })
+            if b.mcp:
+                routes.append({
+                    "prefix": base + "/mcp",
+                    "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                    "strip_prefix": base,
+                })
         return routes
+
+    @property
+    def any_mcp(self) -> bool:
+        """True when at least one fronted hub serves /mcp — the gateway then
+        enables OWUI per-user API-key minting (locked to deny-all inside
+        OWUI; see webui._MCP_API_KEY_ENV)."""
+        return any(b.mcp for b in self.backends)
 
     def public_url_for(self, public_base: str, backend: GatewayBackend) -> str:
         """The HUBZOID_PUBLIC_URL a given bridge should advertise, so its
@@ -121,8 +139,36 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
             model_label=s.model_label or _slugify(_agent_name(hub_dir)),
+            mcp=_mcp_enabled(hub_dir),
+            mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
         ))
     return GatewayPlan(backends=tuple(backends))
+
+
+def _own_env_value(hub_dir: Path, key: str) -> str:
+    """A value from this hub's own `.env` file — and only from there.
+
+    Read with `dotenv_values` (no process-env mutation) instead of
+    `settings.load`: the plan loop loads N hubs' .env files into os.environ
+    sequentially with override=True, so a value left behind by hub A would
+    bleed into hub B's settings if we read the environment here. MCP flags
+    must never leak across hubs, so they are per-file only in gateway mode.
+    (A bridge process reads them normally via settings.load — one process,
+    one hub, no bleed.)
+    """
+    from dotenv import dotenv_values
+
+    env_path = Path(hub_dir) / ".env"
+    if not env_path.is_file():
+        return ""
+    return ((dotenv_values(env_path) or {}).get(key) or "").strip()
+
+
+def _mcp_enabled(hub_dir: Path) -> bool:
+    """Whether this hub's own `.env` sets MCP_SERVER=true."""
+    from . import settings as settingslib
+
+    return settingslib.truthy(_own_env_value(hub_dir, "MCP_SERVER"))
 
 
 def _agent_name(hub_dir: Path) -> str:

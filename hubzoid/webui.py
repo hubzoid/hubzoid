@@ -49,7 +49,8 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_FOLLOW_UP_GENERATION": _OFF,     # post-reply suggestion chips: extra LLM call per turn + on refresh
     "ENABLE_AUTOCOMPLETE_GENERATION": _OFF,  # input-box autocomplete: extra LLM call on typing pause
     "ENABLE_RETRIEVAL_QUERY_GENERATION": _OFF, # RAG query rewriter: not used (hubzoid doesn't RAG)
-    "ENABLE_API_KEY": _OFF,                  # per-user API keys defeat auth
+    "ENABLE_API_KEY": _OFF,                  # per-user API keys defeat auth (name on OWUI <=0.9.5)
+    "ENABLE_API_KEYS": _OFF,                 # same toggle, renamed in OWUI 0.9.6+
     "ENABLE_VERSION_UPDATE_CHECK": _OFF,     # do not phone home from customer prod
     "ENABLE_MEMORY": _OFF,                   # OWUI's user-memory conflicts with hubzoid memory
     "ENABLE_OLLAMA_API": _OFF,               # we do not proxy ollama
@@ -95,6 +96,27 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_MESSAGE_RATING": _ON,            # thumbs up/down
     "ENABLE_TITLE_GENERATION": _ON,          # auto chat titles
     "ENABLE_ADMIN_EXPORT": _ON,              # chat-history export for admins
+}
+
+# Env flipped on when a hub enables the hosted MCP server (MCP_SERVER=true).
+# Users mint per-user API keys in OWUI (Settings -> Account -> API keys) and
+# present them as Bearer tokens on /mcp. The endpoint-restriction pair with an
+# EMPTY allowlist makes OWUI 403 every API request authenticated by key —
+# verified in OWUI 0.9.6 source (utils/auth.py, get_current_user_by_api_key):
+# the key mints fine but is inert against OWUI itself, so the original
+# "per-user API keys defeat auth" concern stays honored. The key is an
+# identity credential for the MCP surface only (hubzoid.access.owui_api_keys
+# resolves it read-only against OWUI's DB). Both spellings: OWUI renamed the
+# vars in 0.9.6 (plural) but still falls back to the singular forms for the
+# restriction pair. `setdefault` as everywhere — the operator's .env wins.
+_MCP_API_KEY_ENV: dict[str, str] = {
+    "ENABLE_API_KEY": _ON,
+    "ENABLE_API_KEYS": _ON,
+    "USER_PERMISSIONS_FEATURES_API_KEYS": _ON,   # non-admins may mint keys; scope per-group in the admin panel instead if wanted
+    "ENABLE_API_KEY_ENDPOINT_RESTRICTIONS": _ON,
+    "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS": _ON,
+    "API_KEY_ALLOWED_ENDPOINTS": "",             # empty allowlist = deny-all inside OWUI
+    "API_KEYS_ALLOWED_ENDPOINTS": "",
 }
 
 
@@ -328,6 +350,7 @@ def start(
     webui_name: str | None,
     suggestions: list[str] | None = None,
     response_watermark: str | None = None,
+    enable_api_keys: bool = False,
 ) -> subprocess.Popen:
     """Spawn Open WebUI as a subprocess. Returns the Popen handle.
 
@@ -361,6 +384,7 @@ def start(
         # user gets an empty model selector → "Model not selected". Nothing to
         # scope at the model level in a single hub, so bypass by default.
         bypass_model_access_control=True,
+        enable_api_keys=enable_api_keys,
     )
 
 
@@ -373,6 +397,7 @@ def start_gateway(
     webui_name: str | None = None,
     response_watermark: str | None = None,
     suggestions: list[str] | None = None,
+    enable_api_keys: bool = False,
 ) -> subprocess.Popen:
     """Spawn ONE Open WebUI fronting many bridges (the `hubzoid gateway` path).
 
@@ -394,6 +419,7 @@ def start_gateway(
         # Bypassing model access control would let every user see every team's
         # model, so it stays OFF here. Operators can override in the env.
         bypass_model_access_control=False,
+        enable_api_keys=enable_api_keys,
     )
 
 
@@ -407,6 +433,7 @@ def _spawn_owui(
     response_watermark: str,
     suggestions: list[str] | None,
     bypass_model_access_control: bool = False,
+    enable_api_keys: bool = False,
 ) -> subprocess.Popen:
     """Shared Open WebUI launcher for both `start` and `start_gateway`.
 
@@ -454,7 +481,14 @@ def _spawn_owui(
         payload = [{"content": s} for s in suggestions if s]
         env.setdefault("DEFAULT_PROMPT_SUGGESTIONS", json.dumps(payload))
 
-    # 5. The big strip. Apply hubzoid defaults; operator .env wins.
+    # 5. MCP credential minting. Must precede the defaults loop: both write
+    # the ENABLE_API_KEY* names via setdefault, and the _ON set only wins by
+    # getting there first. Operator .env still beats both.
+    if enable_api_keys:
+        for key, value in _MCP_API_KEY_ENV.items():
+            env.setdefault(key, value)
+
+    # 6. The big strip. Apply hubzoid defaults; operator .env wins.
     for key, value in _DEFAULT_OWUI_ENV.items():
         env.setdefault(key, value)
 
@@ -466,7 +500,7 @@ def _spawn_owui(
     # => an operator's explicit .env value wins either way.
     env.setdefault("BYPASS_MODEL_ACCESS_CONTROL", _ON if bypass_model_access_control else _OFF)
 
-    # 6. Refuse to boot if auth is on with an unsafe config.
+    # 7. Refuse to boot if auth is on with an unsafe config.
     _validate_auth_env(env)
 
     log_path = data_dir / "openwebui.log"

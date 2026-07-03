@@ -301,3 +301,46 @@ def test_ui_host_arbitrary_address(captured_cmd, tmp_path):
     _start_for_cmd(tmp_path, ui_host="192.168.1.42")
     cmd = captured_cmd[0]
     assert cmd[cmd.index("--host") + 1] == "192.168.1.42"
+
+
+# ---------------------------------------------------------------------------
+# MCP api-key minting (MCP_SERVER=true flips per-user keys on, deny-all)
+# ---------------------------------------------------------------------------
+_MCP_KEY_FLAGS = [
+    "ENABLE_API_KEY",
+    "ENABLE_API_KEYS",
+    "USER_PERMISSIONS_FEATURES_API_KEYS",
+    "ENABLE_API_KEY_ENDPOINT_RESTRICTIONS",
+    "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS",
+]
+
+
+def test_api_keys_stay_off_by_default(captured_env, tmp_path, monkeypatch):
+    for flag in _MCP_KEY_FLAGS + ["API_KEY_ALLOWED_ENDPOINTS", "API_KEYS_ALLOWED_ENDPOINTS"]:
+        monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["ENABLE_API_KEY"] == "False"
+    assert env["ENABLE_API_KEYS"] == "False"
+
+
+@pytest.mark.parametrize("flag", _MCP_KEY_FLAGS)
+def test_enable_api_keys_flips_minting_on(captured_env, tmp_path, flag, monkeypatch):
+    monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path, enable_api_keys=True)
+    assert env[flag] == "True"
+
+
+def test_enable_api_keys_locks_owui_endpoints_to_deny_all(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("API_KEY_ALLOWED_ENDPOINTS", raising=False)
+    monkeypatch.delenv("API_KEYS_ALLOWED_ENDPOINTS", raising=False)
+    env = _start(captured_env, tmp_path, enable_api_keys=True)
+    # Empty allowlist + restrictions on => OWUI 403s every key-authenticated
+    # request; the key is an MCP credential only.
+    assert env["API_KEY_ALLOWED_ENDPOINTS"] == ""
+    assert env["API_KEYS_ALLOWED_ENDPOINTS"] == ""
+
+
+def test_operator_env_beats_mcp_key_defaults(captured_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("ENABLE_API_KEYS", "False")
+    env = _start(captured_env, tmp_path, enable_api_keys=True)
+    assert env["ENABLE_API_KEYS"] == "False"

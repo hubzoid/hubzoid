@@ -44,6 +44,7 @@ dependencies = [
   "claude-agent-sdk>=0.1.0",
   "open-webui>=0.6",
   "fastapi>=0.115",
+  "fastmcp>=3.4,<4",        # mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.37",        # edge.py reverse-proxy app
   "uvicorn[standard]>=0.30",
   "httpx>=0.27",
