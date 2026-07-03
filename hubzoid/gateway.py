@@ -21,6 +21,7 @@ This module is pure planning — no processes are launched here. The CLI
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,14 @@ class GatewayBackend:
     model_label: str   # what /v1/models reports (best-effort, for display)
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
     mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
+    # Per-hub display identity, read from AGENTS.md frontmatter + branding/.
+    # Consumed by gateway_provision to seed each hub's Open WebUI model entry
+    # (picker name, description, quick-start suggestions, avatar). All optional;
+    # empty defaults mean "provision skips that field", never an error.
+    display_name: str = ""       # AGENTS.md `name:`, falls back to folder name
+    description: str = ""        # AGENTS.md `description:`
+    suggestions: tuple[str, ...] = ()  # AGENTS.md `suggestions:` list
+    logo: Path | None = None     # <hub>/branding/ logo file, if any
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,15 @@ class GatewayPlan:
             "ENABLE_OPENAI_API": "True",
             "OPENAI_API_BASE_URLS": ";".join(self.base_urls),
             "OPENAI_API_KEYS": ";".join(self.api_keys),
+            # Forward the logged-in user's identity to every bridge, as the
+            # single-hub path does (webui.start). Without it OWUI never sends
+            # X-OpenWebUI-User-Email, so the bridge derives an anonymous identity
+            # and every restricted tool is denied ("anonymous") — access control
+            # is dead in gateway mode. Defaults on, but an operator's explicit
+            # environment value wins (e.g. --no-bridges fronting external
+            # bridges that must not receive user PII).
+            "ENABLE_FORWARD_USER_INFO_HEADERS":
+                os.environ.get("ENABLE_FORWARD_USER_INFO_HEADERS", "true"),
         }
         labels = [b.model_label for b in self.backends if b.model_label]
         if labels:
@@ -117,6 +135,7 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     backends: list[GatewayBackend] = []
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
+    seen_labels: dict[str, Path] = {}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
         s = load(hub_dir)
@@ -133,14 +152,29 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         seen_slugs[base_slug] = n + 1
         slug = base_slug if n == 0 else f"{base_slug}-{n + 1}"
 
+        meta = _agent_meta(hub_dir)
+        label = s.model_label or _bridge_model_label(meta["fm_name"], hub_dir)
+        if label in seen_labels:
+            raise ValueError(
+                f"gateway: hubs {seen_labels[label].name} and {hub_dir.name} "
+                f"both surface as model '{label}'. Each hub must expose a "
+                "unique model id, or one team's chats would silently route to "
+                "the other team's agent. Give one of them a distinct `name:` "
+                "in AGENTS.md or a MODEL_LABEL in its .env."
+            )
+        seen_labels[label] = hub_dir
         backends.append(GatewayBackend(
             hub_dir=hub_dir,
             slug=slug,
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
-            model_label=s.model_label or _slugify(_agent_name(hub_dir)),
+            model_label=label,
             mcp=_mcp_enabled(hub_dir),
             mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
+            display_name=meta["fm_name"] or hub_dir.name,
+            description=meta["description"],
+            suggestions=meta["suggestions"],
+            logo=_find_logo(hub_dir),
         ))
     return GatewayPlan(backends=tuple(backends))
 
@@ -171,12 +205,50 @@ def _mcp_enabled(hub_dir: Path) -> bool:
     return settingslib.truthy(_own_env_value(hub_dir, "MCP_SERVER"))
 
 
-def _agent_name(hub_dir: Path) -> str:
-    """Best-effort hub agent name from AGENTS.md frontmatter; falls back to
-    the folder name. Used only as a display label."""
+def _bridge_model_label(fm_name: str | None, hub_dir: Path) -> str:
+    """The model id THE BRIDGE will report at /v1/models, derived with the
+    bridge's own functions (loaders.agents name fallback + server slugify) so
+    the provisioned OWUI entry and the live connection model can never drift
+    apart on fallback names."""
+    from .loaders.agents import _safe_id
+    from .server import _slugify as server_slugify
+    return server_slugify(fm_name or _safe_id(hub_dir.name))
+
+
+def _agent_meta(hub_dir: Path) -> dict:
+    """Best-effort hub identity from AGENTS.md frontmatter. Never raises:
+    a missing/broken AGENTS.md yields fm_name=None + empty fields, matching
+    the fail-safe posture of everything provisioning-related. fm_name stays
+    None when frontmatter has no `name:` so callers can apply the SAME
+    fallback the bridge applies (see _bridge_model_label)."""
     from . import frontmatter as fm
+    fm_name, description, suggestions = None, "", ()
     try:
         data, _ = fm.read(hub_dir / "AGENTS.md")
-        return str(data.get("name") or hub_dir.name)
+        raw_name = data.get("name")
+        fm_name = str(raw_name) if raw_name else None
+        description = str(data.get("description") or "")
+        raw = data.get("suggestions") or []
+        if isinstance(raw, list):
+            suggestions = tuple(str(s) for s in raw if str(s).strip())
     except Exception:  # noqa: BLE001
-        return hub_dir.name
+        pass
+    return {"fm_name": fm_name, "description": description, "suggestions": suggestions}
+
+
+def _find_logo(hub_dir: Path) -> Path | None:
+    """The hub's raster logo for use as its Open WebUI model avatar.
+
+    Only raster formats OWUI's profile-image validator accepts (it rejects
+    SVG data-URIs as script-capable). Prefers logo.* over favicon.*.
+    """
+    branding_dir = hub_dir / "branding"
+    if not branding_dir.is_dir():
+        return None
+    files = {e.name.lower(): e for e in branding_dir.iterdir() if e.is_file()}
+    for stem in ("logo", "favicon"):
+        for ext in ("png", "webp", "jpg", "jpeg", "gif"):
+            match = files.get(f"{stem}.{ext}")
+            if match is not None:
+                return match
+    return None
