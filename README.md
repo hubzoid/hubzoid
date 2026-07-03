@@ -270,6 +270,38 @@ Edit `demo-hub/connectors/.mcp.json` (or whatever your hub is named):
 boot. The same `.mcp.json` is honored by both the OpenAI Agents and
 Claude Agent runtimes.
 
+## MCP server — serve your hub
+
+The inverse direction: a hub can *be* an MCP server, so people connect
+from their own AI (Claude Code, Cursor, …) and use the hub's tools and
+knowledge with their own model — bring your own intelligence, the hub
+provides context.
+
+```dotenv
+# <hub>/.env
+MCP_SERVER=true
+```
+
+The bridge then serves Streamable HTTP MCP at `/mcp` (public via the edge;
+`/b/<hub>/mcp` per hub in gateway mode). Users mint their own credential in
+Open WebUI (Settings → Account → API keys) and connect:
+
+```bash
+claude mcp add --transport http myhub https://hub.example.com/mcp \
+  --header "Authorization: Bearer sk-..."
+```
+
+Every call runs under the caller's identity: their OWUI API key resolves to
+their email and groups, `restricted/` tools follow the same group rules as
+chat, and every decision is audited. In gateway mode set
+`MCP_ACCESS_GROUP=<owui-group>` per hub to gate the whole surface to one
+team. The connecting agent receives the hub's `AGENTS.md` (or the
+`mcp_instructions:` frontmatter override) as MCP instructions at connect
+time. Details: [docs/mcp-server.md](docs/mcp-server.md).
+
+> Hubzoid Enterprise feature (`mcp` entitlement) — free for development,
+> notice-only in production. See [LICENSING.md](LICENSING.md).
+
 ## Branding and UI
 
 Hubzoid passes ~24 env vars to Open WebUI to strip platform surfaces
@@ -410,7 +442,7 @@ The repo ships with `demo-hub/` at the root as a working starter. Its
 |---|---|
 | [AGENTS.md](https://agents.md) | `<hub>/AGENTS.md`, `<hub>/agents/<n>/AGENTS.md` |
 | SKILL.md | `<hub>/skills/<n>/SKILL.md` |
-| [MCP](https://modelcontextprotocol.io) | `<hub>/connectors/.mcp.json` |
+| [MCP](https://modelcontextprotocol.io) | `<hub>/connectors/.mcp.json` (consume) · `/mcp` endpoint (serve, `MCP_SERVER=true`) |
 
 Hubs are portable across any tool that adopts these specs (Claude Code,
 Cursor, Codex, Copilot, Gemini CLI, VS Code).
