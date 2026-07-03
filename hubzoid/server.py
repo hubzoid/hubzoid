@@ -71,6 +71,15 @@ def build_app() -> FastAPI:
     # with whatever arrives next — the gate is at start, not for the duration).
     inflight = _InFlight()
 
+    # Hosted MCP surface (MCP_SERVER=true): external clients bring their own
+    # model and use this hub's tools/knowledge, authenticated per-user with
+    # OWUI API keys. Mounted as a root sub-app below; its lifespan (the
+    # Streamable HTTP session manager) is composed into ours.
+    mcp_app = None
+    if settings.mcp_server:
+        from . import mcp_server as mcp_server_lib
+        mcp_app = mcp_server_lib.build_mcp_app(hub_dir, settings=settings)
+
     from contextlib import asynccontextmanager
 
     from . import scheduler as scheduler_lib
@@ -86,7 +95,14 @@ def build_app() -> FastAPI:
         sched.start()   # no-op when <hub>/schedule/ is empty or disabled
         app.state.scheduler = sched
         try:
-            yield
+            if mcp_app is not None:
+                # Without this the MCP session manager never starts and
+                # every /mcp request 500s (the documented FastMCP mounting
+                # pitfall).
+                async with mcp_app.lifespan(mcp_app):
+                    yield
+            else:
+                yield
         finally:
             await sched.stop()
             await rt.aclose()
@@ -234,6 +250,14 @@ def build_app() -> FastAPI:
         target.parent.mkdir(parents=True, exist_ok=True)
         uploads_lib.write_with_meta(upload_dir, safe_name, body, mime=mime)
         return JSONResponse({"chat_id": safe_chat, "filename": safe_name, "size": len(body)})
+
+    if mcp_app is not None:
+        # Root-mount, registered last: the sub-app's only route is /mcp, so
+        # every real bridge route above matches first and unmatched paths get
+        # the sub-app's 404 instead of FastAPI's (cosmetic difference only).
+        # Mounting at "/mcp" instead would serve the endpoint at /mcp/ and
+        # 307-redirect POST /mcp, which not every MCP client follows.
+        app.mount("/", mcp_app)
 
     return app
 

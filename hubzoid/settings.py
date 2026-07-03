@@ -63,6 +63,19 @@ Environment variables explicitly supported:
                              every surface (verbose; useful for debugging).
                            off -> emit nothing.
                          Aliases: true->compact, false/hide->off, inline->full.
+  MCP_SERVER             true | false (default). Serve this hub as a hosted
+                         MCP server at /mcp on the bridge (exposed publicly by
+                         the edge). External MCP clients (Claude Code, Cursor)
+                         authenticate with the caller's own Open WebUI API key
+                         and get the hub's tools + knowledge under the same
+                         per-group access rules as chat. Enterprise feature
+                         (notice-only). See docs/mcp-server.md.
+  MCP_ACCESS_GROUP       Optional OWUI group name gating the WHOLE /mcp
+                         surface: only members get past auth (401 otherwise).
+                         Essential in gateway mode, where one shared user DB
+                         backs every hub — without it, any logged-in user of
+                         any team can reach this hub's unrestricted tools and
+                         knowledge. Unset = every authenticated OWUI user.
 """
 from __future__ import annotations
 
@@ -92,6 +105,8 @@ class Settings:
     reasoning_effort: str | None = None
     thinking_mode: str = "indicator"
     show_tools: str = "compact"
+    mcp_server: bool = False
+    mcp_access_group: str | None = None
 
     @property
     def first_api_key(self) -> str:
@@ -133,7 +148,14 @@ def load(hub_dir: Path) -> Settings:
         reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
         thinking_mode=reasoninglib.normalize_thinking(os.environ.get("SHOW_THINKING")),
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
+        mcp_server=truthy(os.environ.get("MCP_SERVER")),
+        mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
     )
+
+
+def truthy(raw: str | None) -> bool:
+    """The single yes/no rule for hubzoid boolean env vars."""
+    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _int_env(name: str, default: int) -> int:

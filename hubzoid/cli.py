@@ -274,6 +274,9 @@ def run(
                 model_label=settings.model_label or main_name,
                 webui_name=resolved_webui_name,
                 suggestions=suggestions,
+                # MCP callers authenticate with per-user OWUI api keys, so the
+                # minting UI must exist (keys stay deny-all inside OWUI).
+                enable_api_keys=settings.mcp_server,
             )
             log_path = getattr(ui_proc, "_log_path", None)
             console.print(f"[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
@@ -290,16 +293,25 @@ def run(
                 # Start the public-facing edge router in front of bridge + OWUI.
                 edge_env = os.environ.copy()
                 edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
-                edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps([
+                edge_routes = [
                     {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"}
-                ])
+                ]
+                if settings.mcp_server:
+                    # The hosted MCP surface is the one other bridge path that
+                    # is public by design (per-user OWUI api-key auth; /v1
+                    # stays loopback-only).
+                    edge_routes.append(
+                        {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
+                    )
+                edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
                 edge_cmd = [
                     sys.executable, "-m", "uvicorn",
                     "hubzoid.edge:_factory", "--factory",
                     "--host", host, "--port", str(ui_port),
                     "--log-level", settings.log_level,
                 ]
-                console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  (/artifacts → bridge :{br_port}, else → owui :{owui_port})")
+                edge_paths = "/artifacts + /mcp" if settings.mcp_server else "/artifacts"
+                console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  ({edge_paths} → bridge :{br_port}, else → owui :{owui_port})")
                 edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
                 edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
                 if owui_ready and edge_ready and edge_proc.poll() is None:
@@ -398,6 +410,18 @@ def gateway(
             # own .env doesn't already pin HUBZOID_PUBLIC_URL.
             if pub:
                 bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
+            # Users/groups/api-keys live in the SHARED gateway DB, not in
+            # <hub>/.openwebui-data (which never exists in gateway mode) —
+            # point access-control lookups (owui_groups, owui_api_keys) at it.
+            bridge_env["HUBZOID_OWUI_DB"] = str(gw_data / "webui.db")
+            # Pin the MCP flags per hub. plan() read each hub's own .env
+            # file; the plan loop also loaded every .env into THIS process's
+            # env (override=True), so values left behind by hub A would
+            # otherwise leak into hub B's bridge via os.environ.copy(). The
+            # hub's own .env still wins inside the bridge (settings.load
+            # overrides), so this only settles the .env-less inheritance.
+            bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
+            bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
             cmd = [
                 sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
                 "--no-ui", "--bridge-port", str(b.bridge_port),
@@ -425,6 +449,9 @@ def gateway(
             ui_host=owui_host,
             connection_env=gp.connection_env(),
             webui_name=name,
+            # Any MCP-enabled hub needs users to mint per-user api keys in
+            # the shared OWUI (keys stay deny-all inside OWUI itself).
+            enable_api_keys=gp.any_mcp,
         )
     except FileNotFoundError as exc:
         console.print(f"[yellow]{exc}[/yellow]")

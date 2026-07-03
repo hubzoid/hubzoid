@@ -18,10 +18,13 @@ from __future__ import annotations
 from .identity import Identity, normalize
 
 # Surfaces that may reach restricted tools. Open WebUI is the verified-login
-# surface; `web`/`api` are aliases for direct authenticated callers. Slack,
-# Telegram and scheduled runs are deliberately absent. Override per deployment
-# with HUBZOID_RESTRICTED_SURFACES (comma-separated), read in guard.py.
-DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api"})
+# surface; `web`/`api` are aliases for direct authenticated callers; `mcp` is
+# the hosted MCP server, where the caller authenticated with their own OWUI
+# API key (a per-person verified login, unlike Slack's shared bot token).
+# Slack, Telegram and scheduled runs are deliberately absent. Override per
+# deployment with HUBZOID_RESTRICTED_SURFACES (comma-separated), read in
+# guard.py.
+DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp"})
 
 
 def is_allowed(
