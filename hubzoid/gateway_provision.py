@@ -81,15 +81,22 @@ def provision(
     email: str,
     password: str,
     hubs: list[HubSpec],
+    allow_bootstrap: bool = False,
     client: httpx.Client | None = None,
 ) -> list[str]:
     """Provision every hub's model entry + team group. Returns action lines
-    for the console (one per hub: created / refreshed / skipped)."""
+    for the console (one per hub: created / refreshed / skipped).
+
+    `allow_bootstrap` should be True only on a FRESH data dir (no webui.db
+    before this boot): it permits the first-user signup that OWUI promotes to
+    admin. On an established gateway it stays False so a wrong password fails
+    loudly instead of quietly signing up a stray account.
+    """
     own_client = client is None
     if client is None:
         client = httpx.Client(base_url=base_url, timeout=15.0)
     try:
-        token = _signin_or_bootstrap(client, email, password)
+        token = _signin_or_bootstrap(client, email, password, allow_bootstrap)
         headers = {"Authorization": f"Bearer {token}"}
         groups = _group_ids(client, headers)
 
@@ -106,21 +113,25 @@ def provision(
             client.close()
 
 
-def _signin_or_bootstrap(client: httpx.Client, email: str, password: str) -> str:
-    """Admin token via signin; on a fresh DB fall back to first-user signup
-    (which OWUI auto-promotes to admin)."""
-    r = client.post("/api/v1/auths/signin", json={"email": email, "password": password})
-    if r.status_code == 200:
-        return r.json()["token"]
-    r = client.post(
-        "/api/v1/auths/signup",
-        json={"name": "Hubzoid Admin", "email": email, "password": password},
-    )
-    if r.status_code == 200:
-        log.info("provision: bootstrapped first admin %s", email)
-        return r.json()["token"]
+def _signin_or_bootstrap(client: httpx.Client, email: str, password: str,
+                         allow_bootstrap: bool) -> str:
+    """Admin token via signin; only on a fresh data dir (allow_bootstrap) fall
+    back to first-user signup, which OWUI auto-promotes to admin. On an
+    established gateway a signin failure is a credential problem — surfaced,
+    never papered over with a signup that would create a stray account."""
+    signin = client.post("/api/v1/auths/signin", json={"email": email, "password": password})
+    if signin.status_code == 200:
+        return signin.json()["token"]
+    if allow_bootstrap:
+        signup = client.post(
+            "/api/v1/auths/signup",
+            json={"name": "Hubzoid Admin", "email": email, "password": password},
+        )
+        if signup.status_code == 200:
+            log.info("provision: bootstrapped first admin %s", email)
+            return signup.json()["token"]
     raise ProvisionError(
-        f"cannot sign in to Open WebUI as {email} (HTTP {r.status_code}); "
+        f"cannot sign in to Open WebUI as {email} (signin HTTP {signin.status_code}); "
         "check HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD"
     )
 
@@ -182,8 +193,17 @@ def _provision_hub(client: httpx.Client, headers: dict, groups: dict[str, str],
                    hub: HubSpec) -> str:
     gid = _ensure_group(client, headers, groups, hub)
 
+    # Existence probe. Strictly 200 = exists, 404 = missing; anything else
+    # (500 while the DB warms, an auth blip, a proxy 502) raises and skips
+    # this hub for THIS boot — misreading an error as "missing" would take
+    # the create path, whose access_grants could clobber an admin's ACL.
     r = client.get("/api/v1/models/model", params={"id": hub.model_id}, headers=headers)
-    existing = r.json() if r.status_code == 200 else None
+    if r.status_code == 200:
+        existing = r.json()
+    elif r.status_code == 404:
+        existing = None
+    else:
+        r.raise_for_status()
 
     if existing is None:
         # First boot for this hub: model row + private ACL (its group reads).
@@ -202,12 +222,19 @@ def _provision_hub(client: httpx.Client, headers: dict, groups: dict[str, str],
         return f"{hub.model_id}: created (group '{hub.group}' has read access)"
 
     # Later boots: refresh identity, merge admin meta, NEVER send
-    # access_grants (None = OWUI leaves the grants untouched).
+    # access_grants (None = OWUI leaves the grants untouched). Identity keys
+    # are cleared before merging so a field REMOVED from AGENTS.md (or a
+    # deleted logo) also disappears here — the hub is the source of truth for
+    # its identity; everything else in meta stays the admin's.
+    merged_meta = dict(existing.get("meta") or {})
+    for key in ("description", "suggestion_prompts", "profile_image_url"):
+        merged_meta.pop(key, None)
+    merged_meta.update(_identity_meta(hub))
     form = {
         "id": hub.model_id,
         "base_model_id": existing.get("base_model_id"),
         "name": hub.name,
-        "meta": {**(existing.get("meta") or {}), **_identity_meta(hub)},
+        "meta": merged_meta,
         "params": existing.get("params") or {},
         "access_grants": None,
         "is_active": existing.get("is_active", True),

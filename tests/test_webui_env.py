@@ -233,6 +233,25 @@ def test_gateway_bypass_escape_hatch(captured_env, tmp_path, monkeypatch):
     assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "True"
 
 
+def test_gateway_allow_bypass_alone_opens_the_gateway(captured_env, tmp_path, monkeypatch):
+    """Docs say HUBZOID_GATEWAY_ALLOW_BYPASS=1 gives an open gateway — the flag
+    alone must suffice, without also having to know about
+    BYPASS_MODEL_ACCESS_CONTROL."""
+    monkeypatch.delenv("BYPASS_MODEL_ACCESS_CONTROL", raising=False)
+    monkeypatch.setenv("HUBZOID_GATEWAY_ALLOW_BYPASS", "1")
+    env = _start_gateway(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "True"
+
+
+def test_gateway_allow_bypass_respects_explicit_off(captured_env, tmp_path, monkeypatch):
+    """Contradictory config (allow flag + explicit BYPASS=False): the explicit
+    False wins — the flag permits openness, it does not force it."""
+    monkeypatch.setenv("BYPASS_MODEL_ACCESS_CONTROL", "False")
+    monkeypatch.setenv("HUBZOID_GATEWAY_ALLOW_BYPASS", "1")
+    env = _start_gateway(captured_env, tmp_path)
+    assert env["BYPASS_MODEL_ACCESS_CONTROL"] == "False"
+
+
 def test_single_hub_inherited_bypass_still_wins(captured_env, tmp_path, monkeypatch):
     """The gateway forcing must NOT change single-hub semantics: there the
     operator's env value continues to win (setdefault behavior)."""
