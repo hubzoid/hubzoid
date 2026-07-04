@@ -9,15 +9,25 @@ asset renders.
 Known OWUI asset filenames (the set hubzoid will mirror):
   favicon.svg
   favicon.png
+  favicon-dark.png
   favicon-96x96.png
   favicon.ico
   apple-touch-icon.png
+  logo.png
   splash.png
   splash-dark.png
+  web-app-manifest-192x192.png
+  web-app-manifest-512x512.png
 
 Convenience aliases: ``logo.{svg,png,...}`` in branding/ is treated as a
 synonym for ``favicon.<same-ext>`` (most operators say "logo" when they
 mean the brand mark; OWUI's brand mark is the favicon).
+
+Single-master convenience: any raster slot the operator does NOT supply is
+filled from ``favicon.png`` (itself aliased from ``logo.png`` when needed),
+so one image brands every surface — light and dark, tab icon and sidebar.
+Only PNG slots are synthesized; ``.svg``/``.ico`` are copied only when a real
+file of that format is present (PNG bytes are not valid SVG/ICO).
 
 Idempotent. Runs on every ``hubzoid run`` before the OWUI subprocess
 starts. Edits to branding/ are picked up on next start.
@@ -35,13 +45,31 @@ log = logging.getLogger("hubzoid.branding")
 _MIRROR_NAMES: list[str] = [
     "favicon.svg",
     "favicon.png",
+    "favicon-dark.png",
     "favicon-96x96.png",
     "favicon.ico",
     "apple-touch-icon.png",
+    "logo.png",
     "splash.png",
     "splash-dark.png",
+    "web-app-manifest-192x192.png",
+    "web-app-manifest-512x512.png",
     "custom.css",
 ]
+
+# Raster slots synthesized from the master (favicon.png) when the operator did
+# not supply them, so a single image brands every OWUI chrome surface. `.svg`
+# and `.ico` are deliberately absent — PNG bytes are not valid in those formats.
+_DERIVE_FROM_MASTER: tuple[str, ...] = (
+    "favicon-dark.png",
+    "favicon-96x96.png",
+    "apple-touch-icon.png",
+    "logo.png",
+    "splash.png",
+    "splash-dark.png",
+    "web-app-manifest-192x192.png",
+    "web-app-manifest-512x512.png",
+)
 
 
 # Baseline CSS hubzoid injects into Open WebUI's `<static>/custom.css`
@@ -145,7 +173,27 @@ def _build_source_index(branding_dir: Path) -> dict[str, Path]:
         if target in _MIRROR_NAMES and target not in index:
             index[target] = logo
 
+    # 3. Single-master derivation. Any raster slot the operator did not supply
+    # is filled from favicon.png (aliased from logo.png above when needed), so
+    # one image brands every surface. splash-dark prefers a supplied splash.png
+    # over the bare favicon. Only PNG slots are synthesized (see _MIRROR_NAMES).
+    if "splash.png" in index:
+        index.setdefault("splash-dark.png", index["splash.png"])
+    master = index.get("favicon.png")
+    if master is not None:
+        for name in _DERIVE_FROM_MASTER:
+            index.setdefault(name, master)
+
     return index
+
+
+def has_assets(branding_dir: Path) -> bool:
+    """True when ``branding_dir`` yields at least one mirror-able asset.
+
+    Ignores non-asset files (README, notes). Used to decide whether an
+    explicit gateway branding dir is populated before falling back to a hub's.
+    """
+    return bool(_build_source_index(branding_dir))
 
 
 def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -> dict[str, Path | str]:

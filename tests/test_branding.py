@@ -200,3 +200,87 @@ def test_apply_idempotent(tmp_path):
     branding.apply(hub, static)
 
     assert (static / "favicon.svg").read_text() == "<svg id=v2/>"
+
+
+# ---------------------------------------------------------------------------
+# single-master derivation: one image brands every raster slot
+# ---------------------------------------------------------------------------
+def test_apply_single_favicon_derives_all_raster_slots(tmp_path):
+    """A lone favicon.png fills every raster chrome slot (light + dark, sidebar,
+    splash, PWA), so one image brands the whole UI. .svg/.ico are NOT faked."""
+    hub = tmp_path / "hub"
+    static = tmp_path / "static"
+    _write(hub / "branding" / "favicon.png", "MASTER")
+    static.mkdir()
+
+    branding.apply(hub, static)
+
+    for name in (
+        "favicon.png", "favicon-dark.png", "favicon-96x96.png",
+        "apple-touch-icon.png", "logo.png", "splash.png", "splash-dark.png",
+        "web-app-manifest-192x192.png", "web-app-manifest-512x512.png",
+    ):
+        assert (static / name).read_text() == "MASTER", name
+        assert (static / "static" / name).read_text() == "MASTER", name
+    # PNG bytes are never written as svg/ico (wrong format).
+    assert not (static / "favicon.svg").exists()
+    assert not (static / "favicon.ico").exists()
+
+
+def test_apply_logo_png_seeds_derivation_via_favicon_alias(tmp_path):
+    """logo.png with no favicon.png aliases to favicon.png AND seeds derivation
+    of every other raster slot."""
+    hub = tmp_path / "hub"
+    static = tmp_path / "static"
+    _write(hub / "branding" / "logo.png", "LOGO")
+    static.mkdir()
+
+    branding.apply(hub, static)
+
+    assert (static / "favicon.png").read_text() == "LOGO"
+    assert (static / "favicon-dark.png").read_text() == "LOGO"
+    assert (static / "splash.png").read_text() == "LOGO"
+
+
+def test_apply_explicit_variant_wins_over_derivation(tmp_path):
+    """Supplied variants are kept; only the missing slots are synthesized.
+    splash-dark derives from a supplied splash.png, not the bare favicon."""
+    hub = tmp_path / "hub"
+    static = tmp_path / "static"
+    _write(hub / "branding" / "favicon.png", "LIGHT")
+    _write(hub / "branding" / "favicon-dark.png", "DARK")
+    _write(hub / "branding" / "splash.png", "SPLASH")
+    static.mkdir()
+
+    branding.apply(hub, static)
+
+    assert (static / "favicon-dark.png").read_text() == "DARK"    # kept
+    assert (static / "splash.png").read_text() == "SPLASH"        # kept
+    assert (static / "splash-dark.png").read_text() == "SPLASH"   # from splash
+    assert (static / "logo.png").read_text() == "LIGHT"           # from master
+
+
+def test_apply_svg_only_does_not_fabricate_png_slots(tmp_path):
+    """An svg-only branding dir must not synthesize png slots from svg bytes."""
+    hub = tmp_path / "hub"
+    static = tmp_path / "static"
+    _write(hub / "branding" / "logo.svg", "<svg/>")
+    static.mkdir()
+
+    applied = branding.apply(hub, static)
+
+    assert "favicon.svg" in applied
+    assert not (static / "favicon.png").exists()
+    assert not (static / "splash.png").exists()
+
+
+def test_has_assets(tmp_path):
+    """has_assets ignores README/notes and missing dirs, sees real assets."""
+    empty = tmp_path / "b1"
+    _write(empty / "README.md", "# branding")
+    assert branding.has_assets(empty) is False
+    assert branding.has_assets(tmp_path / "does-not-exist") is False
+
+    good = tmp_path / "b2"
+    _write(good / "favicon.png", "x")
+    assert branding.has_assets(good) is True
