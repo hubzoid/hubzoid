@@ -112,6 +112,41 @@ class GatewayPlan:
         OWUI; see webui._MCP_API_KEY_ENV)."""
         return any(b.mcp for b in self.backends)
 
+    def branding_source(self, gw_data: Path, override: str | None = None) -> Path:
+        """The directory whose ``branding/`` subdir provides the gateway's
+        shared OWUI chrome (favicon, splash, sidebar logo).
+
+        One shared OWUI fronts N hubs, so the chrome is org-level. Resolution,
+        in priority order:
+
+        1. ``override`` (from ``HUBZOID_GATEWAY_BRANDING``) — a hub *slug* to
+           borrow that hub's branding, or a filesystem *path* to a dir that
+           contains a ``branding/`` subdir.
+        2. ``<gw_data>/branding`` when populated — an explicit gateway-owned
+           branding dir (backward compatible with the state-dir convention).
+        3. the **first hub** in the list — the zero-config default, so a hub's
+           own ``branding/`` brands the shared chrome with no extra steps.
+        4. ``gw_data`` — nothing to stamp; only the baseline CSS is written.
+
+        Returns a dir suitable for ``branding.apply(<dir>, ...)`` (which reads
+        ``<dir>/branding``). Never raises.
+        """
+        from . import branding as _branding
+
+        if override and override.strip():
+            override = override.strip()
+            for b in self.backends:
+                if b.slug == override:
+                    return b.hub_dir
+            p = Path(override).expanduser()
+            if p.is_dir():
+                return p
+        if _branding.has_assets(gw_data / "branding"):
+            return gw_data
+        if self.backends:
+            return self.backends[0].hub_dir
+        return gw_data
+
     def public_url_for(self, public_base: str, backend: GatewayBackend) -> str:
         """The HUBZOID_PUBLIC_URL a given bridge should advertise, so its
         artifact links resolve through the edge to itself."""

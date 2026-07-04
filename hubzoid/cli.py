@@ -379,7 +379,9 @@ def gateway(
     HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD set, each hub's model entry (name,
     description, suggestions, avatar) and team group + read ACL are
     provisioned automatically on boot; admins then only add users to groups.
-    Gateway chrome branding comes from <data-dir>/branding/. Artifact
+    Gateway chrome branding (favicon, splash, sidebar) comes from the first
+    hub's branding/ by default — override with HUBZOID_GATEWAY_BRANDING
+    (a hub slug or a path), or populate <data-dir>/branding/. Artifact
     downloads route per hub via `/b/<slug>/artifacts`. See docs/DEPLOYING.md.
     """
     from . import gateway as gateway_lib
@@ -402,21 +404,28 @@ def gateway(
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")
 
-    # Deterministic gateway chrome branding. Stamp the gateway's own logo /
-    # favicon (from <data_dir>/branding/) into OWUI's static dirs so the login
-    # page and tab title show a chosen mark, not whatever a prior single-hub
-    # `run` last left in the shared OWUI install. Uses the GATEWAY baseline CSS,
-    # which keeps the Workspace nav visible (gateway admins manage per-team
-    # Groups + per-model ACLs there) — unlike the single-hub baseline, which
-    # hides it. No-op beyond baseline CSS when <data_dir>/branding/ is absent.
-    # Per-hub identity belongs on the model avatar, not here: one shared chrome
-    # fronts N hubs, so the global logo is org-level by design. Best-effort:
-    # a read-only OWUI install (root-owned site-packages) must not stop the
-    # gateway from booting.
+    # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
+    # OWUI's static dirs so the login page, tab icon and sidebar show a brand
+    # mark, not whatever a prior single-hub `run` last left in the shared OWUI
+    # install. Source resolves (see GatewayPlan.branding_source):
+    #   HUBZOID_GATEWAY_BRANDING (hub slug or path) -> <data_dir>/branding when
+    #   populated -> the first hub's branding/ -> baseline CSS only.
+    # Uses the GATEWAY baseline CSS, which keeps the Workspace nav visible
+    # (gateway admins manage per-team Groups + per-model ACLs there) — unlike
+    # the single-hub baseline, which hides it. Per-hub identity belongs on the
+    # model avatar, not here: one shared chrome fronts N hubs, so the global
+    # logo is org-level by design. Best-effort: a read-only OWUI install
+    # (root-owned site-packages) must not stop the gateway from booting.
     from . import branding
+    brand_src = gp.branding_source(gw_data, os.environ.get("HUBZOID_GATEWAY_BRANDING"))
     try:
-        for sd in branding.static_dirs():
-            branding.apply(gw_data, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+        static_roots = branding.static_dirs()
+        for sd in static_roots:
+            branding.apply(brand_src, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
+        if static_roots:
+            console.print(f"[cyan]→ branding[/cyan]  chrome from {brand_src}/branding")
+        else:
+            console.print("[yellow]→ branding[/yellow]  Open WebUI static dirs not found; default look kept")
     except OSError as exc:
         console.print(f"[yellow]→ branding[/yellow]  skipped ({exc}); default look kept")
 
