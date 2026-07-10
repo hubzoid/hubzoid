@@ -968,8 +968,28 @@ def test_script_large_output_is_bounded_not_buffered(tmp_path):
     assert res.ok
     events = [json.loads(l) for l in res.run_log.read_text().splitlines()]
     end = next(e for e in events if e.get("event") == "script_end")
+    stdout = end.get("stdout", "")
     # only a bounded tail is kept in the log, never the whole 5 MB
-    assert len(end.get("stdout", "")) <= 64 * 1024 + 100
+    assert len(stdout) <= 64 * 1024 + 100
+    # ...but this 5 MB is ONE line (no early newline), and it must NOT collapse
+    # to just the truncation marker — real output bytes survive to the log.
+    # Regression guard: _tail used to strip to the first newline, which for a
+    # single huge line discarded the whole tail (the log then held only the
+    # marker, with zero payload bytes).
+    assert "xxxxxxxx" in stdout
+    assert stdout.strip() != "...[output truncated]..."
+
+
+def test_tail_keeps_single_huge_line(tmp_path):
+    """A >cap single line with no early newline keeps its tail, not just the marker."""
+    from hubzoid.schedule_runner import _tail
+    f = tmp_path / "out.bin"
+    f.write_bytes(b"A" * 200_000 + b"\n")   # one 200 KB line, newline only at the very end
+    with open(f, "rb") as fh:
+        out = _tail(fh, 64 * 1024)
+    assert out.startswith("...[output truncated]...")
+    assert "AAAA" in out                    # real bytes preserved, not discarded
+    assert len(out) > 60 * 1024
 
 
 def test_script_binary_output_is_not_reported_as_start_failure(tmp_path):
@@ -989,6 +1009,29 @@ def test_apply_model_override_lowercases_tier():
     from hubzoid.runtime import _apply_model_override
     assert _apply_model_override("claude-local", "OPUS")[0] == "claude-local/opus"
     assert _apply_model_override("claude-local", "Claude-Opus-4-7")[0] == "claude-local/claude-opus-4-7"
+
+
+def test_validate_model_pin_passes_recognized_and_falls_back_on_typo():
+    """A recognized tier / claude-* id passes through; a typo falls back to the
+    default tier instead of being handed to the CLI to fail the whole run."""
+    from hubzoid.factory_claude import _validate_model_pin
+    # recognized -> unchanged
+    assert _validate_model_pin("opus", hub="h") == "opus"
+    assert _validate_model_pin("SONNET", hub="h") == "SONNET"        # case-insensitive check, value kept
+    assert _validate_model_pin("claude-opus-4-7", hub="h") == "claude-opus-4-7"
+    assert _validate_model_pin(None, hub="h") is None
+    # unrecognized -> default tier (sonnet), never passed through to fail 3x
+    assert _validate_model_pin("opus-typo", hub="h") == "sonnet"
+    assert _validate_model_pin("gpt-4o", hub="h") == "sonnet"        # non-claude under claude-local
+
+
+def test_validate_model_pin_warns_on_typo(caplog):
+    import logging
+    from hubzoid.factory_claude import _validate_model_pin
+    with caplog.at_level(logging.WARNING):
+        out = _validate_model_pin("opus-typo", hub="myhub")
+    assert out == "sonnet"
+    assert any("unrecognized model pin" in r.getMessage() for r in caplog.records)
 
 
 def test_write_hub_file_refuses_git_dir(tmp_path):

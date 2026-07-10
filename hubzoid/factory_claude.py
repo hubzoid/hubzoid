@@ -211,7 +211,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # Pin from the SAME resolved model used for delegate classification (honors
     # AGENTS.md `model:` frontmatter, not just .env MODEL) so the tier we
     # classify against is the tier the main agent actually runs on.
-    model_pin = _parse_model_pin(hub_model)
+    model_pin = _validate_model_pin(_parse_model_pin(hub_model), hub=hub_dir.name)
 
     # Delegates: sub-agents whose model differs from the hub. Each becomes a
     # native Claude subagent on its own tier, dispatched via the Agent tool.
@@ -366,6 +366,32 @@ def _parse_model_pin(model_setting: str | None) -> str | None:
         return None
     suffix = stripped.split("/", 1)[1].strip()
     return suffix or None
+
+
+def _validate_model_pin(pin: str | None, *, hub: str) -> str | None:
+    """Guard an unattended run against a typo'd model pin.
+
+    A recognized pin is a bare Claude tier (``opus``/``sonnet``/``haiku``) or a
+    full ``claude-*`` id. An unrecognized pin (e.g. a scheduled task's
+    ``model: claude-local/opus-typo``) would be handed to the ``claude`` CLI,
+    which either rejects it — burning the run's consecutive-error budget over a
+    few wasted rounds — or silently falls back to its own default and runs the
+    job on the wrong tier with no signal. Neither is acceptable for an
+    unattended job, so warn loudly and fall back to the known-good default tier
+    for this build. Returns the pin unchanged when it is recognized (or None).
+    """
+    if pin is None:
+        return None
+    from .runtime import _CLAUDE_TIERS  # local import: avoids a runtime<->factory cycle
+    low = pin.strip().lower()
+    if low in _CLAUDE_TIERS or low.startswith("claude-"):
+        return pin
+    log.warning(
+        "hub %s: unrecognized model pin %r — expected a Claude tier (%s) or a "
+        "claude-* id. Falling back to the default tier %r for this run.",
+        hub, pin, ", ".join(sorted(_CLAUDE_TIERS)), _CLAUDE_LOCAL_DEFAULT,
+    )
+    return _CLAUDE_LOCAL_DEFAULT
 
 
 # ---------------------------------------------------------------------------

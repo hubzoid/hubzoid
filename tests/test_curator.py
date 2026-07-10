@@ -55,6 +55,17 @@ def test_remember_creates_learned_doc(tmp_path):
     assert "learned_by:" in doc and "updated:" in doc
 
 
+def test_remember_description_requires_explicit_user_request(tmp_path):
+    """The tool description must instruct the model to call `remember` ONLY on an
+    explicit user request, not proactively/autonomously — this is what keeps the
+    hub from curating silently in the background."""
+    # normalize whitespace: the description preserves the docstring's hard
+    # line-wraps, so phrases can straddle a newline.
+    desc = " ".join(_remember(tmp_path).description.lower().split())
+    assert "only when the user" in desc
+    assert "do not call it on your own initiative" in desc
+
+
 def test_remember_full_replaces_not_appends(tmp_path):
     rem = _remember(tmp_path)
     _invoke(rem, topic="link", content="X and Y are connected.")
