@@ -871,6 +871,10 @@ def schedule_list(
         last = entry.get("last_fired_iso")
         last_s = f"last: {entry.get('last_result', '?')} @ {last}" if last else "never fired"
         flags = []
+        if t.is_script:
+            flags.append("script")
+        if t.model:
+            flags.append(f"model: {t.model}")
         if t.commit:
             flags.append(f"commit: {', '.join(t.commit)}" + (" + push" if t.push else ""))
         if not t.enabled:
@@ -893,7 +897,8 @@ def schedule_run(
     task_name: str = typer.Argument(..., metavar="TASK", help="Task name (the md filename stem)."),
     timeout: int = typer.Option(None, "--timeout", help="Override the task's per-round timeout (seconds)."),
     max_rounds: int = typer.Option(None, "--max-rounds", help="Override the task's round cap."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print the round-1 prompt and exit (no LLM)."),
+    model: str = typer.Option(None, "--model", help="Override the model for this run (LLM tasks), e.g. claude-local/opus."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the round-1 prompt (LLM) or the command (script) and exit."),
 ) -> None:
     """Fire one task NOW, in-process — for testing and manual runs.
 
@@ -922,9 +927,19 @@ def schedule_run(
         task.timeout = timeout
     if max_rounds:
         task.max_rounds = max_rounds
+    if model:
+        if task.is_script:
+            console.print("[yellow]--model is ignored for a script (run:) task — "
+                          "scripts don't use an LLM.[/yellow]")
+        else:
+            task.model = model
 
     if dry_run:
-        typer.echo(runner.build_prompt(task, hub, round_no=1))
+        if task.is_script:
+            display = task.run[0] if task.run_shell else " ".join(task.run or [])
+            typer.echo(f"[script task] would run: {display}")
+        else:
+            typer.echo(runner.build_prompt(task, hub, round_no=1))
         return
 
     # Manual runs should be observable in the terminal.
@@ -935,7 +950,10 @@ def schedule_run(
         console.print("[red]another scheduled run is in progress (lock held); try again later.[/red]")
         raise typer.Exit(1)
     try:
-        console.print(f"[cyan]→ running {task.name}[/cyan] (timeout {task.timeout}s/round, ≤{task.max_rounds} rounds)")
+        if task.is_script:
+            console.print(f"[cyan]→ running {task.name}[/cyan] (script, timeout {task.timeout}s)")
+        else:
+            console.print(f"[cyan]→ running {task.name}[/cyan] (timeout {task.timeout}s/round, ≤{task.max_rounds} rounds)")
         result = asyncio.run(runner.run_task(hub, task))
     finally:
         lock.release()

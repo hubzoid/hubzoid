@@ -733,3 +733,295 @@ def test_minimal_template_ships_example_schedule():
     assert "schedule:" in text and "enabled: false" in text
     # gitignore covers runtime state
     assert ".hubzoid/" in (tpl / ".gitignore").read_text()
+
+
+# ===========================================================================
+# #2 per-schedule model override
+# ===========================================================================
+def test_loader_parses_model_override(tmp_path):
+    _write_task(tmp_path, "heavy", 'schedule: "0 4 * * *"\nmodel: claude-local/opus')
+    [t], problems = sch.load_tasks(tmp_path)
+    assert problems == [] and t.model == "claude-local/opus"
+
+
+def test_loader_model_defaults_none_and_rejects_blank(tmp_path):
+    _write_task(tmp_path, "plain", 'schedule: "0 4 * * *"')
+    [t], _ = sch.load_tasks(tmp_path)
+    assert t.model is None
+    _write_task(tmp_path, "blank", 'schedule: "0 4 * * *"\nmodel: "   "')
+    tasks, problems = sch.load_tasks(tmp_path)
+    bad = [p for p in problems if "blank" in p]
+    assert bad and "model" in bad[0]
+    assert "blank" not in [t.name for t in tasks]
+
+
+def test_runtime_factory_passes_model_and_max_turns(tmp_path, monkeypatch):
+    """The scheduled-run factory threads `task.model` into runtime.build."""
+    captured = {}
+
+    def fake_build(hub_dir, *, extra_tools=None, max_turns=None, model=None):
+        captured.update(model=model, max_turns=max_turns,
+                        has_git="run_git" in (extra_tools or {}))
+        return object()
+
+    monkeypatch.setattr("hubzoid.runtime.build", fake_build)
+    t = _task(name="m", model="claude-local/opus", max_turns=17)
+    runner._default_runtime_factory(tmp_path, t, lambda **k: None)
+    assert captured == {"model": "claude-local/opus", "max_turns": 17, "has_git": True}
+
+
+def test_runtime_build_model_override_wins_over_env(tmp_path, monkeypatch):
+    """runtime.build(model=...) overrides .env MODEL for that build only."""
+    from hubzoid import runtime as runtime_lib
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=gpt-4o-mini\n")
+    (hub / "AGENTS.md").write_text("---\nname: A\n---\nyou are A\n")
+
+    seen = {}
+
+    def fake_build_claude(hub_dir, *, extra_tools=None, max_turns=None, model_override=None):
+        seen["override"] = model_override
+        return object()
+
+    monkeypatch.setattr("hubzoid.factory_claude.build_claude_runtime", fake_build_claude)
+    runtime_lib.build(hub, model="claude-local/opus")
+    assert seen["override"] == "claude-local/opus"
+
+
+# ===========================================================================
+# #1 plain-cron `run:` script tasks (no LLM harness)
+# ===========================================================================
+def test_loader_parses_run_string_as_shell(tmp_path):
+    _write_task(tmp_path, "build", 'schedule: "0 4 * * *"\nrun: "python build.py && echo ok"',
+                body="")
+    [t], problems = sch.load_tasks(tmp_path)
+    assert problems == []
+    assert t.is_script and t.run == ["python build.py && echo ok"] and t.run_shell is True
+
+
+def test_loader_parses_run_list_as_argv(tmp_path):
+    _write_task(tmp_path, "build", 'schedule: "0 4 * * *"\nrun: ["python", "build.py"]', body="")
+    [t], problems = sch.load_tasks(tmp_path)
+    assert problems == []
+    assert t.is_script and t.run == ["python", "build.py"] and t.run_shell is False
+
+
+def test_loader_script_body_optional_llm_body_required(tmp_path):
+    # script task with empty body -> fine
+    _write_task(tmp_path, "s", 'schedule: "0 4 * * *"\nrun: "true"', body="")
+    tasks, problems = sch.load_tasks(tmp_path)
+    assert [t.name for t in tasks] == ["s"] and problems == []
+    # LLM task with empty body -> still a problem
+    _write_task(tmp_path, "l", 'schedule: "0 4 * * *"', body="")
+    tasks2, problems2 = sch.load_tasks(tmp_path)
+    assert "l" not in [t.name for t in tasks2]
+    assert any("empty" in p and "l" in p for p in problems2)
+
+
+def test_loader_rejects_empty_run(tmp_path):
+    _write_task(tmp_path, "e", 'schedule: "0 4 * * *"\nrun: ""', body="x")
+    tasks, problems = sch.load_tasks(tmp_path)
+    assert tasks == [] and problems and "run" in problems[0]
+
+
+def test_script_run_shell_success_and_logs(tmp_path):
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    t = _task(name="s", run=["echo hi > out.txt"], run_shell=True)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.ok and res.result == "done" and res.rounds == 1
+    assert (hub / "out.txt").read_text().strip() == "hi"
+    # JSONL run log records script_start/script_end
+    events = [json.loads(l) for l in res.run_log.read_text().splitlines()]
+    kinds = [e.get("event") for e in events]
+    assert "script_start" in kinds and "script_end" in kinds
+    assert any(e.get("event") == "script_end" and e.get("exit") == 0 for e in events)
+
+
+def test_script_run_argv_success(tmp_path):
+    import sys
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    t = _task(name="s", run=[sys.executable, "-c", "open('x.txt','w').write('y')"],
+              run_shell=False)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.ok and (hub / "x.txt").read_text() == "y"
+
+
+def test_script_run_nonzero_exit_is_error(tmp_path):
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    t = _task(name="s", run=["exit 3"], run_shell=True)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.result == "error" and "exit 3" in res.error
+
+
+def test_script_run_timeout_is_bounded(tmp_path):
+    import sys
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    t = _task(name="s", run=[sys.executable, "-c", "import time; time.sleep(5)"],
+              run_shell=False, timeout=1)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.result == "error" and "timed out" in res.error
+
+
+def test_script_run_commits_declared_paths(tmp_path):
+    hub = _hub_repo(tmp_path)
+    t = _task(name="gen", run=["echo generated > knowledge/gen.md"], run_shell=True,
+              commit=["knowledge"])
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.ok and res.commit_sha
+    changed = subprocess.run(["git", "-C", str(hub), "show", "--name-only", "--format=", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.split()
+    assert "knowledge/gen.md" in changed
+    msg = subprocess.run(["git", "-C", str(hub), "log", "-1", "--format=%s"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    assert msg.startswith("schedule(gen): ran ")
+
+
+def test_script_failure_does_not_commit(tmp_path):
+    hub = _hub_repo(tmp_path)
+    t = _task(name="gen", run=["echo x > knowledge/gen.md && exit 1"], run_shell=True,
+              commit=["knowledge"])
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.result == "error" and res.commit_sha is None
+    # the file was written but NOT committed (capture only runs on done)
+    log_head = subprocess.run(["git", "-C", str(hub), "log", "-1", "--format=%s"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    assert log_head == "init"
+
+
+def test_cli_schedule_run_dry_run_prints_command_for_script(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "s", 'schedule: "0 4 * * *"\nrun: "python build.py"', body="")
+    res = CliRunner().invoke(cli.app, ["schedule", "run", str(hub), "s", "--dry-run"])
+    assert res.exit_code == 0, res.output
+    assert "would run" in res.output and "python build.py" in res.output
+
+
+# ===========================================================================
+# review fixes: model backend-preservation, argv typing, schedule/ guard,
+# script-commit crash finalization
+# ===========================================================================
+def test_apply_model_override_preserves_backend():
+    from hubzoid.runtime import _apply_model_override
+
+    # bare claude tier on a claude-local hub -> pinned within claude-local
+    assert _apply_model_override("claude-local", "opus") == ("claude-local/opus", "claude-local/opus")
+    assert _apply_model_override("claude-local/sonnet", "opus")[0] == "claude-local/opus"
+    # full claude id -> also pinned within claude backend
+    assert _apply_model_override("claude-local", "claude-opus-4-7")[0] == "claude-local/claude-opus-4-7"
+    # already-prefixed -> verbatim
+    assert _apply_model_override("claude-local", "claude-local/haiku")[0] == "claude-local/haiku"
+    # explicit non-claude id -> deliberate cross-backend switch, verbatim
+    assert _apply_model_override("claude-local", "gpt-4o") == ("gpt-4o", "gpt-4o")
+    # openai hub -> override used verbatim
+    assert _apply_model_override("gpt-4o-mini", "gpt-4o") == ("gpt-4o", "gpt-4o")
+
+
+def test_model_override_bare_tier_routes_to_claude_backend(tmp_path, monkeypatch):
+    from hubzoid import runtime as runtime_lib
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / ".env").write_text("MODEL=claude-local\n")
+    (hub / "AGENTS.md").write_text("---\nname: A\n---\nA\n")
+    seen = {}
+    monkeypatch.setattr(
+        "hubzoid.factory_claude.build_claude_runtime",
+        lambda hub_dir, *, extra_tools=None, max_turns=None, model_override=None:
+            seen.update(ov=model_override) or object(),
+    )
+    runtime_lib.build(hub, model="opus")
+    assert seen["ov"] == "claude-local/opus"   # NOT routed to the OpenAI backend
+
+
+def test_loader_rejects_nonstring_argv_item(tmp_path):
+    _write_task(tmp_path, "e", 'schedule: "0 4 * * *"\nrun: ["echo", true]', body="")
+    tasks, problems = sch.load_tasks(tmp_path)
+    assert tasks == [] and problems and "quoted strings" in problems[0]
+
+
+def test_write_hub_file_refuses_schedule_policy_dir(tmp_path):
+    hub = tmp_path / "hub"
+    (hub / "schedule").mkdir(parents=True)
+    task = _task(name="t", write=["."])          # whole hub declared writable
+    _, write = schedule_tools.make(hub, task, lambda **kw: None)
+    out = _invoke(write, path="schedule/evil.md", content="run: rm -rf /")
+    assert "refused" in out.lower() and "schedule/" in out
+    assert not (hub / "schedule" / "evil.md").exists()
+    # a normal path under the writable root still works
+    ok = _invoke(write, path="notes.txt", content="hi")
+    assert "wrote" in ok.lower() and (hub / "notes.txt").exists()
+
+
+def test_script_large_output_is_bounded_not_buffered(tmp_path):
+    import sys
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    # emit ~5 MB to stdout; capture must be bounded (temp file + tail), run still done
+    t = _task(name="s", run=[sys.executable, "-c", "print('x'*5_000_000)"], run_shell=False)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.ok
+    events = [json.loads(l) for l in res.run_log.read_text().splitlines()]
+    end = next(e for e in events if e.get("event") == "script_end")
+    # only a bounded tail is kept in the log, never the whole 5 MB
+    assert len(end.get("stdout", "")) <= 64 * 1024 + 100
+
+
+def test_script_binary_output_is_not_reported_as_start_failure(tmp_path):
+    import sys
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    # write raw non-UTF-8 bytes to stdout; must decode leniently, run succeeds
+    t = _task(name="s",
+              run=[sys.executable, "-c",
+                   "import sys; sys.stdout.buffer.write(b'\\xff\\xfe\\x00ok')"],
+              run_shell=False)
+    res = asyncio.run(runner.run_task(hub, t))
+    assert res.ok and "failed to start" not in res.error
+
+
+def test_apply_model_override_lowercases_tier():
+    from hubzoid.runtime import _apply_model_override
+    assert _apply_model_override("claude-local", "OPUS")[0] == "claude-local/opus"
+    assert _apply_model_override("claude-local", "Claude-Opus-4-7")[0] == "claude-local/claude-opus-4-7"
+
+
+def test_write_hub_file_refuses_git_dir(tmp_path):
+    hub = tmp_path / "hub"
+    (hub / ".git" / "hooks").mkdir(parents=True)
+    task = _task(name="t", write=["."])
+    _, write = schedule_tools.make(hub, task, lambda **kw: None)
+    out = _invoke(write, path=".git/hooks/pre-commit", content="#!/bin/sh\nevil")
+    assert "refused" in out.lower() and ".git" in out
+    assert not (hub / ".git" / "hooks" / "pre-commit").exists()
+
+
+def test_cli_schedule_run_model_flag_warns_on_script(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "s", 'schedule: "0 4 * * *"\nrun: "true"', body="")
+    res = CliRunner().invoke(cli.app, ["schedule", "run", str(hub), "s",
+                                       "--model", "claude-local/opus", "--dry-run"])
+    assert res.exit_code == 0, res.output
+    assert "ignored for a script" in res.output
+
+
+def test_script_commit_crash_finalizes_and_never_raises(tmp_path, monkeypatch):
+    hub = _hub_repo(tmp_path)
+    t = _task(name="gen", run=["echo x > knowledge/gen.md"], run_shell=True,
+              commit=["knowledge"])
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(1, ["git", "commit"])
+
+    monkeypatch.setattr("hubzoid.schedule_runner.commit_paths", boom)
+    res = asyncio.run(runner.run_task(hub, t))     # must NOT raise
+    assert res.result == "error"
+    st = sch.ScheduleState(hub).get("gen")
+    assert st.get("last_result") == "error"        # not stuck at "running"
+    events = [json.loads(l) for l in res.run_log.read_text().splitlines()]
+    assert any(e.get("event") == "run_end" for e in events)   # rlog finalized

@@ -7,11 +7,14 @@ Each file is a single markdown document. Frontmatter is optional:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import frontmatter
 from .._fs import resolve_bucket
+
+log = logging.getLogger("hubzoid")
 
 
 @dataclass
@@ -32,7 +35,14 @@ def load_all(hub_dir: Path) -> list[LoadedKnowledge]:
     for path in sorted(kdir.rglob("*.md"), key=lambda p: p.as_posix().lower()):
         if path.name.startswith(".") or path.name.lower() == "_index.md":
             continue
-        fm, body = frontmatter.read(path)
+        # Isolate per-file failures: one malformed doc (e.g. broken YAML
+        # frontmatter) must never blank the whole knowledge scan — skip and
+        # log it, keep every good doc.
+        try:
+            fm, body = frontmatter.read(path)
+        except Exception as exc:  # noqa: BLE001 — a bad file must not kill the load
+            log.warning("knowledge: skipping unreadable %s: %s", path, exc)
+            continue
         name = str(fm.get("name") or path.stem)
         desc = str(fm.get("description") or f"Knowledge document: {path.stem}.")
         kw = fm.get("keywords") or []

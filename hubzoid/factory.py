@@ -44,7 +44,8 @@ class HubContext:
     delegates: list = field(default_factory=list)
 
 
-def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None) -> Agent:
+def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None,
+                model_override: str | None = None) -> Agent:
     """Build and return the main Agent for the hub at `hub_dir`.
 
     All sub-agents from `<hub>/agents/<name>/` are promoted to skills and
@@ -68,8 +69,10 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
     # Resolve the hub model first — it decides which sub-agents are delegates.
+    # A caller-supplied override (a scheduled task's `model:`) wins over both
+    # .env MODEL and AGENTS.md `model:`.
     main_spec = agents_loader.load_main(hub_dir)
-    main_model_id = settings.model or main_spec.spec.model
+    main_model_id = (model_override or "").strip() or settings.model or main_spec.spec.model
     if not main_model_id:
         raise RuntimeError(
             "no model configured. Set MODEL in <hub>/.env or `model:` in AGENTS.md frontmatter."
@@ -81,6 +84,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     kept, fallbacks = _prepare_delegates(delegate_agents)
     for loaded in fallbacks:
         skills.append(agents_loader.to_skill(loaded))
+    skills = _with_core_skills(skills)     # chat runtime gets core skills
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
         "hub %s: %d skill(s), %d delegate(s), %d knowledge doc(s)",
@@ -109,6 +113,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     # has no restricted/ folder, so existing hubs are unchanged.
     from . import access  # deferred to avoid circular import via __init__.py
     registry = access.apply(hub_dir, registry)
+    _add_curator_tool(ctx, registry, access)
 
     mcp_servers = mcp_loader.load_all(hub_dir)
 
@@ -147,6 +152,38 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
 # ---------------------------------------------------------------------------
 # Helpers shared with factory_claude.
 # ---------------------------------------------------------------------------
+def _with_core_skills(skills: list) -> list:
+    """Merge hubzoid's core-shipped skills into a hub's skill list, lowest
+    priority (a hub `skills/` or `agents/`-promoted skill of the same name
+    wins). Called by the chat factories only — the MCP surface deliberately
+    does not get core skills (they assume the chat runtime's tools)."""
+    by_name = {s.spec.name: s for s in skills}
+    for s in skills_loader.load_core():
+        if s.spec.name in by_name:
+            log.info("hub defines %r; the core-shipped skill is not used", s.spec.name)
+            continue
+        by_name[s.spec.name] = s
+    return list(by_name.values())
+
+
+def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
+    """Add the core-shipped, `curator`-gated `remember` tool to the registry.
+
+    Present on every hub but hidden/denied unless the caller is in the hub's
+    `curator` Open WebUI group on a verified-login surface (same wall as
+    restricted/ tools). A hub that already defines its own tool of the same
+    name keeps it — hub wins over the core tool.
+    """
+    from .tools import curator as curator_tool
+
+    for ft in curator_tool.make(ctx):
+        if ft.name in registry:
+            log.info("hub tool %r overrides the core curator tool", ft.name)
+            continue
+        registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
+                                               ctx.hub_dir)
+
+
 def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
     """Return (skills, delegate_agents).
 
@@ -156,7 +193,12 @@ def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):
     """
     from . import handover
 
-    real = skills_loader.load_all(hub_dir)
+    # Precedence within the hub: hub `skills/` > `agents/`-promoted. Core-shipped
+    # skills are NOT merged here — they're a chat-runtime concern added by the
+    # chat factories via `_with_core_skills`, so the MCP surface (which also
+    # calls this) does NOT advertise core skills like `dashboard` whose delivery
+    # tool (write_artifact) it doesn't expose.
+    real = skills_loader.load_hub(hub_dir)
     skill_agents, raw_delegates = agents_loader.split_subagents(hub_dir, hub_model)
     by_name: dict[str, object] = {s.spec.name: s for s in real}
     for loaded in skill_agents:
