@@ -7,6 +7,12 @@ can invoke it. Anonymous callers, the CLI, Slack, and scheduled runs are
 refused (fail-closed, same wall as `restricted/` tools). A hub that never
 creates a ``curator`` group therefore never exposes it to anyone.
 
+It is user-invoked, not autonomous: the tool description instructs the model to
+call ``remember`` ONLY when the user explicitly asks to remember/save/note
+something, never on its own initiative. "Self-learning" here means a human
+curator teaching the hub in-chat, not the hub curating itself unattended (which
+the fail-closed gate above already forbids for scheduled runs).
+
 What it does. ``remember(topic, content)`` writes a single knowledge document
 to ``<hub>/knowledge/_learned/<slug>.md`` with frontmatter ``name:
 learned/<slug>`` — creating it if new, or FULL-REPLACING it if it exists. The
@@ -69,16 +75,23 @@ def make(ctx) -> list:
 
     @function_tool
     def remember(topic: str, content: str) -> str:
-        """Save a durable learning into the hub's knowledge base.
+        """Save a durable learning into the hub's knowledge base — ONLY when the
+        user explicitly asks you to.
 
-        Use this to record something the hub should remember across chats — a
-        correction, a newly-confirmed fact, a gotcha. It writes ONE knowledge
-        document per topic. If a document for this topic already exists, this
-        REPLACES it in full, so first call `read_knowledge('learned/<topic>')`
-        and fold your update into the complete text — do not send only the new
-        sentence, send the whole updated document. This makes corrections
-        (e.g. "X and Y are only PARTIALLY connected") overwrite the old claim
-        instead of contradicting it.
+        Call this tool ONLY when the user directly tells you to remember, save,
+        note, or record something for next time (e.g. "remember that...", "save
+        this", "note for future", "don't forget..."). Do NOT call it on your own
+        initiative: never decide to persist a fact just because it seems useful,
+        and never curate silently in the background. If the user has not asked
+        you to remember something, do not use this tool.
+
+        When the user does ask, it writes ONE knowledge document per topic. If a
+        document for this topic already exists, this REPLACES it in full, so
+        first call `read_knowledge('learned/<topic>')` and fold your update into
+        the complete text — do not send only the new sentence, send the whole
+        updated document. This makes corrections (e.g. "X and Y are only
+        PARTIALLY connected") overwrite the old claim instead of contradicting
+        it.
 
         The saved learning is available to every user of this hub and is
         readable immediately via read_knowledge.

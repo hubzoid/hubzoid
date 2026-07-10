@@ -285,8 +285,16 @@ def _tail(fh, cap: int) -> str:
     except OSError:
         return ""
     if size > cap:
-        data = b"...[output truncated]...\n" + data[data.find(b"\n") + 1:] \
-            if b"\n" in data else data
+        # Drop the partial first line so the tail starts on a clean boundary —
+        # but ONLY when that first newline is near the window start. For one
+        # huge line (a big JSON/base64 blob or minified log with no early
+        # newline) stripping to the first newline would discard the ENTIRE
+        # capture and leave just the marker — which also blanks the failure
+        # diagnostic, since the error tail reads from this same value. In that
+        # case keep the raw tail bytes so real output is never lost.
+        marker = b"...[output truncated]...\n"
+        nl = data.find(b"\n")
+        data = marker + (data[nl + 1:] if 0 <= nl <= 1024 else data)
     return data.decode("utf-8", errors="replace")
 
 
