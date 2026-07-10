@@ -60,8 +60,38 @@ def _resolve_model_id(hub_dir: Path, settings) -> str:
     return model_id or "claude-local"
 
 
+_CLAUDE_TIERS = frozenset({"opus", "sonnet", "haiku"})
+
+
+def _apply_model_override(base_id: str, override: str) -> tuple[str, str]:
+    """Resolve a per-run model override, PRESERVING the hub's backend.
+
+    Backend selection keys off the returned model id, so a bare Claude tier
+    (``opus``/``sonnet``/``haiku``) or a ``claude-*`` id on a claude-local hub
+    is pinned *within* the claude-local backend (``claude-local/<x>``) — a
+    task's ``model: opus`` must not accidentally route to the OpenAI backend
+    (and ``_parse_model_pin`` needs the ``claude-local/`` prefix to extract the
+    tier). A full id that already names its backend (``claude-local/...``, or an
+    OpenAI/LiteLLM id like ``gpt-4o``) is used verbatim, so a deliberate
+    cross-backend switch still works.
+
+    Returns (model_id_for_backend_selection, override_passed_to_factory) — the
+    two are the same string; both are returned for call-site clarity.
+    """
+    ov = override.strip()
+    low = ov.lower()
+    if base_id.lower().startswith("claude-local") and not low.startswith("claude-local"):
+        if low in _CLAUDE_TIERS or low.startswith("claude-"):
+            # Use the lowercased form — the Claude CLI recognizes `opus`/`sonnet`/
+            # `haiku` and `claude-*` ids only in lowercase, and _parse_model_pin
+            # passes the suffix through verbatim.
+            norm = f"claude-local/{low}"
+            return norm, norm
+    return ov, ov
+
+
 def build(hub_dir: Path, *, extra_tools: dict | None = None,
-          max_turns: int | None = None) -> Runtime:
+          max_turns: int | None = None, model: str | None = None) -> Runtime:
     """Pick the backend for this hub based on `MODEL` in <hub>/.env.
 
     `MODEL=claude-local` -> Claude Agent SDK (subprocess + `claude` login).
@@ -74,24 +104,34 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
     internal tools (run_git, write_hub_file) without leaking them into chat.
     `max_turns` overrides the per-call agent-turn cap (default 20) — long
     unattended runs need more headroom than a chat turn.
+    `model` overrides the hub's configured model for this build only — used by
+    a scheduled task's `model:` frontmatter so one job can run on a heavier
+    (or cheaper) tier than the hub default, without touching .env. It wins
+    over both `.env` MODEL and AGENTS.md `model:`.
     """
     hub_dir = Path(hub_dir).resolve()
     settings = settingslib.load(hub_dir)
-    model_id = _resolve_model_id(hub_dir, settings)
-    if not (settings.model or "").strip():
-        log.info(
-            "hub %s: no MODEL in .env; defaulting to %s",
-            hub_dir.name, model_id,
-        )
+    base_id = _resolve_model_id(hub_dir, settings)
+    override = (model or "").strip() or None
+    if override:
+        model_id, override = _apply_model_override(base_id, override)
+    else:
+        model_id = base_id
+        if not (settings.model or "").strip():
+            log.info(
+                "hub %s: no MODEL in .env; defaulting to %s",
+                hub_dir.name, model_id,
+            )
 
     if model_id.lower().startswith("claude-local"):
         from .factory_claude import build_claude_runtime
         return build_claude_runtime(hub_dir, extra_tools=extra_tools,
-                                    max_turns=max_turns)
+                                    max_turns=max_turns, model_override=override)
 
     from .factory import build_agent
-    return OpenAIAgentsRuntime(build_agent(hub_dir, extra_tools=extra_tools),
-                               max_turns=max_turns, tool_mode=settings.show_tools)
+    return OpenAIAgentsRuntime(
+        build_agent(hub_dir, extra_tools=extra_tools, model_override=override),
+        max_turns=max_turns, tool_mode=settings.show_tools)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +240,8 @@ class OpenAIAgentsRuntime:
                         )
                         if line:
                             yield line
+            # Surface final token usage for the metrics ledger (best-effort).
+            _record_openai_usage(result)
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
                 _request_ctx.drain_artifacts(), "".join(shown))
@@ -214,6 +256,31 @@ class OpenAIAgentsRuntime:
         async for chunk in self.stream(prompt):
             pieces.append(chunk)
         return "".join(pieces)
+
+
+def _record_openai_usage(result) -> None:
+    """Surface the OpenAI Agents run's token usage for the metrics ledger.
+
+    `result.context_wrapper.usage` accumulates across the run. The OpenAI path
+    reports no dollar cost, so `cost_usd` is None (token counts still give
+    relative cost). Best-effort — never break the stream on a shape change.
+    """
+    try:
+        from . import _request_ctx
+        usage = getattr(getattr(result, "context_wrapper", None), "usage", None)
+        if usage is None:
+            return
+        inp = int(getattr(usage, "input_tokens", 0) or 0)
+        out = int(getattr(usage, "output_tokens", 0) or 0)
+        _request_ctx.record_usage({
+            "input_tokens": inp,
+            "output_tokens": out,
+            "total_tokens": int(getattr(usage, "total_tokens", inp + out) or (inp + out)),
+            "cost_usd": None,
+            "num_turns": getattr(usage, "requests", None),
+        })
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
+        log.debug("openai usage capture skipped: %s", exc)
 
 
 # Convenience for callers that want a JSON-debuggable view of which backend

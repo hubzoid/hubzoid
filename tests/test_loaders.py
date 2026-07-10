@@ -26,9 +26,20 @@ def test_load_subagents():
 
 def test_load_skills():
     skills = skills_loader.load_all(MINIMAL)
-    assert len(skills) == 1
-    assert skills[0].spec.name == "greet"
-    assert "Hello" in skills[0].body
+    names = {s.spec.name: s for s in skills}
+    # The hub's own skill…
+    assert "greet" in names
+    assert "Hello" in names["greet"].body
+    # …plus the core-shipped skills every hub gets (e.g. dashboard).
+    assert "dashboard" in names
+
+
+def test_load_skills_hub_only():
+    """Hub-authored skills, without the core-shipped ones."""
+    hub_only = skills_loader._scan_dir(
+        __import__("hubzoid._fs", fromlist=["resolve_bucket"]).resolve_bucket(MINIMAL, "skills")
+    )
+    assert [s.spec.name for s in hub_only] == ["greet"]
 
 
 def test_load_knowledge():

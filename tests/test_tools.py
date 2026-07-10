@@ -216,26 +216,38 @@ def _kn(name: str, body: str = "kn body", description: str = "desc") -> LoadedKn
     return LoadedKnowledge(name=name, description=description, body=body)
 
 
+def _write_kn(ctx, name: str, body: str = "kn body", description: str = "desc") -> None:
+    """Persist a knowledge doc to disk. read_knowledge/list_knowledge are
+    disk-live (re-scan each call), so tests must write real files, not just
+    populate ctx.knowledge."""
+    kdir = ctx.hub_dir / "knowledge"
+    kdir.mkdir(parents=True, exist_ok=True)
+    (kdir / f"{name}.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"
+    )
+
+
 def test_list_knowledge_empty(ctx):
     list_knowledge = _by_name(knowledge_mod.make(ctx), "list_knowledge")
     assert "no knowledge" in _call(list_knowledge).lower()
 
 
 def test_list_knowledge_with_docs(ctx):
-    ctx.knowledge = [_kn("intro", description="overview"), _kn("api", description="endpoints")]
+    _write_kn(ctx, "intro", description="overview")
+    _write_kn(ctx, "api", description="endpoints")
     list_knowledge = _by_name(knowledge_mod.make(ctx), "list_knowledge")
     out = _call(list_knowledge)
     assert "intro" in out and "api" in out
 
 
 def test_read_knowledge_returns_body(ctx):
-    ctx.knowledge = [_kn("intro", body="hello there")]
+    _write_kn(ctx, "intro", body="hello there")
     read_knowledge = _by_name(knowledge_mod.make(ctx), "read_knowledge")
-    assert _call(read_knowledge, name="intro") == "hello there"
+    assert _call(read_knowledge, name="intro").strip() == "hello there"
 
 
 def test_read_knowledge_missing_lists_available(ctx):
-    ctx.knowledge = [_kn("intro")]
+    _write_kn(ctx, "intro")
     read_knowledge = _by_name(knowledge_mod.make(ctx), "read_knowledge")
     out = _call(read_knowledge, name="nope")
     assert "no document" in out

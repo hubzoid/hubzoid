@@ -211,7 +211,15 @@ class ScheduledTask:
     commit: list[str] = field(default_factory=list)   # hub-relative paths
     push: bool = False
     enabled: bool = True
+    model: str | None = None                    # per-task model override (LLM tasks)
+    run: list[str] | None = None                # plain-cron command; None = LLM task
+    run_shell: bool = False                      # run[0] is a shell command line, not argv
     source_path: Path | None = None
+
+    @property
+    def is_script(self) -> bool:
+        """A plain-cron task runs a command (`run:`), not the LLM harness."""
+        return self.run is not None
 
     @property
     def scratch_rel(self) -> str:
@@ -255,7 +263,11 @@ def _parse_task(path: Path) -> ScheduledTask:
     cron = parse_cron(str(raw_schedule))
     if next_fire(cron, datetime.now()) is None:
         raise ValueError(f"cron {raw_schedule!r} never matches a real date")
-    if not body.strip():
+
+    run, run_shell = _parse_run(fm.get("run"))
+    # A plain-cron (`run:`) task runs a command, not the LLM — its body is
+    # optional documentation. An LLM task must have instructions.
+    if run is None and not body.strip():
         raise ValueError("task body is empty — write the instructions below the frontmatter")
 
     def _int(key: str, default: int) -> int:
@@ -279,6 +291,10 @@ def _parse_task(path: Path) -> ScheduledTask:
     if push and not commit:
         raise ValueError("`push: true` needs `commit:` paths — nothing to push otherwise")
 
+    model = fm.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise ValueError("`model:` must be a non-empty string (e.g. claude-local/opus)")
+
     return ScheduledTask(
         name=name,
         schedule=str(raw_schedule).strip(),
@@ -291,8 +307,45 @@ def _parse_task(path: Path) -> ScheduledTask:
         commit=commit,
         push=push,
         enabled=bool(fm.get("enabled", True)),
+        model=(model.strip() if isinstance(model, str) else None),
+        run=run,
+        run_shell=run_shell,
         source_path=path,
     )
+
+
+def _parse_run(raw: Any) -> tuple[list[str] | None, bool]:
+    """Parse the `run:` frontmatter into (command, is_shell).
+
+    Two accepted forms:
+      * a string  -> a shell command line (crontab-style: pipes, `&&`, env all
+        work). Returns (["<the line>"], True).
+      * a list    -> argv executed directly with NO shell (safer, no word
+        splitting). Returns (["arg0", "arg1", ...], False).
+
+    Returns (None, False) when `run:` is absent — the task is an LLM task.
+    """
+    if raw is None:
+        return None, False
+    if isinstance(raw, str):
+        if not raw.strip():
+            raise ValueError("`run:` command string is empty")
+        return [raw.strip()], True
+    if isinstance(raw, list):
+        argv: list[str] = []
+        for a in raw:
+            # Require quoted strings: an unquoted YAML scalar (true, 3.10) would
+            # str() to a surprising token ("True", "3.1"). Reject rather than guess.
+            if not isinstance(a, str):
+                raise ValueError(
+                    f"`run:` argv items must be quoted strings, got {a!r} "
+                    "(quote it: - \"...\")"
+                )
+            argv.append(a)
+        if not argv or not any(a.strip() for a in argv):
+            raise ValueError("`run:` argv list is empty")
+        return argv, False
+    raise ValueError("`run:` must be a shell command string or an argv list")
 
 
 def load_tasks(hub_dir: Path) -> tuple[list[ScheduledTask], list[str]]:

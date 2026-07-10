@@ -76,6 +76,30 @@ Environment variables explicitly supported:
                          backs every hub — without it, any logged-in user of
                          any team can reach this hub's unrestricted tools and
                          knowledge. Unset = every authenticated OWUI user.
+  SLACK_IDENTITY_MAPPING true | false (default). When true, the Slack adapter
+                         resolves each sender's verified Slack profile email
+                         (needs the `users:read.email` manifest scope) and
+                         forwards it to the bridge, which looks up that user's
+                         Open WebUI groups. This maps a Slack user to their OWUI
+                         identity so per-group permissions apply over Slack.
+                         This flag only supplies the identity; restricted tools
+                         still require opting the surface into
+                         HUBZOID_RESTRICTED_SURFACES (below). Emails must match
+                         between Slack and OWUI (matched case-insensitively); no
+                         match falls back to anonymous.
+  HUBZOID_RESTRICTED_SURFACES
+                         Comma-separated COMPLETE list of surfaces that may
+                         reach access-controlled tools. Unset = the built-in
+                         default `owui,web,api,mcp`. Setting it REPLACES the
+                         default (it does not extend it), so include the
+                         defaults you still want, e.g.
+                         `owui,web,api,mcp,slack-dm`. Slack surfaces are split:
+                         `slack-dm` (1:1 DM / assistant sidebar — one human,
+                         safe) and `slack-channel` (shared thread with many
+                         authors, answered under the @mentioner's identity —
+                         a confused-deputy risk). Add `slack-dm` if you want
+                         restricted tools in Slack DMs; NEVER add
+                         `slack-channel`.
 """
 from __future__ import annotations
 
@@ -107,6 +131,7 @@ class Settings:
     show_tools: str = "compact"
     mcp_server: bool = False
     mcp_access_group: str | None = None
+    slack_identity_mapping: bool = False
 
     @property
     def first_api_key(self) -> str:
@@ -150,6 +175,7 @@ def load(hub_dir: Path) -> Settings:
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
         mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
+        slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
     )
 
 

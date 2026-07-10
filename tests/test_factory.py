@@ -40,8 +40,11 @@ def test_build_agent_minimal_hub():
     assert "current_time" in tool_names
     assert "reverse_string" in tool_names  # from tools_local
     assert "sentinel_marker" in tool_names
-    # Memory tools removed pending Item 6 redesign (per-user via OWUI headers).
-    assert "remember" not in tool_names
+    # The core-shipped curator tool `remember` IS registered now, but gated:
+    # it carries the `curator` permission, so it is hidden/denied unless the
+    # caller is in the hub's `curator` group (see tests/test_curator.py).
+    assert "remember" in tool_names
+    # The old recall/forget memory tools stay removed.
     assert "recall" not in tool_names
     assert "forget" not in tool_names
 

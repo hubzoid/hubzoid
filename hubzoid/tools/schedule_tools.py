@@ -27,6 +27,8 @@ from typing import Callable
 
 from agents import function_tool
 
+from .._fs import resolve_bucket
+
 log = logging.getLogger("hubzoid.schedule")
 
 _GIT_TIMEOUT = 300          # seconds per git invocation
@@ -62,12 +64,36 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
     hub = Path(hub_dir).resolve()
     writable = [str(p) for p in task.writable_paths()]
 
+    # The hub's `schedule/` policy dir is NEVER agent-writable, even if a task
+    # declares `write`/`commit` roots that would otherwise cover it (e.g.
+    # commit: ["."]). Otherwise an LLM task could drop a `schedule/evil.md`
+    # with a `run:` shell command that the scheduler executes on the next tick
+    # — turning a sandboxed file write into arbitrary code execution. The
+    # task's own scratch dir lives under `.hubzoid/schedule/`, which is a
+    # different path and stays writable.
+    _forbidden_roots = [(hub / "schedule").resolve()]
+    _sched_bucket = resolve_bucket(hub, "schedule")
+    if _sched_bucket is not None:
+        _forbidden_roots.append(_sched_bucket.resolve())
+
     def _resolve_writable(rel: str) -> Path:
         """Resolve a hub-relative path and require it under a writable root."""
         rel = str(rel).strip().lstrip("/")
         if not rel or ".." in Path(rel).parts:
             raise PermissionError(f"path must be hub-relative without '..': {rel!r}")
+        # Never let a task write into a git internals dir (hooks, config), even
+        # under a broad `write`/`commit` grant — a `.git/hooks/*` write plus the
+        # post-run `git commit` is a code-exec vector. Parity with the schedule/
+        # guard's threat model.
+        if ".git" in Path(rel).parts:
+            raise PermissionError(f"{rel!r} is under a .git/ directory, which is never writable.")
         target = (hub / rel).resolve()
+        for root in _forbidden_roots:
+            if target == root or root in target.parents:
+                raise PermissionError(
+                    f"{rel!r} is under the hub's schedule/ policy folder, which "
+                    "is never writable by a task (it defines the schedule itself)."
+                )
         for root in writable:
             root_abs = (hub / root).resolve()
             if target == root_abs or root_abs in target.parents:
