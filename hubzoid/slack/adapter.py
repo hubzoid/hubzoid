@@ -49,6 +49,22 @@ log = logging.getLogger("hubzoid.slack")
 _UPDATE_INTERVAL_S = 0.75
 
 
+def _lookup_email(client, user_id: str) -> str | None:
+    """The sender's verified Slack profile email via users.info, or None.
+
+    Server-side lookup — a normal user cannot spoof another's email. Any
+    failure (missing scope, rate limit, no email on profile) returns None,
+    so identity resolution fails closed (anonymous, no groups)."""
+    try:
+        info = client.users_info(user=user_id)
+        profile = (info.get("user") or {}).get("profile") or {}
+        return profile.get("email") or None
+    except Exception:  # noqa: BLE001 — never fail a reply over identity lookup
+        log.warning("slack: users.info failed for %s; treating as anonymous",
+                    user_id, exc_info=True)
+        return None
+
+
 def _format_for_slack(text: str) -> str:
     """Convert standard markdown to Slack mrkdwn and apply the 40k cap.
 
@@ -96,6 +112,8 @@ def stream_reply(
     messages: list[dict[str, str]],
     on_delta: Callable[[str], None],
     chat_id: str | None = None,
+    user_email: str | None = None,
+    surface: str = "slack",
     http_client: httpx.Client | None = None,
     timeout: float | None = None,
 ) -> None:
@@ -104,6 +122,16 @@ def stream_reply(
     `bridge_url` should be the `/v1` base (e.g. `http://127.0.0.1:8000/v1`).
     `chat_id`, when provided, is forwarded in the body so the bridge
     scopes artifacts + uploads to the same Slack thread on every turn.
+    `user_email`, when provided (SLACK_IDENTITY_MAPPING on), is the sender's
+    verified Slack profile email; the bridge maps it to that person's Open
+    WebUI groups so per-group permissions apply over Slack.
+    `surface` declares the Slack context: `slack-dm` (1:1 DM or the assistant
+    sidebar — a single human, safe to grant restricted tools) or
+    `slack-channel` (a shared channel / group-DM thread with MANY authors,
+    where the bot answers under the @mentioner's identity but the prompt
+    includes everyone's text — NEVER safe for restricted tools). The access
+    guard gates on this: an operator may add `slack-dm` to
+    HUBZOID_RESTRICTED_SURFACES but must never add `slack-channel`.
     Raises on HTTP error.
     """
     client = http_client or httpx.Client(timeout=timeout)
@@ -111,14 +139,18 @@ def stream_reply(
     body: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
     if chat_id:
         body["chat_id"] = chat_id
+    # Declare the surface so the access guard treats each Slack context on its
+    # own terms (restricted tools stay off unless the operator opts the surface
+    # in via HUBZOID_RESTRICTED_SURFACES). When identity mapping is on, forward
+    # the sender's verified email so the bridge resolves their OWUI groups.
+    headers = {"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": surface}
+    if user_email:
+        headers["X-OpenWebUI-User-Email"] = user_email
     try:
         with client.stream(
             "POST",
             f"{bridge_url}/chat/completions",
-            # Declare the surface so the access guard refuses restricted tools
-            # over Slack: it carries no per-person login, so a restricted door
-            # is never reachable here. See hubzoid.access.policy.
-            headers={"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": "slack"},
+            headers=headers,
             json=body,
         ) as r:
             r.raise_for_status()
@@ -193,12 +225,17 @@ def build_app(
     bot_user_id: str | None = None,
     verify_token: bool = True,
     max_upload_bytes: int = settingslib.DEFAULT_MAX_UPLOAD_BYTES,
+    identity_mapping: bool = False,
 ) -> App:
     """Construct a configured slack_bolt App. Does not start any sockets.
 
     `verify_token=False` skips slack-bolt's eager `auth.test` call against
     Slack — used by tests so they can construct an App with a fake token.
     Socket Mode doesn't use signing secrets, so we pass a placeholder.
+
+    `identity_mapping` (SLACK_IDENTITY_MAPPING): when true, resolve each
+    sender's verified Slack profile email and forward it to the bridge so the
+    caller's Open WebUI groups apply. Needs the `users:read.email` scope.
     """
     app = App(
         token=bot_token,
@@ -219,6 +256,27 @@ def build_app(
     # seen files on every turn so the agent never loses track of what
     # was uploaded earlier in the thread.
     seen_files_by_chat: dict[str, dict[str, tuple[str, str]]] = {}
+
+    # Slack user-id -> verified profile email, memoized (users.info is
+    # rate-limited and a user's email rarely changes within a process).
+    email_cache: dict[str, str | None] = {}
+
+    def _sender_email(client, user_id: str | None) -> str | None:
+        """The sender's verified Slack profile email, or None. Server-side
+        lookup (unspoofable by other users). No-op unless identity mapping is
+        enabled. A lookup failure denies rather than grants (returns None)."""
+        if not identity_mapping or not user_id:
+            return None
+        if user_id in email_cache:
+            return email_cache[user_id]
+        email = _lookup_email(client, user_id)
+        # Only memoize a SUCCESSFUL lookup. `_lookup_email` returns None on a
+        # transient failure too (rate-limit, network blip); caching that would
+        # lock the user out of their groups until the process restarts. A user
+        # with genuinely no email is re-looked-up each turn (rare, cheap).
+        if email is not None:
+            email_cache[user_id] = email
+        return email
 
     def _gather_messages(client, context, channel: str, thread_ts: str) -> tuple[list[dict[str, str]], str]:
         """Common path: fetch history, download any Slack files, build messages.
@@ -315,6 +373,8 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                user_email=_sender_email(client, payload.get("user")),
+                surface="slack-dm",   # assistant sidebar: 1:1 with the bot
             )
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
@@ -349,6 +409,10 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                user_email=_sender_email(client, event.get("user")),
+                # Channel / group thread: MANY authors flattened into one prompt,
+                # answered under the @mentioner's identity. Never restricted-safe.
+                surface="slack-channel",
             )
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
@@ -395,6 +459,8 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                user_email=_sender_email(client, event.get("user")),
+                surface="slack-dm",   # 1:1 direct message
             )
             final = writer.done()
             if not strip_thinking(strip_tool_calls(final))[0].strip():
@@ -436,6 +502,15 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
     model_label = settings.model_label or _slugify(agent_name)
     bridge_url = f"http://127.0.0.1:{settings.bridge_port}/v1"
 
+    if settings.slack_identity_mapping:
+        log.info(
+            "SLACK_IDENTITY_MAPPING is on: resolving sender emails to OWUI "
+            "identity. Ensure the Slack app has the `users:read.email` scope "
+            "(regenerate the manifest with `hubzoid slack manifest` if unsure). "
+            "Restricted tools over Slack DMs also need `slack-dm` in "
+            "HUBZOID_RESTRICTED_SURFACES; never add `slack-channel`."
+        )
+
     app = build_app(
         hub_dir=hub_dir,
         bridge_url=bridge_url,
@@ -444,6 +519,7 @@ def run(hub_dir: Path, *, env: dict[str, str] | None = None) -> int:
         bot_token=env["SLACK_BOT_TOKEN"],
         suggestions=suggestions,
         max_upload_bytes=settings.max_upload_bytes,
+        identity_mapping=settings.slack_identity_mapping,
     )
 
     log.info("hubzoid slack adapter starting (hub=%s, bridge=%s)", hub_dir.name, bridge_url)

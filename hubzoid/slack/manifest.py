@@ -48,6 +48,7 @@ _BOT_SCOPES = [
     "im:write",
     "mpim:history",       # group DM threads
     "users:read",
+    "users:read.email",   # resolve a sender's email for OWUI identity mapping
 ]
 
 _BOT_EVENTS = [

@@ -135,7 +135,8 @@ def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]
 # Public entry: build a ClaudeRuntime for the hub.
 # ---------------------------------------------------------------------------
 def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
-                         max_turns: int | None = None) -> "ClaudeRuntime":
+                         max_turns: int | None = None,
+                         model_override: str | None = None) -> "ClaudeRuntime":
     try:
         import claude_agent_sdk  # noqa: F401
     except ImportError as exc:
@@ -154,9 +155,14 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     output_dir = memlib.session_output_dir(hub_dir, session_id)
 
     # Resolve the hub model first — it decides which sub-agents are delegates.
+    # A caller-supplied override (a scheduled task's `model:`) wins over both
+    # .env MODEL and AGENTS.md `model:`, and sets the model pin the main agent
+    # actually runs on.
     main_spec = agents_loader.load_main(hub_dir)
-    hub_model = settings.model or main_spec.spec.model or "claude-local"
+    hub_model = (model_override or "").strip() or settings.model or main_spec.spec.model or "claude-local"
     skills, delegate_agents = _load_skills_and_delegates(hub_dir, hub_model)
+    from .factory import _with_core_skills
+    skills = _with_core_skills(skills)     # chat runtime gets core skills
     knowledge = knowledge_loader.load_all(hub_dir)
     log.info(
         "hub %s (claude-local): %d skill(s), %d delegate(s), %d knowledge doc(s)",
@@ -188,6 +194,8 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # adapter calls, so it holds here too. No-op when there is no restricted/.
     from . import access
     registry = access.apply(hub_dir, registry)
+    from .factory import _add_curator_tool
+    _add_curator_tool(ctx, registry, access)
 
     # MCP: external servers from the hub's connectors/.mcp.json (raw dicts;
     # Claude SDK accepts the same JSON shape) plus our in-process hubzoid
@@ -295,6 +303,35 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         name=main_name, options=options, thinking_mode=thinking_mode,
         tool_mode=settings.show_tools,
     )
+
+
+def _record_claude_usage(message) -> None:
+    """Surface the Claude SDK's final usage/cost for the metrics ledger.
+
+    `ResultMessage.usage` is an Anthropic usage mapping (input_tokens,
+    output_tokens, cache_* ). `total_cost_usd` is None on the subscription
+    (claude-local) and a real dollar figure in API-key mode. Best-effort:
+    a shape change in the SDK must never break the stream.
+    """
+    try:
+        usage = getattr(message, "usage", None) or {}
+        get = usage.get if isinstance(usage, dict) else (lambda k, d=0: getattr(usage, k, d))
+        # Anthropic reports cache tokens SEPARATELY from input_tokens. claude-local
+        # leans heavily on prompt caching, so summing them in is essential — else
+        # input totals massively undercount real usage.
+        inp = (int(get("input_tokens", 0) or 0)
+               + int(get("cache_read_input_tokens", 0) or 0)
+               + int(get("cache_creation_input_tokens", 0) or 0))
+        out = int(get("output_tokens", 0) or 0)
+        _request_ctx.record_usage({
+            "input_tokens": inp,
+            "output_tokens": out,
+            "total_tokens": inp + out,
+            "cost_usd": getattr(message, "total_cost_usd", None),
+            "num_turns": getattr(message, "num_turns", None),
+        })
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
+        log.debug("claude usage capture skipped: %s", exc)
 
 
 _CLAUDE_LOCAL_DEFAULT = "sonnet"
@@ -478,6 +515,7 @@ class ClaudeRuntime:
                 # --- Final aggregate (fallback if partials are missing) ---
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
+                    _record_claude_usage(message)
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"

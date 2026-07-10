@@ -40,6 +40,7 @@ from . import _request_ctx
 from . import _signing
 from . import access
 from . import memory as memlib
+from . import metrics as metrics_lib
 from . import owui as owui_lib
 from . import runtime as runtime_lib
 from . import settings as settingslib
@@ -177,7 +178,7 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id, inflight, identity),
+                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -187,9 +188,20 @@ def build_app() -> FastAPI:
             with _request_ctx.chat_scope(chat_id):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
+                    usage = _finalize_usage(hub_dir, chat_id, identity, model_label)
         finally:
             inflight.leave()
-        return JSONResponse(_blocking_envelope(text, model_label))
+        return JSONResponse(_blocking_envelope(text, model_label, usage))
+
+    @app.get("/metrics")
+    async def get_metrics(request: Request) -> JSONResponse:
+        """Aggregated token/cost usage for this hub (from the JSONL ledger).
+
+        Auth-gated like the rest of the bridge. Feeds external analytics and
+        the cost-dashboard artifact; OWUI's own analytics tab shows per-message
+        token counts natively once the usage envelope is populated (below)."""
+        _auth(request)
+        return JSONResponse(metrics_lib.summary(hub_dir))
 
     # ------------------------------------------------------------------
     # Per-chat artifact + upload routes.
@@ -284,7 +296,7 @@ class _InFlight:
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
                   inflight: _InFlight | None = None,
-                  identity=None) -> AsyncIterator[bytes]:
+                  identity=None, hub_dir: Path | None = None) -> AsyncIterator[bytes]:
     if inflight:
         inflight.enter()
     try:
@@ -295,16 +307,49 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
 
         # Set chat scope so tools resolve to this chat's dirs, and bind the
         # caller's identity so the access guard sees who is running each tool.
+        usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
                 if delta:
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
+            # Drain + log usage while still inside chat_scope (the runtime set
+            # it there); build the OpenAI usage envelope for the final chunk.
+            if hub_dir is not None:
+                usage = _finalize_usage(hub_dir, chat_id, identity, model)
 
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
+        # Final usage chunk (OpenAI `stream_options.include_usage` convention):
+        # empty choices + top-level usage. Open WebUI reads this to populate its
+        # native per-message token stats (previously it received zeros).
+        usage_chunk = {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [],
+            "usage": usage,
+        }
+        yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
         yield b"data: [DONE]\n\n"
     finally:
         if inflight:
             inflight.leave()
+
+
+def _finalize_usage(hub_dir: Path, chat_id: str, identity, model_label: str) -> dict:
+    """Drain the turn's usage, append it to the metrics ledger, and return the
+    OpenAI usage envelope (prompt/completion/total tokens). Must be called
+    while the request's chat_scope is still active."""
+    raw = _request_ctx.drain_usage()
+    try:
+        metrics_lib.record_interaction(
+            hub_dir, chat_id=chat_id, identity=identity, model=model_label, usage=raw,
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never break the response
+        log.warning("metrics: record_interaction failed", exc_info=True)
+    inp = int(raw.get("input_tokens") or 0)
+    out = int(raw.get("output_tokens") or 0)
+    return {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": inp + out}
 
 
 # ---------------------------------------------------------------------------
@@ -529,10 +574,25 @@ def _serve_chat_file(*, base: Path, filename: str, inline: bool) -> FileResponse
         raise HTTPException(status_code=404, detail="not found")
     media_type, _ = mimetypes.guess_type(target.name)
     disp = "inline" if inline else "attachment"
+    headers = {"Content-Disposition": f'{disp}; filename="{safe_name}"'}
+    # Agent-authored artifacts (e.g. a dashboard HTML built by the `dashboard`
+    # skill) are served inline and may be on the same origin as Open WebUI
+    # behind the edge proxy. Sandbox them: a CSP `sandbox` with NO
+    # `allow-same-origin` forces a unique opaque origin, so any script embedded
+    # in the artifact cannot read OWUI's session/JWT or cookies. That opaque
+    # origin is the ONLY control that matters here — withholding `allow-forms`
+    # etc. adds no security (a script can already exfiltrate via fetch), so we
+    # grant the capabilities interactive artifacts legitimately need (charts,
+    # forms, in-tab links, downloads) while keeping `allow-same-origin` off.
+    if inline:
+        headers["Content-Security-Policy"] = (
+            "sandbox allow-scripts allow-popups allow-downloads "
+            "allow-forms allow-top-navigation-by-user-activation"
+        )
     return FileResponse(
         path=str(target),
         media_type=media_type or "application/octet-stream",
-        headers={"Content-Disposition": f'{disp}; filename="{safe_name}"'},
+        headers=headers,
     )
 
 
@@ -582,7 +642,7 @@ def _chunk(content_delta: str | None, *, finish_reason: str | None = None, model
     }
 
 
-def _blocking_envelope(text: str, model: str) -> dict[str, Any]:
+def _blocking_envelope(text: str, model: str, usage: dict | None = None) -> dict[str, Any]:
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion",
@@ -591,7 +651,7 @@ def _blocking_envelope(text: str, model: str) -> dict[str, Any]:
         "choices": [
             {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 
