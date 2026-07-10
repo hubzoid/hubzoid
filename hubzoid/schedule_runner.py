@@ -36,6 +36,8 @@ import json
 import logging
 import os
 import re
+import shlex
+import signal
 import subprocess
 import time
 import traceback
@@ -229,6 +231,148 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
 
 
 # ---------------------------------------------------------------------------
+# Capture: commit the task's declared paths (shared by LLM + script paths)
+# ---------------------------------------------------------------------------
+def _capture_commit(hub_dir: Path, task: ScheduledTask, result: "RunResult",
+                    rlog: "RunLog", started_dt: datetime) -> None:
+    """Commit (and optionally push) ONLY the task's declared `commit:` paths.
+
+    Sets `result.commit_sha` on success, or flips the run to `error` if the
+    scoped commit/push fails. A dirty tree elsewhere is never swept in — see
+    `commit_paths`. The message is synthesized from the run's summary (the
+    agent's DONE note for LLM tasks, or `ran <cmd>` for script tasks).
+    """
+    date = started_dt.strftime("%Y-%m-%d")
+    summary = re.sub(r"\s+", " ", result.summary).strip()[:100]
+    msg = f"schedule({task.name}): {summary or f'run {date}'}"
+    try:
+        sha = commit_paths(hub_dir, task.commit, msg, push=task.push)
+    except RuntimeError as exc:
+        result.result = "error"
+        result.error = str(exc)
+        rlog.emit(event="error", where="commit", error=str(exc))
+        log.error("schedule[%s] commit/push failed: %s", task.name, exc)
+    else:
+        result.commit_sha = sha
+        if sha:
+            rlog.emit(event="commit", sha=sha, paths=task.commit,
+                      pushed=task.push, message=msg)
+            log.info("schedule[%s] committed %s%s", task.name, sha[:10],
+                     " and pushed" if task.push else "")
+        else:
+            rlog.emit(event="commit_skip", reason="no changes in declared paths")
+            log.info("schedule[%s] nothing to commit", task.name)
+
+
+# ---------------------------------------------------------------------------
+# Plain-cron script execution (`run:` tasks — no LLM harness)
+# ---------------------------------------------------------------------------
+# Cap on captured stdout/stderr held in memory. Output is written to temp files
+# (so the child never blocks on a full pipe and the bridge never buffers GBs of
+# a runaway script's output) and only this much of the TAIL is read back — far
+# more than the log needs (it keeps [-4000:]).
+_MAX_CAPTURE_BYTES = 64 * 1024
+
+
+def _tail(fh, cap: int) -> str:
+    """Read at most the last `cap` bytes of a file object, decoded leniently."""
+    try:
+        fh.flush()
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - cap))
+        data = fh.read()
+    except OSError:
+        return ""
+    if size > cap:
+        data = b"...[output truncated]...\n" + data[data.find(b"\n") + 1:] \
+            if b"\n" in data else data
+    return data.decode("utf-8", errors="replace")
+
+
+def _run_command(cmd: list[str], *, shell: bool, cwd: str,
+                 timeout: int) -> tuple[int, str, str]:
+    """Run a command in its OWN process group and return (rc, stdout, stderr).
+
+    Output goes to temp files (bounded read-back via `_tail`), NOT in-memory
+    pipes — a verbose `run:` job can't OOM the shared bridge process, and the
+    child never blocks on a full pipe. On timeout the WHOLE process group is
+    killed (`start_new_session=True` + `killpg`), so a line that backgrounds
+    work or builds a pipeline cannot orphan grandchildren. Re-raises
+    `TimeoutExpired` after killing so the caller reports the timeout.
+    """
+    import tempfile
+
+    with tempfile.TemporaryFile() as outf, tempfile.TemporaryFile() as errf:
+        proc = subprocess.Popen(
+            cmd[0] if shell else cmd,
+            shell=shell, cwd=cwd,
+            stdout=outf, stderr=errf,
+            start_new_session=True,
+        )
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+            try:
+                proc.wait(timeout=5)   # reap; don't block forever
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        return proc.returncode, _tail(outf, _MAX_CAPTURE_BYTES), _tail(errf, _MAX_CAPTURE_BYTES)
+
+
+def _execute_script(hub_dir: Path, task: ScheduledTask, result: "RunResult",
+                    rlog: "RunLog") -> None:
+    """Run a `run:` command as a subprocess in the hub dir. Never raises.
+
+    Fills result.result ('done' on exit 0, else 'error'), result.summary
+    (used as the commit message), and result.error. This is the plain-cron
+    path: a deterministic build/sync script that needs no LLM. The command
+    is operator-authored and git-committed (same trust boundary as the OS
+    crontab it replaces), so a shell string is run through the shell.
+    """
+    cmd = task.run or []
+    display = cmd[0] if task.run_shell else " ".join(shlex.quote(c) for c in cmd)
+    result.rounds = 1
+    rlog.emit(event="script_start", command=display, shell=task.run_shell,
+              timeout=task.timeout)
+    log.info("schedule[%s] run: %s", task.name, display)
+    try:
+        rc, out, err = _run_command(cmd, shell=task.run_shell,
+                                    cwd=str(hub_dir), timeout=task.timeout)
+    except subprocess.TimeoutExpired:
+        result.result = "error"
+        result.error = f"script timed out after {task.timeout}s"
+        rlog.emit(event="script_timeout", timeout=task.timeout)
+        log.warning("schedule[%s] script timed out after %ss", task.name, task.timeout)
+        return
+    except (OSError, ValueError) as exc:
+        result.result = "error"
+        result.error = f"script failed to start: {type(exc).__name__}: {exc}"
+        rlog.emit(event="error", where="script_start", error=result.error)
+        log.error("schedule[%s] %s", task.name, result.error)
+        return
+
+    stdout = (out or "").strip()
+    stderr = (err or "").strip()
+    rlog.emit(event="script_end", exit=rc,
+              stdout=stdout[-4000:], stderr=stderr[-4000:])
+    if rc == 0:
+        result.result = "done"
+        result.summary = f"ran `{display}`"
+        log.info("schedule[%s] script done (exit 0)", task.name)
+    else:
+        tail = stderr[-500:] or stdout[-500:] or "(no output)"
+        result.result = "error"
+        result.error = f"exit {rc}: {tail}"
+        log.warning("schedule[%s] script failed (exit %d)", task.name, rc)
+
+
+# ---------------------------------------------------------------------------
 # The run loop
 # ---------------------------------------------------------------------------
 def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
@@ -239,7 +383,8 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
     from .tools import schedule_tools
 
     extra = {t.name: t for t in schedule_tools.make(hub_dir, task, emit)}
-    return runtime_lib.build(hub_dir, extra_tools=extra, max_turns=task.max_turns)
+    return runtime_lib.build(hub_dir, extra_tools=extra, max_turns=task.max_turns,
+                             model=task.model)
 
 
 async def run_task(hub_dir: Path, task: ScheduledTask, *,
@@ -265,6 +410,34 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
              task.name, task.timeout, task.max_rounds, log_path)
     state.record_fired(task.name, started_dt, result="running",
                        run_log=str(log_path))
+
+    # Plain-cron (`run:`) task: run a subprocess instead of the LLM harness,
+    # reusing the same lock/state/log/commit machinery. Executed off the event
+    # loop so a long script never stalls concurrent chat requests.
+    if task.is_script:
+        try:
+            await asyncio.to_thread(_execute_script, hub_dir, task, result, rlog)
+            if result.result == "done" and task.commit:
+                _capture_commit(hub_dir, task, result, rlog, started_dt)
+        except Exception as exc:  # noqa: BLE001 — never raise; run_task's contract
+            # e.g. a git pre-commit hook / index lock raises CalledProcessError,
+            # which _capture_commit does not catch. Finalize cleanly regardless.
+            result.result = "error"
+            result.error = f"{type(exc).__name__}: {exc}"
+            rlog.emit(event="error", where="script_run", error=result.error,
+                      traceback=traceback.format_exc())
+            log.exception("schedule[%s] script run crashed", task.name)
+        finally:
+            result.duration_s = time.monotonic() - started
+            state.record_fired(task.name, started_dt, result=result.result,
+                               run_log=str(log_path))
+            rlog.emit(event="run_end", result=result.result, rounds=result.rounds,
+                      duration_s=round(result.duration_s, 1),
+                      commit_sha=result.commit_sha, error=result.error)
+            rlog.close()
+            log.info("schedule[%s] run end: %s (script, %.0fs)",
+                     task.name, result.result, result.duration_s)
+        return result
 
     try:
         rt = runtime_factory(hub_dir, task, rlog.emit)
@@ -352,26 +525,7 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
 
         # Capture: commit (and push) ONLY the declared paths, only on DONE.
         if done and task.commit:
-            date = started_dt.strftime("%Y-%m-%d")
-            summary = re.sub(r"\s+", " ", result.summary).strip()[:100]
-            msg = f"schedule({task.name}): {summary or f'run {date}'}"
-            try:
-                sha = commit_paths(hub_dir, task.commit, msg, push=task.push)
-            except RuntimeError as exc:
-                result.result = "error"
-                result.error = str(exc)
-                rlog.emit(event="error", where="commit", error=str(exc))
-                log.error("schedule[%s] commit/push failed: %s", task.name, exc)
-            else:
-                result.commit_sha = sha
-                if sha:
-                    rlog.emit(event="commit", sha=sha, paths=task.commit,
-                              pushed=task.push, message=msg)
-                    log.info("schedule[%s] committed %s%s", task.name, sha[:10],
-                             " and pushed" if task.push else "")
-                else:
-                    rlog.emit(event="commit_skip", reason="no changes in declared paths")
-                    log.info("schedule[%s] nothing to commit", task.name)
+            _capture_commit(hub_dir, task, result, rlog, started_dt)
     except Exception as exc:  # noqa: BLE001 — scheduler must survive anything
         result.result = "error"
         result.error = f"{type(exc).__name__}: {exc}"

@@ -22,8 +22,14 @@ from .identity import Identity, normalize
 # the hosted MCP server, where the caller authenticated with their own OWUI
 # API key (a per-person verified login, unlike Slack's shared bot token).
 # Slack, Telegram and scheduled runs are deliberately absent. Override per
-# deployment with HUBZOID_RESTRICTED_SURFACES (comma-separated), read in
-# guard.py.
+# deployment with HUBZOID_RESTRICTED_SURFACES (comma-separated COMPLETE list;
+# it replaces this default), read in guard.py.
+#
+# Slack, when SLACK_IDENTITY_MAPPING is on, arrives as two distinct surfaces:
+# `slack-dm` (1:1 DM / assistant sidebar — a single human, safe to opt in) and
+# `slack-channel` (a shared thread whose many authors are flattened into one
+# prompt but answered under the @mentioner's identity — a confused-deputy risk
+# that must NEVER be opted in).
 DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp"})
 
 

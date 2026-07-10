@@ -26,12 +26,15 @@ log = logging.getLogger("hubzoid.access")
 
 # OWUI 0.9.x: membership lives in the group_member association table, joining
 # the group and user tables. Group/user are reserved words, hence the quoting.
+# Match the email case-insensitively (lower() both sides): OWUI lowercases
+# emails at signup, but a forwarded email (e.g. a Slack profile "John.Doe@x")
+# may differ in case — an exact match would silently resolve to no groups.
 _QUERY = """
 SELECT g.name
 FROM "group" g
 JOIN group_member gm ON gm.group_id = g.id
 JOIN "user" u ON u.id = gm.user_id
-WHERE u.email = ?
+WHERE lower(u.email) = lower(?)
 """
 
 
