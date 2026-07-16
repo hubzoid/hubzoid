@@ -100,6 +100,15 @@ Environment variables explicitly supported:
                          a confused-deputy risk). Add `slack-dm` if you want
                          restricted tools in Slack DMs; NEVER add
                          `slack-channel`.
+  COMPOSIO_API_KEY       Key for the Composio credential broker, which stores
+                         each user's per-app credentials keyed by their
+                         identity. Required for CONNECTIONS to work.
+  CONNECTIONS            Comma-separated allow-list of app slugs this hub's
+                         users may connect, e.g. "odoo,slack". A tool calls
+                         `connections.require(app)`; only listed apps are ever
+                         offered, and unlisted ones are refused without touching
+                         the broker. Unset = per-user connections off. See
+                         hubzoid.connections.
 """
 from __future__ import annotations
 
@@ -132,6 +141,9 @@ class Settings:
     mcp_server: bool = False
     mcp_access_group: str | None = None
     slack_identity_mapping: bool = False
+    otel_endpoint: str | None = None
+    composio_api_key: str | None = None
+    connections: tuple[str, ...] = ()
 
     @property
     def first_api_key(self) -> str:
@@ -176,7 +188,17 @@ def load(hub_dir: Path) -> Settings:
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
         mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
+        otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
+        composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None,
+        connections=_conn_slugs(os.environ.get("CONNECTIONS")),
     )
+
+
+def _conn_slugs(raw: str | None) -> tuple[str, ...]:
+    """Parse CONNECTIONS: comma-separated app slugs, trimmed, lowercased."""
+    if not raw:
+        return ()
+    return tuple(s.strip().lower() for s in raw.split(",") if s.strip())
 
 
 def truthy(raw: str | None) -> bool:

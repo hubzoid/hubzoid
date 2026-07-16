@@ -52,6 +52,7 @@ dependencies = [
   "pydantic>=2.0",
   "PyYAML>=6.0",
   "python-dotenv>=1.0",
+  "composio==1.0.0rc2",     # connections.py broker; pinned — the client surface (connected_accounts.list/get) changed across the rc series
   "typer>=0.12",
   "rich>=13",
   "jinja2>=3.1",

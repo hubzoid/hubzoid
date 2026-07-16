@@ -123,6 +123,12 @@ def build_registry(
         delegates=[],
     )
 
+    # Per-user connections gate, same as the chat factories. Without this a
+    # restricted tool calling connections.require() over MCP hits an unarmed
+    # gate; inert unless the hub set CONNECTIONS.
+    from . import connections as connlib
+    connlib.attach(ctx)
+
     builtin = make_builtin_tools(ctx)
     local = tools_local_loader.load_all(hub_dir)
     registry = access.apply(hub_dir, {**builtin, **local})

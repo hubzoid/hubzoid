@@ -179,6 +179,11 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         delegates=delegate_agents,
     )
 
+    # Per-user connections gate (Composio-backed), same as the OpenAI path.
+    # Inert unless the hub set CONNECTIONS. Tools reach it via ctx.connections.
+    from . import connections as connlib
+    connlib.attach(ctx)
+
     # Same registry as the OpenAI path. Built-ins + hub-local; local shadows
     # built-ins on name conflicts; caller-injected extras (scheduled-task
     # internals) win over both.
@@ -302,11 +307,12 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     return ClaudeRuntime(
         name=main_name, options=options, thinking_mode=thinking_mode,
         tool_mode=settings.show_tools,
+        hub=hub_dir.name, otel_endpoint=settings.otel_endpoint,
     )
 
 
 def _record_claude_usage(message) -> None:
-    """Surface the Claude SDK's final usage/cost for the metrics ledger.
+    """Surface the Claude SDK's final usage/cost for the usage envelope + OTel.
 
     `ResultMessage.usage` is an Anthropic usage mapping (input_tokens,
     output_tokens, cache_* ). `total_cost_usd` is None on the subscription
@@ -448,11 +454,34 @@ class ClaudeRuntime:
     """Thin async-iterator adapter around `claude_agent_sdk.query(...)`."""
 
     def __init__(self, *, name: str, options, thinking_mode: str = "indicator",
-                 tool_mode: str = "compact"):
+                 tool_mode: str = "compact", hub: str = "",
+                 otel_endpoint: str | None = None):
         self.name = name
         self._options = options
         self._thinking_mode = thinking_mode
         self._tool_mode = tool_mode
+        self._hub = hub
+        self._otel_endpoint = otel_endpoint
+
+    def _options_for_turn(self):
+        """Per-turn options. When OTel is enabled, clone the shared options with
+        an env carrying THIS turn's caller (hubzoid.user/hub/surface) so the
+        `claude` subprocess Claude Code spawns emits attributed telemetry.
+        When OTel is off, return the shared options untouched (no-op)."""
+        from .access.identity import current_identity
+        from . import otel as otellib
+
+        ident = current_identity()
+        env = otellib.claude_otel_env(
+            endpoint=self._otel_endpoint,
+            user=ident.user, hub=self._hub, surface=ident.surface,
+        )
+        if not env:
+            return self._options
+        import dataclasses
+        import os
+        merged = {**os.environ, **(self._options.env or {}), **env}
+        return dataclasses.replace(self._options, env=merged)
 
     async def aopen(self) -> None:
         """No-op: the Claude Agent SDK manages MCP lifecycle internally.
@@ -490,7 +519,7 @@ class ClaudeRuntime:
         # nothing — the call line was already shown.
         tool_use_names: dict[str, str] = {}
         try:
-            async for message in query(prompt=prompt, options=self._options):
+            async for message in query(prompt=prompt, options=self._options_for_turn()):
                 # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}
