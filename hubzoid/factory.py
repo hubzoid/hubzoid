@@ -19,6 +19,7 @@ from pathlib import Path
 from agents import Agent
 from agents.tool import FunctionTool
 
+from . import connections as connlib
 from . import memory as memlib
 from . import model as modellib
 from . import settings as settingslib
@@ -42,6 +43,7 @@ class HubContext:
     skills: list = field(default_factory=list)
     knowledge: list = field(default_factory=list)
     delegates: list = field(default_factory=list)
+    connections: "connlib.Connections | None" = None
 
 
 def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None,
@@ -100,6 +102,11 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
         knowledge=knowledge,
         delegates=[loaded for loaded, _ in kept],
     )
+
+    # Per-user connections gate (Composio-backed). Hangs on ctx so tools reach
+    # it at call time via ctx.connections.require(app). Inert if the hub set no
+    # CONNECTIONS, so existing hubs are unchanged.
+    connlib.attach(ctx)
 
     # Tool registry: pre-shipped (with closures over ctx) + hub-local.
     builtin: dict[str, FunctionTool] = make_builtin_tools(ctx)

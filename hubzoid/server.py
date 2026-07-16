@@ -40,7 +40,6 @@ from . import _request_ctx
 from . import _signing
 from . import access
 from . import memory as memlib
-from . import metrics as metrics_lib
 from . import owui as owui_lib
 from . import runtime as runtime_lib
 from . import settings as settingslib
@@ -188,20 +187,10 @@ def build_app() -> FastAPI:
             with _request_ctx.chat_scope(chat_id):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
-                    usage = _finalize_usage(hub_dir, chat_id, identity, model_label)
+                    usage = _usage_envelope()
         finally:
             inflight.leave()
         return JSONResponse(_blocking_envelope(text, model_label, usage))
-
-    @app.get("/metrics")
-    async def get_metrics(request: Request) -> JSONResponse:
-        """Aggregated token/cost usage for this hub (from the JSONL ledger).
-
-        Auth-gated like the rest of the bridge. Feeds external analytics and
-        the cost-dashboard artifact; OWUI's own analytics tab shows per-message
-        token counts natively once the usage envelope is populated (below)."""
-        _auth(request)
-        return JSONResponse(metrics_lib.summary(hub_dir))
 
     # ------------------------------------------------------------------
     # Per-chat artifact + upload routes.
@@ -312,10 +301,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             async for delta in rt.stream(prompt):
                 if delta:
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
-            # Drain + log usage while still inside chat_scope (the runtime set
-            # it there); build the OpenAI usage envelope for the final chunk.
-            if hub_dir is not None:
-                usage = _finalize_usage(hub_dir, chat_id, identity, model)
+            # Drain usage while still inside chat_scope (the runtime set it
+            # there); build the OpenAI usage envelope for the final chunk.
+            usage = _usage_envelope()
 
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
@@ -336,19 +324,22 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             inflight.leave()
 
 
-def _finalize_usage(hub_dir: Path, chat_id: str, identity, model_label: str) -> dict:
-    """Drain the turn's usage, append it to the metrics ledger, and return the
-    OpenAI usage envelope (prompt/completion/total tokens). Must be called
-    while the request's chat_scope is still active."""
+def _usage_envelope() -> dict:
+    """Drain the turn's usage and return the OpenAI usage envelope
+    (prompt/completion/total tokens) that populates Open WebUI's native
+    per-message token column. Must be called while the request's chat_scope is
+    still active. Cost/usage analytics itself is emitted via OTel (opt-in,
+    see hubzoid.otel); this envelope is the one piece that needs no backend."""
     raw = _request_ctx.drain_usage()
-    try:
-        metrics_lib.record_interaction(
-            hub_dir, chat_id=chat_id, identity=identity, model=model_label, usage=raw,
-        )
-    except Exception:  # noqa: BLE001 — telemetry must never break the response
-        log.warning("metrics: record_interaction failed", exc_info=True)
-    inp = int(raw.get("input_tokens") or 0)
-    out = int(raw.get("output_tokens") or 0)
+
+    def _n(key: str) -> int:
+        # Never raise: a malformed usage value must not 500 the chat response.
+        try:
+            return int(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    inp, out = _n("input_tokens"), _n("output_tokens")
     return {"prompt_tokens": inp, "completion_tokens": out, "total_tokens": inp + out}
 
 

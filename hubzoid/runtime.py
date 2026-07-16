@@ -128,6 +128,8 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
         return build_claude_runtime(hub_dir, extra_tools=extra_tools,
                                     max_turns=max_turns, model_override=override)
 
+    from . import otel as otellib
+    otellib.openai_otel_setup(endpoint=settings.otel_endpoint, hub=hub_dir.name)
     from .factory import build_agent
     return OpenAIAgentsRuntime(
         build_agent(hub_dir, extra_tools=extra_tools, model_override=override),
@@ -240,7 +242,7 @@ class OpenAIAgentsRuntime:
                         )
                         if line:
                             yield line
-            # Surface final token usage for the metrics ledger (best-effort).
+            # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result)
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
@@ -259,7 +261,7 @@ class OpenAIAgentsRuntime:
 
 
 def _record_openai_usage(result) -> None:
-    """Surface the OpenAI Agents run's token usage for the metrics ledger.
+    """Surface the OpenAI Agents run's token usage for the usage envelope.
 
     `result.context_wrapper.usage` accumulates across the run. The OpenAI path
     reports no dollar cost, so `cost_usd` is None (token counts still give

@@ -36,8 +36,8 @@ _current_artifacts: ContextVar[list | None] = ContextVar("hubzoid_artifacts", de
 
 # Token/cost usage measured for this request. The runtime writes it when the
 # backend reports final usage (Claude's ResultMessage, the OpenAI run's usage);
-# the bridge drains it after the turn to log the metrics ledger and fill the
-# OpenAI usage envelope. A dict container mutated in place (like artifacts), so
+# the bridge drains it after the turn to fill the OpenAI usage envelope (Open
+# WebUI's native token column). A dict container mutated in place (like artifacts), so
 # the write survives the context copy the SDK makes for tool calls.
 _current_usage: ContextVar[dict | None] = ContextVar("hubzoid_usage", default=None)
 
