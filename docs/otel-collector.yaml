@@ -1,0 +1,70 @@
+# Reference OpenTelemetry Collector config for Hubzoid -> Langfuse.
+#
+# WHY THIS EXISTS (and why it is optional):
+#   - The OpenAI/LiteLLM path (OpenRouter, Azure, OpenAI, ...) already emits the
+#     standard `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` (and
+#     `gen_ai.cost.total_cost`), which Langfuse maps and prices natively. Those
+#     backends can point HUBZOID_OTEL_ENDPOINT straight at Langfuse — no collector.
+#   - The claude-local path (Claude Code subprocess) emits the counts under the
+#     NON-standard names `input_tokens` / `output_tokens` / `cache_*_tokens`.
+#     Langfuse ignores those, so token/cost show as 0. This collector renames
+#     them to the semantic-convention names so Langfuse maps usage and computes
+#     cost from its model price table.
+#   - It also promotes the OWUI identity to the span-level `user.id` so Langfuse's
+#     Users tab attributes to the real person, not Claude Code's account hash.
+#
+# THIN BY DESIGN: this is a stock otelcol-contrib with a config file — a rented
+# standard, no bespoke Hubzoid code. Hubzoid only points HUBZOID_OTEL_ENDPOINT at
+# the collector; the collector normalizes once for every hub.
+#
+# SIMPLER FOR A SINGLE HUB: set HUBZOID_OTEL_NORMALIZE=1 instead and the bridge
+# does this same rename in-process, no collector to run. Use THIS collector only
+# when you already run one or want one normalization point in front of a fleet.
+# Do NOT do both — pick the flag OR the collector, or you normalize twice (the
+# rename is a no-op the second time, but running both is pointless).
+#
+# RUN:
+#   HUBZOID_OTEL_ENDPOINT=http://127.0.0.1:4318   (per hub .env -> the collector)
+#   LANGFUSE_OTEL_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel
+#   LANGFUSE_OTEL_AUTH="Basic $(printf '%s:%s' "$PUBLIC_KEY" "$SECRET_KEY" | base64)"
+#   otelcol-contrib --config docs/otel-collector.yaml
+#
+# Requires the `transform` processor -> use the otelcol-CONTRIB distribution.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Normalize claude-local's token attribute names to the OTel GenAI semantic
+  # convention. These are no-ops on the LiteLLM path (it already uses the
+  # standard names), so one pipeline serves every backend.
+  transform/genai:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["gen_ai.usage.input_tokens"], attributes["input_tokens"]) where attributes["input_tokens"] != nil
+          - set(attributes["gen_ai.usage.output_tokens"], attributes["output_tokens"]) where attributes["output_tokens"] != nil
+          - set(attributes["gen_ai.usage.cache_read_input_tokens"], attributes["cache_read_tokens"]) where attributes["cache_read_tokens"] != nil
+          - set(attributes["gen_ai.usage.cache_creation_input_tokens"], attributes["cache_creation_tokens"]) where attributes["cache_creation_tokens"] != nil
+          # Attribute the trace to the real OWUI person. Langfuse reads userId
+          # from the span-level user.id; Claude Code otherwise sets its own
+          # account hash. hubzoid.user is the canonical OWUI email.
+          - set(attributes["user.id"], resource.attributes["hubzoid.user"]) where resource.attributes["hubzoid.user"] != nil
+  batch: {}
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: ${env:LANGFUSE_OTEL_ENDPOINT}
+    headers:
+      Authorization: ${env:LANGFUSE_OTEL_AUTH}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform/genai, batch]
+      exporters: [otlphttp/langfuse]

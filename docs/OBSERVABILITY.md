@@ -25,20 +25,68 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(public_key:secret_key)>
 
 Unset `HUBZOID_OTEL_ENDPOINT` (the default) and nothing is emitted.
 
-## What you get
+On the **claude-local** path, also set this to get cost in Langfuse (see the
+caveat below):
 
-- **claude-local**: `claude_code.token.usage`, `claude_code.cost.usage` (USD),
-  per-request `api_request` events, and (beta) traces, each tagged with
-  `hubzoid.user`, `hubzoid.hub`, `hubzoid.surface` for **per-user, per-hub**
-  cost. The user is the Open WebUI identity for that turn, also mirrored into
-  the standard `user.id` resource attribute so backends' native user views
-  (e.g. Langfuse's Users tab) pick it up.
-- **OpenAI path**: LiteLLM's native `otel` callback emits tokens and
-  `gen_ai.cost.total_cost`, tagged with `hubzoid.hub`. Per-user attribution on
-  this path is a follow-up.
+```
+HUBZOID_OTEL_NORMALIZE=1
+```
 
-In Langfuse this lands as per-user / per-hub / per-model cost dashboards, with
-users and sessions as first-class objects.
+Only **traces** are emitted by default (metrics and logs are off): token and
+cost ride the trace spans, a trace backend like Langfuse drops metrics/logs
+anyway, and logs can carry prompt content. An operator with a metrics/log
+backend opts in with `OTEL_METRICS_EXPORTER=otlp` / `OTEL_LOGS_EXPORTER=otlp`.
+
+## What you get, and the one caveat (attribute names)
+
+Every turn emits trace spans (`interaction -> llm_request -> tool`) tagged with
+`hubzoid.user`, `hubzoid.hub`, `hubzoid.surface` (and `user.id` mirroring the
+OWUI email) as **resource attributes** — so traces and per-hub / per-surface
+filtering work on any OTLP backend, direct.
+
+Whether **cost** shows depends on the model path, because of attribute naming:
+
+- **OpenAI / LiteLLM path** (OpenRouter, Azure, OpenAI, ...): LiteLLM emits the
+  standard `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` and
+  `gen_ai.cost.total_cost`. Langfuse maps and prices these **natively — point
+  `HUBZOID_OTEL_ENDPOINT` straight at Langfuse, cost works, no collector.**
+- **claude-local path** (Claude Code): the token counts are on the spans but
+  under the **non-standard** names `input_tokens` / `output_tokens` /
+  `cache_*_tokens`, which Langfuse does not map — so token/cost show as **0**
+  when pointed directly at Langfuse. The fix is one flag:
+
+  ```
+  HUBZOID_OTEL_NORMALIZE=1
+  ```
+
+  With it set, the bridge intercepts its own `claude` subprocess's OTLP
+  **in-process**, renames those attrs to the semantic-convention names Langfuse
+  maps, promotes `user.id` from the OWUI identity (so Langfuse's Users tab shows
+  the real person, not Claude Code's subscription-account hash), and forwards to
+  `HUBZOID_OTEL_ENDPOINT`. **No separate collector process** — it runs inside the
+  bridge you already start, on its existing loopback port, and does nothing until
+  you set the flag. It only acts on claude-local; the LiteLLM path is unaffected.
+
+With `HUBZOID_OTEL_NORMALIZE=1` on claude-local (or nothing extra on the LiteLLM
+path), Langfuse shows per-user / per-hub / per-model **cost** dashboards, with
+users and sessions as first-class objects. Leave the flag off and you still get
+the traces and attribution, just no cost on claude-local.
+
+> **Pricing note:** Langfuse prices tokens from its own model table. If your
+> hub pins a model Langfuse doesn't yet price (e.g. a very new Opus id), tokens
+> map but cost stays 0 until you add that model's price once in Langfuse's
+> settings. Check the model id on a span if cost is unexpectedly 0.
+
+### Alternative: a shared collector
+
+If you already run an OpenTelemetry Collector, or want a single normalization
+point in front of *many* hubs and backends, do the same rename there instead of
+per-bridge. A ready reference config is in
+[`otel-collector.yaml`](./otel-collector.yaml): point `HUBZOID_OTEL_ENDPOINT` at
+the collector (leave `HUBZOID_OTEL_NORMALIZE` **off** so you don't normalize
+twice), and the collector exports to Langfuse. It is stock `otelcol-contrib` + a
+config file, and is a no-op on the LiteLLM path. For a single hub, the in-bridge
+flag is simpler — this is for fleets that already have collector infrastructure.
 
 ## Transport and exposure
 

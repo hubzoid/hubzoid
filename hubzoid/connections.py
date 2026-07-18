@@ -43,8 +43,15 @@ _CACHE_TTL_SECONDS = 60.0
 class Broker(Protocol):
     """What ``Connections`` needs from a credential broker (e.g. Composio).
 
-    Kept to two calls so a fake in a test, or a different broker later, is a
-    drop-in. Both are keyed by the caller's canonical user (their email).
+    A small surface so a fake in a test, or a different broker later, is a
+    drop-in. Everything is keyed by the caller's canonical user (their email).
+    Two ways to act as the user:
+
+      * "via" the broker — :meth:`is_connected` + :meth:`execute`: the broker
+        runs the action with the user's stored credential, which never leaves
+        it. Works even when the credential is masked.
+      * "direct" — :meth:`get_credential`: hand the raw credential back so the
+        hub calls the target itself. Needs an unmasked credential.
     """
 
     def get_credential(self, *, user: str, app: str) -> dict | None:
@@ -52,6 +59,12 @@ class Broker(Protocol):
 
     def connect_link(self, *, user: str, app: str) -> str:
         """A one-time hosted link for this user to connect ``app``."""
+
+    def is_connected(self, *, user: str, app: str) -> bool:
+        """Whether this user has an active connection for ``app`` (no secret read)."""
+
+    def execute(self, *, user: str, action: str, arguments: dict) -> dict:
+        """Run ``action`` as this user via the broker; return the result data."""
 
 
 class ConnectionsError(Exception):
@@ -179,16 +192,42 @@ class Connections:
         if cred is not None:
             # Connected but empty: never a usable credential. Fail closed.
             raise ConnectionUnavailable(key, "empty-credential")
+        raise self._needs_connection(broker, user, key, now)
 
-        # Not connected. Reuse a still-fresh pending link so a model retrying
-        # several tools in one turn shows the user one link (and does not mint a
-        # fresh server-side auth request per attempt).
-        pending = self._link_cache.get(ck)
+    def execute(self, app: str, action: str, arguments: dict | None = None) -> dict:
+        """Run ``action`` as the current user via the broker ("via Composio").
+
+        The broker executes with the user's stored credential (which never
+        leaves it), so this works even when the credential is masked — the path
+        to prefer for actions the broker can perform. Same gate as
+        :meth:`require`: fails closed for an unsanctioned app, an unconfigured
+        broker, or an anonymous caller, and raises :class:`NeedsConnection` with
+        a connect link if the user has not connected yet.
+        """
+        key = normalize(app)
+        if key not in self._allowed:
+            raise ConnectionUnavailable(key, "not-sanctioned")
+        broker = self._broker()
+        if broker is None:
+            raise ConnectionUnavailable(key, "unconfigured")
+        ident = current_identity()
+        if ident.is_anonymous:
+            raise ConnectionUnavailable(key, "anonymous")
+        user = normalize(ident.user)
+        if not broker.is_connected(user=user, app=key):
+            raise self._needs_connection(broker, user, key, self._now())
+        return broker.execute(user=user, action=action, arguments=arguments or {})
+
+    def _needs_connection(self, broker, user: str, key: str, now: float) -> "NeedsConnection":
+        """A :class:`NeedsConnection` for ``key``, reusing a still-fresh pending
+        link so a model retrying several tools in one turn shows one link (and
+        does not mint a fresh server-side auth request per attempt)."""
+        pending = self._link_cache.get((user, key))
         if pending is not None and pending[1] > now:
-            raise NeedsConnection(key, pending[0])
+            return NeedsConnection(key, pending[0])
         link = broker.connect_link(user=user, app=key)
-        self._link_cache[ck] = (link, now + _CACHE_TTL_SECONDS)
-        raise NeedsConnection(key, link)
+        self._link_cache[(user, key)] = (link, now + _CACHE_TTL_SECONDS)
+        return NeedsConnection(key, link)
 
 
 def surfaced(fn):
@@ -248,6 +287,11 @@ def _field(obj, key):
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
+
+
+# The literal value Composio substitutes for secret fields when project-level
+# secret masking is on. A credential carrying it is unusable for wrapped tools.
+_MASK_SENTINEL = "REDACTED"
 
 
 def _credential_from_val(val) -> dict:
@@ -317,17 +361,31 @@ class ComposioBroker:
         item = items[0]
         # The list item already carries state.val; only re-fetch the full record
         # on the older/edge shape where it does not, so the common path is a
-        # single round trip.
+        # single round trip. Tolerate SDKs that do not expose a per-item fetch.
         val = _field(_field(item, "state") or {}, "val")
         if val is None:
-            detail = self._client.connected_accounts.get(_field(item, "id"))
-            val = _field(_field(detail, "state") or {}, "val")
+            try:
+                detail = self._client.connected_accounts.get(_field(item, "id"))
+                val = _field(_field(detail, "state") or {}, "val")
+            except Exception:  # noqa: BLE001
+                val = None
         cred = _credential_from_val(val)
+        if any(str(v).strip().upper() == _MASK_SENTINEL for v in cred.values()):
+            # Composio secret masking (ON by default) replaces secret values with
+            # the literal "REDACTED". That is non-empty, so it would otherwise be
+            # handed to a tool and sent upstream ("Bearer REDACTED" -> a cryptic
+            # 401). Fail closed and name the setting.
+            log.warning(
+                "connections: %s credential for %s is masked ('REDACTED'). "
+                "Composio secret masking is on; turn OFF 'mask secret keys in "
+                "connected account' for the project so wrapped tools can read the "
+                "raw credential.", app, user,
+            )
+            raise ConnectionUnavailable(app, "masked-credential")
         if not cred:
-            # Connected, but no usable credential — in practice Composio secret
-            # masking (on by default) is still enabled for the project. Handing
-            # a tool {} produces a cryptic downstream login failure; fail closed
-            # and tell the operator where to look.
+            # Connected, but no usable credential — some maskable schemes null the
+            # secret fields rather than redacting them. Handing a tool {} produces
+            # a cryptic downstream login failure; fail closed and tell the operator.
             log.warning(
                 "connections: ACTIVE %s account for %s has an empty credential "
                 "(state.val). Turn OFF secret masking for the Composio project "
@@ -339,9 +397,12 @@ class ComposioBroker:
     def _auth_config_id(self, app: str) -> str:
         """The toolkit's auth config id, creating a managed one if none exists.
 
-        Mirrors the SDK's own ``toolkits._get_auth_config_id`` using the public
-        ``auth_configs`` surface: newest existing config wins, else a
-        Composio-managed auth config is created on the fly.
+        Newest existing config for the toolkit wins; otherwise a Composio-managed
+        auth config is created on the fly. Managed auth only exists for toolkits
+        Composio brokers credentials for (e.g. GitHub). Self-hosted toolkits
+        (e.g. Odoo) have no managed auth, so an admin must create the auth config
+        in Composio first; we fail closed with an operator-facing note rather
+        than surfacing a raw 400.
         """
         configs = self._client.auth_configs.list(toolkit_slug=app)
         items = _field(configs, "items") or []
@@ -350,17 +411,30 @@ class ComposioBroker:
                 items, key=lambda c: _field(c, "created_at") or "", reverse=True,
             )[0]
             return _field(newest, "id")
-        created = self._client.auth_configs.create(
-            app,
-            {
-                "type": "use_composio_managed_auth",
-                "tool_access_config": {"tools_for_connected_account_creation": []},
-            },
-        )
+        try:
+            created = self._client.auth_configs.create(
+                app,
+                {
+                    "type": "use_composio_managed_auth",
+                    "tool_access_config": {"tools_for_connected_account_creation": []},
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "connections: no auth config for %s and Composio-managed auth is "
+                "unavailable (%s). Create an auth config for this toolkit in the "
+                "Composio dashboard (self-hosted toolkits need connection details).",
+                app, exc,
+            )
+            raise ConnectionUnavailable(app, "no-auth-config")
         return _field(created, "id")
 
     def connect_link(self, *, user: str, app: str) -> str:
-        req = self._client.connected_accounts.link(user, self._auth_config_id(app))
+        # The hosted Composio Connect Link works for every auth scheme (unlike
+        # toolkits.authorize, which has no redirect for non-OAuth toolkits). It
+        # lives on the low-level client: client.link.create(auth_config_id=, user_id=).
+        acid = self._auth_config_id(app)
+        req = self._client.client.link.create(auth_config_id=acid, user_id=user)
         link = _field(req, "redirect_url")
         if not link:
             # No hosted link — surfacing an empty one would tell the user to
@@ -371,6 +445,24 @@ class ComposioBroker:
             )
             raise ConnectionUnavailable(app, "no-connect-link")
         return link
+
+    def is_connected(self, *, user: str, app: str) -> bool:
+        # Just checks for an ACTIVE account — never reads state.val, so it works
+        # even for managed-auth toolkits whose credential is always masked.
+        resp = self._client.connected_accounts.list(
+            user_ids=[user], toolkit_slugs=[app], statuses=["ACTIVE"],
+        )
+        return bool(_field(resp, "items"))
+
+    def execute(self, *, user: str, action: str, arguments: dict) -> dict:
+        # Composio runs the action server-side with the user's credential (which
+        # never leaves Composio), so masking is irrelevant. `data` is the action
+        # result; a falsy `successful` is a real execution failure.
+        resp = self._client.tools.execute(action, user_id=user, arguments=arguments or {})
+        if _field(resp, "successful") is False:
+            raise RuntimeError(f"{action} failed: {_field(resp, 'error') or 'unknown error'}")
+        data = _field(resp, "data")
+        return dict(data) if isinstance(data, dict) else (data if data is not None else {})
 
 
 def build(settings, *, broker: Broker | None = None) -> Connections:
@@ -449,3 +541,17 @@ def require(app: str) -> dict:
     with :func:`surfaced` on the tool to show the connect link.
     """
     return _GATE.require(app)
+
+
+def execute(app: str, action: str, arguments: dict | None = None) -> dict:
+    """Run ``action`` as the current user via the broker (no HubContext needed).
+
+    The "via Composio" convenience a restricted tool calls directly::
+
+        from hubzoid import connections
+        me = connections.execute("github", "GITHUB_GET_THE_AUTHENTICATED_USER")
+
+    Same gate and :class:`NeedsConnection` behaviour as
+    :meth:`Connections.execute`; pair it with :func:`surfaced`.
+    """
+    return _GATE.execute(app, action, arguments)

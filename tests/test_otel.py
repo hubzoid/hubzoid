@@ -21,8 +21,11 @@ def test_claude_env_carries_otel_vars_and_user_hub_attributes():
         surface="owui",
     )
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
-    assert env["OTEL_METRICS_EXPORTER"] == "otlp"
-    assert env["OTEL_LOGS_EXPORTER"] == "otlp"
+    assert env["OTEL_TRACES_EXPORTER"] == "otlp"
+    # Traces-only by default: token + cost ride the spans, and a trace backend
+    # (Langfuse) drops metrics/logs, so we don't waste egress emitting them.
+    assert env["OTEL_METRICS_EXPORTER"] == "none"
+    assert env["OTEL_LOGS_EXPORTER"] == "none"
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
 
     attrs = _parse_attrs(env)
@@ -33,6 +36,20 @@ def test_claude_env_carries_otel_vars_and_user_hub_attributes():
     # (Langfuse Users tab keys on user.id) attribute to the real person, not
     # the shared claude-login subscription account.
     assert attrs["user.id"] == "priya"
+
+
+def test_claude_env_metrics_logs_off_by_default_but_operator_can_opt_in(monkeypatch):
+    monkeypatch.delenv("OTEL_METRICS_EXPORTER", raising=False)
+    monkeypatch.delenv("OTEL_LOGS_EXPORTER", raising=False)
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="owui")
+    assert env["OTEL_METRICS_EXPORTER"] == "none"
+    assert env["OTEL_LOGS_EXPORTER"] == "none"
+    # An operator with a metrics/log backend opts in via the standard env vars.
+    monkeypatch.setenv("OTEL_METRICS_EXPORTER", "otlp")
+    monkeypatch.setenv("OTEL_LOGS_EXPORTER", "otlp")
+    env = otel.claude_otel_env(endpoint="http://c:4318", user="u", hub="h", surface="owui")
+    assert env["OTEL_METRICS_EXPORTER"] == "otlp"
+    assert env["OTEL_LOGS_EXPORTER"] == "otlp"
 
 
 def test_claude_env_protocol_defaults_http_but_honors_operator_override(monkeypatch):

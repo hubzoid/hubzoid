@@ -205,6 +205,11 @@ def run(
     #    `hubzoid.server.build_app` knows what to load.
     bridge_env = os.environ.copy()
     bridge_env["HUBZOID_HUB_DIR"] = str(hub)
+    # Tell the bridge process its REAL port. Uvicorn binds it via --port, but
+    # settings.load() inside the bridge reads BRIDGE_PORT from env (else defaults
+    # to 8000). The OTel normalize intercept and the HUBZOID_PUBLIC_URL artifact
+    # fallback both need settings.bridge_port to match the actual bind.
+    bridge_env["BRIDGE_PORT"] = str(br_port)
     bridge_cmd = [
         sys.executable, "-m", "uvicorn",
         "hubzoid.server:build_app", "--factory",
