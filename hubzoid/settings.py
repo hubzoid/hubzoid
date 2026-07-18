@@ -109,6 +109,17 @@ Environment variables explicitly supported:
                          offered, and unlisted ones are refused without touching
                          the broker. Unset = per-user connections off. See
                          hubzoid.connections.
+  HUBZOID_OTEL_ENDPOINT  OTLP/HTTP base URL to push traces to (e.g. a Langfuse
+                         `.../api/public/otel`). Unset = observability off. See
+                         docs/OBSERVABILITY.md.
+  HUBZOID_OTEL_NORMALIZE true | false (default). claude-local only. When true,
+                         the bridge intercepts the `claude` subprocess's OTLP
+                         in-process, renames Claude Code's non-standard token
+                         attrs to the `gen_ai.usage.*` names Langfuse maps, and
+                         promotes the OWUI user to span `user.id` — so Langfuse
+                         shows cost + the real user WITHOUT running a separate
+                         collector. No-op on the OpenAI/LiteLLM path (already
+                         standard). See docs/OBSERVABILITY.md.
 """
 from __future__ import annotations
 
@@ -142,6 +153,7 @@ class Settings:
     mcp_access_group: str | None = None
     slack_identity_mapping: bool = False
     otel_endpoint: str | None = None
+    otel_normalize: bool = False
     composio_api_key: str | None = None
     connections: tuple[str, ...] = ()
 
@@ -189,6 +201,7 @@ def load(hub_dir: Path) -> Settings:
         mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
         otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
+        otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),
         composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None,
         connections=_conn_slugs(os.environ.get("CONNECTIONS")),
     )

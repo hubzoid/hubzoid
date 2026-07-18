@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.7.7"
+version = "0.7.9"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -53,6 +53,7 @@ dependencies = [
   "PyYAML>=6.0",
   "python-dotenv>=1.0",
   "composio==1.0.0rc2",     # connections.py broker; pinned — the client surface (connected_accounts.list/get) changed across the rc series
+  "opentelemetry-proto>=1.20",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
   "typer>=0.12",
   "rich>=13",
   "jinja2>=3.1",

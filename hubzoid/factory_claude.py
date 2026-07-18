@@ -304,10 +304,20 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
             ]
         options = ClaudeAgentOptions(**opts_kwargs)
 
+    # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
+    # own loopback intercept (it renames token attrs -> gen_ai.usage.* so
+    # Langfuse computes cost, then forwards). Off -> straight to the backend.
+    from . import otel as otellib
+    otel_endpoint = otellib.claude_export_endpoint(
+        otel_endpoint=settings.otel_endpoint,
+        normalize=settings.otel_normalize,
+        bridge_port=settings.bridge_port,
+    )
+
     return ClaudeRuntime(
         name=main_name, options=options, thinking_mode=thinking_mode,
         tool_mode=settings.show_tools,
-        hub=hub_dir.name, otel_endpoint=settings.otel_endpoint,
+        hub=hub_dir.name, otel_endpoint=otel_endpoint,
     )
 
 

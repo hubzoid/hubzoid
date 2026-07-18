@@ -34,9 +34,15 @@ from hubzoid.connections import (
 class FakeBroker:
     """Stand-in for the Composio-backed client. Records every call it receives."""
 
-    def __init__(self, creds=None, link_tpl="https://connect.test/{app}?u={user}"):
+    def __init__(self, creds=None, link_tpl="https://connect.test/{app}?u={user}",
+                 connected=None, results=None):
         self._creds = dict(creds or {})
         self._link_tpl = link_tpl
+        # Who is connected (for the execute/"via Composio" path, where we check
+        # connection status without reading the credential). Defaults to whoever
+        # has a stored credential.
+        self._connected = set(connected) if connected is not None else set(self._creds)
+        self._results = dict(results or {})  # action -> data returned by execute
         self.calls: list[tuple] = []
 
     def get_credential(self, *, user, app):
@@ -46,6 +52,14 @@ class FakeBroker:
     def connect_link(self, *, user, app):
         self.calls.append(("link", user, app))
         return self._link_tpl.format(app=app, user=user)
+
+    def is_connected(self, *, user, app):
+        self.calls.append(("is_connected", user, app))
+        return (user, app) in self._connected
+
+    def execute(self, *, user, action, arguments):
+        self.calls.append(("execute", user, action))
+        return self._results.get(action, {})
 
 
 def _owui(user):
@@ -203,6 +217,81 @@ def test_pending_connect_link_is_reused_across_attempts():
 
 
 # ---------------------------------------------------------------------------
+# execute: the "via Composio" path — Composio runs the action, no raw token
+# ---------------------------------------------------------------------------
+def test_execute_runs_action_for_a_connected_user():
+    broker = FakeBroker(creds={("p@x.com", "github"): {"access_token": "t"}},
+                        results={"GITHUB_ME": {"login": "octocat"}})
+    conns = Connections(client=broker, allowed=["github"])
+    with _owui("p@x.com"):
+        assert conns.execute("github", "GITHUB_ME", {}) == {"login": "octocat"}
+    assert ("execute", "p@x.com", "GITHUB_ME") in broker.calls
+
+
+def test_execute_raises_needs_connection_when_not_connected():
+    broker = FakeBroker(creds={})  # nobody connected
+    conns = Connections(client=broker, allowed=["github"])
+    with _owui("p@x.com"):
+        with pytest.raises(NeedsConnection) as ei:
+            conns.execute("github", "GITHUB_ME", {})
+    assert ei.value.link == "https://connect.test/github?u=p@x.com"
+
+
+def test_execute_fails_closed_for_unsanctioned_app_without_touching_broker():
+    broker = FakeBroker()
+    conns = Connections(client=broker, allowed=["github"])
+    with _owui("p@x.com"):
+        with pytest.raises(ConnectionUnavailable) as ei:
+            conns.execute("stripe", "X", {})
+    assert ei.value.reason == "not-sanctioned"
+    assert broker.calls == []
+
+
+def test_execute_denies_anonymous():
+    broker = FakeBroker()
+    conns = Connections(client=broker, allowed=["github"])
+    with pytest.raises(ConnectionUnavailable) as ei:
+        conns.execute("github", "X", {})
+    assert ei.value.reason == "anonymous"
+
+
+def test_execute_normalizes_the_user():
+    broker = FakeBroker(connected={("p@x.com", "github")}, results={"A": {"ok": 1}})
+    conns = Connections(client=broker, allowed=["github"])
+    with _owui(" P@X.com "):
+        assert conns.execute("github", "A") == {"ok": 1}
+    assert ("is_connected", "p@x.com", "github") in broker.calls
+    assert ("execute", "p@x.com", "A") in broker.calls
+
+
+def test_module_execute_uses_the_set_gate():
+    broker = FakeBroker(connected={("p@x.com", "github")}, results={"A": {"ok": 2}})
+    connlib.set_gate(Connections(client=broker, allowed=["github"]))
+    with _owui("p@x.com"):
+        assert connlib.execute("github", "A") == {"ok": 2}
+
+
+def test_broker_is_connected_reflects_active_accounts():
+    assert ComposioBroker(FakeComposio(accounts=[{"id": "a", "status": "ACTIVE"}])
+                          ).is_connected(user="p@x.com", app="github") is True
+    assert ComposioBroker(FakeComposio(accounts=[])
+                          ).is_connected(user="p@x.com", app="github") is False
+
+
+def test_broker_execute_returns_data_and_passes_user_action():
+    sdk = FakeComposio(exec_result={"successful": True, "data": {"login": "octocat"}})
+    out = ComposioBroker(sdk).execute(user="p@x.com", action="GITHUB_ME", arguments={"a": 1})
+    assert out == {"login": "octocat"}
+    assert ("tools.execute", "p@x.com", "GITHUB_ME") in sdk.calls
+
+
+def test_broker_execute_raises_on_unsuccessful_result():
+    sdk = FakeComposio(exec_result={"successful": False, "error": "boom", "data": None})
+    with pytest.raises(RuntimeError):
+        ComposioBroker(sdk).execute(user="p@x.com", action="X", arguments={})
+
+
+# ---------------------------------------------------------------------------
 # surfaced: a raised outcome becomes a chat message, inside the tool body
 # ---------------------------------------------------------------------------
 def test_surfaced_returns_needs_connection_message():
@@ -290,10 +379,36 @@ class _FakeConnectedAccounts:
         self._o.calls.append(("get", nanoid))
         return self._o.detail
 
-    def link(self, user_id, auth_config_id, **kwargs):
-        self._o.calls.append(("link", user_id, auth_config_id))
+
+class _FakeLink:
+    """The real hosted-link resource lives on the LOW-LEVEL client:
+    ``composio.client.link.create(auth_config_id=, user_id=)`` -> redirect_url."""
+
+    def __init__(self, outer):
+        self._o = outer
+
+    def create(self, *, auth_config_id, user_id, **kwargs):
+        self._o.calls.append(("link.create", user_id, auth_config_id))
         return types.SimpleNamespace(
-            id="ca_new", status="INITIATED", redirect_url=self._o.redirect)
+            connected_account_id="ca_new", redirect_url=self._o.redirect)
+
+
+class _FakeLowClient:
+    """Stands in for composio.Composio.client (the HttpClient)."""
+
+    def __init__(self, outer):
+        self.link = _FakeLink(outer)
+
+
+class _FakeTools:
+    """Stands in for composio.Composio.tools (the "via Composio" execute path)."""
+
+    def __init__(self, outer):
+        self._o = outer
+
+    def execute(self, action, *, user_id, arguments):
+        self._o.calls.append(("tools.execute", user_id, action))
+        return self._o.exec_result
 
 
 class _FakeAuthConfigs:
@@ -307,6 +422,10 @@ class _FakeAuthConfigs:
     def create(self, toolkit, options):
         # High-level AuthConfigs.create(toolkit_slug, options) -> AuthConfig
         self._o.calls.append(("auth_configs.create", toolkit, options["type"]))
+        if self._o.managed_auth_unavailable:
+            # Mirrors real Composio for self-hosted toolkits (e.g. Odoo): no
+            # managed credentials, so creating a managed auth config 400s.
+            raise RuntimeError("Composio has no managed credentials for this toolkit")
         return types.SimpleNamespace(id="ac_created")
 
 
@@ -315,14 +434,20 @@ class FakeComposio:
 
     def __init__(self, accounts=(), detail=None,
                  redirect="https://composio/connect/redir",
-                 auth_configs=({"id": "ac_1", "created_at": "2026-01-01"},)):
+                 auth_configs=({"id": "ac_1", "created_at": "2026-01-01"},),
+                 managed_auth_unavailable=False,
+                 exec_result=None):
         self.accounts = accounts
         self.detail = detail
         self.redirect = redirect
         self.auth_config_items = list(auth_configs)
+        self.managed_auth_unavailable = managed_auth_unavailable
+        self.exec_result = exec_result or {"successful": True, "data": {}}
         self.calls: list[tuple] = []
         self.connected_accounts = _FakeConnectedAccounts(self)
         self.auth_configs = _FakeAuthConfigs(self)
+        self.client = _FakeLowClient(self)  # composio.Composio.client (HttpClient)
+        self.tools = _FakeTools(self)
 
 
 def test_broker_get_credential_returns_none_when_no_active_account():
@@ -373,21 +498,34 @@ def test_broker_drops_none_fields_from_credential():
 
 def test_broker_connect_link_uses_hosted_link_with_existing_auth_config():
     # toolkits.authorize has no redirect URL for API-key/BASIC toolkits (Odoo).
-    # The hosted Connect Link works for every auth scheme: resolve the
-    # toolkit's auth config, then mint the link against it.
+    # The hosted Connect Link (client.link.create) works for every auth scheme:
+    # resolve the toolkit's auth config, then mint the link against it.
     sdk = FakeComposio(redirect="https://composio/connect/abc")
-    link = ComposioBroker(sdk).connect_link(user="priya@x.com", app="odoo")
+    link = ComposioBroker(sdk).connect_link(user="priya@x.com", app="github")
     assert link == "https://composio/connect/abc"
-    assert ("auth_configs.list", "odoo") in sdk.calls
-    assert ("link", "priya@x.com", "ac_1") in sdk.calls
+    assert ("auth_configs.list", "github") in sdk.calls
+    assert ("link.create", "priya@x.com", "ac_1") in sdk.calls
 
 
 def test_broker_connect_link_creates_managed_auth_config_when_none_exists():
     sdk = FakeComposio(redirect="https://composio/connect/xyz", auth_configs=())
-    link = ComposioBroker(sdk).connect_link(user="priya@x.com", app="odoo")
+    link = ComposioBroker(sdk).connect_link(user="priya@x.com", app="github")
     assert link == "https://composio/connect/xyz"
-    assert ("auth_configs.create", "odoo", "use_composio_managed_auth") in sdk.calls
-    assert ("link", "priya@x.com", "ac_created") in sdk.calls
+    assert ("auth_configs.create", "github", "use_composio_managed_auth") in sdk.calls
+    assert ("link.create", "priya@x.com", "ac_created") in sdk.calls
+
+
+def test_broker_connect_link_fails_closed_when_no_managed_auth(caplog):
+    # A self-hosted toolkit (e.g. Odoo) with no auth config yet and no managed
+    # credentials: fail closed with an operator note, not a raw SDK 400.
+    import logging
+
+    sdk = FakeComposio(auth_configs=(), managed_auth_unavailable=True)
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ConnectionUnavailable) as ei:
+            ComposioBroker(sdk).connect_link(user="priya@x.com", app="odoo")
+    assert ei.value.reason == "no-auth-config"
+    assert any("auth config" in r.message.lower() for r in caplog.records)
 
 
 def test_broker_empty_state_val_fails_closed_not_empty_creds(caplog):
@@ -405,6 +543,27 @@ def test_broker_empty_state_val_fails_closed_not_empty_creds(caplog):
         with pytest.raises(ConnectionUnavailable) as ei:
             ComposioBroker(sdk).get_credential(user="priya@x.com", app="odoo")
     assert ei.value.reason == "empty-credential"
+    assert any("masking" in r.message.lower() for r in caplog.records)
+
+
+def test_broker_masked_credential_fails_closed(caplog):
+    # Composio secret masking (ON by default) returns the literal string
+    # "REDACTED" for secret fields. That is non-empty, so it slips past the
+    # empty-credential guard and gets sent upstream ("Bearer REDACTED" -> a
+    # cryptic 401). Detect the sentinel and fail closed with an operator note.
+    import logging
+
+    sdk = FakeComposio(
+        accounts=[{"id": "acc_1", "status": "ACTIVE"}],
+        detail={"id": "acc_1",
+                "state": {"auth_scheme": "OAUTH2",
+                          "val": {"access_token": "REDACTED", "token_type": "bearer",
+                                  "scope": "repo"}}},
+    )
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ConnectionUnavailable) as ei:
+            ComposioBroker(sdk).get_credential(user="p@x.com", app="github")
+    assert ei.value.reason == "masked-credential"
     assert any("masking" in r.message.lower() for r in caplog.records)
 
 

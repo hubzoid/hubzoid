@@ -108,6 +108,43 @@ def build_app() -> FastAPI:
             await rt.aclose()
 
     app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
+    app.state.runtime = rt
+
+    # In-bridge OTLP normalize intercept (opt-in, claude-local only). When on,
+    # the `claude` subprocess exports OTel to this loopback route instead of
+    # straight to the backend; we rename Claude Code's non-standard token attrs
+    # to the gen_ai.usage.* names Langfuse maps and promote the OWUI user to
+    # span user.id, then forward. This makes cost + per-user work on claude-local
+    # with NO separate collector process. See hubzoid.otel / docs/OBSERVABILITY.md.
+    from . import otel as otellib
+    from .factory_claude import ClaudeRuntime
+    if settings.otel_normalize and settings.otel_endpoint and isinstance(rt, ClaudeRuntime):
+        import httpx
+        from fastapi import Response
+
+        _otel_forward_url = settings.otel_endpoint.rstrip("/") + "/v1/traces"
+        _otel_headers = otellib.parse_otlp_headers(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"))
+
+        @app.post("/otel/v1/traces")
+        async def _otel_intercept(request: Request):
+            raw = await request.body()
+            gzipped = request.headers.get("content-encoding", "").lower() == "gzip"
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as http:
+                    status = await otellib.forward_otlp(
+                        raw, forward_url=_otel_forward_url, headers=_otel_headers,
+                        client=http, gzipped=gzipped,
+                    )
+                # The upstream (Langfuse) rejecting the batch is silent otherwise
+                # — surface it, since it means traces/cost won't appear.
+                if status >= 300:
+                    log.warning("otel forward -> %s rejected batch: HTTP %s",
+                                _otel_forward_url, status)
+            except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+                log.warning("otel normalize/forward dropped a batch: %s", exc)
+            # Always 200: an OTLP exporter retries non-2xx, and telemetry must
+            # never back-pressure or crash the turn that produced it.
+            return Response(status_code=200)
 
     def _auth(request: Request) -> None:
         auth = request.headers.get("authorization", "")

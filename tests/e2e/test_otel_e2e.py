@@ -106,5 +106,96 @@ def test_otel_emits_attributed_metrics_through_runtime(monkeypatch):
     # enhanced-telemetry beta ever gets dropped, this fails (Langfuse would go
     # blank while metrics/logs still flowed).
     assert "/v1/traces" in paths, "no trace spans emitted (Langfuse needs traces)"
-    assert "claude_code.token.usage" in blob, "no token metric reached the receiver"
+    # Token counts ride the TRACE spans (metrics/logs default to `none` — a
+    # trace backend like Langfuse drops them). Claude Code names the span attr
+    # `input_tokens`; the in-bridge normalizer renames it to gen_ai.usage.* so
+    # Langfuse maps it. If this attr disappears, cost regresses to 0.
+    assert "input_tokens" in blob, "no token counts on the trace spans"
     assert "hubzoid.user" in blob and "priya" in blob, "OWUI user not on the telemetry"
+
+
+def _make_raw_trace_receiver(sink: list):
+    """Like _make_receiver, but keeps RAW (gunzipped) /v1/traces protobuf bytes
+    so we can parse them and assert on real Claude Code span attributes."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            n = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(n)
+            if self.headers.get("Content-Encoding") == "gzip":
+                try:
+                    raw = gzip.decompress(raw)
+                except Exception:
+                    pass
+            if self.path.endswith("/v1/traces"):
+                sink.append(raw)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a):
+            pass
+
+    return Handler
+
+
+def test_normalize_converts_real_claude_span_attrs(monkeypatch):
+    """Regression guard on REAL Claude Code output: it stamps token counts on
+    trace spans under the non-standard names our normalizer renames, and puts
+    the OWUI user in the resource. If Claude Code ever changes those attribute
+    names, this fails and the in-bridge normalize (docs/OBSERVABILITY.md) needs
+    updating — otherwise Langfuse cost would silently regress to 0."""
+    from opentelemetry.proto.collector.trace.v1 import trace_service_pb2
+
+    from hubzoid import otel
+
+    sink: list[bytes] = []
+    port = _free_port()
+    srv = HTTPServer(("127.0.0.1", port), _make_raw_trace_receiver(sink))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv("HUBZOID_OTEL_ENDPOINT", f"http://127.0.0.1:{port}")
+        monkeypatch.setenv("MODEL", "claude-local")
+        # normalize OFF here: capture RAW claude bytes, then run the normalizer
+        # over them directly (the bridge route does the same thing in prod).
+        monkeypatch.delenv("HUBZOID_OTEL_NORMALIZE", raising=False)
+
+        out = asyncio.run(asyncio.wait_for(_one_turn(), timeout=150))
+        assert out.strip(), "the turn should still produce a reply"
+        time.sleep(6)  # let the trace export flush
+    finally:
+        srv.shutdown()
+
+    assert sink, "no /v1/traces batch reached the receiver"
+
+    def span_attr_keys(body: bytes) -> set:
+        req = trace_service_pb2.ExportTraceServiceRequest()
+        req.ParseFromString(body)
+        keys = set()
+        for rs in req.resource_spans:
+            for ss in rs.scope_spans:
+                for span in ss.spans:
+                    keys.update(a.key for a in span.attributes)
+        return keys
+
+    # Real Claude Code spans carry the non-standard token names before rename.
+    raw_keys = set().union(*(span_attr_keys(b) for b in sink))
+    assert "input_tokens" in raw_keys, (
+        f"Claude Code span token attr 'input_tokens' not found (got {sorted(raw_keys)}); "
+        f"the normalizer's rename map is stale."
+    )
+
+    # After normalize: the semconv names Langfuse maps + the promoted OWUI user.
+    normed_keys = set().union(*(span_attr_keys(otel.normalize_otlp_traces(b)) for b in sink))
+    assert "gen_ai.usage.input_tokens" in normed_keys
+    # user.id promoted from resource hubzoid.user (=priya) onto the spans.
+    for b in sink:
+        req = trace_service_pb2.ExportTraceServiceRequest()
+        req.ParseFromString(otel.normalize_otlp_traces(b))
+        for rs in req.resource_spans:
+            has_user = any(a.key == "hubzoid.user" for a in rs.resource.attributes)
+            if not has_user:
+                continue
+            for ss in rs.scope_spans:
+                for span in ss.spans:
+                    uid = next((a for a in span.attributes if a.key == "user.id"), None)
+                    assert uid is not None and uid.value.string_value == "priya"
