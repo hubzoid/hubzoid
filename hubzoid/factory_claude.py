@@ -317,7 +317,9 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     return ClaudeRuntime(
         name=main_name, options=options, thinking_mode=thinking_mode,
         tool_mode=settings.show_tools,
-        hub=hub_dir.name, otel_endpoint=otel_endpoint,
+        hub=hub_dir.name, otel_endpoint=otel_endpoint, hub_dir=hub_dir,
+        vision=(settings.vision_enabled, settings.vision_max_edge,
+                settings.vision_max_images),
     )
 
 
@@ -465,13 +467,16 @@ class ClaudeRuntime:
 
     def __init__(self, *, name: str, options, thinking_mode: str = "indicator",
                  tool_mode: str = "compact", hub: str = "",
-                 otel_endpoint: str | None = None):
+                 otel_endpoint: str | None = None, hub_dir: Path | None = None,
+                 vision: tuple[bool, int, int] = (True, 1568, 4)):
         self.name = name
         self._options = options
         self._thinking_mode = thinking_mode
         self._tool_mode = tool_mode
         self._hub = hub
         self._otel_endpoint = otel_endpoint
+        self._hub_dir = hub_dir
+        self._vision = vision
 
     def _options_for_turn(self):
         """Per-turn options. When OTel is enabled, clone the shared options with
@@ -528,8 +533,19 @@ class ClaudeRuntime:
         # so we can surface them with a ⚠ marker. Successful results emit
         # nothing — the call line was already shown.
         tool_use_names: dict[str, str] = {}
+        # Native image vision: expand any [Image: name] reference in the prompt
+        # into a multimodal message (text + Anthropic image blocks). Returns the
+        # plain string unchanged when there is nothing to inject.
+        qprompt = prompt
+        if self._hub_dir is not None:
+            from . import vision_inject
+            enabled, max_edge, max_images = self._vision
+            qprompt = vision_inject.claude_prompt(
+                prompt, self._hub_dir, _request_ctx.get_chat_id(),
+                enabled=enabled, max_edge=max_edge, max_images=max_images,
+            )
         try:
-            async for message in query(prompt=prompt, options=self._options_for_turn()):
+            async for message in query(prompt=qprompt, options=self._options_for_turn()):
                 # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}

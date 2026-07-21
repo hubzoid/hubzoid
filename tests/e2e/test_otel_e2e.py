@@ -187,6 +187,8 @@ def test_normalize_converts_real_claude_span_attrs(monkeypatch):
     # After normalize: the semconv names Langfuse maps + the promoted OWUI user.
     normed_keys = set().union(*(span_attr_keys(otel.normalize_otlp_traces(b)) for b in sink))
     assert "gen_ai.usage.input_tokens" in normed_keys
+    # hub promoted to a Langfuse tag (group-able "cost by hub" dimension).
+    assert "langfuse.trace.tags" in normed_keys
     # user.id promoted from resource hubzoid.user (=priya) onto the spans.
     for b in sink:
         req = trace_service_pb2.ExportTraceServiceRequest()

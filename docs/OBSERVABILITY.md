@@ -67,6 +67,12 @@ Whether **cost** shows depends on the model path, because of attribute naming:
   bridge you already start, on its existing loopback port, and does nothing until
   you set the flag. It only acts on claude-local; the LiteLLM path is unaffected.
 
+`HUBZOID_OTEL_NORMALIZE=1` also emits the hub name as a Langfuse **tag**
+(`langfuse.trace.tags`), because Langfuse cannot group dashboards by a custom
+metadata field like `hubzoid.hub`. Tags *are* a group-able dimension, so this is
+what makes a single **"cost by hub"** chart possible (and lets you cross hub ×
+user). Without it, the hub is only filterable metadata, not chartable.
+
 With `HUBZOID_OTEL_NORMALIZE=1` on claude-local (or nothing extra on the LiteLLM
 path), Langfuse shows per-user / per-hub / per-model **cost** dashboards, with
 users and sessions as first-class objects. Leave the flag off and you still get
