@@ -97,12 +97,15 @@ _TOKEN_RENAME = {
 def normalize_otlp_traces(body: bytes) -> bytes:
     """Rewrite an OTLP/HTTP ExportTraceServiceRequest so Langfuse maps it.
 
-    Two changes, both no-ops on the LiteLLM path:
+    Three changes, all no-ops on the LiteLLM path:
       * copy claude-local's token attrs to the `gen_ai.usage.*` names Langfuse
         maps (copy, not move, so it's idempotent and non-destructive);
       * set each span's `user.id` from the resource's `hubzoid.user` so
         Langfuse's Users tab attributes to the real OWUI person, not Claude
-        Code's account hash.
+        Code's account hash;
+      * promote the resource's `hubzoid.hub` to a Langfuse tag
+        (`langfuse.trace.tags`) so per-hub cost is a first-class group-able
+        dimension (Langfuse can't group by a custom metadata field).
 
     Best-effort: any parse failure returns the input unchanged (telemetry must
     never break the turn that produced it)."""
@@ -115,18 +118,21 @@ def normalize_otlp_traces(body: bytes) -> bytes:
         req.ParseFromString(body)
         for rs in req.resource_spans:
             hub_user = None
+            hub_name = None
             for a in rs.resource.attributes:
                 if a.key == "hubzoid.user":
                     hub_user = a.value.string_value
+                elif a.key == "hubzoid.hub":
+                    hub_name = a.value.string_value
             for ss in rs.scope_spans:
                 for span in ss.spans:
-                    _normalize_span(span, hub_user)
+                    _normalize_span(span, hub_user, hub_name)
         return req.SerializeToString()
     except Exception:  # noqa: BLE001 — never let telemetry rewriting raise
         return body
 
 
-def _normalize_span(span, hub_user: str | None) -> None:
+def _normalize_span(span, hub_user: str | None, hub_name: str | None = None) -> None:
     keys = {a.key for a in span.attributes}
     # Snapshot the copies to add BEFORE mutating the repeated field.
     additions: list[tuple[str, object]] = []
@@ -147,6 +153,15 @@ def _normalize_span(span, hub_user: str | None) -> None:
             existing = span.attributes.add()
             existing.key = "user.id"
         existing.value.string_value = hub_user
+    if hub_name:
+        # Langfuse reads tags from `langfuse.trace.tags` (a string array).
+        # Overwrite (Clear + set) so re-running is idempotent, not additive.
+        tag = next((a for a in span.attributes if a.key == "langfuse.trace.tags"), None)
+        if tag is None:
+            tag = span.attributes.add()
+            tag.key = "langfuse.trace.tags"
+        tag.value.Clear()
+        tag.value.array_value.values.add().string_value = hub_name
 
 
 def parse_otlp_headers(raw: str | None) -> dict[str, str]:

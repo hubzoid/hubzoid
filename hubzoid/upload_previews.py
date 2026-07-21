@@ -203,16 +203,17 @@ def _parse_page_range(spec: str | None, total: int) -> tuple[int, int]:
 
 
 def image_preview(filename: str, *, mime: str, size: int, target: Path) -> str:
-    """Metadata-only response — we don't read image bytes into the prompt.
+    """Metadata-only response — the image itself is shown to the model directly.
 
-    The agent gets enough to decide whether to surface the path to the
-    user or hand the image to a vision-capable tool downstream.
+    Uploaded images are injected into the conversation as a real image block by
+    ``hubzoid.vision_inject`` (native vision), so there is nothing to "read": the
+    picture is already visible above. This preview just confirms the file.
     """
     return (
         f"[Image file: {filename} ({mime}, {size} bytes).\n"
         f"Path on disk: {target}\n"
-        f"read_upload does not return image bytes — pass the path to a "
-        f"vision-capable tool to inspect the contents.]"
+        f"This image has been shown to you directly in the conversation — look "
+        f"at it there. read_upload does not return image bytes.]"
     )
 
 

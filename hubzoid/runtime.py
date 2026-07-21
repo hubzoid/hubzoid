@@ -133,7 +133,9 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import build_agent
     return OpenAIAgentsRuntime(
         build_agent(hub_dir, extra_tools=extra_tools, model_override=override),
-        max_turns=max_turns, tool_mode=settings.show_tools)
+        max_turns=max_turns, tool_mode=settings.show_tools, hub_dir=hub_dir,
+        vision=(settings.vision_enabled, settings.vision_max_edge,
+                settings.vision_max_images))
 
 
 # ---------------------------------------------------------------------------
@@ -143,10 +145,13 @@ class OpenAIAgentsRuntime:
     """Wraps an `agents.Agent` + `Runner.run_streamed` behind the Runtime API."""
 
     def __init__(self, agent, *, max_turns: int | None = None,
-                 tool_mode: str = "compact"):
+                 tool_mode: str = "compact", hub_dir=None,
+                 vision: tuple[bool, int, int] = (True, 1568, 4)):
         self._agent = agent
         self._max_turns = max_turns or 20
         self._tool_mode = tool_mode
+        self._hub_dir = hub_dir
+        self._vision = vision
         self.name = agent.name
         # MCP servers come back from the loader unconnected. The Agents SDK
         # requires they be connected before it will list their tools (the
@@ -209,8 +214,18 @@ class OpenAIAgentsRuntime:
 
         text_accumulated = False
         shown: list[str] = []
+        # Native image vision: expand any [Image: name] reference into an input
+        # list (text + input_image blocks). Plain string when nothing to inject.
+        run_input = prompt
+        if self._hub_dir is not None:
+            from . import vision_inject
+            enabled, max_edge, max_images = self._vision
+            run_input = vision_inject.openai_input(
+                prompt, self._hub_dir, _request_ctx.get_chat_id(),
+                enabled=enabled, max_edge=max_edge, max_images=max_images,
+            )
         try:
-            result = Runner.run_streamed(self._agent, prompt, max_turns=self._max_turns)
+            result = Runner.run_streamed(self._agent, run_input, max_turns=self._max_turns)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:

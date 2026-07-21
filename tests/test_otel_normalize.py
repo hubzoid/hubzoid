@@ -119,6 +119,36 @@ def test_leaves_user_id_when_no_hubzoid_user_in_resource():
     assert _span_attrs(otel.normalize_otlp_traces(body))["user.id"] == "acct_abc"
 
 
+# --- normalize_otlp_traces: hub -> Langfuse tag -----------------------------
+def _span_tags(body: bytes):
+    req = trace_service_pb2.ExportTraceServiceRequest()
+    req.ParseFromString(body)
+    span = req.resource_spans[0].scope_spans[0].spans[0]
+    for a in span.attributes:
+        if a.key == "langfuse.trace.tags":
+            return [v.string_value for v in a.value.array_value.values]
+    return None
+
+
+def test_promotes_hub_to_langfuse_tag():
+    # hubzoid.hub is only metadata (Langfuse can't group by it); also emit it as
+    # a Langfuse tag (`langfuse.trace.tags`, a string array) so per-hub cost is a
+    # first-class group-able dimension.
+    body = _request(resource_attrs={"hubzoid.hub": "gpms-hub"}, span_attrs={"input_tokens": 1})
+    assert _span_tags(otel.normalize_otlp_traces(body)) == ["gpms-hub"]
+
+
+def test_no_hub_tag_when_no_hub_in_resource():
+    body = _request(span_attrs={"input_tokens": 1})
+    assert _span_tags(otel.normalize_otlp_traces(body)) is None
+
+
+def test_hub_tag_is_idempotent():
+    body = _request(resource_attrs={"hubzoid.hub": "irs-hub"}, span_attrs={"input_tokens": 1})
+    twice = otel.normalize_otlp_traces(otel.normalize_otlp_traces(body))
+    assert _span_tags(twice) == ["irs-hub"]  # not ["irs-hub", "irs-hub"]
+
+
 # --- normalize_otlp_traces: robustness --------------------------------------
 def test_returns_input_unchanged_on_unparseable_bytes():
     junk = b"not a protobuf \xff\x00\x01"

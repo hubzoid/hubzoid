@@ -12,6 +12,19 @@ from typing import Any, Iterable
 
 _MENTION_RE = re.compile(r"<@[A-Z0-9_]+>")
 
+# Image extensions get the canonical [Image: name] reference so
+# hubzoid.vision_inject shows them to the model directly; anything else gets a
+# read_upload note. Slack gives us only the filename here, so we key on suffix.
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def _attachment_note(name: str) -> str:
+    dot = name.rfind(".")
+    ext = name[dot:].lower() if dot != -1 else ""
+    if ext in _IMAGE_EXTS:
+        return f"[Image: {name}]  (attached image, shown to you directly)"
+    return f"[User attached file: {name}. Read with read_upload('{name}').]"
+
 # Standard-markdown -> Slack mrkdwn conversions. Slack does not understand
 # `**bold**`, `[label](url)`, or `# Heading`; left as-is they render as
 # literal punctuation. We rewrite these. Code fences are preserved verbatim.
@@ -100,10 +113,7 @@ def messages_from_thread(
 
         cleaned = _MENTION_RE.sub("", text).strip()
         if attached:
-            notes = "\n".join(
-                f"[User attached file: {name}. Read with read_upload('{name}').]"
-                for name in attached
-            )
+            notes = "\n".join(_attachment_note(name) for name in attached)
             cleaned = f"{cleaned}\n{notes}" if cleaned else notes
         if not cleaned:
             continue

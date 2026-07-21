@@ -567,10 +567,16 @@ def _persist_attachments(
     notes: list[str] = []
     for safe_name, payload, mime in decoded:
         uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        notes.append(
-            f"[User attached file: {safe_name} ({len(payload)} bytes, {mime}). "
-            f"Read it with read_upload('{safe_name}').]"
-        )
+        if mime.startswith("image/"):
+            # Canonical image reference. hubzoid.vision_inject expands this to a
+            # multimodal content block at model-call time, so the model sees the
+            # image directly — no read_upload needed for images.
+            notes.append(f"[Image: {safe_name}]  (attached image, shown to you directly)")
+        else:
+            notes.append(
+                f"[User attached file: {safe_name} ({len(payload)} bytes, {mime}). "
+                f"Read it with read_upload('{safe_name}').]"
+            )
     return notes
 
 

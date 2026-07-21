@@ -156,6 +156,13 @@ class Settings:
     otel_normalize: bool = False
     composio_api_key: str | None = None
     connections: tuple[str, ...] = ()
+    # Native image vision: pass uploaded images to the model as content blocks.
+    # On by default (HUBZOID_VISION=false to disable for a text-only/cost-
+    # sensitive hub). max_edge caps the long edge before send; max_images caps
+    # how many referenced images expand to blocks per turn (older -> text note).
+    vision_enabled: bool = True
+    vision_max_edge: int = 1568
+    vision_max_images: int = 4
 
     @property
     def first_api_key(self) -> str:
@@ -204,6 +211,9 @@ def load(hub_dir: Path) -> Settings:
         otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),
         composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None,
         connections=_conn_slugs(os.environ.get("CONNECTIONS")),
+        vision_enabled=truthy(os.environ.get("HUBZOID_VISION", "true")),
+        vision_max_edge=_int_env("HUBZOID_VISION_MAX_EDGE", 1568),
+        vision_max_images=_int_env("HUBZOID_VISION_MAX_IMAGES", 4),
     )
 
 

@@ -445,8 +445,11 @@ def test_chat_completion_persists_data_url_attachment(client):
         files = [p for p in uploads.iterdir() if not p.name.endswith(".hubzoid.json")]
         assert len(files) == 1
         assert files[0].read_bytes() == payload
-        # The prompt the runtime saw must mention the upload + how to read it.
-        assert "read_upload" in seen_prompt["text"]
+        # An image attachment gets the canonical [Image: <name>] reference that
+        # hubzoid.vision_inject expands to a content block (native vision) —
+        # NOT a read_upload note (that is only for non-image files now).
+        assert "[Image: upload-1.png]" in seen_prompt["text"]
+        assert "read_upload" not in seen_prompt["text"]
     finally:
         import shutil
         shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)
