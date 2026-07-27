@@ -10,13 +10,14 @@ Commands:
   hubzoid slack systemd [PATH]     Print a systemd unit template.
   hubzoid doctor [PATH]            Validate hub config and report issues.
   hubzoid audit [PATH]             Show the access log (who called which tool).
-  hubzoid test [PATH]              Send a hello prompt and assert non-empty response.
+  hubzoid test [PATH]              Send one prompt to the agent; --file attaches files.
   hubzoid version                  Print version.
 
 Path defaults to `.` (the current directory) everywhere.
 """
 from __future__ import annotations
 
+import base64
 import importlib.resources as resources
 import json
 import os
@@ -32,6 +33,7 @@ from rich.console import Console
 
 from . import __version__
 from . import settings as settingslib
+from . import uploads as uploadslib
 
 app = typer.Typer(
     name="hubzoid",
@@ -717,20 +719,107 @@ def audit(
 # ---------------------------------------------------------------------------
 # test
 # ---------------------------------------------------------------------------
+# Stable chat id for `hubzoid test --file`. One predictable directory to
+# inspect (`<hub>/.hubzoid/chats/cli-test/`) instead of a new random one per
+# run, so uploads and artifacts stay where you left them between invocations.
+_TEST_CHAT_ID = "cli-test"
+
+
+def _attachment_blocks(files: list[Path]) -> list[dict]:
+    """Encode local files as the data-URL content blocks the bridge parses.
+
+    `_persist_attachments` speaks data URLs because that is what arrives
+    over HTTP. Re-encoding bytes we just read costs a base64 round-trip,
+    and buys attachment handling identical to real traffic — same
+    safe-naming, same sidecars, same notes — with no logic duplicated here.
+    """
+    blocks: list[dict] = []
+    for path in files:
+        payload = path.read_bytes()
+        mime = uploadslib.guess_mime(path.name)
+        b64 = base64.b64encode(payload).decode("ascii")
+        blocks.append({
+            "type": "file",
+            "name": path.name,
+            "data": f"data:{mime};base64,{b64}",
+        })
+    return blocks
+
+
+def _stage_test_attachments(
+    hub: Path,
+    chat_id: str,
+    files: list[Path],
+    prompt: str,
+    *,
+    max_upload_bytes: int,
+) -> str:
+    """Stage `files` into the chat's uploads dir; return the annotated prompt.
+
+    Delegates to the bridge's own handler, so the agent sees exactly what it
+    would see from Open WebUI or Slack: `[Image: x]` for images (expanded by
+    `vision_inject` at model-call time) and a `read_upload('x')` pointer for
+    everything else.
+
+    Raises HTTPException(413) if any file exceeds the cap; nothing is written
+    in that case — a half-staged set is worse than a refused one.
+    """
+    if not files:
+        return prompt
+
+    from .server import _persist_attachments
+
+    messages = [{"role": "user", "content": _attachment_blocks(files)}]
+    notes = _persist_attachments(
+        hub, chat_id, messages, max_upload_bytes=max_upload_bytes
+    )
+    if not notes:
+        return prompt
+    return "\n\n".join(notes) + "\n\n" + prompt
+
+
 @app.command("test")
 def test_hub(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     prompt: str = typer.Option("Reply with the single word: pong", "--prompt", help="Test prompt to send."),
+    file: list[Path] = typer.Option(
+        None, "--file", "-f",
+        exists=True, dir_okay=False, readable=True,
+        help="Attach a local file (repeatable). Staged into the 'cli-test' chat so "
+             "the agent can read it with read_upload, or see it directly if it's an image.",
+    ),
 ) -> None:
     """Send one prompt to the hub's agent and print the response.
 
     Runs in-process (no bridge / no UI). Backend is picked from MODEL in .env:
     `claude-local` -> Claude Agent SDK; anything else -> OpenAI Agents SDK.
+
+    With `--file`, the run is scoped to the `cli-test` chat so the upload tools
+    resolve. Without it the run stays unscoped, exactly as before — that keeps
+    `write_artifact` writing to the session output dir and reporting a local
+    path, rather than a download URL for a bridge that isn't running.
     """
     import asyncio
+    from contextlib import nullcontext
+
+    from fastapi import HTTPException
 
     hub = hub.resolve()
+    files = list(file or [])
 
+    # Stage before building the runtime: an over-cap attachment should fail
+    # fast, not after paying for model/MCP init.
+    if files:
+        try:
+            prompt = _stage_test_attachments(
+                hub, _TEST_CHAT_ID, files, prompt,
+                max_upload_bytes=settingslib.load(hub).max_upload_bytes,
+            )
+        except HTTPException as exc:
+            console.print(f"[red]{exc.detail}[/red]")
+            raise typer.Exit(2) from exc
+
+    from . import _request_ctx
     from . import runtime as runtime_lib
 
     # No MODEL in .env is fine — runtime.build() defaults to claude-local
@@ -746,7 +835,11 @@ def test_hub(
         finally:
             await rt.aclose()
 
-    text = asyncio.run(_go())
+    # ContextVars set here are visible inside asyncio.run(): the task it
+    # creates copies the context at creation time, i.e. inside this block.
+    scope = _request_ctx.chat_scope(_TEST_CHAT_ID) if files else nullcontext()
+    with scope:
+        text = asyncio.run(_go())
     console.print(f"[green]←[/green] {text}")
 
 

@@ -410,6 +410,10 @@ hubzoid audit [PATH]             Show the access log: who called which restricte
   --user TEXT                      Filter to one user.
   -n, --limit INT                  How many recent decisions (default 50).
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
+  --prompt TEXT                    The prompt to send.
+  -f, --file PATH                  Attach a local file (repeatable). Staged into the
+                                   'cli-test' chat, so the agent reads it with
+                                   read_upload — or sees it directly, if it's an image.
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.
 hubzoid slack manifest [PATH]    Print a Slack App Manifest (JSON by default).
 hubzoid slack systemd [PATH]     Print a systemd unit for the Slack adapter.
