@@ -390,14 +390,16 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     they are trusted because reaching the bridge already requires its API key
     (``_auth``), and end users talk to Open WebUI, never to the bridge directly.
 
-    Groups are resolved in priority order:
+    Groups are the UNION of two sources, so an identity can carry both (see
+    ``merge_group_sources``):
 
-      1. ``X-Hubzoid-Groups`` (comma-separated) — an explicit override, set by a
-         reverse proxy or used in testing. Wins when present.
-      2. Open WebUI's forwarded ``X-OpenWebUI-User-Email`` — the bridge looks up
+      1. Open WebUI's forwarded ``X-OpenWebUI-User-Email`` — the bridge looks up
          that user's groups in OWUI's own database (where the admin manages them
          on the Groups screen). This is what makes adding a person to a group in
          Open WebUI grant the matching permission, with no proxy and no logout.
+      2. ``X-Hubzoid-Groups`` (comma-separated) — groups supplied by a surface
+         resolver or trusted front (e.g. the WhatsApp/Telegram roster), merged on
+         top of the OWUI groups rather than overriding them.
 
     A request with no groups reaches no restricted tool (fail-closed). A
     non-Open-WebUI surface (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``)
@@ -411,16 +413,31 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
         u = body.get("user")
         user = u if isinstance(u, str) and u.strip() else None
 
+    # Groups MERGE (union), so an identity can carry both its Open WebUI groups
+    # and groups supplied by a surface resolver / trusted front. Non-breaking:
+    # an OWUI-only request still gets exactly its OWUI groups, a header-only
+    # request still gets exactly its header groups; only when BOTH are present
+    # (the WhatsApp/Telegram path) do they combine instead of one overriding.
     groups_raw = headers.get("x-hubzoid-groups")
-    if groups_raw is not None:
-        groups = [g for g in groups_raw.split(",") if g.strip()]
-    elif owui_email and hub_dir is not None:
-        groups = access.owui_groups.resolve_groups(hub_dir, owui_email)
-    else:
-        groups = []
+    owui_groups = (
+        access.owui_groups.resolve_groups(hub_dir, owui_email)
+        if owui_email and hub_dir is not None else set()
+    )
+    groups = merge_group_sources(owui_groups, groups_raw)
 
     surface = headers.get("x-hubzoid-surface") or "owui"
     return access.Identity.make(user=user, groups=groups, surface=surface)
+
+
+def merge_group_sources(owui_groups, header_groups_raw) -> list:
+    """Union an identity's group sources: Open WebUI groups + comma-separated
+    header groups (from a surface resolver or trusted front). Blank entries are
+    dropped; final normalization/dedup is applied by `access.Identity.make`.
+    """
+    groups = set(owui_groups or ())
+    if header_groups_raw is not None:
+        groups |= {g.strip() for g in header_groups_raw.split(",") if g.strip()}
+    return list(groups)
 
 
 # ---------------------------------------------------------------------------
