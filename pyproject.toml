@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.7.11"
+version = "0.7.12"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -60,9 +60,11 @@ dependencies = [
   "slack-bolt>=1.21",
   "pypdf>=4.0",
   "Pillow>=10.0",           # vision_inject.py resizes uploaded images before sending them to the model
+  "SQLAlchemy>=2.0",        # db.py: hub-owned tables (inbound history). SQLite default; Postgres via DATABASE_URL
 ]
 
 [project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]  # only when DATABASE_URL points at Postgres
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
@@ -81,7 +83,7 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.access", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools"]
+packages = ["hubzoid", "hubzoid.access", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram"]
 include-package-data = true
 
 [tool.setuptools.package-data]

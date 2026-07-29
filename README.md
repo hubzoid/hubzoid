@@ -366,6 +366,24 @@ hubzoid slack run my-hub         # or as a separate process (prod / systemd)
 Full walkthrough (manifest, install, tokens, updating an existing app,
 production systemd unit, troubleshooting): [docs/slack.md](docs/slack.md).
 
+## WhatsApp & Telegram chat surfaces
+
+Run any hub as a WhatsApp or Telegram bot — same agent, skills, knowledge, and
+`.env`. Unlike Slack (Socket Mode), these use an inbound **webhook**, so they
+need a public URL. A per-hub `identity/access.csv` roster maps each sender
+(phone) to an email + groups — the allowlist, so only registered people get a
+reply.
+
+```bash
+# put WHATSAPP_* and/or TELEGRAM_* in my-hub/.env, add identity/access.csv, then:
+hubzoid run my-hub --whatsapp --telegram   # inline with the bridge + UI
+hubzoid inbound run my-hub                  # or as a separate process (prod / systemd)
+```
+
+Conversation memory, per-sender identity, access gating, Telegram streaming, and
+typing/read receipts are built in. Full walkthrough (Meta/Telegram setup, the
+roster, env knobs): [docs/inbound-surfaces.md](docs/inbound-surfaces.md).
+
 ## CLI
 
 ```
@@ -417,6 +435,8 @@ hubzoid test [PATH]              Send one prompt to the agent and print the resp
 hubzoid slack run [PATH]         Run the hub as a Slack bot (Socket Mode). See docs/slack.md.
 hubzoid slack manifest [PATH]    Print a Slack App Manifest (JSON by default).
 hubzoid slack systemd [PATH]     Print a systemd unit for the Slack adapter.
+hubzoid inbound run [PATH]       Serve the WhatsApp/Telegram webhook app. See docs/inbound-surfaces.md.
+hubzoid inbound systemd [PATH]   Print a systemd unit for the inbound surfaces.
 hubzoid version
 hubzoid --help
 ```
@@ -461,7 +481,10 @@ Cursor, Codex, Copilot, Gemini CLI, VS Code).
 * **v0.4** Slack chat surface (shipped — `hubzoid slack run`, see
   [docs/slack.md](docs/slack.md)). Background and scheduled workflows via
   WaveAssist Cloud (separate product, opt-in).
-* **Later** Telegram chat surface. Mem0 / Zep memory backends.
+* **v0.7** WhatsApp and Telegram chat surfaces (shipped — `hubzoid run
+  --whatsapp --telegram`, see [docs/inbound-surfaces.md](docs/inbound-surfaces.md)),
+  with per-sender identity, access gating, and conversation memory.
+* **Later** Mem0 / Zep memory backends.
 
 Non-goals: voice and realtime, visual agent builder.
 

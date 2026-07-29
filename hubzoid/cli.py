@@ -177,6 +177,18 @@ def run(
         help="Also start the Slack adapter (Socket Mode). Reads SLACK_BOT_TOKEN and "
         "SLACK_APP_TOKEN from .env. Soft-fails with a warning if either is missing.",
     ),
+    whatsapp: bool = typer.Option(
+        False,
+        "--whatsapp",
+        help="Also start the WhatsApp webhook surface. Reads WHATSAPP_* from .env and "
+        "exposes /webhooks/whatsapp via the edge. Soft-skips if unconfigured.",
+    ),
+    telegram: bool = typer.Option(
+        False,
+        "--telegram",
+        help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
+        "exposes /webhooks/telegram via the edge. Soft-skips if unconfigured.",
+    ),
 ) -> None:
     """Start the bridge (+ Open WebUI) for a hub."""
     hub = hub.resolve()
@@ -310,6 +322,15 @@ def run(
                     edge_routes.append(
                         {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
                     )
+                if whatsapp or telegram:
+                    # WhatsApp/Telegram receive on a loopback inbound port; only
+                    # /webhooks is exposed publicly (each POST is signature- or
+                    # secret-verified before anything runs). Import here so a plain
+                    # `hubzoid run` never pulls in the inbound stack (SQLAlchemy, etc.).
+                    from .inbound.run import inbound_port
+                    edge_routes.append(
+                        {"prefix": "/webhooks", "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
+                    )
                 edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
                 edge_cmd = [
                     sys.executable, "-m", "uvicorn",
@@ -348,9 +369,27 @@ def run(
             slack_proc = subprocess.Popen(slack_cmd, env=bridge_env)
             console.print(f"[cyan]→ slack [/cyan]  starting (Socket Mode)")
 
+    # Optional: the inbound webhook surfaces (WhatsApp/Telegram) as one shared
+    # child. It reads WHATSAPP_*/TELEGRAM_* from .env and serves whichever are
+    # configured; the edge already routes /webhooks to it. Soft-warn per surface.
+    inbound_proc = None
+    if whatsapp or telegram:
+        from .inbound.env import missing_telegram_vars, missing_whatsapp_vars
+        if whatsapp and missing_whatsapp_vars(os.environ):
+            console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
+        if telegram and missing_telegram_vars(os.environ):
+            console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
+        start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
+        start_tg = telegram and not missing_telegram_vars(os.environ)
+        if start_wa or start_tg:
+            inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
+            inbound_proc = subprocess.Popen(inbound_cmd, env=bridge_env)
+            surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg)) if on)
+            console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks)")
+
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
-        for p in (edge_proc, ui_proc, slack_proc, bridge_proc):
+        for p in (edge_proc, ui_proc, slack_proc, inbound_proc, bridge_proc):
             if p is not None and p.poll() is None:
                 p.terminate()
         sys.exit(0)
@@ -361,7 +400,7 @@ def run(
     try:
         bridge_proc.wait()
     finally:
-        for p in (edge_proc, ui_proc, slack_proc):
+        for p in (edge_proc, ui_proc, slack_proc, inbound_proc):
             if p is not None and p.poll() is None:
                 p.terminate()
 
@@ -672,6 +711,15 @@ def doctor(
     except Exception as exc:  # noqa: BLE001
         problems.append(f"access check failed: {type(exc).__name__}: {exc}")
 
+    # Identity resolver: an opt-in per-hub roster (identity/access.csv or .py) the
+    # WhatsApp/Telegram surfaces use to map a sender to an email + groups.
+    try:
+        from .access.resolver import load_resolver
+        if load_resolver(hub) is not None:
+            notes.append("identity: roster resolver present (identity/access.csv or .py)")
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"identity resolver failed to load: {type(exc).__name__}: {exc}")
+
     for n in notes:
         console.print(f"[green]✓[/green] {n}")
     for p in problems:
@@ -926,6 +974,54 @@ def slack_systemd(
     hub = hub.resolve()
     python_path = python or Path(sys.executable).resolve()
     typer.echo(systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user))
+
+
+inbound_app = typer.Typer(
+    help="WhatsApp/Telegram webhook surfaces: run the server or print a systemd unit.",
+    no_args_is_help=True,
+)
+
+
+@inbound_app.command("run")
+def inbound_run(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Serve the WhatsApp/Telegram webhook app for a hub. Foreground; ^C to stop.
+
+    Requires the hub's bridge to be running (`hubzoid run <hub>`). Reads
+    WHATSAPP_* and/or TELEGRAM_* from <hub>/.env and serves whichever are set.
+    """
+    from .inbound.run import run as run_inbound
+
+    hub = hub.resolve()
+    if not (hub / "AGENTS.md").is_file():
+        console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
+        raise typer.Exit(2)
+    settingslib.load(hub)
+    raise typer.Exit(run_inbound(hub))
+
+
+@inbound_app.command("systemd")
+def inbound_systemd(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    user: str = typer.Option("hubzoid", "--user", help="Linux user to run the service as."),
+    python: Path = typer.Option(
+        None, "--python", help="Python interpreter path. Default: detect from current sys.executable."
+    ),
+) -> None:
+    """Print a systemd unit for hubzoid-inbound@<hub>.service to stdout."""
+    from .inbound.service import systemd_unit_for_hub
+
+    hub = hub.resolve()
+    python_path = python or Path(sys.executable).resolve()
+    typer.echo(systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user))
+
+
+app.add_typer(
+    inbound_app,
+    name="inbound",
+    help="WhatsApp/Telegram webhook surfaces: run the server or print a systemd unit.",
+)
 
 
 app.add_typer(
