@@ -75,6 +75,7 @@ def build_app_for_hub(hub_dir, env=None):
         model=model, resolver=resolver, whatsapp=wa, telegram=tg,
         messages=Messages.from_env(env), history_max=history_max,
         history_ttl_seconds=history_ttl_seconds, stream_interval=stream_interval,
+        max_upload_bytes=settings.max_upload_bytes,
     )
 
 

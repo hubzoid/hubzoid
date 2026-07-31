@@ -48,7 +48,14 @@ def to_telegram(text: str) -> str:
     out: list[str] = []
     for chunk in _FENCE_SPLIT_RE.split(text):
         if chunk.startswith("```") and chunk.endswith("```") and len(chunk) >= 6:
-            out.append(f"<pre>{_escape(chunk[3:-3])}</pre>")
+            inner = chunk[3:-3]
+            # Drop the opening fence's info string (the ```python language tag),
+            # which is everything up to the first newline — otherwise it leaks in
+            # as the first line of the code block. (code-review #8)
+            nl = inner.find("\n")
+            if nl != -1:
+                inner = inner[nl + 1:]
+            out.append(f"<pre>{_escape(inner)}</pre>")
             continue
         out.append(_format_chunk(chunk))
     return "".join(out)

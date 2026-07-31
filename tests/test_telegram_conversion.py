@@ -54,7 +54,18 @@ def test_html_special_chars_are_escaped():
 
 
 def test_code_fence_content_is_escaped_inside_pre():
-    assert to_telegram("```\n<x>&\n```") == "<pre>\n&lt;x&gt;&amp;\n</pre>"
+    # The opening fence line (info string, empty here) is dropped, so no leading blank line.
+    assert to_telegram("```\n<x>&\n```") == "<pre>&lt;x&gt;&amp;\n</pre>"
+
+
+def test_code_fence_language_tag_is_dropped():
+    # code-review #8: a ```python opener must not leak "python" as the first code line.
+    assert to_telegram("```python\nprint(1)\n```") == "<pre>print(1)\n</pre>"
+
+
+def test_single_line_fence_kept_as_is():
+    # An inline-style fence with no newline has no info string to strip.
+    assert to_telegram("```code```") == "<pre>code</pre>"
 
 
 def test_truncate_caps_at_tg_limit():

@@ -90,6 +90,31 @@ mechanism, we hold the thread.
   would share rows. Dedup markers under `.inbound/dedup` are not yet auto-pruned
   (small files; a periodic cleanup can be added).
 
+## Attachments (images & files)
+
+Media a user sends — a WhatsApp image or document, a Telegram photo, voice note,
+or document — rides the **same pipeline the web and Slack already use**. The
+harness downloads the bytes from the surface, POSTs them to the bridge's per-chat
+uploads route (`/uploads/{chat_id}/{filename}`), and stitches a text reference
+onto the user's turn:
+
+- **Images** get an `[Image: <name>]` reference that `vision_inject` expands into
+  a real image block at model-call time — the model **sees** the image directly.
+- **Other files** (PDF, CSV, docs) land in the chat's uploads dir with a
+  `read_upload('<name>')` note. The agent reads them on demand **if the hub
+  exposes a file-read tool** — same as Slack/OWUI today.
+- **Voice/audio notes** are captured as files and referenced, but are only
+  *understood* if the hub provides a transcription tool (there is no native audio
+  vision). Capture-and-reference works out of the box; transcription is a hub
+  tool choice.
+
+Any caption travels as the message text alongside the marker. The marker is
+stored in history too, so an uploaded image stays visible for follow-up turns.
+Per-file size is bounded by `HUBZOID_MAX_UPLOAD_BYTES` (default 25 MiB); an
+oversized or failed download is skipped, never fatal to the turn. This is
+**inbound** only (user → hub), matching Slack; sending files back is not part of
+this build.
+
 ## WhatsApp setup
 
 `.env`:
@@ -179,7 +204,8 @@ hubzoid inbound systemd <hub> > /etc/systemd/system/hubzoid-inbound@<hub>.servic
 | `TELEGRAM_STREAM` | true | Telegram edit-streaming on/off |
 | `HUBZOID_INBOUND_PORT` | 8100 | loopback port for the inbound server |
 | `HUBZOID_RESTRICTED_SURFACES` | `owui,web,api,mcp` | add `whatsapp`/`telegram` to allow restricted tools |
-| `INBOUND_MSG_VERIFY_PROMPT` / `_VERIFIED` / `_NOT_REGISTERED` / `_NOT_OWN_CONTACT` / `_PLEASE_VERIFY` | built-in English | override the fixed handshake/gate messages |
+| `INBOUND_MSG_VERIFY_PROMPT` / `_VERIFIED` / `_NOT_REGISTERED` / `_NOT_OWN_CONTACT` / `_PLEASE_VERIFY` / `_NO_RESPONSE` | built-in English | override the fixed handshake/gate/fallback messages |
+| `HUBZOID_MAX_UPLOAD_BYTES` | 25 MiB | per-attachment ingress cap (shared with web/Slack uploads) |
 | `WHATSAPP_*` / `TELEGRAM_*` | — | surface credentials (above) |
 
 ## Analytics

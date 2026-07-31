@@ -2,16 +2,23 @@
 
 Meta batches under ``entry[].changes[].value``; ``value.messages`` holds inbound
 messages and ``value.contacts`` their display names. Delivery/read receipts
-arrive as ``value.statuses`` (no ``messages``) and yield nothing. Only text and
-quick-reply/button messages carry text we can answer; other media types are
-skipped for now. Defensive throughout — a malformed payload yields ``[]``,
-never an exception.
+arrive as ``value.statuses`` (no ``messages``) and yield nothing. Text and
+quick-reply/button messages carry answerable text; media messages (image,
+document, audio, video, voice, sticker) surface as `MediaRef`s the harness
+downloads and attaches, with any caption as the text. Defensive throughout — a
+malformed payload yields ``[]``, never an exception.
 """
 from __future__ import annotations
 
-from ..inbound.message import InboundMessage
+from ..inbound.message import InboundMessage, MediaRef, ext_for
 
 SURFACE = "whatsapp"
+
+# Media message types. `document` carries a filename; the rest we name from the
+# media id + a mime-derived extension so distinct attachments never collide.
+_MEDIA_TYPES = ("image", "document", "audio", "video", "voice", "sticker")
+# Types that can carry a caption alongside the media.
+_CAPTION_TYPES = ("image", "document", "video")
 
 
 def parse_messages(payload: dict) -> "list[InboundMessage]":
@@ -54,12 +61,37 @@ def _parse_one(msg, names) -> "InboundMessage | None":
     sender = msg.get("from")
     if not mid or not sender:
         return None
+    media = _extract_media(msg)
     text = _extract_text(msg)
     if text is None:
-        return None  # unsupported type (media, etc.) — nothing to answer
+        text = _extract_caption(msg) if media else None
+    if text is None and not media:
+        return None  # unsupported type with nothing to answer
     return InboundMessage(
-        id=mid, surface=SURFACE, handle=sender, text=text, name=names.get(sender),
+        id=mid, surface=SURFACE, handle=sender, text=text or "",
+        name=names.get(sender), media=tuple(media),
     )
+
+
+def _extract_media(msg: dict) -> "list[MediaRef]":
+    refs: "list[MediaRef]" = []
+    for mtype in _MEDIA_TYPES:
+        obj = _sub(msg, mtype)
+        media_id = obj.get("id")
+        if not media_id:
+            continue
+        mime = _clean(obj.get("mime_type"))
+        name = _clean(obj.get("filename")) or f"{mtype}-{media_id}{ext_for(mime)}"
+        refs.append(MediaRef(key=media_id, name=name, mime=mime))
+    return refs
+
+
+def _extract_caption(msg: dict) -> "str | None":
+    for mtype in _CAPTION_TYPES:
+        caption = _clean(_sub(msg, mtype).get("caption"))
+        if caption:
+            return caption
+    return None
 
 
 def _clean(value) -> "str | None":
