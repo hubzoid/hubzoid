@@ -52,8 +52,18 @@ def test_interactive_button_reply_extracts_title():
     assert parse_messages(p)[0].text == "Confirm"
 
 
-def test_unsupported_media_type_is_skipped():
+def test_image_media_is_surfaced_as_attachment():
+    # Media is no longer dropped: an image becomes an answerable message with a
+    # MediaRef (the harness downloads it) and an empty text when there's no caption.
     p = _payload({"from": "91x", "id": "wamid.D", "type": "image", "image": {"id": "x"}})
+    [m] = parse_messages(p)
+    assert m.text == ""
+    assert m.media[0].key == "x"
+
+
+def test_unhandled_type_with_no_media_is_skipped():
+    p = _payload({"from": "91x", "id": "wamid.L", "type": "location",
+                  "location": {"latitude": 1.0, "longitude": 2.0}})
     assert parse_messages(p) == []
 
 
