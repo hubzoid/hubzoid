@@ -114,6 +114,37 @@ def _build_mcp_server(registry: dict):
     return create_sdk_mcp_server(name=_MCP_NAMESPACE, version="0.1.0", tools=tools)
 
 
+def _identity_preamble() -> str:
+    """A short note prepended to the USER turn naming the real end user.
+
+    `claude -p` authenticates via the box's local subscription account, so with
+    no other identity signal the model assumes it *is* that account holder and
+    answers "who am I" with the Claude login rather than the Open WebUI user.
+    Hubzoid already resolves the true caller into `current_identity()`; we
+    surface it here. Deliberately injected into the user turn (not the system
+    prompt) so the cached system-prompt prefix stays byte-identical across users
+    and prompt caching still hits.
+    """
+    from .access.identity import current_identity
+
+    ident = current_identity()
+    if ident.is_anonymous:
+        return (
+            "[Session context] This is an automated run with no interactive end "
+            "user (scheduled task or CLI). Do not attribute an identity to the "
+            "request.\n\n"
+        )
+    groups = ", ".join(sorted(ident.groups)) or "none"
+    return (
+        "[Session context] You are serving one end user through "
+        f"{ident.surface}. The current user is {ident.user} (groups: {groups}). "
+        "This is the real person you are helping. The operating-system account "
+        "and Claude subscription this process runs under are infrastructure, not "
+        "the user, never present yourself as, or answer 'who am I' with, that "
+        "account. Use the identity above for any identity-scoped decision.\n\n"
+    )
+
+
 def _allowed_tool_names(registry: dict, mcp_specs: dict[str, dict]) -> list[str]:
     """Build the `allowed_tools` whitelist Claude sees.
 
@@ -536,6 +567,12 @@ class ClaudeRuntime:
         # Native image vision: expand any [Image: name] reference in the prompt
         # into a multimodal message (text + Anthropic image blocks). Returns the
         # plain string unchanged when there is nothing to inject.
+        # Tell the model who the real end user is. `claude -p` authenticates via
+        # the box's subscription account, so with no other signal it assumes it
+        # *is* that account holder. We prepend the resolved caller
+        # (current_identity()) to the USER turn — not the cached system prompt —
+        # so the model serves the OWUI user while prompt caching still hits.
+        prompt = _identity_preamble() + prompt
         qprompt = prompt
         if self._hub_dir is not None:
             from . import vision_inject
