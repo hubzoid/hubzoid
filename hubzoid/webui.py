@@ -77,7 +77,7 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     # ~500MB RAM) eagerly at startup whenever RAG_EMBEDDING_ENGINE is empty
     # — and "never using RAG" does NOT prevent it (it's loaded in main.py's
     # startup, not lazily). hubzoid strips OWUI's RAG entirely (see
-    # server.py's rewrite_owui_prompt + ENABLE_RAG_WEB_SEARCH off), so the
+    # server._normalize_owui_uploads + ENABLE_RAG_WEB_SEARCH off), so the
     # embedder is dead weight. Setting the engine to a non-empty value makes
     # OWUI's get_ef() skip the local load. This is the single deterministic
     # lever (there is no RAG_EMBEDDING_ENGINE=none). Pairs with
@@ -89,7 +89,8 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     # the file is never marked processed. BYPASS_EMBEDDING_AND_RETRIEVAL
     # makes process_file extract text only (no vector store, no embedding
     # call), and at chat time the full file content flows through the same
-    # <context>/<source> template that rewrite_owui_prompt strips anyway.
+    # <context>/<source> template that _normalize_owui_uploads strips anyway
+    # (after copying the referenced file into the canonical uploads store).
     "RAG_EMBEDDING_ENGINE": "openai",        # non-empty => local MiniLM never loads
     "BYPASS_EMBEDDING_AND_RETRIEVAL": _ON,   # uploads: extract text, never embed
     "OFFLINE_MODE": _ON,                     # don't phone HuggingFace for model updates at boot

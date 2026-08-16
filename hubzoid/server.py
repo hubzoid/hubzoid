@@ -186,8 +186,9 @@ def build_app() -> FastAPI:
         chat_id = _derive_chat_id(body, request, messages)
         identity = _derive_identity(body, request, hub_dir)
 
-        # Extract attachments from message content[] arrays and persist
-        # them to the chat's uploads dir before flattening to text.
+        # Extract content[] attachments (base64 image_url / input_file — Slack
+        # and direct-API uploads) into the canonical per-chat uploads store now;
+        # their notes are prepended after the prompt is assembled below.
         attachment_notes = _persist_attachments(
             hub_dir, chat_id, messages, max_upload_bytes=max_upload_bytes
         )
@@ -195,22 +196,23 @@ def build_app() -> FastAPI:
         prompt = _flatten_messages(messages)
         if not prompt:
             raise HTTPException(status_code=400, detail="empty prompt after flattening messages")
-        if attachment_notes:
-            prompt = "\n\n".join(attachment_notes) + "\n\n" + prompt
 
-        # Open WebUI delivers attachments by wrapping the user's question
-        # in a RAG template with <source resource-id="..." name="..."> tags
-        # — the file_id is right there in the prompt. We resolve it to the
-        # deterministic on-disk path (<hub>/.openwebui-data/uploads/<id>_<name>)
-        # and rewrite the prompt to a clean attachment-note + user-query
-        # shape, identical to what Slack uploads look like. The RAG wrapper
-        # + chunks get dropped (we don't need them — agent reads full file
-        # from disk via read_file). Pass-through on any non-match.
+        # Open WebUI uploads arrive as a RAG-wrapped prompt referencing files it
+        # stored under .openwebui-data/uploads/. Normalize them into the SAME
+        # canonical per-chat uploads store the base64 path just used, so ONE store
+        # is authoritative — read_upload, vision and ticket attachments all resolve
+        # OWUI files from it, and no downstream reader has to know OWUI exists.
+        # Strips OWUI's RAG boilerplate/chunks; pass-through on any non-match.
         owui_uploads = hub_dir / ".openwebui-data" / "uploads"
         if owui_uploads.is_dir():
-            rewritten = owui_lib.rewrite_owui_prompt(prompt, owui_uploads)
-            if rewritten is not None:
-                prompt = rewritten
+            normalized = _normalize_owui_uploads(hub_dir, chat_id, prompt, owui_uploads)
+            if normalized is not None:
+                prompt = normalized
+
+        # Base64/Slack notes go on top, AFTER the OWUI rewrite (which replaces the
+        # prompt body), so an image + a document in the same turn both survive.
+        if attachment_notes:
+            prompt = "\n\n".join(attachment_notes) + "\n\n" + prompt
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
@@ -495,6 +497,71 @@ _DATA_URL_RE = re.compile(
 )
 
 
+def _attachment_note(safe_name: str, size: int, mime: str) -> str:
+    """The one canonical prompt marker for an ingested upload, shared by the
+    base64/Slack path and the Open WebUI path so both produce identical
+    downstream shape. Images get the `[Image: ...]` reference that
+    `hubzoid.vision_inject` expands into a multimodal content block at model-call
+    time (the model sees the image directly — no read_upload needed); everything
+    else points the agent at `read_upload`."""
+    if mime.startswith("image/"):
+        return f"[Image: {safe_name}]  (attached image, shown to you directly)"
+    return (
+        f"[User attached file: {safe_name} ({size} bytes, {mime}). "
+        f"Read it with read_upload('{safe_name}').]"
+    )
+
+
+def _normalize_owui_uploads(
+    hub_dir: Path, chat_id: str, prompt: str, owui_uploads: Path
+) -> str | None:
+    """Copy every file Open WebUI attached into the ONE canonical per-chat uploads
+    store, then return the prompt rewritten to the same attachment-note shape a
+    Slack / base64 upload produces.
+
+    Returns None when the prompt is not an OWUI RAG wrap (caller passes it through
+    untouched). When OWUI referenced files but some or all could not be read
+    (missing on disk, template drift), those become a LOUD, visible note rather
+    than a silent drop — a silent drop is exactly what makes a user paste a whole
+    file into chat.
+    """
+    result = owui_lib.owui_attachments(prompt, owui_uploads)
+    if result is None:
+        return None
+    resolved, unresolved, user_query = result
+
+    upload_dir = memlib.chat_upload_dir(hub_dir, chat_id)
+    notes: list[str] = []
+    for name, src in resolved:
+        safe_name = _safe_path_component(name)
+        if not safe_name:
+            continue
+        try:
+            payload = src.read_bytes()
+        except OSError as exc:  # unreadable on disk -> treat as unresolved, loudly
+            log.warning("owui: could not read attached file %s: %s", src, exc)
+            unresolved.append(name)
+            continue
+        mime = uploads_lib.guess_mime(safe_name)
+        uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
+        notes.append(_attachment_note(safe_name, len(payload), mime))
+
+    if unresolved:
+        listed = ", ".join(sorted(set(unresolved)))
+        log.warning(
+            "owui: %d attached file(s) referenced but not readable under %s: %s",
+            len(set(unresolved)), owui_uploads, listed,
+        )
+        notes.append(
+            f"[Attachment unreadable: the user attached {listed} but it could not be "
+            f"read from storage. Tell them and ask them to re-upload it or paste the "
+            f"relevant part. Do NOT guess its contents.]"
+        )
+
+    body = "\n\n".join(notes)  # owui_attachments returns non-None only with >=1 ref
+    return f"{body}\n\n{user_query}" if user_query else body
+
+
 def _persist_attachments(
     hub_dir: Path,
     chat_id: str,
@@ -584,16 +651,7 @@ def _persist_attachments(
     notes: list[str] = []
     for safe_name, payload, mime in decoded:
         uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        if mime.startswith("image/"):
-            # Canonical image reference. hubzoid.vision_inject expands this to a
-            # multimodal content block at model-call time, so the model sees the
-            # image directly — no read_upload needed for images.
-            notes.append(f"[Image: {safe_name}]  (attached image, shown to you directly)")
-        else:
-            notes.append(
-                f"[User attached file: {safe_name} ({len(payload)} bytes, {mime}). "
-                f"Read it with read_upload('{safe_name}').]"
-            )
+        notes.append(_attachment_note(safe_name, len(payload), mime))
     return notes
 
 

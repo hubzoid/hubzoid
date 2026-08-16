@@ -12,20 +12,17 @@ So we don't need to query OWUI's SQLite DB, we don't need correlation
 headers, and we don't need to match user-query text to a chat row.
 The file_id + filename are in the prompt itself.
 
-Public entry: `rewrite_owui_prompt(prompt, owui_uploads_dir) -> str | None`.
+This module ONLY parses — it does not decide where the bytes live. The
+bridge (`server._normalize_owui_uploads`) is the one place that reads
+each parsed file and copies it into the canonical per-chat uploads store,
+so that read_upload / vision / ticket attachments all resolve OWUI files
+from the SAME directory as Slack/base64 uploads. Nothing downstream of
+the bridge needs to know Open WebUI exists.
 
-When the prompt is a recognisable OWUI RAG wrap with at least one file
-that exists on disk, returns the rewritten prompt:
-
-    [User attached file: foo.json — read with read_file('/abs/path/...')
-     or pass this path to test_template, extract_for_review,
-     validate_template, or any path-accepting tool.]
-
-    {user query verbatim}
-
-When the prompt doesn't match (plain question, no <context>, no <source>,
-all files missing), returns None and the caller passes the original
-prompt through unchanged.
+Public entry: `owui_attachments(prompt, owui_uploads_dir)` -> (resolved,
+unresolved, user_query) or None. `parse_owui_attachment_prompt` is a
+thin resolved-only wrapper kept for callers that only want files that
+exist on disk.
 """
 from __future__ import annotations
 
@@ -38,28 +35,11 @@ _SOURCE_TAG_RE = re.compile(r"<source\s+([^>]+)>", re.DOTALL)
 _ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 
 
-def parse_owui_attachment_prompt(
-    prompt: str,
-    owui_uploads_dir: Path,
-) -> tuple[list[tuple[str, Path]], str] | None:
-    """Extract (file paths, user query) from an OWUI RAG-wrapped prompt.
-
-    Returns None when the prompt isn't a recognisable OWUI wrap, when
-    no `<source resource-type="file">` tags exist, or when none of the
-    referenced files are on disk. On success, returns:
-
-        ([(filename, absolute_path), ...], user_query)
-
-    `user_query` is everything after the closing `</context>` tag,
-    stripped of surrounding whitespace. Filename + path comes straight
-    from the `name` and `resource-id` attributes of each `<source>`.
-    Duplicate (file_id, name) pairs are coalesced — OWUI emits one
-    `<source>` per retrieved chunk and we only want each file once.
-    """
-    if "</context>" not in prompt:
-        return None
-
-    refs: list[tuple[str, str]] = []  # ordered (file_id, name) for stable output
+def _file_refs(prompt: str) -> list[tuple[str, str]]:
+    """Deduped, ordered (file_id, name) for every `<source resource-type="file">`
+    tag in the prompt. OWUI emits one `<source>` per retrieved chunk, so the same
+    file appears many times — we want each once, in first-seen order."""
+    refs: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for tag in _SOURCE_TAG_RE.finditer(prompt):
         attrs = dict(_ATTR_RE.findall(tag.group(1)))
@@ -74,53 +54,60 @@ def parse_owui_attachment_prompt(
             continue
         seen.add(key)
         refs.append(key)
+    return refs
 
+
+def owui_attachments(
+    prompt: str,
+    owui_uploads_dir: Path,
+) -> tuple[list[tuple[str, Path]], list[str], str] | None:
+    """Parse an OWUI RAG-wrapped prompt into its file attachments.
+
+    Returns None when `prompt` is not an OWUI wrap at all — no `</context>`, or
+    a `<context>` that carries no file `<source>` tags (e.g. a knowledge
+    collection). The caller passes such a prompt through untouched.
+
+    Otherwise returns `(resolved, unresolved, user_query)`:
+
+        resolved   : [(name, absolute_path), ...] file refs whose bytes are on disk
+        unresolved : [name, ...]                   file refs whose bytes are missing
+        user_query : text after `</context>`, stripped
+
+    `unresolved` is surfaced deliberately: a file OWUI referenced but whose bytes
+    we cannot find (cleaned up, or the template drifted) must become a LOUD note,
+    never a silent drop — a silent drop is what makes a user paste a whole file
+    into chat.
+    """
+    if "</context>" not in prompt:
+        return None
+    refs = _file_refs(prompt)
     if not refs:
         return None
 
-    paths: list[tuple[str, Path]] = []
+    resolved: list[tuple[str, Path]] = []
+    unresolved: list[str] = []
     for file_id, name in refs:
         target = owui_uploads_dir / f"{file_id}_{name}"
         if target.is_file():
-            paths.append((name, target))
-
-    if not paths:
-        return None
+            resolved.append((name, target))
+        else:
+            unresolved.append(name)
 
     user_query = prompt.rsplit("</context>", 1)[-1].strip()
-    return paths, user_query
+    return resolved, unresolved, user_query
 
 
-def rewrite_owui_prompt(prompt: str, owui_uploads_dir: Path) -> str | None:
-    """Rewrite an OWUI RAG-wrapped prompt into clean notes + user query.
-
-    Returns None when the prompt isn't an OWUI wrap (caller should pass
-    the original prompt through). Returns a string when we have
-    attachments + a user query to surface.
-
-    The rewritten prompt:
-
-        [User attached file: NAME — read with read_file('PATH') or pass
-         this path to test_template, extract_for_review, validate_template,
-         or any path-accepting tool.]
-        [User attached file: ...]
-
-        USER_QUERY
-
-    The OWUI wrapper boilerplate and the `<context>...</context>` block
-    with RAG chunks are dropped entirely — the agent reads the full file
-    from disk via `read_file`, so the chunks are redundant token cost.
-    """
-    parsed = parse_owui_attachment_prompt(prompt, owui_uploads_dir)
-    if parsed is None:
+def parse_owui_attachment_prompt(
+    prompt: str,
+    owui_uploads_dir: Path,
+) -> tuple[list[tuple[str, Path]], str] | None:
+    """Resolved-only view of `owui_attachments`: `([(name, path), ...], user_query)`,
+    or None when the prompt is not an OWUI wrap or none of its referenced files
+    exist on disk. Kept for callers that only care about readable files."""
+    result = owui_attachments(prompt, owui_uploads_dir)
+    if result is None:
         return None
-    paths, user_query = parsed
-    notes = "\n".join(
-        f"[User attached file: {name} — read with read_file('{path}') "
-        f"or pass this path to test_template, extract_for_review, "
-        f"validate_template, or any path-accepting tool.]"
-        for name, path in paths
-    )
-    if user_query:
-        return f"{notes}\n\n{user_query}"
-    return notes
+    resolved, _unresolved, user_query = result
+    if not resolved:
+        return None
+    return resolved, user_query
