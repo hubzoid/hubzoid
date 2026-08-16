@@ -128,7 +128,7 @@ def test_bypass_embedding_and_retrieval_default_on(captured_env, tmp_path, monke
     # with no key configured that's a 401 from api.openai.com and the file
     # is never marked processed. Bypass skips upload-time embedding entirely;
     # full file content flows through the same <context>/<source> template
-    # that rewrite_owui_prompt already strips.
+    # that _normalize_owui_uploads already strips.
     monkeypatch.delenv("BYPASS_EMBEDDING_AND_RETRIEVAL", raising=False)
     env = _start(captured_env, tmp_path)
     assert env["BYPASS_EMBEDDING_AND_RETRIEVAL"] == "True"
