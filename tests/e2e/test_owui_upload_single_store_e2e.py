@@ -119,6 +119,9 @@ def test_owui_document_lands_in_single_store(client):
     assert f"read_upload('{name}')" in prompt
     assert ".openwebui-data" not in prompt
     assert "<source" not in prompt and "<context>" not in prompt
+    # The canonical on-disk path is advertised so path-accepting tools / scripts
+    # (the IRS test_template.py <file> flow) keep working — no IRS-side change needed.
+    assert str(copied) in prompt
     assert prompt.rstrip().endswith("Summarize this.")
 
 
