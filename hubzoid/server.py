@@ -497,18 +497,22 @@ _DATA_URL_RE = re.compile(
 )
 
 
-def _attachment_note(safe_name: str, size: int, mime: str) -> str:
+def _attachment_note(safe_name: str, size: int, mime: str, target: Path) -> str:
     """The one canonical prompt marker for an ingested upload, shared by the
-    base64/Slack path and the Open WebUI path so both produce identical
+    base64/direct-API path and the Open WebUI path so both produce identical
     downstream shape. Images get the `[Image: ...]` reference that
     `hubzoid.vision_inject` expands into a multimodal content block at model-call
-    time (the model sees the image directly — no read_upload needed); everything
-    else points the agent at `read_upload`."""
+    time (the model sees the image directly — no read_upload needed). Everything
+    else points the agent at `read_upload` AND carries the on-disk path, so
+    path-accepting tools and shell scripts (e.g. a hub's `test_template.py <file>`)
+    can be handed the file directly — that path was part of the old OWUI note and
+    some hubs depend on it."""
     if mime.startswith("image/"):
         return f"[Image: {safe_name}]  (attached image, shown to you directly)"
     return (
         f"[User attached file: {safe_name} ({size} bytes, {mime}). "
-        f"Read it with read_upload('{safe_name}').]"
+        f"Read it with read_upload('{safe_name}'), or pass its on-disk path to a "
+        f"path-accepting tool or script: {target}]"
     )
 
 
@@ -544,7 +548,7 @@ def _normalize_owui_uploads(
             continue
         mime = uploads_lib.guess_mime(safe_name)
         uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        notes.append(_attachment_note(safe_name, len(payload), mime))
+        notes.append(_attachment_note(safe_name, len(payload), mime, upload_dir / safe_name))
 
     if unresolved:
         listed = ", ".join(sorted(set(unresolved)))
@@ -651,7 +655,7 @@ def _persist_attachments(
     notes: list[str] = []
     for safe_name, payload, mime in decoded:
         uploads_lib.write_with_meta(upload_dir, safe_name, payload, mime=mime)
-        notes.append(_attachment_note(safe_name, len(payload), mime))
+        notes.append(_attachment_note(safe_name, len(payload), mime, upload_dir / safe_name))
     return notes
 
 

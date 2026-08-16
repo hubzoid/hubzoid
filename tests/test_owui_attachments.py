@@ -228,6 +228,9 @@ class TestNormalizeOwuiUploads:
         # 2) prompt carries the canonical read_upload marker; OWUI boilerplate gone
         assert f"read_upload('{name}')" in out
         assert "<source" not in out and "<context>" not in out and "### Task" not in out
+        # 2b) the on-disk canonical path is advertised too, so path-accepting tools
+        #     / shell scripts (e.g. the IRS test_template.py <file> flow) still work
+        assert str(copied) in out
         # 3) user query preserved verbatim at the end
         assert out.endswith("review this")
 
