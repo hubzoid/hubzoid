@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Per-User Tool Connections</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#faf6f0; --paper:#ffffff; --paper2:#fcf9f4; --ink:#2b2118; --muted:#6b5a4a; --faint:#9a8a78;
+    --line:#d9cbb8; --line-soft:#e7ddcd;
+    --saffron:#c75b12; --saffron-soft:#f3e0cf; --saffron-wash:#fbf1e7;
+    --maroon:#6e2a1e; --gold:#b58a3c;
+    --green:#4a6b3a; --green-soft:#e7eede; --green-wash:#f1f5ea;
+    --red:#a8341f; --red-soft:#f6e2dc; --red-wash:#fbece7;
+    --amber:#9a6b16; --amber-soft:#f6ecd6; --amber-wash:#f8f1de;
+    --gray:#7d7468; --gray-soft:#e6e0d6;
+    --shadow:0 1px 2px rgba(43,33,24,.03),0 7px 20px rgba(43,33,24,.055);
+    --serif:"Georgia","Iowan Old Style","Palatino Linotype",serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box} html{scroll-behavior:smooth}
+  body::before{content:"";display:block;height:5px;background:var(--saffron)}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       line-height:1.6;font-size:16px;-webkit-font-smoothing:antialiased}
+  .page{max-width:1080px;margin:0 auto;padding:40px 40px 100px}
+
+  header{text-align:center;border-bottom:1px solid var(--line);padding-bottom:30px;margin-bottom:14px}
+  .eyebrow{font-family:var(--sans);letter-spacing:.32em;text-transform:uppercase;font-size:11px;color:var(--saffron);margin-bottom:14px}
+  h1{font-family:var(--serif);font-size:40px;font-weight:400;margin:0 0 12px;letter-spacing:.01em;line-height:1.1}
+  .subtitle{font-family:var(--serif);color:var(--muted);font-style:italic;font-size:17px;margin:0 auto;max-width:760px}
+  .stampline{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:18px}
+
+  section{margin-top:48px}
+  h2{font-family:var(--serif);font-size:25px;font-weight:400;margin:0 0 4px;display:flex;align-items:baseline;gap:14px}
+  h2 .num{font-family:var(--mono);font-size:14px;color:var(--saffron);font-weight:700}
+  h2 + .rule{height:1px;background:var(--line);margin:14px 0 18px}
+  h3{font-family:var(--sans);font-size:13px;text-transform:uppercase;letter-spacing:.15em;color:var(--maroon);margin:28px 0 10px;font-weight:700}
+  p{margin:13px 0;max-width:74ch}
+  strong{color:var(--maroon);font-weight:700}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--saffron-wash);border:1px solid var(--line-soft);
+       padding:1px 6px;border-radius:3px;color:var(--maroon)}
+
+  .verdict{background:var(--paper);border:1px solid var(--saffron);box-shadow:var(--shadow);padding:26px 32px;margin:24px 0;border-radius:10px}
+  .verdict .vh{font-family:var(--sans);font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--saffron);margin-bottom:10px}
+  .verdict p{max-width:none}
+
+  .call{padding:16px 22px;margin:18px 0;border:1px solid var(--line);border-radius:9px}
+  .call.s{background:var(--saffron-wash);border-color:var(--saffron-soft)}
+  .call.g{background:var(--green-wash);border-color:var(--green-soft)}
+  .call.r{background:var(--red-soft);border-color:#e8c4ba}
+  .call.a{background:var(--amber-soft);border-color:#e6d4a8}
+  .call .t{font-family:var(--sans);font-size:11px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;display:block;margin-bottom:6px}
+  .call.s .t{color:var(--saffron)} .call.g .t{color:var(--green)} .call.r .t{color:var(--red)} .call.a .t{color:var(--amber)}
+  .call p{max-width:none;margin:8px 0}
+
+  .tw{overflow-x:auto;margin:16px 0}
+  table{width:100%;border-collapse:collapse;font-size:14px;background:var(--paper);min-width:560px;table-layout:fixed;
+        border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:var(--shadow)}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{font-family:var(--sans);color:var(--maroon);font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;
+     border-bottom:1px solid var(--line);white-space:nowrap}
+  tbody tr:hover{background:var(--paper2)} tbody tr:last-child td{border-bottom:none}
+  tr.hi td{background:var(--saffron-wash)}
+  .mono{font-family:var(--mono);font-size:11.5px;color:var(--muted);word-break:break-word}
+
+  .sev{font-family:var(--sans);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;
+       padding:3px 8px;border-radius:2px;border:1px solid;white-space:nowrap;display:inline-block}
+  .sev.crit{background:var(--red-soft);color:var(--red);border-color:var(--red)}
+  .sev.gap{background:var(--saffron-soft);color:var(--saffron);border-color:var(--saffron)}
+  .sev.ok{background:var(--green-soft);color:var(--green);border-color:var(--green)}
+  .sev.wrn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber)}
+
+  .item{display:grid;grid-template-columns:44px 1fr;gap:16px;background:var(--paper);border:1px solid var(--line);
+        border-left:4px solid var(--saffron);padding:14px 18px;margin:9px 0;border-radius:0 9px 9px 0;box-shadow:var(--shadow)}
+  .item .rk{font-family:var(--mono);color:var(--saffron);font-weight:700;font-size:20px;line-height:1.1}
+  .item .t{font-weight:700;font-size:15.5px}
+  .item .d{font-size:14px;color:var(--muted);margin-top:5px}
+  .item .path{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:6px;display:block;word-break:break-word}
+
+  /* flow diagram kit */
+  .dg{background:var(--paper);border:1px solid var(--line);padding:24px 22px;margin:18px 0;border-radius:9px}
+  .lane{font-family:var(--sans);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:700;margin:14px 0 8px;text-align:center}
+  .row{display:flex;gap:12px;justify-content:center;align-items:stretch;flex-wrap:wrap}
+  .blk{padding:11px 14px;flex:1;min-width:170px;background:var(--paper);border:1.5px solid var(--line);border-radius:8px}
+  .blk .t{font-family:var(--sans);font-weight:700;font-size:13px}
+  .blk .s{font-family:var(--sans);font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.45}
+  .blk .tech{font-family:var(--mono);font-size:10.5px;margin-top:6px;padding-top:5px;border-top:1px dashed var(--line);color:var(--muted)}
+  .blk.agent{border-color:var(--saffron);background:var(--saffron-wash)}
+  .blk.okb{border-color:var(--green);background:var(--green-wash)}
+  .blk.dim{border-style:dashed;background:var(--paper2)}
+  .arw{display:flex;flex-direction:column;align-items:center;margin:8px 0}
+  .arw .ln{width:2px;height:16px;background:var(--line)}
+  .arw .hd{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--line);margin-top:-1px}
+  .arw .lb{font-size:10.5px;color:var(--saffron);margin-top:4px;font-family:var(--mono);font-weight:600;text-align:center}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;font-family:var(--sans);font-size:11px;color:var(--muted);margin-top:14px}
+  .dot{width:11px;height:11px;border-radius:2px;display:inline-block;border:1px solid;vertical-align:-1px;margin-right:5px}
+
+  .seal{text-align:center;margin:44px 0 6px;font-family:var(--sans);font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--saffron)}
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;font-family:var(--sans);line-height:1.6}
+
+  @media(max-width:820px){.page{padding:24px 18px 70px}h1{font-size:30px}.item{grid-template-columns:1fr}}
+  @media print{
+    @page{margin:11mm}
+    *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+    .verdict,.call,.item,.dg,.blk,table{break-inside:avoid;box-shadow:none}
+    thead{display:table-header-group} tr{break-inside:avoid} h2,h3{break-after:avoid}
+    a{color:inherit;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="eyebrow">Isha Foundation, Information Technology &middot; Hubzoid</div>
+    <h1>Per-User Tool Connections</h1>
+    <p class="subtitle">Let each seeker connect their own MCP tools through OpenWebUI's native interface, and have the Hubzoid agent run those tools under that person's own credential. No new Hubzoid UI, not one page.</p>
+    <div class="stampline">2026-08-16 &middot; rev 1 &middot; source: OWUI docs (native MCP v0.6.31), hubzoid server.py / connections.py / access, this session</div>
+  </header>
+
+  <div class="verdict"><div class="vh">Bottom line</div>
+    <p><strong>Option 2. OpenWebUI owns the connect experience, Hubzoid owns execution.</strong> A user clicks <code>+ &rarr; Integrations &rarr; Tools</code>, enables a tool, and completes the OAuth in the browser. OWUI vaults the per-user token. Hubzoid reads that token and runs the tool under the user's identity, on web and, by identity, on Slack. <strong>Zero new Hubzoid UI.</strong> One open question sizes the whole effort: does OWUI hand the tool token to the backend on each call, or must Hubzoid read and refresh it from OWUI's database.</p></div>
+
+  <section>
+    <h2><span class="num">01</span> The goal, and how it works</h2><div class="rule"></div>
+    <p><strong>Goal:</strong> per-user, per-tool OAuth (Odoo, Jira, Zoho and the like), configured and connected entirely in OpenWebUI's own UI, executed by the Hubzoid agent so the hub keeps its skills, sub-agents and <code>restricted/</code> access. The whole flow rides one identity, so a tool connected once works across surfaces.</p>
+
+    <div class="dg">
+      <div class="lane">Part 1 &middot; Admin setup &mdash; OpenWebUI admin panel</div>
+      <div class="row">
+        <div class="blk"><div class="t">Register MCP A / B / C</div><div class="s">Add each server, choose auth type (OAuth 2.1, basic, key), pick which sub-tools are allowed.</div><div class="tech">writes &rarr; webui.db</div></div>
+        <div class="blk"><div class="t">Grant access</div><div class="s">Users X, Y get A and B, not C, via OWUI Groups.</div><div class="tech">group / group_member</div></div>
+      </div>
+      <div class="arw"><div class="ln"></div><div class="hd"></div><div class="lb">admin done, no restart</div></div>
+
+      <div class="lane">Part 2 &middot; User connects &mdash; native OpenWebUI, no Hubzoid UI</div>
+      <div class="row">
+        <div class="blk"><div class="t">Click + &rarr; Integrations &rarr; Tools</div><div class="s">User sees only A and B (access-filtered), enables A.</div></div>
+        <div class="blk"><div class="t">OAuth in browser</div><div class="s">Provider consent redirect completes in the tab.</div></div>
+        <div class="blk okb"><div class="t">OWUI vaults token</div><div class="s">Per-user token stored, encrypted, auto-refresh on OWUI's own use.</div><div class="tech">webui.db &middot; WEBUI_SECRET_KEY</div></div>
+      </div>
+      <div class="arw"><div class="ln"></div><div class="hd"></div><div class="lb">token now on record for this user</div></div>
+
+      <div class="lane">Part 3 &middot; User asks &mdash; the Hubzoid agent executes</div>
+      <div class="row">
+        <div class="blk agent"><div class="t">Hubzoid agent turn</div><div class="s">Reads which tools the user enabled from the request, resolves the caller's identity.</div><div class="tech">server.py &middot; body.tools[] + X-OpenWebUI-User-Email</div></div>
+        <div class="blk agent"><div class="t">Get the user's token</div><div class="s">Reads and decrypts that user's token, injects it as the Bearer for the MCP call.</div><div class="tech">read webui.db &middot; per-user injection</div></div>
+        <div class="blk okb"><div class="t">Run the tool</div><div class="s">Calls a1 / a2 / a3 on the real MCP server as that user.</div><div class="tech">Odoo MCP (OAuth 2.1)</div></div>
+      </div>
+      <div class="arw"><div class="ln"></div><div class="hd"></div><div class="lb">same token, keyed by identity</div></div>
+
+      <div class="lane">Part 4 &middot; Other surfaces &mdash; free, once identity maps</div>
+      <div class="row">
+        <div class="blk dim"><div class="t">Slack / Telegram / WhatsApp</div><div class="s">Same agent, same token lookup by identity. Works wherever the user resolves to the same OWUI email.</div></div>
+      </div>
+
+      <div class="legend">
+        <span><span class="dot" style="border-color:var(--saffron);background:var(--saffron-wash)"></span>Hubzoid acts</span>
+        <span><span class="dot" style="border-color:var(--green);background:var(--green-wash)"></span>Good / stored state</span>
+        <span><span class="dot" style="border-color:var(--line);background:var(--paper2);border-style:dashed"></span>Out of the core path</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span> What changes in Hubzoid</h2><div class="rule"></div>
+    <p>Small, contained, backend-only. Nothing here is a UI. Rows marked <span class="sev ok">have</span> already exist and are reused.</p>
+    <div class="tw"><table>
+      <colgroup><col style="width:24%"><col style="width:47%"><col style="width:15%"><col style="width:14%"></colgroup>
+      <thead><tr><th>Piece</th><th>Change</th><th>Where</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td>Request parsing</td><td>Read <code>body.tools[]</code> to learn which MCP tools the user enabled. Today it is dropped.</td><td class="mono">server.py:179</td><td><span class="sev gap">edit</span></td></tr>
+        <tr><td>Token reader</td><td>New module: read + decrypt the per-user OAuth token from webui.db. Mirrors the groups reader.</td><td class="mono">access/owui_oauth_tokens.py (new)</td><td><span class="sev gap">new</span></td></tr>
+        <tr><td>Per-user injection</td><td>Inject the caller's Bearer into the MCP connection at call time, not boot-time <code>${VAR}</code>.</td><td class="mono">loaders/mcp.py + runtime</td><td><span class="sev gap">edit</span></td></tr>
+        <tr><td>Broker impl</td><td>A Broker whose credential source is the OWUI DB (not Composio). Slots on the existing seam.</td><td class="mono">connections.py</td><td><span class="sev gap">new</span></td></tr>
+        <tr><td>Refresh + state</td><td>Own token refresh using the stored refresh token, cached in a dedicated table.</td><td class="mono">hubzoid_oauth_state (new table)</td><td><span class="sev gap">new</span></td></tr>
+        <tr><td>Access gate</td><td>Which tool a user may call, from OWUI Groups. Already read for restricted/.</td><td class="mono">access/owui_groups.py</td><td><span class="sev ok">have</span></td></tr>
+        <tr><td>Identity</td><td>Caller resolved from forwarded headers, per surface. Already the seam for Slack.</td><td class="mono">access/identity.py</td><td><span class="sev ok">have</span></td></tr>
+        <tr><td>Rate limit + traces</td><td>Optional, later: a per-user counter and an OTel span on each MCP call.</td><td class="mono">broker + OTel &rarr; Langfuse</td><td><span class="sev wrn">later</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span> Database &mdash; one DB, dedicated tables</h2><div class="rule"></div>
+    <div class="call g"><span class="t">Decision &middot; one database, never two</span>
+      <p>There are <strong>not two databases today</strong>. OWUI owns <code>webui.db</code> (SQLite). Hubzoid has <strong>no database of its own</strong> &mdash; it is file-based and reads webui.db read-only for groups and API keys. Keep it that way. Hubzoid's new state goes in dedicated <code>hubzoid_*</code> tables <strong>inside the same database</strong>, behind one accessor, so a later move to Postgres carries both together with one connection string.</p>
+    </div>
+    <div class="tw"><table>
+      <colgroup><col style="width:20%"><col style="width:40%"><col style="width:40%"></colgroup>
+      <thead><tr><th>Aspect</th><th>Today</th><th>Plan</th></tr></thead>
+      <tbody>
+        <tr><td>OWUI store</td><td class="mono">webui.db (SQLite) &mdash; users, groups, tokens</td><td>Unchanged. Source of truth for identity and tokens.</td></tr>
+        <tr><td>Hubzoid store</td><td>None. Files + in-memory TTL caches.</td><td>Add <code>hubzoid_*</code> tables in the <strong>same</strong> DB (refresh state, rate-limit, audit).</td></tr>
+        <tr><td>Access pattern</td><td class="mono">read-only ro connection (owui_groups.py:60)</td><td>One shared accessor, write-capable (WAL), honoring <code>HUBZOID_OWUI_DB</code> / a future <code>DATABASE_URL</code>.</td></tr>
+        <tr class="hi"><td>Postgres path</td><td>Not applicable</td><td>One DSN swaps OWUI + Hubzoid tables together. No second migration story.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="call a"><span class="t">Caution &middot; Hubzoid now writes to the shared DB</span>
+      <p>Today Hubzoid only reads webui.db. Writing means: use <strong>WAL mode</strong> to avoid contending with OWUI, keep every table <code>hubzoid_</code>-prefixed so OWUI's own migrator never touches them, and confirm on each upgrade that OWUI's migrations <strong>leave unknown tables intact</strong>.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">04</span> Implementation steps</h2><div class="rule"></div>
+    <div class="item"><div class="rk">1</div><div><div class="t">Honor the enabled-tools list</div><div class="d">Read <code>body.tools[]</code> in the bridge so the agent knows which MCP tools this user turned on for the chat.</div><span class="path">server.py &middot; chat_completions</span></div></div>
+    <div class="item"><div class="rk">2</div><div><div class="t">Read and decrypt the per-user token</div><div class="d">New access module, same shape as the groups reader, that resolves the caller's stored OAuth token from webui.db and decrypts it with WEBUI_SECRET_KEY.</div><span class="path">access/owui_oauth_tokens.py (new)</span></div></div>
+    <div class="item"><div class="rk">3</div><div><div class="t">Inject the token per user at call time</div><div class="d">Extend the MCP client so the Odoo connection carries the current caller's Bearer, replacing boot-time static credentials.</div><span class="path">loaders/mcp.py + runtime</span></div></div>
+    <div class="item"><div class="rk">4</div><div><div class="t">Own the refresh path &mdash; the hardest part</div><div class="d">Refresh needs OWUI's stored client registration plus the refresh token. Keep fresh access tokens in a hubzoid_* table. This is the fragile core (see risks).</div><span class="path">hubzoid_oauth_state + connections.py broker</span></div></div>
+    <div class="item"><div class="rk">5</div><div><div class="t">Gate by group</div><div class="d">Reuse OWUI Groups to enforce which user may use which tool. Already wired for restricted/.</div><span class="path">access/owui_groups.py (reuse)</span></div></div>
+    <div class="item"><div class="rk">6</div><div><div class="t">Later: rate limit and observability</div><div class="d">A per-user token bucket beside the access guard, and an OTel span around each MCP call into the existing Langfuse pipeline. Unified with agent traces, added when wanted.</div><span class="path">broker + OTel &rarr; Langfuse</span></div></div>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span> The one question that sizes the effort</h2><div class="rule"></div>
+    <div class="call s"><span class="t">Verify first &middot; does OWUI forward the tool token to the backend</span>
+      <p>OWUI refreshes and forwards OAuth tokens to downstream services, and Hubzoid is an OpenAI-compatible endpoint. <strong>If OWUI forwards the per-tool token to Hubzoid on each call</strong>, steps 2 and 4 nearly vanish &mdash; Hubzoid reads a fresh Bearer from the request headers. No DB read, no refresh. <strong>If it does not</strong> (the likely case, since that forwarding is usually the login-session token), Hubzoid does the read-decrypt-and-refresh above. Confirm this before scoping.</p>
+    </div>
+    <div class="tw"><table>
+      <colgroup><col style="width:34%"><col style="width:46%"><col style="width:20%"></colgroup>
+      <thead><tr><th>If OWUI...</th><th>Then Hubzoid...</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr class="hi"><td>forwards the tool token to the backend</td><td>reads the Bearer from request headers, injects it</td><td><span class="sev ok">small</span></td></tr>
+        <tr><td>keeps the token for its own loop only</td><td>reads + decrypts from webui.db and owns refresh</td><td><span class="sev gap">medium</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="num">06</span> Check on every OpenWebUI upgrade</h2><div class="rule"></div>
+    <p>Option 2 couples to OWUI internals, so pin the version and re-verify this list before adopting any new OWUI build. <span class="sev crit">crit</span> items break the feature if they drift.</p>
+    <div class="tw"><table>
+      <colgroup><col style="width:32%"><col style="width:53%"><col style="width:15%"></colgroup>
+      <thead><tr><th>Check</th><th>Why it matters</th><th>Sev</th></tr></thead>
+      <tbody>
+        <tr><td>Version &ge; 0.6.31, native MCP present</td><td>Per-user MCP OAuth landed here; a regression removes the whole basis.</td><td><span class="sev crit">crit</span></td></tr>
+        <tr><td>OAuth token table + columns</td><td>Hubzoid reads this table to get the user's token.</td><td><span class="sev crit">crit</span></td></tr>
+        <tr><td>Token encryption scheme</td><td>Hubzoid decrypts with WEBUI_SECRET_KEY; a cipher change breaks reads.</td><td><span class="sev crit">crit</span></td></tr>
+        <tr><td>OAuth client registration store</td><td>Needed to refresh tokens; refresh fails without it.</td><td><span class="sev crit">crit</span></td></tr>
+        <tr><td>hubzoid_* tables survive migration</td><td>OWUI's migrator must leave our tables untouched.</td><td><span class="sev crit">crit</span></td></tr>
+        <tr><td>Native MCP, not MCPO</td><td>MCPO shares one client across users; per-user isolation is lost.</td><td><span class="sev gap">gap</span></td></tr>
+        <tr><td>Groups schema (group / group_member / user)</td><td>Access gating and identity groups read from here.</td><td><span class="sev gap">gap</span></td></tr>
+        <tr><td>webui.db path (.openwebui-data)</td><td>Every read and write assumes this location.</td><td><span class="sev gap">gap</span></td></tr>
+        <tr><td>Request tools[] shape</td><td>The signal for which tools the user enabled.</td><td><span class="sev gap">gap</span></td></tr>
+        <tr><td>ENABLE_FORWARD_USER_INFO_HEADERS on</td><td>Identity (email) forwarding; without it, no user resolution.</td><td><span class="sev gap">gap</span></td></tr>
+        <tr><td>WEBUI_SECRET_KEY fixed (config)</td><td>A rotating key makes stored tokens undecryptable.</td><td><span class="sev crit">crit</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="num">07</span> Cross-surface reach</h2><div class="rule"></div>
+    <p>The token is keyed to the user's identity, not the surface. Connect once in OWUI, use everywhere the user maps to the same OWUI email. Connecting <em>from</em> Slack is not needed and is not clean under Option 2 (the OAuth redirect wants a browser).</p>
+    <div class="tw"><table>
+      <colgroup><col style="width:26%"><col style="width:50%"><col style="width:24%"></colgroup>
+      <thead><tr><th>Surface</th><th>Maps to the OWUI email?</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>OWUI web</td><td>Native, the account itself</td><td><span class="sev ok">works</span></td></tr>
+        <tr><td>Slack</td><td>Yes, if Slack email-auth is on (Slack exposes profile email)</td><td><span class="sev ok">works</span></td></tr>
+        <tr><td>Telegram</td><td>No native email &mdash; needs a one-time identity link</td><td><span class="sev gap">after link</span></td></tr>
+        <tr><td>WhatsApp</td><td>No native email (phone only) &mdash; needs a one-time link</td><td><span class="sev gap">after link</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="num">08</span> Risks</h2><div class="rule"></div>
+    <div class="call r"><span class="t">Risk &middot; the refresh + schema coupling is the fragile core</span>
+      <p>Reading OWUI's token table, matching its encryption, and driving refresh from its client registration are all bets on OWUI internals that carry no stability promise. Mitigation: <strong>pin the OWUI version</strong>, gate every upgrade behind the checklist in section 06, and keep the coupling isolated in one module so a schema change is a one-file fix, not a hunt.</p>
+    </div>
+    <div class="call a"><span class="t">Caution &middot; if the token is not forwarded, refresh is unavoidable</span>
+      <p>Since Hubzoid uses the token and OWUI does not, OWUI will not refresh it. Hubzoid must, or a connected tool silently dies at token expiry. Do not ship without the refresh path unless section 05 confirms forwarding.</p>
+    </div>
+  </section>
+
+  <div class="seal">Isha Foundation &middot; Hubzoid &middot; Per-User Tool Connections</div>
+  <footer>
+    Method: read hubzoid <code>server.py</code>, <code>connections.py</code>, <code>access/owui_groups.py</code> this session; OpenWebUI native MCP behavior from OWUI docs (v0.6.31) and project discussions.
+    Verified: Hubzoid holds no database of its own and reads webui.db read-only; OWUI supports per-user MCP OAuth via <code>+ &rarr; Integrations &rarr; Tools</code> from v0.6.31.
+    NOT verified: the exact OAuth token table name, columns and encryption in the pinned OWUI build; whether OWUI forwards the per-tool token to the model backend (section 05); Slack email-auth being enabled in this deployment.
+    Dated 2026-08-16.
+  </footer>
+</div>
+</body>
+</html>
