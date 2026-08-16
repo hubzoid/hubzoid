@@ -61,3 +61,29 @@ See https://github.com/modelcontextprotocol/servers for the full list.
 Every MCP server is provisioned read-only by default (no writes, no posts).
 Granting write access is a per-server decision. set up the server's
 credentials with the right scope before adding to `.mcp.json`.
+
+## Per-user MCP via Open WebUI (native OAuth)
+
+The `.mcp.json` connectors above are hub-wide: one credential shared by every
+user. For tools where each user must act as **themselves** (their own Jira,
+Zoho, Odoo, ...), Hubzoid also picks up MCP servers a user connects natively in
+Open WebUI - no Hubzoid UI involved:
+
+1. An admin registers the MCP server in OWUI (Settings -> Admin -> External
+   Tools), auth type OAuth 2.1.
+2. A user opens `+ -> Integrations -> Tools`, enables it, and completes the
+   OAuth redirect. OWUI vaults that user's token.
+3. On the user's next turn the bridge reads and decrypts *their* token from
+   OWUI's database and calls the MCP server as them. Two users reach the same
+   server as themselves; the same connection works across surfaces (Slack,
+   Telegram) once their identity maps to the same OWUI account.
+
+Requirements: OWUI >= 0.6.31, and OWUI and the bridge must share the same
+`WEBUI_SECRET_KEY` (OWUI encrypts the tokens with it, so `hubzoid run` already
+gives both processes the value from your `.env`). On by default; set
+`OWUI_NATIVE_MCP=0` to disable. A connected token is used until it expires;
+automatic refresh is a tracked follow-up, so a user reconnects after expiry
+for now.
+
+Full design, the data path, and the OWUI-upgrade checklist:
+[per-user-tool-connections.html](per-user-tool-connections.html).

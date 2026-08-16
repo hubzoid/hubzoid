@@ -510,24 +510,49 @@ class ClaudeRuntime:
         self._vision = vision
 
     def _options_for_turn(self):
-        """Per-turn options. When OTel is enabled, clone the shared options with
-        an env carrying THIS turn's caller (hubzoid.user/hub/surface) so the
-        `claude` subprocess Claude Code spawns emits attributed telemetry.
-        When OTel is off, return the shared options untouched (no-op)."""
+        """Per-turn options, cloned from the shared base for THIS caller.
+
+        Two per-turn concerns fold in here, both keyed on `current_identity()`:
+
+          * OTel env: carry the caller (hubzoid.user/hub/surface) into the
+            `claude` subprocess so its telemetry is attributed.
+          * OWUI-connected MCP servers: inject the servers this user connected
+            in Open WebUI, each with their own Bearer, so the agent reaches
+            them as the caller (see `owui_mcp`).
+
+        Returns the shared options untouched when neither applies (the common
+        no-op path), so hubs using neither pay nothing."""
+        import dataclasses
+        import os
         from .access.identity import current_identity
         from . import otel as otellib
+        from . import owui_mcp
 
         ident = current_identity()
+
+        extra_specs: dict = {}
+        extra_allowed: list[str] = []
+        if self._hub_dir is not None:
+            try:
+                extra_specs, extra_allowed = owui_mcp.per_user_specs(self._hub_dir, ident)
+            except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
+                log.warning("owui-mcp per-user injection skipped", exc_info=True)
+
         env = otellib.claude_otel_env(
             endpoint=self._otel_endpoint,
             user=ident.user, hub=self._hub, surface=ident.surface,
         )
-        if not env:
+
+        if not env and not extra_specs:
             return self._options
-        import dataclasses
-        import os
-        merged = {**os.environ, **(self._options.env or {}), **env}
-        return dataclasses.replace(self._options, env=merged)
+
+        changes: dict[str, Any] = {}
+        if env:
+            changes["env"] = {**os.environ, **(self._options.env or {}), **env}
+        if extra_specs:
+            changes["mcp_servers"] = {**(self._options.mcp_servers or {}), **extra_specs}
+            changes["allowed_tools"] = [*(self._options.allowed_tools or []), *extra_allowed]
+        return dataclasses.replace(self._options, **changes)
 
     async def aopen(self) -> None:
         """No-op: the Claude Agent SDK manages MCP lifecycle internally.

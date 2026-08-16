@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.7.14"
+version = "0.7.15"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -42,7 +42,7 @@ classifiers = [
 dependencies = [
   "openai-agents[litellm]>=0.14.7",
   "claude-agent-sdk>=0.1.0",
-  "open-webui>=0.6",
+  "open-webui==0.11.0",   # PINNED 2026-08-16: verified against tests + E2E; per-user MCP OAuth plan couples to OWUI internals, so upgrades are deliberate. Re-run tests/ + HubzoidTests before bumping.
   "fastapi>=0.115",
   "fastmcp>=3.4,<4",        # mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.37",        # edge.py reverse-proxy app
@@ -52,6 +52,7 @@ dependencies = [
   "pydantic>=2.0",
   "PyYAML>=6.0",
   "python-dotenv>=1.0",
+  "cryptography>=41",       # access/owui_oauth_tokens.py: Fernet-decrypt OWUI's per-user tool tokens (same scheme OWUI uses)
   "composio==1.0.0rc2",     # connections.py broker; pinned — the client surface (connected_accounts.list/get) changed across the rc series
   "opentelemetry-proto>=1.20",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
   "typer>=0.12",

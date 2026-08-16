@@ -9,7 +9,8 @@
 
 openai-agents[litellm]>=0.14.7
 claude-agent-sdk>=0.1.0
-open-webui>=0.6
+open-webui==0.11.0
+cryptography>=41
 fastapi>=0.115
 fastmcp>=3.4,<4
 uvicorn[standard]>=0.30
