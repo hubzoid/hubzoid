@@ -46,3 +46,22 @@ def connect_ro(hub_dir) -> sqlite3.Connection | None:
         return sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
     except sqlite3.Error:
         return None
+
+
+def connect_rw(hub_dir) -> sqlite3.Connection | None:
+    """A read-write connection to OWUI's DB, or None if it cannot be opened.
+
+    The one writer path: refreshing an expired per-user token and writing the
+    fresh one back into ``oauth_session`` (OWUI never refreshes these itself for
+    a Hubzoid model). WAL so a write never blocks OWUI's or a bridge's reads;
+    keep the write short. Callers must close what they get.
+    """
+    db = db_path(Path(hub_dir))
+    if not db.is_file():
+        return None
+    try:
+        con = sqlite3.connect(str(db), timeout=5.0)
+        con.execute("PRAGMA journal_mode=WAL")
+        return con
+    except sqlite3.Error:
+        return None

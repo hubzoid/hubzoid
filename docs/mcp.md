@@ -139,9 +139,10 @@ real public URL or the provider redirect will fail.
 
 - **Governance:** which servers exist is admin-controlled (registered globally
   in OWUI). A user only connects their own account to them.
-- **Token refresh** is a tracked follow-up: a connected token is used until it
-  expires, then the user reconnects. (The two OAuth consumers - OWUI and the
-  bridge - sharing one rotating refresh token needs deliberate design.)
+- **Token refresh** is automatic: an expired token is refreshed via its refresh
+  token and written back to OWUI's `oauth_session`, so OWUI and the bridge stay
+  in sync (single source of truth). A user only reconnects if the refresh token
+  itself is revoked or has expired.
 - **Turn it off:** remove `OWUI_NATIVE_MCP` (or set it to `0`).
 
 Full design, the exact data path, and the OWUI-upgrade checklist:
