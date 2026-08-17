@@ -81,11 +81,27 @@ def _seed_owui_config_once(data_dir: Path) -> None:
         try:
             con = sqlite3.connect(db)
             try:
-                con.execute("DELETE FROM config")
-                con.commit()
+                # Safety: if an admin has already registered tool servers, the hub
+                # is already in a working persistent state - never wipe that. Only
+                # the stale, never-persisted transition case needs a reset.
+                row = con.execute(
+                    "SELECT value FROM config WHERE key = 'tool_server.connections'"
+                ).fetchone()
+                registered = False
+                if row and row[0]:
+                    try:
+                        parsed = row[0] if isinstance(row[0], list) else json.loads(row[0])
+                        registered = isinstance(parsed, list) and len(parsed) > 0
+                    except (ValueError, TypeError):
+                        registered = False
+                if registered:
+                    log.info("owui-native-mcp: tool servers already registered; skipping config reseed")
+                else:
+                    con.execute("DELETE FROM config")
+                    con.commit()
+                    log.info("owui-native-mcp: reseeded OWUI config from env (one-time)")
             finally:
                 con.close()
-            log.info("owui-native-mcp: reseeded OWUI config from env (one-time)")
         except sqlite3.Error:
             # Leave the marker unwritten so we retry on the next boot.
             log.warning("owui-native-mcp: config reseed skipped", exc_info=True)

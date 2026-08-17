@@ -74,3 +74,20 @@ def test_reseed_retries_if_delete_fails(tmp_path):
     con.close()
     webui._seed_owui_config_once(dd)
     assert not (dd / MARKER).exists()                  # not marked -> will retry
+
+
+def test_reseed_skips_when_tool_servers_registered(tmp_path):
+    # A hub that already has tool servers is in a working persistent state -
+    # never wipe it. (Guards the rare case of turning the flag on over a hub that
+    # was already using native MCP.)
+    dd = tmp_path / "data"
+    dd.mkdir(parents=True)
+    con = sqlite3.connect(dd / "webui.db")
+    con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
+    con.execute("INSERT INTO config VALUES ('user.permissions', '{\"tools\": false}')")
+    con.execute("INSERT INTO config VALUES ('tool_server.connections', '[{\"id\":\"linear\"}]')")
+    con.commit()
+    con.close()
+    webui._seed_owui_config_once(dd)
+    assert _config_count(dd) == 2                       # preserved, not wiped
+    assert (dd / MARKER).exists()                       # still marked as handled
