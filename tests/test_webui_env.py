@@ -19,6 +19,11 @@ def captured_env(tmp_path, monkeypatch):
     """Patch the OWUI binary lookup and Popen; return the env dict that would
     have been passed to OWUI."""
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
+    # These tests assert hubzoid's DEFAULT OWUI env. OWUI_NATIVE_MCP is an
+    # operator opt-in that expands to several of those flags; isolate from it so
+    # a real-hub e2e test that leaks it via load_dotenv(override=True) can't
+    # flip the defaults under us.
+    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     captured: dict[str, str] = {}
 
     def fake_popen(cmd, env=None, stdout=None, stderr=None):
@@ -77,6 +82,28 @@ def test_strip_flags_default_off(captured_env, tmp_path, flag, monkeypatch):
     monkeypatch.delenv(flag, raising=False)
     env = _start(captured_env, tmp_path)
     assert env[flag] == "False"
+
+
+# ---------------------------------------------------------------------------
+# OWUI_NATIVE_MCP: one operator switch expands to the OWUI flags the per-user
+# MCP OAuth flow needs (docs/mcp.md). Opt-in, so off by default.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("flag", [
+    "ENABLE_PERSISTENT_CONFIG",
+    "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS",
+    "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS",
+    "ENABLE_DIRECT_CONNECTIONS",
+])
+def test_owui_native_mcp_expands_flags(captured_env, tmp_path, flag, monkeypatch):
+    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
+    env = _start(captured_env, tmp_path)
+    assert env[flag] == "True"
+
+
+def test_owui_native_mcp_default_off_leaves_persistence_stripped(captured_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["ENABLE_PERSISTENT_CONFIG"] == "False"
 
 
 # ---------------------------------------------------------------------------

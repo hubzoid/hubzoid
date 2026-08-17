@@ -51,11 +51,14 @@ def _expired(token: dict) -> bool:
         return False
 
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
 def enabled() -> bool:
-    """False only when explicitly killed. Default on: the work is a no-op
-    unless a server is registered and the caller connected one, so there is
-    no cost to leaving it enabled for hubs that never use it."""
-    return os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() not in ("0", "false", "off")
+    """On only when the operator set ``OWUI_NATIVE_MCP=true`` - the same one
+    switch that configures OWUI in ``webui.py``. Opt-in, so hubs that do not use
+    native MCP pay nothing (no per-turn DB reads) and stay env-authoritative."""
+    return os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY
 
 
 def _namespace(name: str, server_id: str, taken: set[str]) -> str:

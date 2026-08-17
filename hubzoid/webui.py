@@ -37,6 +37,20 @@ log = logging.getLogger("hubzoid.webui")
 _OFF = "False"
 _ON = "True"
 
+# One operator switch for OWUI-native per-user MCP. `OWUI_NATIVE_MCP=true` in a
+# hub's .env expands to the OWUI flags the "+ -> Integrations -> Tools" OAuth
+# flow needs: persist config to webui.db (so admin-registered MCP servers land
+# where the bridge reads them - OWUI keeps that config in memory otherwise) plus
+# the tools permissions hubzoid strips by default. Opt-in so existing hubs stay
+# env-authoritative and reproducible; the bridge injection (owui_mcp) reads the
+# same flag. See docs/mcp.md and docs/per-user-tool-connections.html.
+_OWUI_NATIVE_MCP_ENV = {
+    "ENABLE_PERSISTENT_CONFIG": _ON,
+    "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS": _ON,
+    "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS": _ON,
+    "ENABLE_DIRECT_CONNECTIONS": _ON,
+}
+
 _DEFAULT_OWUI_ENV: dict[str, str] = {
     # --- Strip platform / branding leaks --------------------------------
     "ENABLE_COMMUNITY_SHARING": _OFF,        # "Share to Open WebUI Community" CTA
@@ -492,6 +506,13 @@ def _spawn_owui(
     # getting there first. Operator .env still beats both.
     if enable_api_keys:
         for key, value in _MCP_API_KEY_ENV.items():
+            env.setdefault(key, value)
+
+    # 5c. OWUI-native per-user MCP: one switch. Applied BEFORE the strip so its
+    # ENABLE_PERSISTENT_CONFIG=True wins over the strip's default of False.
+    # setdefault throughout, so an operator's explicit .env value still wins.
+    if os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY:
+        for key, value in _OWUI_NATIVE_MCP_ENV.items():
             env.setdefault(key, value)
 
     # 6. The big strip. Apply hubzoid defaults; operator .env wins.
