@@ -18,6 +18,7 @@ import pytest
 import uvicorn
 import websockets
 from starlette.applications import Starlette
+from starlette.requests import Request
 from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
@@ -83,6 +84,70 @@ def test_response_headers_strip_hop_by_hop_and_length():
     assert "connection" not in out
 
 
+def test_response_headers_exclude_set_cookie():
+    # set-cookie is excluded from the dict so the handler can re-emit each one
+    # individually; a dict collapses duplicates and would lose all but one.
+    resp = httpx.Response(
+        200,
+        headers=[
+            (b"content-type", b"text/html"),
+            (b"set-cookie", b"token=JWT; Path=/"),
+            (b"set-cookie", b"oauth_session_id=sess; Path=/"),
+        ],
+    )
+    out = edge._response_headers(resp)
+    assert out.get("content-type") == "text/html"
+    assert not any(k.lower() == "set-cookie" for k in out)
+
+
+def _http_request(headers: list[tuple[bytes, bytes]]) -> Request:
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/oauth/google/login",
+        "query_string": b"",
+        "headers": headers,
+    })
+
+
+def test_request_headers_preserve_host():
+    # Bug 1: the inbound Host must survive so OWUI builds the OAuth redirect_uri
+    # from the public host, not the loopback upstream. Hop-by-hop still stripped.
+    req = _http_request([
+        (b"host", b"hub.example.com"),
+        (b"connection", b"keep-alive"),
+        (b"cookie", b"a=1"),
+    ])
+    out = dict(edge._request_headers(req))
+    assert out[b"host"] == b"hub.example.com"
+    assert out[b"cookie"] == b"a=1"
+    assert b"connection" not in out
+
+
+def test_request_headers_assert_scheme_when_absent():
+    req = _http_request([(b"host", b"hub.example.com")])
+    out = dict(edge._request_headers(req, "https"))
+    assert out[b"x-forwarded-proto"] == b"https"
+
+
+def test_request_headers_inbound_scheme_wins():
+    # A fronting TLS proxy's X-Forwarded-Proto is authoritative and not duplicated.
+    req = _http_request([
+        (b"host", b"hub.example.com"),
+        (b"x-forwarded-proto", b"https"),
+    ])
+    xfp = [v for k, v in edge._request_headers(req, "https")
+           if k == b"x-forwarded-proto"]
+    assert xfp == [b"https"]
+
+
+def test_request_headers_no_scheme_left_untouched():
+    # Localhost run declares no public scheme: nothing is asserted (stays http).
+    req = _http_request([(b"host", b"localhost:3080")])
+    out = dict(edge._request_headers(req, ""))
+    assert b"x-forwarded-proto" not in out
+
+
 # ---------------------------------------------------------------------------
 # Integration: real servers behind the edge
 # ---------------------------------------------------------------------------
@@ -140,8 +205,26 @@ def _owui_app() -> Starlette:
         except WebSocketDisconnect:
             pass
 
+    async def setcookies(request):
+        # The OAuth login callback emits several Set-Cookie headers at once.
+        resp = PlainTextResponse("ok")
+        resp.set_cookie("token", "JWT")
+        resp.set_cookie("oauth_session_id", "sess")
+        resp.set_cookie("oauth_id_token", "idt")
+        return resp
+
+    async def whoami(request):
+        # Echo what the upstream actually received, so the edge's Host/scheme
+        # forwarding can be asserted end-to-end.
+        return PlainTextResponse(
+            f"host={request.headers.get('host')} "
+            f"proto={request.headers.get('x-forwarded-proto')}"
+        )
+
     return Starlette(routes=[
         Route("/sse", sse),
+        Route("/setcookies", setcookies),
+        Route("/whoami", whoami),
         WebSocketRoute("/ws", ws_echo),
         Route("/{path:path}", any_path),
     ])
@@ -199,3 +282,25 @@ def test_websocket_relays_through(edge_url):
             return await ws.recv()
 
     assert asyncio.run(roundtrip()) == "echo:hello"
+
+
+def test_multiple_set_cookies_all_forwarded(edge_url):
+    # Bug 2: an OAuth-style multi-cookie response must reach the browser intact.
+    base, _ = edge_url
+    r = httpx.get(base + "/setcookies", timeout=10)
+    names = sorted(c.split("=", 1)[0] for c in r.headers.get_list("set-cookie"))
+    assert names == ["oauth_id_token", "oauth_session_id", "token"]
+
+
+def test_upstream_sees_public_host_and_scheme(edge_url):
+    # Bug 1: the edge forwards the client's Host (not the loopback upstream) and
+    # passes through a fronting proxy's X-Forwarded-Proto, so OWUI derives the
+    # right OAuth redirect_uri.
+    base, _ = edge_url
+    r = httpx.get(
+        base + "/whoami",
+        headers={"Host": "hub.example.com", "X-Forwarded-Proto": "https"},
+        timeout=10,
+    )
+    assert "host=hub.example.com" in r.text
+    assert "proto=https" in r.text

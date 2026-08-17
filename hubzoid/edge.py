@@ -47,9 +47,8 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 log = logging.getLogger("hubzoid.edge")
 
 # Hop-by-hop headers must not be forwarded across a proxy (RFC 7230 §6.1).
-# `host` is dropped so httpx sets the upstream host; `content-length` is
-# dropped on the response because we re-stream the body and let the server
-# frame it (chunked), avoiding a length mismatch.
+# `content-length` is dropped on the response because we re-stream the body
+# and let the server frame it (chunked), avoiding a length mismatch.
 _HOP_BY_HOP = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade",
@@ -96,20 +95,52 @@ def _forward_target(
     return route.upstream, fwd
 
 
-def _request_headers(request: Request) -> list[tuple[bytes, bytes]]:
-    return [
+def _request_headers(
+    request: Request, public_scheme: str = ""
+) -> list[tuple[bytes, bytes]]:
+    """Forward the client's headers upstream, minus hop-by-hop.
+
+    The inbound `Host` is PRESERVED (standard reverse-proxy behaviour). The
+    edge is the public front door, so Open WebUI must build absolute URLs -
+    notably the OAuth `redirect_uri` - from the real public host, not the
+    loopback upstream it is dialled on. httpx keeps an explicit `Host` header
+    instead of deriving one from the connection target, so passing it through
+    is enough; dropping it made OWUI see `127.0.0.1:<port>` and produce a
+    `redirect_uri` the IdP rejects.
+
+    `public_scheme` (e.g. "https", derived from the operator's declared public
+    URL) is asserted as `X-Forwarded-Proto` only when the request carries none.
+    An inbound `X-Forwarded-Proto` from a fronting TLS proxy always wins, and
+    with no declared scheme nothing is added, so plain-http localhost is
+    untouched. OWUI's uvicorn honours `X-Forwarded-Proto` from loopback.
+    """
+    headers = [
         (k, v)
         for k, v in request.headers.raw
         if k.decode("latin-1").lower() not in _HOP_BY_HOP
-        and k.decode("latin-1").lower() != "host"
     ]
+    if public_scheme and not any(
+        k.decode("latin-1").lower() == "x-forwarded-proto" for k, _ in headers
+    ):
+        headers.append((b"x-forwarded-proto", public_scheme.encode("latin-1")))
+    return headers
 
 
 def _response_headers(resp: httpx.Response) -> dict[str, str]:
+    """Response headers as a dict, EXCLUDING `set-cookie`.
+
+    A dict collapses duplicate keys, and httpx's `.items()` comma-folds them -
+    which is illegal for `Set-Cookie` (RFC 6265 §5.2) and silently loses every
+    cookie but the first. The OAuth login callback sets several at once
+    (`token`, `oauth_session_id`, ...), so `set-cookie` is excluded here and
+    re-appended individually by the handler via `multi_items()`.
+    """
     return {
         k: v
         for k, v in resp.headers.items()
-        if k.lower() not in _HOP_BY_HOP and k.lower() != "content-length"
+        if k.lower() not in _HOP_BY_HOP
+        and k.lower() != "content-length"
+        and k.lower() != "set-cookie"
     }
 
 
@@ -117,6 +148,7 @@ def build_edge_app(
     *,
     default_base: str,
     routes: tuple[EdgeRoute, ...] | list[EdgeRoute] = (),
+    public_scheme: str = "",
 ) -> Starlette:
     """A Starlette reverse proxy: `routes` go to their bridge, the rest to OWUI.
 
@@ -124,6 +156,9 @@ def build_edge_app(
         default_base: Open WebUI base, e.g. "http://127.0.0.1:43080". Receives
             every path not matched by a route, plus all websockets.
         routes: prefix rules sending artifact paths to the right bridge.
+        public_scheme: the operator's public scheme ("https"), asserted as
+            `X-Forwarded-Proto` when the inbound request carries none. Empty
+            (the default) leaves the scheme untouched - correct for localhost.
     """
     default_base = default_base.rstrip("/")
     norm_routes = tuple(
@@ -153,7 +188,7 @@ def build_edge_app(
         upstream_req = client.build_request(
             request.method,
             url,
-            headers=_request_headers(request),
+            headers=_request_headers(request, public_scheme),
             content=request.stream(),
         )
         try:
@@ -161,12 +196,18 @@ def build_edge_app(
         except httpx.ConnectError:
             return Response("upstream unavailable", status_code=502)
 
-        return StreamingResponse(
+        sr = StreamingResponse(
             resp.aiter_raw(),
             status_code=resp.status_code,
             headers=_response_headers(resp),
             background=BackgroundTask(resp.aclose),
         )
+        # Re-emit every Set-Cookie individually: a dict (used above) can hold
+        # only one, but the OAuth login callback sets several at once.
+        for k, v in resp.headers.multi_items():
+            if k.lower() == "set-cookie":
+                sr.raw_headers.append((b"set-cookie", v.encode("latin-1")))
+        return sr
 
     async def ws_handler(websocket: WebSocket) -> None:
         # Only Open WebUI uses websockets (socket.io); bridges don't. Relay
@@ -206,8 +247,10 @@ def _factory() -> Starlette:
     Reads the routing table from the environment so `hubzoid run` / `gateway`
     launch it the same way they launch the bridge:
 
-      HUBZOID_EDGE_DEFAULT  Open WebUI base URL (catch-all + websockets).
-      HUBZOID_EDGE_ROUTES   JSON: [{"prefix","upstream","strip_prefix"}, ...].
+      HUBZOID_EDGE_DEFAULT        Open WebUI base URL (catch-all + websockets).
+      HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix"}, ...].
+      HUBZOID_EDGE_PUBLIC_SCHEME  Public scheme ("https") asserted upstream as
+                                  X-Forwarded-Proto when the request has none.
     """
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
@@ -225,7 +268,10 @@ def _factory() -> Starlette:
         )
         for r in spec
     ]
-    return build_edge_app(default_base=default_base, routes=routes)
+    public_scheme = os.environ.get("HUBZOID_EDGE_PUBLIC_SCHEME", "").strip().lower()
+    return build_edge_app(
+        default_base=default_base, routes=routes, public_scheme=public_scheme
+    )
 
 
 async def _relay_ws(client_ws: WebSocket, upstream) -> None:

@@ -44,6 +44,25 @@ app = typer.Typer(
 console = Console()
 
 
+def _public_scheme(env: dict, *urls: str) -> str:
+    """The public scheme ("https") the edge should assert as X-Forwarded-Proto.
+
+    Derived from the operator's already-declared public URL (the explicit
+    `--public-url`, then `HUBZOID_PUBLIC_URL`/`WEBUI_URL`, which OAuth already
+    requires) - so behind a real TLS proxy the edge advertises https with zero
+    extra setup, while a plain-http localhost run declares nothing and is left
+    untouched. Returns "" when no https public URL is known.
+    """
+    candidates = [u for u in urls if u] + [
+        env.get("HUBZOID_PUBLIC_URL", ""),
+        env.get("WEBUI_URL", ""),
+    ]
+    for url in candidates:
+        if url.strip().lower().startswith("https://"):
+            return "https"
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
@@ -312,6 +331,7 @@ def run(
                 # Start the public-facing edge router in front of bridge + OWUI.
                 edge_env = os.environ.copy()
                 edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
+                edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
                 edge_routes = [
                     {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"}
                 ]
@@ -628,6 +648,7 @@ def gateway(
     if edge_enabled:
         edge_env = os.environ.copy()
         edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
+        edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env, pub)
         edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gp.edge_routes())
         edge_cmd = [
             sys.executable, "-m", "uvicorn",
