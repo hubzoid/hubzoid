@@ -70,6 +70,44 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
     ]
 
 
+def test_plan_edge_routes_add_webhooks_for_inbound_hub(tmp_path):
+    """A hub whose own .env configures a WhatsApp/Telegram surface gets a
+    /webhooks edge route to its inbound server, so the provider's webhook is not
+    swallowed by Open WebUI's catch-all. A hub without one gets none, and the
+    route carries no strip_prefix (the inbound app serves the full /webhooks/...
+    path)."""
+    wa, plain = tmp_path / "wa", tmp_path / "plain"
+    wa.mkdir(); plain.mkdir()
+    (wa / ".env").write_text(
+        "WHATSAPP_VERIFY_TOKEN=vt\nWHATSAPP_APP_SECRET=sek\n"
+        "WHATSAPP_TOKEN=tok\nWHATSAPP_PHONE_NUMBER_ID=123\n"
+    )
+    load = _loader({
+        str(wa): _settings(wa, 8000, label="wa-agent"),
+        str(plain): _settings(plain, 8001, label="plain-agent"),
+    })
+    gp = gateway.plan([wa, plain], load=load)
+    by_slug = {b.slug: b for b in gp.backends}
+    assert by_slug["wa"].inbound is True
+    assert by_slug["wa"].inbound_port == 8100
+    assert by_slug["plain"].inbound is False
+    webhooks = [r for r in gp.edge_routes() if r["prefix"] == "/webhooks"]
+    assert webhooks == [{"prefix": "/webhooks", "upstream": "http://127.0.0.1:8100"}]
+
+
+def test_plan_inbound_honours_custom_port_and_telegram(tmp_path):
+    """A Telegram-only surface counts too, and HUBZOID_INBOUND_PORT in the hub's
+    own .env moves the /webhooks upstream."""
+    tg = tmp_path / "tg"; tg.mkdir()
+    (tg / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\n"
+        "HUBZOID_INBOUND_PORT=8250\n"
+    )
+    gp = gateway.plan([tg], load=_loader({str(tg): _settings(tg, 8000, label="tg-agent")}))
+    assert gp.backends[0].inbound is True
+    assert {"prefix": "/webhooks", "upstream": "http://127.0.0.1:8250"} in gp.edge_routes()
+
+
 def test_plan_public_url_per_hub(tmp_path):
     irs = tmp_path / "irs"; irs.mkdir()
     gp = gateway.plan([irs], load=_loader({str(irs): _settings(irs, 8000)}))

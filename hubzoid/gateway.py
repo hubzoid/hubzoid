@@ -37,6 +37,11 @@ class GatewayBackend:
     model_label: str   # what /v1/models reports (best-effort, for display)
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
     mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
+    # WhatsApp/Telegram inbound: True when this hub's .env configures a webhook
+    # surface. The gateway edge then forwards /webhooks/* to its loopback inbound
+    # server; without it the webhook falls through to Open WebUI's catch-all.
+    inbound: bool = False
+    inbound_port: int = 0  # the hub's loopback inbound server port (0 = unset)
     # Per-hub display identity, read from AGENTS.md frontmatter + branding/.
     # Consumed by gateway_provision to seed each hub's Open WebUI model entry
     # (picker name, description, quick-start suggestions, avatar). All optional;
@@ -103,6 +108,19 @@ class GatewayPlan:
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",
                     "strip_prefix": base,
                 })
+        # WhatsApp/Telegram inbound: the hub's inbound server owns /webhooks/*
+        # (e.g. /webhooks/whatsapp) on a loopback port, each POST signature- or
+        # secret-verified before anything runs. The edge must forward it or the
+        # provider's webhook falls through to Open WebUI. /webhooks is a single
+        # global prefix (the inbound app is not namespaced per hub), so one
+        # fronted hub can own it: the first with an inbound surface wins. No
+        # strip_prefix — the inbound app serves the full /webhooks/... path.
+        inbound = next((b for b in self.backends if b.inbound), None)
+        if inbound:
+            routes.append({
+                "prefix": "/webhooks",
+                "upstream": f"http://127.0.0.1:{inbound.inbound_port}",
+            })
         return routes
 
     @property
@@ -206,6 +224,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             model_label=label,
             mcp=_mcp_enabled(hub_dir),
             mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
+            inbound=_inbound_enabled(hub_dir),
+            inbound_port=_inbound_port_for(hub_dir),
             display_name=meta["fm_name"] or hub_dir.name,
             description=meta["description"],
             suggestions=meta["suggestions"],
@@ -238,6 +258,44 @@ def _mcp_enabled(hub_dir: Path) -> bool:
     from . import settings as settingslib
 
     return settingslib.truthy(_own_env_value(hub_dir, "MCP_SERVER"))
+
+
+def _own_env(hub_dir: Path) -> dict:
+    """This hub's own `.env` as a dict, read without mutating process env.
+
+    Same isolation rationale as `_own_env_value`: the plan loop loads N hubs'
+    .env files with override=True, so surface detection must read the file
+    directly and never the environment, or one hub's WHATSAPP_* would bleed
+    into the next hub's plan.
+    """
+    from dotenv import dotenv_values
+
+    env_path = Path(hub_dir) / ".env"
+    if not env_path.is_file():
+        return {}
+    return {k: (v or "") for k, v in (dotenv_values(env_path) or {}).items()}
+
+
+def _inbound_enabled(hub_dir: Path) -> bool:
+    """Whether this hub's own `.env` configures a WhatsApp or Telegram surface,
+    so the gateway edge should forward /webhooks/* to its inbound server.
+
+    Uses the same token checks the inbound server itself uses, so the edge route
+    and the served routes can never disagree about whether a surface is on.
+    """
+    from .inbound.env import missing_telegram_vars, missing_whatsapp_vars
+
+    own = _own_env(hub_dir)
+    return not missing_whatsapp_vars(own) or not missing_telegram_vars(own)
+
+
+def _inbound_port_for(hub_dir: Path) -> int:
+    """This hub's inbound-server port: HUBZOID_INBOUND_PORT from its own .env,
+    else the default. Resolved with the inbound module's own helper so gateway
+    and inbound agree on the port."""
+    from .inbound.run import inbound_port
+
+    return inbound_port({"HUBZOID_INBOUND_PORT": _own_env_value(hub_dir, "HUBZOID_INBOUND_PORT")})
 
 
 def _bridge_model_label(fm_name: str | None, hub_dir: Path) -> str:
