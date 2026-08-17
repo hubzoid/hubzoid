@@ -66,24 +66,71 @@ credentials with the right scope before adding to `.mcp.json`.
 
 The `.mcp.json` connectors above are hub-wide: one credential shared by every
 user. For tools where each user must act as **themselves** (their own Jira,
-Zoho, Odoo, ...), Hubzoid also picks up MCP servers a user connects natively in
-Open WebUI - no Hubzoid UI involved:
+Linear, Odoo, ...), Hubzoid instead picks up MCP servers registered in **Open
+WebUI**, where each user connects their own account. **No Hubzoid UI, no
+`.mcp.json`** - OWUI's own admin screen is the source of truth.
 
-1. An admin registers the MCP server in OWUI (Settings -> Admin -> External
-   Tools), auth type OAuth 2.1.
-2. A user opens `+ -> Integrations -> Tools`, enables it, and completes the
-   OAuth redirect. OWUI vaults that user's token.
-3. On the user's next turn the bridge reads and decrypts *their* token from
+### How it works
+
+1. An **admin registers** the MCP server once in OWUI (steps below). OWUI
+   persists it to its database.
+2. Each **user connects** their own account via `+ -> Integrations -> Tools`
+   (an OAuth redirect). OWUI vaults that user's token, encrypted.
+3. On the user's next turn the bridge **reads and decrypts their token** from
    OWUI's database and calls the MCP server as them. Two users reach the same
-   server as themselves; the same connection works across surfaces (Slack,
-   Telegram) once their identity maps to the same OWUI account.
+   server as themselves; the connection follows their identity across surfaces
+   (Slack, Telegram) once it maps to the same OWUI account.
 
-Requirements: OWUI >= 0.6.31, and OWUI and the bridge must share the same
-`WEBUI_SECRET_KEY` (OWUI encrypts the tokens with it, so `hubzoid run` already
-gives both processes the value from your `.env`). On by default; set
-`OWUI_NATIVE_MCP=0` to disable. A connected token is used until it expires;
-automatic refresh is a tracked follow-up, so a user reconnects after expiry
-for now.
+### Enable it (operator - one line)
 
-Full design, the data path, and the OWUI-upgrade checklist:
+Add to the hub's `.env`:
+
+```dotenv
+OWUI_NATIVE_MCP=true
+```
+
+That single switch turns on the bridge injection **and** configures OWUI for it
+- it expands to `ENABLE_PERSISTENT_CONFIG=True` (so admin-registered servers
+persist to the DB the bridge reads; OWUI keeps that config in memory otherwise)
+plus the tools permissions hubzoid strips by default. It is **opt-in**, so hubs
+that do not use it stay env-authoritative and reproducible.
+
+You also need a fixed **`WEBUI_SECRET_KEY`** in the `.env`: OWUI encrypts the
+tokens with it and the bridge decrypts with the same value (`hubzoid run` hands
+both processes the `.env` value). Generate one with `openssl rand -hex 32`.
+Requires OWUI >= 0.6.31.
+
+### Register a server (admin - once per server, in OWUI)
+
+1. **Admin Panel -> Settings -> Integrations**
+2. **External Tool Servers -> +**
+3. **Type ->** switch to **MCP Streamable HTTP**
+4. Fill **URL** (e.g. `https://mcp.linear.app/mcp`), a **Name**, and
+   **Auth -> OAuth 2.1**
+5. **Register Client** -> wait for **"Registered"** (RFC 7591 dynamic client
+   registration against the server)
+6. **Save** (the dialog), then **Save** (the page)
+
+> The server must support **Dynamic Client Registration**. Linear, Notion,
+> Sentry, and Atlassian do. **GitHub's remote MCP does not** (no `/register`
+> endpoint) - for servers without DCR, use **OAuth 2.1 (Static)** with a
+> pre-created OAuth app instead.
+
+### Connect (each user - once, in a chat)
+
+1. Click **Integrations** (next to the `+`) -> **Tools** -> toggle the server on
+2. Complete the provider's **OAuth** sign-in
+3. Ask the agent to use it. From then on the bridge injects the user's token
+   automatically.
+
+### Notes and limits
+
+- **Governance:** which servers exist is admin-controlled (registered globally
+  in OWUI). A user only connects their own account to them.
+- **Token refresh** is a tracked follow-up: a connected token is used until it
+  expires, then the user reconnects. (The two OAuth consumers - OWUI and the
+  bridge - sharing one rotating refresh token needs deliberate design.)
+- **Turn it off:** remove `OWUI_NATIVE_MCP` (or set it to `0`).
+
+Full design, the exact data path, and the OWUI-upgrade checklist:
 [per-user-tool-connections.html](per-user-tool-connections.html).

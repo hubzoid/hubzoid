@@ -49,6 +49,13 @@ def _seed(path, *, user_id, email, server_id, url, token, secret, allow=None):
     con.close()
 
 
+@pytest.fixture(autouse=True)
+def _native_mcp_on(monkeypatch):
+    # The feature is opt-in (OWUI_NATIVE_MCP=true). Turn it on for the injection
+    # tests; individual tests override to 0/unset to exercise the off path.
+    monkeypatch.setenv("OWUI_NATIVE_MCP", "1")
+
+
 @pytest.fixture
 def owui(tmp_path, monkeypatch):
     secret = "shared-webui-secret"
@@ -61,7 +68,6 @@ def owui(tmp_path, monkeypatch):
           url=facts["url"], token=facts["token"], secret=secret)
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
-    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     tok._fernet_cache.clear()
     return facts
 
@@ -146,3 +152,10 @@ def test_expired_token_is_skipped(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     tok._fernet_cache.clear()
     assert owui_mcp.per_user_specs(".", _ident("e@x.org")) == ({}, [])
+
+
+def test_disabled_by_default(owui, monkeypatch):
+    # Opt-in: with OWUI_NATIVE_MCP unset, the bridge injects nothing even for a
+    # fully connected user.
+    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
+    assert owui_mcp.per_user_specs(".", _ident(owui["email"])) == ({}, [])
