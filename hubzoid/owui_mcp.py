@@ -12,44 +12,25 @@ The runtime merges these per-turn (``factory_claude.ClaudeRuntime`` /
 ``runtime.OpenAIAgentsRuntime``), so two people on the same hub each reach the
 same MCP server as themselves and see only their own data. Entirely no-op
 (empty result) when the caller is anonymous, has connected nothing, or the
-kill-switch ``OWUI_NATIVE_MCP=0`` is set. Nothing here writes; every read is
-read-only and fail-closed via the access layer. See the design doc
+switch ``OWUI_NATIVE_MCP`` is not set. Token freshness (expiry + refresh) is
+delegated to ``owui_refresh``, so a server is injected only with a currently
+valid token; an expired-and-unrefreshable one is dropped for that turn (the
+user reconnects in OWUI). See the design doc
 ``docs/per-user-tool-connections.html``.
-
-Not yet handled here: token refresh (task tracked separately). A connected
-token is used as stored; when it expires the caller reconnects in OWUI until
-the refresh path lands.
 """
 from __future__ import annotations
 
 import logging
 import os
 import re
-import time
 
+from . import owui_refresh as refresh
 from .access import owui_oauth_tokens as tokens
 from .access import owui_tool_servers as servers
 
 log = logging.getLogger("hubzoid.owui_mcp")
 
 _NAME_RE = re.compile(r"[^a-z0-9]+")
-
-# Skip a token this close to (or past) expiry. Until the refresh path lands
-# (tracked separately) an expired token is dropped rather than injected to
-# 401 — the caller reconnects in OWUI. A small skew avoids racing the clock.
-_EXPIRY_SKEW_SECONDS = 60
-
-
-def _expired(token: dict) -> bool:
-    """True when OWUI's stored token is at or past its expiry (minus skew)."""
-    exp = token.get("expires_at")
-    if not exp:
-        return False
-    try:
-        return time.time() >= float(exp) - _EXPIRY_SKEW_SECONDS
-    except (TypeError, ValueError):
-        return False
-
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -103,12 +84,11 @@ def per_user_specs(hub_dir, identity) -> tuple[dict, list[str]]:
         if conn is None:
             # Connected once, server since removed by the admin. Skip quietly.
             continue
-        token = tokens.read_token(hub_dir, user_id, server_id)
-        access_token = (token or {}).get("access_token")
+        # Valid token, refreshing if it has expired. None => connected but not
+        # usable now (refresh failed / none); drop it this turn (owui_refresh
+        # logged why) and the user reconnects in OWUI.
+        access_token = refresh.access_token_for(hub_dir, user_id, server_id)
         if not access_token:
-            continue
-        if _expired(token):
-            log.info("owui-mcp: token for %r expired; caller must reconnect", server_id)
             continue
         key = _namespace(conn["name"], server_id, taken)
         specs[key] = {

@@ -27,6 +27,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from . import owui_db
@@ -47,16 +48,16 @@ def mcp_provider(server_id: str) -> str:
     return f"{_MCP_PREFIX}{server_id}"
 
 
-def _secret(hub_dir) -> str | None:
-    """The key OWUI encrypts session tokens with.
+def _secret(hub_dir, *, primary: str = "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY") -> str | None:
+    """The key OWUI encrypts a blob with.
 
-    OWUI uses ``OAUTH_SESSION_TOKEN_ENCRYPTION_KEY`` if set, else
-    ``WEBUI_SECRET_KEY`` (env.py). Both processes normally inherit these from
-    the environment ``hubzoid run`` exports; the ``.webui_secret_key`` file the
-    hub launches OWUI with is the last-resort source so a bridge started
-    without the env var still resolves it.
+    ``primary`` is the blob-specific override env var OWUI checks first
+    (``OAUTH_SESSION_TOKEN_ENCRYPTION_KEY`` for session tokens,
+    ``OAUTH_CLIENT_INFO_ENCRYPTION_KEY`` for client info); both fall back to
+    ``WEBUI_SECRET_KEY``. The ``.webui_secret_key`` file is the last resort so a
+    bridge started without the env var still resolves it.
     """
-    for var in ("OAUTH_SESSION_TOKEN_ENCRYPTION_KEY", "WEBUI_SECRET_KEY"):
+    for var in (primary, "WEBUI_SECRET_KEY"):
         val = os.environ.get(var)
         if val:
             return val
@@ -154,6 +155,74 @@ def read_token(hub_dir, user_id: str, server_id: str) -> dict | None:
         log.warning("OWUI token decrypt failed (server %r)", server_id, exc_info=True)
         return None
     return token if isinstance(token, dict) else None
+
+
+def read_session(hub_dir, user_id: str, server_id: str) -> dict | None:
+    """The user's newest MCP OAuth session for ``server_id``: ``{"id", "token"}``
+    where ``token`` is the decrypted dict. Like :func:`read_token` but also
+    returns the row ``id`` so a refreshed token can be written back to the same
+    row. None when not connected or on any failure (fail-closed)."""
+    if not user_id or not server_id:
+        return None
+    secret = _secret(hub_dir)
+    if not secret:
+        return None
+    con = owui_db.connect_ro(hub_dir)
+    if con is None:
+        return None
+    try:
+        row = con.execute(
+            "SELECT id, token FROM oauth_session "
+            "WHERE user_id = ? AND provider = ? ORDER BY created_at DESC LIMIT 1",
+            (user_id, mcp_provider(server_id)),
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        log.warning("OWUI session read failed (server %r)", server_id, exc_info=True)
+        return None
+    finally:
+        con.close()
+    if not row or not row[1]:
+        return None
+    try:
+        token = json.loads(_fernet(secret).decrypt(row[1].encode()).decode())
+    except Exception:  # noqa: BLE001
+        log.warning("OWUI session decrypt failed (server %r)", server_id, exc_info=True)
+        return None
+    return {"id": row[0], "token": token} if isinstance(token, dict) else None
+
+
+def write_session(hub_dir, session_id: str, token: dict) -> bool:
+    """Encrypt ``token`` and write it back to its ``oauth_session`` row, matching
+    OWUI's own format so OWUI can still read it. Used only by the refresh path
+    (OWUI never refreshes these for a Hubzoid model). Best-effort: returns False
+    on any failure, never raises."""
+    if not session_id or not isinstance(token, dict):
+        return False
+    secret = _secret(hub_dir)
+    if not secret:
+        return False
+    try:
+        enc = _fernet(secret).encrypt(json.dumps(token).encode()).decode()
+    except Exception:  # noqa: BLE001
+        log.warning("OWUI session encrypt failed", exc_info=True)
+        return False
+    now = int(time.time())
+    exp = token.get("expires_at")
+    con = owui_db.connect_rw(hub_dir)
+    if con is None:
+        return False
+    try:
+        con.execute(
+            "UPDATE oauth_session SET token = ?, expires_at = ?, updated_at = ? WHERE id = ?",
+            (enc, int(exp) if exp else now + 3600, now, session_id),
+        )
+        con.commit()
+        return True
+    except Exception:  # noqa: BLE001
+        log.warning("OWUI session write-back failed", exc_info=True)
+        return False
+    finally:
+        con.close()
 
 
 def connected_server_ids(hub_dir, user_id: str) -> set[str]:
