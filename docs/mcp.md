@@ -100,6 +100,18 @@ tokens with it and the bridge decrypts with the same value (`hubzoid run` hands
 both processes the `.env` value). Generate one with `openssl rand -hex 32`.
 Requires OWUI >= 0.6.31.
 
+**First boot** with the flag does a one-time reseed of OWUI's config from your
+env (a `config`-table-only reset so env is the true default). Users, groups,
+models, access grants and already-registered tool servers are untouched. After
+that, env is the default and admin edits in OWUI persist normally.
+
+**Gateway mode:** set `OWUI_NATIVE_MCP=true` at the **gateway** level - one
+shared OWUI means one tool-server registry and one token store, so it is
+gateway-wide (every hub bridge injects; access is still gated by OWUI Groups per
+server). Bridges read the shared gateway DB automatically. The OAuth redirect
+returns to the shared OWUI, so set `WEBUI_URL` / `HUBZOID_PUBLIC_URL` to your
+real public URL or the provider redirect will fail.
+
 ### Register a server (admin - once per server, in OWUI)
 
 1. **Admin Panel -> Settings -> Integrations**
