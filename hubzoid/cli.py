@@ -482,6 +482,13 @@ def gateway(
 
     procs: list[subprocess.Popen] = []
 
+    # Native MCP is gateway-wide: the shared OWUI holds one tool-server registry
+    # and one token store, so it is on for the whole gateway or off. Resolve once
+    # and pin the shared OWUI + every bridge to that single value, so a hub .env
+    # the plan loop loaded last cannot make it per-bridge-inconsistent.
+    native_mcp = os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in ("1", "true", "yes", "on")
+    os.environ["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
+
     # 1. Launch each hub's headless bridge (unless they already run elsewhere).
     if launch_bridges:
         for b in gp.backends:
@@ -512,6 +519,8 @@ def gateway(
             # overrides), so this only settles the .env-less inheritance.
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
             bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
+            # Gateway-wide native MCP (resolved above) - pin every bridge to it.
+            bridge_env["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
             cmd = [
                 sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
                 "--no-ui", "--bridge-port", str(b.bridge_port),

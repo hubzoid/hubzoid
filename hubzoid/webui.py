@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,50 @@ _OWUI_NATIVE_MCP_ENV = {
     "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS": _ON,
     "ENABLE_DIRECT_CONNECTIONS": _ON,
 }
+
+
+def _seed_owui_config_once(data_dir: Path) -> None:
+    """One-time, when OWUI_NATIVE_MCP first turns on: clear OWUI's stale config
+    so it re-seeds from the CURRENT env now that persistence is on.
+
+    Why it is needed. OWUI's ``config`` table can hold a frozen snapshot from an
+    older OWUI/hubzoid version or an earlier persistence-on period. With
+    persistence off that snapshot was ignored; turning persistence on would make
+    it override the env (e.g. a stale ``tools=false`` permission hiding the tools
+    UI). So on the transition boot we drop the table and let OWUI write a fresh
+    one from env. From then on the env is the default and admin edits persist -
+    exactly the intended model.
+
+    Why it is safe. Only the ``config`` key-value table is touched. Users,
+    groups, models and access grants live in their own tables, and with
+    persistence off nothing in ``config`` was surviving restarts anyway, so
+    nothing durable is lost. A marker file makes it run exactly once, so
+    admin-registered tool servers (written after this) persist normally. A fresh
+    hub has no webui.db yet - OWUI simply seeds from env on first boot, and the
+    marker records that. Best-effort: any failure logs and lets the boot proceed.
+    """
+    marker = Path(data_dir) / ".hubzoid-owui-native-mcp-seeded"
+    if marker.exists():
+        return
+    db = Path(data_dir) / "webui.db"
+    if db.is_file():
+        try:
+            con = sqlite3.connect(db)
+            try:
+                con.execute("DELETE FROM config")
+                con.commit()
+            finally:
+                con.close()
+            log.info("owui-native-mcp: reseeded OWUI config from env (one-time)")
+        except sqlite3.Error:
+            # Leave the marker unwritten so we retry on the next boot.
+            log.warning("owui-native-mcp: config reseed skipped", exc_info=True)
+            return
+    try:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        marker.write_text("hubzoid: OWUI config seeded from env for native MCP\n")
+    except OSError:
+        log.warning("owui-native-mcp: could not write seed marker", exc_info=True)
 
 _DEFAULT_OWUI_ENV: dict[str, str] = {
     # --- Strip platform / branding leaks --------------------------------
@@ -514,6 +559,9 @@ def _spawn_owui(
     if os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY:
         for key, value in _OWUI_NATIVE_MCP_ENV.items():
             env.setdefault(key, value)
+        # Make "env is the default" actually hold: on the first native-MCP boot,
+        # drop the stale (previously-ignored) config so OWUI re-seeds from env.
+        _seed_owui_config_once(data_dir)
 
     # 6. The big strip. Apply hubzoid defaults; operator .env wins.
     for key, value in _DEFAULT_OWUI_ENV.items():
