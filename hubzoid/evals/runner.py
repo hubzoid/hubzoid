@@ -42,12 +42,23 @@ _AGENT_ERROR_MARKER = "[agent error:"
 ProgressFn = Callable[[CaseResult], None]
 
 
+def judge_tools(rt) -> list[str]:
+    """This hub's tool inventory, for the judge. Never fails the run."""
+    try:
+        from .judge import available_tools
+        return available_tools(rt)
+    except Exception as exc:  # noqa: BLE001 — an unknown inventory is survivable
+        log.debug("could not read the tool inventory: %s", exc)
+        return []
+
+
 def _chat_id(case: EvalCase) -> str:
     """Per-case chat scope, so uploads and artifacts never bleed across cases."""
     return f"eval-{case.name}"
 
 
-async def _run_one(rt, case: EvalCase, *, judge_fn=None) -> CaseResult:
+async def _run_one(rt, case: EvalCase, *, judge_fn=None,
+                   tools_available: list[str] | None = None) -> CaseResult:
     """Run a single case to a verdict. Never raises — failures become results."""
     result = CaseResult(name=case.name, tags=list(case.tags))
     started = time.monotonic()
@@ -81,7 +92,12 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None) -> CaseResult:
         case, response=result.response, tool_calls=result.tool_calls)
 
     if judge_fn is not None and case.is_judged and result.free_passed:
-        result.judge = await judge_fn(case, result.response)
+        # Both tool lists go to the judge as observed ground truth. Criteria
+        # routinely say "reports what the tool returned" or "does not invent
+        # tools"; without the lists the judge guesses, and guesses wrong (see
+        # judge.py for the two real misgradings this fixed).
+        result.judge = await judge_fn(case, result.response, result.tool_calls,
+                                      tools_available)
 
     return result
 
@@ -113,9 +129,12 @@ async def arun_suite(
     # Open/use/close MCP in one task — see runtime.aopen() for why.
     await rt.aopen()
     try:
+        # After aopen(), so MCP-provided tools are in the inventory too.
+        tools_available = judge_tools(rt) if judge_fn is not None else None
         for case in cases:
             log.info("eval: running %s", case.name)
-            result = await _run_one(rt, case, judge_fn=judge_fn)
+            result = await _run_one(rt, case, judge_fn=judge_fn,
+                                    tools_available=tools_available)
             suite.cases.append(result)
             if on_case is not None:
                 on_case(result)

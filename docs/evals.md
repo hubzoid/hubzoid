@@ -164,10 +164,18 @@ added, not as a regression.
 
 ## The judge
 
-A judged case is scored 1–10 by a model that sees three things: your hub's
-`AGENTS.md`, the case's `## Criteria`, and the answer. It is a plain
-single-turn call with no tools and no hub persona — it grades, it does not
+A judged case is scored 1–10 by a model that sees four things: your hub's
+`AGENTS.md`, the case's `## Criteria`, the answer, and — as observed ground
+truth — **which tools ran and which tools this hub has**. It is a plain
+single-turn call with no tools and no hub persona: it grades, it does not
 answer.
+
+Those tool lists matter more than they look. Criteria routinely say "reports
+what the tool returned" or "does not invent tools that do not exist", and
+without the lists the judge has to guess. In testing it guessed badly both
+ways — scoring a correct answer 2/10 for "fabricating a tool result" when the
+tool had in fact been called, and marking down an answer for "inventing"
+built-ins the hub genuinely has.
 
 **Pin the judge model for anything you track over time:**
 
@@ -265,6 +273,32 @@ traffic out of your production latency and cost dashboards.
 
 A Langfuse outage never fails a run — the push is best-effort and the local
 JSON is the record.
+
+## Writing good cases
+
+The most common mistake is a **free check standing in for a judgement**. Three
+real examples from the test hub, all of which failed a correct answer:
+
+- `contains: ["whoami"]` — the hub's `AGENTS.md` says to describe tools "in
+  plain language", so the agent wrote "Who Am I". Correct behaviour, wrong
+  assertion.
+- `not_contains: ["e.g."]` used as a proxy for hedging. It caught a good answer.
+- Criteria ending "and nothing beyond it", which failed a reply that added one
+  sentence of helpful framing.
+
+Use `contains` / `not_contains` for **facts that must or must not appear
+verbatim**. Use `## Criteria` for anything needing judgement. When a free check
+and the judge disagree, the free check is usually the one that is wrong.
+
+Two more habits worth having:
+
+**Make criteria branch-complete.** If a tool can return a link, or details, or
+an error, say what a correct answer looks like in each case. Criteria that
+only describe the happy path will fail whenever the environment differs.
+
+**Say what a failure is, not just what a pass is.** "Inventing setup steps the
+tool did not return is a failure" grades far more consistently than "reports
+what the tool returned".
 
 ## Notes and limits
 
