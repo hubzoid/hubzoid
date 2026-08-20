@@ -41,6 +41,17 @@ _current_artifacts: ContextVar[list | None] = ContextVar("hubzoid_artifacts", de
 # the write survives the context copy the SDK makes for tool calls.
 _current_usage: ContextVar[dict | None] = ContextVar("hubzoid_usage", default=None)
 
+# Tool calls made during this request, recorded ONLY when something is
+# listening (the eval runner). Default None means "not recording", so
+# `record_tool_call` is a single is-None check on the chat path — evals must
+# not cost production anything.
+#
+# This is recorded at the call site rather than scraped from the streamed text
+# because the text form depends on SHOW_TOOLS: with `SHOW_TOOLS=off` a real
+# tool call produces no output at all, and an eval asserting `expect_tools`
+# would silently fail on a hub that turns tool display off.
+_current_tool_calls: ContextVar[list | None] = ContextVar("hubzoid_tool_calls", default=None)
+
 
 def get_chat_id() -> str | None:
     return _current_chat_id.get()
@@ -94,6 +105,34 @@ def drain_usage() -> dict:
     out = dict(holder)
     holder.clear()
     return out
+
+
+def record_tool_call(name: str, args: object | None = None) -> None:
+    """Note that `name` was called, if a recorder is active. No-op otherwise.
+
+    Append-in-place (not reassign) so the entry is visible from the parent
+    context that reads it, even though the backends emit tool events from a
+    context the SDK copied. Same reasoning as `record_artifact`.
+    """
+    items = _current_tool_calls.get()
+    if items is None:
+        return
+    items.append({"name": name, "args": args})
+
+
+@contextmanager
+def tool_call_recorder() -> Iterator[list]:
+    """Record every tool call made inside the block into the yielded list.
+
+    Used by the eval runner to check `expect_tools` / `forbid_tools`. Outside
+    such a block nothing is recorded and nothing is allocated.
+    """
+    items: list = []
+    token = _current_tool_calls.set(items)
+    try:
+        yield items
+    finally:
+        _current_tool_calls.reset(token)
 
 
 @contextmanager

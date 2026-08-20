@@ -635,6 +635,11 @@ class ClaudeRuntime:
                                 continue
                             short = tool_events.short_name(block.name)
                             tool_use_names[tid] = short
+                            # Record before formatting: `format_call` returns
+                            # "" when SHOW_TOOLS=off, but an eval's
+                            # expect_tools must still see the call.
+                            _request_ctx.record_tool_call(
+                                short, getattr(block, "input", None))
                             line = tool_events.format_call(
                                 short, getattr(block, "input", None),
                                 mode=self._tool_mode,
