@@ -326,3 +326,50 @@ def test_score_ids_are_unique_and_deterministic(hub):
              if e["type"] == "score-create"]
     assert first == again
     assert len(first) == len(set(first))
+
+
+def test_push_returns_a_clickable_project_scoped_url(hub, monkeypatch):
+    """Langfuse UI routes are project-scoped; a bare <host>/traces?tags=... is
+    a 404. The push resolves the project id so the operator gets a link that
+    actually opens, not a dataset name to go hunting for."""
+    import httpx
+
+    class Post:
+        status_code = 207
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"successes": [{"id": "x", "status": 201}], "errors": []}
+
+    class Get:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": [{"id": "proj123", "name": "My Project"}]}
+
+    _configured(monkeypatch)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Post())
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: Get())
+    status = lf.push(hub, _suite())
+    assert "/project/proj123/traces?tags=hubzoid.eval" in status
+
+
+def test_push_still_succeeds_when_the_project_lookup_fails(hub, monkeypatch):
+    """A link is a nicety. Losing it must not fail a push that landed."""
+    import httpx
+
+    class Post:
+        status_code = 207
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"successes": [], "errors": []}
+
+    _configured(monkeypatch)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Post())
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(
+        httpx.ConnectError("nope")))
+    assert "2 case(s)" in lf.push(hub, _suite())
