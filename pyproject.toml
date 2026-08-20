@@ -84,7 +84,7 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.access", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram"]
+packages = ["hubzoid", "hubzoid.access", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram"]
 include-package-data = true
 
 [tool.setuptools.package-data]

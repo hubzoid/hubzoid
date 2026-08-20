@@ -21,6 +21,8 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
 | `schedule_runner.py` | Executes one task: fresh-context rounds via the hub Runtime until `STATUS: DONE`, then scoped commit/push. |
 | `tools/schedule_tools.py` | `run_git` + `write_hub_file` — internal tools injected only into scheduled runs, never chat. |
+| `evals/` | Hub-owned behavioural checks (`<hub>/evals/*.md`): format, free assertions, runner, judge, report, optional Langfuse push. |
+| `evals/schedule.py` | Second task source for `scheduler.py` — a due eval case runs the deterministic runner, not the agent harness. |
 | `cli.py` | Typer-based CLI. |
 | `factory.py` | `build_agent(hub_dir)`. composes everything. |
 
@@ -64,6 +66,9 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 - Real-LLM tests live in `tests/e2e/` and are marked `e2e`. They must
   auto-skip when no provider key is set.
 - Run the full suite before opening a PR: `pytest`.
+- The eval runner (`hubzoid/evals/`) must stay model-free in its logic: the
+  judge's model call and the runner's judge are both injected seams, so the
+  whole suite path is testable with no model and no network. Keep it that way.
 
 ## Style
 

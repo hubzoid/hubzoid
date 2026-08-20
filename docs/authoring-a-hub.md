@@ -147,6 +147,36 @@ in a sub-agent's `tools:` list.
 
 `${VAR}` references are resolved against the environment at boot.
 
+## Evals
+
+One markdown file per behavioural check, under `evals/`. The filename is the
+case name; everything in frontmatter is optional.
+
+```markdown
+---
+contains: ["14 days"]
+expect_tools: [read_knowledge]
+forbid_tools: [http_get]
+# schedule: "0 6 * * 1"     # run itself weekly inside `hubzoid run`
+---
+## Prompt
+What is the refund window for a cancelled program?
+
+## Criteria
+States 14 days. Does not invent an exception process.
+```
+
+A `## Criteria` section is what turns the model judge on — there is no
+separate flag. The judge grades against this hub's own `AGENTS.md`, so rules
+you wrote there are enforced without restating them here.
+
+```
+hubzoid eval run <hub>              # exit code is the CI gate
+hubzoid eval run <hub> --no-judge   # free checks only, no cost
+```
+
+Full reference: [evals.md](evals.md).
+
 ## `.env`
 
 ```bash

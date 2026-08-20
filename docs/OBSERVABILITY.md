@@ -94,6 +94,30 @@ twice), and the collector exports to Langfuse. It is stock `otelcol-contrib` + a
 config file, and is a no-op on the LiteLLM path. For a single hub, the in-bridge
 flag is simpler — this is for fleets that already have collector infrastructure.
 
+## Eval runs
+
+If the hub has `evals/*.md` cases (see [evals.md](evals.md)), each run is also
+pushed to Langfuse as a set of traces with scores — one trace per case, one
+score per assertion, plus the judge's score and reasoning. This needs the
+Langfuse API keys alongside the endpoint:
+
+```
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+If you configured tracing with Basic auth in `OTEL_EXPORTER_OTLP_HEADERS`, the
+keys are read back from there instead — there is no third place to configure.
+
+**Filter eval traffic out of your production dashboards.** Every eval trace is
+tagged `hubzoid.eval` (and carries `hubzoid.eval: true` in metadata). Eval
+traffic is synthetic; left mixed in, it skews the latency and cost numbers you
+use to understand real users.
+
+The push is best-effort and entirely optional. Evals work with no endpoint
+configured at all — the terminal table, the run JSON under
+`<hub>/.hubzoid/evals/`, and `hubzoid eval status` need no infrastructure.
+
 ## Transport and exposure
 
 Emission is **outbound push** over OTLP/HTTP (`http/protobuf`). Nothing is
