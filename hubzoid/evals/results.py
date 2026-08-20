@@ -164,4 +164,11 @@ class SuiteResult:
 
 
 def now_iso() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
+    """Local time WITH its UTC offset, e.g. 2026-08-20T20:45:06+05:30.
+
+    The offset is not decoration. Langfuse's ingestion API validates
+    timestamps against a strict ISO-8601 pattern that requires `Z` or an
+    offset, and rejects every event carrying a naive one. It also makes the
+    JSON record unambiguous when a run is read on a box in another zone.
+    """
+    return datetime.now().astimezone().replace(microsecond=0).isoformat()

@@ -39,6 +39,17 @@ def _scheduled(cron: str = EVERY_MINUTE, body: str = "hi") -> str:
     return f'---\nschedule: "{cron}"\n---\n{body}'
 
 
+def _now() -> datetime:
+    """Wall clock pinned to a minute boundary.
+
+    Cron matching truncates to the minute, so a test that fires at HH:MM:45 and
+    then re-ticks 30s later crosses into the next minute and is legitimately due
+    again. Pinning seconds to 0 makes these tests deterministic instead of
+    passing or failing depending on the time of day.
+    """
+    return datetime.now().replace(second=0, microsecond=0)
+
+
 class _Recorder:
     """Stands in for evals.schedule.run_due; records what it was asked to run."""
 
@@ -91,13 +102,13 @@ def test_first_discovery_anchors_now_and_is_not_due(tmp_path):
     """A case installed now fires at its next future match, not retroactively."""
     hub = _hub(tmp_path, {"c.md": _scheduled("0 6 * * 1")})
     state = ScheduleState(hub)
-    assert evals_schedule.due_cases(hub, state, datetime.now()) == []
+    assert evals_schedule.due_cases(hub, state, _now()) == []
 
 
 def test_becomes_due_once_the_cron_matches(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     state = ScheduleState(hub)
-    now = datetime.now()
+    now = _now()
     assert evals_schedule.due_cases(hub, state, now) == []          # anchors
     later = now + timedelta(minutes=5)
     assert [c.name for c in evals_schedule.due_cases(hub, state, later)] == ["c"]
@@ -113,7 +124,7 @@ def test_state_keys_are_namespaced(tmp_path):
 def test_eval_and_task_of_the_same_name_keep_separate_anchors(tmp_path):
     hub = _hub(tmp_path, {"nightly.md": _scheduled()})
     state = ScheduleState(hub)
-    now = datetime.now()
+    now = _now()
     evals_schedule.due_cases(hub, state, now)                       # anchors eval:nightly
     later = now + timedelta(minutes=5)
     # The scheduled *task* named `nightly` fires; the eval's anchor must be
@@ -131,7 +142,7 @@ def test_due_evals_fire_through_the_eval_runner(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder()
     sched = _sched(hub, rec)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))                              # anchors
     fired = asyncio.run(sched.check_once(now + timedelta(minutes=5)))
     assert fired == ["eval:c"]
@@ -144,7 +155,7 @@ def test_all_due_cases_run_as_one_suite(tmp_path):
                           "c.md": _scheduled()})
     rec = _Recorder()
     sched = _sched(hub, rec)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))
     asyncio.run(sched.check_once(now + timedelta(minutes=5)))
     assert rec.calls == [["a", "b", "c"]]
@@ -154,7 +165,7 @@ def test_unscheduled_cases_never_fire(tmp_path):
     hub = _hub(tmp_path, {"manual.md": "hi"})
     rec = _Recorder()
     sched = _sched(hub, rec)
-    asyncio.run(sched.check_once(datetime.now() + timedelta(days=2)))
+    asyncio.run(sched.check_once(_now() + timedelta(days=2)))
     assert rec.calls == []
 
 
@@ -162,7 +173,7 @@ def test_busy_hub_defers_the_run(tmp_path):
     """An eval must never start mid-conversation."""
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder()
-    now = datetime.now()
+    now = _now()
     asyncio.run(_sched(hub, rec).check_once(now))
     asyncio.run(_sched(hub, rec, busy=True).check_once(now + timedelta(minutes=5)))
     assert rec.calls == []
@@ -171,7 +182,7 @@ def test_busy_hub_defers_the_run(tmp_path):
 def test_deferred_run_fires_once_the_hub_is_idle(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder()
-    now = datetime.now()
+    now = _now()
     asyncio.run(_sched(hub, rec).check_once(now))
     later = now + timedelta(minutes=5)
     asyncio.run(_sched(hub, rec, busy=True).check_once(later))
@@ -183,7 +194,7 @@ def test_run_lock_blocks_a_concurrent_run(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder()
     sched = _sched(hub, rec)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))
 
     other = RunLock(hub)
@@ -200,7 +211,7 @@ def test_a_failing_suite_still_records_the_anchor(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder(ok=False)
     sched = _sched(hub, rec)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))
     fire_at = now + timedelta(minutes=5)
     asyncio.run(sched.check_once(fire_at))
@@ -218,7 +229,7 @@ def test_a_crashing_eval_run_does_not_kill_the_tick_loop(tmp_path):
         raise RuntimeError("model down")
 
     sched = _sched(hub, boom)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))
     asyncio.run(sched.check_once(now + timedelta(minutes=5)))      # must not raise
 
@@ -230,7 +241,7 @@ def test_lock_is_released_after_a_crash(tmp_path):
         raise RuntimeError("model down")
 
     sched = _sched(hub, boom)
-    now = datetime.now()
+    now = _now()
     asyncio.run(sched.check_once(now))
     asyncio.run(sched.check_once(now + timedelta(minutes=5)))
     assert RunLock(hub).acquire("after")
