@@ -1,4 +1,11 @@
-"""In-process scheduler — fires `<hub>/schedule/*.md` tasks while the hub runs.
+"""In-process scheduler — fires `<hub>/schedule/*.md` and `<hub>/evals/*.md`.
+
+Two task sources, one timing mechanism. A due file from `schedule/` runs the
+agent harness (`schedule_runner`, rounds until `STATUS: DONE`); a due case from
+`evals/` runs the deterministic eval runner (`evals.schedule.run_due`), because
+whether an eval passed is not something a model should be deciding. Everything
+below — cron, anchors, idle gate, lock, catch-up — is shared.
+
 
 Started by the FastAPI bridge's lifespan (`server.build_app`), so deploying a
 hub IS deploying its background jobs: one long-lived process, no extra
@@ -32,6 +39,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import schedule_runner
+from .evals import schedule as evals_schedule
 from .scheduling import RunLock, ScheduledTask, ScheduleState, is_due, load_tasks
 
 log = logging.getLogger("hubzoid.schedule")
@@ -70,11 +78,13 @@ class Scheduler:
         is_busy: Callable[[], bool] = lambda: False,
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         run_task: Callable = schedule_runner.run_task,   # injectable for tests
+        run_evals: Callable = evals_schedule.run_due,    # injectable for tests
     ):
         self.hub_dir = Path(hub_dir).resolve()
         self.is_busy = is_busy
         self.tick_seconds = tick_seconds
         self._run_task = run_task
+        self._run_evals = run_evals
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._deferred_logged: set[str] = set()
@@ -90,9 +100,10 @@ class Scheduler:
         for p in problems:
             log.warning("schedule: %s", p)
         enabled = [t for t in tasks if t.enabled]
-        if not enabled and not problems:
-            log.info("scheduler: no tasks under %s/schedule — not starting",
-                     self.hub_dir.name)
+        evals = evals_schedule.scheduled_cases(self.hub_dir)
+        if not enabled and not problems and not evals:
+            log.info("scheduler: no tasks under %s/schedule and no scheduled "
+                     "evals — not starting", self.hub_dir.name)
             return False
         state = ScheduleState(self.hub_dir)
         now = datetime.now()
@@ -100,6 +111,10 @@ class Scheduler:
             from .scheduling import next_fire_for
             nxt = next_fire_for(t, state, now)
             log.info("scheduler: %s (%s) next fire %s", t.name, t.schedule,
+                     nxt.strftime("%Y-%m-%d %H:%M") if nxt else "never")
+        for c in evals:
+            nxt = evals_schedule.next_fire_for(c, state, now)
+            log.info("scheduler: eval %s (%s) next fire %s", c.name, c.schedule,
                      nxt.strftime("%Y-%m-%d %H:%M") if nxt else "never")
         self._stopping.clear()
         self._task = asyncio.create_task(self._loop())   # caller has a running loop (lifespan)
@@ -155,7 +170,45 @@ class Scheduler:
             self._deferred_logged.discard(task.name)
             if await self._fire(task):
                 fired.append(task.name)
+
+        fired += await self._check_evals(state, now)
         return fired
+
+    async def _check_evals(self, state: ScheduleState, now: datetime) -> list[str]:
+        """Fire every due eval case as ONE suite run.
+
+        Batched because building the runtime (MCP init) is the expensive part:
+        five cases sharing a weekly cron should cost one startup, not five.
+        Due-ness is still per case, so a case added later catches up on its own
+        schedule rather than inheriting the batch's anchor.
+        """
+        due = evals_schedule.due_cases(self.hub_dir, state, now)
+        if not due:
+            return []
+
+        names = [c.name for c in due]
+        if self.is_busy():
+            key = "evals:" + ",".join(names)
+            if key not in self._deferred_logged:
+                log.info("evals due (%s) but hub is busy; deferring to a later "
+                         "tick", ", ".join(names))
+                self._deferred_logged.add(key)
+            return []
+        self._deferred_logged = {k for k in self._deferred_logged
+                                 if not k.startswith("evals:")}
+
+        lock = RunLock(self.hub_dir)
+        if not lock.acquire("evals"):
+            log.info("evals due but another run holds the lock; skipping this tick")
+            return []
+        try:
+            log.info("evals firing: %s", ", ".join(names))
+            await self._run_evals(self.hub_dir, due, state, now=now)
+        except Exception:  # noqa: BLE001 — the tick loop must survive anything
+            log.exception("scheduled eval run crashed")
+        finally:
+            lock.release()
+        return [f"eval:{n}" for n in names]
 
     async def _fire(self, task: ScheduledTask) -> bool:
         """Run the task under the cross-process lock. False = lock-skipped."""
