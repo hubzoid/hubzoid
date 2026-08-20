@@ -3,13 +3,13 @@
 Is this hub still doing what it is supposed to do?
 
 Write **one markdown file per thing you want to check**. Hubzoid runs each one
-through the hub's own agent, checks the cheap things for free, and — if you
-wrote criteria — has a model grade the answer against the hub's own
+through the hub's own agent, checks the cheap things without a model, and — if
+you wrote criteria — has a model grade the answer against the hub's own
 `AGENTS.md`.
 
 ```
 hubzoid eval run <hub>            # everything
-hubzoid eval run <hub> --no-judge # free checks only, costs nothing
+hubzoid eval run <hub> --no-judge # skip grading (the agent still runs)
 hubzoid eval run <hub> --compare  # what regressed since last time
 ```
 
@@ -71,17 +71,18 @@ States 14 days. Cites the policy knowledge file. Does not invent an
 exception process.
 ```
 
-| Key | Cost | Notes |
+| Key | Extra model call? | Notes |
 |---|---|---|
-| `expect_tools` / `forbid_tools` | free | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. |
-| `contains` / `not_contains` | free | **Case-insensitive.** A bare string is accepted where a list is expected. |
-| `timeout` | free | Defaults to 120s. A timed-out case fails; it never hangs the suite. |
-| `## Criteria` | model | Graded 1–10 against `AGENTS.md` + these criteria. |
+| `expect_tools` / `forbid_tools` | no | Matched on the short name — write `read_knowledge`, not `mcp__hubzoid__read_knowledge`. Works even with `SHOW_TOOLS=off`. |
+| `contains` / `not_contains` | no | **Case-insensitive.** A bare string is accepted where a list is expected. |
+| `timeout` | no | Defaults to 120s. A timed-out case fails; it never hangs the suite. |
+| `## Criteria` | **yes** | Graded 1–10 against `AGENTS.md` + these criteria. |
 | `threshold` | — | The pass mark. 7 means "clearly acceptable", not "perfect". |
 | `schedule` | — | See [Running on a schedule](#running-on-a-schedule). |
 
-**Free checks run first, and the judge only runs if they all pass.** There is
-no point paying a model to grade an answer already known to be wrong.
+**Model-free checks run first, and the judge only runs if they all pass.**
+There is no point paying for a second model call to grade an answer already
+known to be wrong.
 
 Assertions see the agent's **answer**, not the tool-activity lines or the
 `<think>` panel — those are display chrome and get stripped before checking,
@@ -110,7 +111,7 @@ Does not reveal the secret value.
 hubzoid eval run <hub>                    # all cases
 hubzoid eval run <hub> --tag canary       # only cases carrying a tag
 hubzoid eval run <hub> --case refund-*    # glob on the case name
-hubzoid eval run <hub> --no-judge         # free tier only, zero token cost
+hubzoid eval run <hub> --no-judge         # skip the grading call
 hubzoid eval run <hub> --judge-model X    # pin the grader for this run
 hubzoid eval run <hub> --compare          # plus a diff against the last run
 hubzoid eval run <hub> --quiet            # summary and failures only
@@ -240,7 +241,7 @@ gets evaluated on what it rewrote, with no extra wiring.
 ### In CI
 
 ```yaml
-- run: hubzoid eval run ./my-hub --no-judge     # every push: free, fast
+- run: hubzoid eval run ./my-hub --no-judge     # every push: 1 call per case
 - run: hubzoid eval run ./my-hub                # on main: full, judged
 ```
 
@@ -273,6 +274,38 @@ traffic out of your production latency and cost dashboards.
 
 A Langfuse outage never fails a run — the push is best-effort and the local
 JSON is the record.
+
+## What a run costs
+
+Be clear about this, because `--no-judge` is easy to misread:
+
+**Every case always runs your hub's agent.** That is a real, paid model call —
+on a hub pinned to Opus, an Opus call, with tools, knowledge lookups and all.
+There is no way to check a hub's behaviour without asking it something.
+
+What varies is the *second* call:
+
+| | Model calls per case |
+|---|---|
+| Case with no `## Criteria` | 1 (the agent) |
+| Case with `## Criteria` | 2 (the agent, then the judge) |
+| Any case, with `--no-judge` | 1 (the agent) |
+
+So `--no-judge` roughly halves the cost of a judged suite. It does not make a
+run free, and the `contains` / `expect_tools` checks being "free" means only
+that they add no model call of their own — they are string and list operations
+over a reply you already paid for.
+
+Three ways to keep the bill down:
+
+- **`--case` / `--tag`** while iterating, so you re-run one case, not twenty.
+- **Judge only where judgement is needed.** A case that can be settled by
+  `contains` does not need a `## Criteria` section at all.
+- **Schedule a small subset.** Give five canary cases a weekly cron and leave
+  the rest for CI.
+
+Runs are sequential, so wall-clock is the sum of the cases. A case that
+provokes a long answer can take a minute or more on its own.
 
 ## Writing good cases
 

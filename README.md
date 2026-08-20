@@ -153,10 +153,11 @@ Your hub is one folder. Six things to know.
    Works on any backend (claude-local or OpenAI/LiteLLM). See
    [docs/schedule.md](docs/schedule.md).
 9. **Evals.** One markdown file per behavioural check under `evals/` — a
-   prompt, plus what the answer must do. Free checks (substrings, which tools
-   were called) cost nothing; add a `## Criteria` section and a model grades
-   the answer against your own `AGENTS.md`. Run them by hand, from CI (the
-   exit code is the gate), or on a cron. See [docs/evals.md](docs/evals.md).
+   prompt, plus what the answer must do. Every case runs the hub's agent once;
+   checks on the reply (substrings, which tools were called) add no model call
+   of their own. Add a `## Criteria` section and a second model call grades the
+   answer against your own `AGENTS.md`. Run them by hand, from CI (the exit
+   code is the gate), or on a cron. See [docs/evals.md](docs/evals.md).
 
 Folder names are case- and plural-flexible. `skills/`, `Skills/`, and
 `skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
@@ -431,7 +432,7 @@ hubzoid eval run [PATH]          Run the hub's evals/*.md cases against the hub'
                                    command is a CI gate. See docs/evals.md.
   --tag TEXT                       Only cases carrying this tag.
   --case TEXT                      Only cases whose name matches this glob.
-  --no-judge                       Free checks only — no model, no cost.
+  --no-judge                       Skip the grading call (the agent still runs).
   --judge-model TEXT               Model that grades. Pin it for stable scores.
   --compare                        Also diff against the previous run.
 hubzoid eval list [PATH]         List cases: what each checks, which are scheduled.
