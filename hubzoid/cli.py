@@ -1650,3 +1650,255 @@ def _slugify(text: str) -> str:
 
 if __name__ == "__main__":
     app()
+
+
+# ---------------------------------------------------------------------------
+# eval — hub-owned behavioural checks (see hubzoid/evals/)
+# ---------------------------------------------------------------------------
+eval_app = typer.Typer(
+    help="Hub-owned evals: one md file per case under <hub>/evals/. Run them "
+    "by hand, from CI (the exit code is the gate), or on a cron via a case's "
+    "`schedule:` frontmatter.",
+    no_args_is_help=True,
+)
+
+
+def _load_cases(hub: Path, tag: str | None, case: str | None):
+    """Discover + filter, turning a bad case file into a clean CLI error."""
+    from .evals import cases as cases_lib
+
+    try:
+        found = cases_lib.discover(hub)
+    except cases_lib.EvalCaseError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    if not found:
+        console.print(f"no eval cases — add markdown files under {hub / 'evals'}/")
+        raise typer.Exit(0)
+
+    selected = cases_lib.select(found, tag=tag, case=case)
+    if not selected:
+        console.print("[yellow]no cases matched that filter[/yellow]")
+        raise typer.Exit(0)
+    return selected
+
+
+@eval_app.command("run")
+def eval_run(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    tag: str = typer.Option(None, "--tag", help="Only cases carrying this tag."),
+    case: str = typer.Option(None, "--case", help="Only cases whose name matches this glob."),
+    no_judge: bool = typer.Option(False, "--no-judge", help="Free tier only — costs nothing."),
+    judge_model: str = typer.Option(None, "--judge-model", help="Model that grades. Default: HUBZOID_EVAL_JUDGE_MODEL, else the hub's own."),
+    model: str = typer.Option(None, "--model", help="Override the model under test for this run."),
+    compare: bool = typer.Option(False, "--compare", help="Also diff against the previous run."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print the summary and failures."),
+) -> None:
+    """Run the hub's eval cases. Exits non-zero if any fail — that is the CI gate.
+
+    Cases run through the hub's own runtime, so they see the same model, tools,
+    MCP servers and access guard that real chat traffic does. Free checks
+    (substrings, tool calls) run first; a case with a `## Criteria` section is
+    then graded by a model, but only if the free checks passed.
+    """
+    from .evals import judge as judge_lib
+    from .evals import report as report_lib
+    from .evals import runner as runner_lib
+
+    hub = hub.resolve()
+    selected = _load_cases(hub, tag, case)
+
+    judged = [c for c in selected if c.is_judged]
+    judge_fn = None
+    if judged and not no_judge:
+        judge_fn = judge_lib.make_judge(hub, model=judge_model)
+
+    console.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")
+    if judge_fn is not None:
+        console.print(f"[dim]judge: {judge_lib.describe(hub, judge_model)}[/dim]")
+    elif judged:
+        console.print(f"[dim]judge: off — {len(judged)} case(s) will run free checks only[/dim]")
+
+    def _progress(result) -> None:
+        if quiet and result.passed:
+            return
+        mark = "[green]✓[/green]" if result.passed else "[red]✗[/red]"
+        console.print(f"  {mark} {result.name}"
+                      + (f"  [dim]{result.reason}[/dim]" if result.reason else ""))
+
+    suite = runner_lib.run_suite(
+        hub, selected, judge_fn=judge_fn, on_case=_progress, model=model)
+
+    previous = report_lib.load_runs(hub, limit=1)
+    path = report_lib.save(hub, suite)
+
+    console.print()
+    report_lib.render_table(console, suite)
+    console.print(f"[dim]{path}[/dim]")
+
+    _push_to_langfuse(hub, suite)
+
+    if compare:
+        console.print()
+        if previous:
+            prev_path, prev = previous[-1]
+            report_lib.render_compare(
+                console, report_lib.compare(prev, suite), prev_name=prev_path.stem)
+        else:
+            console.print("[dim]no previous run to compare against[/dim]")
+
+    if not suite.ok:
+        raise typer.Exit(1)
+
+
+def _push_to_langfuse(hub: Path, suite) -> None:
+    """Best-effort push. Never fails a run — the local JSON is the record."""
+    from .evals import langfuse as lf
+
+    try:
+        pushed = lf.push(hub, suite)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]langfuse push skipped: {exc}[/yellow]")
+        return
+    if pushed:
+        console.print(f"[dim]langfuse: {pushed}[/dim]")
+
+
+@eval_app.command("list")
+def eval_list(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """List the hub's eval cases: what each checks, and which are scheduled."""
+    from . import scheduling as sch
+    from .evals import cases as cases_lib
+
+    hub = hub.resolve()
+    try:
+        found = cases_lib.discover(hub)
+    except cases_lib.EvalCaseError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+    if not found:
+        console.print(f"no eval cases — add markdown files under {hub / 'evals'}/")
+        return
+
+    for c in found:
+        bits = []
+        if c.expect_tools:
+            bits.append(f"expects {', '.join(c.expect_tools)}")
+        if c.forbid_tools:
+            bits.append(f"forbids {', '.join(c.forbid_tools)}")
+        if c.contains:
+            bits.append(f"contains {len(c.contains)}")
+        if c.not_contains:
+            bits.append(f"not_contains {len(c.not_contains)}")
+        bits.append("judged" if c.is_judged else "free only")
+        if c.tags:
+            bits.append(f"tags: {', '.join(c.tags)}")
+        if not c.enabled:
+            console.print(f"[dim]⏸ {c.name}  disabled[/dim]")
+            continue
+        when = ""
+        if c.cron is not None:
+            when = f"  {c.schedule} ({sch.cron_to_human(c.cron)})"
+        console.print(f"[green]●[/green] [bold]{c.name}[/bold]{when}  ·  {'; '.join(bits)}")
+
+
+@eval_app.command("status")
+def eval_status(
+    hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Last run, pass rate, and what is currently failing.
+
+    This is the surface that matters for scheduled evals — nobody is watching
+    a terminal at 06:00 on a Monday.
+    """
+    from .evals import report as report_lib
+
+    hub = hub.resolve()
+    suite = report_lib.latest(hub)
+    if suite is None:
+        console.print("no eval runs yet — try `hubzoid eval run`")
+        return
+
+    verdict = "[green]all passing[/green]" if suite.ok else f"[red]{suite.failed} failing[/red]"
+    console.print(f"{verdict}  ·  {suite.passed}/{len(suite.cases)} passed"
+                  f"  ·  {suite.finished_at or suite.started_at}")
+    console.print(f"[dim]model: {suite.model or '?'}"
+                  + (f" · judge: {suite.judge_model}" if suite.judge_model else "")
+                  + "[/dim]")
+    for c in suite.cases:
+        if not c.passed:
+            console.print(f"  [red]✗[/red] {c.name}  [dim]{c.reason}[/dim]")
+
+
+@eval_app.command("explain")
+def eval_explain(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    case_name: str = typer.Argument(..., metavar="CASE", help="Case name (the md filename stem)."),
+) -> None:
+    """Everything needed to fix one failing case, in one place.
+
+    The prompt, the full response, the tool calls, each assertion's verdict,
+    the judge's reasoning, and the path to the markdown to edit — because
+    "edit the instructions" is the primary fix lever, not "edit the code".
+    """
+    from .evals import cases as cases_lib
+    from .evals import report as report_lib
+
+    hub = hub.resolve()
+    suite = report_lib.latest(hub)
+    if suite is None:
+        console.print("no eval runs yet — try `hubzoid eval run`")
+        raise typer.Exit(1)
+
+    result = next((c for c in suite.cases if c.name == case_name), None)
+    if result is None:
+        known = ", ".join(c.name for c in suite.cases) or "(none)"
+        console.print(f"[red]no case {case_name!r} in the last run[/red]. Ran: {known}")
+        raise typer.Exit(2)
+
+    case = next((c for c in cases_lib.discover(hub, strict=False) if c.name == case_name), None)
+
+    console.print(f"[bold]{result.name}[/bold]  "
+                  + ("[green]PASS[/green]" if result.passed else "[red]FAIL[/red]")
+                  + f"  ·  {result.duration:.1f}s")
+    if case is not None and case.source_path:
+        console.print(f"[dim]case file:  {case.source_path}[/dim]")
+    console.print(f"[dim]hub spec:   {hub / 'AGENTS.md'}[/dim]")
+
+    if case is not None:
+        console.print("\n[cyan]prompt[/cyan]")
+        console.print(case.prompt)
+
+    console.print("\n[cyan]response[/cyan]")
+    console.print(result.response or "[dim](empty)[/dim]")
+
+    console.print("\n[cyan]tools called[/cyan]")
+    console.print(", ".join(result.tool_calls) or "[dim](none)[/dim]")
+
+    console.print("\n[cyan]checks[/cyan]")
+    if result.error:
+        console.print(f"  [red]error:[/red] {result.error}")
+    for c in result.checks:
+        mark = "[green]✓[/green]" if c.passed else "[red]✗[/red]"
+        console.print(f"  {mark} {c.kind}" + (f"  [dim]{c.detail}[/dim]" if c.detail else ""))
+    if result.judge is not None:
+        j = result.judge
+        if j.error:
+            console.print(f"  [yellow]judge error:[/yellow] {j.error}")
+        else:
+            mark = "[green]✓[/green]" if j.passed else "[red]✗[/red]"
+            console.print(f"  {mark} judge {j.score}/10 (needs {j.threshold})  [dim]{j.model}[/dim]")
+            if j.reasoning:
+                console.print(f"      [dim]{j.reasoning}[/dim]")
+
+
+app.add_typer(
+    eval_app,
+    name="eval",
+    help="Run the hub's eval cases; inspect results and regressions.",
+    rich_help_panel="Commands",
+)

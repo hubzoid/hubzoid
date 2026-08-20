@@ -251,6 +251,11 @@ class OpenAIAgentsRuntime:
                                 args = _json.loads(args)
                             except Exception:  # noqa: BLE001
                                 pass
+                        # Record before formatting: `format_call` returns ""
+                        # when SHOW_TOOLS=off, but an eval's expect_tools must
+                        # still see the call.
+                        _request_ctx.record_tool_call(
+                            tool_events.short_name(name), args)
                         line = tool_events.format_call(
                             tool_events.short_name(name), args,
                             mode=self._tool_mode,
