@@ -1,8 +1,13 @@
-"""The free tier — every check that needs no model and therefore costs nothing.
+"""Model-free checks — assertions over an already-finished run.
+
+"Free" here means these checks add no model call of their own. It does NOT mean
+running a case is free: every case always invokes the hub's agent, which is a
+real, paid model call. `--no-judge` skips the extra grading call, so it is
+cheaper, not free.
 
 These run first, on every case, always. The judge (`judge.py`) only runs when
-these pass: there is no point paying a model to grade an answer that already
-failed on a missing keyword or a forbidden tool call.
+they pass: there is no point paying for a second model call to grade an answer
+that already failed on a missing keyword or a forbidden tool call.
 
 Four kinds of check:
 
@@ -128,7 +133,7 @@ def run_free_checks(
     response: str,
     tool_calls: list[str],
 ) -> list[Check]:
-    """Every zero-cost assertion declared on `case`, in table order.
+    """Every model-free assertion declared on `case`, in table order.
 
     `response` must already be `strip_chrome`-ed — the runner does that once
     and reuses the clean text for the judge too.

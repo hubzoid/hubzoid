@@ -172,7 +172,7 @@ you wrote there are enforced without restating them here.
 
 ```
 hubzoid eval run <hub>              # exit code is the CI gate
-hubzoid eval run <hub> --no-judge   # free checks only, no cost
+hubzoid eval run <hub> --no-judge   # skip grading (the agent still runs)
 ```
 
 Full reference: [evals.md](evals.md).

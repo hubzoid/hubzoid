@@ -1689,7 +1689,7 @@ def eval_run(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     tag: str = typer.Option(None, "--tag", help="Only cases carrying this tag."),
     case: str = typer.Option(None, "--case", help="Only cases whose name matches this glob."),
-    no_judge: bool = typer.Option(False, "--no-judge", help="Free tier only — costs nothing."),
+    no_judge: bool = typer.Option(False, "--no-judge", help="Skip the grading call. The agent still runs, so this is cheaper, not free."),
     judge_model: str = typer.Option(None, "--judge-model", help="Model that grades. Default: HUBZOID_EVAL_JUDGE_MODEL, else the hub's own."),
     model: str = typer.Option(None, "--model", help="Override the model under test for this run."),
     compare: bool = typer.Option(False, "--compare", help="Also diff against the previous run."),

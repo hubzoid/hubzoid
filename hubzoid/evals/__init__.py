@@ -1,17 +1,17 @@
 """Hubzoid evals — "is this hub still doing what it is supposed to do?"
 
 One markdown file per case in `<hub>/evals/`, run through the hub's own
-runtime, checked first with zero-cost assertions and then (optionally) graded
+runtime, checked first with model-free assertions and then (optionally) graded
 by a model against the hub's own instructions.
 
     hubzoid eval <hub>                  # everything
-    hubzoid eval <hub> --no-judge       # free tier only, costs nothing
+    hubzoid eval <hub> --no-judge       # skip grading (the agent still runs)
     hubzoid eval <hub> --compare        # what regressed since last run
 
 Layout:
 
     cases.py       the `evals/*.md` format: parse, discover, filter
-    assertions.py  the free tier (substrings, tool calls) — no model, no cost
+    assertions.py  model-free checks (substrings, tool calls) over a finished run
     judge.py       the model tier — grades against AGENTS.md + `## Criteria`
     runner.py      execution against `runtime.build(hub)` — the real hub
     report.py      terminal table, run JSON, `--compare`
