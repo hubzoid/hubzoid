@@ -29,6 +29,7 @@ import base64
 import logging
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -101,14 +102,40 @@ def config(hub_dir: Path) -> tuple[str, str, str] | None:
     return base, public, secret
 
 
+def _timestamp(suite: SuiteResult) -> str:
+    """An ISO-8601 timestamp Langfuse will accept: always carries an offset.
+
+    Langfuse validates against a strict pattern requiring `Z` or `+HH:MM`, and
+    rejects the whole event without one. `now_iso()` produces that today, but
+    a run reloaded from an older JSON file may hold a naive string, so coerce
+    rather than trust the input.
+    """
+    raw = (suite.finished_at or suite.started_at or "").strip()
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        parsed = datetime.now()
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.replace(microsecond=0).isoformat()
+
+
 def _events(hub_dir: Path, suite: SuiteResult, run_name: str) -> list[dict]:
     """Build the ingestion batch: one dataset item + scores per case.
 
     Uses the generic `/api/public/ingestion` batch endpoint rather than the
     Langfuse SDK, so evals add no dependency and work against any self-hosted
     version that speaks the documented ingestion contract.
+
+    **Every score body carries its own `id`.** The docs call it optional, but a
+    score posted without one is accepted with HTTP 201 and then silently never
+    materialises — no error, no row, nothing in the trace. The SDK never hits
+    this because it generates a UUID client-side before sending. The ids here
+    are deterministic (they mirror the envelope id), so re-pushing the same run
+    updates the same scores instead of duplicating them.
     """
     dataset = dataset_name(hub_dir)
+    stamp = _timestamp(suite)
     events: list[dict] = []
 
     for i, case in enumerate(suite.cases):
@@ -116,7 +143,7 @@ def _events(hub_dir: Path, suite: SuiteResult, run_name: str) -> list[dict]:
         events.append({
             "id": f"{trace_id}-trace",
             "type": "trace-create",
-            "timestamp": suite.finished_at or suite.started_at,
+            "timestamp": stamp,
             "body": {
                 "id": trace_id,
                 "name": f"eval/{case.name}",
@@ -141,8 +168,9 @@ def _events(hub_dir: Path, suite: SuiteResult, run_name: str) -> list[dict]:
         events.append({
             "id": f"{trace_id}-score-passed",
             "type": "score-create",
-            "timestamp": suite.finished_at or suite.started_at,
+            "timestamp": stamp,
             "body": {
+                "id": f"{trace_id}-score-passed",
                 "traceId": trace_id, "name": "passed",
                 "value": 1 if case.passed else 0,
                 "dataType": "NUMERIC", "comment": case.reason or None,
@@ -155,8 +183,9 @@ def _events(hub_dir: Path, suite: SuiteResult, run_name: str) -> list[dict]:
             events.append({
                 "id": f"{trace_id}-score-{n}",
                 "type": "score-create",
-                "timestamp": suite.finished_at or suite.started_at,
+                "timestamp": stamp,
                 "body": {
+                    "id": f"{trace_id}-score-{n}",
                     "traceId": trace_id, "name": check.kind,
                     "value": 1 if check.passed else 0,
                     "dataType": "NUMERIC", "comment": check.detail or None,
@@ -167,8 +196,9 @@ def _events(hub_dir: Path, suite: SuiteResult, run_name: str) -> list[dict]:
             events.append({
                 "id": f"{trace_id}-score-judge",
                 "type": "score-create",
-                "timestamp": suite.finished_at or suite.started_at,
+                "timestamp": stamp,
                 "body": {
+                    "id": f"{trace_id}-score-judge",
                     "traceId": trace_id, "name": "judge",
                     "value": case.judge.score, "dataType": "NUMERIC",
                     "comment": case.judge.reasoning or None,
@@ -204,4 +234,36 @@ def push(hub_dir: Path, suite: SuiteResult, *, run_name: str | None = None) -> s
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+    # The ingestion endpoint answers 207 Multi-Status and reports per-event
+    # outcomes in the BODY. Checking only the status code reports success for a
+    # batch that was rejected in full — which is exactly what happened: every
+    # event failed timestamp validation while the CLI printed "5 case(s) → ...".
+    # A push that silently lands nothing is worse than one that fails loudly.
+    errors = _batch_errors(resp)
+    if errors:
+        raise RuntimeError(
+            f"{len(errors)} of {len(events)} event(s) rejected: {errors[0]}")
     return f"{len(suite.cases)} case(s) → {dataset_name(hub_dir)} run {run_name}"
+
+
+def _batch_errors(resp) -> list[str]:
+    """Per-event failures from an ingestion response body. [] when all landed.
+
+    Tolerant of shape drift: a body we cannot parse is treated as "no reported
+    errors" rather than a hard failure, since the status code already passed.
+    """
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001 — best-effort parse; the status already passed
+        return []
+    if not isinstance(body, dict):
+        return []
+    out: list[str] = []
+    for err in body.get("errors") or []:
+        if not isinstance(err, dict):
+            out.append(str(err)[:200])
+            continue
+        detail = err.get("message") or err.get("error") or "rejected"
+        out.append(f"{err.get('id', '?')}: {str(detail)[:160]}")
+    return out

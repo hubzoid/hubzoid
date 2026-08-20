@@ -171,6 +171,10 @@ def test_push_posts_the_batch_with_basic_auth(hub, monkeypatch):
         status_code = 207
         text = ""
 
+        @staticmethod
+        def json():
+            return {"successes": [{"id": "x", "status": 201}], "errors": []}
+
     def fake_post(url, json=None, headers=None, timeout=None):
         seen.update(url=url, json=json, headers=headers)
         return Resp()
@@ -208,3 +212,117 @@ def test_a_langfuse_outage_never_fails_the_suite(hub, monkeypatch):
 
     from hubzoid import cli
     cli._push_to_langfuse(hub, _suite())        # must not raise
+
+
+# ---------------------------------------------------------------------------
+# regressions found pushing to a real Langfuse instance
+# ---------------------------------------------------------------------------
+def test_timestamps_carry_a_utc_offset(hub):
+    """Langfuse validates against a strict ISO-8601 pattern that requires Z or
+    an offset, and rejects every event without one. A naive timestamp silently
+    dropped a whole run."""
+    import re
+    for event in lf._events(hub, _suite(), "run1"):
+        assert re.search(r"(Z|[+-]\d\d:\d\d)$", event["timestamp"]), event["timestamp"]
+
+
+def test_naive_timestamp_from_an_old_record_is_coerced(hub):
+    """Runs written before the fix hold naive strings; pushing one must still
+    produce a valid event rather than being rejected."""
+    suite = _suite()
+    suite.finished_at = "2026-08-20T20:45:06"
+    suite.started_at = ""
+    assert lf._timestamp(suite).endswith(("Z",)) or "+" in lf._timestamp(suite) \
+        or "-" in lf._timestamp(suite)[10:]
+
+
+def test_garbage_timestamp_does_not_raise(hub):
+    suite = _suite()
+    suite.finished_at = suite.started_at = "not a date"
+    assert lf._timestamp(suite)
+
+
+def test_now_iso_is_timezone_aware():
+    from datetime import datetime
+    from hubzoid.evals.results import now_iso
+    assert datetime.fromisoformat(now_iso()).tzinfo is not None
+
+
+def test_a_207_whose_events_all_failed_is_not_success(hub, monkeypatch):
+    """The real bug: ingestion answers 207 with per-event outcomes in the BODY.
+    Checking only the status code printed '5 case(s) → ...' while every single
+    event had been rejected. A push that silently lands nothing is worse than
+    one that fails loudly."""
+    import httpx
+
+    class Resp:
+        status_code = 207
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"successes": [], "errors": [
+                {"id": "eval-run1-refund-trace", "status": 400,
+                 "message": "Invalid request data"}]}
+
+    _configured(monkeypatch)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    with pytest.raises(RuntimeError, match="rejected"):
+        lf.push(hub, _suite())
+
+
+def test_a_207_with_no_errors_is_success(hub, monkeypatch):
+    import httpx
+
+    class Resp:
+        status_code = 207
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"successes": [{"id": "x", "status": 201}], "errors": []}
+
+    _configured(monkeypatch)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    assert "2 case(s)" in lf.push(hub, _suite())
+
+
+def test_an_unparseable_body_is_not_treated_as_failure(hub, monkeypatch):
+    """Shape drift in a future Langfuse version must not break pushes that the
+    status code already said were fine."""
+    import httpx
+
+    class Resp:
+        status_code = 207
+        text = "not json"
+
+        @staticmethod
+        def json():
+            raise ValueError("no json")
+
+    _configured(monkeypatch)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    assert lf.push(hub, _suite())
+
+
+def test_every_score_body_carries_its_own_id(hub):
+    """Regression: a score posted without a body `id` is accepted with HTTP 201
+    and then silently never materialises — no error, no row, nothing on the
+    trace. The docs call the field optional; the SDK just always generates one
+    client-side, so SDK users never hit it. Found against a live Langfuse where
+    5 traces landed and 0 scores did."""
+    scores = [e for e in lf._events(hub, _suite(), "run1") if e["type"] == "score-create"]
+    assert scores
+    for s in scores:
+        assert s["body"].get("id"), s["body"]
+
+
+def test_score_ids_are_unique_and_deterministic(hub):
+    """Deterministic so re-pushing a run updates the same scores rather than
+    duplicating them; unique so two checks of the same kind do not collide."""
+    first = [e["body"]["id"] for e in lf._events(hub, _suite(), "run1")
+             if e["type"] == "score-create"]
+    again = [e["body"]["id"] for e in lf._events(hub, _suite(), "run1")
+             if e["type"] == "score-create"]
+    assert first == again
+    assert len(first) == len(set(first))
