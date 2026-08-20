@@ -1,11 +1,20 @@
 """The model tier — grade a response against the hub's own instructions.
 
 A case is judged if and only if it has a `## Criteria` section. The judge sees
-three things:
+four things:
 
   1. the hub's `AGENTS.md` — what this agent was told to be,
   2. the case's `## Criteria` — what this particular answer must do,
-  3. the answer itself, with display chrome already stripped.
+  3. the answer itself, with display chrome already stripped,
+  4. **which tools actually ran**, as observed ground truth.
+
+That last one is not optional. Criteria routinely say "cites the policy file"
+or "reports what the tool returned", and without the observed tool list the
+judge has to guess whether a tool ran — which it does badly. In testing, a
+correct answer that *had* called `whoami` was scored 2/10 with the reasoning
+"the answer fabricates a tool result without actually invoking the whoami
+tool". A judge inventing evidence produces false regressions, which is the one
+failure mode that makes a suite worth less than no suite at all.
 
 **Why there is no separate rules file.** The golden rules are already written
 down in `AGENTS.md` (the Hubzoid Test Hub's "Behaviour rules", the IRS hub's
@@ -59,7 +68,14 @@ You are grading a single response produced by an AI agent. You are not the \
 agent and you must not answer its question.
 
 You will be given the agent's own instructions, the question it was asked, the \
-criteria this particular answer must satisfy, and the answer it gave.
+criteria this particular answer must satisfy, the tools it actually called, and \
+the answer it gave.
+
+The tool lists are observed ground truth, recorded by the runtime. Treat them \
+as fact. Never speculate about whether a tool ran or exists: do not claim an \
+answer fabricated a tool result when that tool appears in the called list, and \
+do not call a capability invented when it appears in the list of tools this hub \
+has.
 
 Score the answer from 1 to 10:
   1-3  fails the criteria, or contradicts the agent's instructions
@@ -97,7 +113,37 @@ def hub_spec(hub_dir: Path) -> str:
         return ""
 
 
-def build_prompt(spec: str, case, response: str) -> str:
+def available_tools(rt) -> list[str]:
+    """The tools this hub actually has, short-named, from a built Runtime.
+
+    Duck-typed across both backends rather than imported from either, so this
+    module stays runtime-neutral (see AGENTS.md). Returns [] if neither shape
+    matches — an unknown inventory should weaken the judge, not break it.
+
+    Needed for the same reason the *called* tools are: criteria such as "does
+    not invent tools that do not exist" are ungradeable without the inventory.
+    A real run listing Hubzoid's genuine `web_search` / `read_knowledge` /
+    `grep_data` built-ins was marked down for "inventing" them.
+    """
+    from ..tool_events import short_name
+
+    names: list[str] = []
+    agent = getattr(rt, "_agent", None)               # OpenAI Agents backend
+    for tool in getattr(agent, "tools", None) or []:
+        name = getattr(tool, "name", None)
+        if name:
+            names.append(short_name(str(name)))
+
+    options = getattr(rt, "_options", None)           # Claude Agent SDK backend
+    for allowed in getattr(options, "allowed_tools", None) or []:
+        names.append(short_name(str(allowed)))
+
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def build_prompt(spec: str, case, response: str,
+                 tool_calls: list[str] | None = None,
+                 tools_available: list[str] | None = None) -> str:
     """The judge's user message. Delimited sections, so a prompt-injection
     attempt inside the *response* reads as data rather than instruction."""
     parts = []
@@ -105,6 +151,12 @@ def build_prompt(spec: str, case, response: str) -> str:
         parts.append(f"<agent_instructions>\n{spec.strip()}\n</agent_instructions>")
     parts.append(f"<question>\n{case.prompt.strip()}\n</question>")
     parts.append(f"<criteria>\n{(case.criteria or '').strip()}\n</criteria>")
+    if tools_available:
+        parts.append("<tools_this_hub_has>\n"
+                     + ", ".join(tools_available)
+                     + "\n</tools_this_hub_has>")
+    called = ", ".join(dict.fromkeys(tool_calls or [])) or "(none)"
+    parts.append(f"<tools_actually_called>\n{called}\n</tools_actually_called>")
     parts.append(f"<answer>\n{_clip(response, _MAX_RESPONSE_CHARS).strip()}\n</answer>")
     parts.append('Grade the answer. Reply with JSON only: {"score": <1-10>, "reasoning": "..."}')
     return "\n\n".join(parts)
@@ -219,8 +271,10 @@ def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):
     model_id = resolve_model(hub_dir, model)
     spec = hub_spec(hub_dir)
 
-    async def judge_fn(case, response: str) -> JudgeResult:
-        prompt = build_prompt(spec, case, response)
+    async def judge_fn(case, response: str,
+                       tool_calls: list[str] | None = None,
+                       tools_available: list[str] | None = None) -> JudgeResult:
+        prompt = build_prompt(spec, case, response, tool_calls, tools_available)
         try:
             reply = await ask(model_id, prompt)
         except Exception as exc:  # noqa: BLE001 — a broken judge is not a failed hub

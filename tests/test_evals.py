@@ -354,7 +354,7 @@ def test_judge_is_skipped_when_free_checks_fail(tmp_path, patched_build):
     patched_build(FakeRuntime(replies={"say pong": "hello"}))
     called = []
 
-    async def judge(case, response):
+    async def judge(case, response, tool_calls=None, tools_available=None):
         called.append(case.name)
         return JudgeResult(score=10, threshold=7)
 
@@ -367,7 +367,7 @@ def test_judge_runs_when_free_checks_pass(tmp_path, patched_build):
     hub = _hub(tmp_path, {"j.md": "## Prompt\nhi\n\n## Criteria\nbe polite\n"})
     patched_build(FakeRuntime(replies={"hi": "hello there"}))
 
-    async def judge(case, response):
+    async def judge(case, response, tool_calls=None, tools_available=None):
         assert response == "hello there"
         return JudgeResult(score=9, threshold=7, model="judge-model")
 
@@ -382,7 +382,7 @@ def test_judge_below_threshold_fails_the_case(tmp_path, patched_build):
     )})
     patched_build(FakeRuntime(replies={"hi": "meh"}))
 
-    async def judge(case, response):
+    async def judge(case, response, tool_calls=None, tools_available=None):
         return JudgeResult(score=6, threshold=case.threshold)
 
     suite = runner.run_suite(hub, cases.discover(hub), judge_fn=judge)
@@ -396,7 +396,7 @@ def test_unjudged_case_ignores_the_judge(tmp_path, patched_build):
     hub = _hub(tmp_path, {"n.md": "---\ncontains: [hi]\n---\nsay hi"})
     patched_build(FakeRuntime(replies={"say hi": "hi"}))
 
-    async def judge(case, response):  # pragma: no cover — must not run
+    async def judge(case, response, tool_calls=None, tools_available=None):  # pragma: no cover — must not run
         raise AssertionError("judge ran on an unjudged case")
 
     assert runner.run_suite(hub, cases.discover(hub), judge_fn=judge).ok
