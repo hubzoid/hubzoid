@@ -207,12 +207,15 @@ async def ask_model(model_id: str, prompt: str) -> str:
     return await _ask_litellm(model_id, prompt)
 
 
-def make_judge(hub_dir: Path, *, model: str | None = None, ask=ask_model):
+def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):
     """Build the `judge_fn(case, response) -> JudgeResult` the runner injects.
 
     `ask` is swappable so the tests can exercise prompt assembly, verdict
-    parsing and error handling without a model or a network.
+    parsing and error handling without a model or a network. It resolves here
+    rather than as a default argument so that patching the module attribute
+    also works — a default would bind `ask_model` at import time.
     """
+    ask = ask or ask_model
     model_id = resolve_model(hub_dir, model)
     spec = hub_spec(hub_dir)
 
