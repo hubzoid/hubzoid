@@ -152,10 +152,15 @@ Your hub is one folder. Six things to know.
    "every Monday, fold last week's `raw_data/` commits into `knowledge/`".
    Works on any backend (claude-local or OpenAI/LiteLLM). See
    [docs/schedule.md](docs/schedule.md).
+9. **Evals.** One markdown file per behavioural check under `evals/` — a
+   prompt, plus what the answer must do. Free checks (substrings, which tools
+   were called) cost nothing; add a `## Criteria` section and a model grades
+   the answer against your own `AGENTS.md`. Run them by hand, from CI (the
+   exit code is the gate), or on a cron. See [docs/evals.md](docs/evals.md).
 
 Folder names are case- and plural-flexible. `skills/`, `Skills/`, and
 `skill/` all work. Same for `agents/`, `knowledge/`, `tools_local/`,
-`connectors/`, `raw_data/`, `schedule/`. Restart with the same command.
+`connectors/`, `raw_data/`, `schedule/`, `evals/`. Restart with the same command.
 Changes are picked up on the next start.
 
 ## Multi-hub agents repo
@@ -421,6 +426,18 @@ hubzoid schedule run PATH TASK   Fire one task NOW, in-process — for testing a
 hubzoid schedule status [PATH]   Show recorded fire history per task.
                                    Tasks fire automatically inside `hubzoid run`;
                                    see docs/schedule.md.
+hubzoid eval run [PATH]          Run the hub's evals/*.md cases against the hub's
+                                   own agent. Exit 0 = all passed, so the same
+                                   command is a CI gate. See docs/evals.md.
+  --tag TEXT                       Only cases carrying this tag.
+  --case TEXT                      Only cases whose name matches this glob.
+  --no-judge                       Free checks only — no model, no cost.
+  --judge-model TEXT               Model that grades. Pin it for stable scores.
+  --compare                        Also diff against the previous run.
+hubzoid eval list [PATH]         List cases: what each checks, which are scheduled.
+hubzoid eval status [PATH]       Last run, pass rate, and what is failing now.
+hubzoid eval explain PATH CASE   Prompt, response, tool calls, verdicts and the
+                                   files to edit — everything to fix one case.
 hubzoid doctor [PATH]            Validate hub config and report issues.
 hubzoid audit [PATH]             Show the access log: who called which restricted
                                    tool, allowed or denied. See docs/access-management.md.
