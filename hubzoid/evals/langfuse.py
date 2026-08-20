@@ -244,7 +244,39 @@ def push(hub_dir: Path, suite: SuiteResult, *, run_name: str | None = None) -> s
     if errors:
         raise RuntimeError(
             f"{len(errors)} of {len(events)} event(s) rejected: {errors[0]}")
-    return f"{len(suite.cases)} case(s) → {dataset_name(hub_dir)} run {run_name}"
+
+    link = _trace_url(base, auth, run_name)
+    return f"{len(suite.cases)} case(s) → {link or dataset_name(hub_dir)}"
+
+
+def _trace_url(base: str, auth: str, run_name: str) -> str | None:
+    """A URL that actually opens this run in the Langfuse UI.
+
+    Langfuse UI routes are project-scoped (`/project/<id>/traces`), and the
+    project id is not derivable from the OTLP endpoint — a bare
+    `<host>/traces?tags=...` 404s. So resolve it once per push and hand the
+    operator a link they can click, rather than a dataset name they then have
+    to go hunting for.
+
+    Best-effort: a failure here must not fail a push that already succeeded.
+    """
+    try:
+        import httpx
+
+        resp = httpx.get(f"{base}/api/public/projects",
+                         headers={"Authorization": f"Basic {auth}"}, timeout=_TIMEOUT)
+        if resp.status_code >= 400:
+            return None
+        projects = resp.json().get("data") or []
+        if not projects:
+            return None
+        pid = projects[0].get("id")
+        if not pid:
+            return None
+        return f"{base}/project/{pid}/traces?tags={EVAL_TAG}"
+    except Exception as exc:  # noqa: BLE001 — a link is a nicety, never a failure
+        log.debug("could not resolve the langfuse project url: %s", exc)
+        return None
 
 
 def _batch_errors(resp) -> list[str]:
