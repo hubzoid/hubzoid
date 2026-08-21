@@ -125,3 +125,98 @@ def test_function_receives_surface_and_handle(tmp_path):
     """)
     resolve = load_resolver(tmp_path)
     assert resolve("telegram", "123")["email"] == "telegram-123@isha.org"
+
+
+# ---------------------------------------------------------------------------
+# Email-keyed lookup, reload-on-edit, and the .py opt-in (unify-access, 0.8.1)
+# ---------------------------------------------------------------------------
+def test_table_resolves_same_identity_by_phone_and_email(tmp_path):
+    _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator;staff
+    """)
+    r = load_resolver(tmp_path)
+    assert r("whatsapp", "919800000001")["email"] == "ravi@isha.org"
+    # Same person, reached by the OWUI email, resolves the same groups.
+    assert sorted(r.groups_for_email("ravi@isha.org")) == ["coordinator", "staff"]
+
+
+def test_groups_for_email_is_case_insensitive(tmp_path):
+    _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,Ravi@Isha.org,coordinator
+    """)
+    r = load_resolver(tmp_path)
+    assert r.groups_for_email("  RAVI@isha.ORG ") == ["coordinator"]
+
+
+def test_unknown_email_returns_empty_not_none(tmp_path):
+    _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator
+    """)
+    r = load_resolver(tmp_path)
+    assert r.groups_for_email("stranger@isha.org") == []
+
+
+def test_duplicate_email_across_rows_unions_groups(tmp_path):
+    _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator
+        919800000002,ravi@isha.org,staff
+    """)
+    r = load_resolver(tmp_path)
+    assert sorted(r.groups_for_email("ravi@isha.org")) == ["coordinator", "staff"]
+
+
+def test_csv_reloads_on_edit_without_restart(tmp_path):
+    p = _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator
+    """)
+    r = load_resolver(tmp_path)
+    assert r.groups_for_email("ravi@isha.org") == ["coordinator"]
+    # Operator edits the roster in place; next lookup must reflect it.
+    p.write_text(textwrap.dedent("""\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator;auditor
+    """))
+    assert sorted(r.groups_for_email("ravi@isha.org")) == ["auditor", "coordinator"]
+
+
+def test_corrupt_csv_denies_not_last_good(tmp_path):
+    p = _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,ravi@isha.org,coordinator
+    """)
+    r = load_resolver(tmp_path)
+    assert r.groups_for_email("ravi@isha.org") == ["coordinator"]
+    # A half-saved / unreadable file must fail closed (deny), never keep the
+    # old grant alive.
+    p.unlink()
+    p.mkdir()  # replace the file with a directory -> open() raises OSError
+    assert r.groups_for_email("ravi@isha.org") == []
+
+
+def test_py_backing_ignoring_args_is_never_handed_an_email(tmp_path):
+    # Legacy access.py that defines only resolve() and ignores its arguments:
+    # it must NOT leak its fixed group to every OWUI email.
+    _write(tmp_path, "identity/access.py", """\
+        def resolve(surface, handle):
+            return {"email": "fixed@isha.org", "groups": ["coordinator"]}
+    """)
+    r = load_resolver(tmp_path)
+    assert r("whatsapp", "919800000001")["groups"] == ["coordinator"]  # phone path unchanged
+    assert r.groups_for_email("anyone@isha.org") == []  # email path contributes nothing
+
+
+def test_py_backing_opts_in_with_groups_for_email(tmp_path):
+    _write(tmp_path, "identity/access.py", """\
+        def resolve(surface, handle):
+            return None
+        def groups_for_email(email):
+            return ["coordinator"] if email == "ravi@isha.org" else []
+    """)
+    r = load_resolver(tmp_path)
+    assert r.groups_for_email("ravi@isha.org") == ["coordinator"]
+    assert r.groups_for_email("other@isha.org") == []

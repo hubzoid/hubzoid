@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from . import audit
 from . import owui_groups
+from .groups import effective_groups
 from .guard import apply, guard_tool
 from .identity import (
     ANONYMOUS,
@@ -38,6 +39,7 @@ __all__ = [
     "apply",
     "audit",
     "current_identity",
+    "effective_groups",
     "guard_tool",
     "identity_scope",
     "is_allowed",

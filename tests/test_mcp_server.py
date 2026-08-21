@@ -501,3 +501,49 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
     r_alice, r_bob = asyncio.run(go())
     assert "alice@x.io|['clickup']" in _result(r_alice)["content"][0]["text"]
     assert "bob@x.io|[]" in _result(r_bob)["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Roster (identity/access.csv) over MCP (unify-access, 0.8.1)
+# ---------------------------------------------------------------------------
+def _add_roster(hub: Path, email: str, groups: str) -> None:
+    (hub / "identity").mkdir(exist_ok=True)
+    (hub / "identity" / "access.csv").write_text(
+        "phone,email,groups\n" f"919800000001,{email},{groups}\n"
+    )
+
+
+def test_roster_grants_restricted_tool_over_mcp(tmp_path, monkeypatch):
+    """A coordinator granted 'clickup' in the roster (not in any OWUI group)
+    can use the restricted tool over MCP — the WhatsApp/OWUI parity fix."""
+    from hubzoid.access.resolver import reset_roster_cache
+
+    reset_roster_cache()
+    hub = _mk_hub(tmp_path)
+    _add_roster(hub, "alice@example.com", "clickup")
+    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # no OWUI groups at all
+    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    result = _result(_call(
+        app, _rpc("tools/call", {"name": "clickup_echo", "arguments": {"text": "hi"}})
+    ))
+    assert "clickup says: hi" in str(result)
+
+
+def test_roster_cannot_open_mcp_front_door(tmp_path, monkeypatch):
+    """MCP_ACCESS_GROUP is an OWUI-admin boundary: a roster entry naming that
+    group must NOT admit a caller whose OWUI membership lacks it."""
+    from hubzoid.access.resolver import reset_roster_cache
+
+    reset_roster_cache()
+    hub = _mk_hub(tmp_path)
+    _add_roster(hub, "alice@example.com", "irs")  # roster claims the door group
+    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # OWUI does NOT grant irs
+    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "irs")
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    assert _call(app, _rpc("tools/list")).status_code == 401

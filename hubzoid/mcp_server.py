@@ -170,7 +170,12 @@ def _mcp_identity(hub_dir: Path) -> "access.Identity":
             # with our own verifier; make it visible if it ever does.
             log.warning("mcp: authenticated request resolved to anonymous identity")
         return access.ANONYMOUS
-    groups = access.owui_groups.resolve_groups(hub_dir, email)
+    # Union OWUI groups with the hub roster (keyed by the same email), so a
+    # coordinator granted a permission in identity/access.* gets it over MCP
+    # too. This governs RESTRICTED-TOOL permissions only. The MCP front door
+    # (MCP_ACCESS_GROUP, in _build_verifier) stays OWUI-only on purpose: the
+    # roster must not be able to open the gateway tenant boundary.
+    groups = access.effective_groups(hub_dir, email=email, surface=MCP_SURFACE)
     return access.Identity.make(user=email, groups=groups, surface=MCP_SURFACE)
 
 

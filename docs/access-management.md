@@ -67,14 +67,27 @@ that email to the user's groups via OWUI's `group_member` table, read-only and
 fail-closed.)
 
 **Other fronts, or a custom identity source (advanced).** The bridge also accepts
-explicit headers from a trusted reverse proxy, which override the Open WebUI
-lookup:
+explicit headers from a trusted reverse proxy. Groups are **unioned**, not
+overridden: a caller carries their OWUI groups, their roster groups (see below),
+and any header groups together.
 
 | Header | Meaning |
 |---|---|
 | `X-Hubzoid-User` | the user id (display + audit) |
-| `X-Hubzoid-Groups` | comma-separated group names; overrides the OWUI lookup |
+| `X-Hubzoid-Groups` | comma-separated group names; unioned onto the OWUI + roster groups |
 | `X-Hubzoid-Surface` | the front the request came from (default `owui`) |
+
+**Roster parity across surfaces.** A hub's `identity/access.csv` (or `access.py`)
+is now consulted on the Open WebUI and MCP paths too, keyed by the logged-in
+email, not only on WhatsApp/Telegram. So a coordinator granted a group in the
+roster gets the matching permission on every surface, with no duplicate OWUI
+group to maintain. This is **additive**: an email absent from the roster keeps
+exactly its OWUI groups (nobody is locked out), and the roster can grant
+restricted-tool permissions but **cannot** open the MCP front door
+(`MCP_ACCESS_GROUP`), which stays OWUI-admin-only. Editing the CSV takes effect
+on the next request — no restart. A live `access.py` backing must define
+`groups_for_email(email)` to participate on these surfaces; a legacy file with
+only `resolve(surface, handle)` is never handed an email.
 
 Use these when you terminate auth at a proxy (see [auth.md](auth.md) Mode F) or
 front the hub with something other than Open WebUI. They are trusted because
