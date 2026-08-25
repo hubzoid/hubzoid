@@ -1,40 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 360" width="1000" height="360" role="img" aria-label="Any chat surface to your Hubzoid agent to any SDK">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 430" width="1040" height="430" role="img" aria-label="Chat surfaces through the Hubzoid hub to an agent runtime">
   <style> text{font-family:ui-monospace, SFMono-Regular, Menlo, 'JetBrains Mono', monospace;} </style>
-  <text x="119.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#6B6B70">SURFACES</text>
-  <text x="511.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#6B6B70">HUBZOID</text>
-  <text x="887.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#6B6B70">ENGINE</text>
-  <path d="M198 66 C 268 66, 351 180, 421 180" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M198 122 C 268 122, 351 180, 421 180" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M198 178 C 268 178, 351 180, 421 180" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M198 234 C 268 234, 351 180, 421 180" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M198 290 C 268 290, 351 180, 421 180" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M601 180 C 671 180, 732 66, 802 66" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M601 180 C 671 180, 732 122, 802 122" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M601 180 C 671 180, 732 178, 802 178" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <path d="M601 180 C 671 180, 732 234, 802 234" fill="none" stroke="#6B6B70" stroke-width="1.25"/>
-  <rect x="40" y="44" width="158" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="119.0" y="71" text-anchor="middle" font-size="15" fill="#0B0B0C">Open WebUI</text>
-  <rect x="40" y="100" width="158" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="119.0" y="127" text-anchor="middle" font-size="15" fill="#0B0B0C">Slack</text>
-  <rect x="40" y="156" width="158" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="119.0" y="183" text-anchor="middle" font-size="15" fill="#0B0B0C">WhatsApp</text>
-  <rect x="40" y="212" width="158" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="119.0" y="239" text-anchor="middle" font-size="15" fill="#0B0B0C">Telegram</text>
-  <rect x="40" y="268" width="158" height="44" rx="4" fill="none" stroke="#B9B9BC" stroke-width="1.5" stroke-dasharray="4 4"/>
-  <text x="119.0" y="295" text-anchor="middle" font-size="15" fill="#B9B9BC">+ more soon</text>
-  <rect x="802" y="44" width="170" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="887.0" y="71" text-anchor="middle" font-size="14" fill="#0B0B0C">Claude Agent SDK</text>
-  <rect x="802" y="100" width="170" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="887.0" y="127" text-anchor="middle" font-size="14" fill="#0B0B0C">OpenAI Agents SDK</text>
-  <rect x="802" y="156" width="170" height="44" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
-  <text x="887.0" y="183" text-anchor="middle" font-size="14" fill="#0B0B0C">LiteLLM · local</text>
-  <rect x="802" y="212" width="170" height="44" rx="4" fill="none" stroke="#B9B9BC" stroke-width="1.5" stroke-dasharray="4 4"/>
-  <text x="887.0" y="239" text-anchor="middle" font-size="14" fill="#B9B9BC">+ more soon</text>
-  <rect x="421" y="96" width="180" height="168" rx="6" fill="none" stroke="#E5572A" stroke-width="2"/>
-  <text x="511.0" y="158" text-anchor="middle" font-size="26" font-weight="700" fill="#0B0B0C">Hubzoid</text>
-  <line x1="449" y1="178" x2="573" y2="178" stroke="#E7E6E2" stroke-width="1"/>
-  <text x="511.0" y="202" text-anchor="middle" font-size="12" letter-spacing="0.6" fill="#6B6B70">AGENTS.md</text>
-  <text x="511.0" y="222" text-anchor="middle" font-size="12" letter-spacing="0.6" fill="#6B6B70">skills · knowledge</text>
-  <path d="M420 175.0 L428 180.0 L420 185.0 Z" fill="#E5572A"/>
-  <path d="M600 175.0 L608 180.0 L600 185.0 Z" fill="#E5572A"/>
+  <text x="122.0" y="34" text-anchor="middle" font-size="12" letter-spacing="1.6" fill="#6B6B70">SURFACES</text>
+  <text x="520.0" y="34" text-anchor="middle" font-size="12" letter-spacing="1.6" fill="#6B6B70">THE HUB</text>
+  <text x="924.0" y="34" text-anchor="middle" font-size="12" letter-spacing="1.6" fill="#6B6B70">RUNTIME</text>
+  <path d="M210 85 C 290 85, 312 214, 392 214" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M210 144 C 290 144, 312 214, 392 214" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M210 203 C 290 203, 312 214, 392 214" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M210 262 C 290 262, 312 214, 392 214" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M210 321 C 290 321, 312 214, 392 214" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M648 214 C 728 214, 758 85, 838 85" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M648 214 C 728 214, 758 144, 838 144" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <path d="M648 214 C 728 214, 758 203, 838 203" fill="none" stroke="#6B6B70" stroke-width="1.2"/>
+  <rect x="34" y="62" width="176" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <g transform="translate(50,74)"><rect x="2" y="3" width="18" height="12.5" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.6"/><path d="M6.5 15.5 L6.5 20 L11 15.5" fill="none" stroke="#0B0B0C" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7.5" cy="9.2" r="1.15" fill="#0B0B0C"/><circle cx="11" cy="9.2" r="1.15" fill="#0B0B0C"/><circle cx="14.5" cy="9.2" r="1.15" fill="#0B0B0C"/></g>
+  <text x="84" y="90" font-size="15" fill="#0B0B0C">Open WebUI</text>
+  <rect x="34" y="121" width="176" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <g transform="translate(50,133)"><g stroke="#0B0B0C" stroke-width="1.9" stroke-linecap="round"><line x1="8" y1="4" x2="8" y2="18"/><line x1="13" y1="4" x2="13" y2="18"/><line x1="4" y1="8" x2="18" y2="8"/><line x1="4" y1="13" x2="18" y2="13"/></g></g>
+  <text x="84" y="149" font-size="15" fill="#0B0B0C">Slack</text>
+  <rect x="34" y="180" width="176" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <g transform="translate(50,192)"><circle cx="11" cy="11" r="8.6" fill="none" stroke="#0B0B0C" stroke-width="1.6"/><path d="M8 7.4 C7.4 8.2 7.7 10.6 9.2 12.2 C10.8 13.8 13.1 14.1 13.9 13.5 C14.3 13.2 14.4 12.6 14.1 12.2 L12.7 11.4 L11.7 12.1 C11 11.7 10.3 11 9.9 10.3 L10.6 9.3 L9.8 7.9 C9.4 7.6 8.4 7 8 7.4 Z" fill="#0B0B0C"/></g>
+  <text x="84" y="208" font-size="15" fill="#0B0B0C">WhatsApp</text>
+  <rect x="34" y="239" width="176" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <g transform="translate(50,251)"><path d="M20.5 3.2 L2.4 10.8 L8.6 12.7 L10.7 18.8 L13.4 14.6 L17.3 17.7 Z" fill="#0B0B0C"/><path d="M8.6 12.7 L16.2 6.6" fill="none" stroke="#0B0B0C" stroke-width="0" /><path d="M8.6 12.7 L15.5 7.2" stroke="#00000000"/></g>
+  <text x="84" y="267" font-size="15" fill="#0B0B0C">Telegram</text>
+  <rect x="34" y="298" width="176" height="46" rx="4" fill="none" stroke="#B9B9BC" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <g transform="translate(50,310)"><g stroke="#B9B9BC" stroke-width="1.7" stroke-linecap="round"><line x1="11" y1="5" x2="11" y2="17"/><line x1="5" y1="11" x2="17" y2="11"/></g></g>
+  <text x="84" y="326" font-size="15" fill="#B9B9BC">more soon</text>
+  <rect x="838" y="62" width="172" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <text x="924.0" y="90" text-anchor="middle" font-size="14" fill="#0B0B0C">Claude Agent SDK</text>
+  <rect x="838" y="121" width="172" height="46" rx="4" fill="none" stroke="#0B0B0C" stroke-width="1.5"/>
+  <text x="924.0" y="149" text-anchor="middle" font-size="14" fill="#0B0B0C">OpenAI Agents SDK</text>
+  <rect x="838" y="180" width="172" height="46" rx="4" fill="none" stroke="#B9B9BC" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="924.0" y="208" text-anchor="middle" font-size="14" fill="#B9B9BC">+ more soon</text>
+  <text x="924.0" y="261" text-anchor="middle" font-size="11" fill="#6B6B70">models via LiteLLM</text>
+  <text x="924.0" y="277" text-anchor="middle" font-size="11" fill="#6B6B70">OpenRouter · OpenAI</text>
+  <text x="924.0" y="293" text-anchor="middle" font-size="11" fill="#6B6B70">Anthropic · local</text>
+  <rect x="392" y="44" width="256" height="340" rx="6" fill="#FFFFFF" stroke="#E5572A" stroke-width="2"/>
+  <text x="520.0" y="96" text-anchor="middle" font-size="27" font-weight="700" fill="#0B0B0C">Hubzoid</text>
+  <text x="520.0" y="118" text-anchor="middle" font-size="12" fill="#6B6B70">the hub · one folder of markdown</text>
+  <line x1="418" y1="136" x2="622" y2="136" stroke="#E7E6E2" stroke-width="1"/>
+  <rect x="414" y="164" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="463" y="183" text-anchor="middle" font-size="12.5" fill="#0B0B0C">AGENTS.md</text>
+  <rect x="526" y="164" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="575" y="183" text-anchor="middle" font-size="12.5" fill="#6B6B70">agents</text>
+  <rect x="414" y="204" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="463" y="223" text-anchor="middle" font-size="12.5" fill="#6B6B70">skills</text>
+  <rect x="526" y="204" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="575" y="223" text-anchor="middle" font-size="12.5" fill="#6B6B70">knowledge</text>
+  <rect x="414" y="244" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="463" y="263" text-anchor="middle" font-size="12.5" fill="#6B6B70">tools</text>
+  <rect x="526" y="244" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="575" y="263" text-anchor="middle" font-size="12.5" fill="#6B6B70">connectors</text>
+  <rect x="414" y="284" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="463" y="303" text-anchor="middle" font-size="12.5" fill="#6B6B70">schedule</text>
+  <rect x="526" y="284" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="575" y="303" text-anchor="middle" font-size="12.5" fill="#6B6B70">evals</text>
+  <rect x="414" y="324" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="463" y="343" text-anchor="middle" font-size="12.5" fill="#6B6B70">auth · access</text>
+  <path d="M391 209 L399 214 L391 219 Z" fill="#E5572A"/>
+  <path d="M647 209 L655 214 L647 219 Z" fill="#E5572A"/>
 </svg>

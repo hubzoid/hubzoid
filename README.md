@@ -20,7 +20,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/hero-map-dark.svg">
-    <img alt="Open WebUI, Slack, WhatsApp, Telegram and more, through Hubzoid, onto the Claude Agent SDK, OpenAI Agents SDK, LiteLLM and more" src="assets/hero-map-light.svg" width="900">
+    <img alt="Chat surfaces (Open WebUI, Slack, WhatsApp, Telegram) through the Hubzoid hub (AGENTS.md, agents, skills, knowledge, tools, connectors, schedule, evals, auth) onto an agent runtime (Claude Agent SDK or OpenAI Agents SDK), models routed via LiteLLM" src="assets/hero-map-light.svg" width="920">
   </picture>
 </p>
 
