@@ -56,7 +56,9 @@
   <rect x="526" y="284" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
   <text x="575" y="303" text-anchor="middle" font-size="12.5" fill="#6B6B70">evals</text>
   <rect x="414" y="324" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
-  <text x="463" y="343" text-anchor="middle" font-size="12.5" fill="#6B6B70">auth · access</text>
+  <text x="463" y="343" text-anchor="middle" font-size="12.5" fill="#6B6B70">auth</text>
+  <rect x="526" y="324" width="98" height="28" rx="4" fill="none" stroke="#E7E6E2" stroke-width="1"/>
+  <text x="575" y="343" text-anchor="middle" font-size="12.5" fill="#6B6B70">access</text>
   <path d="M391 209 L399 214 L391 219 Z" fill="#E5572A"/>
   <path d="M647 209 L655 214 L647 219 Z" fill="#E5572A"/>
 </svg>
