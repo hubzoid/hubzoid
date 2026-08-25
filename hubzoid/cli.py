@@ -1116,8 +1116,18 @@ def schedule_list(
             flags.append(f"model: {t.model}")
         if t.commit:
             flags.append(f"commit: {', '.join(t.commit)}" + (" + push" if t.push else ""))
+        # Webhook-triggered tasks have no cron/next-fire — they show their trigger
+        # and fire when an event lands.
+        when = f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule
         if not t.enabled:
-            console.print(f"[dim]⏸ {t.name}  ({t.schedule})  disabled[/dim]")
+            console.print(f"[dim]⏸ {t.name}  ({when})  disabled[/dim]")
+            continue
+        if t.is_webhook:
+            console.print(
+                f"[green]●[/green] [bold]{t.name}[/bold]  on webhook '{t.on_webhook}'"
+                f"  →  fires on event  ·  {last_s}"
+                + (f"  ·  {'; '.join(flags)}" if flags else "")
+            )
             continue
         console.print(
             f"[green]●[/green] [bold]{t.name}[/bold]  {t.schedule} ({sch.cron_to_human(t.cron)})"

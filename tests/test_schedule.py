@@ -1068,3 +1068,133 @@ def test_script_commit_crash_finalizes_and_never_raises(tmp_path, monkeypatch):
     assert st.get("last_result") == "error"        # not stuck at "running"
     events = [json.loads(l) for l in res.run_log.read_text().splitlines()]
     assert any(e.get("event") == "run_end" for e in events)   # rlog finalized
+
+
+# ===========================================================================
+# webhook-triggered tasks (on_webhook:)
+# ===========================================================================
+def _drop_event(hub: Path, name: str, payload: dict) -> Path:
+    """Simulate the inbound webhook surface landing one event in the inbox."""
+    from hubzoid.inbound.webhook import make_file_sink
+    make_file_sink(hub, name)({"surface": "webhook", "name": name, "body": payload})
+    from hubzoid.inbound.webhook import pending_events
+    return pending_events(hub, name)[-1]
+
+
+def test_parse_on_webhook_default_and_named(tmp_path):
+    _write_task(tmp_path, "alerts", "on_webhook: squadcast", body="Handle it.")
+    _write_task(tmp_path, "deflt", "on_webhook: true", body="Handle it.")
+    tasks, problems = sch.load_tasks(tmp_path)
+    assert problems == []
+    by = {t.name: t for t in tasks}
+    assert by["alerts"].on_webhook == "squadcast" and by["alerts"].is_webhook
+    assert by["alerts"].cron is None and by["alerts"].schedule == ""
+    assert by["deflt"].on_webhook == "webhook"          # `true` -> default name
+
+
+def test_parse_on_webhook_slugifies_name(tmp_path):
+    _write_task(tmp_path, "a", 'on_webhook: "Squad Cast!"', body="x")
+    tasks, _ = sch.load_tasks(tmp_path)
+    assert tasks[0].on_webhook == "squad-cast"
+
+
+def test_parse_rejects_both_triggers(tmp_path):
+    _write_task(tmp_path, "bad", 'schedule: "0 3 * * *"\non_webhook: squadcast', body="x")
+    _tasks, problems = sch.load_tasks(tmp_path)
+    assert any("not both" in p for p in problems)
+
+
+def test_parse_rejects_no_trigger(tmp_path):
+    _write_task(tmp_path, "bad", "commit: knowledge/", body="x")
+    _tasks, problems = sch.load_tasks(tmp_path)
+    assert any("missing trigger" in p for p in problems)
+
+
+def test_webhook_task_due_only_when_event_pending(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+    task = {t.name: t for t in sch.load_tasks(hub)[0]}["alerts"]
+    state = sch.ScheduleState(hub)
+    assert sch.is_due(task, state, hub_dir=hub) is False        # empty inbox
+    _drop_event(hub, "squadcast", {"event": "down"})
+    assert sch.is_due(task, state, hub_dir=hub) is True         # event waiting
+
+
+def test_scheduler_fires_on_event_then_archives(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+    fired = []
+
+    async def fake_run(hub_dir, task):
+        fired.append(task.name)
+        return runner.RunResult(task=task.name, result="done", rounds=1)
+
+    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+
+    # No event -> not due, nothing fires.
+    assert asyncio.run(s.check_once()) == []
+    assert fired == []
+
+    # Event lands -> fires once; the handled event is archived out of the inbox.
+    _drop_event(hub, "squadcast", {"event": "down"})
+    assert asyncio.run(s.check_once()) == ["alerts"]
+    from hubzoid.inbound.webhook import pending_events, inbox_dir
+    assert pending_events(hub, "squadcast") == []              # drained
+    assert (inbox_dir(hub, "squadcast") / ".processed").is_dir()
+    assert fired == ["alerts"]                                 # fired exactly once
+
+
+def test_scheduler_does_not_refire_drained_inbox(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+
+    async def fake_run(hub_dir, task):
+        return runner.RunResult(task=task.name, result="done", rounds=1)
+
+    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+    _drop_event(hub, "squadcast", {"event": "down"})
+    assert asyncio.run(s.check_once()) == ["alerts"]           # handled
+    assert asyncio.run(s.check_once()) == []                   # inbox drained -> quiet
+
+
+def test_scheduler_failed_run_keeps_event_for_retry(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+    outcomes = ["error", "done"]
+
+    async def fake_run(hub_dir, task):
+        return runner.RunResult(task=task.name, result=outcomes.pop(0), rounds=1)
+
+    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+    ev = _drop_event(hub, "squadcast", {"event": "down"})
+    from hubzoid.inbound.webhook import pending_events
+    assert asyncio.run(s.check_once()) == ["alerts"]           # run #1 errored
+    assert pending_events(hub, "squadcast") == [ev]            # NOT archived -> stays due
+    assert asyncio.run(s.check_once()) == ["alerts"]           # run #2 retries, succeeds
+    assert pending_events(hub, "squadcast") == []              # now archived
+
+
+def test_scheduler_midrun_event_stays_pending(tmp_path):
+    """An event that lands DURING a run isn't archived as handled by that run."""
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+    ev1 = _drop_event(hub, "squadcast", {"n": 1})
+    late = {}
+
+    async def fake_run(hub_dir, task):
+        late["ev2"] = _drop_event(hub, "squadcast", {"n": 2})   # arrives mid-run
+        return runner.RunResult(task=task.name, result="done", rounds=1)
+
+    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+    assert asyncio.run(s.check_once()) == ["alerts"]
+    from hubzoid.inbound.webhook import pending_events
+    # ev1 archived (claimed), ev2 still pending (landed after the claim).
+    assert pending_events(hub, "squadcast") == [late["ev2"]]
+
+
+def test_cli_list_shows_webhook_trigger(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
+    res = CliRunner().invoke(cli.app, ["schedule", "list", str(hub)])
+    assert res.exit_code == 0, res.output
+    assert "on webhook 'squadcast'" in res.output
