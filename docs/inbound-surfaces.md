@@ -73,8 +73,7 @@ is the allowlist.
 
 **Group merge:** an identity's groups are the **union** of its Open WebUI groups
 and the resolver's groups. Keep groups in OWUI (table `phone,email` only) *and/or*
-in the table. Identity resolution is a **Hubzoid Enterprise** feature (free for
-dev; a notice logs when unlicensed — it never blocks).
+in the table. Identity resolution is MIT licensed like the rest of Hubzoid.
 
 ## Access control
 

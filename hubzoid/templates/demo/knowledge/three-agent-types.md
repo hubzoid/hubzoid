@@ -40,8 +40,8 @@ digests. The work happens whether you log in or not. Background agents
 typically chain multiple steps, fetch from external systems, and deliver
 output by email or chat.
 
-Lives in email, Telegram digest, dashboards. In Hubzoid, background
-agents run on WaveAssist Cloud (the sister infrastructure).
+Lives in email, Telegram digests, and dashboards. In Hubzoid, background
+agents run through the built-in scheduler.
 
 ## How a real deployment uses all three
 

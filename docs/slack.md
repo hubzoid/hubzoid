@@ -176,9 +176,8 @@ and recreate. Tokens survive the update.
 
 ## Caveats
 
-- **`claude-local` is interactive-only.** That constraint is documented for
-  WaveAssist workflows; it applies here too. If you run the Slack adapter
-  against `MODEL=claude-local`, every Slack message draws from the
+- **`claude-local` uses the host's interactive subscription.** If you run the
+  Slack adapter against `MODEL=claude-local`, every Slack message draws from the
   Pro/Max subscription on the host machine. Use a portable key
   (`MODEL=anthropic/...` or `openrouter/...`) if you need many concurrent
   Slack users.

@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · access management. Production use requires a license
-# with the "access" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid access management. MIT licensed like the rest of the repository.
 """The one place a caller's groups are assembled from every source.
 
 A person can be granted a group in more than one store, and which stores are

@@ -13,8 +13,8 @@ LiteLLM supports many more providers; v1 documents the four above.
 Azure note: the model id is the *deployment name* you created in the Azure
 portal, not the underlying model — e.g. `azure/gpt-4o` where "gpt-4o" is your
 deployment. AZURE_API_BASE is the resource endpoint
-(https://<resource>.openai.azure.com), mirroring WaveAssist's `endpoint`, and
-AZURE_API_KEY mirrors its `api_key`. AZURE_API_VERSION defaults if unset.
+(https://<resource>.openai.azure.com). `AZURE_API_KEY` is the corresponding
+resource key. `AZURE_API_VERSION` defaults if unset.
 """
 from __future__ import annotations
 

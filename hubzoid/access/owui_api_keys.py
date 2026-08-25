@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · MCP server. Production use requires a license with the
-# "mcp" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid MCP access management. MIT licensed like the rest of the repository.
 """Resolve an Open WebUI per-user API key to the owning user's email.
 
 This is the credential story for the hosted MCP surface: a user mints an

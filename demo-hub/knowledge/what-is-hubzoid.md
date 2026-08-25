@@ -58,9 +58,7 @@ boilerplate. No prompt-engineering scaffolding. The markdown is the IDE.
 - Open WebUI binds to `127.0.0.1:3080`. Not reachable from outside.
 - Auth off by default for local dev. Turn on for production deployment.
 
-## Sister product
+## Scheduled work
 
-Hubs that need scheduled background work (the third agent type) hand off
-to WaveAssist Cloud at run time. WaveAssist is an internal infrastructure
-choice. Customers see Hubzoid. See `mcp-and-connectors` for how the two
-pieces fit together at the integration layer.
+Hubs run scheduled background work through Hubzoid's built-in scheduler. See
+`schedule/` for tasks and `mcp-and-connectors` for external integrations.

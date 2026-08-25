@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · access management. Production use requires a license
-# with the "access" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid access management. MIT licensed like the rest of the repository.
 """Seed per-hub identity + access into the shared gateway Open WebUI.
 
 A gateway fronts N hubs through ONE Open WebUI, so per-hub identity cannot

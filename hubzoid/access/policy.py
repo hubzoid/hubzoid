@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · access management. Production use requires a license
-# with the "access" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid access management. MIT licensed like the rest of the repository.
 """The access decision. Pure functions, no I/O, trivially testable.
 
 A restricted tool requires a permission (its file's normalized stem). A caller

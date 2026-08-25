@@ -38,10 +38,10 @@ through writing one; [`proposals/TEMPLATE.md`](proposals/TEMPLATE.md) is the for
 
 ## Honest note
 
-Hubzoid is the engine behind WaveAssist's services work, released under MIT so
-you're never locked in. We steer direction, and we may decline good code simply
-because we don't want to maintain it. That's not a knock on your work — it's the
-doctrine that keeps the project small enough to trust.
+Hubzoid is released under MIT so you're never locked in. We steer direction,
+and we may decline good code simply because we don't want to maintain it. That's
+not a knock on your work — it's the doctrine that keeps the project small enough
+to trust.
 
 ## Dev setup
 

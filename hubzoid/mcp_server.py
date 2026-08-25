@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · MCP server. Production use requires a license with the
-# "mcp" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid MCP server. MIT licensed like the rest of the repository.
 """Hosted MCP server — expose a hub's tools + knowledge over Streamable HTTP.
 
 The inverse of `loaders/mcp.py` (which *consumes* MCP servers): this module

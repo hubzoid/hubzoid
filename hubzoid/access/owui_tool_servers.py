@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · access management. Production use requires a license
-# with the "access" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid access management. MIT licensed like the rest of the repository.
 """Read the admin-registered MCP tool servers from Open WebUI's config.
 
 OWUI keeps every tool-server connection (OpenAPI and MCP) as one JSON list

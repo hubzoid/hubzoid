@@ -1,5 +1,4 @@
-# Hubzoid Enterprise · access management. Production use requires a license
-# with the "access" entitlement; free to run for development. See LICENSING.md.
+# Hubzoid access management. MIT licensed like the rest of the repository.
 """Per-request caller identity: who is calling, in which groups, on which surface.
 
 This is the verified claim the access checks read. The bridge (`server.py`) sets
