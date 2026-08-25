@@ -1,5 +1,11 @@
 """The shared inbound web app: one Starlette application serving the public
-``/webhooks/<surface>`` routes for every configured surface.
+``/webhooks/<hub>/<surface>`` routes for every configured surface.
+
+Routes are namespaced by hub slug (``/webhooks/<hub>/whatsapp``) so a single
+public front door can serve **many** inbound hubs at once — the gateway edge
+routes ``/webhooks/<hub>`` to the owning hub's inbound server. (Before 0.9.1
+the prefix was a single global ``/webhooks``, so only the first inbound hub on
+a box could be reached; the slug removes that limit.)
 
 Per message the flow is identical across surfaces: verify authenticity, drop
 duplicates, resolve the sender against the roster (the allowlist), load the
@@ -44,6 +50,7 @@ from .dispatch import dispatch as default_dispatch
 from .history import DEFAULT_MAX_MESSAGES, History
 from .render import strip_thinking, strip_tool_calls
 from .uploads import push_upload
+from .webhook import WebhookConfig
 
 log = logging.getLogger("hubzoid.inbound")
 
@@ -198,8 +205,10 @@ def _make_default_ingest(bridge_url, api_key, max_upload_bytes):
 
 def build_app(
     *, hub_dir, bridge_url, api_key, model, resolver,
+    slug: str = "",
     whatsapp: "WhatsAppConfig | None" = None,
     telegram: "TelegramConfig | None" = None,
+    webhook: "WebhookConfig | None" = None,
     dispatch_fn: Callable = default_dispatch,
     messages: "Messages | None" = None,
     history_max: int = DEFAULT_MAX_MESSAGES,
@@ -208,6 +217,10 @@ def build_app(
     max_upload_bytes: int = settingslib.DEFAULT_MAX_UPLOAD_BYTES,
     ingest_media_fn: "Callable | None" = None,
 ) -> Starlette:
+    # Every public route is namespaced under the hub slug so one front door can
+    # serve many inbound hubs. `slug` is the hub's own slug; the gateway edge
+    # routes /webhooks/<slug> here and this app serves the full path.
+    base = "/webhooks/" + slug.strip("/") if slug.strip("/") else "/webhooks"
     inbound_dir = Path(hub_dir) / ".inbound"
     dedup = Dedup(inbound_dir / "dedup")
     history = History(db.engine_for(hub_dir), max_messages=history_max,
@@ -218,21 +231,23 @@ def build_app(
 
     if whatsapp is not None:
         routes += _whatsapp_routes(
-            whatsapp, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
+            base, whatsapp, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
             msgs, ingest,
         )
     if telegram is not None:
         routes += _telegram_routes(
-            telegram, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
+            base, telegram, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
             msgs, ingest, stream_interval,
         )
+    if webhook is not None:
+        routes += _webhook_routes(base, webhook)
     return Starlette(routes=routes)
 
 
 # ---------------------------------------------------------------------------
 # WhatsApp
 # ---------------------------------------------------------------------------
-def _whatsapp_routes(wa, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest):
+def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest):
     async def get_handler(request):
         challenge = verify_challenge(dict(request.query_params), wa.verify_token)
         if challenge is None:
@@ -295,15 +310,15 @@ def _whatsapp_routes(wa, dedup, history, resolver, dispatch_fn, bridge_url, api_
             history.append(chat_id, "assistant", _clean_reply(reply))
 
     return [
-        Route("/webhooks/whatsapp", get_handler, methods=["GET"]),
-        Route("/webhooks/whatsapp", post_handler, methods=["POST"]),
+        Route(base + "/whatsapp", get_handler, methods=["GET"]),
+        Route(base + "/whatsapp", post_handler, methods=["POST"]),
     ]
 
 
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
-def _telegram_routes(tg, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest, stream_interval):
+def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest, stream_interval):
     async def post_handler(request):
         if not verify_secret(request.headers.get("X-Telegram-Bot-Api-Secret-Token"),
                              tg.secret_token):
@@ -444,4 +459,45 @@ def _telegram_routes(tg, dedup, history, resolver, dispatch_fn, bridge_url, api_
                 log.debug("telegram: final edit failed", exc_info=True)
         return reply
 
-    return [Route("/webhooks/telegram", post_handler, methods=["POST"])]
+    return [Route(base + "/telegram", post_handler, methods=["POST"])]
+
+
+# ---------------------------------------------------------------------------
+# Generic webhook (machine-to-hub: alerting, CI, automations)
+# ---------------------------------------------------------------------------
+def _webhook_routes(base, cfg: "WebhookConfig"):
+    """A generic authenticated receiver at ``<base>/<cfg.name>``.
+
+    No roster, no LLM, no reply — verify the secret (or HMAC), parse the body,
+    hand it to the sink, ack. A failed sink returns 500 so the provider retries;
+    a bad secret returns 403 before the sink ever runs.
+    """
+    async def post_handler(request):
+        raw = await request.body()
+        if not cfg.authenticate(raw_body=raw, headers=request.headers,
+                                query=request.query_params):
+            return PlainTextResponse("forbidden", status_code=403)
+        # Parse JSON when we can, but never reject a non-JSON body — some
+        # providers post form-encoded or plain text. Keep the raw text either way.
+        text = raw.decode("utf-8", "replace")
+        try:
+            parsed = json.loads(text) if text.strip() else None
+        except json.JSONDecodeError:
+            parsed = None
+        event = {
+            "surface": "webhook",
+            "name": cfg.name,
+            "received_at": time.time(),
+            "query": dict(request.query_params),
+            "content_type": request.headers.get("content-type", ""),
+            "body": parsed if parsed is not None else text,
+        }
+        try:
+            if cfg.sink is not None:
+                cfg.sink(event)
+        except Exception:  # noqa: BLE001 — a sink failure must signal a retry
+            log.exception("webhook: sink failed for %s", cfg.name)
+            return PlainTextResponse("sink error", status_code=500)
+        return PlainTextResponse("ok")
+
+    return [Route(base + "/" + cfg.name, post_handler, methods=["POST"])]

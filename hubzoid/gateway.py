@@ -87,12 +87,14 @@ class GatewayPlan:
 
     def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
         """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
-        /b/<slug>/mcp for MCP-enabled hubs.
+        /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
         `/artifacts/...` (or `/mcp`) path. Only MCP-enabled hubs get an /mcp
         route — the bridge wouldn't serve it anyway, but the edge should not
-        even forward the path.
+        even forward the path. The /webhooks/<slug> route (no strip) reaches the
+        hub's own inbound server; every inbound hub gets one, so several can run
+        behind one front door.
         """
         routes = []
         for b in self.backends:
@@ -108,19 +110,20 @@ class GatewayPlan:
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",
                     "strip_prefix": base,
                 })
-        # WhatsApp/Telegram inbound: the hub's inbound server owns /webhooks/*
-        # (e.g. /webhooks/whatsapp) on a loopback port, each POST signature- or
-        # secret-verified before anything runs. The edge must forward it or the
-        # provider's webhook falls through to Open WebUI. /webhooks is a single
-        # global prefix (the inbound app is not namespaced per hub), so one
-        # fronted hub can own it: the first with an inbound surface wins. No
-        # strip_prefix — the inbound app serves the full /webhooks/... path.
-        inbound = next((b for b in self.backends if b.inbound), None)
-        if inbound:
-            routes.append({
-                "prefix": "/webhooks",
-                "upstream": f"http://127.0.0.1:{inbound.inbound_port}",
-            })
+            # Inbound surfaces (WhatsApp/Telegram/generic webhook): the hub's
+            # inbound server owns /webhooks/<slug>/* (e.g. /webhooks/<slug>/whatsapp)
+            # on a loopback port, each POST signature-, secret-, or HMAC-verified
+            # before anything runs. The edge must forward it or the provider's
+            # webhook falls through to Open WebUI. The route is namespaced by hub
+            # slug so EVERY inbound hub is reachable at once (before 0.9.1 a single
+            # global /webhooks meant only the first inbound hub could be reached).
+            # No strip_prefix — the inbound app serves the full /webhooks/<slug>/...
+            # path, matching the slug it derives from its own hub folder.
+            if b.inbound:
+                routes.append({
+                    "prefix": f"/webhooks/{b.slug}",
+                    "upstream": f"http://127.0.0.1:{b.inbound_port}",
+                })
         return routes
 
     @property
@@ -188,6 +191,7 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     backends: list[GatewayBackend] = []
     seen_slugs: dict[str, int] = {}
     seen_ports: dict[int, Path] = {}
+    seen_inbound_ports: dict[int, Path] = {}
     seen_labels: dict[str, Path] = {}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
@@ -216,6 +220,23 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
                 "in AGENTS.md or a MODEL_LABEL in its .env."
             )
         seen_labels[label] = hub_dir
+
+        # Two inbound hubs sharing an inbound port would collide on the loopback
+        # bind, so the edge could reach only one. Caught here with the same
+        # posture as the bridge-port guard: each inbound hub needs a distinct
+        # HUBZOID_INBOUND_PORT in its own .env.
+        inbound_on = _inbound_enabled(hub_dir)
+        inbound_port = _inbound_port_for(hub_dir)
+        if inbound_on:
+            if inbound_port in seen_inbound_ports:
+                raise ValueError(
+                    f"gateway: hubs {seen_inbound_ports[inbound_port].name} and "
+                    f"{hub_dir.name} both use HUBZOID_INBOUND_PORT={inbound_port} "
+                    "for their inbound webhook server; give each inbound hub a "
+                    "unique HUBZOID_INBOUND_PORT in its .env."
+                )
+            seen_inbound_ports[inbound_port] = hub_dir
+
         backends.append(GatewayBackend(
             hub_dir=hub_dir,
             slug=slug,
@@ -224,8 +245,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             model_label=label,
             mcp=_mcp_enabled(hub_dir),
             mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
-            inbound=_inbound_enabled(hub_dir),
-            inbound_port=_inbound_port_for(hub_dir),
+            inbound=inbound_on,
+            inbound_port=inbound_port,
             display_name=meta["fm_name"] or hub_dir.name,
             description=meta["description"],
             suggestions=meta["suggestions"],
@@ -277,16 +298,23 @@ def _own_env(hub_dir: Path) -> dict:
 
 
 def _inbound_enabled(hub_dir: Path) -> bool:
-    """Whether this hub's own `.env` configures a WhatsApp or Telegram surface,
-    so the gateway edge should forward /webhooks/* to its inbound server.
+    """Whether this hub's own `.env` configures any inbound surface (WhatsApp,
+    Telegram, or a generic webhook), so the gateway edge should forward
+    /webhooks/<slug>/* to its inbound server.
 
     Uses the same token checks the inbound server itself uses, so the edge route
     and the served routes can never disagree about whether a surface is on.
     """
-    from .inbound.env import missing_telegram_vars, missing_whatsapp_vars
+    from .inbound.env import (
+        missing_telegram_vars,
+        missing_webhook_vars,
+        missing_whatsapp_vars,
+    )
 
     own = _own_env(hub_dir)
-    return not missing_whatsapp_vars(own) or not missing_telegram_vars(own)
+    return (not missing_whatsapp_vars(own)
+            or not missing_telegram_vars(own)
+            or not missing_webhook_vars(own))
 
 
 def _inbound_port_for(hub_dir: Path) -> int:

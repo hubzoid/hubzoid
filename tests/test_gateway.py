@@ -71,11 +71,11 @@ def test_plan_edge_routes_namespace_per_hub(tmp_path):
 
 
 def test_plan_edge_routes_add_webhooks_for_inbound_hub(tmp_path):
-    """A hub whose own .env configures a WhatsApp/Telegram surface gets a
-    /webhooks edge route to its inbound server, so the provider's webhook is not
-    swallowed by Open WebUI's catch-all. A hub without one gets none, and the
-    route carries no strip_prefix (the inbound app serves the full /webhooks/...
-    path)."""
+    """A hub whose own .env configures a WhatsApp/Telegram/webhook surface gets a
+    /webhooks/<slug> edge route to its inbound server, so the provider's webhook
+    is not swallowed by Open WebUI's catch-all. A hub without one gets none, and
+    the route carries no strip_prefix (the inbound app serves the full
+    /webhooks/<slug>/... path, namespaced by the hub's own slug)."""
     wa, plain = tmp_path / "wa", tmp_path / "plain"
     wa.mkdir(); plain.mkdir()
     (wa / ".env").write_text(
@@ -91,13 +91,13 @@ def test_plan_edge_routes_add_webhooks_for_inbound_hub(tmp_path):
     assert by_slug["wa"].inbound is True
     assert by_slug["wa"].inbound_port == 8100
     assert by_slug["plain"].inbound is False
-    webhooks = [r for r in gp.edge_routes() if r["prefix"] == "/webhooks"]
-    assert webhooks == [{"prefix": "/webhooks", "upstream": "http://127.0.0.1:8100"}]
+    webhooks = [r for r in gp.edge_routes() if r["prefix"].startswith("/webhooks")]
+    assert webhooks == [{"prefix": "/webhooks/wa", "upstream": "http://127.0.0.1:8100"}]
 
 
 def test_plan_inbound_honours_custom_port_and_telegram(tmp_path):
     """A Telegram-only surface counts too, and HUBZOID_INBOUND_PORT in the hub's
-    own .env moves the /webhooks upstream."""
+    own .env moves the /webhooks/<slug> upstream."""
     tg = tmp_path / "tg"; tg.mkdir()
     (tg / ".env").write_text(
         "TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\n"
@@ -105,7 +105,56 @@ def test_plan_inbound_honours_custom_port_and_telegram(tmp_path):
     )
     gp = gateway.plan([tg], load=_loader({str(tg): _settings(tg, 8000, label="tg-agent")}))
     assert gp.backends[0].inbound is True
-    assert {"prefix": "/webhooks", "upstream": "http://127.0.0.1:8250"} in gp.edge_routes()
+    assert {"prefix": "/webhooks/tg", "upstream": "http://127.0.0.1:8250"} in gp.edge_routes()
+
+
+def test_plan_edge_routes_webhooks_for_every_inbound_hub(tmp_path):
+    """Two inbound hubs behind one gateway each get their own /webhooks/<slug>
+    route — the pre-0.9.1 singleton (first-inbound-wins) is gone."""
+    a, b = tmp_path / "alpha", tmp_path / "beta"
+    a.mkdir(); b.mkdir()
+    (a / ".env").write_text(
+        "WHATSAPP_VERIFY_TOKEN=vt\nWHATSAPP_APP_SECRET=sek\n"
+        "WHATSAPP_TOKEN=tok\nWHATSAPP_PHONE_NUMBER_ID=1\nHUBZOID_INBOUND_PORT=8100\n"
+    )
+    (b / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\nHUBZOID_INBOUND_PORT=8101\n"
+    )
+    load = _loader({
+        str(a): _settings(a, 8000, label="alpha-agent"),
+        str(b): _settings(b, 8001, label="beta-agent"),
+    })
+    gp = gateway.plan([a, b], load=load)
+    webhooks = [r for r in gp.edge_routes() if r["prefix"].startswith("/webhooks")]
+    assert webhooks == [
+        {"prefix": "/webhooks/alpha", "upstream": "http://127.0.0.1:8100"},
+        {"prefix": "/webhooks/beta", "upstream": "http://127.0.0.1:8101"},
+    ]
+
+
+def test_plan_generic_webhook_surface_counts_as_inbound(tmp_path):
+    """A hub with only WEBHOOK_INBOUND_SECRET (no WhatsApp/Telegram) is inbound
+    and gets its /webhooks/<slug> route."""
+    wh = tmp_path / "alerts"; wh.mkdir()
+    (wh / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\nWEBHOOK_INBOUND_NAME=squadcast\n")
+    gp = gateway.plan([wh], load=_loader({str(wh): _settings(wh, 8000, label="alerts-agent")}))
+    assert gp.backends[0].inbound is True
+    assert {"prefix": "/webhooks/alerts", "upstream": "http://127.0.0.1:8100"} in gp.edge_routes()
+
+
+def test_plan_rejects_inbound_port_collision(tmp_path):
+    """Two inbound hubs sharing HUBZOID_INBOUND_PORT would bind the same loopback
+    port; the plan refuses it (mirrors the bridge-port guard)."""
+    a, b = tmp_path / "alpha", tmp_path / "beta"
+    a.mkdir(); b.mkdir()
+    (a / ".env").write_text("TELEGRAM_BOT_TOKEN=bt\nTELEGRAM_WEBHOOK_SECRET=ws\n")  # default 8100
+    (b / ".env").write_text("WEBHOOK_INBOUND_SECRET=shh\n")  # default 8100 too
+    load = _loader({
+        str(a): _settings(a, 8000, label="alpha-agent"),
+        str(b): _settings(b, 8001, label="beta-agent"),
+    })
+    with pytest.raises(ValueError, match="HUBZOID_INBOUND_PORT"):
+        gateway.plan([a, b], load=load)
 
 
 def test_plan_public_url_per_hub(tmp_path):
