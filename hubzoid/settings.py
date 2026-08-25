@@ -68,8 +68,7 @@ Environment variables explicitly supported:
                          the edge). External MCP clients (Claude Code, Cursor)
                          authenticate with the caller's own Open WebUI API key
                          and get the hub's tools + knowledge under the same
-                         per-group access rules as chat. Enterprise feature
-                         (notice-only). See docs/mcp-server.md.
+                         per-group access rules as chat. See docs/mcp-server.md.
   MCP_ACCESS_GROUP       Optional OWUI group name gating the WHOLE /mcp
                          surface: only members get past auth (401 otherwise).
                          Essential in gateway mode, where one shared user DB

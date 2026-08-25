@@ -263,37 +263,15 @@ def test_owui_resolve_missing_db_is_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Enterprise notice: informational, never blocks
+# Access management wires restricted tools (MIT, no license gate)
 # ---------------------------------------------------------------------------
-def test_access_unlicensed_warns_but_still_runs(tmp_path, caplog):
-    import logging
+def test_access_wires_restricted_tools(tmp_path):
     _make_restricted_hub(tmp_path)
-    with caplog.at_level(logging.WARNING, logger="hubzoid.access"):
-        reg = access.apply(tmp_path, {})
-    # It does NOT block: the restricted tool is still wired.
+    reg = access.apply(tmp_path, {})
+    # The restricted tool is wired.
     assert "ornate_sales" in reg
-    # And it informs that this is an Enterprise feature.
-    assert any("Enterprise feature" in r.message for r in caplog.records)
 
 
-def test_access_licensed_is_quiet(tmp_path, caplog, monkeypatch):
-    from hubzoid import licensing
-    priv, pub = licensing.generate_keypair()
-    token = licensing.issue(
-        {"customer": "Acme", "tier": "enterprise", "features": ["access"]}, priv
-    )
-    monkeypatch.setenv("LICENSE_KEY", token)
-    monkeypatch.setenv("HUBZOID_LICENSE_PUBKEY", pub)
-    _make_restricted_hub(tmp_path)
-    import logging
-    with caplog.at_level(logging.WARNING, logger="hubzoid.access"):
-        access.apply(tmp_path, {})
-    assert not any("Enterprise feature" in r.message for r in caplog.records)
-
-
-def test_no_restricted_folder_no_notice(tmp_path, caplog):
-    import logging
-    with caplog.at_level(logging.WARNING, logger="hubzoid.access"):
-        reg = access.apply(tmp_path, {"a": sample_tool})
+def test_no_restricted_folder_registry_unchanged(tmp_path):
+    reg = access.apply(tmp_path, {"a": sample_tool})
     assert reg == {"a": sample_tool}
-    assert not any("Enterprise" in r.message for r in caplog.records)

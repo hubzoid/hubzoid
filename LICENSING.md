@@ -1,50 +1,20 @@
 # Licensing
 
-Hubzoid is **open core**.
+Hubzoid is **MIT licensed** — all of it. Use it, modify it, self-host it,
+redistribute it, run it in production, free of charge. See [`LICENSE`](LICENSE).
 
-| Part | Path | License | Use |
-|---|---|---|---|
-| **Core** | everything except `ee/` | **MIT** (see [`LICENSE`](LICENSE)) | Free for everyone. Use, modify, self-host, redistribute. |
-| **Enterprise** | [`ee/`](ee/) | **Hubzoid Enterprise License** (see [`ee/LICENSE`](ee/LICENSE)) | Source-available. Read and modify for dev/testing freely. **Production use needs a paid license key.** |
+There is no enterprise edition, no license key, and no paid tier. Every feature
+in this repository is MIT.
 
-## How the enterprise tier is gated
+## Trademark
 
-Enterprise features check a license key at runtime before they activate. With
-no valid key, the runtime stays on the **community** tier and those features
-stay off. The core keeps working exactly as before.
+The **"Hubzoid"** name and logo are trademarks of WaveAssist Technologies Pvt
+Ltd. MIT covers the code, not the marks: you may fork and ship the code, but not
+under the Hubzoid name or brand. This is the only restriction.
 
-- The key is an ED25519-signed token. Verification is **offline** (works
-  air-gapped). See [`hubzoid/licensing.py`](hubzoid/licensing.py).
-- The **private** signing key lives only with Hubzoid, never in this repo.
-- The **public** key is embedded in the shipped code, so anyone can verify a
-  key but nobody can forge one.
-- A customer sets `LICENSE_KEY=<token>` in their hub's `.env`.
+## How we make money
 
-```bash
-hubzoid license                 # show the active tier, customer, features, expiry
-hubzoid license keygen          # (Hubzoid) generate the signing keypair, once
-hubzoid license issue ...       # (Hubzoid) sign a customer key with the private key
-hubzoid license verify --key …  # check a token offline
-```
-
-## What is in each tier
-
-**Core (MIT):** the markdown-to-agent runtime (both backends), the
-OpenAI-compatible API and bridge, loaders, tools, skills, knowledge,
-sub-agents, MCP connectors, the Open WebUI integration and white-labeling,
-single-hub single-team operation, and baseline security.
-
-**Enterprise (`ee/`):** multi-role and multi-tenant access management
-(per-role tool authorization, per-identity data scoping, audit, approvals),
-managed and fleet-scale scheduling, the multi-tenant control plane, audit and
-cost governance, and SLA monitoring. These are gated by the license key.
-
-## Honest note
-
-The enterprise source is visible, so the key check is a speed bump backed by a
-contract, not DRM. The protection is **legal** (the Hubzoid Enterprise License
-forbids unlicensed production use) plus **practical** (real buyers will not run
-forked, unsupported code). The check only has to make paying the easier path.
-
-The "Hubzoid" name and logo are trademarks of WaveAssist Technologies Pvt Ltd
-and are not licensed by either license above.
+Hubzoid is built and maintained by WaveAssist Technologies as the engine behind
+its services work. We sell the **service** — deploying, integrating, securing,
+and running hubs for organizations — not the code. MIT is deliberate: you are
+never locked in. See [hubzoid.com](https://hubzoid.com).

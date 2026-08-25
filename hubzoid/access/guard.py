@@ -1,7 +1,4 @@
-# Hubzoid Enterprise · access management.
-# Source-available and free to run for development and testing; production use
-# requires a license key with the "access" entitlement. See LICENSING.md.
-# This is a notice, not a gate: the feature runs on the community tier too.
+# Hubzoid access management. MIT, like the rest of the repo (see LICENSING.md).
 """Wrap a restricted FunctionTool so the gate runs in code before it executes.
 
 Two layers, exactly as the design says, and both backends get them because both
@@ -41,23 +38,6 @@ def _allowed_surfaces() -> frozenset[str]:
     if not raw:
         return DEFAULT_RESTRICTED_SURFACES
     return frozenset(s.strip().lower() for s in raw.split(",") if s.strip())
-
-
-def _notice_license() -> None:
-    """Inform, do not block, when access management runs unlicensed.
-
-    Soft open-core: the feature runs fully on the community tier; this is a
-    heads-up, not a gate, and a valid ``access`` license silences it (no output
-    on success). To switch from informing to enforcing later, change the warning
-    to a raise here.
-    """
-    from .. import licensing
-
-    if not licensing.load_license().has_feature("access"):
-        log.warning(
-            "Access management (restricted/) is a Hubzoid Enterprise feature; "
-            "production use needs a license. See LICENSING.md."
-        )
 
 
 def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
@@ -105,7 +85,6 @@ def apply(hub_dir: Path, registry: dict) -> dict:
     restricted = load_restricted(Path(hub_dir))
     if not restricted:
         return registry
-    _notice_license()  # inform that this is an Enterprise feature; never blocks
     out = dict(registry)
     for ft, permission in restricted:
         out[ft.name] = guard_tool(ft, permission, hub_dir)

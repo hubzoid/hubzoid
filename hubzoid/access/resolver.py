@@ -1,7 +1,4 @@
-# Hubzoid Enterprise · access management.
-# Source-available and free to run for development and testing; production use
-# requires a license key with the "access" entitlement. See LICENSING.md.
-# This is a notice, not a gate: the feature runs on the community tier too.
+# Hubzoid access management. MIT, like the rest of the repo (see LICENSING.md).
 """Resolve identity for a hub, from either surface-native handle or email.
 
 This is the generic identity seam every non-web surface plugs into. A hub opts
@@ -91,10 +88,8 @@ def load_resolver(hub_dir) -> "Roster | None":
     py = idir / _PY_NAME
     table = idir / _CSV_NAME
     if py.is_file():
-        _notice_license()
         return _FunctionRoster(py)
     if table.is_file():
-        _notice_license()
         return _CsvRoster(table)
     return None
 
@@ -335,17 +330,3 @@ def _copy(rec) -> "dict | None":
     return out
 
 
-def _notice_license() -> None:
-    """Inform (never block) that identity resolution is an Enterprise feature.
-
-    Same soft open-core posture as `access.guard`: runs fully on the community
-    tier; a valid ``access`` license silences this. Change the warning to a
-    raise here to switch from informing to enforcing.
-    """
-    from .. import licensing
-
-    if not licensing.load_license().has_feature("access"):
-        log.warning(
-            "Identity resolution (identity/) is a Hubzoid Enterprise feature; "
-            "production use needs a license. See LICENSING.md."
-        )

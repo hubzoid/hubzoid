@@ -305,9 +305,6 @@ team. The connecting agent receives the hub's `AGENTS.md` (or the
 `mcp_instructions:` frontmatter override) as MCP instructions at connect
 time. Details: [docs/mcp-server.md](docs/mcp-server.md).
 
-> Hubzoid Enterprise feature (`mcp` entitlement) — free for development,
-> notice-only in production. See [LICENSING.md](LICENSING.md).
-
 ## Branding and UI
 
 Hubzoid passes ~24 env vars to Open WebUI to strip platform surfaces
@@ -346,10 +343,6 @@ reached anyway, logging every decision (`hubzoid audit <hub>`). Secrets live in
 `restricted/.env`, which the model's file tools refuse to read. A hub with no
 `restricted/` folder is unaffected, so this is entirely opt-in. Full guide:
 [docs/access-management.md](docs/access-management.md).
-
-Access management is a Hubzoid Enterprise feature: source-available and free to
-run for development, licensed for production use. It is not blocked without a
-license, only flagged. See [LICENSING.md](LICENSING.md).
 
 ## Deploying to production
 
@@ -519,4 +512,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome.
 
 ## License
 
-MIT.
+MIT — all of it. The "Hubzoid" name and logo are trademarks of WaveAssist
+Technologies Pvt Ltd. See [LICENSING.md](LICENSING.md).

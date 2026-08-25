@@ -4,6 +4,25 @@ This file guides AI coding tools (Claude Code, Cursor, Codex, Copilot, Gemini
 CLI, etc.) editing the hubzoid platform source. The per-hub `demo-hub/AGENTS.md`
 is a different thing. that's the runtime prompt for the hub's main agent.
 
+## Prime directive: keep it thin
+
+Hubzoid is built by a services company that does not want to maintain things.
+Before adding any code, ask two questions:
+
+1. **Is this absolutely needed?**
+2. **Can a rented standard do it instead** — the runtime SDKs, Open WebUI,
+   OpenTelemetry, the platform we already depend on?
+
+If a standard can do the job, rent it and delete ours. Prefer deleting to adding.
+Own the minimum. The moat is the service, not the platform code. Every line we
+own is maintenance drag.
+
+Hubzoid is **MIT, all of it** (see `LICENSING.md`) — there is no enterprise
+edition, license key, or paid tier in this repo; don't add feature gating.
+
+Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
+`CONTRIBUTING.md` and the `skills/` (`propose-change`, `implement-proposal`).
+
 ## Project layout
 
 | Path | Purpose |
