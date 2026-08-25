@@ -34,11 +34,15 @@ Hubzoid turns it into a running agent, served over an OpenAI-compatible HTTP API
 and reachable from Open WebUI, Slack, WhatsApp, and Telegram at once.
 
 You write the markdown. Hubzoid handles the runtime, the API, the UI, the
-streaming, and the sub-agent routing. The engine underneath is the [OpenAI Agents
-SDK](https://openai.github.io/openai-agents-python/) or the [Claude Agent
-SDK](https://code.claude.com/docs/en/agent-sdk/overview), provider-agnostic via
-[LiteLLM](https://docs.litellm.ai) -- OpenRouter, OpenAI, Anthropic, and local
-Claude work out of the box.
+streaming, the sub-agent routing, per-user identity, access control and
+restricted tools, scheduling, and the audit log. The runtime underneath is the
+[OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) or the
+[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview).
+
+You pick where the model comes from. Point at any provider through
+[LiteLLM](https://docs.litellm.ai) (OpenRouter, OpenAI, Anthropic, and more), or
+run local Claude through your `claude` CLI subscription with no LiteLLM and no
+API key. Both paths use the same hub, the same tools, the same skills.
 
 ## Quickstart
 
@@ -84,14 +88,15 @@ The two files you edit later as you customize:
 
 Same agent, same skills, same knowledge, same `.env`. Pick the surfaces you want.
 
-| Surface | Status | Get started |
+| Surface | How it connects | Docs |
 |---|---|---|
-| Open WebUI (web chat, white-label) | Shipped | bundled with `hubzoid run` |
-| Slack (Socket Mode, no public URL) | Shipped | [docs/slack.md](docs/slack.md) |
-| WhatsApp (webhook) | Shipped | [docs/inbound-surfaces.md](docs/inbound-surfaces.md) |
-| Telegram (webhook, streaming) | Shipped | [docs/inbound-surfaces.md](docs/inbound-surfaces.md) |
-| MCP server (serve your hub to other AIs) | Shipped | [docs/mcp-server.md](docs/mcp-server.md) |
-| More surfaces | Coming | see [Roadmap](#roadmap) |
+| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | — |
+| Slack | Socket Mode. No public URL. | [slack.md](docs/slack.md) |
+| WhatsApp | Inbound webhook. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
+| Telegram | Inbound webhook, with streaming. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
+| MCP server | Serve your hub to other AIs (Claude Code, Cursor). | [mcp-server.md](docs/mcp-server.md) |
+
+More surfaces are on the [roadmap](#roadmap).
 
 ```bash
 hubzoid run my-hub --slack --whatsapp --telegram   # any combination, one process
