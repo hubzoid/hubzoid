@@ -8,11 +8,6 @@ and every decision is logged.
 A hub with no `restricted/` folder is unaffected by any of this. Access control
 is entirely opt-in: you turn it on by adding the folder.
 
-> Access management is a Hubzoid **Enterprise** feature: source-available and
-> free for development, licensed for production. It runs on the community tier
-> too; you just see a one-line notice in the logs and in `hubzoid doctor`. It is
-> flagged, never blocked. See [LICENSING.md](../LICENSING.md).
-
 ## The model in one line
 
 A critical tool lives in a file. The file name is the permission. An Open WebUI

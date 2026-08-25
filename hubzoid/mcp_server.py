@@ -33,8 +33,6 @@ Design points:
   * Stateless Streamable HTTP: every request is self-contained, so the
     endpoint scales behind load balancers and survives bridge restarts.
 
-Licensing: enterprise feature, notice-only (inform, never block) — the same
-soft open-core stance as access management. See `_notice_license`.
 """
 from __future__ import annotations
 
@@ -66,21 +64,6 @@ CHAT_SCOPED_TOOLS = frozenset({
     "read_upload",
     "read_upload_full",
 })
-
-
-def _notice_license() -> None:
-    """Inform, do not block, when the MCP server runs unlicensed.
-
-    Mirrors `access.guard._notice_license`: soft open-core. To enforce later,
-    change the warning to a raise here.
-    """
-    from . import licensing
-
-    if not licensing.load_license().has_feature("mcp"):
-        log.warning(
-            "The hosted MCP server (MCP_SERVER=true) is a Hubzoid Enterprise "
-            "feature; production use needs a license. See LICENSING.md."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +356,6 @@ def build_mcp_app(
     from fastmcp import FastMCP
 
     hub_dir = Path(hub_dir).resolve()
-    _notice_license()
     if settings is None:
         settings = settingslib.load(hub_dir)
     registry, permissions = build_registry(hub_dir, settings=settings)

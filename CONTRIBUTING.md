@@ -1,6 +1,47 @@
 # Contributing
 
-Thanks for considering a contribution.
+Thanks for being here. Hubzoid is MIT and we're glad to have you.
+
+Hubzoid is built by a small team that does not want to maintain a large surface.
+So the contribution model is deliberately **light**: we'd rather have a clear
+idea we can build well than a big PR we have to own forever. Three lanes.
+
+## 1. An idea, a question, "would you take X?" → open a Discussion
+
+[GitHub Discussions](https://github.com/hubzoid/hubzoid/discussions) is the front
+door. Feature ideas, design questions, "is this a bug or am I holding it wrong" —
+start here. This is the best way to help, and it costs you nothing.
+
+## 2. Small and obvious → open a PR directly
+
+Typo, doc fix, a clearly-scoped bug with a test. Just send it. Sign your commits
+off (DCO):
+
+```bash
+git commit -s -m "fix: ..."
+```
+
+The `-s` adds a `Signed-off-by` line certifying you wrote the change and can
+contribute it under the MIT license (see [DCO](https://developercertificate.org/)).
+That's all we ask — no CLA.
+
+## 3. A feature or anything non-trivial → propose it as text, not code
+
+Don't open a large code PR unprompted; it's the one thing likely to be closed
+unread. Instead write the *intent* as a short markdown proposal in
+[`proposals/`](proposals/) and open a PR with just that file. We (or an agent)
+discuss it, and once it's agreed we implement it.
+
+This keeps the codebase thin and coherent, and it means non-developers can shape
+Hubzoid too. The [`propose-change`](skills/propose-change.md) skill will walk you
+through writing one; [`proposals/TEMPLATE.md`](proposals/TEMPLATE.md) is the form.
+
+## Honest note
+
+Hubzoid is the engine behind WaveAssist's services work, released under MIT so
+you're never locked in. We steer direction, and we may decline good code simply
+because we don't want to maintain it. That's not a knock on your work — it's the
+doctrine that keeps the project small enough to trust.
 
 ## Dev setup
 
@@ -31,6 +72,7 @@ provider. They are skipped automatically if no provider key is set.
 - Tools that need hub state take it via a context object in `make(ctx)`.
 - Tests live in `tests/`. End-to-end tests in `tests/e2e/`.
 - Document any new env var in `hubzoid/settings.py`.
+- Read [`AGENTS.md`](AGENTS.md) first — especially the "keep it thin" rule.
 
 ## Runtime neutrality (important)
 
@@ -55,20 +97,7 @@ To keep the invariant:
   should not rely on OpenAI-SDK-specific behavior the Claude adapter
   can't replicate.
 
-## What's in scope for v0.1
-
-- Bug fixes.
-- Doc improvements.
-- Loader edge cases.
-- Tests.
-
-## What's out of scope (yet)
-
-- New surfaces (Slack, Telegram). Tracked for v1.1.
-- Alternative memory backends. Tracked for v1.2.
-- Multi-tenancy. Tracked for v1.3.
-
 ## License
 
 By contributing, you agree your contribution is licensed under the MIT
-License (see `LICENSE`).
+License (see `LICENSE`), and you certify the DCO sign-off above.

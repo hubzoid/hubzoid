@@ -1,9 +1,5 @@
 # Hosted MCP server — bring your own intelligence
 
-> Hubzoid Enterprise feature (`mcp` entitlement). Runs free for development;
-> production use needs a license. Notice-only today: an unlicensed hub logs a
-> warning and keeps working. See `LICENSING.md`.
-
 A hub can serve its tools and knowledge to **external MCP clients** — Claude
 Code, Cursor, any Streamable-HTTP MCP client. The caller brings their own
 model (their subscription, their harness, their context); the hub provides
