@@ -62,10 +62,47 @@ Keep the docs in knowledge/ in step with the source repos under raw_data/.
 ```
 
 The filename stem (`knowledge-refresh`) is the task name. Frontmatter is
-YAML; only `schedule:` is required. Cron is numeric 5-field (minute, hour,
+YAML; every task needs exactly one **trigger** — `schedule:` (a cron) or
+`on_webhook:` (an event; see below). Cron is numeric 5-field (minute, hour,
 day-of-month, month, day-of-week with 0=Sunday), evaluated in the server's
 local time. Tip: pick an off-minute (`7 3` not `0 3`) — it makes log
 correlation easier and avoids colliding with other on-the-hour jobs.
+
+## Event-triggered tasks — `on_webhook:`
+
+Instead of a clock, a task can fire when a **generic webhook event** lands. The
+[generic webhook surface](inbound-surfaces.md#generic-webhook-setup-alerting-ci-automations)
+authenticates an inbound POST (Squadcast/PagerDuty downtime, a CI result, an Odoo
+automation) and drops it in the hub's inbox; a task that declares `on_webhook:`
+then runs to handle it.
+
+```markdown
+---
+on_webhook: squadcast         # fires when a /webhooks/<hub>/squadcast event lands
+commit: ["output/"]           # (optional) same commit/push/write/model keys apply
+---
+
+Read every new event under `.inbound/webhooks/squadcast/`, and for each downtime
+event notify the on-call coordinator. Delete each file once handled (the runner
+also archives handled events for you on a successful run).
+```
+
+- The value must match the receiver's `WEBHOOK_INBOUND_NAME` (the endpoint /
+  inbox folder). `on_webhook: true` is shorthand for the default name `webhook`.
+- A task is **either** `schedule:` **or** `on_webhook:`, never both.
+- **Due-ness:** the task is due whenever an unprocessed event is waiting. The
+  scheduler fires it (idle-gated, one run at a time, exactly like a cron task),
+  and on a **successful** run archives the events it claimed into
+  `.inbound/webhooks/<name>/.processed/` so they are not handled twice. A failed
+  or crashed run leaves the events pending, so the task stays due and **retries**
+  — at-least-once delivery. Events that arrive mid-run are handled by the next
+  tick, never silently dropped.
+- **Why not dispatch straight to the agent?** A machine event has no roster
+  identity, so dispatching it into the chat path would force a synthetic
+  privileged user on a public endpoint. Keeping the webhook as an authenticated
+  inbox and letting a task act on it means the task runs as trusted hub code and
+  chooses its own identity — the authorization decision stays out of the public
+  receive path.
 
 ## How a run works (the harness contract)
 

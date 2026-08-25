@@ -122,19 +122,66 @@ def webhook_config_from_env(env: Mapping[str, str], *, hub_dir: Path | None = No
                          hmac=use_hmac, sink=sink)
 
 
+# Where verified events land, and where a schedule task's drained events are
+# archived. Kept here so the receiver (this module) and the reader (the schedule
+# trigger in `scheduling.py`) agree on the layout without importing each other's
+# heavier siblings — this module is stdlib-only.
+_PROCESSED_DIRNAME = ".processed"
+
+
+def inbox_dir(hub_dir: Path, name: str) -> Path:
+    """The directory holding pending events for the ``<name>`` webhook."""
+    return Path(hub_dir) / ".inbound" / "webhooks" / name
+
+
+def pending_events(hub_dir: Path, name: str) -> "list[Path]":
+    """Every unprocessed event file for ``<name>``, oldest first.
+
+    Only top-level ``*.json`` files count — archived events live under a
+    ``.processed/`` subdir and are skipped, so a drained inbox reads as empty.
+    The filename is ``<epoch_ns>-<rand>.json`` so lexical sort is time order.
+    """
+    d = inbox_dir(hub_dir, name)
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.glob("*.json") if p.is_file())
+
+
+def archive_events(paths: "list[Path]") -> None:
+    """Move drained event files into the inbox's ``.processed/`` subdir.
+
+    Called by the scheduler after a webhook-triggered task run SUCCEEDS, so the
+    task is not re-fired for events it already handled. On failure the files are
+    left in place and the task stays due — at-least-once delivery. Missing files
+    (a task that deleted them itself) are ignored."""
+    for p in paths:
+        try:
+            if not p.is_file():
+                continue
+            dest_dir = p.parent / _PROCESSED_DIRNAME
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            p.replace(dest_dir / p.name)
+        except OSError:
+            log.exception("webhook: could not archive %s", p)
+
+
 def make_file_sink(hub_dir: Path, name: str) -> "Callable[[dict], None]":
     """The default sink: append each event as a JSON file under the hub's inbox.
 
     ``<hub>/.inbound/webhooks/<name>/<epoch_ns>-<rand>.json`` — sortable by name,
-    collision-free, and trivially readable by a schedule task or hub tool.
+    collision-free, and trivially readable by a schedule task or hub tool. The
+    write is atomic (temp file + rename) so a reader (the schedule trigger) never
+    sees a half-written event.
     """
-    inbox = Path(hub_dir) / ".inbound" / "webhooks" / name
+    inbox = inbox_dir(hub_dir, name)
 
     def sink(event: dict) -> None:
         inbox.mkdir(parents=True, exist_ok=True)
         stamp = f"{time.time_ns()}-{os.urandom(4).hex()}"
         path = inbox / f"{stamp}.json"
-        path.write_text(json.dumps(event, ensure_ascii=False, indent=2))
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(event, ensure_ascii=False, indent=2))
+        tmp.replace(path)  # atomic on POSIX — the reader sees all-or-nothing
         log.info("webhook: stored %s event -> %s", name, path.name)
 
     return sink

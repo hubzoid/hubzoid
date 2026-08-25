@@ -108,6 +108,9 @@ class Scheduler:
         state = ScheduleState(self.hub_dir)
         now = datetime.now()
         for t in enabled:
+            if t.is_webhook:
+                log.info("scheduler: %s (on webhook %s) fires on event", t.name, t.on_webhook)
+                continue
             from .scheduling import next_fire_for
             nxt = next_fire_for(t, state, now)
             log.info("scheduler: %s (%s) next fire %s", t.name, t.schedule,
@@ -158,7 +161,7 @@ class Scheduler:
         for task in tasks:
             if not task.enabled:
                 continue
-            if not is_due(task, state, now):
+            if not is_due(task, state, now, hub_dir=self.hub_dir):
                 self._deferred_logged.discard(task.name)
                 continue
             if self.is_busy():
@@ -217,8 +220,17 @@ class Scheduler:
             log.info("schedule[%s] due but another run holds the lock; "
                      "skipping this tick", task.name)
             return False
+        # Claim the events this run is responsible for BEFORE it starts, so a
+        # delivery that lands mid-run stays pending and re-fires next tick rather
+        # than being silently archived as handled.
+        claimed: list = []
+        if task.is_webhook:
+            from .inbound.webhook import pending_events
+            claimed = pending_events(self.hub_dir, task.on_webhook)
+        result = None
         try:
-            log.info("schedule[%s] firing (%s)", task.name, task.schedule)
+            trigger = f"on_webhook {task.on_webhook}" if task.is_webhook else task.schedule
+            log.info("schedule[%s] firing (%s)", task.name, trigger)
             result = await self._run_task(self.hub_dir, task)
             log.info("schedule[%s] finished: %s (%d round(s)%s)",
                      task.name, result.result, result.rounds,
@@ -227,4 +239,10 @@ class Scheduler:
             log.exception("schedule[%s] run crashed", task.name)
         finally:
             lock.release()
+        # Archive the claimed events only on success — a failed or crashed run
+        # leaves them pending so the task stays due and retries (at-least-once).
+        if task.is_webhook and claimed and result is not None and result.ok:
+            from .inbound.webhook import archive_events
+            archive_events(claimed)
+            log.info("schedule[%s] archived %d handled event(s)", task.name, len(claimed))
         return True

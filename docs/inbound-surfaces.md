@@ -227,11 +227,18 @@ The endpoint is then `https://<host>/webhooks/<hub>/<WEBHOOK_INBOUND_NAME>`, e.g
 
 **What happens to a verified event — the default sink.** The payload is written as
 one JSON file per delivery under `<hub>/.inbound/webhooks/<name>/` (sortable name,
-collision-free). A `schedule/*.md` task or a hub tool then reads that inbox and
-decides what to do — notify a coordinator, open a ticket, page someone. This keeps
-the surface unopinionated: **hubzoid owns receiving and proving; the hub owns
-acting.** The stored event is `{surface, name, received_at, query, content_type,
-body}`, where `body` is the parsed JSON (or the raw text if it is not JSON).
+collision-free, written atomically). The stored event is `{surface, name,
+received_at, query, content_type, body}`, where `body` is the parsed JSON (or the
+raw text if it is not JSON). This keeps the surface unopinionated: **hubzoid owns
+receiving and proving; the hub owns acting.**
+
+**Acting on the event — the `on_webhook:` schedule trigger.** A `schedule/*.md`
+task declares `on_webhook: <name>` and runs whenever an event lands, reads the
+inbox, and does the work (notify a coordinator, open a ticket, page someone). The
+scheduler archives handled events on success and retries on failure. See
+[Event-triggered tasks](schedule.md#event-triggered-tasks--on_webhook) for the
+full contract. (A plain hub tool or a cron task that polls the inbox works too;
+`on_webhook:` is the low-latency, event-driven path.)
 
 A non-JSON body is kept as text, never rejected. A sink failure returns `500` so
 the provider retries; everything else acks `200 ok` fast.

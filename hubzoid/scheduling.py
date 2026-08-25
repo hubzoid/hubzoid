@@ -201,9 +201,10 @@ def cron_to_human(c: CronExpr) -> str:
 @dataclass
 class ScheduledTask:
     name: str                                   # filename stem, the task id
-    schedule: str                               # raw cron string
-    cron: CronExpr
+    schedule: str                               # raw cron string ("" for webhook-triggered)
+    cron: CronExpr | None                       # None for a webhook-triggered task
     body: str                                   # the agent's instructions
+    on_webhook: str | None = None               # webhook endpoint name that fires this task
     timeout: int = DEFAULT_TIMEOUT              # seconds per round
     max_rounds: int = DEFAULT_MAX_ROUNDS
     max_turns: int = DEFAULT_MAX_TURNS
@@ -220,6 +221,11 @@ class ScheduledTask:
     def is_script(self) -> bool:
         """A plain-cron task runs a command (`run:`), not the LLM harness."""
         return self.run is not None
+
+    @property
+    def is_webhook(self) -> bool:
+        """A webhook-triggered task fires when an event lands, not on a cron."""
+        return self.on_webhook is not None
 
     @property
     def scratch_rel(self) -> str:
@@ -257,12 +263,27 @@ def _parse_task(path: Path) -> ScheduledTask:
     name = path.stem
     if not _NAME_RE.match(name):
         raise ValueError(f"task filename {name!r} must be alphanumeric/._-")
+    on_webhook = _parse_on_webhook(fm.get("on_webhook"))
     raw_schedule = fm.get("schedule")
-    if not raw_schedule:
-        raise ValueError("missing required `schedule:` (5-field cron) in frontmatter")
-    cron = parse_cron(str(raw_schedule))
-    if next_fire(cron, datetime.now()) is None:
-        raise ValueError(f"cron {raw_schedule!r} never matches a real date")
+    # A task is triggered EITHER by a cron (`schedule:`) OR by a webhook event
+    # (`on_webhook:`), never both — two triggers on one task is ambiguous.
+    if on_webhook is not None and raw_schedule:
+        raise ValueError(
+            "a task is triggered by `schedule:` (cron) OR `on_webhook:` (event), "
+            "not both — remove one"
+        )
+    if on_webhook is None:
+        if not raw_schedule:
+            raise ValueError(
+                "missing trigger: give `schedule:` (5-field cron) or "
+                "`on_webhook:` (a webhook endpoint name) in frontmatter"
+            )
+        cron: CronExpr | None = parse_cron(str(raw_schedule))
+        if next_fire(cron, datetime.now()) is None:
+            raise ValueError(f"cron {raw_schedule!r} never matches a real date")
+    else:
+        cron = None
+        raw_schedule = ""
 
     run, run_shell = _parse_run(fm.get("run"))
     # A plain-cron (`run:`) task runs a command, not the LLM — its body is
@@ -300,6 +321,7 @@ def _parse_task(path: Path) -> ScheduledTask:
         schedule=str(raw_schedule).strip(),
         cron=cron,
         body=body,
+        on_webhook=on_webhook,
         timeout=_int("timeout", DEFAULT_TIMEOUT),
         max_rounds=_int("max_rounds", DEFAULT_MAX_ROUNDS),
         max_turns=_int("max_turns", DEFAULT_MAX_TURNS),
@@ -312,6 +334,36 @@ def _parse_task(path: Path) -> ScheduledTask:
         run_shell=run_shell,
         source_path=path,
     )
+
+
+def _webhook_slug(text: str) -> str:
+    """URL-safe endpoint segment, matching WEBHOOK_INBOUND_NAME's slugging so the
+    task's `on_webhook:` value lines up with the inbox folder the receiver writes."""
+    out = "".join(c if c.isalnum() else "-" for c in str(text).strip().lower())
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-")
+
+
+def _parse_on_webhook(raw: Any) -> str | None:
+    """Parse the `on_webhook:` frontmatter into an endpoint name, or None.
+
+    Accepted forms:
+      * absent / false / null  -> None (the task is cron-triggered).
+      * ``true``               -> the default endpoint name ``webhook``.
+      * a string               -> that endpoint name (slugified to match the
+                                  receiver's WEBHOOK_INBOUND_NAME).
+    """
+    if raw is None or raw is False:
+        return None
+    if raw is True:
+        return "webhook"
+    if isinstance(raw, str):
+        name = _webhook_slug(raw)
+        if not name:
+            raise ValueError("`on_webhook:` is empty — name the webhook endpoint (or use `true`)")
+        return name
+    raise ValueError("`on_webhook:` must be a webhook endpoint name, or `true` for the default")
 
 
 def _parse_run(raw: Any) -> tuple[list[str] | None, bool]:
@@ -441,8 +493,11 @@ def next_fire_for(task: ScheduledTask, state: ScheduleState,
     """Next fire computed from the task's anchor (see module docstring).
 
     Side effect: stamps first_seen_at for never-seen tasks so their anchor
-    starts now (no retroactive fire on first discovery).
+    starts now (no retroactive fire on first discovery). A webhook-triggered
+    task has no cron, so this returns None — its due-ness is event-driven.
     """
+    if task.cron is None:
+        return None
     now = now or datetime.now()
     anchor = state.anchor(task.name)
     if anchor is None:
@@ -451,8 +506,23 @@ def next_fire_for(task: ScheduledTask, state: ScheduleState,
     return next_fire(task.cron, anchor)
 
 
+def has_pending_webhook_events(task: ScheduledTask, hub_dir: Path) -> bool:
+    """Whether a webhook-triggered task has unprocessed events waiting."""
+    if not task.on_webhook:
+        return False
+    from .inbound.webhook import pending_events   # stdlib-only import, kept lazy
+    return bool(pending_events(hub_dir, task.on_webhook))
+
+
 def is_due(task: ScheduledTask, state: ScheduleState,
-           now: datetime | None = None) -> bool:
+           now: datetime | None = None, *, hub_dir: Path | None = None) -> bool:
+    # A webhook-triggered task is due whenever an event is waiting in its inbox.
+    # The scheduler archives handled events after a successful run, so a drained
+    # inbox is not due (see scheduler._fire / inbound.webhook.archive_events).
+    # `getattr` keeps this working for the eval stand-in (`_Schedulable`), which
+    # carries only name+cron and is never webhook-triggered.
+    if getattr(task, "is_webhook", False):
+        return hub_dir is not None and has_pending_webhook_events(task, hub_dir)
     now = now or datetime.now()
     nxt = next_fire_for(task, state, now)
     return nxt is not None and nxt <= now
