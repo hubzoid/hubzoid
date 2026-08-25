@@ -17,6 +17,7 @@ from ..telegram.enrollment import Bindings
 from .env import telegram_config_from_env, whatsapp_config_from_env
 from .harness import Messages, build_app
 from .history import DEFAULT_MAX_MESSAGES
+from .webhook import webhook_config_from_env
 
 log = logging.getLogger("hubzoid.inbound")
 
@@ -31,6 +32,26 @@ def inbound_port(env=None) -> int:
         return DEFAULT_INBOUND_PORT
 
 
+def _slugify(text: str) -> str:
+    out = "".join(c if c.isalnum() else "-" for c in str(text).strip().lower())
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-") or "hub"
+
+
+def hub_slug(hub_dir, env=None) -> str:
+    """The URL slug this hub's webhooks are namespaced under: ``HUBZOID_HUB_SLUG``
+    if the operator pinned one, else the slugified folder name.
+
+    The gateway edge and this inbound app must agree on the slug or the route
+    404s. Both apply this same rule, so distinct folder names need no config; set
+    ``HUBZOID_HUB_SLUG`` only when the gateway had to de-dup a slug collision
+    (two hubs with the same folder basename)."""
+    env = env if env is not None else os.environ
+    pinned = (env.get("HUBZOID_HUB_SLUG") or "").strip()
+    return _slugify(pinned) if pinned else _slugify(Path(hub_dir).name)
+
+
 def build_app_for_hub(hub_dir, env=None):
     """Build the Starlette app for a hub, or None if no surface is configured."""
     env = env if env is not None else os.environ
@@ -41,7 +62,8 @@ def build_app_for_hub(hub_dir, env=None):
 
     wa = whatsapp_config_from_env(env)
     tg = telegram_config_from_env(env, bindings=bindings)
-    if wa is None and tg is None:
+    wh = webhook_config_from_env(env, hub_dir=hub_dir)
+    if wa is None and tg is None and wh is None:
         return None
     # Streaming (edit-in-place) is ON by default; set TELEGRAM_STREAM=false to disable.
     if tg is not None and settingslib.truthy(env.get("TELEGRAM_STREAM", "true")):
@@ -72,7 +94,8 @@ def build_app_for_hub(hub_dir, env=None):
 
     return build_app(
         hub_dir=hub_dir, bridge_url=bridge_url, api_key=settings.first_api_key,
-        model=model, resolver=resolver, whatsapp=wa, telegram=tg,
+        model=model, resolver=resolver, slug=hub_slug(hub_dir, env),
+        whatsapp=wa, telegram=tg, webhook=wh,
         messages=Messages.from_env(env), history_max=history_max,
         history_ttl_seconds=history_ttl_seconds, stream_interval=stream_interval,
         max_upload_bytes=settings.max_upload_bytes,
@@ -93,7 +116,9 @@ def run(hub_dir, env=None, port=None) -> int:
     import uvicorn
 
     bind_port = port or inbound_port(env)
-    log.info("hubzoid inbound starting on 127.0.0.1:%s (hub=%s)", bind_port, Path(hub_dir).name)
+    slug = hub_slug(hub_dir, env)
+    log.info("hubzoid inbound starting on 127.0.0.1:%s (hub=%s, public path /webhooks/%s/*)",
+             bind_port, Path(hub_dir).name, slug)
     uvicorn.run(app, host="127.0.0.1", port=bind_port, log_level="info")
     return 0
 

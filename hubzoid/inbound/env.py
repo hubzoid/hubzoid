@@ -9,6 +9,11 @@ from __future__ import annotations
 from typing import Mapping
 
 from .harness import TelegramConfig, WhatsAppConfig
+# Re-exported so callers have one import site for every surface's env helpers.
+from .webhook import (  # noqa: F401
+    missing_webhook_vars,
+    webhook_config_from_env,
+)
 
 _WHATSAPP_VARS = (
     "WHATSAPP_VERIFY_TOKEN",

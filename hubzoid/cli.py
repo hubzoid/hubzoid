@@ -206,7 +206,14 @@ def run(
         False,
         "--telegram",
         help="Also start the Telegram webhook surface. Reads TELEGRAM_* from .env and "
-        "exposes /webhooks/telegram via the edge. Soft-skips if unconfigured.",
+        "exposes /webhooks/<hub>/telegram via the edge. Soft-skips if unconfigured.",
+    ),
+    webhook: bool = typer.Option(
+        False,
+        "--webhook",
+        help="Also start the generic webhook surface (alerting, CI, automations). "
+        "Reads WEBHOOK_INBOUND_SECRET/_NAME/_HMAC from .env and exposes "
+        "/webhooks/<hub>/<name> via the edge. Soft-skips if unconfigured.",
     ),
 ) -> None:
     """Start the bridge (+ Open WebUI) for a hub."""
@@ -342,14 +349,17 @@ def run(
                     edge_routes.append(
                         {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
                     )
-                if whatsapp or telegram:
-                    # WhatsApp/Telegram receive on a loopback inbound port; only
-                    # /webhooks is exposed publicly (each POST is signature- or
-                    # secret-verified before anything runs). Import here so a plain
-                    # `hubzoid run` never pulls in the inbound stack (SQLAlchemy, etc.).
-                    from .inbound.run import inbound_port
+                if whatsapp or telegram or webhook:
+                    # Inbound surfaces receive on a loopback inbound port; only
+                    # /webhooks/<hub> is exposed publicly (each POST is signature-,
+                    # secret-, or HMAC-verified before anything runs). Namespaced by
+                    # hub slug so the same public path scheme works under the gateway.
+                    # Import here so a plain `hubzoid run` never pulls in the inbound
+                    # stack (SQLAlchemy, etc.).
+                    from .inbound.run import hub_slug, inbound_port
                     edge_routes.append(
-                        {"prefix": "/webhooks", "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
+                        {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
+                         "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
                     )
                 edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
                 edge_cmd = [
@@ -389,23 +399,31 @@ def run(
             slack_proc = subprocess.Popen(slack_cmd, env=bridge_env)
             console.print(f"[cyan]→ slack [/cyan]  starting (Socket Mode)")
 
-    # Optional: the inbound webhook surfaces (WhatsApp/Telegram) as one shared
-    # child. It reads WHATSAPP_*/TELEGRAM_* from .env and serves whichever are
-    # configured; the edge already routes /webhooks to it. Soft-warn per surface.
+    # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
+    # shared child. It reads WHATSAPP_*/TELEGRAM_*/WEBHOOK_INBOUND_* from .env and
+    # serves whichever are configured; the edge already routes /webhooks/<hub> to
+    # it. Soft-warn per surface.
     inbound_proc = None
-    if whatsapp or telegram:
-        from .inbound.env import missing_telegram_vars, missing_whatsapp_vars
+    if whatsapp or telegram or webhook:
+        from .inbound.env import (
+            missing_telegram_vars,
+            missing_webhook_vars,
+            missing_whatsapp_vars,
+        )
         if whatsapp and missing_whatsapp_vars(os.environ):
             console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
         if telegram and missing_telegram_vars(os.environ):
             console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
+        if webhook and missing_webhook_vars(os.environ):
+            console.print(f"[yellow]→ inbound[/yellow]  webhook skipped: missing {', '.join(missing_webhook_vars(os.environ))}")
         start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
         start_tg = telegram and not missing_telegram_vars(os.environ)
-        if start_wa or start_tg:
+        start_wh = webhook and not missing_webhook_vars(os.environ)
+        if start_wa or start_tg or start_wh:
             inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
             inbound_proc = subprocess.Popen(inbound_cmd, env=bridge_env)
-            surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg)) if on)
-            console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks)")
+            surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
+            console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
 
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
