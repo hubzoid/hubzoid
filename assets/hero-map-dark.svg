@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 360" width="1000" height="360" role="img" aria-label="Any chat surface to your Hubzoid agent to any SDK">
+  <style> text{font-family:ui-monospace, SFMono-Regular, Menlo, 'JetBrains Mono', monospace;} </style>
+  <text x="119.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#9A9AA0">SURFACES</text>
+  <text x="511.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#9A9AA0">HUBZOID</text>
+  <text x="887.0" y="26" text-anchor="middle" font-size="12" letter-spacing="1.4" fill="#9A9AA0">ENGINE</text>
+  <path d="M198 66 C 268 66, 351 180, 421 180" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M198 122 C 268 122, 351 180, 421 180" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M198 178 C 268 178, 351 180, 421 180" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M198 234 C 268 234, 351 180, 421 180" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M198 290 C 268 290, 351 180, 421 180" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M601 180 C 671 180, 732 66, 802 66" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M601 180 C 671 180, 732 122, 802 122" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M601 180 C 671 180, 732 178, 802 178" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <path d="M601 180 C 671 180, 732 234, 802 234" fill="none" stroke="#9A9AA0" stroke-width="1.25"/>
+  <rect x="40" y="44" width="158" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="119.0" y="71" text-anchor="middle" font-size="15" fill="#F4F4F2">Open WebUI</text>
+  <rect x="40" y="100" width="158" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="119.0" y="127" text-anchor="middle" font-size="15" fill="#F4F4F2">Slack</text>
+  <rect x="40" y="156" width="158" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="119.0" y="183" text-anchor="middle" font-size="15" fill="#F4F4F2">WhatsApp</text>
+  <rect x="40" y="212" width="158" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="119.0" y="239" text-anchor="middle" font-size="15" fill="#F4F4F2">Telegram</text>
+  <rect x="40" y="268" width="158" height="44" rx="4" fill="none" stroke="#5A5A60" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="119.0" y="295" text-anchor="middle" font-size="15" fill="#5A5A60">+ more soon</text>
+  <rect x="802" y="44" width="170" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="887.0" y="71" text-anchor="middle" font-size="14" fill="#F4F4F2">Claude Agent SDK</text>
+  <rect x="802" y="100" width="170" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="887.0" y="127" text-anchor="middle" font-size="14" fill="#F4F4F2">OpenAI Agents SDK</text>
+  <rect x="802" y="156" width="170" height="44" rx="4" fill="none" stroke="#F4F4F2" stroke-width="1.5"/>
+  <text x="887.0" y="183" text-anchor="middle" font-size="14" fill="#F4F4F2">LiteLLM · local</text>
+  <rect x="802" y="212" width="170" height="44" rx="4" fill="none" stroke="#5A5A60" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="887.0" y="239" text-anchor="middle" font-size="14" fill="#5A5A60">+ more soon</text>
+  <rect x="421" y="96" width="180" height="168" rx="6" fill="none" stroke="#FF7A33" stroke-width="2"/>
+  <text x="511.0" y="158" text-anchor="middle" font-size="26" font-weight="700" fill="#F4F4F2">Hubzoid</text>
+  <line x1="449" y1="178" x2="573" y2="178" stroke="#2A2A2E" stroke-width="1"/>
+  <text x="511.0" y="202" text-anchor="middle" font-size="12" letter-spacing="0.6" fill="#9A9AA0">AGENTS.md</text>
+  <text x="511.0" y="222" text-anchor="middle" font-size="12" letter-spacing="0.6" fill="#9A9AA0">skills · knowledge</text>
+  <path d="M420 175.0 L428 180.0 L420 185.0 Z" fill="#FF7A33"/>
+  <path d="M600 175.0 L608 180.0 L600 185.0 Z" fill="#FF7A33"/>
+</svg>
