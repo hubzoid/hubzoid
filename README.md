@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Your AI agents. Every channel. Every tool. Under your control.</strong><br>
-  <sub>The open-source platform for governed, production AI agents. Self-hosted, defined in markdown, and MIT licensed&mdash;all of it.</sub>
+  <sub>The open-source platform for governed, production AI agents. Self-hosted and defined entirely in markdown.</sub>
 </p>
 
 <p align="center">
@@ -44,20 +44,55 @@ The hub stays portable. Run it with the
 models from OpenAI, Anthropic, Azure OpenAI, OpenRouter, or local Claude through
 your existing CLI subscription.
 
-## The complete agent platform, without the platform lock-in
+## Quickstart
+
+**Three commands if the `claude` CLI is installed and logged in.**
+
+```bash
+pip install hubzoid
+hubzoid init my-hub                    # minimal runnable hub + agents-repo wrapper
+hubzoid run my-hub
+```
+
+Open <http://localhost:3080>. You get a generic assistant with one example of
+every Hubzoid surface (one skill, one knowledge file, one sub-agent, one custom
+tool) so the folder layout is obvious. Edit `my-hub/AGENTS.md` to make it yours.
+
+Using OpenAI, Anthropic, Azure OpenAI, or OpenRouter? Add a key and model to
+`my-hub/.env` first -- see [Providers](docs/providers.md).
+
+Want the guided tour? `hubzoid init my-hub --template demo` gives a **Hubzoid
+Guide** agent that explains the framework as you chat.
+
+<details>
+<summary>Python version and build caveats</summary>
+
+> Python 3.11 or 3.12 (Open WebUI does not yet support 3.13+). On recent macOS,
+> the default `python3` is too new; create your venv with `python3.12 -m venv`
+> explicitly. If pip tries to build `av` (PyAV) from source, run
+> `brew install pkg-config ffmpeg` first.
+
+The two files you edit as you customize:
+
+1. `my-hub/.env`: keys, model selection, UI knobs.
+2. `my-hub/AGENTS.md`: the system prompt body. YAML frontmatter sets `name`,
+   `description`, and optional `model`.
+
+</details>
+
+## What you get
 
 | Capability | What Hubzoid gives you |
 |---|---|
-| **One agent, every channel** | Open WebUI, Slack, WhatsApp, Telegram, webhooks, the OpenAI-compatible API, and MCP clients share the same agent, skills, knowledge, and tools. |
-| **Access enforced outside the model** | Gate sensitive tools by user group. Unauthorized tools are hidden, denied again at execution time, and written to an audit log. The model is never the security boundary. |
-| **Connect existing tools** | Add shared MCP connectors, user-owned OAuth connections, or small Python tools for internal APIs, databases, Jira, Linear, Odoo, Notion, Sentry, and more. |
-| **Agents that work unattended** | Trigger work on cron schedules or incoming webhooks with bounded runs, resumable state, scoped writes, detailed logs, and optional Git commit and push. |
-| **Central, multi-agent deployment** | Serve many team-specific hubs through one Open WebUI, one user directory, one brand, and group-controlled visibility with `hubzoid gateway`. |
-| **Bring your model and runtime** | Move the same hub between OpenAI Agents and Claude Agent runtimes. Route models through LiteLLM or run local Claude with no provider API key. |
-| **Quality and observability built in** | Run behavioral evals locally, in CI, or on a schedule. Export agent, model, tool, user, token, and cost traces through OpenTelemetry. |
-| **100% open source** | Every feature is MIT licensed, including access controls, gateways, scheduling, evals, and integrations. No enterprise edition. No license key. No feature gates. |
+| One agent, every channel | Web, Slack, WhatsApp, Telegram, webhooks, the OpenAI-compatible API, and MCP clients share the same agent, skills, and tools. |
+| Access enforced outside the model | Gate tools by user group. Unauthorized tools are hidden, denied again at execution, and audited. The model is never the security boundary. |
+| Connect existing tools | Shared MCP connectors, user-owned OAuth connections, or small Python tools for internal APIs and databases. |
+| Agents that work unattended | Trigger work on cron schedules or webhooks with bounded runs, resumable state, and optional Git commit and push. |
+| Central, multi-agent deployment | Serve many team-specific hubs through one Open WebUI, one directory, and one brand with `hubzoid gateway`. |
+| Bring your model and runtime | Move the same hub between OpenAI Agents and Claude Agent runtimes. Route through LiteLLM or run local Claude. |
+| Quality and observability | Run behavioral evals locally, in CI, or on a schedule. Export agent, model, tool, token, and cost traces through OpenTelemetry. |
 
-## Enterprise control. Open-source freedom.
+## Security and control
 
 Hubzoid is designed to run inside your perimeter and use the identity systems
 you already trust.
@@ -75,132 +110,7 @@ you already trust.
   tool, result, and reason.
 - **Deployment choice:** run on a Linux host, in Docker, or under ECS,
   Kubernetes, and other orchestrators. Keep telemetry local or send standard
-  OpenTelemetry traces to your existing collector or Langfuse.
-
-There is no proprietary control plane and no commercial code hidden elsewhere.
-Deploy Hubzoid yourself, modify it, and redistribute it without changing
-platforms or asking for permission.
-
-## Quickstart
-
-**Three commands if the `claude` CLI is installed and logged in.**
-
-```bash
-pip install hubzoid
-hubzoid init my-hub                    # minimal runnable hub + agents-repo wrapper
-hubzoid run my-hub
-```
-
-Open <http://localhost:3080>. You get a generic assistant with one example of
-every Hubzoid surface (one skill, one knowledge file, one sub-agent, one custom
-tool) so the folder layout is obvious. Edit `my-hub/AGENTS.md` to make it yours.
-
-Using OpenAI, Anthropic, Azure OpenAI, or OpenRouter instead? Add the provider
-key and model to `my-hub/.env` before running the hub.
-
-Want the guided tour instead? `hubzoid init my-hub --template demo` gives a
-**Hubzoid Guide** agent that explains the framework as you chat.
-
-<details>
-<summary>Python version and build caveats</summary>
-
-> Python 3.11 or 3.12 (Open WebUI does not yet support 3.13+). On recent macOS,
-> the default `python3` is too new; create your venv with `python3.12 -m venv`
-> explicitly. If pip tries to build `av` (PyAV) from source, run
-> `brew install pkg-config ffmpeg` first.
-
-Default `MODEL=claude-local` uses your installed `claude` CLI subscription. If
-you already ran `claude login`, go straight to `hubzoid run`. Otherwise open
-`my-hub/.env`, comment out the
-`MODEL=claude-local` line, and uncomment one provider stanza (OpenRouter, OpenAI,
-Anthropic) with your key pasted in.
-
-The two files you edit later as you customize:
-
-1. `my-hub/.env`: keys, model selection, UI knobs.
-2. `my-hub/AGENTS.md`: the system prompt body. YAML frontmatter sets `name`,
-   `description`, and optional `model`.
-
-</details>
-
-## One agent, every surface
-
-Same agent, same skills, same knowledge, same `.env`. Pick the surfaces you want.
-
-| Surface | How it connects | Docs |
-|---|---|---|
-| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | — |
-| Slack | Socket Mode. No public URL. | [slack.md](docs/slack.md) |
-| WhatsApp | Inbound webhook. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
-| Telegram | Inbound webhook, with streaming. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
-| OpenAI-compatible API | Connect any compatible client or application. | — |
-| MCP server | Serve the hub's tools and knowledge to Claude Code, Cursor, and other MCP clients. | [mcp-server.md](docs/mcp-server.md) |
-| Generic webhook | Receive events from monitoring, CI, and automation systems. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
-
-More surfaces are on the [roadmap](#roadmap).
-
-```bash
-hubzoid run my-hub --slack --whatsapp --telegram   # any combination, one process
-```
-
-Slack uses Socket Mode, so it needs no public endpoint. WhatsApp and Telegram
-use verified inbound webhooks and a per-hub `identity/access.csv` roster that
-maps each sender to an email and groups. Unknown senders are rejected before an
-LLM or tool runs. Conversation memory, per-sender identity, access gating,
-attachments, and channel-native response updates are built in.
-
-## Connect the tools your organization already runs
-
-Hubzoid does not make you rebuild integrations inside a proprietary platform.
-Use the lightest standard that fits:
-
-1. **Shared MCP connectors** give a hub centrally configured tools and data.
-2. **Per-user MCP connections** let each person connect supported services with
-   OAuth in Open WebUI; Hubzoid executes with that person's encrypted token.
-3. **Hub-local Python tools** wrap an internal API or workflow with a normal
-   typed function.
-4. **The MCP server** exposes the hub's governed tools and knowledge to other AI
-   clients under the caller's identity and group permissions.
-
-Connectors behave the same under both supported agent runtimes. MCP servers are
-read-only by default, and HTTP access can be limited with an allowlist. See
-[MCP connectors](docs/mcp.md) and [MCP server mode](docs/mcp-server.md).
-
-## Automate work, not just conversations
-
-Put a markdown task in `schedule/` and the hub becomes an unattended agent. A
-task can run on a five-field cron or fire from an incoming webhook. It uses the
-same persona, skills, knowledge, tools, and model as chat, inside a bounded run
-harness with timeouts, persistent progress, and path-scoped writes.
-
-Every run produces a live JSONL log. Tasks can safely update selected hub files,
-commit only declared paths, and optionally push the result so CI and review
-workflows continue normally. Scheduled evals use the same scheduler to catch
-model or data drift. See [scheduled tasks](docs/schedule.md) and
-[evals](docs/evals.md).
-
-## Operate every hub from one front door
-
-`hubzoid gateway` places multiple independent hubs behind one shared Open WebUI.
-Users sign in once and see only the agents granted to their team. Operators get
-one user directory, one group-management surface, consistent organization-wide
-branding, and one place to register user-connected MCP services.
-
-Each hub keeps its own instructions, tools, knowledge, schedules, model, and
-artifact space. Run everything on one host or split the bridges across your
-infrastructure. See [production deployment](docs/DEPLOYING.md).
-
-## Measure quality, usage, and cost
-
-Behavioral evals live beside the agent in `evals/*.md`. Assert required answer
-content, required tool calls, forbidden tools, and model-judged criteria. Run
-the same suite during development, as a CI gate, or on a schedule.
-
-Opt-in OpenTelemetry traces capture the interaction, model requests, tool calls,
-user identity, tokens, and cost. Send them directly to Langfuse or through your
-existing OTel collector; a shared backend can separate every hub and user
-without a Hubzoid-specific telemetry service. See
-[observability](docs/OBSERVABILITY.md).
+  OpenTelemetry traces to your collector or Langfuse.
 
 ## A minimal AGENTS.md
 
@@ -222,7 +132,7 @@ say so in one line and stop.
 
 That is the whole hub. One file. No sub-agents, no skills, no knowledge needed.
 Drop it in a folder, run `hubzoid run .`, and you have a code reviewer at
-<http://localhost:3080> -- and, if you flip on the surfaces above, in Slack,
+<http://localhost:3080> -- and, if you flip on the surfaces below, in Slack,
 WhatsApp, and Telegram too.
 
 ## How it works
@@ -248,13 +158,76 @@ WhatsApp, and Telegram too.
 One install command provides the UI, API bridge, both agent runtimes, model
 routing, channel adapters, scheduler, access layer, and built-in tools.
 
+## Surfaces
+
+Same agent, same skills, same knowledge. Pick the surfaces you want.
+
+| Surface | How it connects | Docs |
+|---|---|---|
+| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | — |
+| Slack | Socket Mode. No public URL. | [slack.md](docs/slack.md) |
+| WhatsApp | Inbound webhook. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
+| Telegram | Inbound webhook, with streaming. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
+| OpenAI-compatible API | Any compatible client or application. | — |
+| MCP server | Serve the hub's tools and knowledge to Claude Code, Cursor, and other MCP clients. | [mcp-server.md](docs/mcp-server.md) |
+| Generic webhook | Receive events from monitoring, CI, and automation. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
+
+```bash
+hubzoid run my-hub --slack --whatsapp --telegram   # any combination, one process
+```
+
+WhatsApp and Telegram use verified inbound webhooks and a per-hub
+`identity/access.csv` roster that maps each sender to an email and groups.
+Unknown senders are rejected before an LLM or tool runs. More surfaces are on the
+[roadmap](#roadmap).
+
+## Tools and connectors
+
+Use the lightest standard that fits:
+
+1. **Shared MCP connectors** give a hub centrally configured tools and data.
+2. **Per-user MCP connections** let each person connect supported services with
+   OAuth in Open WebUI; Hubzoid executes with that person's encrypted token.
+3. **Hub-local Python tools** wrap an internal API or workflow with a typed
+   function.
+4. **The MCP server** exposes the hub's governed tools and knowledge to other AI
+   clients under the caller's identity and group permissions.
+
+See [MCP connectors](docs/mcp.md) and [MCP server mode](docs/mcp-server.md).
+
+## Automation
+
+Put a markdown task in `schedule/` and the hub becomes an unattended agent. A
+task runs on a five-field cron or fires from an incoming webhook, using the same
+persona, skills, knowledge, tools, and model as chat inside a bounded run with
+timeouts, persistent progress, and path-scoped writes. Each run produces a live
+JSONL log and can commit or push only declared paths. See
+[scheduled tasks](docs/schedule.md).
+
+## Gateway
+
+`hubzoid gateway` places multiple independent hubs behind one shared Open WebUI.
+Users sign in once and see only the agents granted to their team; operators get
+one user directory, one group surface, and consistent branding. Each hub keeps
+its own instructions, tools, knowledge, schedules, and model. See
+[production deployment](docs/DEPLOYING.md).
+
+## Evals and observability
+
+Behavioral evals live beside the agent in `evals/*.md`. Assert required answer
+content, required tool calls, forbidden tools, and model-judged criteria. Run the
+same suite during development, as a CI gate, or on a schedule.
+
+Opt-in OpenTelemetry traces capture the interaction, model requests, tool calls,
+user identity, tokens, and cost. Send them to Langfuse or through your existing
+OTel collector. See [evals](docs/evals.md) and
+[observability](docs/OBSERVABILITY.md).
+
 ## Editing your hub
 
 Your hub is one folder. The pieces you can add:
 
-1. **Pick your model.** Default `.env` uses `MODEL=claude-local` (no key needed if
-   `claude login` is done). To switch to OpenRouter / OpenAI / Anthropic,
-   uncomment a stanza in `.env` and paste a key.
+1. **Pick your model.** `.env` selects the model. See [Providers](docs/providers.md).
 2. **Write the main agent.** `AGENTS.md` body is the system prompt. Frontmatter
    sets `name`, `description`, optional `model`, and optional `suggestions:`
    (quick-start prompts shown as buttons on the empty chat screen).
@@ -503,5 +476,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome.
 
 ## License
 
-MIT -- all of it. Use it, modify it, self-host it, and ship it in production.
-See [LICENSING.md](LICENSING.md).
+MIT -- all of it, including access controls, gateways, scheduling, evals, and
+integrations. No enterprise edition, no license key, no feature gates. Use it,
+modify it, self-host it, and ship it in production. See
+[LICENSING.md](LICENSING.md).
