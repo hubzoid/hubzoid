@@ -1,0 +1,7 @@
+.env
+output/
+.openwebui-data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hubzoid/
