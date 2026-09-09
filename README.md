@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Internal AI agents for the work your team does by hand.</strong><br>
-  <sub>The open-source framework for internal agents: self-hosted, defined in markdown, deployed inside your own perimeter.</sub>
+  <sub>The open-source framework for enterprise internal agents: self-hosted, defined in markdown, run inside your own perimeter.</sub>
 </p>
 
 <p align="center">
@@ -28,12 +28,9 @@
 
 ## One folder becomes a production agent
 
-An internal agent does the work your team currently does by hand, across the
-systems your company already runs. A morning briefing across sales, cash, and
-operations, ready before the day starts. Every supplier bill checked against its
-purchase order, with only the exceptions reaching a person. Stock drift across
-locations flagged early enough to act. A plain-language answer, in Slack, to
-"what did we bill last month, and to whom".
+An internal agent does the work your team does by hand, on the systems your
+company already runs: the morning briefing, the supplier bill check, the stock
+drift scan, a plain answer in Slack to "what did we bill last month".
 
 Hubzoid turns a folder of markdown into that agent, complete and deployable.
 Define its instructions, sub-agents, skills, knowledge, tools, access rules,
@@ -90,15 +87,10 @@ The two files you edit as you customize:
 
 ## Internal agents, not customer-facing bots
 
-Hubzoid builds internal agents: the agents your own team uses to do its own
-work in operations, finance, leadership reporting, IT-ops, knowledge,
-procurement, and accounts. The scope rule is one sentence. The agent's user is
-your team, never your customers.
-
-Two reasons. Internal work has provable ROI: the hours it replaces are on a
-timesheet, and the errors it catches have a price. And a wrong answer stays
-inside a room where a human can catch it, before it reaches an invoice, a
-customer, or a regulator. That is the right place to put an agent to work first.
+Hubzoid builds internal agents: the ones your own team uses for its own work in
+operations, finance, leadership reporting, IT-ops, and knowledge. The agent's
+user is your team, never your customers. Internal work has provable ROI, and a
+wrong answer reaches your own team, not a customer.
 
 ## Templates
 
@@ -210,11 +202,11 @@ Same agent, same skills, same knowledge. Pick the surfaces you want.
 
 | Surface | How it connects | Docs |
 |---|---|---|
-| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | · |
+| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | — |
 | Slack | Socket Mode. No public URL. | [slack.md](docs/slack.md) |
 | WhatsApp | Inbound webhook. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
 | Telegram | Inbound webhook, with streaming. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
-| OpenAI-compatible API | Any compatible client or application. | · |
+| OpenAI-compatible API | Any compatible client or application. | — |
 | MCP server | Serve the hub's tools and knowledge to Claude Code, Cursor, and other MCP clients. | [mcp-server.md](docs/mcp-server.md) |
 | Generic webhook | Receive events from monitoring, CI, and automation. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
 
@@ -517,18 +509,14 @@ Codex, Copilot, Gemini CLI, VS Code).
 * Memory backends for cross-session recall.
 * Sandboxed eval (record/replay tool mocking) and multi-turn cases.
 * Sandboxed code execution (Python in a container) and browser automation.
-* Pluggable agent runtimes (beyond Claude Code) and chat frontends (beyond Open WebUI).
+* Pluggable agent runtimes beyond the two shipped SDKs, and chat frontends beyond Open WebUI.
 
 ## Need it built for your company?
 
-Hubzoid is MIT-licensed and complete. Run it yourself, everything is here. If
-you would rather have internal agents built, deployed, and operated for your
-company, Hubzoid the practice does that at a fixed price:
-<https://hubzoid.com>.
-
-Start with an agent map: a short, written view of which internal work in your
-company is worth an agent first.
-[Get your agent map](https://hubzoid.com/agent-map).
+Hubzoid is MIT-licensed and complete; run it yourself. If you would rather have
+your internal agents built, deployed, and handed over at a fixed price, that is
+what [hubzoid.com](https://hubzoid.com) does. Start with an
+[agent map](https://hubzoid.com/agent-map).
 
 ## Contributing
 
