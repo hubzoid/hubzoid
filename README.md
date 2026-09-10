@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Internal AI agents for the work your team does by hand.</strong><br>
+  <strong>Internal AI agents that work for your team.</strong><br>
   <sub>The open-source framework for enterprise internal agents: self-hosted, defined in markdown, run inside your own perimeter.</sub>
 </p>
 
