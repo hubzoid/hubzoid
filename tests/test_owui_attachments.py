@@ -279,3 +279,24 @@ class TestNormalizeOwuiUploads:
         assert (canon / "report.csv").is_file() and (canon / "chart.png").is_file()
         assert "read_upload('report.csv')" in out
         assert "[Image: chart.png]" in out
+
+
+# ---------------------------------------------------------------------------
+# _owui_uploads_dir — where the bridge looks for OWUI's uploads. MUST track the
+# OWUI DB so it is correct in BOTH single-hub and gateway deployments.
+# ---------------------------------------------------------------------------
+class TestOwuiUploadsDir:
+    def test_single_hub_uses_per_hub_data_dir(self, tmp_path, monkeypatch):
+        # No HUBZOID_OWUI_DB => the hub runs its own OWUI under .openwebui-data.
+        monkeypatch.delenv("HUBZOID_OWUI_DB", raising=False)
+        from hubzoid.server import _owui_uploads_dir
+        assert _owui_uploads_dir(tmp_path) == tmp_path / ".openwebui-data" / "uploads"
+
+    def test_gateway_tracks_the_shared_db_dir(self, tmp_path, monkeypatch):
+        # Gateway sets HUBZOID_OWUI_DB to the shared DB; uploads sit beside it,
+        # NOT under the (nonexistent) per-hub .openwebui-data. This is the fix:
+        # a hard-coded per-hub path made every gateway upload "unreadable".
+        gw = tmp_path / "gateway-data"
+        monkeypatch.setenv("HUBZOID_OWUI_DB", str(gw / "webui.db"))
+        from hubzoid.server import _owui_uploads_dir
+        assert _owui_uploads_dir(tmp_path) == gw / "uploads"

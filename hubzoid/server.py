@@ -39,6 +39,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from . import _request_ctx
 from . import _signing
 from . import access
+from .access import owui_db
 from . import memory as memlib
 from . import owui as owui_lib
 from . import runtime as runtime_lib
@@ -198,12 +199,12 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="empty prompt after flattening messages")
 
         # Open WebUI uploads arrive as a RAG-wrapped prompt referencing files it
-        # stored under .openwebui-data/uploads/. Normalize them into the SAME
+        # stored under its data dir's uploads/. Normalize them into the SAME
         # canonical per-chat uploads store the base64 path just used, so ONE store
         # is authoritative — read_upload, vision and ticket attachments all resolve
         # OWUI files from it, and no downstream reader has to know OWUI exists.
         # Strips OWUI's RAG boilerplate/chunks; pass-through on any non-match.
-        owui_uploads = hub_dir / ".openwebui-data" / "uploads"
+        owui_uploads = _owui_uploads_dir(hub_dir)
         if owui_uploads.is_dir():
             normalized = _normalize_owui_uploads(hub_dir, chat_id, prompt, owui_uploads)
             if normalized is not None:
@@ -518,6 +519,23 @@ def _attachment_note(safe_name: str, size: int, mime: str, target: Path) -> str:
         f"Read it with read_upload('{safe_name}'), or pass its on-disk path to a "
         f"path-accepting tool or script: {target}]"
     )
+
+
+def _owui_uploads_dir(hub_dir: Path) -> Path:
+    """Where Open WebUI stored this hub's uploads.
+
+    OWUI writes uploads next to its DB (``<DATA_DIR>/uploads``). Resolve them
+    from the SAME override the access layer uses: ``owui_db.db_path`` returns the
+    gateway DB when ``HUBZOID_OWUI_DB`` is set (gateway mode: the shared OWUI and
+    its DB live in the gateway data dir, NOT ``<hub>/.openwebui-data`` which never
+    exists there) and the per-hub ``<hub>/.openwebui-data/webui.db`` otherwise. So
+    uploads track the DB in both single-hub and gateway deployments.
+
+    Before this, the path was hard-coded to ``<hub>/.openwebui-data/uploads`` and
+    every gateway upload landed elsewhere, so the bridge saw an empty store and
+    told the user their attachment was "unreadable" on every turn.
+    """
+    return owui_db.db_path(hub_dir).parent / "uploads"
 
 
 def _normalize_owui_uploads(

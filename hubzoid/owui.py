@@ -4,13 +4,16 @@ OWUI wraps the user's question in a RAG template before forwarding to
 external OpenAI-compatible endpoints. The wrapped prompt contains
 `<source>` tags for retrieved file chunks; each tag carries the
 `resource-id` (OWUI's file_id) and `name` (filename) directly. OWUI
-persists every uploaded file to a deterministic path:
+persists every uploaded file to a deterministic name under its data dir:
 
-    <hub>/.openwebui-data/uploads/<file_id>_<filename>
+    <owui_data_dir>/uploads/<file_id>_<filename>
 
-So we don't need to query OWUI's SQLite DB, we don't need correlation
-headers, and we don't need to match user-query text to a chat row.
-The file_id + filename are in the prompt itself.
+where `<owui_data_dir>` is `<hub>/.openwebui-data` in single-hub mode and the
+shared gateway data dir in gateway mode. This module does not resolve that dir
+— the bridge passes it in as `owui_uploads_dir` (see
+`server._owui_uploads_dir`). So we don't need to query OWUI's SQLite DB, we
+don't need correlation headers, and we don't need to match user-query text to a
+chat row. The file_id + filename are in the prompt itself.
 
 This module ONLY parses — it does not decide where the bytes live. The
 bridge (`server._normalize_owui_uploads`) is the one place that reads
