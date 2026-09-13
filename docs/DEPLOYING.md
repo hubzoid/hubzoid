@@ -375,7 +375,11 @@ model. If the bridges already run as their own systemd units, add
 `HUBZOID_OWUI_DB=<data-dir>/webui.db` in each bridge's environment yourself
 (the gateway injects it automatically for bridges it launches; without it,
 restricted-tool group lookups read a per-hub DB that doesn't exist in
-gateway mode and every restricted tool is denied). The gateway forwards the
+gateway mode and every restricted tool is denied). This same variable also
+tells the bridge where OWUI stored uploaded files (they sit in
+`<data-dir>/uploads` next to the DB) — without it, chat attachments resolve
+against a per-hub dir that never fills in gateway mode and every upload is
+reported "unreadable". The gateway forwards the
 logged-in user's identity headers to bridges by default (access control
 needs them); set `ENABLE_FORWARD_USER_INFO_HEADERS=false` in the gateway's
 environment if your external bridges must not receive user emails.
