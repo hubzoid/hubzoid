@@ -25,6 +25,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "output": ("output", "outputs"),
     "raw_data": ("raw_data", "raw-data", "rawdata"),
     "schedule": ("schedule", "schedules", "scheduled"),
+    "workflows": ("workflows", "workflow"),
     "evals": ("evals", "eval", "evaluations"),
     "restricted": ("restricted",),
     "identity": ("identity",),

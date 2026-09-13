@@ -62,6 +62,14 @@ _DDL = [
         PRIMARY KEY (hub, subject, k)
     )
     """,
+    # hz_meta: small key/value flags — notably `casbin_authoritative` (set at
+    # migration cutover or fresh-install bootstrap) and `bootstrapped`.
+    """
+    CREATE TABLE IF NOT EXISTS hz_meta (
+        k TEXT PRIMARY KEY,
+        v TEXT
+    )
+    """,
 ]
 
 

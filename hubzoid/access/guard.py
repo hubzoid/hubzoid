@@ -50,10 +50,26 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     surfaces = _allowed_surfaces()
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
+    hub_name = hub_dir.name
+
+    def _decide(ident) -> tuple[bool, str]:
+        """The decision for `ident`: surface gate first, then Casbin `can()` if
+        this hub is migrated, else the legacy group check. One authority."""
+        can = None
+        try:
+            from . import store_for
+
+            gs = store_for(hub_dir)
+            if gs.is_authoritative():
+                subject = ident.user or ""
+                can = lambda: gs.can(subject, hub_name, permission)  # noqa: E731
+        except Exception:  # noqa: BLE001 — a store hiccup falls back to legacy, never opens a door
+            can = None
+        return is_allowed(ident, permission, allowed_surfaces=surfaces, can=can)
 
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()
-        allowed, reason = is_allowed(ident, permission, allowed_surfaces=surfaces)
+        allowed, reason = _decide(ident)
         audit.record(
             hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
             decision=("allow" if allowed else "deny"), reason=reason,
@@ -69,7 +85,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     def _is_enabled(*_args, **_kwargs) -> bool:
         # The SDK calls this with (run_context, agent); we only need the
         # request-scoped identity, so accept anything and ignore it.
-        allowed, _ = is_allowed(current_identity(), permission, allowed_surfaces=surfaces)
+        allowed, _ = _decide(current_identity())
         return allowed
 
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)

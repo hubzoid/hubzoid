@@ -125,3 +125,53 @@ def test_normalization(store):
     store.grant("Alice", "Finance", "Prod_In")
     assert store.can("Alice", "finance", "prod_in")
     assert store.can("Alice", " FINANCE ".strip(), "prod_in")
+
+
+def test_authoritative_marker(store):
+    assert store.is_authoritative() is False
+    store.set_authoritative(True)
+    assert store.is_authoritative() is True
+    store.set_authoritative(False)
+    assert store.is_authoritative() is False
+
+
+def test_bootstrap_grants_org_admins_once(store):
+    store.bootstrap(["root", "ops"], authoritative=True)
+    assert store.can("root", "any-hub", MANAGE_ACCESS)
+    assert store.can("ops", "any-hub", MANAGE_ACCESS)
+    assert store.is_authoritative() is True
+    # idempotent: a second call with different admins does nothing (already done)
+    store.bootstrap(["someone-else"])
+    assert not store.can("someone-else", "any-hub", MANAGE_ACCESS)
+
+
+# --- policy `can` seam (surface gate stays in front) -------------------------
+from hubzoid.access.identity import Identity  # noqa: E402
+from hubzoid.access.policy import is_allowed  # noqa: E402
+
+
+def test_policy_can_seam_gates_after_surface():
+    ident = Identity.make("alice@corp", groups=[], surface="owui")
+    # grant present -> allowed
+    ok, reason = is_allowed(ident, "prod_in", can=lambda: True)
+    assert ok and reason == "grant"
+    # grant absent -> denied
+    ok, reason = is_allowed(ident, "prod_in", can=lambda: False)
+    assert not ok and reason == "no-grant"
+
+
+def test_policy_surface_gate_beats_grant():
+    # a Slack-channel caller is denied BEFORE can() is ever consulted
+    ident = Identity.make("alice@corp", groups=[], surface="slack-channel")
+    called = []
+    ok, reason = is_allowed(
+        ident, "prod_in", can=lambda: called.append(1) or True
+    )
+    assert not ok and reason.startswith("surface:")
+    assert called == []  # can() never ran — a grant is necessary, not sufficient
+
+
+def test_policy_legacy_groups_without_can():
+    ident = Identity.make("alice@corp", groups=["prod_in"], surface="owui")
+    assert is_allowed(ident, "prod_in")[0] is True     # legacy path
+    assert is_allowed(ident, "other")[0] is False

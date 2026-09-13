@@ -37,12 +37,24 @@ def is_allowed(
     permission: str,
     *,
     allowed_surfaces: frozenset[str] = DEFAULT_RESTRICTED_SURFACES,
+    can=None,
 ) -> tuple[bool, str]:
     """Return (allowed, reason). `reason` is a short tag for the audit log.
 
     An empty/blank permission means the tool is not actually restricted, so it
     is always allowed. This lets callers pass a tool through the same gate
     without special-casing the unrestricted majority.
+
+    The **surface gate always runs first** (the confused-deputy rule): a caller
+    on a surface not in `allowed_surfaces` is denied before any permission check,
+    so a grant is necessary but never sufficient.
+
+    Permission decision:
+      * if `can` is given (a zero-arg callable returning bool), it is the
+        authority — the Casbin store's ``can(subject, hub, permission)``. This is
+        used once a hub's access has been migrated to Casbin.
+      * otherwise fall back to the legacy membership check
+        (``permission in identity.groups``), for hubs not yet migrated.
     """
     perm = normalize(permission)
     if not perm:
@@ -51,6 +63,8 @@ def is_allowed(
         return False, "anonymous"
     if identity.surface not in allowed_surfaces:
         return False, f"surface:{identity.surface}"
+    if can is not None:
+        return (True, "grant") if can() else (False, "no-grant")
     if perm in identity.groups:
         return True, "group"
     return False, "no-group"

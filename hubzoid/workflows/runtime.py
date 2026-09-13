@@ -189,8 +189,10 @@ def load_workflows(hub_dir) -> int:
     """Import every workflow module under `<hub>/workflows/<name>/`. A workflow
     is any .py there that applies @workflow. Returns how many were registered."""
     _require_init()
-    root = Path(hub_dir) / "workflows"
-    if not root.is_dir():
+    from .._fs import resolve_bucket
+
+    root = resolve_bucket(Path(hub_dir), "workflows")
+    if root is None or not root.is_dir():
         return 0
     before = len(_REGISTRY)
     for wf_dir in sorted(p for p in root.iterdir() if p.is_dir()):

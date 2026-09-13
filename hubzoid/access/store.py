@@ -181,6 +181,63 @@ class GrantStore:
         with self._engine.connect() as conn:
             return [tuple(r) for r in conn.execute(text(q), params).fetchall()]
 
+    # ---- authority marker + bootstrap ---------------------------------------
+
+    def _meta_get(self, conn, key: str) -> str | None:
+        row = conn.execute(text("SELECT v FROM hz_meta WHERE k=:k"), {"k": key}).fetchone()
+        return row[0] if row else None
+
+    def _meta_set(self, conn, key: str, value: str) -> None:
+        dialect = conn.engine.dialect.name
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    "INSERT INTO hz_meta(k, v) VALUES(:k, :v) "
+                    "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
+                ),
+                {"k": key, "v": value},
+            )
+        else:
+            conn.execute(
+                text(
+                    "INSERT INTO hz_meta(k, v) VALUES(:k, :v) "
+                    "ON CONFLICT (k) DO UPDATE SET v=excluded.v"
+                ),
+                {"k": key, "v": value},
+            )
+
+    def is_authoritative(self) -> bool:
+        """True once Casbin is the authority for this deployment (set at fresh
+        bootstrap or at migration cutover). Until then callers use legacy groups,
+        so existing un-migrated hubs are untouched."""
+        with self._engine.connect() as conn:
+            return self._meta_get(conn, "casbin_authoritative") == "1"
+
+    def set_authoritative(self, flag: bool = True) -> None:
+        with self._engine.begin() as conn:
+            self._meta_set(conn, "casbin_authoritative", "1" if flag else "0")
+
+    def bootstrap(self, admin_subjects: Iterable[str] = (), *,
+                  authoritative: bool = False) -> None:
+        """First-boot bootstrap (idempotent): grant org `manage_access` to the
+        given admins once, so no deployment — fresh or migrated — can lock itself
+        out of the portal. `authoritative=True` also makes Casbin the authority
+        (use for fresh installs with no legacy access to migrate)."""
+        with self._engine.begin() as conn:
+            if self._meta_get(conn, "bootstrapped") == "1":
+                if authoritative:
+                    self._meta_set(conn, "casbin_authoritative", "1")
+                return
+            for subj in admin_subjects:
+                subj = (subj or "").strip()
+                if subj:
+                    self._insert_grant(conn, subj, ORG, MANAGE_ACCESS)
+            self._meta_set(conn, "bootstrapped", "1")
+            if authoritative:
+                self._meta_set(conn, "casbin_authoritative", "1")
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+
     def _org_admins(self, conn) -> set[str]:
         rows = conn.execute(
             text("SELECT subject FROM hz_grants WHERE hub=:o AND permission=:m"),
