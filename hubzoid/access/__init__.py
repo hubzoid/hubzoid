@@ -17,6 +17,8 @@ before, so this package is invisible to existing hubs.
 """
 from __future__ import annotations
 
+import threading
+
 from . import audit
 from . import owui_groups
 from .groups import effective_groups
@@ -31,9 +33,32 @@ from .identity import (
 )
 from .loader import load_restricted
 from .policy import is_allowed
+from .store import GrantStore
+
+_stores: "dict[int, GrantStore]" = {}
+_stores_lock = threading.Lock()
+
+
+def store_for(hub_dir) -> GrantStore:
+    """The (cached) access store for this hub's database. One store per engine,
+    so the whole deployment (a hub, or the shared gateway DB) shares one."""
+    from ..db import engine_for
+
+    eng = engine_for(hub_dir)
+    key = id(eng)
+    gs = _stores.get(key)
+    if gs is None:
+        with _stores_lock:
+            gs = _stores.get(key)
+            if gs is None:
+                gs = GrantStore(eng)
+                _stores[key] = gs
+    return gs
+
 
 __all__ = [
     "ANONYMOUS",
+    "GrantStore",
     "Identity",
     "apply",
     "audit",
@@ -46,4 +71,5 @@ __all__ = [
     "normalize",
     "owui_groups",
     "set_identity",
+    "store_for",
 ]
