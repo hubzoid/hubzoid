@@ -171,6 +171,20 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "OFFLINE_MODE": _ON,                     # don't phone HuggingFace for model updates at boot
     "AUDIO_STT_ENGINE": "webapi",            # browser-side speech-to-text => 0 server RAM
 
+    # --- Process memory allocator (glibc): cap per-thread arenas --------
+    # Not an OWUI setting — it is read by the child's libc at startup, which
+    # is why it belongs in the subprocess env. OWUI runs ~70 worker threads
+    # (Starlette's threadpool + the imported torch/BLAS pools). glibc-malloc
+    # hands each thread its own ~64MB arena and never trims it back, so RSS
+    # bloats to arenas x 64MB (~4-5GB observed) of mostly-idle space — this
+    # is what OOM-killed 8GB gateway boxes, NOT a model in memory (none is
+    # loaded; see the slim-runtime block above). Capping arenas to 2 holds
+    # OWUI to a normal footprint (~1-2GB) with no correctness change and no
+    # measurable latency cost for this I/O-bound workload (it waits on the
+    # LLM API and DB, not on malloc). Harmless no-op on musl/non-glibc.
+    # setdefault => an operator who set MALLOC_ARENA_MAX in .env still wins.
+    "MALLOC_ARENA_MAX": "2",
+
     # --- Real UX wins, kept on ------------------------------------------
     "ENABLE_MESSAGE_RATING": _ON,            # thumbs up/down
     "ENABLE_TITLE_GENERATION": _ON,          # auto chat titles

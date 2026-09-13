@@ -173,6 +173,22 @@ def test_offline_mode_default_on(captured_env, tmp_path, monkeypatch):
     assert env["OFFLINE_MODE"] == "True"
 
 
+def test_malloc_arena_max_default_capped(captured_env, tmp_path, monkeypatch):
+    # glibc hands each of OWUI's ~70 threads its own ~64MB arena and never
+    # trims it, bloating RSS to several GB of idle space (the gateway OOM
+    # cause). Capping arenas holds OWUI to a normal footprint. Passed to the
+    # child's env so its libc reads it at startup.
+    monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env["MALLOC_ARENA_MAX"] == "2"
+
+
+def test_operator_can_override_malloc_arena_max(captured_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("MALLOC_ARENA_MAX", "8")
+    env = _start(captured_env, tmp_path)
+    assert env["MALLOC_ARENA_MAX"] == "8"
+
+
 def test_operator_can_re_enable_local_embeddings(captured_env, tmp_path, monkeypatch):
     # Empty string is the OWUI signal to load the local model; operator wins.
     monkeypatch.setenv("RAG_EMBEDDING_ENGINE", "")
