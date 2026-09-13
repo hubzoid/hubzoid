@@ -114,6 +114,21 @@ external engine is never actually called, so no key or service is needed.
 | `OFFLINE_MODE` | `True` | Don't phone HuggingFace for model updates at boot. |
 | `AUDIO_STT_ENGINE` | `webapi` | Browser-side speech-to-text — 0 server RAM. |
 
+### Process memory allocator (1 flag)
+
+Not an OWUI setting — read by the subprocess's libc at startup. OWUI runs
+~70 worker threads (Starlette's threadpool plus imported torch/BLAS pools),
+and glibc-malloc gives each thread its own ~64MB arena, bloating RSS to
+several GB of mostly-idle space (the cause of gateway OOM kills — not a
+model in memory; the embedder above is already stripped). Capping arenas
+holds OWUI to a normal footprint with no correctness change and no
+measurable latency cost for this I/O-bound workload. Inert no-op on
+musl/non-glibc.
+
+| Flag | Default | Why |
+|---|---|---|
+| `MALLOC_ARENA_MAX` | `2` | Cap per-thread glibc-malloc arenas. Prevents the ~4-5GB arena bloat that OOM-killed gateway boxes. |
+
 ### Workspace permissions off for non-admins (5 flags)
 
 Admin users still see all tabs. These four hide them from regular users.
