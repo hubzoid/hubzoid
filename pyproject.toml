@@ -62,6 +62,9 @@ dependencies = [
   "pypdf>=4.0",
   "Pillow>=10.0",           # vision_inject.py resizes uploaded images before sending them to the model
   "SQLAlchemy>=2.0",        # db.py: hub-owned tables (inbound history). SQLite default; Postgres via DATABASE_URL
+  "casbin>=1.43",           # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
+  "dbos>=2.31",             # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
+  "croniter>=2.0",          # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
 ]
 
 [project.optional-dependencies]

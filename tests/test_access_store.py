@@ -1,0 +1,127 @@
+"""Unit tests for the Casbin-backed access store (direct grants only).
+
+Pure: SQLite + casbin, no LLM, no network, no Open WebUI.
+"""
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import create_engine
+
+from hubzoid.access.store import (
+    EVERYONE,
+    LastAdminError,
+    MANAGE_ACCESS,
+    ORG,
+    USE_HUB,
+    GrantStore,
+)
+
+
+@pytest.fixture()
+def store(tmp_path):
+    eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")
+    return GrantStore(eng)
+
+
+def test_grant_implies_use_hub(store):
+    store.grant("alice", "finance", "prod_in")
+    assert store.can("alice", "finance", "prod_in")
+    assert store.can("alice", "finance", USE_HUB)  # implied
+    # not in another hub
+    assert not store.can("alice", "ops", "prod_in")
+    assert not store.can("alice", "ops", USE_HUB)
+
+
+def test_revoke_tool_keeps_use_hub(store):
+    store.grant("alice", "finance", "prod_in")
+    store.revoke("alice", "finance", "prod_in")
+    assert not store.can("alice", "finance", "prod_in")
+    assert store.can("alice", "finance", USE_HUB)  # still in the hub
+
+
+def test_revoke_use_hub_cascades(store):
+    store.grant("alice", "finance", "prod_in")
+    store.grant("alice", "finance", "read_reports")
+    store.revoke("alice", "finance", USE_HUB)
+    assert not store.can("alice", "finance", USE_HUB)
+    assert not store.can("alice", "finance", "prod_in")
+    assert not store.can("alice", "finance", "read_reports")
+    assert store.list_grants("finance") == []
+
+
+def test_wildcard_subject_public_use_hub(store):
+    store.grant(EVERYONE, "public", USE_HUB)
+    assert store.can("anyone-at-all", "public", USE_HUB)
+    assert store.can("someone-else", "public", USE_HUB)
+    assert not store.can("anyone-at-all", "public", "prod_in")
+
+
+def test_org_admin_spans_all_hubs(store):
+    store.grant("root", ORG, MANAGE_ACCESS)
+    assert store.can("root", "finance", MANAGE_ACCESS)
+    assert store.can("root", "ops", MANAGE_ACCESS)
+    assert store.can("root", "any-new-hub", MANAGE_ACCESS)
+    # but only manage_access, not arbitrary tool perms
+    assert not store.can("root", "finance", "prod_in")
+
+
+def test_last_org_admin_cannot_be_removed(store):
+    store.grant("root", ORG, MANAGE_ACCESS)
+    with pytest.raises(LastAdminError):
+        store.revoke("root", ORG, MANAGE_ACCESS)
+    assert store.can("root", "finance", MANAGE_ACCESS)
+
+
+def test_second_admin_lets_first_be_removed(store):
+    store.grant("root", ORG, MANAGE_ACCESS)
+    store.grant("root2", ORG, MANAGE_ACCESS)
+    store.revoke("root", ORG, MANAGE_ACCESS)  # now allowed
+    assert not store.can("root", "finance", MANAGE_ACCESS)
+    assert store.can("root2", "finance", MANAGE_ACCESS)
+
+
+def test_revoke_all_respects_last_admin(store):
+    store.grant("root", ORG, MANAGE_ACCESS)
+    with pytest.raises(LastAdminError):
+        store.revoke_all("root")
+    store.grant("alice", "finance", "prod_in")
+    store.revoke_all("alice")
+    assert store.list_grants("finance") == []
+
+
+def test_permissions_for_and_hubs_for(store):
+    store.grant("alice", "finance", "prod_in")
+    store.grant("alice", "ops", "read_reports")
+    store.grant(EVERYONE, "public", USE_HUB)
+    assert store.permissions_for("alice", "finance") == {"prod_in", USE_HUB}
+    # alice's own hubs plus the public one (the wildcard use_hub applies to her too)
+    assert store.hubs_for("alice") == {"finance", "ops", "public"}
+    # the public wildcard shows up for any subject's hub list
+    assert store.hubs_for("bob") == {"public"}
+
+
+def test_grant_many_bulk_import(store):
+    store.grant_many([
+        ("alice", "finance", "prod_in"),
+        ("bob", "finance", "read_reports"),
+        ("alice", "ops", "read_reports"),
+    ])
+    assert store.can("alice", "finance", "prod_in")
+    assert store.can("bob", "finance", USE_HUB)
+    assert store.can("alice", "ops", "read_reports")
+
+
+def test_cross_process_freshness(tmp_path):
+    url = f"sqlite:///{tmp_path / 'hub.db'}"
+    writer = GrantStore(create_engine(url))
+    reader = GrantStore(create_engine(url))  # a second "process"
+    assert not reader.can("alice", "finance", "prod_in")
+    writer.grant("alice", "finance", "prod_in")
+    # reader must pick up the write via the revision bump
+    assert reader.can("alice", "finance", "prod_in")
+
+
+def test_normalization(store):
+    store.grant("Alice", "Finance", "Prod_In")
+    assert store.can("Alice", "finance", "prod_in")
+    assert store.can("Alice", " FINANCE ".strip(), "prod_in")
