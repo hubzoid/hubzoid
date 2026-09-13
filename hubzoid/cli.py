@@ -1249,6 +1249,119 @@ app.add_typer(
 
 
 # ---------------------------------------------------------------------------
+# access — per-hub permissions on the one Casbin store (direct grants)
+# ---------------------------------------------------------------------------
+def _access_domain(hub_dir: Path, hub: str | None, org: bool) -> str:
+    from .access.store import ORG
+
+    if org:
+        return ORG
+    return hub or hub_dir.resolve().name
+
+
+@app.command()
+def grant(
+    subject: str = typer.Argument(..., help="Who to grant (email or workflow:<name>)."),
+    permission: str = typer.Argument(..., help="Permission, e.g. prod_in, use_hub, manage_access."),
+    hub: str = typer.Option(None, "--hub", help="Hub (Casbin domain). Default: the hub dir's name."),
+    org: bool = typer.Option(False, "--org", help="Grant org-wide (all hubs), for manage_access."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory (where the DB lives). Default: current dir."),
+) -> None:
+    """Grant a permission. Granting any tool permission auto-grants use_hub."""
+    from .access import store_for
+
+    domain = _access_domain(hub_dir, hub, org)
+    store_for(hub_dir).grant(subject, domain, permission)
+    console.print(f"[green]granted[/green] {subject} · {permission} in {domain}")
+
+
+@app.command()
+def revoke(
+    subject: str = typer.Argument(..., help="Who to revoke from."),
+    permission: str = typer.Argument(..., help="Permission to remove. use_hub removes the hub's perms."),
+    hub: str = typer.Option(None, "--hub", help="Hub (Casbin domain). Default: the hub dir's name."),
+    org: bool = typer.Option(False, "--org", help="Revoke an org-wide grant."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Revoke a permission. Refuses to remove the last org admin."""
+    from .access import store_for
+    from .access.store import LastAdminError
+
+    domain = _access_domain(hub_dir, hub, org)
+    try:
+        store_for(hub_dir).revoke(subject, domain, permission)
+    except LastAdminError as e:
+        console.print(f"[red]refused:[/red] {e}")
+        raise typer.Exit(code=1)
+    console.print(f"[yellow]revoked[/yellow] {subject} · {permission} in {domain}")
+
+
+access_app = typer.Typer(help="Per-hub access: check, list, bootstrap.", no_args_is_help=True)
+
+
+@access_app.command("check")
+def access_check(
+    subject: str = typer.Argument(..., help="Who to check."),
+    hub: str = typer.Option(None, "--hub", help="Hub (Casbin domain). Default: the hub dir's name."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Show every permission a subject effectively holds in a hub."""
+    from .access import store_for
+
+    domain = hub or hub_dir.resolve().name
+    perms = sorted(store_for(hub_dir).permissions_for(subject, domain))
+    if not perms:
+        console.print(f"[dim]{subject} has no access in {domain}[/dim]")
+        return
+    console.print(f"{subject} in [bold]{domain}[/bold]: " + ", ".join(perms))
+
+
+@access_app.command("list")
+def access_list(
+    hub: str = typer.Option(None, "--hub", help="Only this hub (Casbin domain)."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """List all grants (subject · permission · hub)."""
+    from .access import store_for
+
+    rows = store_for(hub_dir).list_grants(hub)
+    if not rows:
+        console.print("[dim]no grants[/dim]")
+        return
+    for subject, dom, perm in rows:
+        console.print(f"{subject:30.30}  {perm:20.20}  [dim]{dom}[/dim]")
+    console.print(f"[dim]{len(rows)} grant(s)[/dim]")
+
+
+@access_app.command("bootstrap")
+def access_bootstrap(
+    admin: list[str] = typer.Option([], "--admin", help="Subject to make an org admin (repeatable)."),
+    authoritative: bool = typer.Option(
+        False, "--authoritative",
+        help="Make Casbin the authority now (fresh install, no legacy to migrate).",
+    ),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """First-boot bootstrap: grant org admins once (idempotent), optionally make
+    Casbin authoritative. Break-glass for a fresh install."""
+    from .access import store_for
+
+    store_for(hub_dir).bootstrap(admin, authoritative=authoritative)
+    console.print(
+        f"[green]bootstrapped[/green] admins={list(admin) or '(none)'} "
+        f"authoritative={authoritative}"
+    )
+
+
+app.add_typer(
+    access_app,
+    name="access",
+    help="Per-hub access: check, list, bootstrap.",
+    rich_help_panel="Commands",
+)
+
+
+# ---------------------------------------------------------------------------
 # version
 # ---------------------------------------------------------------------------
 @app.command()
