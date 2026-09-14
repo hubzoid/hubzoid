@@ -125,6 +125,11 @@ def test_cross_origin_mutation_refused(client):
                     headers={"origin": ""},
                     json={"subject": "a", "hub": hub, "permission": "prod_in"})
     assert r.status_code == 403
+    # Origin: null (opaque) is refused (no valid authority to compare)
+    r = client.post("/portal/api/access/grant",
+                    headers={"origin": "null"},
+                    json={"subject": "a", "hub": hub, "permission": "prod_in"})
+    assert r.status_code == 403
 
 
 def test_overview_and_workflows_and_audit(client):

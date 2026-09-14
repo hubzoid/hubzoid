@@ -206,16 +206,25 @@ class GrantStore:
                 {"k": key, "v": value},
             )
 
-    def is_authoritative(self) -> bool:
-        """True once Casbin is the authority for this deployment (set at fresh
-        bootstrap or at migration cutover). Until then callers use legacy groups,
-        so existing un-migrated hubs are untouched."""
+    def is_authoritative(self, hub: str | None = None) -> bool:
+        """True once Casbin is the authority for this hub. A **per-hub** marker
+        (`casbin_authoritative:<hub>`) is checked first, then the deployment-wide
+        one — so on a shared gateway DB, migrating hub A does NOT flip hubs B–N
+        (which stay legacy until their own cutover). Un-migrated hubs are
+        untouched. Cached and refreshed on a policy_revision change so a
+        per-request check is a cheap in-memory read, not a DB hit."""
+        self._refresh_if_stale()
+        hub = normalize(hub) if hub else None
         with self._engine.connect() as conn:
+            if hub and self._meta_get(conn, f"casbin_authoritative:{hub}") == "1":
+                return True
             return self._meta_get(conn, "casbin_authoritative") == "1"
 
-    def set_authoritative(self, flag: bool = True) -> None:
+    def set_authoritative(self, flag: bool = True, *, hub: str | None = None) -> None:
+        key = f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
         with self._engine.begin() as conn:
-            self._meta_set(conn, "casbin_authoritative", "1" if flag else "0")
+            self._meta_set(conn, key, "1" if flag else "0")
+            self._bump_revision(conn)
 
     def bootstrap(self, admin_subjects: Iterable[str] = (), *,
                   authoritative: bool = False) -> None:
@@ -238,7 +247,14 @@ class GrantStore:
             # empty bootstrap() must NOT block a later legitimate admin list.
             if granted:
                 self._meta_set(conn, "bootstrapped", "1")
+            # Refuse to make Casbin authoritative with no org admin at all — that
+            # is an unrecoverable web lockout (nobody can pass the portal gate).
             if authoritative:
+                if not (granted or self._org_admins(conn)):
+                    raise LastAdminError(
+                        "refusing authoritative bootstrap with no org admin — "
+                        "pass at least one --admin"
+                    )
                 self._meta_set(conn, "casbin_authoritative", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
@@ -296,6 +312,10 @@ class GrantStore:
         permission = normalize(permission)
         if not subject or not permission:
             raise ValueError("subject and permission are required")
+        if permission == "*":
+            # A '*' permission would match every action in the matcher, incl.
+            # manage_access — never a grantable value.
+            raise ValueError("the wildcard permission '*' is not grantable")
         rows = [(subject, hub, permission)]
         # Implication: any hub-scoped permission implies use_hub (except in the
         # org domain, where use_hub is meaningless).
@@ -366,6 +386,60 @@ class GrantStore:
             self._bump_revision(conn)
         self._refresh_if_stale()
 
+    def apply_migration(self, grants: Iterable[tuple[str, str, str]],
+                        attrs: Iterable[tuple[str, str, str, str]],
+                        hubs: Iterable[str], *, replace: bool = True,
+                        authoritative: bool = True) -> None:
+        """The migration cutover, in ONE transaction: (optionally) replace the
+        target hubs' grants, insert the plan (with use_hub implication), set
+        attributes + identity rows, set the PER-HUB authority markers, and bump
+        the revision. Atomic — a crash rolls the whole thing back, and replace
+        semantics mean no stale grant survives cutover."""
+        import time
+
+        hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
+        expanded: list[tuple[str, str, str]] = []
+        emails: set[str] = set()
+        for subject, hub, permission in grants:
+            subject = normalize(subject)
+            hub = normalize(hub)
+            permission = normalize(permission)
+            if not subject or not permission or permission == "*":
+                continue
+            expanded.append((subject, hub, permission))
+            if hub != ORG and permission != USE_HUB:
+                expanded.append((subject, hub, USE_HUB))
+            if subject != EVERYONE and "@" in subject:
+                emails.add(subject)
+        with self._engine.begin() as conn:
+            if replace:
+                for h in hubs:
+                    conn.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
+            for s, h, p in expanded:
+                self._insert_grant(conn, s, h, p)
+            for hub, subject, k, v in attrs:
+                conn.execute(
+                    text(
+                        "INSERT INTO hz_identity_attrs (hub, subject, k, v) "
+                        "VALUES (:h, :s, :k, :v) "
+                        "ON CONFLICT (hub, subject, k) DO UPDATE SET v=excluded.v"
+                    ),
+                    {"h": normalize(hub), "s": normalize(subject), "k": k, "v": v},
+                )
+            for email in emails:
+                conn.execute(
+                    text(
+                        "INSERT INTO hz_identities (subject, email, created) "
+                        "VALUES (:s, :s, :t) ON CONFLICT (subject) DO NOTHING"
+                    ),
+                    {"s": email, "t": time.time()},
+                )
+            if authoritative:
+                for h in hubs:
+                    self._meta_set(conn, f"casbin_authoritative:{h}", "1")
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+
     def grant_many(self, grants: Iterable[tuple[str, str, str]]) -> None:
         """Apply many (subject, hub, permission) grants in one transaction — the
         CSV-import / migration path. Applies the same use_hub implication."""
@@ -374,7 +448,7 @@ class GrantStore:
             subject = normalize(subject)
             hub = normalize(hub)
             permission = normalize(permission)
-            if not subject or not permission:
+            if not subject or not permission or permission == "*":
                 continue
             expanded.append((subject, hub, permission))
             if hub != ORG and permission != USE_HUB:

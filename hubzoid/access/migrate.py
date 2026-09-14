@@ -59,11 +59,16 @@ def preflight(hub_dir) -> list[str]:
     from .resolver import _FunctionRoster  # type: ignore
 
     roster = load_resolver(Path(hub_dir))
-    if isinstance(roster, _FunctionRoster) and getattr(roster, "_groups_for_email", None):
+    if isinstance(roster, _FunctionRoster):
+        # A function roster computes identity/authz live (groups_for_email, or a
+        # resolve() that may return groups) — not statically enumerable. Refuse
+        # rather than risk dropping live permissions at cutover; the owner exports
+        # an explicit direct-grant snapshot (identity/access.csv) first.
         raise MigrationBlocked(
-            "this hub uses a function-backed roster with groups_for_email(); its "
-            "grants are computed live and are not statically enumerable. Export an "
-            "explicit direct-grant snapshot (identity/access.csv) before migrating."
+            "this hub uses a function-backed roster (identity/access.py); its "
+            "grants may be computed live and are not statically enumerable. Export "
+            "an explicit direct-grant snapshot (identity/access.csv) before "
+            "migrating (then remove access.py or keep it for identity only)."
         )
     return []
 
@@ -168,7 +173,12 @@ def plan_from_owui(engine: Engine, hub_name: str, *, model_id: str | None = None
     elif len(model_by_id) == 1:
         chosen = model_by_id
     else:
-        chosen = model_by_id  # migrate all models found
+        # Unioning every model's ACL into one hub would over-grant. Require an
+        # explicit model_id to say which OWUI model IS this hub.
+        raise MigrationBlocked(
+            f"{len(model_by_id)} OWUI models found; pass --model-id to say which one "
+            "is this hub (unioning all would over-grant)"
+        )
 
     for mid, ac_raw in chosen.items():
         try:
@@ -212,16 +222,16 @@ def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True)
         raise MigrationBlocked(
             f"refusing to cut over with unresolved conflicts: {plan.conflicts}"
         )
-    store.grant_many(plan.grants)
-    for hub, subject, k, v in plan.attrs:
-        store.set_attr(hub, subject, k, v)
-    # Record an identity row per real grantee (email subjects), so email/owui_id
-    # mappings exist for later hardening. The wildcard subject is not a person.
-    for subject in {s for s, _h, _p in plan.grants}:
-        if subject and subject != EVERYONE and "@" in subject:
-            store.upsert_identity(email=subject)
-    if authoritative:
-        store.set_authoritative(True)
+    hubs = {normalize(h) for _s, h, _p in plan.grants if h and normalize(h) != "*"}
+    if not authoritative:
+        # a plain (non-cutover) apply: just add the grants, no marker
+        store.grant_many(plan.grants)
+        for hub, subject, k, v in plan.attrs:
+            store.set_attr(hub, subject, k, v)
+        return
+    # The cutover: one atomic, hub-scoped, replace-semantics transaction that
+    # also sets the per-hub authority markers.
+    store.apply_migration(plan.grants, plan.attrs, hubs, replace=True, authoritative=True)
 
 
 def diff(store: GrantStore, plan: MigrationPlan) -> dict:
@@ -229,12 +239,17 @@ def diff(store: GrantStore, plan: MigrationPlan) -> dict:
     is the cutover gate. Compares (subject, hub, permission) including the
     implied use_hub."""
     want: set[tuple[str, str, str]] = set()
+    hubs: set[str] = set()
     for subject, hub, perm in plan.grants:
+        subject, hub, perm = normalize(subject), normalize(hub), normalize(perm)
         want.add((subject, hub, perm))
+        hubs.add(hub)
         if hub != "*" and perm != USE_HUB:
             want.add((subject, hub, USE_HUB))
-    have = set(store.list_grants())
+    # Only compare within the migrated hubs — other hubs' rows on a shared DB are
+    # not "extra".
+    have = {(s, h, p) for s, h, p in store.list_grants() if h in hubs}
     return {
         "missing": sorted(want - have),   # planned but not in store
-        "extra": sorted(have - want),     # in store but not planned
+        "extra": sorted(have - want),     # in store but not planned (stale)
     }

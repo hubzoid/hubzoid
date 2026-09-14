@@ -146,10 +146,27 @@ def test_access_audit_records_changes(store):
     assert rows[0]["action"] == "revoke"
 
 
+def test_wildcard_permission_rejected(store):
+    with pytest.raises(ValueError):
+        store.grant("alice", "finance", "*")   # would match every action incl manage_access
+    # bulk import silently skips it too
+    store.grant_many([("bob", "finance", "*"), ("bob", "finance", "prod_in")])
+    assert store.can("bob", "finance", "prod_in")
+    assert not store.can("bob", "finance", "manage_access")
+
+
+def test_per_hub_authority_isolation(store):
+    store.set_authoritative(True, hub="finance")
+    assert store.is_authoritative("finance") is True
+    assert store.is_authoritative("ops") is False       # a different hub stays legacy
+    assert store.is_authoritative() is False            # no deployment-global marker
+
+
 def test_authoritative_marker(store):
     assert store.is_authoritative() is False
     store.set_authoritative(True)
-    assert store.is_authoritative() is True
+    assert store.is_authoritative() is True             # deployment-global
+    assert store.is_authoritative("anyhub") is True     # global covers all hubs
     store.set_authoritative(False)
     assert store.is_authoritative() is False
 

@@ -23,10 +23,13 @@ def test_mount_serves_api_and_static(tmp_path, monkeypatch):
     monkeypatch.delenv("HUBZOID_PORTAL_DEV_USER", raising=False)
     assert c.get("/portal/api/me").status_code == 403
 
-    # dev user that is an org admin -> 200 (dev override is loopback-only)
+    # dev user that is an org admin -> 200 (dev override is a two-part opt-in)
     access.store_for(tmp_path).bootstrap(["dev@corp"], authoritative=True)
     monkeypatch.setenv("HUBZOID_PORTAL_DEV_USER", "dev@corp")
-    monkeypatch.setattr(portal, "_is_loopback", lambda request: True)
+    # DEV_USER alone is not trusted without the explicit DEV flag
+    monkeypatch.delenv("HUBZOID_PORTAL_DEV", raising=False)
+    assert c.get("/portal/api/me").status_code == 403
+    monkeypatch.setenv("HUBZOID_PORTAL_DEV", "1")
     r = c.get("/portal/api/me")
     assert r.status_code == 200 and r.json()["org_admin"] is True
 

@@ -49,7 +49,6 @@ class WorkflowDef:
     schedule: str | None
     timezone: str | None
     on_failure: str | None
-    max_attempts: int
 
 
 _REGISTRY: "dict[str, WorkflowDef]" = {}
@@ -112,9 +111,10 @@ def _load_settings() -> dict:
 
 
 def workflow(schedule: str | None = None, *, timezone: str | None = None,
-             on_failure: str | None = None, max_attempts: int = 3):
+             on_failure: str | None = None):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
-    `hub` proxy and takes only the hub name (never secrets)."""
+    `hub` proxy and takes only the hub name (never secrets). Retries are a
+    per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob."""
     _require_init()
 
     def deco(fn: Callable):
@@ -136,7 +136,7 @@ def workflow(schedule: str | None = None, *, timezone: str | None = None,
 
         _REGISTRY[name] = WorkflowDef(
             name=name, fn=fn, wrapped=wrapped, schedule=schedule,
-            timezone=timezone, on_failure=on_failure, max_attempts=max_attempts,
+            timezone=timezone, on_failure=on_failure,
         )
         log.info("workflows: registered %r (schedule=%r)", name, schedule)
         return wrapped
@@ -144,11 +144,18 @@ def workflow(schedule: str | None = None, *, timezone: str | None = None,
     return deco
 
 
-def step(fn: Callable):
+def step(fn: Callable | None = None, *, max_attempts: int = 1):
     """A durable step for the author's own side effects (posting, emailing).
-    At-least-once — make it idempotent."""
+    At-least-once — make it idempotent. Opt into retries with
+    `@step(max_attempts=N)` (default 1 = no retry)."""
     _require_init()
-    return _DBOS.step()(fn)
+
+    def wrap(f: Callable):
+        if max_attempts and max_attempts > 1:
+            return _DBOS.step(retries_allowed=True, max_attempts=max_attempts)(f)
+        return _DBOS.step()(f)
+
+    return wrap(fn) if fn is not None else wrap
 
 
 def _wrap_seams_as_steps() -> None:

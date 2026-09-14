@@ -5,6 +5,15 @@
 reviewed"). It is keyed **(hub, workflow, key)** so two workflows in the same hub
 never clash on the same key. Values are JSON. Same thin SQLAlchemy-Core path as
 `db.py`, across SQLite and Postgres.
+
+Durability semantics (read this): a `hub.state[...] = v` write is its own DB
+commit — durable the instant it returns. It is NOT a DBOS-checkpointed step, so
+across a crash + replay a **read-modify-write is not atomic**: a naive
+``state["n"] = state.get("n", 0) + 1`` can double-count if the run crashes after
+the write but before the workflow completes and is later replayed. Use
+**idempotent** patterns instead — the canonical one is a per-item marker
+(``state[f"done:{id}"] = sha``), which is what makes a re-run skip already-done
+work. Do not use `hub.state` as a transactional counter across steps.
 """
 from __future__ import annotations
 

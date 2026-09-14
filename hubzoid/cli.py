@@ -1474,8 +1474,9 @@ def access_migrate(
     console.print(f"[{colour}]applied[/{colour}] · Casbin is now authoritative · "
                   f"{len(d['missing'])} missing, {len(d['extra'])} extra after apply")
     if not ok:
-        console.print("[yellow]note: non-zero diff — review stale (extra) grants; "
-                      "the zero-diff gate is not met.[/yellow]")
+        console.print("[red]non-zero diff after cutover — investigate; the zero-diff "
+                      "gate was not met.[/red]")
+        raise typer.Exit(1)
 
 
 @access_app.command("diff")

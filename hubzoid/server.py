@@ -210,9 +210,9 @@ def build_app() -> FastAPI:
         chat_id = _derive_chat_id(body, request, messages)
         identity = _derive_identity(body, request, hub_dir)
         # Hub-entry gate: once Casbin is authoritative, a caller must hold
-        # `use_hub` to chat at all (read knowledge, use even unrestricted tools).
-        # Fail-closed; skipped for un-migrated hubs and anonymous/internal callers.
-        _enforce_use_hub(identity, hub_dir)
+        # `use_hub` (verified identity) to chat at all — read knowledge, use even
+        # unrestricted tools. Fail-closed; skipped for un-migrated hubs.
+        _enforce_use_hub(request, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
         # and direct-API uploads) into the canonical per-chat uploads store now;
@@ -422,27 +422,39 @@ def _usage_envelope() -> dict:
 # ---------------------------------------------------------------------------
 # Identity derivation
 # ---------------------------------------------------------------------------
-def _enforce_use_hub(identity, hub_dir: Path | None) -> None:
+def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     """Once Casbin is authoritative, require `use_hub` to enter the hub at all.
 
-    Fail-closed: a store error while (or after) authority is determined denies
-    (503), never silently allows. Un-migrated hubs and anonymous/internal callers
-    (no verified user) pass through — restricted tools stay gated by the guard."""
-    if hub_dir is None or identity is None or identity.is_anonymous:
+    Uses ONLY the verified identity from the trusted front headers
+    (`X-OpenWebUI-User-Email` / `X-Hubzoid-User`) — never the caller-controlled
+    `body.user` — so an authoritative hub cannot be entered anonymously or under
+    a spoofed subject. Fail-closed: a store error denies (503). Un-migrated hubs
+    pass through (legacy)."""
+    if hub_dir is None:
         return
     from .access import store_for
     from .access.store import USE_HUB
 
     try:
         gs = store_for(hub_dir)
-        authoritative = gs.is_authoritative()
+        authoritative = gs.is_authoritative(hub_dir.name)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
     if not authoritative:
         return
+    verified = (
+        request.headers.get("x-openwebui-user-email")
+        or request.headers.get("x-hubzoid-user")
+        or ""
+    ).strip().lower()
+    if not verified:
+        raise HTTPException(
+            status_code=403,
+            detail=f"The '{hub_dir.name}' hub requires sign-in.",
+        )
     try:
-        ok = gs.can(identity.user, hub_dir.name, USE_HUB)
+        ok = gs.can(verified, hub_dir.name, USE_HUB)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub can() failed for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
@@ -487,8 +499,21 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     owui_email = headers.get("x-openwebui-user-email")
     user = headers.get("x-hubzoid-user") or owui_email
     if not user:
+        # `body.user` is caller-controlled (the OpenAI-API `user` field), so it is
+        # NOT trusted as an authz subject on an authoritative hub — that would let
+        # a bridge-key caller assert any grantee. Kept as the identity only for
+        # legacy (un-migrated) hubs, where it carries no groups anyway.
         u = body.get("user")
-        user = u if isinstance(u, str) and u.strip() else None
+        candidate = u if isinstance(u, str) and u.strip() else None
+        if candidate and hub_dir is not None:
+            try:
+                from .access import store_for
+
+                if store_for(hub_dir).is_authoritative(hub_dir.name):
+                    candidate = None
+            except Exception:  # noqa: BLE001 — fail closed: drop the untrusted id
+                candidate = None
+        user = candidate
 
     # Groups are the UNION of every store that applies to this surface: the
     # user's Open WebUI groups, the hub roster keyed by the same email, and any

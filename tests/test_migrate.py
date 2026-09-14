@@ -31,7 +31,9 @@ def test_plan_from_csv_and_apply(store):
     assert store.can("tester@example.com", "test-hub", "testers")
     assert store.can("tester@example.com", "test-hub", USE_HUB)   # implied
     assert store.get_attr("test-hub", "tester@example.com", "center") == "adyar"
-    assert store.is_authoritative() is True
+    # per-hub authority marker (not deployment-global)
+    assert store.is_authoritative("test-hub") is True
+    assert store.is_authoritative("some-other-hub") is False
 
     # cutover gate: a full static diff is zero after apply
     d = migrate.diff(store, plan)

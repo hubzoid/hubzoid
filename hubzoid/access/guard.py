@@ -40,6 +40,38 @@ def _allowed_surfaces() -> frozenset[str]:
     return frozenset(s.strip().lower() for s in raw.split(",") if s.strip())
 
 
+def decide(hub_dir: Path, ident, permission: str,
+           surfaces: "frozenset[str] | None" = None) -> tuple[bool, str]:
+    """The ONE access decision, used by both the invocation guard and MCP tool
+    discovery: surface gate first, then Casbin `can()` once this hub is
+    authoritative, else the legacy group check.
+
+    FAIL CLOSED: once Casbin is (or might be) authoritative, any error
+    determining or evaluating it denies — it never silently drops to legacy
+    groups, which after cutover would be a bypass."""
+    if surfaces is None:
+        surfaces = _allowed_surfaces()
+    hub_dir = Path(hub_dir)
+    hub_name = hub_dir.name
+    from . import store_for
+
+    try:
+        gs = store_for(hub_dir)
+        authoritative = gs.is_authoritative(hub_name)
+    except Exception:  # noqa: BLE001 — can't determine authority -> deny, don't guess
+        log.exception("access: store unavailable for %s; denying", hub_name)
+        return (False, "store-error")
+    if authoritative:
+        subject = getattr(ident, "user", None) or ""
+        try:
+            allowed = gs.can(subject, hub_name, permission)
+        except Exception:  # noqa: BLE001 — authoritative but errored -> deny, never legacy
+            log.exception("access: can() failed for %s; denying", hub_name)
+            return (False, "store-error")
+        return is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: allowed)
+    return is_allowed(ident, permission, allowed_surfaces=surfaces)
+
+
 def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
@@ -50,37 +82,10 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     surfaces = _allowed_surfaces()
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
-    hub_name = hub_dir.name
-
-    def _decide(ident) -> tuple[bool, str]:
-        """The decision for `ident`: surface gate first, then Casbin `can()` once
-        this hub is authoritative, else the legacy group check. One authority.
-
-        FAIL CLOSED: once Casbin is (or might be) authoritative, any error
-        determining or evaluating it denies — it never silently drops back to
-        legacy groups, which after cutover would be a bypass."""
-        from . import store_for
-
-        try:
-            gs = store_for(hub_dir)
-            authoritative = gs.is_authoritative()
-        except Exception:  # noqa: BLE001 — can't determine authority -> deny, don't guess
-            log.exception("access: store unavailable for %s; denying", hub_name)
-            return (False, "store-error")
-        if authoritative:
-            subject = ident.user or ""
-            try:
-                allowed = gs.can(subject, hub_name, permission)
-            except Exception:  # noqa: BLE001 — authoritative but errored -> deny, never legacy
-                log.exception("access: can() failed for %s; denying", hub_name)
-                return (False, "store-error")
-            return is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: allowed)
-        # Not authoritative: this hub hasn't migrated — legacy group check.
-        return is_allowed(ident, permission, allowed_surfaces=surfaces)
 
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()
-        allowed, reason = _decide(ident)
+        allowed, reason = decide(hub_dir, ident, permission, surfaces)
         audit.record(
             hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
             decision=("allow" if allowed else "deny"), reason=reason,
@@ -96,7 +101,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     def _is_enabled(*_args, **_kwargs) -> bool:
         # The SDK calls this with (run_context, agent); we only need the
         # request-scoped identity, so accept anything and ignore it.
-        allowed, _ = _decide(current_identity())
+        allowed, _ = decide(hub_dir, current_identity(), permission, surfaces)
         return allowed
 
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)

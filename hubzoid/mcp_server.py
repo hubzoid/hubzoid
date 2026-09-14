@@ -191,7 +191,7 @@ def _build_verifier(hub_dir: Path, *, access_group: str | None = None):
 
             try:
                 gs = store_for(hub_dir)
-                authoritative = gs.is_authoritative()
+                authoritative = gs.is_authoritative(hub_dir.name)
             except Exception:  # noqa: BLE001 — can't determine authority -> deny
                 log.exception("mcp: store unavailable; denying %s", email)
                 return None
@@ -314,7 +314,7 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str]):
     """
     from fastmcp.server.middleware import Middleware
 
-    from .access.guard import _allowed_surfaces
+    from .access.guard import _allowed_surfaces, decide
 
     class _AccessListFilter(Middleware):
         async def on_list_tools(self, context, call_next):
@@ -323,11 +323,12 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str]):
                 return tools
             ident = _mcp_identity(hub_dir)
             surfaces = _allowed_surfaces()
+            # Use the SAME authoritative/fail-closed decision as invocation, so a
+            # user with a direct Casbin grant sees the tool (and a legacy-only
+            # user after cutover does not see one that would fail on invoke).
             return [
                 t for t in tools
-                if access.is_allowed(
-                    ident, permissions.get(t.name, ""), allowed_surfaces=surfaces
-                )[0]
+                if decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
             ]
 
     return _AccessListFilter()
