@@ -1,11 +1,16 @@
 """CLI tests for the access commands (grant / revoke / access check|list|bootstrap)."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
 from hubzoid.cli import app
 
 runner = CliRunner()
+
+TEST_HUB = "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/HubzoidTestHub/test-hub"
 
 
 def test_grant_check_revoke_roundtrip(tmp_path):
@@ -53,3 +58,26 @@ def test_new_workflow_scaffold(tmp_path):
     # scaffolding twice refuses
     r = runner.invoke(app, ["new", "workflow", "review-prs", str(tmp_path)])
     assert r.exit_code == 1
+
+
+@pytest.mark.skipif(
+    not Path(TEST_HUB, "identity", "access.csv").exists(), reason="test hub absent"
+)
+def test_migrate_cli_e2e(tmp_path):
+    env = {"DATABASE_URL": f"sqlite:///{tmp_path / 'hub.db'}"}
+
+    r = runner.invoke(app, ["access", "migrate", TEST_HUB], env=env)   # dry run
+    assert r.exit_code == 0, r.output
+    assert "dry-run" in r.output
+
+    r = runner.invoke(app, ["access", "migrate", "--apply", TEST_HUB], env=env)
+    assert r.exit_code == 0 and "authoritative" in r.output
+
+    r = runner.invoke(
+        app, ["access", "check", "tester@example.com", "--hub", "test-hub", TEST_HUB],
+        env=env,
+    )
+    assert "testers" in r.output and "use_hub" in r.output
+
+    r = runner.invoke(app, ["access", "diff", TEST_HUB], env=env)
+    assert r.exit_code == 0 and "0 missing" in r.output

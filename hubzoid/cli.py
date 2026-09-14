@@ -1383,6 +1383,81 @@ def access_bootstrap(
     )
 
 
+def _build_plan(hub_dir: Path, from_owui: str | None, model_id: str | None):
+    from .access import migrate
+
+    hub_name = hub_dir.resolve().name
+    plan = migrate.plan_from_csv(hub_dir, hub_name)
+    if from_owui:
+        from sqlalchemy import create_engine
+
+        migrate.plan_from_owui(create_engine(from_owui), hub_name,
+                               model_id=model_id, plan=plan)
+    return plan
+
+
+@access_app.command("migrate")
+def access_migrate(
+    from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read (group + model access)."),
+    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub (default: all)."),
+    apply: bool = typer.Option(False, "--apply", help="Actually apply + make Casbin authoritative (the cutover). Without this, dry-run."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Flatten legacy access (access.csv [+ Open WebUI]) into direct Casbin
+    grants. Dry-run by default; --apply performs the cutover."""
+    from .access import store_for
+    from .access.migrate import MigrationBlocked, apply as apply_plan, diff
+
+    try:
+        plan = _build_plan(hub_dir, from_owui, model_id)
+    except MigrationBlocked as e:
+        console.print(f"[red]migration blocked:[/red] {e}")
+        raise typer.Exit(2)
+
+    console.print(f"[bold]{len(plan.grants)} grant(s), {len(plan.attrs)} attribute(s)[/bold]")
+    for c in plan.conflicts:
+        console.print(f"[yellow]conflict:[/yellow] {c}")
+    for w in plan.warnings:
+        console.print(f"[dim]{w}[/dim]")
+
+    gs = store_for(hub_dir)
+    if not apply:
+        d = diff(gs, plan)
+        console.print(f"[dim]dry-run — vs current store: {len(d['missing'])} missing, "
+                      f"{len(d['extra'])} extra. Re-run with --apply to cut over.[/dim]")
+        return
+    apply_plan(gs, plan, authoritative=True)
+    d = diff(gs, plan)
+    ok = not d["missing"]
+    colour = "green" if ok else "red"
+    console.print(f"[{colour}]applied[/{colour}] · Casbin is now authoritative · "
+                  f"{len(d['missing'])} missing, {len(d['extra'])} extra after apply")
+
+
+@access_app.command("diff")
+def access_diff(
+    from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read."),
+    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Show the full static diff between the migration plan and the live store
+    (the zero-diff cutover gate)."""
+    from .access import store_for
+    from .access.migrate import MigrationBlocked, diff
+
+    try:
+        plan = _build_plan(hub_dir, from_owui, model_id)
+    except MigrationBlocked as e:
+        console.print(f"[red]migration blocked:[/red] {e}")
+        raise typer.Exit(2)
+    d = diff(store_for(hub_dir), plan)
+    for kind in ("missing", "extra"):
+        for subj, hub, perm in d[kind]:
+            mark = "[red]-[/red]" if kind == "extra" else "[green]+[/green]"
+            console.print(f"{mark} {subj:28.28} {perm:18.18} [dim]{hub}[/dim]")
+    console.print(f"[dim]{len(d['missing'])} missing, {len(d['extra'])} extra[/dim]")
+
+
 app.add_typer(
     access_app,
     name="access",

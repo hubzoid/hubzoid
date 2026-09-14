@@ -353,3 +353,41 @@ class GrantStore:
 
     def _bump_revision(self, conn) -> None:
         conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
+
+    # ---- attributes (per hub, subject) --------------------------------------
+
+    def set_attr(self, hub: str, subject: str, key: str, value: str) -> None:
+        """Set a per-(hub, subject) attribute (e.g. center). Casbin never reads
+        these; tools do, for in-tool data scoping."""
+        hub = normalize(hub)
+        subject = (subject or "").strip()
+        with self._engine.begin() as conn:
+            dialect = conn.engine.dialect.name
+            sql = (
+                "INSERT INTO hz_identity_attrs (hub, subject, k, v) "
+                "VALUES (:h, :s, :k, :v) "
+                "ON CONFLICT (hub, subject, k) DO UPDATE SET v=excluded.v"
+            )
+            conn.execute(text(sql), {"h": hub, "s": subject, "k": key, "v": value})
+
+    def get_attr(self, hub: str, subject: str, key: str, default=None):
+        hub = normalize(hub)
+        subject = (subject or "").strip()
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT v FROM hz_identity_attrs WHERE hub=:h AND subject=:s AND k=:k"
+                ),
+                {"h": hub, "s": subject, "k": key},
+            ).fetchone()
+        return row[0] if row else default
+
+    def attrs_for(self, hub: str, subject: str) -> dict:
+        hub = normalize(hub)
+        subject = (subject or "").strip()
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT k, v FROM hz_identity_attrs WHERE hub=:h AND subject=:s"),
+                {"h": hub, "s": subject},
+            ).fetchall()
+        return {k: v for k, v in rows}
