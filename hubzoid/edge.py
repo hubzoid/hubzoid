@@ -58,6 +58,20 @@ _HOP_BY_HOP = frozenset({
 # this prefix to the bridge; the gateway prepends a per-hub prefix.
 DEFAULT_ARTIFACT_PREFIX = "/artifacts"
 
+# OWUI routes whose browser writes are blocked when access management is locked
+# (Casbin authoritative). Override with HUBZOID_OWUI_LOCKED_PREFIXES.
+_OWUI_LOCK_DEFAULT = ("/api/v1/groups",)
+
+
+def _owui_lock_prefixes(env) -> tuple[str, ...]:
+    flag = (env.get("HUBZOID_LOCK_OWUI_ACCESS_UI", "") or "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        return ()
+    raw = (env.get("HUBZOID_OWUI_LOCKED_PREFIXES", "") or "").strip()
+    if raw:
+        return tuple(p.strip() for p in raw.split(",") if p.strip())
+    return _OWUI_LOCK_DEFAULT
+
 
 @dataclass(frozen=True)
 class EdgeRoute:
@@ -165,6 +179,7 @@ def build_edge_app(
         EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix) for r in routes
     )
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
+    locked_prefixes = _owui_lock_prefixes(os.environ)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -179,6 +194,23 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        # OWUI access-UI lock: once Casbin is authoritative, block browser writes
+        # to OWUI's group/model-access routes (even the owner-admin's) so access
+        # is managed only in the Hubzoid portal. The Hubzoid service account
+        # reaches OWUI directly (not through this edge), so the mirror still works.
+        if (
+            locked_prefixes
+            and request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and _match(request.url.path, norm_routes) is None
+            and any(
+                request.url.path == p or request.url.path.startswith(p + "/")
+                for p in locked_prefixes
+            )
+        ):
+            return Response(
+                "Access management is locked; manage it in the Hubzoid portal.",
+                status_code=403,
+            )
         upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
         url = upstream + fwd_path
         if request.url.query:

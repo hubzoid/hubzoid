@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root{
+  --paper:#FFFFFF; --canvas:#FAFAF8; --panel:#FFFFFF; --ink:#0B0B0C; --mute:#6B6B70;
+  --line:#E7E6E2; --accent:#E5572A; --accent-fg:#FFFFFF;
+  --ok:#2E7D32; --ok-bg:#EAF3EB; --danger:#7A1D14; --danger-bg:#FBEEEC;
+  --warn:#9A6400; --warn-bg:#FBF1E3; --idle:#7A7A80; --idle-bg:#F1F1EF;
+  --sidebar:#FAFAF8;
+}
+.dark{
+  --paper:#0B0B0C; --canvas:#141416; --panel:#161619; --ink:#F3F3F1; --mute:#9A9AA1;
+  --line:#26262B; --accent:#E5572A; --accent-fg:#FFFFFF;
+  --ok:#5BBF6A; --ok-bg:#15251A; --danger:#F16A6A; --danger-bg:#2A1414;
+  --warn:#E0A458; --warn-bg:#2A2010; --idle:#8A8A90; --idle-bg:#1E1E22;
+  --sidebar:#0D0D0F;
+}
+@theme inline{
+  --color-paper:var(--paper); --color-canvas:var(--canvas); --color-panel:var(--panel);
+  --color-ink:var(--ink); --color-mute:var(--mute); --color-line:var(--line);
+  --color-accent:var(--accent); --color-accent-fg:var(--accent-fg);
+  --color-ok:var(--ok); --color-ok-bg:var(--ok-bg);
+  --color-danger:var(--danger); --color-danger-bg:var(--danger-bg);
+  --color-warn:var(--warn); --color-warn-bg:var(--warn-bg);
+  --color-idle:var(--idle); --color-idle-bg:var(--idle-bg);
+  --color-sidebar:var(--sidebar);
+  --font-sans:"Inter",system-ui,-apple-system,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{border-color:var(--line)}
+html,body,#root{height:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}

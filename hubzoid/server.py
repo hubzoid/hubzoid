@@ -315,6 +315,15 @@ def build_app() -> FastAPI:
         uploads_lib.write_with_meta(upload_dir, safe_name, body, mime=mime)
         return JSONResponse({"chat_id": safe_chat, "filename": safe_name, "size": len(body)})
 
+    # Admin portal: JSON API under /portal/api + the static SPA at /portal.
+    # Registered before the root MCP mount so /portal is not swallowed.
+    try:
+        from . import portal as portal_lib
+
+        portal_lib.mount_portal(app, hub_dir)
+    except Exception:  # noqa: BLE001 — the portal is optional; never block the bridge
+        logging.getLogger("hubzoid.portal").exception("portal mount failed")
+
     if mcp_app is not None:
         # Root-mount, registered last: the sub-app's only route is /mcp, so
         # every real bridge route above matches first and unmatched paths get

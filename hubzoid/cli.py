@@ -340,7 +340,10 @@ def run(
                 edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
                 edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
                 edge_routes = [
-                    {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"}
+                    {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"},
+                    # The admin portal (SPA + JSON API) is served by the bridge;
+                    # expose it through the one public port like /artifacts.
+                    {"prefix": "/portal", "upstream": f"http://127.0.0.1:{br_port}"},
                 ]
                 if settings.mcp_server:
                     # The hosted MCP surface is the one other bridge path that
