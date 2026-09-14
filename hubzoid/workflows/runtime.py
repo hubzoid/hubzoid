@@ -75,9 +75,12 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         _DBOS = DBOS
         _HUB_DIR = Path(hub_dir)
         _HUB_NAME = hub_name or _HUB_DIR.name
-        _ENGINE = db.engine_for(_HUB_DIR)
-        sys_url = db.resolve_url(_HUB_DIR)
-        DBOS(config={"name": _app_name(_HUB_NAME), "system_database_url": sys_url})
+        # hub.state lives in the SHARED operational DB (keyed (hub, workflow, key),
+        # collision-safe); DBOS system tables stay PER-BRIDGE so a gateway's N
+        # bridges never share one SQLite DBOS system database.
+        _ENGINE = db.operational_engine(_HUB_DIR)
+        DBOS(config={"name": _app_name(_HUB_NAME),
+                     "system_database_url": db.dbos_url(_HUB_DIR)})
         # One durable queue per hub, global concurrency 1: two due workflows (or a
         # manual + scheduled run) in the same hub never overlap.
         _QUEUE = Queue(f"{_app_name(_HUB_NAME)}-wf", concurrency=1)
@@ -199,6 +202,17 @@ def launch() -> None:
     _DBOS.launch()
     _LAUNCHED = True
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
+    # Publish this hub's workflow catalog to the shared store so the org portal
+    # (served by one bridge) can list every hub's workflows.
+    try:
+        from ..access import store_for
+
+        store_for(_HUB_DIR).publish_workflows(
+            _HUB_NAME,
+            [(w.name, w.schedule, w.timezone) for w in _REGISTRY.values()],
+        )
+    except Exception:  # noqa: BLE001 — catalog publish is best-effort
+        log.exception("workflows: could not publish catalog")
 
 
 def registry() -> list[WorkflowDef]:

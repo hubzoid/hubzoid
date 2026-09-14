@@ -22,7 +22,10 @@ pytestmark = pytest.mark.skipif(
 
 _SCRIPT = '''
 import os, tempfile
-os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/hub.db"
+_d = tempfile.mkdtemp()
+# scratch operational + DBOS DBs so nothing touches the real test hub
+os.environ["HUBZOID_OPERATIONAL_DB"] = f"sqlite:///{_d}/ops.db"
+os.environ["HUBZOID_DBOS_DB"] = f"sqlite:///{_d}/dbos.db"
 os.environ["GITHUB_TOKEN"] = "ghp_test"
 from hubzoid.workflows import runtime, context
 context.configure(llm=lambda prompt, **kw: "[stub review]")

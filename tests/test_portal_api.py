@@ -15,6 +15,7 @@ from hubzoid.portal import PortalAdmin, build_router
 def client(tmp_path, monkeypatch):
     eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: eng)
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(tmp_path)
     gs.set_authoritative(True)

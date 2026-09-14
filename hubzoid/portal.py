@@ -268,12 +268,21 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
 
     @router.get("/workflows")
     def workflows(admin: PortalAdmin = Depends(require_admin)):
+        # Read the SHARED catalog (every hub's workflows), scoped to the hubs this
+        # admin manages. Falls back to the in-process registry (standalone).
+        gs = store_for(hub_dir)
+        hubs = None if admin.is_org_admin else admin.manageable
+        rows = gs.list_workflows(hubs)
+        if rows:
+            return {"workflows": rows}
         try:
             from .workflows import runtime as wf
 
             return {"workflows": [
-                {"name": w.name, "schedule": w.schedule, "timezone": w.timezone}
+                {"hub": hub_dir.name, "name": w.name, "schedule": w.schedule,
+                 "timezone": w.timezone}
                 for w in wf.registry()
+                if admin.is_org_admin or hub_dir.name in admin.manageable
             ]}
         except Exception:  # noqa: BLE001
             return {"workflows": []}
@@ -289,19 +298,30 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
 
     @router.get("/access-changes")
     def access_changes(limit: int = 100, admin: PortalAdmin = Depends(require_admin)):
-        """Grant/revoke change events (who changed whose access), newest first."""
-        return {"rows": store_for(hub_dir).read_access_audit(limit)}
+        """Grant/revoke change events (who changed whose access), newest first —
+        scoped to the hubs this admin manages."""
+        rows = store_for(hub_dir).read_access_audit(limit if admin.is_org_admin else 500)
+        if not admin.is_org_admin:
+            mine = set(admin.manageable)
+            rows = [r for r in rows if (r.get("hub") in mine or r.get("hub") is None)][:limit]
+        return {"rows": rows}
 
     @router.get("/overview")
     def overview(admin: PortalAdmin = Depends(require_admin)):
         gs = store_for(hub_dir)
         grants = gs.list_grants()
+        if not admin.is_org_admin:
+            mine = set(admin.manageable)
+            grants = [g for g in grants if g[1] in mine]
         subjects = {s for s, _h, _p in grants}
+        hubs = _known_hubs(hub_dir, gs)
+        if not admin.is_org_admin:
+            hubs = [h for h in hubs if h in admin.manageable]
         return {
-            "hubs": len(_known_hubs(hub_dir, gs)),
+            "hubs": len(hubs),
             "grants": len(grants),
             "people": len(subjects),
-            "authoritative": gs.is_authoritative(),
+            "authoritative": gs.is_authoritative(hub_dir.name),
         }
 
     return router

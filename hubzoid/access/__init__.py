@@ -40,11 +40,12 @@ _stores_lock = threading.Lock()
 
 
 def store_for(hub_dir) -> GrantStore:
-    """The (cached) access store for this hub's database. One store per engine,
-    so the whole deployment (a hub, or the shared gateway DB) shares one."""
-    from ..db import engine_for
+    """The (cached) access store for this deployment's SHARED operational DB.
+    Standalone: the hub's own DB. Gateway: the one shared DB (all bridges see the
+    same grants + per-hub authority markers), via db.operational_engine."""
+    from ..db import operational_engine
 
-    eng = engine_for(hub_dir)
+    eng = operational_engine(hub_dir)
     key = id(eng)
     gs = _stores.get(key)
     if gs is None:

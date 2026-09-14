@@ -220,6 +220,19 @@ class GrantStore:
                 return True
             return self._meta_get(conn, "casbin_authoritative") == "1"
 
+    def any_authoritative(self) -> bool:
+        """True if the deployment has migrated any hub (global marker or any
+        per-hub marker). Used to decide the gateway-wide OWUI access-UI lock."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM hz_meta WHERE "
+                    "(k = 'casbin_authoritative' OR k LIKE 'casbin_authoritative:%') "
+                    "AND v = '1' LIMIT 1"
+                )
+            ).fetchone()
+        return bool(row)
+
     def set_authoritative(self, flag: bool = True, *, hub: str | None = None) -> None:
         key = f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
         with self._engine.begin() as conn:
@@ -287,6 +300,38 @@ class GrantStore:
             {"t": time.time(), "a": actor, "ac": action, "s": subject,
              "h": hub, "p": permission},
         )
+
+    def publish_workflows(self, hub: str, workflows: Iterable[tuple[str, str | None, str | None]]) -> None:
+        """A bridge publishes its hub's workflow catalog to the shared store, so
+        the org portal can list every hub's workflows. Replaces this hub's rows."""
+        import time
+
+        hub = normalize(hub)
+        rows = list(workflows)
+        with self._engine.begin() as conn:
+            conn.execute(text("DELETE FROM hz_workflows WHERE hub=:h"), {"h": hub})
+            for name, schedule, tz in rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO hz_workflows (hub, name, schedule, timezone, updated) "
+                        "VALUES (:h, :n, :s, :t, :u)"
+                    ),
+                    {"h": hub, "n": name, "s": schedule, "t": tz, "u": time.time()},
+                )
+
+    def list_workflows(self, hubs: "Iterable[str] | None" = None) -> list[dict]:
+        """The workflow catalog, optionally restricted to a set of hubs (for a
+        hub admin's scoped view)."""
+        q = "SELECT hub, name, schedule, timezone FROM hz_workflows"
+        params: dict = {}
+        allow = None
+        if hubs is not None:
+            allow = {normalize(h) for h in hubs}
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(q + " ORDER BY hub, name"), params).fetchall()
+        keys = ("hub", "name", "schedule", "timezone")
+        out = [dict(zip(keys, r)) for r in rows]
+        return [w for w in out if allow is None or w["hub"] in allow]
 
     def read_access_audit(self, limit: int = 100) -> list[dict]:
         """Recent access CHANGE events (grant/revoke), newest first."""

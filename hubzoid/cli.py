@@ -500,6 +500,15 @@ def gateway(
     pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
     log_level = os.environ.get("HUB_LOG_LEVEL", "info")
+    # One shared operational DB for the whole gateway (access grants, per-hub
+    # authority markers, identities, audit, workflow catalog): a local URL passed
+    # to every bridge, so an org grant in hub A is visible in hub B and one bridge
+    # can serve the org-wide portal. DBOS system tables stay per-bridge
+    # (db.dbos_url). An operator's HUBZOID_OPERATIONAL_DB / DATABASE_URL wins.
+    _op_override = os.environ.get("HUBZOID_OPERATIONAL_DB") or os.environ.get("DATABASE_URL")
+    if not _op_override:
+        gw_data.mkdir(parents=True, exist_ok=True)
+    shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
@@ -571,11 +580,15 @@ def gateway(
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
             bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
             # Gateway mode: enable scheduled workflows (the HUBZOID_SCHEDULES gate
-            # is auto-satisfied here). NOTE: with the default per-hub SQLite,
-            # access grants are NOT shared across bridges — set DATABASE_URL to
-            # one Postgres (or the per-bridge DBOS fallback) for a shared
-            # operational store. This is the named gateway build-gate.
+            # is auto-satisfied here), and pin every bridge to ONE shared
+            # operational DB (access grants, per-hub authority markers, identities,
+            # audit, workflow catalog) so an org grant in hub A is visible in hub
+            # B and one bridge can serve the org-wide portal. DBOS system tables
+            # stay per-bridge (db.dbos_url), so no shared-SQLite DBOS topology.
+            # An operator's explicit HUBZOID_OPERATIONAL_DB / DATABASE_URL wins.
             bridge_env["HUBZOID_GATEWAY"] = "1"
+            if not (bridge_env.get("HUBZOID_OPERATIONAL_DB") or bridge_env.get("DATABASE_URL")):
+                bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
             # Gateway-wide native MCP (resolved above) - pin every bridge to it.
             bridge_env["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
             cmd = [
@@ -695,6 +708,18 @@ def gateway(
                 {"prefix": "/portal", "upstream": f"http://127.0.0.1:{first.bridge_port}"}
             )
         edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
+        # Derive the OWUI access-UI lock from the shared store: once the gateway
+        # has migrated any hub, block OWUI's group-management writes (access is
+        # managed in the portal). The one shared OWUI is org-wide.
+        if "HUBZOID_LOCK_OWUI_ACCESS_UI" not in edge_env:
+            try:
+                from .access.store import GrantStore
+                from .db import _engine_for_url
+
+                if GrantStore(_engine_for_url(shared_op_url)).any_authoritative():
+                    edge_env["HUBZOID_LOCK_OWUI_ACCESS_UI"] = "1"
+            except Exception:  # noqa: BLE001 — never block boot on this
+                pass
         edge_cmd = [
             sys.executable, "-m", "uvicorn",
             "hubzoid.edge:_factory", "--factory",

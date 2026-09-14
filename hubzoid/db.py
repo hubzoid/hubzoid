@@ -32,9 +32,52 @@ def resolve_url(hub_dir, env=None) -> str:
     return f"sqlite:///{db_path}"
 
 
+def operational_url(hub_dir, env=None) -> str:
+    """The URL for the SHARED operational store — access grants, authority
+    markers, identities, access-change audit, workflow state — that every bridge
+    of a deployment must agree on.
+
+    Precedence: ``HUBZOID_OPERATIONAL_DB`` (a gateway sets this to one shared
+    SQLite file so all its bridges share one Casbin store) → ``DATABASE_URL``
+    (Postgres, also shared) → the per-hub SQLite (standalone: same as the hub DB).
+
+    Kept separate from the DBOS system DB (`dbos_url`), which stays per-bridge so
+    N bridges never share one SQLite DBOS system database (unproven topology)."""
+    env = env if env is not None else os.environ
+    url = (env.get("HUBZOID_OPERATIONAL_DB") or env.get("DATABASE_URL") or "").strip()
+    if url:
+        return url
+    return resolve_url(hub_dir, env)
+
+
+def dbos_url(hub_dir, env=None) -> str:
+    """The URL for this bridge's DBOS system database. PER-BRIDGE on SQLite (each
+    hub gets its own file), so a gateway's N bridges do not share one SQLite DBOS
+    system DB. Postgres (via ``HUBZOID_DBOS_DB`` or ``DATABASE_URL``) can be shared
+    — DBOS supports many instances on one Postgres."""
+    env = env if env is not None else os.environ
+    url = (env.get("HUBZOID_DBOS_DB") or "").strip()
+    if url:
+        return url
+    dl = (env.get("DATABASE_URL") or "").strip()
+    if dl and not dl.startswith("sqlite"):
+        return dl
+    db_path = Path(hub_dir) / ".hubzoid" / "dbos.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{db_path}"
+
+
 def engine_for(hub_dir, env=None) -> Engine:
     """Return the (cached) SQLAlchemy engine for this hub's database."""
-    url = resolve_url(hub_dir, env)
+    return _engine_for_url(resolve_url(hub_dir, env))
+
+
+def operational_engine(hub_dir, env=None) -> Engine:
+    """The (cached) engine for the shared operational store (see operational_url)."""
+    return _engine_for_url(operational_url(hub_dir, env))
+
+
+def _engine_for_url(url: str) -> Engine:
     eng = _engines.get(url)
     if eng is None:
         connect_args = {}

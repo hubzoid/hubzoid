@@ -63,6 +63,7 @@ def test_mcp_verifier_gates_on_use_hub(tmp_path, monkeypatch):
     (hub_dir).mkdir(exist_ok=True)
     eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: eng)
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(hub_dir)
     gs.set_authoritative(True)

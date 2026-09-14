@@ -84,6 +84,19 @@ _DDL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS hz_access_audit_ts ON hz_access_audit (ts)",
+    # hz_workflows: the shared workflow CATALOG. Each bridge publishes its hub's
+    # workflows here at launch, so the org-wide portal (served by one bridge over
+    # the shared DB) can list every hub's workflows, not just its own.
+    """
+    CREATE TABLE IF NOT EXISTS hz_workflows (
+        hub      TEXT NOT NULL,
+        name     TEXT NOT NULL,
+        schedule TEXT,
+        timezone TEXT,
+        updated  REAL,
+        PRIMARY KEY (hub, name)
+    )
+    """,
 ]
 
 

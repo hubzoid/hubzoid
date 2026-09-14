@@ -80,6 +80,7 @@ def test_hub_user_can_consults_access_store(engine, tmp_path, monkeypatch):
     # point db.engine_for at our test engine so store_for/hub.user.can share it
     import hubzoid.db as db
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: engine)
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: engine)
     gs = store_for(tmp_path)
     gs.grant("workflow:review_prs", "finance", "prod_in")
     with run_scope(hub="finance", workflow="review_prs", hub_dir=tmp_path, engine=engine):
