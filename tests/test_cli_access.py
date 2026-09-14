@@ -10,7 +10,7 @@ from hubzoid.cli import app
 
 runner = CliRunner()
 
-TEST_HUB = "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/HubzoidTestHub/test-hub"
+TEST_HUB = str(Path(__file__).resolve().parents[2] / "HubzoidTestHub" / "test-hub")
 
 
 def test_grant_check_revoke_roundtrip(tmp_path):

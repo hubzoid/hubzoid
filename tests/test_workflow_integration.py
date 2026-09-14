@@ -13,9 +13,7 @@ from pathlib import Path
 
 import pytest
 
-TEST_HUB = Path(
-    "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/HubzoidTestHub/test-hub"
-)
+TEST_HUB = Path(__file__).resolve().parents[2] / "HubzoidTestHub" / "test-hub"
 
 pytestmark = pytest.mark.skipif(
     not (TEST_HUB / "workflows" / "review-prs" / "main.py").exists(),
@@ -32,6 +30,8 @@ HUB = %r
 runtime.init(HUB, hub_name="test-hub")
 runtime.load_workflows(HUB)
 runtime.launch()
+# call_llm is now wrapped as a checkpointed DBOS step (durability, not re-invoked on recovery)
+assert context._LLM_STEP is not None, "call_llm seam was not wrapped as a DBOS step"
 r1 = runtime.run_now("review_prs")
 r2 = runtime.run_now("review_prs")
 assert r1 == 2, f"run1 expected 2, got {r1}"

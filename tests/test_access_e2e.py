@@ -16,9 +16,7 @@ import hubzoid.access as access
 import hubzoid.db as db
 from hubzoid.access.identity import Identity, identity_scope
 
-TEST_HUB = Path(
-    "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/HubzoidTestHub/test-hub"
-)
+TEST_HUB = Path(__file__).resolve().parents[2] / "HubzoidTestHub" / "test-hub"
 
 pytestmark = pytest.mark.skipif(
     not (TEST_HUB / "restricted" / "testers.py").exists(),

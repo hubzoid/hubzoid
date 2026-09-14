@@ -12,6 +12,16 @@ from hubzoid.workflows import WorkflowState, hub, run_scope
 from hubzoid.workflows import context as wctx
 
 
+@pytest.fixture(autouse=True)
+def _reset_seams():
+    # The call_llm/call_agent seams are module globals (set by server/cli boot or
+    # runtime.launch); reset them around every façade test so a prior test that
+    # launched DBOS can't leak a step-wrapped seam into these hermetic tests.
+    wctx._LLM = wctx._AGENT = wctx._LLM_STEP = wctx._AGENT_STEP = None
+    yield
+    wctx._LLM = wctx._AGENT = wctx._LLM_STEP = wctx._AGENT_STEP = None
+
+
 @pytest.fixture()
 def engine(tmp_path):
     return create_engine(f"sqlite:///{tmp_path / 'hub.db'}")

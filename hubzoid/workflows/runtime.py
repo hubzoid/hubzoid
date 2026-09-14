@@ -37,6 +37,7 @@ _LAUNCHED = False
 _HUB_DIR: Path | None = None
 _HUB_NAME: str = ""
 _ENGINE: Any = None
+_QUEUE = None                    # one durable queue per hub, global concurrency 1
 _lock = threading.Lock()
 
 
@@ -66,11 +67,11 @@ def _app_name(hub_name: str) -> str:
 def init(hub_dir, hub_name: str | None = None) -> None:
     """Construct the DBOS singleton over this hub's database. Idempotent. Must
     run before any workflow module is imported (the decorator needs DBOS)."""
-    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE
+    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE
     with _lock:
         if _INITED:
             return
-        from dbos import DBOS
+        from dbos import DBOS, Queue
 
         _DBOS = DBOS
         _HUB_DIR = Path(hub_dir)
@@ -78,6 +79,9 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         _ENGINE = db.engine_for(_HUB_DIR)
         sys_url = db.resolve_url(_HUB_DIR)
         DBOS(config={"name": _app_name(_HUB_NAME), "system_database_url": sys_url})
+        # One durable queue per hub, global concurrency 1: two due workflows (or a
+        # manual + scheduled run) in the same hub never overlap.
+        _QUEUE = Queue(f"{_app_name(_HUB_NAME)}-wf", concurrency=1)
         _INITED = True
         log.info("workflows: DBOS initialised for hub %r", _HUB_NAME)
 
@@ -123,7 +127,12 @@ def workflow(schedule: str | None = None, *, timezone: str | None = None,
                 hub=hub_name, workflow=name, hub_dir=_HUB_DIR, engine=_ENGINE,
                 settings=_load_settings(), subject=f"workflow:{name}",
             ):
-                return fn()
+                try:
+                    return fn()
+                except Exception as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
+                    if on_failure:
+                        _notify_failure(on_failure, name, exc)
+                    raise
 
         _REGISTRY[name] = WorkflowDef(
             name=name, fn=fn, wrapped=wrapped, schedule=schedule,
@@ -142,10 +151,44 @@ def step(fn: Callable):
     return _DBOS.step()(fn)
 
 
+def _wrap_seams_as_steps() -> None:
+    """Wrap the configured call_llm/call_agent seams in DBOS steps so a completed
+    model/agent call is checkpointed and NOT re-invoked on recovery. Retries are
+    on (max 3) since these are external calls."""
+    raw_llm, raw_agent = context._LLM, context._AGENT
+    if raw_llm is not None and context._LLM_STEP is None:
+        @_DBOS.step(retries_allowed=True, max_attempts=3)
+        def _llm_step(prompt: str, hub_dir_str: str, subject: str):
+            return raw_llm(prompt, hub_dir=Path(hub_dir_str), subject=subject)
+        context._LLM_STEP = _llm_step
+    if raw_agent is not None and context._AGENT_STEP is None:
+        @_DBOS.step(retries_allowed=True, max_attempts=3)
+        def _agent_step(task: str, hub_dir_str: str, subject: str):
+            return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
+        context._AGENT_STEP = _agent_step
+
+
+def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
+    """Best-effort on_failure notification: POST to a webhook URL. (There is no
+    built-in email transport; a URL or a hub-configured notifier is the path.)"""
+    payload = {"workflow": workflow_name, "hub": _HUB_NAME, "error": str(error)}
+    try:
+        if target.startswith(("http://", "https://")):
+            import httpx
+
+            httpx.post(target, json=payload, timeout=10.0)
+        else:
+            log.error("workflow %r failed (on_failure=%r): %s",
+                      workflow_name, target, error)
+    except Exception:  # noqa: BLE001 — notification must never mask the failure
+        log.exception("workflows: on_failure notify failed for %r", workflow_name)
+
+
 def launch() -> None:
     global _LAUNCHED
     if _LAUNCHED:
         return
+    _wrap_seams_as_steps()
     _DBOS.launch()
     _LAUNCHED = True
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
@@ -156,8 +199,11 @@ def registry() -> list[WorkflowDef]:
 
 
 def start(name: str, hub_name: str | None = None):
-    """Fire one workflow now (used by the dispatcher and `hubzoid schedule run`)."""
+    """Fire one workflow now (dispatcher + `hubzoid schedule run`). Enqueues on
+    the hub's concurrency-1 queue so runs never overlap."""
     wf = _REGISTRY[name]
+    if _QUEUE is not None:
+        return _QUEUE.enqueue(wf.wrapped, hub_name or _HUB_NAME)
     return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
 
 

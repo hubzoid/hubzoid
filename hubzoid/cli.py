@@ -365,6 +365,16 @@ def run(
                          "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
                     )
                 edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
+                # Derive the OWUI access-UI lock from the migration marker: once
+                # this hub's access is authoritative on Casbin, block OWUI's
+                # group-management writes at the edge (unless force-disabled).
+                if "HUBZOID_LOCK_OWUI_ACCESS_UI" not in edge_env:
+                    try:
+                        from .access import store_for
+                        if store_for(hub).is_authoritative():
+                            edge_env["HUBZOID_LOCK_OWUI_ACCESS_UI"] = "1"
+                    except Exception:  # noqa: BLE001 — never block boot on this
+                        pass
                 edge_cmd = [
                     sys.executable, "-m", "uvicorn",
                     "hubzoid.edge:_factory", "--factory",
@@ -560,6 +570,12 @@ def gateway(
             # overrides), so this only settles the .env-less inheritance.
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
             bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
+            # Gateway mode: enable scheduled workflows (the HUBZOID_SCHEDULES gate
+            # is auto-satisfied here). NOTE: with the default per-hub SQLite,
+            # access grants are NOT shared across bridges — set DATABASE_URL to
+            # one Postgres (or the per-bridge DBOS fallback) for a shared
+            # operational store. This is the named gateway build-gate.
+            bridge_env["HUBZOID_GATEWAY"] = "1"
             # Gateway-wide native MCP (resolved above) - pin every bridge to it.
             bridge_env["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
             cmd = [
@@ -670,7 +686,15 @@ def gateway(
         edge_env = os.environ.copy()
         edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
         edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env, pub)
-        edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gp.edge_routes())
+        gw_routes = list(gp.edge_routes())
+        # One bridge serves the org-wide portal (the shared DB means any will do);
+        # route /portal there so the SPA + API are reachable through the edge.
+        if gp.backends:
+            first = gp.backends[0]
+            gw_routes.append(
+                {"prefix": "/portal", "upstream": f"http://127.0.0.1:{first.bridge_port}"}
+            )
+        edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
         edge_cmd = [
             sys.executable, "-m", "uvicorn",
             "hubzoid.edge:_factory", "--factory",

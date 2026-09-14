@@ -31,6 +31,11 @@ from .state import WorkflowState
 # wire the real hub runtime; tests set fakes. Signature mirrors the POC.
 _LLM: Callable[..., Any] | None = None
 _AGENT: Callable[..., Any] | None = None
+# DBOS-step-wrapped versions of the seams (set by runtime.launch()). When present
+# a workflow's call goes through a checkpointed step, so recovery skips a
+# completed model call instead of re-invoking it (durability).
+_LLM_STEP: Callable[..., Any] | None = None
+_AGENT_STEP: Callable[..., Any] | None = None
 
 
 def configure(*, llm: Callable[..., Any] | None = None,
@@ -119,6 +124,8 @@ class Hub:
                 "at boot (server/cli wires the hub runtime)"
             )
         ctx = _ctx()
+        if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
+            return _LLM_STEP(prompt, str(ctx.hub_dir), ctx.subject)
         return _LLM(prompt, hub_dir=ctx.hub_dir, subject=ctx.subject, **kw)
 
     def call_agent(self, task: str, **kw):
@@ -128,6 +135,8 @@ class Hub:
                 "at boot (server/cli wires the hub runtime)"
             )
         ctx = _ctx()
+        if _AGENT_STEP is not None:
+            return _AGENT_STEP(task, str(ctx.hub_dir), ctx.subject)
         return _AGENT(task, hub_dir=ctx.hub_dir, subject=ctx.subject, **kw)
 
 

@@ -228,11 +228,16 @@ class GrantStore:
                 if authoritative:
                     self._meta_set(conn, "casbin_authoritative", "1")
                 return
+            granted = 0
             for subj in admin_subjects:
-                subj = (subj or "").strip()
+                subj = normalize(subj)
                 if subj:
                     self._insert_grant(conn, subj, ORG, MANAGE_ACCESS)
-            self._meta_set(conn, "bootstrapped", "1")
+                    granted += 1
+            # Only consume the one-shot marker once a real admin exists — an
+            # empty bootstrap() must NOT block a later legitimate admin list.
+            if granted:
+                self._meta_set(conn, "bootstrapped", "1")
             if authoritative:
                 self._meta_set(conn, "casbin_authoritative", "1")
             self._bump_revision(conn)

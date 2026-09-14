@@ -10,9 +10,7 @@ from hubzoid.access import migrate
 from hubzoid.access.migrate import MigrationBlocked
 from hubzoid.access.store import EVERYONE, USE_HUB, GrantStore
 
-TEST_HUB = Path(
-    "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/HubzoidTestHub/test-hub"
-)
+TEST_HUB = Path(__file__).resolve().parents[2] / "HubzoidTestHub" / "test-hub"
 
 
 @pytest.fixture()
