@@ -27,6 +27,7 @@ def client(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(build_router(tmp_path, admin_resolver=resolver))
     c = TestClient(app)
+    c.headers.update({"origin": "http://testserver"})   # same-origin for mutations
     c.gs = gs           # type: ignore[attr-defined]
     c.admin = admin     # type: ignore[attr-defined]
     c.hub = tmp_path.name  # type: ignore[attr-defined]
@@ -110,6 +111,19 @@ def test_reject_reserved_wildcard_grants(client):
     # the org domain only carries manage_access
     r = client.post("/portal/api/access/grant",
                     json={"subject": "y", "hub": "*", "permission": "prod_in"})
+    assert r.status_code == 403
+
+
+def test_cross_origin_mutation_refused(client):
+    hub = client.hub
+    r = client.post("/portal/api/access/grant",
+                    headers={"origin": "http://evil.example"},
+                    json={"subject": "a", "hub": hub, "permission": "prod_in"})
+    assert r.status_code == 403
+    # a bare POST with no Origin is also refused
+    r = client.post("/portal/api/access/grant",
+                    headers={"origin": ""},
+                    json={"subject": "a", "hub": hub, "permission": "prod_in"})
     assert r.status_code == 403
 
 

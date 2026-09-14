@@ -23,9 +23,10 @@ def test_mount_serves_api_and_static(tmp_path, monkeypatch):
     monkeypatch.delenv("HUBZOID_PORTAL_DEV_USER", raising=False)
     assert c.get("/portal/api/me").status_code == 403
 
-    # dev user that is an org admin -> 200
+    # dev user that is an org admin -> 200 (dev override is loopback-only)
     access.store_for(tmp_path).bootstrap(["dev@corp"], authoritative=True)
     monkeypatch.setenv("HUBZOID_PORTAL_DEV_USER", "dev@corp")
+    monkeypatch.setattr(portal, "_is_loopback", lambda request: True)
     r = c.get("/portal/api/me")
     assert r.status_code == 200 and r.json()["org_admin"] is True
 

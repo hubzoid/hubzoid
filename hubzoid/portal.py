@@ -67,7 +67,13 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     hub_dir = Path(hub_dir)
 
     def resolve(request: Request) -> "PortalAdmin | None":
-        subject = (os.environ.get("HUBZOID_PORTAL_DEV_USER") or "").strip()
+        # The dev override is trusted ONLY for loopback callers, so an
+        # accidentally-retained production env var can't turn a remote request
+        # into an admin.
+        subject = ""
+        dev = (os.environ.get("HUBZOID_PORTAL_DEV_USER") or "").strip()
+        if dev and _is_loopback(request):
+            subject = dev
         if not subject:
             subject = _verify_owui_session(request)
         if not subject:
@@ -83,6 +89,27 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
         return PortalAdmin(subject=subject, is_org_admin=org, manageable=manageable)
 
     return resolve
+
+
+def _is_loopback(request: Request) -> bool:
+    host = getattr(request.client, "host", "") if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def _check_same_origin(request: Request) -> None:
+    """Reject a cross-site mutation. The session cookie is ambient, so a POST
+    must come from our own origin (Origin or Referer host == request host)."""
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    if not origin:
+        # No Origin/Referer on a state-changing request — reject (browsers send
+        # Origin on cross-origin and same-origin POSTs; a bare POST is suspect).
+        raise HTTPException(status_code=403, detail="missing Origin on a mutation")
+    from urllib.parse import urlparse
+
+    req_host = request.headers.get("host", "")
+    origin_host = urlparse(origin).netloc
+    if origin_host and req_host and origin_host != req_host:
+        raise HTTPException(status_code=403, detail="cross-origin request refused")
 
 
 def _verify_owui_session(request: Request) -> str:
@@ -197,6 +224,7 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
     @router.post("/access/grant")
     def grant(request: Request, admin: PortalAdmin = Depends(require_admin),
               payload: dict = Body(...)):
+        _check_same_origin(request)
         subject = (payload.get("subject") or "").strip()
         hub = (payload.get("hub") or "").strip()
         perm = (payload.get("permission") or "").strip()
@@ -207,12 +235,13 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
             raise HTTPException(403, "only org admins can grant manage_access")
         _reject_reserved(subject, hub, perm, admin)
         _require_manage(admin, hub)
-        store_for(hub_dir).grant(subject, hub, perm)
+        store_for(hub_dir).grant(subject, hub, perm, actor=admin.subject)
         return {"ok": True}
 
     @router.post("/access/revoke")
     def revoke(request: Request, admin: PortalAdmin = Depends(require_admin),
                payload: dict = Body(...)):
+        _check_same_origin(request)
         subject = (payload.get("subject") or "").strip()
         hub = (payload.get("hub") or "").strip()
         perm = (payload.get("permission") or "").strip()
@@ -220,7 +249,7 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
             raise HTTPException(403, "only org admins can revoke manage_access")
         _require_manage(admin, hub)
         try:
-            store_for(hub_dir).revoke(subject, hub, perm)
+            store_for(hub_dir).revoke(subject, hub, perm, actor=admin.subject)
         except LastAdminError as e:
             raise HTTPException(409, str(e))
         return {"ok": True}
@@ -245,6 +274,11 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
         rows = auditlib.read(hub_dir, limit=limit, user=user,
                              decision=("deny" if denied else None))
         return {"rows": rows}
+
+    @router.get("/access-changes")
+    def access_changes(limit: int = 100, admin: PortalAdmin = Depends(require_admin)):
+        """Grant/revoke change events (who changed whose access), newest first."""
+        return {"rows": store_for(hub_dir).read_access_audit(limit)}
 
     @router.get("/overview")
     def overview(admin: PortalAdmin = Depends(require_admin)):

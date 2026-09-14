@@ -135,6 +135,17 @@ def test_subject_case_insensitive(store):
     assert store.permissions_for("alice@corp", "finance") == {"prod_in", USE_HUB}
 
 
+def test_access_audit_records_changes(store):
+    store.grant("alice", "finance", "prod_in", actor="root")
+    store.revoke("alice", "finance", "prod_in", actor="root")
+    rows = store.read_access_audit()
+    actions = [(r["action"], r["actor"], r["subject"]) for r in rows]
+    assert ("revoke", "root", "alice") in actions
+    assert ("grant", "root", "alice") in actions
+    # newest first
+    assert rows[0]["action"] == "revoke"
+
+
 def test_authoritative_marker(store):
     assert store.is_authoritative() is False
     store.set_authoritative(True)

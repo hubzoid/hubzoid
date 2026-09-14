@@ -260,9 +260,34 @@ class GrantStore:
         rows = conn.execute(text(sql), {"o": ORG, "m": MANAGE_ACCESS}).fetchall()
         return {s for (s,) in rows}
 
+    def _audit(self, conn, actor, action, subject, hub, permission) -> None:
+        import time
+
+        conn.execute(
+            text(
+                "INSERT INTO hz_access_audit (ts, actor, action, subject, hub, permission) "
+                "VALUES (:t, :a, :ac, :s, :h, :p)"
+            ),
+            {"t": time.time(), "a": actor, "ac": action, "s": subject,
+             "h": hub, "p": permission},
+        )
+
+    def read_access_audit(self, limit: int = 100) -> list[dict]:
+        """Recent access CHANGE events (grant/revoke), newest first."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT ts, actor, action, subject, hub, permission "
+                    "FROM hz_access_audit ORDER BY ts DESC LIMIT :n"
+                ),
+                {"n": limit},
+            ).fetchall()
+        keys = ("ts", "actor", "action", "subject", "hub", "permission")
+        return [dict(zip(keys, r)) for r in rows]
+
     # ---- writes (the grant_service; every write is one transaction) ----------
 
-    def grant(self, subject: str, hub: str, permission: str) -> None:
+    def grant(self, subject: str, hub: str, permission: str, *, actor: str | None = None) -> None:
         """Grant one permission. Granting any tool permission auto-grants
         `use_hub` in the same hub (the implication rule), so a grantee can always
         open a hub they have any permission in. Idempotent."""
@@ -279,10 +304,11 @@ class GrantStore:
         with self._engine.begin() as conn:
             for s, h, p in rows:
                 self._insert_grant(conn, s, h, p)
+            self._audit(conn, actor, "grant", subject, hub, permission)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def revoke(self, subject: str, hub: str, permission: str) -> None:
+    def revoke(self, subject: str, hub: str, permission: str, *, actor: str | None = None) -> None:
         """Revoke one permission. Revoking `use_hub` cascades: it removes every
         permission the subject has in that hub (you can't hold a tool in a hub
         you can't enter). Refuses to remove the last org admin (race-safe)."""
@@ -317,10 +343,11 @@ class GrantStore:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
+            self._audit(conn, actor, "revoke", subject, hub, permission)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def revoke_all(self, subject: str) -> None:
+    def revoke_all(self, subject: str, *, actor: str | None = None) -> None:
         """Remove every grant for a subject across all hubs (portal 'revoke all').
         Refuses if it would remove the last org admin (race-safe)."""
         subject = normalize(subject)
@@ -335,6 +362,7 @@ class GrantStore:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
+            self._audit(conn, actor, "revoke_all", subject, None, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
 

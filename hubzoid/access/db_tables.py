@@ -70,6 +70,20 @@ _DDL = [
         v TEXT
     )
     """,
+    # hz_access_audit: an append-only trail of access CHANGES (grant/revoke),
+    # written in the same transaction as the mutation. Complements the per-tool
+    # decision log (access/audit.py); together they are the Audit screen.
+    """
+    CREATE TABLE IF NOT EXISTS hz_access_audit (
+        ts         REAL NOT NULL,
+        actor      TEXT,
+        action     TEXT NOT NULL,
+        subject    TEXT,
+        hub        TEXT,
+        permission TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS hz_access_audit_ts ON hz_access_audit (ts)",
 ]
 
 

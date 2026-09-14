@@ -1327,8 +1327,10 @@ def grant(
     """Grant a permission. Granting any tool permission auto-grants use_hub."""
     from .access import store_for
 
+    import getpass
+
     domain = _access_domain(hub_dir, hub, org)
-    store_for(hub_dir).grant(subject, domain, permission)
+    store_for(hub_dir).grant(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
     console.print(f"[green]granted[/green] {subject} · {permission} in {domain}")
 
 
@@ -1344,9 +1346,11 @@ def revoke(
     from .access import store_for
     from .access.store import LastAdminError
 
+    import getpass
+
     domain = _access_domain(hub_dir, hub, org)
     try:
-        store_for(hub_dir).revoke(subject, domain, permission)
+        store_for(hub_dir).revoke(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
     except LastAdminError as e:
         console.print(f"[red]refused:[/red] {e}")
         raise typer.Exit(code=1)
