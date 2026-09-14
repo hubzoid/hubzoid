@@ -29,7 +29,10 @@ from .identity import Identity, normalize
 # `slack-channel` (a shared thread whose many authors are flattened into one
 # prompt but answered under the @mentioner's identity — a confused-deputy risk
 # that must NEVER be opted in).
-DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp"})
+# `workflow` is a trusted surface: a scheduled workflow runs as its own service
+# identity (`workflow:<name>`, a per-workflow subject granted like a person), not
+# a shared/anonymous sender — so it may reach a restricted tool it was granted.
+DEFAULT_RESTRICTED_SURFACES = frozenset({"owui", "web", "api", "mcp", "workflow"})
 
 
 def is_allowed(

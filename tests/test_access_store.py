@@ -127,6 +127,14 @@ def test_normalization(store):
     assert store.can("Alice", " FINANCE ".strip(), "prod_in")
 
 
+def test_subject_case_insensitive(store):
+    # a grant made with mixed case matches the lowercased login identity
+    store.grant("Alice@Corp", "finance", "prod_in")
+    assert store.can("alice@corp", "finance", "prod_in")
+    assert store.can("ALICE@CORP", "finance", "use_hub")
+    assert store.permissions_for("alice@corp", "finance") == {"prod_in", USE_HUB}
+
+
 def test_authoritative_marker(store):
     assert store.is_authoritative() is False
     store.set_authoritative(True)

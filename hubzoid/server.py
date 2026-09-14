@@ -110,8 +110,8 @@ def build_app() -> FastAPI:
         from .workflows import boot as wf_boot
         from .workflows import context as wf_ctx
         wf_ctx.configure(
-            llm=lambda prompt, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, prompt),
-            agent=lambda task, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, task),
+            llm=lambda prompt, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, prompt, subject=subject),
+            agent=lambda task, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, task, subject=subject),
         )
         wf_dispatcher = await wf_boot.start(hub_dir)
         app.state.workflows = wf_dispatcher
@@ -209,6 +209,10 @@ def build_app() -> FastAPI:
         # don't send an id still get a consistent directory.
         chat_id = _derive_chat_id(body, request, messages)
         identity = _derive_identity(body, request, hub_dir)
+        # Hub-entry gate: once Casbin is authoritative, a caller must hold
+        # `use_hub` to chat at all (read knowledge, use even unrestricted tools).
+        # Fail-closed; skipped for un-migrated hubs and anonymous/internal callers.
+        _enforce_use_hub(identity, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
         # and direct-API uploads) into the canonical per-chat uploads store now;
@@ -418,6 +422,40 @@ def _usage_envelope() -> dict:
 # ---------------------------------------------------------------------------
 # Identity derivation
 # ---------------------------------------------------------------------------
+def _enforce_use_hub(identity, hub_dir: Path | None) -> None:
+    """Once Casbin is authoritative, require `use_hub` to enter the hub at all.
+
+    Fail-closed: a store error while (or after) authority is determined denies
+    (503), never silently allows. Un-migrated hubs and anonymous/internal callers
+    (no verified user) pass through — restricted tools stay gated by the guard."""
+    if hub_dir is None or identity is None or identity.is_anonymous:
+        return
+    from .access import store_for
+    from .access.store import USE_HUB
+
+    try:
+        gs = store_for(hub_dir)
+        authoritative = gs.is_authoritative()
+    except Exception:  # noqa: BLE001
+        log.exception("access: use_hub check unavailable for %s", hub_dir.name)
+        raise HTTPException(status_code=503, detail="access check unavailable")
+    if not authoritative:
+        return
+    try:
+        ok = gs.can(identity.user, hub_dir.name, USE_HUB)
+    except Exception:  # noqa: BLE001
+        log.exception("access: use_hub can() failed for %s", hub_dir.name)
+        raise HTTPException(status_code=503, detail="access check unavailable")
+    if not ok:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You do not have access to the '{hub_dir.name}' hub. "
+                "Ask an admin to grant you access."
+            ),
+        )
+
+
 def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | None = None):
     """Resolve the caller's verified identity for this request.
 

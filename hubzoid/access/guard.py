@@ -53,19 +53,30 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     hub_name = hub_dir.name
 
     def _decide(ident) -> tuple[bool, str]:
-        """The decision for `ident`: surface gate first, then Casbin `can()` if
-        this hub is migrated, else the legacy group check. One authority."""
-        can = None
-        try:
-            from . import store_for
+        """The decision for `ident`: surface gate first, then Casbin `can()` once
+        this hub is authoritative, else the legacy group check. One authority.
 
+        FAIL CLOSED: once Casbin is (or might be) authoritative, any error
+        determining or evaluating it denies — it never silently drops back to
+        legacy groups, which after cutover would be a bypass."""
+        from . import store_for
+
+        try:
             gs = store_for(hub_dir)
-            if gs.is_authoritative():
-                subject = ident.user or ""
-                can = lambda: gs.can(subject, hub_name, permission)  # noqa: E731
-        except Exception:  # noqa: BLE001 — a store hiccup falls back to legacy, never opens a door
-            can = None
-        return is_allowed(ident, permission, allowed_surfaces=surfaces, can=can)
+            authoritative = gs.is_authoritative()
+        except Exception:  # noqa: BLE001 — can't determine authority -> deny, don't guess
+            log.exception("access: store unavailable for %s; denying", hub_name)
+            return (False, "store-error")
+        if authoritative:
+            subject = ident.user or ""
+            try:
+                allowed = gs.can(subject, hub_name, permission)
+            except Exception:  # noqa: BLE001 — authoritative but errored -> deny, never legacy
+                log.exception("access: can() failed for %s; denying", hub_name)
+                return (False, "store-error")
+            return is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: allowed)
+        # Not authoritative: this hub hasn't migrated — legacy group check.
+        return is_allowed(ident, permission, allowed_surfaces=surfaces)
 
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()

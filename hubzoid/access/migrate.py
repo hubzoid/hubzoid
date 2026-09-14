@@ -157,7 +157,14 @@ def plan_from_owui(engine: Engine, hub_name: str, *, model_id: str | None = None
 
     model_by_id = {mid: ac for mid, ac in model_rows}
     if model_id is not None:
-        chosen = {model_id: model_by_id.get(model_id)}
+        if model_id not in model_by_id:
+            # A missing model must NOT be silently treated as public (that would
+            # grant wildcard use_hub). Refuse.
+            raise MigrationBlocked(
+                f"OWUI model_id {model_id!r} not found; refusing (a missing model "
+                "must not become public)"
+            )
+        chosen = {model_id: model_by_id[model_id]}
     elif len(model_by_id) == 1:
         chosen = model_by_id
     else:
@@ -191,7 +198,20 @@ def plan_from_owui(engine: Engine, hub_name: str, *, model_id: str | None = None
 
 def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True) -> None:
     """Apply a plan in one pass, then (optionally) make Casbin authoritative —
-    the cutover. Grants get the use_hub implication for free via grant_many."""
+    the cutover. Grants get the use_hub implication for free via grant_many.
+
+    Refuses to cut over (make Casbin authoritative) on an empty or conflicted
+    plan — that would lock everyone out of a hub that was open a moment ago."""
+    if authoritative and not plan.grants:
+        raise MigrationBlocked(
+            "refusing to cut over with zero grants (empty plan) — this would lock "
+            "everyone out. Provide access.csv / OWUI source, or use --apply only "
+            "with a non-empty plan."
+        )
+    if authoritative and plan.conflicts:
+        raise MigrationBlocked(
+            f"refusing to cut over with unresolved conflicts: {plan.conflicts}"
+        )
     store.grant_many(plan.grants)
     for hub, subject, k, v in plan.attrs:
         store.set_attr(hub, subject, k, v)

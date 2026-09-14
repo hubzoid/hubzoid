@@ -84,6 +84,35 @@ def test_hub_admin_cannot_touch_other_hub(client):
     assert r.status_code == 403
 
 
+def test_hub_admin_reads_scoped_to_managed_hubs(client):
+    hub = client.hub
+    # org admin seeds a second hub with a grant so it's "known"
+    client.post("/portal/api/access/grant",
+                json={"subject": "z", "hub": "otherhub", "permission": "prod_in"})
+    client.admin["who"] = PortalAdmin(subject="ha", is_org_admin=False, manageable=[hub])
+    # /hubs only lists managed hubs
+    keys = {h["key"] for h in client.get("/portal/api/hubs").json()["hubs"]}
+    assert hub in keys and "otherhub" not in keys
+    # and reading another hub's access is forbidden
+    assert client.get("/portal/api/access", params={"hub": "otherhub"}).status_code == 403
+
+
+def test_reject_reserved_wildcard_grants(client):
+    hub = client.hub
+    # org admin cannot grant a tool permission to the wildcard subject
+    r = client.post("/portal/api/access/grant",
+                    json={"subject": "*", "hub": hub, "permission": "prod_in"})
+    assert r.status_code == 403
+    # but CAN grant public use_hub to the wildcard subject
+    r = client.post("/portal/api/access/grant",
+                    json={"subject": "*", "hub": hub, "permission": "use_hub"})
+    assert r.status_code == 200
+    # the org domain only carries manage_access
+    r = client.post("/portal/api/access/grant",
+                    json={"subject": "y", "hub": "*", "permission": "prod_in"})
+    assert r.status_code == 403
+
+
 def test_overview_and_workflows_and_audit(client):
     client.post("/portal/api/access/grant",
                 json={"subject": "alice", "hub": client.hub, "permission": "prod_in"})

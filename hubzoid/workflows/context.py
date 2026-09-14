@@ -118,7 +118,8 @@ class Hub:
                 "hub.call_llm is not configured; call workflows.configure(llm=...) "
                 "at boot (server/cli wires the hub runtime)"
             )
-        return _LLM(prompt, hub_dir=_ctx().hub_dir, **kw)
+        ctx = _ctx()
+        return _LLM(prompt, hub_dir=ctx.hub_dir, subject=ctx.subject, **kw)
 
     def call_agent(self, task: str, **kw):
         if _AGENT is None:
@@ -126,7 +127,8 @@ class Hub:
                 "hub.call_agent is not configured; call workflows.configure(agent=...) "
                 "at boot (server/cli wires the hub runtime)"
             )
-        return _AGENT(task, hub_dir=_ctx().hub_dir, **kw)
+        ctx = _ctx()
+        return _AGENT(task, hub_dir=ctx.hub_dir, subject=ctx.subject, **kw)
 
 
 hub = Hub()

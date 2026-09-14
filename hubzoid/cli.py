@@ -1178,8 +1178,8 @@ def schedule_run(
             from .workflows import runtime as _wf
 
             _wf_ctx.configure(
-                llm=lambda prompt, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, prompt),
-                agent=lambda task, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, task),
+                llm=lambda prompt, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, prompt, subject=subject),
+                agent=lambda task, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, task, subject=subject),
             )
             _wf.init(hub)
             _wf.load_workflows(hub)
@@ -1429,12 +1429,25 @@ def access_migrate(
         console.print(f"[dim]dry-run — vs current store: {len(d['missing'])} missing, "
                       f"{len(d['extra'])} extra. Re-run with --apply to cut over.[/dim]")
         return
-    apply_plan(gs, plan, authoritative=True)
+    if not plan.grants:
+        console.print("[red]refusing to cut over with an empty plan (no grants). "
+                      "This would lock everyone out.[/red]")
+        raise typer.Exit(2)
+    try:
+        apply_plan(gs, plan, authoritative=True)
+    except MigrationBlocked as e:
+        console.print(f"[red]cutover refused:[/red] {e}")
+        raise typer.Exit(2)
     d = diff(gs, plan)
-    ok = not d["missing"]
+    # The cutover gate is a FULL zero diff: nothing planned-but-missing AND
+    # nothing stale (extra) in the store.
+    ok = not d["missing"] and not d["extra"]
     colour = "green" if ok else "red"
     console.print(f"[{colour}]applied[/{colour}] · Casbin is now authoritative · "
                   f"{len(d['missing'])} missing, {len(d['extra'])} extra after apply")
+    if not ok:
+        console.print("[yellow]note: non-zero diff — review stale (extra) grants; "
+                      "the zero-diff gate is not met.[/yellow]")
 
 
 @access_app.command("diff")

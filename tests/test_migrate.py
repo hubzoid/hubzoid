@@ -95,3 +95,27 @@ def test_plan_from_owui_refuses_unknown_schema(store, tmp_path):
         c.execute(text("CREATE TABLE something_else (x TEXT)"))
     with pytest.raises(MigrationBlocked):
         migrate.plan_from_owui(eng, "hub")
+
+
+def test_plan_from_owui_unknown_model_not_public(store, tmp_path):
+    eng = _owui_fixture(tmp_path)
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO model VALUES ('m1', NULL)"))
+    # asking for a model that isn't there must NOT become a public wildcard grant
+    with pytest.raises(MigrationBlocked):
+        migrate.plan_from_owui(eng, "hub", model_id="does-not-exist")
+
+
+def test_apply_refuses_empty_cutover(store):
+    empty = migrate.MigrationPlan()
+    with pytest.raises(MigrationBlocked):
+        migrate.apply(store, empty, authoritative=True)   # would lock everyone out
+    assert store.is_authoritative() is False               # marker untouched
+
+
+def test_apply_refuses_conflicted_cutover(store):
+    plan = migrate.MigrationPlan()
+    plan.add_grant("a@x", "hub", "prod_in")
+    plan.conflicts.append("duplicate email")
+    with pytest.raises(MigrationBlocked):
+        migrate.apply(store, plan, authoritative=True)

@@ -127,7 +127,7 @@ class GrantStore:
     def can(self, subject: str, hub: str, action: str) -> bool:
         """The authority. True if `subject` holds `action` in `hub` (or org-wide,
         or via the public wildcard). Reloads if another process wrote."""
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         if not subject:
             return False
         self._refresh_if_stale()
@@ -137,7 +137,7 @@ class GrantStore:
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
         org-wide + wildcard-subject). Used by the portal and denied-UX."""
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         hub = normalize(hub)
         self._refresh_if_stale()
         out: set[str] = set()
@@ -157,7 +157,7 @@ class GrantStore:
         """The hubs `subject` may open (`use_hub`), for the visibility mirror.
         Excludes the org domain; a wildcard `use_hub` grant means "all hubs" and
         is returned as the sentinel '*'."""
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         self._refresh_if_stale()
         with self._engine.connect() as conn:
             rows = conn.execute(
@@ -245,13 +245,23 @@ class GrantStore:
         ).fetchall()
         return {s for (s,) in rows}
 
+    def _org_admins_locked(self, conn) -> set[str]:
+        """Like _org_admins but takes a row lock on Postgres (FOR UPDATE) so
+        concurrent admin revokes serialize. SQLite has no row lock; its
+        single-writer transaction plus the check-after-delete covers it."""
+        sql = "SELECT subject FROM hz_grants WHERE hub=:o AND permission=:m"
+        if conn.engine.dialect.name != "sqlite":
+            sql += " FOR UPDATE"
+        rows = conn.execute(text(sql), {"o": ORG, "m": MANAGE_ACCESS}).fetchall()
+        return {s for (s,) in rows}
+
     # ---- writes (the grant_service; every write is one transaction) ----------
 
     def grant(self, subject: str, hub: str, permission: str) -> None:
         """Grant one permission. Granting any tool permission auto-grants
         `use_hub` in the same hub (the implication rule), so a grantee can always
         open a hub they have any permission in. Idempotent."""
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
         if not subject or not permission:
@@ -270,14 +280,18 @@ class GrantStore:
     def revoke(self, subject: str, hub: str, permission: str) -> None:
         """Revoke one permission. Revoking `use_hub` cascades: it removes every
         permission the subject has in that hub (you can't hold a tool in a hub
-        you can't enter). Refuses to remove the last org admin."""
-        subject = (subject or "").strip()
+        you can't enter). Refuses to remove the last org admin (race-safe)."""
+        subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
+        removes_admin = (hub == ORG and permission == MANAGE_ACCESS)
         with self._engine.begin() as conn:
-            if hub == ORG and permission == MANAGE_ACCESS:
-                # Last-admin guard, under a write lock on the row set.
-                admins = self._org_admins(conn)
+            if removes_admin:
+                # Serialize concurrent admin revokes: FOR UPDATE on Postgres; on
+                # SQLite the write below takes the DB write lock. Then a
+                # check-BEFORE and a check-AFTER-delete both in the txn, so two
+                # revokes can never both pass and empty the admin set.
+                admins = self._org_admins_locked(conn)
                 if subject in admins and len(admins) <= 1:
                     raise LastAdminError(
                         "cannot remove the last org admin; grant another first"
@@ -294,20 +308,28 @@ class GrantStore:
                     ),
                     {"s": subject, "h": hub, "p": permission},
                 )
+            if removes_admin and not self._org_admins(conn):
+                raise LastAdminError(
+                    "cannot remove the last org admin; grant another first"
+                )
             self._bump_revision(conn)
         self._refresh_if_stale()
 
     def revoke_all(self, subject: str) -> None:
         """Remove every grant for a subject across all hubs (portal 'revoke all').
-        Refuses if it would remove the last org admin."""
-        subject = (subject or "").strip()
+        Refuses if it would remove the last org admin (race-safe)."""
+        subject = normalize(subject)
         with self._engine.begin() as conn:
-            admins = self._org_admins(conn)
+            admins = self._org_admins_locked(conn)
             if subject in admins and len(admins) <= 1:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
             conn.execute(text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject})
+            if not self._org_admins(conn):
+                raise LastAdminError(
+                    "cannot remove the last org admin; grant another first"
+                )
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -316,7 +338,7 @@ class GrantStore:
         CSV-import / migration path. Applies the same use_hub implication."""
         expanded: list[tuple[str, str, str]] = []
         for subject, hub, permission in grants:
-            subject = (subject or "").strip()
+            subject = normalize(subject)
             hub = normalize(hub)
             permission = normalize(permission)
             if not subject or not permission:
@@ -368,7 +390,7 @@ class GrantStore:
         import time
 
         email_n = normalize(email) if email else None
-        subject = email_n or (owui_id or "").strip() or (phone or "").strip()
+        subject = email_n or normalize(owui_id) or normalize(phone)
         if not subject:
             raise ValueError("need at least one of email/owui_id/phone")
         with self._engine.begin() as conn:
@@ -408,7 +430,7 @@ class GrantStore:
                     "SELECT subject, email, owui_id, phone, display, pending "
                     "FROM hz_identities WHERE subject=:s"
                 ),
-                {"s": (subject or "").strip()},
+                {"s": normalize(subject)},
             ).fetchone()
         if not row:
             return None
@@ -421,7 +443,7 @@ class GrantStore:
         """Set a per-(hub, subject) attribute (e.g. center). Casbin never reads
         these; tools do, for in-tool data scoping."""
         hub = normalize(hub)
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         with self._engine.begin() as conn:
             dialect = conn.engine.dialect.name
             sql = (
@@ -433,7 +455,7 @@ class GrantStore:
 
     def get_attr(self, hub: str, subject: str, key: str, default=None):
         hub = normalize(hub)
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
@@ -445,7 +467,7 @@ class GrantStore:
 
     def attrs_for(self, hub: str, subject: str) -> dict:
         hub = normalize(hub)
-        subject = (subject or "").strip()
+        subject = normalize(subject)
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text("SELECT k, v FROM hz_identity_attrs WHERE hub=:h AND subject=:s"),

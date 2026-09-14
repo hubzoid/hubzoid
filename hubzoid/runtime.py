@@ -314,15 +314,23 @@ def describe(hub_dir: Path) -> str:
     return json.dumps({"backend": backend, "model": model})
 
 
-def run_once(hub_dir, prompt: str, **_kw) -> str:
+def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     """One-shot: build the hub's runtime, run a single prompt, return the text.
 
     This is the backend-neutral seam behind a workflow's `hub.call_llm` /
     `hub.call_agent` — it reuses the hub's own runtime (same tools, model,
     skills), so a workflow talks to the exact agent a person would. Runs its own
     event loop, so it is safe to call from a DBOS step (a worker thread).
+
+    Binds the workflow's **service identity** (`subject`, surface `workflow`) for
+    the whole run, so a restricted tool the workflow was granted is reachable and
+    audited under that identity.
     """
     import asyncio
+
+    from .access import Identity, identity_scope
+
+    ident = Identity.make(subject, surface="workflow") if subject else None
 
     async def _go() -> str:
         rt = build(Path(hub_dir))
@@ -332,4 +340,10 @@ def run_once(hub_dir, prompt: str, **_kw) -> str:
         finally:
             await rt.aclose()
 
-    return asyncio.run(_go())
+    def _run() -> str:
+        if ident is not None:
+            with identity_scope(ident):
+                return asyncio.run(_go())
+        return asyncio.run(_go())
+
+    return _run()

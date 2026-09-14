@@ -184,22 +184,29 @@ def _build_verifier(hub_dir: Path, *, access_group: str | None = None):
             # The front door. Once Casbin is authoritative it IS the tenant gate:
             # `can(email, hub, use_hub)`. MCP_ACCESS_GROUP is retired as an authz
             # source (never re-consulted), so OWUI group state can't reopen a hub.
-            try:
-                from .access import store_for
-                from .access.store import USE_HUB
+            # FAIL CLOSED: once authoritative, any store error denies — it never
+            # drops back to the legacy group gate (which would be a bypass).
+            from .access import store_for
+            from .access.store import USE_HUB
 
+            try:
                 gs = store_for(hub_dir)
-                if gs.is_authoritative():
-                    if not gs.can(email, hub_dir.name, USE_HUB):
-                        log.info(
-                            "mcp: %s denied — no use_hub in %s", email, hub_dir.name
-                        )
-                        return None
-                    return AccessToken(
-                        token=token, client_id=email, scopes=[], claims={"email": email}
-                    )
-            except Exception:  # noqa: BLE001 — a store hiccup falls back to the legacy gate
-                pass
+                authoritative = gs.is_authoritative()
+            except Exception:  # noqa: BLE001 — can't determine authority -> deny
+                log.exception("mcp: store unavailable; denying %s", email)
+                return None
+            if authoritative:
+                try:
+                    ok = gs.can(email, hub_dir.name, USE_HUB)
+                except Exception:  # noqa: BLE001 — authoritative but errored -> deny
+                    log.exception("mcp: can() failed; denying %s", email)
+                    return None
+                if not ok:
+                    log.info("mcp: %s denied — no use_hub in %s", email, hub_dir.name)
+                    return None
+                return AccessToken(
+                    token=token, client_id=email, scopes=[], claims={"email": email}
+                )
             if required and required not in access.owui_groups.resolve_groups(
                 hub_dir, email
             ):

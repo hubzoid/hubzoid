@@ -133,6 +133,21 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
         if not (admin.is_org_admin or hub in admin.manageable):
             raise HTTPException(status_code=403, detail=f"cannot manage {hub}")
 
+    def _require_view(admin: PortalAdmin, hub: str) -> None:
+        # a hub admin may only read the hubs they manage; an org admin, all.
+        if not (admin.is_org_admin or hub in admin.manageable):
+            raise HTTPException(status_code=403, detail=f"cannot view {hub}")
+
+    def _reject_reserved(subject: str, hub: str, perm: str, admin: PortalAdmin) -> None:
+        # The reserved wildcard subject '*' and org domain '*' are not general
+        # grant targets from the portal: only org admins, and only for the
+        # intended combos (public use_hub; org-scoped manage_access).
+        if subject == "*":
+            if not (admin.is_org_admin and perm.lower() == USE_HUB and hub != ORG):
+                raise HTTPException(403, "the wildcard subject is only for public use_hub (org admin)")
+        if hub == ORG and perm.lower() != MANAGE_ACCESS:
+            raise HTTPException(403, "the org domain only carries manage_access")
+
     @router.get("/me")
     def me(admin: PortalAdmin = Depends(require_admin)):
         return {
@@ -146,11 +161,13 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
         gs = store_for(hub_dir)
         out = []
         for h in _known_hubs(hub_dir, gs):
-            out.append({"key": h, "name": h, "perms": _hub_perms(hub_dir)})
+            if admin.is_org_admin or h in admin.manageable:
+                out.append({"key": h, "name": h, "perms": _hub_perms(hub_dir)})
         return {"hubs": out}
 
     @router.get("/permissions")
     def permissions(hub: str, admin: PortalAdmin = Depends(require_admin)):
+        _require_view(admin, hub)
         return {
             "hub": hub,
             "permissions": [
@@ -160,6 +177,7 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
 
     @router.get("/access")
     def access(hub: str, admin: PortalAdmin = Depends(require_admin)):
+        _require_view(admin, hub)
         gs = store_for(hub_dir)
         # group grants by subject for this hub (+ the wildcard subject)
         rows: dict[str, dict] = {}
@@ -187,6 +205,7 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
         # only org admins may grant manage_access
         if perm.lower() == MANAGE_ACCESS and not admin.is_org_admin:
             raise HTTPException(403, "only org admins can grant manage_access")
+        _reject_reserved(subject, hub, perm, admin)
         _require_manage(admin, hub)
         store_for(hub_dir).grant(subject, hub, perm)
         return {"ok": True}
