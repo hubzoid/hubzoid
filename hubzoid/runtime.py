@@ -312,3 +312,24 @@ def describe(hub_dir: Path) -> str:
     model = _resolve_model_id(hub_dir, settings)
     backend = "claude-local" if model.lower().startswith("claude-local") else "openai-agents"
     return json.dumps({"backend": backend, "model": model})
+
+
+def run_once(hub_dir, prompt: str, **_kw) -> str:
+    """One-shot: build the hub's runtime, run a single prompt, return the text.
+
+    This is the backend-neutral seam behind a workflow's `hub.call_llm` /
+    `hub.call_agent` — it reuses the hub's own runtime (same tools, model,
+    skills), so a workflow talks to the exact agent a person would. Runs its own
+    event loop, so it is safe to call from a DBOS step (a worker thread).
+    """
+    import asyncio
+
+    async def _go() -> str:
+        rt = build(Path(hub_dir))
+        await rt.aopen()
+        try:
+            return await rt.run(prompt)
+        finally:
+            await rt.aclose()
+
+    return asyncio.run(_go())

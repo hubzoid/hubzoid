@@ -102,6 +102,19 @@ def build_app() -> FastAPI:
         sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
         sched.start()   # no-op when <hub>/schedule/ is empty or disabled
         app.state.scheduler = sched
+        # Deterministic workflows on DBOS (a second, side-by-side source). Only
+        # fire when the box is marked (HUBZOID_SCHEDULES / gateway); a bare
+        # laptop `run` leaves them idle. hub.call_llm/call_agent reuse this hub's
+        # runtime via the run_once seam.
+        from . import runtime as _agent_rt
+        from .workflows import boot as wf_boot
+        from .workflows import context as wf_ctx
+        wf_ctx.configure(
+            llm=lambda prompt, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, prompt),
+            agent=lambda task, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, task),
+        )
+        wf_dispatcher = await wf_boot.start(hub_dir)
+        app.state.workflows = wf_dispatcher
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -112,6 +125,8 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            if wf_dispatcher is not None:
+                await wf_dispatcher.stop()
             await sched.stop()
             await rt.aclose()
             await browser_mgr.stop()

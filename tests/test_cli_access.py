@@ -41,3 +41,15 @@ def test_bootstrap_and_last_admin_guard(tmp_path):
     r = runner.invoke(app, ["revoke", "root", "manage_access", "--org", hub])
     assert r.exit_code == 1
     assert "refused" in r.output.lower()
+
+
+def test_new_workflow_scaffold(tmp_path):
+    r = runner.invoke(app, ["new", "workflow", "review-prs", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    main = tmp_path / "workflows" / "review-prs" / "main.py"
+    assert main.exists()
+    body = main.read_text()
+    assert "@workflow(" in body and "def review_prs()" in body
+    # scaffolding twice refuses
+    r = runner.invoke(app, ["new", "workflow", "review-prs", str(tmp_path)])
+    assert r.exit_code == 1

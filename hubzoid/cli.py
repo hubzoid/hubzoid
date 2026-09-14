@@ -1166,8 +1166,38 @@ def schedule_run(
     tasks, problems = sch.load_tasks(hub)
     by_name = {t.name: t for t in tasks}
     if task_name not in by_name:
+        # Second source: a DBOS workflow under <hub>/workflows/<name>/. The
+        # registry is keyed by the function name; accept the folder name too
+        # (hyphens/underscores interchangeable).
+        try:
+            from . import runtime as _agent_rt
+            from .workflows import context as _wf_ctx
+            from .workflows import runtime as _wf
+
+            _wf_ctx.configure(
+                llm=lambda prompt, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, prompt),
+                agent=lambda task, hub_dir=None, **kw: _agent_rt.run_once(hub_dir, task),
+            )
+            _wf.init(hub)
+            _wf.load_workflows(hub)
+            _wf.launch()
+            wf_names = {w.name for w in _wf.registry()}
+            want = task_name.replace("-", "_")
+            match = next((n for n in wf_names if n == task_name or n == want), None)
+            if match:
+                console.print(f"[cyan]→ running workflow {match}[/cyan]")
+                result = _wf.run_now(match)
+                console.print(f"[green]✓ workflow {match} returned:[/green] {result!r}")
+                return
+            known_wf = ", ".join(sorted(wf_names))
+        except Exception as e:  # noqa: BLE001 — report, then fall through to the error
+            known_wf = f"(workflow load failed: {e})"
+
         known = ", ".join(sorted(by_name)) or "(none)"
-        console.print(f"[red]no task {task_name!r} under {hub / 'schedule'}/. Known: {known}[/red]")
+        console.print(
+            f"[red]no task or workflow {task_name!r} under {hub}. "
+            f"Tasks: {known}. Workflows: {known_wf or '(none)'}[/red]"
+        )
         for p in problems:
             console.print(f"[red]✗ {p}[/red]")
         raise typer.Exit(2)
@@ -1357,6 +1387,65 @@ app.add_typer(
     access_app,
     name="access",
     help="Per-hub access: check, list, bootstrap.",
+    rich_help_panel="Commands",
+)
+
+
+_WORKFLOW_TEMPLATE = '''\
+"""The {name} workflow. Runs a defined sequence of steps on a schedule.
+
+A workflow coordinates steps, calls agents, retains state, retries, and resumes
+after a restart. Edit the schedule and the body. Read a secret INSIDE a step,
+never at the top (step inputs are checkpointed).
+"""
+from hubzoid import workflow, step, hub
+
+
+@workflow(schedule="every 2 minutes", timezone="Asia/Kolkata")
+def {func}():
+    # example: durable, idempotent work
+    seen = hub.state.get("seen", 0)
+    result = hub.call_llm("Say hello and count to three.")
+    do_something(result)
+    hub.state["seen"] = seen + 1
+    return seen + 1
+
+
+@step   # a durable side effect — make it idempotent (at-least-once)
+def do_something(result):
+    token = hub.secret("some_token")   # resolved HERE, inside the step
+    print(f"[{name}] {{result}} (token {{'set' if token else 'unset'}})")
+'''
+
+
+new_app = typer.Typer(help="Scaffold new hub parts.", no_args_is_help=True)
+
+
+@new_app.command("workflow")
+def new_workflow(
+    name: str = typer.Argument(..., help="Workflow name, e.g. review-prs."),
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Scaffold workflows/<name>/main.py with a runnable example."""
+    func = _slugify(name).replace("-", "_")
+    wf_dir = hub_dir.resolve() / "workflows" / name
+    if wf_dir.exists():
+        console.print(f"[red]already exists:[/red] {wf_dir}")
+        raise typer.Exit(1)
+    wf_dir.mkdir(parents=True)
+    body = _WORKFLOW_TEMPLATE.format(name=name, func=func)
+    (wf_dir / "main.py").write_text(body)
+    console.print(f"[green]created[/green] {wf_dir / 'main.py'}")
+    console.print(
+        "[dim]run it once: [/dim]"
+        f"hubzoid schedule run {func} {hub_dir}"
+    )
+
+
+app.add_typer(
+    new_app,
+    name="new",
+    help="Scaffold new hub parts (workflow, ...).",
     rich_help_panel="Commands",
 )
 
