@@ -39,6 +39,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from . import _request_ctx
 from . import _signing
 from . import access
+from . import browser as browser_lib
 from .access import owui_db
 from . import memory as memlib
 from . import owui as owui_lib
@@ -85,12 +86,18 @@ def build_app() -> FastAPI:
 
     from . import scheduler as scheduler_lib
 
+    # Shared browser sidecar (HUBZOID_BROWSER=true). Inert otherwise. Started
+    # BEFORE rt.aopen() so the auto-injected `playwright` MCP server has a live
+    # endpoint to connect to; stopped after rt.aclose().
+    browser_mgr = browser_lib.build(settings)
+
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
         # Connect MCP servers here, in the long-lived lifespan task, so the
         # connection is opened and closed in the SAME task (request handlers
         # run in their own tasks and only *use* the servers). Connecting per
         # request instead raises ClosedResourceError / cancel-scope errors.
+        await browser_mgr.start()
         await rt.aopen()
         sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
         sched.start()   # no-op when <hub>/schedule/ is empty or disabled
@@ -107,6 +114,7 @@ def build_app() -> FastAPI:
         finally:
             await sched.stop()
             await rt.aclose()
+            await browser_mgr.stop()
 
     app = FastAPI(title=f"hubzoid · {rt.name}", version="0.1.0", lifespan=_lifespan)
     app.state.runtime = rt

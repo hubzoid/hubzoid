@@ -39,3 +39,4 @@ dist/
 /demo-hub-*.png
 /manual-*.png
 /*-snap.yml
+.venv/

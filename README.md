@@ -230,8 +230,12 @@ Use the lightest standard that fits:
    function.
 4. **The MCP server** exposes the hub's governed tools and knowledge to other AI
    clients under the caller's identity and group permissions.
+5. **Shared browser** (`HUBZOID_BROWSER=true`) gives every agent the full
+   Playwright toolset backed by one shared, resource-limited browser — so N
+   agents don't mean N browsers. One flag; MCP wiring is automatic.
 
-See [MCP connectors](docs/mcp.md) and [MCP server mode](docs/mcp-server.md).
+See [MCP connectors](docs/mcp.md), [MCP server mode](docs/mcp-server.md), and
+[shared browser](docs/BROWSER.md).
 
 ## Automation
 

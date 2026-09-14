@@ -119,6 +119,40 @@ Environment variables explicitly supported:
                          shows cost + the real user WITHOUT running a separate
                          collector. No-op on the OpenAI/LiteLLM path (already
                          standard). See docs/OBSERVABILITY.md.
+  HUBZOID_BROWSER        true | false (default). Give every agent in this hub a
+                         shared, resource-limited web browser as the full
+                         Playwright MCP toolset (browser_navigate, browser_click,
+                         browser_snapshot, ...). One browser is shared across all
+                         agents, so N agents no longer mean N browsers. See
+                         hubzoid.browser and docs/BROWSER.md.
+  HUBZOID_BROWSER_PORT   Port the playwright-mcp sidecar listens on. Default 8931.
+  HUBZOID_BROWSER_MCP_URL
+                         If set, HubZoid does NOT spawn a sidecar — it connects
+                         agents to this already-running playwright-mcp endpoint
+                         (docker-compose / production manages the sidecars). If
+                         unset, HubZoid spawns playwright-mcp itself (dev).
+  HUBZOID_BROWSER_CDP_URL
+                         A CDP browser-pool endpoint (browserless) the spawned
+                         playwright-mcp attaches to, giving hard concurrency +
+                         memory limits (one action at a time, the rest queue).
+                         MUST be the ws form so the token survives:
+                         ws://host:3000?token=... . If unset, playwright-mcp
+                         launches its own shared browser (shared, but no queue).
+  HUBZOID_BROWSER_CHANNEL
+                         Browser build for the sidecar. Default `chromium`
+                         (the Playwright-bundled build — required in containers,
+                         which have no system Chrome). Do not use `chrome`
+                         unless a real Chrome is installed on the sidecar host.
+  HUBZOID_BROWSER_CONCURRENT | _QUEUED | _TIMEOUT | _MEMORY
+                         Pool limits enforced by the browserless container:
+                         parallel browser slots (default 2), waiters before
+                         rejection (5), stuck-session timeout in seconds (60),
+                         and the hard container memory ceiling (2g). Read by the
+                         shipped docker/browser-compose.yml via ${...}.
+  HUBZOID_BROWSER_MAX_RSS_MB
+                         Direct-mode safety net only (no browserless): restart
+                         the spawned browser if its process-tree RSS exceeds this
+                         many MB. 0 (default) = watchdog off.
 """
 from __future__ import annotations
 
@@ -162,6 +196,33 @@ class Settings:
     vision_enabled: bool = True
     vision_max_edge: int = 1568
     vision_max_images: int = 4
+    # Shared browser (Playwright). Off by default. When on, the hub gets one
+    # shared, resource-limited browser exposed to every agent as the full
+    # Playwright MCP toolset — see hubzoid.browser and docs/BROWSER.md.
+    browser_enabled: bool = False
+    browser_port: int = 8931
+    # If set, HubZoid does NOT spawn a sidecar; it just connects agents to this
+    # already-running playwright-mcp endpoint (compose / production manages it).
+    browser_mcp_url: str | None = None
+    # browserless (or any CDP browser pool) endpoint. When set, the spawned
+    # playwright-mcp attaches to it (pooled + hard concurrency/memory limits).
+    # When unset, playwright-mcp launches its own shared browser (share-only).
+    # Must be the ws form so the token survives: ws://host:3000?token=...
+    browser_cdp_url: str | None = None
+    browser_channel: str = "chromium"
+    # Pinned playwright-mcp version for the spawned sidecar — reproducible builds
+    # (a floating @latest can change the required browser under you). Override
+    # with HUBZOID_BROWSER_MCP_VERSION; use "latest" to float deliberately.
+    browser_mcp_version: str = "0.0.81"
+    # Pool limits — consumed by the browserless container (see the shipped
+    # docker/browser-compose.yml, which reads these via ${...}).
+    browser_concurrent: int = 2
+    browser_queued: int = 5
+    browser_timeout: int = 60          # seconds; reaps stuck sessions
+    browser_memory: str = "2g"         # hard container memory ceiling
+    # Direct-mode safety net only (no browserless): restart the spawned browser
+    # if its process-tree RSS exceeds this. 0 = watchdog off.
+    browser_max_rss_mb: int = 0
 
     @property
     def first_api_key(self) -> str:
@@ -213,6 +274,17 @@ def load(hub_dir: Path) -> Settings:
         vision_enabled=truthy(os.environ.get("HUBZOID_VISION", "true")),
         vision_max_edge=_int_env("HUBZOID_VISION_MAX_EDGE", 1568),
         vision_max_images=_int_env("HUBZOID_VISION_MAX_IMAGES", 4),
+        browser_enabled=truthy(os.environ.get("HUBZOID_BROWSER")),
+        browser_port=_int_env("HUBZOID_BROWSER_PORT", 8931),
+        browser_mcp_url=(os.environ.get("HUBZOID_BROWSER_MCP_URL") or "").strip() or None,
+        browser_cdp_url=(os.environ.get("HUBZOID_BROWSER_CDP_URL") or "").strip() or None,
+        browser_channel=(os.environ.get("HUBZOID_BROWSER_CHANNEL") or "chromium").strip() or "chromium",
+        browser_mcp_version=(os.environ.get("HUBZOID_BROWSER_MCP_VERSION") or "0.0.81").strip() or "0.0.81",
+        browser_concurrent=_int_env("HUBZOID_BROWSER_CONCURRENT", 2),
+        browser_queued=_int_env("HUBZOID_BROWSER_QUEUED", 5),
+        browser_timeout=_int_env("HUBZOID_BROWSER_TIMEOUT", 60),
+        browser_memory=(os.environ.get("HUBZOID_BROWSER_MEMORY") or "2g").strip() or "2g",
+        browser_max_rss_mb=_int_env_zero_ok("HUBZOID_BROWSER_MAX_RSS_MB", 0),
     )
 
 
@@ -237,3 +309,15 @@ def _int_env(name: str, default: int) -> int:
     except ValueError:
         return default
     return n if n > 0 else default
+
+
+def _int_env_zero_ok(name: str, default: int) -> int:
+    """Like _int_env but 0 is a valid value (e.g. a disable sentinel)."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        n = int(raw)
+    except ValueError:
+        return default
+    return n if n >= 0 else default

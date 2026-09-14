@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "0.9.5"
+version = "0.9.6"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { text = "MIT" }
@@ -96,4 +96,5 @@ markers = [
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
   "e2e_ui: end-to-end test that drives Open WebUI in a real browser via Playwright",
+  "e2e_browser: end-to-end test that spawns the shared playwright-mcp sidecar and drives a real browser (needs Node/npx; pooled-mode cases also need Docker)",
 ]

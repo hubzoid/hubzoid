@@ -233,10 +233,11 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     from .factory import _add_curator_tool
     _add_curator_tool(ctx, registry, access)
 
-    # MCP: external servers from the hub's connectors/.mcp.json (raw dicts;
-    # Claude SDK accepts the same JSON shape) plus our in-process hubzoid
-    # server that exposes the FunctionTool registry.
-    external_mcp = mcp_loader.load_all_raw(hub_dir)
+    # MCP: external servers from the hub's connectors/.mcp.json PLUS the
+    # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
+    # the neutral specs into the Claude SDK's {type, url|command, ...} shape.
+    # Our in-process hubzoid server (the FunctionTool registry) is added on top.
+    external_mcp = mcp_loader.load_all_claude(hub_dir)
     hubzoid_mcp = _build_mcp_server(registry)
     mcp_servers = {**external_mcp, _MCP_NAMESPACE: hubzoid_mcp}
 

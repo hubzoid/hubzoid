@@ -1,0 +1,67 @@
+# Shared, resource-limited Playwright browser for a hub (HUBZOID_BROWSER).
+#
+# Two sidecars:
+#   * browserless    — one browser POOL that enforces the hard limits
+#                      (one action at a time + a queue + per-session timeout +
+#                      a hard memory ceiling).
+#   * playwright-mcp — the MCP face agents talk to (full Playwright toolset),
+#                      attached to the pool over CDP. Launches no browser of
+#                      its own.
+#
+# Just include this file — nothing to hand-set:
+#
+#   docker compose -f docker/docker-compose.yml -f docker/browser-compose.yml up
+#
+# This file turns the browser ON for the hub container and points it at the
+# sidecar for you (the two `hubzoid` env vars below), so you do NOT need to edit
+# the hub's .env. The limit knobs are read from the shell / .env via ${...} with
+# sensible defaults; override any of them there if you want.
+
+services:
+  # Turn the browser on and wire the hub to the sidecar automatically. Compose
+  # merges this into the `hubzoid` service defined in docker-compose.yml, so the
+  # operator sets nothing by hand — including this file IS the enable switch.
+  hubzoid:
+    environment:
+      HUBZOID_BROWSER: "true"
+      # Sibling-container DNS name (not localhost) — why HubZoid can't assume it.
+      HUBZOID_BROWSER_MCP_URL: "http://playwright-mcp:8931/mcp"
+
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    restart: unless-stopped
+    environment:
+      # One browser action at a time; the rest queue (POC-verified).
+      CONCURRENT: ${HUBZOID_BROWSER_CONCURRENT:-2}
+      QUEUED: ${HUBZOID_BROWSER_QUEUED:-5}
+      # Milliseconds — reaps stuck sessions. .env holds seconds; convert there
+      # or set HUBZOID_BROWSER_TIMEOUT_MS directly.
+      TIMEOUT: ${HUBZOID_BROWSER_TIMEOUT_MS:-60000}
+      TOKEN: ${HUBZOID_BROWSER_TOKEN:-hubzoid}
+    # Hard memory ceiling — the real cap. If exceeded, the container is
+    # OOM-restarted rather than dragging the host down.
+    mem_limit: ${HUBZOID_BROWSER_MEMORY:-2g}
+    # Not published to the host: only playwright-mcp needs to reach it.
+    expose:
+      - "3000"
+
+  playwright-mcp:
+    # Pinned for reproducibility; override the tag to bump deliberately. Keep it
+    # in step with HUBZOID_BROWSER_MCP_VERSION used by the non-container path.
+    image: mcr.microsoft.com/playwright/mcp:${HUBZOID_BROWSER_MCP_IMAGE_TAG:-v0.0.81}
+    restart: unless-stopped
+    depends_on:
+      - browserless
+    command:
+      - "--port=8931"
+      - "--host=0.0.0.0"
+      - "--headless"
+      - "--browser=${HUBZOID_BROWSER_CHANNEL:-chromium}"
+      # NO --isolated in pooled mode: with it, all sessions share one browserless
+      # browser and the CONCURRENT/QUEUED limits never engage. Without it, each
+      # session is its own browserless session (isolated + gated). POC-proven.
+      # ws form so the token survives the CDP handshake (http form drops it).
+      - "--cdp-endpoint=ws://browserless:3000?token=${HUBZOID_BROWSER_TOKEN:-hubzoid}"
+    # Reachable by the hub container as http://playwright-mcp:8931/mcp.
+    expose:
+      - "8931"

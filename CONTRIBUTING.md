@@ -58,7 +58,11 @@ pytest
 pytest                       # unit + integration (no LLM calls)
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
 pytest -m e2e_ui             # Playwright UI tests against a fixture hub
+pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker
 ```
+
+The shared browser (`HUBZOID_BROWSER`) gives every agent one shared,
+resource-limited Playwright browser — see [docs/BROWSER.md](docs/BROWSER.md).
 
 The e2e tests boot the FastAPI bridge against `demo-hub/` and hit a real
 provider. They are skipped automatically if no provider key is set.
