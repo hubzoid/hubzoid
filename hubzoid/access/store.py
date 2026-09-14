@@ -354,6 +354,67 @@ class GrantStore:
     def _bump_revision(self, conn) -> None:
         conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
 
+    # ---- identities (subject rows) ------------------------------------------
+
+    def upsert_identity(self, *, email: str | None = None, owui_id: str | None = None,
+                        phone: str | None = None, display: str | None = None,
+                        pending: bool = False) -> str:
+        """Record/refresh a grantee's identity row and return its subject id.
+
+        The subject is the stable key everything grants to; today it is the
+        normalized email (the interim used by migration), with owui_id/phone as
+        lookup columns filled at login/resolve for future email-recycling
+        hardening. Idempotent."""
+        import time
+
+        email_n = normalize(email) if email else None
+        subject = email_n or (owui_id or "").strip() or (phone or "").strip()
+        if not subject:
+            raise ValueError("need at least one of email/owui_id/phone")
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT subject FROM hz_identities WHERE subject=:s"),
+                {"s": subject},
+            ).fetchone()
+            fields = {
+                "s": subject, "e": email_n, "o": (owui_id or None),
+                "p": (phone or None), "d": (display or None),
+                "pend": 1 if pending else 0, "t": time.time(),
+            }
+            if row:
+                conn.execute(
+                    text(
+                        "UPDATE hz_identities SET "
+                        "email=COALESCE(:e, email), owui_id=COALESCE(:o, owui_id), "
+                        "phone=COALESCE(:p, phone), display=COALESCE(:d, display), "
+                        "pending=:pend WHERE subject=:s"
+                    ),
+                    fields,
+                )
+            else:
+                conn.execute(
+                    text(
+                        "INSERT INTO hz_identities (subject, email, owui_id, phone, "
+                        "display, pending, created) VALUES (:s, :e, :o, :p, :d, :pend, :t)"
+                    ),
+                    fields,
+                )
+        return subject
+
+    def identity(self, subject: str) -> dict | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT subject, email, owui_id, phone, display, pending "
+                    "FROM hz_identities WHERE subject=:s"
+                ),
+                {"s": (subject or "").strip()},
+            ).fetchone()
+        if not row:
+            return None
+        keys = ("subject", "email", "owui_id", "phone", "display", "pending")
+        return dict(zip(keys, row))
+
     # ---- attributes (per hub, subject) --------------------------------------
 
     def set_attr(self, hub: str, subject: str, key: str, value: str) -> None:

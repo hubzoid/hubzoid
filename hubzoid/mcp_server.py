@@ -181,6 +181,25 @@ def _build_verifier(hub_dir: Path, *, access_group: str | None = None):
             email = owui_api_keys.resolve_email(hub_dir, token)
             if not email:
                 return None
+            # The front door. Once Casbin is authoritative it IS the tenant gate:
+            # `can(email, hub, use_hub)`. MCP_ACCESS_GROUP is retired as an authz
+            # source (never re-consulted), so OWUI group state can't reopen a hub.
+            try:
+                from .access import store_for
+                from .access.store import USE_HUB
+
+                gs = store_for(hub_dir)
+                if gs.is_authoritative():
+                    if not gs.can(email, hub_dir.name, USE_HUB):
+                        log.info(
+                            "mcp: %s denied — no use_hub in %s", email, hub_dir.name
+                        )
+                        return None
+                    return AccessToken(
+                        token=token, client_id=email, scopes=[], claims={"email": email}
+                    )
+            except Exception:  # noqa: BLE001 — a store hiccup falls back to the legacy gate
+                pass
             if required and required not in access.owui_groups.resolve_groups(
                 hub_dir, email
             ):

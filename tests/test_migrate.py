@@ -39,6 +39,9 @@ def test_plan_from_csv_and_apply(store):
     d = migrate.diff(store, plan)
     assert d["missing"] == [] and d["extra"] == []
 
+    # an identity row was recorded for the migrated email
+    assert store.identity("tester@example.com")["email"] == "tester@example.com"
+
 
 def test_preflight_blocks_function_roster(tmp_path):
     ident = tmp_path / "identity"

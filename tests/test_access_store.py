@@ -135,6 +135,17 @@ def test_authoritative_marker(store):
     assert store.is_authoritative() is False
 
 
+def test_upsert_identity(store):
+    subj = store.upsert_identity(email="Alice@Corp", owui_id="u1", display="Alice")
+    assert subj == "alice@corp"                      # subject = normalized email
+    row = store.identity(subj)
+    assert row["email"] == "alice@corp" and row["owui_id"] == "u1"
+    # idempotent + fills missing fields without clobbering
+    store.upsert_identity(email="alice@corp", phone="+15551234")
+    row = store.identity(subj)
+    assert row["owui_id"] == "u1" and row["phone"] == "+15551234"
+
+
 def test_bootstrap_grants_org_admins_once(store):
     store.bootstrap(["root", "ops"], authoritative=True)
     assert store.can("root", "any-hub", MANAGE_ACCESS)

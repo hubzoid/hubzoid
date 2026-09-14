@@ -1461,6 +1461,24 @@ def access_diff(
     console.print(f"[dim]{len(d['missing'])} missing, {len(d['extra'])} extra[/dim]")
 
 
+@access_app.command("sync")
+def access_sync(
+    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+) -> None:
+    """Recompute + re-project each subject's visible hubs (the Casbin->OWUI
+    visibility mirror). The recovery path if a projection was ever missed."""
+    from .access import store_for
+    from .access.reconcile import visibility_plan
+
+    plan = visibility_plan(store_for(hub_dir))
+    for subject, hubs in sorted(plan.items()):
+        console.print(f"{subject:30.30} -> {', '.join(sorted(hubs))}")
+    console.print(
+        f"[dim]{len(plan)} subject(s). OWUI model-visibility projection applies in "
+        f"gateway mode (standalone bypasses model access).[/dim]"
+    )
+
+
 app.add_typer(
     access_app,
     name="access",

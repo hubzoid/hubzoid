@@ -195,6 +195,11 @@ def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True)
     store.grant_many(plan.grants)
     for hub, subject, k, v in plan.attrs:
         store.set_attr(hub, subject, k, v)
+    # Record an identity row per real grantee (email subjects), so email/owui_id
+    # mappings exist for later hardening. The wildcard subject is not a person.
+    for subject in {s for s, _h, _p in plan.grants}:
+        if subject and subject != EVERYONE and "@" in subject:
+            store.upsert_identity(email=subject)
     if authoritative:
         store.set_authoritative(True)
 
