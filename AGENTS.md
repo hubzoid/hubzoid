@@ -6,16 +6,23 @@ is a different thing. that's the runtime prompt for the hub's main agent.
 
 ## Prime directive: keep it thin
 
-Hubzoid is built by a services company that does not want to maintain things.
-Before adding any code, ask two questions:
+**Minimize total ownership cost for the experience we need. Prefer existing
+solutions; own the gaps that demonstrably matter.**
 
-1. **Is this absolutely needed?**
-2. **Can a rented standard do it instead** — the runtime SDKs, Open WebUI,
-   OpenTelemetry, the platform we already depend on?
+This is what "keep it thin" means. Before adding or replacing code, ask:
 
-If a standard can do the job, rent it and delete ours. Prefer deleting to adding.
-Own the minimum. The moat is the service, not the platform code. Every line we
-own is maintenance drag.
+1. **What observed customer or operating need does this address?**
+2. **Can an existing component or integrated solution provide the required
+   experience at lower total ownership cost?**
+3. **If we own the gap, does its demonstrated value justify ongoing maintenance?**
+
+Count implementation, integration, deployment, upgrades, support, and migration
+costs, not just lines of custom code. Prefer existing solutions when they meet
+the need. Own custom code, including UI, when the gap demonstrably matters.
+Replace owned code when an existing solution lowers total cost while preserving
+the required experience, accounting for transition costs and practical
+portability. Neither custom UI nor a larger dependency is automatically
+disallowed; neither is justified by feature breadth alone.
 
 Hubzoid is **MIT, all of it** (see `LICENSING.md`) — there is no enterprise
 edition, license key, or paid tier in this repo; don't add feature gating.

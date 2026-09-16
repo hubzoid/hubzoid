@@ -1,6 +1,9 @@
 .DS_Store
 .env
 
+# Portal dependencies
+/portal/node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
