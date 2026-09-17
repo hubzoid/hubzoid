@@ -149,6 +149,23 @@ Environment variables explicitly supported:
                          rejection (5), stuck-session timeout in seconds (60),
                          and the hard container memory ceiling (2g). Read by the
                          shipped docker/browser-compose.yml via ${...}.
+  HUBZOID_OPERATIONAL_DB  Shared access, identity and audit database URL. A
+                         registered gateway manifest is authoritative; conflicting
+                         overrides fail startup rather than splitting access data.
+  HUBZOID_DBOS_DB        Workflow system database URL. SQLite is per hub; a
+                         gateway may share PostgreSQL. Must agree with manifest.
+  HUBZOID_DEPLOYMENT     Explicit gateway manifest path; normally discovered via
+                         <hub>/.hubzoid/deployment.json. Do not copy hub pointers
+                         into an unrelated deployment.
+  OWUI_INTERNAL_URL     Server-to-server Open WebUI URL; manifest-authoritative.
+                         WEBUI_URL is a standalone fallback (not a gateway override).
+  HUBZOID_SCHEDULES      Enable workflow dispatch for standalone runs (1/true).
+                         Gateways enable it automatically. Missed slots are reported,
+                         not replayed. Markdown schedules retain their own gate.
+  HUBZOID_PORTAL_DEV_USER
+                         Subject trusted only when HUBZOID_PORTAL_DEV=1.
+  HUBZOID_PORTAL_DEV     Development-only portal authentication; never enable on
+                         a shared or public deployment. See ADMINISTRATION.md.
   HUBZOID_BROWSER_MAX_RSS_MB
                          Direct-mode safety net only (no browserless): restart
                          the spawned browser if its process-tree RSS exceeds this

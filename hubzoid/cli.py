@@ -241,6 +241,9 @@ def run(
     ui_port = port or settings.ui_port
     br_port = bridge_port or settings.bridge_port
 
+    if not no_ui:
+        os.environ["OWUI_INTERNAL_URL"] = f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}"
+
     # 1. Start the bridge in a subprocess. We pass HUBZOID_HUB_DIR via env so
     #    `hubzoid.server.build_app` knows what to load.
     bridge_env = os.environ.copy()
@@ -324,7 +327,7 @@ def run(
                 enable_api_keys=settings.mcp_server,
             )
             log_path = getattr(ui_proc, "_log_path", None)
-            console.print(f"[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
+            console.print("[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
             if log_path:
                 console.print(f"            log: {log_path}")
 
@@ -365,16 +368,6 @@ def run(
                          "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
                     )
                 edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
-                # Derive the OWUI access-UI lock from the migration marker: once
-                # this hub's access is authoritative on Casbin, block OWUI's
-                # group-management writes at the edge (unless force-disabled).
-                if "HUBZOID_LOCK_OWUI_ACCESS_UI" not in edge_env:
-                    try:
-                        from .access import store_for
-                        if store_for(hub).is_authoritative():
-                            edge_env["HUBZOID_LOCK_OWUI_ACCESS_UI"] = "1"
-                    except Exception:  # noqa: BLE001 — never block boot on this
-                        pass
                 edge_cmd = [
                     sys.executable, "-m", "uvicorn",
                     "hubzoid.edge:_factory", "--factory",
@@ -410,7 +403,7 @@ def run(
         else:
             slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
             slack_proc = subprocess.Popen(slack_cmd, env=bridge_env)
-            console.print(f"[cyan]→ slack [/cyan]  starting (Socket Mode)")
+            console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
 
     # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
     # shared child. It reads WHATSAPP_*/TELEGRAM_*/WEBHOOK_INBOUND_* from .env and
@@ -485,11 +478,16 @@ def gateway(
     from . import webui
 
     hub_dirs = [h.resolve() for h in hubs]
+    names = [h.name.strip().lower() for h in hub_dirs]
+    if len(names) != len(set(names)) or '*' in names:
+        console.print('[red]Hub directory names must be unique within a deployment so their access domains cannot overlap.[/red]')
+        raise typer.Exit(2)
     for h in hub_dirs:
         if not (h / "AGENTS.md").is_file():
             console.print(f"[red]Not a hub (no AGENTS.md):[/red] {h}")
             raise typer.Exit(2)
 
+    deployment_env = os.environ.copy()
     try:
         gp = gateway_lib.plan(hub_dirs)
     except ValueError as exc:
@@ -505,10 +503,23 @@ def gateway(
     # to every bridge, so an org grant in hub A is visible in hub B and one bridge
     # can serve the org-wide portal. DBOS system tables stay per-bridge
     # (db.dbos_url). An operator's HUBZOID_OPERATIONAL_DB / DATABASE_URL wins.
-    _op_override = os.environ.get("HUBZOID_OPERATIONAL_DB") or os.environ.get("DATABASE_URL")
+    _op_override = deployment_env.get("HUBZOID_OPERATIONAL_DB") or deployment_env.get("DATABASE_URL")
     if not _op_override:
         gw_data.mkdir(parents=True, exist_ok=True)
     shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
+
+    from . import deployment
+    if len(hub_dirs) > 1 and deployment_env.get('HUBZOID_DBOS_DB','').startswith('sqlite'):
+        console.print('[red]A multi-hub gateway requires separate SQLite DBOS files. Unset HUBZOID_DBOS_DB or use PostgreSQL.[/red]')
+        raise typer.Exit(2)
+    deployment.save(gw_data / "deployment.json",
+        hubs=[dict(key=b.hub_dir.name.lower(), name=b.display_name or b.slug,
+                   path=str(b.hub_dir), model_id=b.model_label,
+                   dbos_url=deployment_env.get('HUBZOID_DBOS_DB') or
+                       (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL','').startswith('postgres') else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
+        operational_url=shared_op_url,
+        owui_url=f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}",
+        owui_db=str(gw_data / "webui.db"))
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
@@ -587,8 +598,7 @@ def gateway(
             # stay per-bridge (db.dbos_url), so no shared-SQLite DBOS topology.
             # An operator's explicit HUBZOID_OPERATIONAL_DB / DATABASE_URL wins.
             bridge_env["HUBZOID_GATEWAY"] = "1"
-            if not (bridge_env.get("HUBZOID_OPERATIONAL_DB") or bridge_env.get("DATABASE_URL")):
-                bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
+            bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
             # Gateway-wide native MCP (resolved above) - pin every bridge to it.
             bridge_env["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
             cmd = [
@@ -708,18 +718,9 @@ def gateway(
                 {"prefix": "/portal", "upstream": f"http://127.0.0.1:{first.bridge_port}"}
             )
         edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
-        # Derive the OWUI access-UI lock from the shared store: once the gateway
-        # has migrated any hub, block OWUI's group-management writes (access is
-        # managed in the portal). The one shared OWUI is org-wide.
-        if "HUBZOID_LOCK_OWUI_ACCESS_UI" not in edge_env:
-            try:
-                from .access.store import GrantStore
-                from .db import _engine_for_url
-
-                if GrantStore(_engine_for_url(shared_op_url)).any_authoritative():
-                    edge_env["HUBZOID_LOCK_OWUI_ACCESS_UI"] = "1"
-            except Exception:  # noqa: BLE001 — never block boot on this
-                pass
+        edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")
+        # The edge locks only migrated model ACLs dynamically. Do not lock
+        # shared group management during a partial migration.
         edge_cmd = [
             sys.executable, "-m", "uvicorn",
             "hubzoid.edge:_factory", "--factory",
@@ -734,7 +735,7 @@ def gateway(
         else:
             console.print(f"[yellow]→ gateway[/yellow]  not fully ready; check logs. URL: {display_url}")
     else:
-        console.print(f"[green]→ gateway[/green]  ready    {display_url}" if owui_ready else f"[yellow]→ gateway[/yellow]  OWUI not ready; check logs.")
+        console.print(f"[green]→ gateway[/green]  ready    {display_url}" if owui_ready else "[yellow]→ gateway[/yellow]  OWUI not ready; check logs.")
 
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down gateway...[/cyan]")
@@ -798,6 +799,13 @@ def doctor(
         problems.extend(f"schedule/{p}" for p in sproblems)
     except Exception as exc:  # noqa: BLE001
         problems.append(f"schedule load failed: {type(exc).__name__}: {exc}")
+
+    from .workflows.observe import definitions
+    for w in definitions(hub):
+        if w['error']:
+            problems.append(f"{w['source']}: {w['error']}")
+        else:
+            notes.append(f"workflow: {w['name']} ({w['schedule'] or 'manual'}, {w['timezone']})")
 
     # Access management: note restricted tools if the hub declares any.
     try:
@@ -1006,7 +1014,6 @@ def slack_run(
     Requires the hub's bridge to be running separately (`hubzoid run <hub>`).
     Reads SLACK_BOT_TOKEN and SLACK_APP_TOKEN from <hub>/.env.
     """
-    from . import slack as slack_pkg
     from .slack.adapter import run as run_adapter
     from .slack.env import EnvError
 
@@ -1153,8 +1160,14 @@ def schedule_list(
     tasks, problems = sch.load_tasks(hub)
     state = sch.ScheduleState(hub)
     now = datetime.now()
-    if not tasks and not problems:
-        console.print(f"no tasks — add markdown files under {hub / 'schedule'}/")
+    from .workflows.observe import catalog
+    workflows = catalog(hub)
+    for w in workflows:
+        console.print(f"workflow {w['name']} · {w['state']} · {w['timezone']} · next {w['next_run'] or '—'}")
+        if w['error']:
+            console.print(f"[red]{w['error']}[/red]")
+    if not tasks and not problems and not workflows:
+        console.print(f"no tasks — add schedule/*.md or workflows/<name>/*.py under {hub}")
         return
     for t in tasks:
         nxt = sch.next_fire_for(t, state, now)
@@ -1218,6 +1231,23 @@ def schedule_run(
     tasks, problems = sch.load_tasks(hub)
     by_name = {t.name: t for t in tasks}
     if task_name not in by_name:
+        from .workflows.observe import definitions
+        candidates = definitions(hub)
+        want = task_name.replace('-', '_')
+        match_def = next((w for w in candidates if w['name'] == want), None)
+        if match_def and match_def['error']:
+            console.print(f"[red]{match_def['error']}[/red]")
+            raise typer.Exit(2)
+        if match_def and any(v is not None for v in (timeout, max_rounds, model)):
+            console.print("[red]Workflows do not accept --timeout, --max-rounds or --model. Configure these in workflow code.[/red]")
+            raise typer.Exit(2)
+        if dry_run:
+            if match_def is None:
+                console.print(f"[red]No workflow {task_name!r} found[/red]")
+                raise typer.Exit(2)
+            console.print(f"Would run workflow {want} from {match_def['source']}; no code executed.")
+            return
+        settingslib.load(hub)
         # Second source: a DBOS workflow under <hub>/workflows/<name>/. The
         # registry is keyed by the function name; accept the folder name too
         # (hyphens/underscores interchangeable).
@@ -1308,8 +1338,21 @@ def schedule_status(
     hub = hub.resolve()
     tasks, _ = sch.load_tasks(hub)
     state = sch.ScheduleState(hub)
-    if not tasks:
-        console.print(f"no tasks — add markdown files under {hub / 'schedule'}/")
+    from .workflows.observe import catalog, runs
+    workflows = catalog(hub)
+    for w in workflows:
+        console.print(f"workflow {w['name']} · {w['state']} · next {w['next_run']} · missed {w['missed']}")
+        if w['error']:
+            console.print(f"[red]{w['error']}[/red]")
+    try:
+        for r in runs(hub,limit=20):
+            console.print(f"{r['id']} · {r['name']} · {r['status']} · {r['duration_ms']}ms")
+            if r['error']:
+                console.print(f"[red]{r['error']}[/red]")
+    except Exception as exc:
+        console.print(f"[red]Workflow history unavailable: {exc}[/red]")
+    if not tasks and not workflows:
+        console.print("No scheduled tasks or workflows.")
         return
     for t in tasks:
         entry = state.get(t.name)
@@ -1354,6 +1397,9 @@ def grant(
 
     import getpass
 
+    from .db import operational_url
+    from sqlalchemy.engine import make_url
+    console.print(f"Access store: {make_url(operational_url(hub_dir)).render_as_string(hide_password=True)}")
     domain = _access_domain(hub_dir, hub, org)
     store_for(hub_dir).grant(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
     console.print(f"[green]granted[/green] {subject} · {permission} in {domain}")
@@ -1373,6 +1419,9 @@ def revoke(
 
     import getpass
 
+    from .db import operational_url
+    from sqlalchemy.engine import make_url
+    console.print(f"Access store: {make_url(operational_url(hub_dir)).render_as_string(hide_password=True)}")
     domain = _access_domain(hub_dir, hub, org)
     try:
         store_for(hub_dir).revoke(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
@@ -1432,30 +1481,55 @@ def access_bootstrap(
     Casbin authoritative. Break-glass for a fresh install."""
     from .access import store_for
 
-    store_for(hub_dir).bootstrap(admin, authoritative=authoritative)
+    store_for(hub_dir).bootstrap(admin, authoritative=authoritative, hub=hub_dir.resolve().name)
     console.print(
         f"[green]bootstrapped[/green] admins={list(admin) or '(none)'} "
         f"authoritative={authoritative}"
     )
 
 
-def _build_plan(hub_dir: Path, from_owui: str | None, model_id: str | None):
+def _build_plan(hub_dir: Path, from_owui: str | None, model_id: str | None, standalone_public: bool = False):
     from .access import migrate
 
     hub_name = hub_dir.resolve().name
     plan = migrate.plan_from_csv(hub_dir, hub_name)
+    if standalone_public:
+        from .deployment import read
+        if read(hub_dir):
+            raise migrate.MigrationBlocked('registered gateways require OWUI model evidence')
+        if not from_owui:
+            from .access.owui_groups import _db_path
+            local_owui = _db_path(hub_dir)
+            if local_owui.is_file():
+                from_owui = f'sqlite:///{local_owui.resolve()}'
+            else:
+                return migrate.plan_standalone_public(hub_dir, plan)
     if from_owui:
         from sqlalchemy import create_engine
 
-        migrate.plan_from_owui(create_engine(from_owui), hub_name,
-                               model_id=model_id, plan=plan)
+        from .deployment import permission_catalog, read
+        registered = read(hub_dir)
+        if registered:
+            target = next(h for h in registered['hubs'] if Path(h['path']).resolve() == hub_dir.resolve())
+            if model_id and model_id != target['model_id']:
+                raise migrate.MigrationBlocked('model ID does not match this registered hub')
+            model_id = target['model_id']
+        source = create_engine(from_owui)
+        try:
+            migrate.plan_from_owui(source, hub_name,
+                model_id=model_id, plan=plan,
+                permissions=[p['permission'] for p in permission_catalog(hub_dir)],
+                standalone_public=standalone_public)
+        finally:
+            source.dispose()
     return plan
 
 
 @access_app.command("migrate")
 def access_migrate(
     from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read (group + model access)."),
-    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub (default: all)."),
+    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub (required when multiple models exist)."),
+    standalone_public: bool = typer.Option(False, "--standalone-public", help="Explicitly confirm legacy standalone signed-in public entry; verifies tools against the legacy CSV resolver."),
     apply: bool = typer.Option(False, "--apply", help="Actually apply + make Casbin authoritative (the cutover). Without this, dry-run."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
 ) -> None:
@@ -1465,7 +1539,7 @@ def access_migrate(
     from .access.migrate import MigrationBlocked, apply as apply_plan, diff
 
     try:
-        plan = _build_plan(hub_dir, from_owui, model_id)
+        plan = _build_plan(hub_dir, from_owui, model_id, standalone_public)
     except MigrationBlocked as e:
         console.print(f"[red]migration blocked:[/red] {e}")
         raise typer.Exit(2)
@@ -1476,16 +1550,37 @@ def access_migrate(
     for w in plan.warnings:
         console.print(f"[dim]{w}[/dim]")
 
+    from .access.migrate import verify_effective
+    mismatches = verify_effective(plan)
+    if plan.expected:
+        console.print(f"Effective access: {len(plan.expected)} legacy decisions checked, {len(mismatches)} differences")
+        for row in mismatches:
+            console.print(f"{row['subject']} / {row['hub']} / {row['permission']}: {row['before']} -> {row['after']}")
+    else:
+        console.print("[yellow]CSV-only import: OWUI model visibility has not been verified. Use --from-owui for customer cutover.[/yellow]")
+    if mismatches:
+        raise typer.Exit(2)
     gs = store_for(hub_dir)
     if not apply:
         d = diff(gs, plan)
         console.print(f"[dim]dry-run — vs current store: {len(d['missing'])} missing, "
                       f"{len(d['extra'])} extra. Re-run with --apply to cut over.[/dim]")
         return
+    if not plan.expected:
+        console.print("[red]Cutover requires --from-owui model evidence or --standalone-public for a legacy standalone hub. CSV alone cannot prove existing model access.[/red]")
+        raise typer.Exit(2)
     if not plan.grants:
         console.print("[red]refusing to cut over with an empty plan (no grants). "
                       "This would lock everyone out.[/red]")
         raise typer.Exit(2)
+    import time
+    from .deployment import _write
+    backup = hub_dir / '.hubzoid' / 'backups' / f'access-{time.time_ns()}.json'
+    snapshot = gs.snapshot([hub_dir.resolve().name])
+    if plan.visibility_backup is not None:
+        snapshot['owui_visibility'] = plan.visibility_backup
+    _write(backup, snapshot)
+    console.print(f"Backup: {backup} (restore with hubzoid access rollback)")
     try:
         apply_plan(gs, plan, authoritative=True)
     except MigrationBlocked as e:
@@ -1504,10 +1599,38 @@ def access_migrate(
         raise typer.Exit(1)
 
 
+@access_app.command("rollback")
+def access_rollback(backup: Path, hub_dir: Path = typer.Argument(Path("."))) -> None:
+    """Restore a pre-cutover access snapshot; does not change OWUI accounts."""
+    from .access import store_for
+    import getpass
+    snapshot = json.loads(backup.read_text())
+    if snapshot.get('hubs') != [hub_dir.resolve().name.lower()]:
+        console.print("[red]Backup does not match the selected hub; no access changed.[/red]")
+        raise typer.Exit(2)
+    if snapshot.get('owui_visibility'):
+        from .access.reconcile import validate_visibility_backup
+        validate_visibility_backup(hub_dir, snapshot['owui_visibility'])
+    store_for(hub_dir).restore(snapshot, actor=f"cli:{getpass.getuser()}")
+    if all(snapshot['authority'].values()):
+        console.print("Access snapshot restored. Run access sync and verify end-user visibility.")
+    elif snapshot.get('owui_visibility'):
+        from .access.reconcile import restore_visibility
+        try:
+            restore_visibility(hub_dir, snapshot['owui_visibility'])
+        except Exception:
+            console.print("[red]Hubzoid access restored, but OWUI visibility restoration failed. Keep the maintenance window open, check service credentials, then rerun rollback with the same backup.[/red]")
+            raise typer.Exit(1)
+        console.print("Legacy access and pre-cutover OWUI visibility restored. Verify representative end users before ending maintenance.")
+    else:
+        console.print("Legacy access restored. Restore the pre-cutover OWUI model ACL from your deployment backup before ending the maintenance window; access sync does not restore legacy ACLs.")
+
+
 @access_app.command("diff")
 def access_diff(
     from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read."),
     model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub."),
+    standalone_public: bool = typer.Option(False, "--standalone-public", help="Compare the legacy standalone public-entry plan."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
 ) -> None:
     """Show the full static diff between the migration plan and the live store
@@ -1516,7 +1639,7 @@ def access_diff(
     from .access.migrate import MigrationBlocked, diff
 
     try:
-        plan = _build_plan(hub_dir, from_owui, model_id)
+        plan = _build_plan(hub_dir, from_owui, model_id, standalone_public)
     except MigrationBlocked as e:
         console.print(f"[red]migration blocked:[/red] {e}")
         raise typer.Exit(2)
@@ -1534,16 +1657,11 @@ def access_sync(
 ) -> None:
     """Recompute + re-project each subject's visible hubs (the Casbin->OWUI
     visibility mirror). The recovery path if a projection was ever missed."""
-    from .access import store_for
-    from .access.reconcile import visibility_plan
-
-    plan = visibility_plan(store_for(hub_dir))
-    for subject, hubs in sorted(plan.items()):
-        console.print(f"{subject:30.30} -> {', '.join(sorted(hubs))}")
-    console.print(
-        f"[dim]{len(plan)} subject(s). OWUI model-visibility projection applies in "
-        f"gateway mode (standalone bypasses model access).[/dim]"
-    )
+    from .access.reconcile import sync_owui
+    result = sync_owui(hub_dir)
+    console.print(result)
+    if result['state'] == 'error':
+        raise typer.Exit(1)
 
 
 app.add_typer(

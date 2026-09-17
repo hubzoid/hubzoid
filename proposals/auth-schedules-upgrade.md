@@ -87,3 +87,13 @@ access-UI lock derived from the migration completion marker.
 - Portal builds static, loads behind the bridge, shows the 5 screens, edits only
   Access, gated by `can(*, manage_access)`.
 - `pytest` green; new loaders/tools have unit tests; e2e auto-skip without keys.
+
+## Accepted UX completion work (September 2026)
+
+Implement the reviewed twelve gaps: multi-hub data isolation, safe portal state,
+OWUI 0.11 migration and rollback, deployment discovery, visibility projection,
+workflow dry-run and observation, schedule validation, complete change history,
+OWUI-backed user lifecycle, usable portal interactions, and operator docs/tests.
+Keep preview and atomic cutover. Reuse Casbin, OWUI and DBOS; introduce no second
+account or execution-history system. Validate two hubs, overlapping workflow
+names, org/hub admins and ordinary users. No publishing or pushing is requested.

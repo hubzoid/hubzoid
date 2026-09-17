@@ -161,3 +161,6 @@ Per-person row and field scoping (a branch manager seeing only their own store's
 rows) is a separate axis, enforced at the data layer from the same verified
 identity, not by files or groups. It is out of scope for this layer. The tool
 gate answers "can this person touch Ornate at all," not "which rows."
+
+For multi-hub setup, account ownership, migration preview, cutover and rollback,
+see [Administration](ADMINISTRATION.md).

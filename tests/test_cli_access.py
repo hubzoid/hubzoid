@@ -70,7 +70,7 @@ def test_migrate_cli_e2e(tmp_path):
     assert r.exit_code == 0, r.output
     assert "dry-run" in r.output
 
-    r = runner.invoke(app, ["access", "migrate", "--apply", TEST_HUB], env=env)
+    r = runner.invoke(app, ["access", "migrate", "--apply", "--standalone-public", TEST_HUB], env=env)
     assert r.exit_code == 0 and "authoritative" in r.output
 
     r = runner.invoke(
@@ -79,5 +79,5 @@ def test_migrate_cli_e2e(tmp_path):
     )
     assert "testers" in r.output and "use_hub" in r.output
 
-    r = runner.invoke(app, ["access", "diff", TEST_HUB], env=env)
+    r = runner.invoke(app, ["access", "diff", "--standalone-public", TEST_HUB], env=env)
     assert r.exit_code == 0 and "0 missing" in r.output

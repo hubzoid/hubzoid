@@ -150,6 +150,12 @@ you already trust.
   Kubernetes, and other orchestrators. Keep telemetry local or send standard
   OpenTelemetry traces to your collector or Langfuse.
 
+For a multi-hub deployment, the [administration guide](docs/ADMINISTRATION.md)
+walks the two journeys end to end: configure the deployment, bootstrap an admin,
+add users and grant per-agent access from the portal, verify agent visibility,
+then create and inspect a workflow. See also
+[access management](docs/access-management.md) and [deploying](docs/DEPLOYING.md).
+
 ## A minimal AGENTS.md
 
 ```markdown

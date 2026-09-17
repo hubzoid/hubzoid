@@ -195,7 +195,14 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
     seen_labels: dict[str, Path] = {}
     for hub_dir in hub_dirs:
         hub_dir = Path(hub_dir).resolve()
-        s = load(hub_dir)
+        # Loading a hub's dotenv is local to that hub. Do not carry its secrets
+        # or ports into the next hub or the shared OWUI/edge processes.
+        inherited_env = os.environ.copy()
+        try:
+            s = load(hub_dir)
+        finally:
+            os.environ.clear()
+            os.environ.update(inherited_env)
         if s.bridge_port in seen_ports:
             raise ValueError(
                 f"gateway: hubs {seen_ports[s.bridge_port].name} and "

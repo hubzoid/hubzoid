@@ -18,6 +18,7 @@ via headers); an MCP caller must never inherit that power, so the two key
 spaces are disjoint by construction — this module only ever matches rows of
 OWUI's `api_key` table.
 """
+
 from __future__ import annotations
 
 import hmac
@@ -35,7 +36,7 @@ log = logging.getLogger("hubzoid.access")
 # UI hubzoid ships, so we only support the table shape). Reserved word "key"
 # is quoted.
 _QUERY = """
-SELECT k."key", k.expires_at, u.email
+SELECT k."key", k.expires_at, u.email, u.id
 FROM api_key k
 JOIN "user" u ON u.id = k.user_id
 """
@@ -77,7 +78,12 @@ def resolve_email(hub_dir: Path, token: str | None) -> str | None:
     try:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
         try:
-            rows = con.execute(_QUERY).fetchall()
+            columns = {r[1] for r in con.execute('PRAGMA table_info("user")')}
+            query = _QUERY.replace(
+                "u.id\n",
+                "u.id, " + ("u.role" if "role" in columns else "'user'") + "\n",
+            )
+            rows = con.execute(query).fetchall()
         finally:
             con.close()
     except sqlite3.Error as exc:
@@ -86,8 +92,17 @@ def resolve_email(hub_dir: Path, token: str | None) -> str | None:
 
     now = time.time()
     match: str | None = None
-    for key, expires_at, email in rows:
+    for key, expires_at, email, account_id, role in rows:
         ok = hmac.compare_digest(str(key or ""), token)
-        if ok and not _is_expired(expires_at, now) and email:
-            match = str(email)
+        if ok and not _is_expired(expires_at, now) and email and role != "pending":
+            from . import store_for
+
+            try:
+                store = store_for(hub_dir)
+                store.upsert_identity(email=str(email), owui_id=str(account_id))
+                if not store.is_suspended(str(email)):
+                    match = str(email)
+            except Exception:
+                log.exception("api-key identity check unavailable; denying")
+                return None
     return match

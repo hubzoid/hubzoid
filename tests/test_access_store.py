@@ -149,9 +149,10 @@ def test_access_audit_records_changes(store):
 def test_wildcard_permission_rejected(store):
     with pytest.raises(ValueError):
         store.grant("alice", "finance", "*")   # would match every action incl manage_access
-    # bulk import silently skips it too
-    store.grant_many([("bob", "finance", "*"), ("bob", "finance", "prod_in")])
-    assert store.can("bob", "finance", "prod_in")
+    # Reject the entire batch instead of silently applying a partial import.
+    with pytest.raises(ValueError):
+        store.grant_many([("bob", "finance", "*"), ("bob", "finance", "prod_in")])
+    assert not store.can("bob", "finance", "prod_in")
     assert not store.can("bob", "finance", "manage_access")
 
 

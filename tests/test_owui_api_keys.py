@@ -4,6 +4,7 @@ Fail-closed in every branch: missing DB, unknown key, expired key, blank
 token. A tiny sqlite file stands in for OWUI's database — same tables the
 real lookup reads.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -25,7 +26,8 @@ def _mk_db(path: Path, rows: list[tuple[str, str, object]]) -> Path:
     for i, (email, key, expires_at) in enumerate(rows):
         con.execute('INSERT INTO "user" VALUES (?, ?)', (f"u{i}", email))
         con.execute(
-            "INSERT INTO api_key VALUES (?, ?, ?, ?)", (f"k{i}", f"u{i}", key, expires_at)
+            "INSERT INTO api_key VALUES (?, ?, ?, ?)",
+            (f"k{i}", f"u{i}", key, expires_at),
         )
     con.commit()
     con.close()
@@ -87,3 +89,29 @@ def test_unparseable_expiry_fails_closed(tmp_path, monkeypatch):
     db = _mk_db(tmp_path / "webui.db", [("dave@example.com", "sk-dave", "soon")])
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     assert owui_api_keys.resolve_email(tmp_path, "sk-dave") is None
+
+
+def test_new_account_same_email_cannot_reuse_grants(hub):
+    from hubzoid.access import store_for
+
+    assert owui_api_keys.resolve_email(hub, "sk-alice") == "alice@example.com"
+    store = store_for(hub)
+    store.grant("alice@example.com", hub.name, "ledger")
+    with sqlite3.connect(hub / "webui.db") as con:
+        con.execute(
+            'UPDATE "user" SET id=? WHERE email=?', ("replacement", "alice@example.com")
+        )
+        con.execute(
+            "UPDATE api_key SET user_id=? WHERE user_id=?", ("replacement", "u0")
+        )
+    assert owui_api_keys.resolve_email(hub, "sk-alice") is None
+    assert not store.can("alice@example.com", hub.name, "ledger")
+
+
+def test_pending_account_key_denied(hub):
+    with sqlite3.connect(hub / "webui.db") as con:
+        con.execute("ALTER TABLE \"user\" ADD COLUMN role TEXT DEFAULT 'user'")
+        con.execute(
+            "UPDATE \"user\" SET role='pending' WHERE email='alice@example.com'"
+        )
+    assert owui_api_keys.resolve_email(hub, "sk-alice") is None

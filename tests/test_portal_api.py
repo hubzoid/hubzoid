@@ -13,6 +13,8 @@ from hubzoid.portal import PortalAdmin, build_router
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
+    (tmp_path / "restricted").mkdir()
+    (tmp_path / "restricted" / "prod_in.py").write_text("# declared restricted permission")
     eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: eng)
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)

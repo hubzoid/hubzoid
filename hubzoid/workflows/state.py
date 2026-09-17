@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import json
 import threading
+from weakref import WeakSet
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 _MISSING = object()
-_ensured: set[int] = set()
+_ensured: WeakSet[Engine] = WeakSet()
 _lock = threading.Lock()
 
 _DDL = """
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS hz_workflow_kv (
 
 
 def ensure_state_table(engine: Engine) -> None:
-    key = id(engine)
+    key = engine
     if key in _ensured:
         return
     with _lock:

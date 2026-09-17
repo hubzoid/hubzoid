@@ -8,11 +8,12 @@ same thin, ORM-free path as `db.py`.
 from __future__ import annotations
 
 import threading
+from weakref import WeakSet
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-_done: set[int] = set()
+_done: WeakSet[Engine] = WeakSet()
 _lock = threading.Lock()
 
 # hz_grants        : the policy rows — (subject, hub, permission). subject '*' =
@@ -47,7 +48,7 @@ _DDL = [
         phone    TEXT,
         display  TEXT,
         pending  INTEGER NOT NULL DEFAULT 0,
-        created  REAL
+        created  DOUBLE PRECISION
     )
     """,
     "CREATE INDEX IF NOT EXISTS hz_identities_email ON hz_identities (email)",
@@ -75,7 +76,7 @@ _DDL = [
     # decision log (access/audit.py); together they are the Audit screen.
     """
     CREATE TABLE IF NOT EXISTS hz_access_audit (
-        ts         REAL NOT NULL,
+        ts         DOUBLE PRECISION NOT NULL,
         actor      TEXT,
         action     TEXT NOT NULL,
         subject    TEXT,
@@ -93,7 +94,7 @@ _DDL = [
         name     TEXT NOT NULL,
         schedule TEXT,
         timezone TEXT,
-        updated  REAL,
+        updated  DOUBLE PRECISION,
         PRIMARY KEY (hub, name)
     )
     """,
@@ -102,21 +103,21 @@ _DDL = [
 
 def ensure_access_tables(engine: Engine) -> None:
     """Create the access tables (idempotent, once per engine per process)."""
-    key = id(engine)
+    key = engine
     if key in _done:
         return
     with _lock:
         if key in _done:
             return
         with engine.begin() as conn:
+            if engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(726104812)"))
             for stmt in _DDL:
                 conn.execute(text(stmt))
-            # Seed the single revision row if missing.
-            row = conn.execute(
-                text("SELECT 1 FROM hz_policy_revision WHERE id=1")
-            ).fetchone()
-            if not row:
-                conn.execute(
-                    text("INSERT INTO hz_policy_revision (id, rev) VALUES (1, 0)")
-                )
+            if engine.dialect.name == 'postgresql':
+                for table, column in (('hz_identities', 'created'), ('hz_access_audit', 'ts'), ('hz_workflows', 'updated')):
+                    kind = conn.execute(text("SELECT data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=:t AND column_name=:c"), {'t': table, 'c': column}).scalar()
+                    if kind == 'real':
+                        conn.execute(text(f'ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION'))
+            conn.execute(text("INSERT INTO hz_policy_revision (id, rev) VALUES (1, 0) ON CONFLICT (id) DO NOTHING"))
         _done.add(key)

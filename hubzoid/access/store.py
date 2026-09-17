@@ -26,6 +26,7 @@ bridge processes over one shared DB stay fresh.
 The surface gate (`policy.py`) still runs in FRONT of this: a grant is
 necessary, not sufficient.
 """
+
 from __future__ import annotations
 
 import threading
@@ -40,8 +41,8 @@ from . import db_tables
 from .identity import normalize
 
 # Reserved scopes / permissions.
-ORG = "*"                      # the org domain: a grant here applies to every hub
-EVERYONE = "*"                 # the wildcard subject: everyone who can log in
+ORG = "*"  # the org domain: a grant here applies to every hub
+EVERYONE = "*"  # the wildcard subject: everyone who can log in
 USE_HUB = "use_hub"
 MANAGE_ACCESS = "manage_access"
 
@@ -60,6 +61,21 @@ e = some(where (p.eft == allow))
 [matchers]
 m = (r.sub == p.sub || p.sub == "*") && (r.dom == p.dom || p.dom == "*") && (r.act == p.act || p.act == "*")
 """
+
+
+def _validate_grant(subject: str, hub: str, permission: str) -> None:
+    if not subject or not permission:
+        raise ValueError("subject and permission are required")
+    if not hub:
+        raise ValueError("hub is required")
+    if hub == ORG and permission != MANAGE_ACCESS:
+        raise ValueError("the organization domain only supports manage_access")
+    if subject == EVERYONE and (permission != USE_HUB or hub == ORG):
+        raise ValueError("public grants only support use_hub in a named hub")
+    if permission == "*":
+        # A '*' permission would match every action in the matcher, incl.
+        # manage_access — never a grantable value.
+        raise ValueError("the wildcard permission '*' is not grantable")
 
 
 class _Adapter(Adapter):
@@ -88,7 +104,9 @@ class _Adapter(Adapter):
     def remove_policy(self, sec, ptype, rule) -> None:  # pragma: no cover
         pass
 
-    def remove_filtered_policy(self, sec, ptype, field_index, *field_values) -> None:  # pragma: no cover
+    def remove_filtered_policy(
+        self, sec, ptype, field_index, *field_values
+    ) -> None:  # pragma: no cover
         pass
 
 
@@ -108,13 +126,17 @@ class GrantStore:
         model.load_model_from_text(_MODEL_CONF)
         self._enforcer = casbin.Enforcer(model, _Adapter(engine))
         self._lock = threading.Lock()
-        self._rev = self._read_revision()
+        self._rev = (
+            -1
+        )  # first decision reloads: never pair old policy with a newer revision
 
     # ---- reads ---------------------------------------------------------------
 
     def _read_revision(self) -> int:
         with self._engine.connect() as conn:
-            row = conn.execute(text("SELECT rev FROM hz_policy_revision WHERE id=1")).fetchone()
+            row = conn.execute(
+                text("SELECT rev FROM hz_policy_revision WHERE id=1")
+            ).fetchone()
         return int(row[0]) if row else 0
 
     def _refresh_if_stale(self) -> None:
@@ -130,15 +152,21 @@ class GrantStore:
         subject = normalize(subject)
         if not subject:
             return False
+        if self.is_suspended(subject):
+            return False
         self._refresh_if_stale()
         with self._lock:
-            return bool(self._enforcer.enforce(subject, normalize(hub), normalize(action)))
+            return bool(
+                self._enforcer.enforce(subject, normalize(hub), normalize(action))
+            )
 
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
         org-wide + wildcard-subject). Used by the portal and denied-UX."""
         subject = normalize(subject)
         hub = normalize(hub)
+        if self.is_suspended(subject):
+            return set()
         self._refresh_if_stale()
         out: set[str] = set()
         with self._engine.connect() as conn:
@@ -184,7 +212,9 @@ class GrantStore:
     # ---- authority marker + bootstrap ---------------------------------------
 
     def _meta_get(self, conn, key: str) -> str | None:
-        row = conn.execute(text("SELECT v FROM hz_meta WHERE k=:k"), {"k": key}).fetchone()
+        row = conn.execute(
+            text("SELECT v FROM hz_meta WHERE k=:k"), {"k": key}
+        ).fetchone()
         return row[0] if row else None
 
     def _meta_set(self, conn, key: str, value: str) -> None:
@@ -216,8 +246,10 @@ class GrantStore:
         self._refresh_if_stale()
         hub = normalize(hub) if hub else None
         with self._engine.connect() as conn:
-            if hub and self._meta_get(conn, f"casbin_authoritative:{hub}") == "1":
-                return True
+            if hub:
+                marker = self._meta_get(conn, f"casbin_authoritative:{hub}")
+                if marker is not None:
+                    return marker == "1"
             return self._meta_get(conn, "casbin_authoritative") == "1"
 
     def any_authoritative(self) -> bool:
@@ -234,27 +266,41 @@ class GrantStore:
         return bool(row)
 
     def set_authoritative(self, flag: bool = True, *, hub: str | None = None) -> None:
-        key = f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
+        key = (
+            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
+        )
         with self._engine.begin() as conn:
             self._meta_set(conn, key, "1" if flag else "0")
             self._bump_revision(conn)
 
-    def bootstrap(self, admin_subjects: Iterable[str] = (), *,
-                  authoritative: bool = False) -> None:
+    def bootstrap(
+        self,
+        admin_subjects: Iterable[str] = (),
+        *,
+        authoritative: bool = False,
+        hub: str | None = None,
+    ) -> None:
         """First-boot bootstrap (idempotent): grant org `manage_access` to the
         given admins once, so no deployment — fresh or migrated — can lock itself
         out of the portal. `authoritative=True` also makes Casbin the authority
         (use for fresh installs with no legacy access to migrate)."""
+        marker = (
+            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
+        )
         with self._engine.begin() as conn:
             if self._meta_get(conn, "bootstrapped") == "1":
                 if authoritative:
-                    self._meta_set(conn, "casbin_authoritative", "1")
+                    self._meta_set(conn, marker, "1")
+                    self._audit(conn, "bootstrap", "activate", None, hub or ORG, None)
+                    self._bump_revision(conn)
                 return
             granted = 0
             for subj in admin_subjects:
                 subj = normalize(subj)
                 if subj:
                     self._insert_grant(conn, subj, ORG, MANAGE_ACCESS)
+                    self._ensure_identity(conn, subj)
+                    self._audit(conn, "bootstrap", "grant", subj, ORG, MANAGE_ACCESS)
                     granted += 1
             # Only consume the one-shot marker once a real admin exists — an
             # empty bootstrap() must NOT block a later legitimate admin list.
@@ -268,7 +314,8 @@ class GrantStore:
                         "refusing authoritative bootstrap with no org admin — "
                         "pass at least one --admin"
                     )
-                self._meta_set(conn, "casbin_authoritative", "1")
+                self._meta_set(conn, marker, "1")
+                self._audit(conn, "bootstrap", "activate", None, ORG, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -297,11 +344,19 @@ class GrantStore:
                 "INSERT INTO hz_access_audit (ts, actor, action, subject, hub, permission) "
                 "VALUES (:t, :a, :ac, :s, :h, :p)"
             ),
-            {"t": time.time(), "a": actor, "ac": action, "s": subject,
-             "h": hub, "p": permission},
+            {
+                "t": time.time(),
+                "a": actor,
+                "ac": action,
+                "s": subject,
+                "h": hub,
+                "p": permission,
+            },
         )
 
-    def publish_workflows(self, hub: str, workflows: Iterable[tuple[str, str | None, str | None]]) -> None:
+    def publish_workflows(
+        self, hub: str, workflows: Iterable[tuple[str, str | None, str | None]]
+    ) -> None:
         """A bridge publishes its hub's workflow catalog to the shared store, so
         the org portal can list every hub's workflows. Replaces this hub's rows."""
         import time
@@ -333,34 +388,48 @@ class GrantStore:
         out = [dict(zip(keys, r)) for r in rows]
         return [w for w in out if allow is None or w["hub"] in allow]
 
-    def read_access_audit(self, limit: int = 100) -> list[dict]:
+    def read_access_audit(
+        self, limit: int = 100, *, hubs=None, subject=None, offset=0
+    ) -> list[dict]:
         """Recent access CHANGE events (grant/revoke), newest first."""
+        clauses, params = [], {"n": limit, "offset": offset}
+        if hubs is not None:
+            if not hubs:
+                return []
+            names = []
+            for i, h in enumerate(hubs):
+                params[f"h{i}"] = h
+                names.append(f":h{i}")
+            clauses.append("hub IN (" + ",".join(names) + ")")
+        if subject:
+            clauses.append("subject = :subject")
+            params["subject"] = normalize(subject)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT ts, actor, action, subject, hub, permission "
-                    "FROM hz_access_audit ORDER BY ts DESC LIMIT :n"
+                    "FROM hz_access_audit"
+                    + where
+                    + " ORDER BY ts DESC LIMIT :n OFFSET :offset"
                 ),
-                {"n": limit},
+                params,
             ).fetchall()
         keys = ("ts", "actor", "action", "subject", "hub", "permission")
         return [dict(zip(keys, r)) for r in rows]
 
     # ---- writes (the grant_service; every write is one transaction) ----------
 
-    def grant(self, subject: str, hub: str, permission: str, *, actor: str | None = None) -> None:
+    def grant(
+        self, subject: str, hub: str, permission: str, *, actor: str | None = None
+    ) -> None:
         """Grant one permission. Granting any tool permission auto-grants
         `use_hub` in the same hub (the implication rule), so a grantee can always
         open a hub they have any permission in. Idempotent."""
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
-        if not subject or not permission:
-            raise ValueError("subject and permission are required")
-        if permission == "*":
-            # A '*' permission would match every action in the matcher, incl.
-            # manage_access — never a grantable value.
-            raise ValueError("the wildcard permission '*' is not grantable")
+        _validate_grant(subject, hub, permission)
         rows = [(subject, hub, permission)]
         # Implication: any hub-scoped permission implies use_hub (except in the
         # org domain, where use_hub is meaningless).
@@ -369,18 +438,20 @@ class GrantStore:
         with self._engine.begin() as conn:
             for s, h, p in rows:
                 self._insert_grant(conn, s, h, p)
-            self._audit(conn, actor, "grant", subject, hub, permission)
+                self._audit(conn, actor, "grant", s, h, p)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def revoke(self, subject: str, hub: str, permission: str, *, actor: str | None = None) -> None:
+    def revoke(
+        self, subject: str, hub: str, permission: str, *, actor: str | None = None
+    ) -> None:
         """Revoke one permission. Revoking `use_hub` cascades: it removes every
         permission the subject has in that hub (you can't hold a tool in a hub
         you can't enter). Refuses to remove the last org admin (race-safe)."""
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
-        removes_admin = (hub == ORG and permission == MANAGE_ACCESS)
+        removes_admin = hub == ORG and permission == MANAGE_ACCESS
         with self._engine.begin() as conn:
             if removes_admin:
                 # Serialize concurrent admin revokes: FOR UPDATE on Postgres; on
@@ -393,6 +464,14 @@ class GrantStore:
                         "cannot remove the last org admin; grant another first"
                     )
             if hub != ORG and permission == USE_HUB:
+                for (removed,) in conn.execute(
+                    text(
+                        "SELECT permission FROM hz_grants WHERE subject=:s AND hub=:h"
+                    ),
+                    {"s": subject, "h": hub},
+                ):
+                    if removed != USE_HUB:
+                        self._audit(conn, actor, "revoke", subject, hub, removed)
                 conn.execute(
                     text("DELETE FROM hz_grants WHERE subject=:s AND hub=:h"),
                     {"s": subject, "h": hub},
@@ -427,14 +506,21 @@ class GrantStore:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
-            self._audit(conn, actor, "revoke_all", subject, None, None)
+            self._audit(conn, actor, "revoke_all", subject, ORG, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def apply_migration(self, grants: Iterable[tuple[str, str, str]],
-                        attrs: Iterable[tuple[str, str, str, str]],
-                        hubs: Iterable[str], *, replace: bool = True,
-                        authoritative: bool = True) -> None:
+    def apply_migration(
+        self,
+        grants: Iterable[tuple[str, str, str]],
+        attrs: Iterable[tuple[str, str, str, str]],
+        hubs: Iterable[str],
+        *,
+        replace: bool = True,
+        authoritative: bool = True,
+        actor: str = "migration",
+        identities: Iterable[dict] = (),
+    ) -> None:
         """The migration cutover, in ONE transaction: (optionally) replace the
         target hubs' grants, insert the plan (with use_hub implication), set
         attributes + identity rows, set the PER-HUB authority markers, and bump
@@ -443,25 +529,32 @@ class GrantStore:
         import time
 
         hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
+        attrs = list(attrs)
+        if any(normalize(h) not in hubs for h, _, _, _ in attrs):
+            raise ValueError("migration attributes outside target hubs")
         expanded: list[tuple[str, str, str]] = []
         emails: set[str] = set()
         for subject, hub, permission in grants:
             subject = normalize(subject)
             hub = normalize(hub)
             permission = normalize(permission)
-            if not subject or not permission or permission == "*":
-                continue
+            _validate_grant(subject, hub, permission)
             expanded.append((subject, hub, permission))
             if hub != ORG and permission != USE_HUB:
                 expanded.append((subject, hub, USE_HUB))
+            if hub not in hubs:
+                raise ValueError("migration grant outside target hubs")
             if subject != EVERYONE and "@" in subject:
                 emails.add(subject)
         with self._engine.begin() as conn:
+            self._lock_hubs(conn, hubs)
             if replace:
                 for h in hubs:
+                    self._audit(conn, actor, "replace_hub_grants", None, h, None)
                     conn.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
             for s, h, p in expanded:
                 self._insert_grant(conn, s, h, p)
+                self._audit(conn, actor, "grant", s, h, p)
             for hub, subject, k, v in attrs:
                 conn.execute(
                     text(
@@ -479,13 +572,43 @@ class GrantStore:
                     ),
                     {"s": email, "t": time.time()},
                 )
+            for identity in identities:
+                subject = normalize(identity["email"])
+                self._ensure_identity(conn, subject)
+                previous = conn.execute(
+                    text("SELECT owui_id FROM hz_identities WHERE subject=:s"),
+                    {"s": subject},
+                ).scalar()
+                if previous and previous != identity["owui_id"]:
+                    raise ValueError(
+                        "OWUI account changed for "
+                        + subject
+                        + "; refresh and review accounts before migration"
+                    )
+                conn.execute(
+                    text(
+                        "UPDATE hz_identities SET owui_id=:o, pending=:p WHERE subject=:s"
+                    ),
+                    {
+                        "o": identity["owui_id"],
+                        "p": int(identity.get("pending", False)),
+                        "s": subject,
+                    },
+                )
+                self._meta_set(
+                    conn,
+                    "account_unavailable:" + subject,
+                    "1" if identity.get("pending") else "0",
+                )
             if authoritative:
                 for h in hubs:
                     self._meta_set(conn, f"casbin_authoritative:{h}", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def grant_many(self, grants: Iterable[tuple[str, str, str]]) -> None:
+    def grant_many(
+        self, grants: Iterable[tuple[str, str, str]], *, actor: str = "bulk-import"
+    ) -> None:
         """Apply many (subject, hub, permission) grants in one transaction — the
         CSV-import / migration path. Applies the same use_hub implication."""
         expanded: list[tuple[str, str, str]] = []
@@ -493,20 +616,21 @@ class GrantStore:
             subject = normalize(subject)
             hub = normalize(hub)
             permission = normalize(permission)
-            if not subject or not permission or permission == "*":
-                continue
+            _validate_grant(subject, hub, permission)
             expanded.append((subject, hub, permission))
             if hub != ORG and permission != USE_HUB:
                 expanded.append((subject, hub, USE_HUB))
         with self._engine.begin() as conn:
             for s, h, p in expanded:
                 self._insert_grant(conn, s, h, p)
+                self._audit(conn, actor, "grant", s, h, p)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
     # ---- internals -----------------------------------------------------------
 
     def _insert_grant(self, conn, subject: str, hub: str, permission: str) -> None:
+        self._ensure_identity(conn, subject)
         dialect = conn.engine.dialect.name
         if dialect == "sqlite":
             conn.execute(
@@ -525,14 +649,31 @@ class GrantStore:
                 {"s": subject, "h": hub, "p": permission},
             )
 
+    @staticmethod
+    def _lock_hubs(conn, hubs) -> None:
+        # PostgreSQL DELETE does not lock an empty hub's key space. Serialize
+        # whole-hub replacement so two concurrent cutovers cannot merge plans.
+        if conn.engine.dialect.name == "postgresql":
+            for hub in sorted(set(hubs)):
+                conn.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": "hubzoid-access:" + hub},
+                )
+
     def _bump_revision(self, conn) -> None:
         conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
 
     # ---- identities (subject rows) ------------------------------------------
 
-    def upsert_identity(self, *, email: str | None = None, owui_id: str | None = None,
-                        phone: str | None = None, display: str | None = None,
-                        pending: bool = False) -> str:
+    def upsert_identity(
+        self,
+        *,
+        email: str | None = None,
+        owui_id: str | None = None,
+        phone: str | None = None,
+        display: str | None = None,
+        pending: bool = False,
+    ) -> str:
         """Record/refresh a grantee's identity row and return its subject id.
 
         The subject is the stable key everything grants to; today it is the
@@ -547,14 +688,33 @@ class GrantStore:
             raise ValueError("need at least one of email/owui_id/phone")
         with self._engine.begin() as conn:
             row = conn.execute(
-                text("SELECT subject FROM hz_identities WHERE subject=:s"),
+                text("SELECT subject, owui_id FROM hz_identities WHERE subject=:s"),
                 {"s": subject},
             ).fetchone()
             fields = {
-                "s": subject, "e": email_n, "o": (owui_id or None),
-                "p": (phone or None), "d": (display or None),
-                "pend": 1 if pending else 0, "t": time.time(),
+                "s": subject,
+                "e": email_n,
+                "o": (owui_id or None),
+                "p": (phone or None),
+                "d": (display or None),
+                "pend": 1 if pending else 0,
+                "t": time.time(),
             }
+            if row and owui_id and row[1] and row[1] != owui_id:
+                # A new account reusing an email must not inherit the old owner's
+                # direct grants, including administrator rights.
+                conn.execute(
+                    text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
+                )
+                self._meta_set(conn, "suspended:" + subject, "1")
+                self._audit(
+                    conn, "owui-identity", "account_replaced", subject, ORG, None
+                )
+                self._bump_revision(conn)
+            if owui_id:
+                self._meta_set(
+                    conn, "account_unavailable:" + subject, "1" if pending else "0"
+                )
             if row:
                 conn.execute(
                     text(
@@ -597,7 +757,6 @@ class GrantStore:
         hub = normalize(hub)
         subject = normalize(subject)
         with self._engine.begin() as conn:
-            dialect = conn.engine.dialect.name
             sql = (
                 "INSERT INTO hz_identity_attrs (hub, subject, k, v) "
                 "VALUES (:h, :s, :k, :v) "
@@ -626,3 +785,193 @@ class GrantStore:
                 {"h": hub, "s": subject},
             ).fetchall()
         return {k: v for k, v in rows}
+
+    def _ensure_identity(self, conn, subject):
+        import time
+
+        if subject != EVERYONE:
+            conn.execute(
+                text(
+                    "INSERT INTO hz_identities (subject, email, pending, created) "
+                    "VALUES (:s, :e, 1, :t) ON CONFLICT (subject) DO NOTHING"
+                ),
+                {
+                    "s": subject,
+                    "e": subject if "@" in subject else None,
+                    "t": time.time(),
+                },
+            )
+
+    def is_suspended(self, subject: str) -> bool:
+        with self._engine.connect() as conn:
+            return any(
+                self._meta_get(conn, prefix + normalize(subject)) == "1"
+                for prefix in ("suspended:", "account_unavailable:")
+            )
+
+    def suspend(self, subject: str, *, actor: str, suspended=True) -> None:
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE:
+            raise ValueError("a person or service is required")
+        with self._engine.begin() as conn:
+            admins = self._org_admins_locked(conn)
+            if suspended and subject in admins and len(admins) <= 1:
+                raise LastAdminError("cannot suspend the last org admin")
+            if suspended:
+                conn.execute(
+                    text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
+                )
+            self._meta_set(conn, "suspended:" + subject, "1" if suspended else "0")
+            self._audit(
+                conn,
+                actor,
+                "suspend" if suspended else "reactivate",
+                subject,
+                ORG,
+                None,
+            )
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+
+    def reconcile_accounts(self, people: list[dict]) -> None:
+        """A successful complete OWUI directory read updates account availability.
+
+        Keep pre-granted signup emails; only previously bound, missing accounts
+        are unavailable. A failed/partial directory fetch must never call this.
+        """
+        observed = {normalize(p["email"]) for p in people}
+        for person in people:
+            self.upsert_identity(
+                email=person["email"],
+                owui_id=person["id"],
+                display=person.get("name"),
+                pending=person.get("role") == "pending",
+            )
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                text("SELECT subject FROM hz_identities WHERE owui_id IS NOT NULL")
+            ).fetchall()
+            for (subject,) in rows:
+                if subject not in observed:
+                    key = "account_unavailable:" + subject
+                    if self._meta_get(conn, key) != "1":
+                        self._meta_set(conn, key, "1")
+                        self._audit(
+                            conn,
+                            "owui-identity",
+                            "account_unavailable",
+                            subject,
+                            ORG,
+                            None,
+                        )
+
+    def identities(self) -> list[dict]:
+        with self._engine.connect() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    text(
+                        "SELECT subject, email, owui_id, display, pending FROM hz_identities ORDER BY subject"
+                    )
+                ).mappings()
+            ]
+
+    def snapshot(self, hubs: list[str]) -> dict:
+        hubs = sorted({normalize(h) for h in hubs})
+        with self._engine.connect() as c:
+            attrs = [
+                list(r)
+                for r in c.execute(
+                    text("SELECT hub, subject, k, v FROM hz_identity_attrs")
+                )
+                if r[0] in hubs
+            ]
+        return dict(
+            version=1,
+            hubs=hubs,
+            grants=[g for g in self.list_grants() if g[1] in hubs],
+            attrs=attrs,
+            authority={h: self.is_authoritative(h) for h in hubs},
+        )
+
+    def restore(self, snapshot: dict, *, actor: str) -> None:
+        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
+            raise ValueError("unsupported access backup")
+        try:
+            hubs = set(snapshot["hubs"])
+            if not hubs or any(
+                not isinstance(h, str) or not h or h != normalize(h) or h == ORG
+                for h in hubs
+            ):
+                raise ValueError("invalid backup scope")
+            if set(snapshot["authority"]) != hubs or any(
+                type(v) is not bool for v in snapshot["authority"].values()
+            ):
+                raise ValueError("invalid backup authority")
+            for sub, h, p in snapshot["grants"]:
+                if (
+                    any(
+                        not isinstance(v, str) or v != normalize(v) for v in (sub, h, p)
+                    )
+                    or h not in hubs
+                ):
+                    raise ValueError("invalid backup grant scope")
+                _validate_grant(sub, h, p)
+            for h, sub, k, v in snapshot["attrs"]:
+                if h not in hubs or not all(isinstance(x, str) for x in (h, sub, k, v)):
+                    raise ValueError("invalid backup attribute")
+        except (KeyError, TypeError) as exc:
+            raise ValueError("invalid access backup structure") from exc
+        with self._engine.begin() as c:
+            self._lock_hubs(c, hubs)
+            for h in hubs:
+                c.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
+                c.execute(text("DELETE FROM hz_identity_attrs WHERE hub=:h"), {"h": h})
+                self._meta_set(
+                    c,
+                    "casbin_authoritative:" + h,
+                    "1" if snapshot["authority"][h] else "0",
+                )
+                self._audit(c, actor, "rollback", None, h, None)
+            for sub, h, p in snapshot["grants"]:
+                self._insert_grant(c, sub, h, p)
+                self._audit(c, actor, "restore_grant", sub, h, p)
+            for h, sub, k, v in snapshot["attrs"]:
+                if h not in hubs:
+                    raise ValueError("invalid attribute scope")
+                c.execute(
+                    text(
+                        "INSERT INTO hz_identity_attrs (hub,subject,k,v) VALUES (:h,:s,:k,:v)"
+                    ),
+                    dict(h=h, s=sub, k=k, v=v),
+                )
+            self._bump_revision(c)
+        self._refresh_if_stale()
+
+    def runtime_health(self, hub: str) -> dict:
+        import json
+
+        with self._engine.connect() as c:
+            raw = self._meta_get(c, "workflow_health:" + normalize(hub))
+        return json.loads(raw) if raw else {}
+
+    def set_runtime_health(self, hub: str, **values) -> None:
+        import json
+
+        old = self.runtime_health(hub)
+        old.update(values)
+        with self._engine.begin() as c:
+            self._meta_set(c, "workflow_health:" + normalize(hub), json.dumps(old))
+
+    def metadata(self, key: str, default=None):
+        import json
+
+        with self._engine.connect() as c:
+            value = self._meta_get(c, key)
+        return json.loads(value) if value else default
+
+    def set_metadata(self, key: str, value) -> None:
+        import json
+
+        with self._engine.begin() as c:
+            self._meta_set(c, key, json.dumps(value))

@@ -1,32 +1,30 @@
-# React + TypeScript + Vite
+# Hubzoid administration portal
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/TypeScript UI served by the existing bridge at `/portal/`. No Node service
+is needed in production; the built assets ship in `hubzoid/portal_dist`.
 
-Currently, two official plugins are available:
+The portal manages per-agent access and displays accounts, permissions, workflow
+execution and audit history. Open WebUI owns accounts/authentication; Casbin owns
+agent access; DBOS owns execution history. See [the operator guide](../docs/ADMINISTRATION.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+npm run dev       # /portal/api proxies to the bridge on localhost:8000
+npm run lint
+npm run build     # typecheck + production assets
+npm test          # Playwright browser regressions against built assets
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`npm test` needs a Playwright Chromium installation. It intercepts requests with
+synthetic accounts and verifies hub switching, correct mutation targets, error
+recovery, workflow details, audit history and role controls. Python acceptance
+tests in `tests/test_admin_journey.py` exercise the real APIs, shared deployment
+configuration, migration/rollback, access isolation and real DBOS execution.
+
+For development, bootstrap a local admin, then set BOTH `HUBZOID_PORTAL_DEV=1`
+and `HUBZOID_PORTAL_DEV_USER=<admin>` on the local bridge. Never use these on a
+public deployment. Production uses the OWUI session cookie verified server-side.
+
+Permissions are backend-enforced. Disabled frontend controls are only UX.
+Hub-dependent screens are keyed by hub; requests are aborted on navigation and
+mutations use the loaded response's hub, never stale rows with a new selection.

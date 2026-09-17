@@ -64,16 +64,22 @@ def to_cron(schedule: str) -> str:
     # raw 5-field cron passthrough (fields are only digits and * / , -)
     parts = s.split()
     if len(parts) == 5 and all(re.fullmatch(r"[\d*/,\-]+", p) for p in parts):
+        if not croniter.is_valid(s):
+            raise ScheduleError(f"invalid cron: {s}")
         return s
 
     m = re.fullmatch(r"every\s+(\d+)\s*(minute|minutes|min|m)", s)
     if m:
         n = int(m.group(1))
+        if n < 1 or n > 59 or 60 % n:
+            raise ScheduleError("minute interval must divide 60 (1–30); use every 1 hour for hourly")
         return f"*/{n} * * * *"
 
     m = re.fullmatch(r"every\s+(\d+)\s*(hour|hours|hr|h)", s)
     if m:
         n = int(m.group(1))
+        if n < 1 or n > 23 or 24 % n:
+            raise ScheduleError("hour interval must divide 24 (1–12); use daily for daily")
         return f"0 */{n} * * *"
 
     m = re.fullmatch(r"(daily|every day)(?:\s+at)?\s+(.+)", s)

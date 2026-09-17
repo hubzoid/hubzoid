@@ -192,6 +192,8 @@ def _build_verifier(hub_dir: Path, *, access_group: str | None = None):
             try:
                 gs = store_for(hub_dir)
                 authoritative = gs.is_authoritative(hub_dir.name)
+                if gs.is_suspended(email):
+                    return None
             except Exception:  # noqa: BLE001 — can't determine authority -> deny
                 log.exception("mcp: store unavailable; denying %s", email)
                 return None

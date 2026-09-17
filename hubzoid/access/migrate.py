@@ -17,6 +17,7 @@ and asks for an explicit `access.csv` snapshot first.
 Nothing is authoritative until cutover: `apply(..., authoritative=True)` writes
 the marker that makes Casbin the authority (and turns on the OWUI-UI lock).
 """
+
 from __future__ import annotations
 
 import csv as _csv
@@ -40,16 +41,24 @@ class MigrationBlocked(Exception):
 
 @dataclass
 class MigrationPlan:
-    grants: list[tuple[str, str, str]] = field(default_factory=list)      # (subject, hub, perm)
-    attrs: list[tuple[str, str, str, str]] = field(default_factory=list)  # (hub, subject, k, v)
+    grants: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # (subject, hub, perm)
+    attrs: list[tuple[str, str, str, str]] = field(
+        default_factory=list
+    )  # (hub, subject, k, v)
     conflicts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    expected: list[tuple[str, str, str, bool]] = field(default_factory=list)
+    visibility_backup: dict | None = None
+    identities: list[dict] = field(default_factory=list)
 
     def add_grant(self, subject: str, hub: str, perm: str) -> None:
         self.grants.append(((subject or "").strip(), normalize(hub), normalize(perm)))
 
 
 # --- preflight --------------------------------------------------------------
+
 
 def preflight(hub_dir) -> list[str]:
     """Refuse (raise) if the hub's roster is a function that computes authz live
@@ -75,6 +84,7 @@ def preflight(hub_dir) -> list[str]:
 
 # --- CSV source -------------------------------------------------------------
 
+
 def _find_csv(hub_dir: Path) -> Path | None:
     from .._fs import resolve_bucket
 
@@ -95,25 +105,72 @@ def plan_from_csv(hub_dir, hub_name: str | None = None) -> MigrationPlan:
     if path is None:
         plan.warnings.append("no identity/access.csv found")
         return plan
-    seen: set[str] = set()
-    with open(path, newline="") as f:
-        for row in _csv.DictReader(f):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = _csv.DictReader(f)
+        reader.fieldnames = [name.strip().lower() for name in (reader.fieldnames or [])]
+        for row in reader:
             email = (row.get("email") or "").strip().lower()
             if not email:
                 continue
-            if email in seen:
-                plan.conflicts.append(f"duplicate email in access.csv: {email}")
-            seen.add(email)
-            groups = [g for g in (row.get("groups") or "").replace(",", ";").split(";") if g.strip()]
+            groups = [
+                g
+                for g in (row.get("groups") or "").replace(",", ";").split(";")
+                if g.strip()
+            ]
             for g in groups:
+                if normalize(g) in ("manage_access", "*"):
+                    plan.conflicts.append(
+                        f"reserved permission in legacy groups for {email}: {g}"
+                    )
+                    continue
                 plan.add_grant(email, hub_name, g)
             center = (row.get("center") or "").strip()
             if center:
-                plan.attrs.append((hub_name, email, "center", center))
+                previous = [
+                    v
+                    for h, s, k, v in plan.attrs
+                    if h == hub_name and s == email and k == "center"
+                ]
+                if previous and center not in previous:
+                    plan.conflicts.append(f"conflicting center values for {email}")
+                elif not previous:
+                    plan.attrs.append((hub_name, email, "center", center))
+    return plan
+
+
+def plan_standalone_public(hub_dir, plan: MigrationPlan) -> MigrationPlan:
+    """Explicit legacy standalone bypass: signed-in entry was public.
+
+    Tool decisions come from the actual legacy roster resolver, independently of
+    the grant plan. Gateways must use model ACL evidence instead.
+    """
+    from ..deployment import permission_catalog, read
+    from .resolver import load_resolver
+
+    hub_dir = Path(hub_dir)
+    if read(hub_dir):
+        raise MigrationBlocked(
+            "registered gateways require --from-owui, not --standalone-public"
+        )
+    roster = load_resolver(hub_dir)
+    hub = normalize(hub_dir.name)
+    subjects = {normalize(s) for s, _, _ in plan.grants} | {"__future_signed_in__"}
+    permissions = {p["permission"] for p in permission_catalog(hub_dir)} - {
+        "use_hub",
+        "manage_access",
+    }
+    permissions.update(p for _, _, p in plan.grants)
+    plan.add_grant(EVERYONE, hub, USE_HUB)
+    for subject in sorted(subjects):
+        plan.expected.append((subject, hub, USE_HUB, True))
+        groups = set(roster.groups_for_email(subject)) if roster else set()
+        for permission in sorted(permissions - {USE_HUB}):
+            plan.expected.append((subject, hub, permission, permission in groups))
     return plan
 
 
 # --- Open WebUI 0.11 source -------------------------------------------------
+
 
 def _owui_public(access_control) -> bool:
     """OWUI 0.11: access_control == null (or missing) means public signed-in
@@ -121,92 +178,208 @@ def _owui_public(access_control) -> bool:
     return access_control is None
 
 
-def plan_from_owui(engine: Engine, hub_name: str, *, model_id: str | None = None,
-                   plan: MigrationPlan | None = None) -> MigrationPlan:
-    """Read OWUI 0.11 group memberships + a model's access grants into the plan.
+def plan_from_owui(
+    engine: Engine,
+    hub_name: str,
+    *,
+    model_id: str | None = None,
+    plan: MigrationPlan | None = None,
+    permissions=(),
+    standalone_public: bool = False,
+) -> MigrationPlan:
+    """Read supported legacy or normalized OWUI schemas; never guess access.
 
-    Refuses an unknown schema (missing user/group/model tables) rather than
-    guessing. `model_id` selects which model = this hub; if None, and there is a
-    single model, that one is used."""
+    Preserve the intersection of model visibility and tool-group membership.
+    The independent expected matrix includes denied users, not just grants.
+    """
     plan = plan or MigrationPlan()
     hub_name = normalize(hub_name)
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    required = {"user", "group", "model"}
-    if not required.issubset(tables):
+    if not {"user", "group", "model"} <= tables:
         raise MigrationBlocked(
-            f"unrecognized Open WebUI schema (need tables {sorted(required)}, "
-            f"found {sorted(tables & required)}); refusing to guess"
+            "unrecognized Open WebUI schema: missing user/group/model"
         )
 
-    with engine.connect() as conn:
+    def cols(table: str) -> set[str]:
+        return {c["name"] for c in insp.get_columns(table)}
+
+    modern_membership = "group_member" in tables
+    modern = "access_grant" in tables
+    if (not modern_membership and "user_ids" not in cols("group")) or (
+        not standalone_public and not modern and "access_control" not in cols("model")
+    ):
+        raise MigrationBlocked("unrecognized Open WebUI membership/access schema")
+    with engine.connect() as c:
         users = {
-            r[0]: (r[1] or "").strip().lower()
-            for r in conn.execute(text("SELECT id, email FROM user")).fetchall()
+            r.id: dict(r) for r in c.execute(text('SELECT * FROM "user"')).mappings()
         }
-        # groups: id -> (name, [user_ids])
-        groups: dict[str, tuple[str, list[str]]] = {}
-        for gid, name, uids in conn.execute(
-            text("SELECT id, name, user_ids FROM \"group\"")
-        ).fetchall():
-            try:
-                members = json.loads(uids) if uids else []
-            except Exception:  # noqa: BLE001
-                members = []
-            groups[gid] = (name or "", members)
-
-        # models: pick the hub's model
-        model_rows = conn.execute(
-            text("SELECT id, access_control FROM model")
-        ).fetchall()
-
-    model_by_id = {mid: ac for mid, ac in model_rows}
-    if model_id is not None:
-        if model_id not in model_by_id:
-            # A missing model must NOT be silently treated as public (that would
-            # grant wildcard use_hub). Refuse.
-            raise MigrationBlocked(
-                f"OWUI model_id {model_id!r} not found; refusing (a missing model "
-                "must not become public)"
+        emails = {uid: normalize(u.get("email", "")) for uid, u in users.items()}
+        plan.identities = [
+            dict(email=u["email"], owui_id=uid, pending=u.get("role") == "pending")
+            for uid, u in users.items()
+            if u.get("email")
+        ]
+        pending_emails = {
+            emails[uid] for uid, u in users.items() if u.get("role") == "pending"
+        }
+        groups = {
+            r.id: dict(r) for r in c.execute(text('SELECT * FROM "group"')).mappings()
+        }
+        members = {gid: set() for gid in groups}
+        if modern_membership:
+            for gid, uid in c.execute(
+                text("SELECT group_id, user_id FROM group_member")
+            ):
+                if gid in members:
+                    members[gid].add(uid)
+        else:
+            for gid, g in groups.items():
+                try:
+                    members[gid] = set(json.loads(g.get("user_ids") or "[]"))
+                except (ValueError, TypeError):
+                    raise MigrationBlocked(f"invalid membership JSON for group {gid}")
+        if standalone_public:
+            if model_id:
+                raise MigrationBlocked(
+                    "standalone public bypass does not select a model ACL"
+                )
+            public = True
+            allowed = set(users)
+        else:
+            models = {
+                r.id: dict(r) for r in c.execute(text("SELECT * FROM model")).mappings()
+            }
+            if model_id is None and len(models) == 1:
+                model_id = next(iter(models))
+            if model_id not in models:
+                raise MigrationBlocked("select an existing OWUI model with --model-id")
+            model = models[model_id]
+            if model.get("is_active") in (False, 0):
+                raise MigrationBlocked(
+                    "selected OWUI model is disabled; review its intended access before migration"
+                )
+            allowed = {uid for uid, u in users.items() if u.get("role") == "admin"}
+            if model.get("user_id") in users:
+                allowed.add(model["user_id"])
+            public = False
+            if modern:
+                grants = c.execute(
+                    text(
+                        "SELECT principal_type, principal_id, permission FROM access_grant "
+                        "WHERE resource_type='model' AND resource_id=:id"
+                    ),
+                    {"id": model_id},
+                ).fetchall()
+                plan.visibility_backup = dict(
+                    model_id=model_id,
+                    access_grants=[
+                        dict(principal_type=t, principal_id=p, permission=a)
+                        for t, p, a in grants
+                    ],
+                )
+                for typ, principal, permission in grants:
+                    if permission not in ("read", "write"):
+                        continue
+                    if principal == "*" and typ in ("user", "anyone"):
+                        public = True
+                    elif typ == "user":
+                        allowed.add(principal)
+                    elif typ == "group":
+                        allowed.update(members.get(principal, set()))
+            else:
+                raw = model.get("access_control")
+                try:
+                    ac = json.loads(raw) if isinstance(raw, str) else raw
+                except ValueError:
+                    raise MigrationBlocked("invalid model access JSON")
+                public = ac is None
+                if ac is not None and not isinstance(ac, dict):
+                    raise MigrationBlocked("invalid model access structure")
+                original = []
+                if public:
+                    original.append(
+                        dict(principal_type="user", principal_id="*", permission="read")
+                    )
+                for action in ("read", "write"):
+                    block = (ac or {}).get(action, {})
+                    original.extend(
+                        dict(principal_type="user", principal_id=uid, permission=action)
+                        for uid in block.get("user_ids", []) or []
+                    )
+                    original.extend(
+                        dict(
+                            principal_type="group", principal_id=gid, permission=action
+                        )
+                        for gid in block.get("group_ids", []) or []
+                    )
+                    allowed.update(block.get("user_ids", []) or [])
+                    for gid in block.get("group_ids", []) or []:
+                        allowed.update(members.get(gid, set()))
+                plan.visibility_backup = dict(model_id=model_id, access_grants=original)
+    tool_perms = {normalize(p) for p in permissions} - {USE_HUB, "manage_access"}
+    # CSV group permissions and OWUI groups previously formed a union.
+    old_csv = {(normalize(s), p) for s, h, p in plan.grants if h == hub_name}
+    all_emails = set(emails.values()) | {s for s, _ in old_csv}
+    entry = {emails[u] for u in allowed if u in emails}
+    if public:
+        entry |= all_emails
+    plan.grants = [g for g in plan.grants if g[1] != hub_name]
+    if public:
+        plan.add_grant(EVERYONE, hub_name, USE_HUB)
+    membership = {}
+    for gid, ids in members.items():
+        perm = normalize(groups[gid].get("name", ""))
+        for uid in ids:
+            if uid in emails:
+                membership.setdefault(emails[uid], set()).add(perm)
+    for email in sorted(all_emails | {"__future_signed_in__"}):
+        may_enter = public or email in entry
+        active = email not in pending_emails
+        plan.expected.append((email, hub_name, USE_HUB, may_enter and active))
+        if may_enter and not public:
+            plan.add_grant(email, hub_name, USE_HUB)
+        for perm in sorted(tool_perms):
+            may_use = may_enter and (
+                perm in membership.get(email, set()) or (email, perm) in old_csv
             )
-        chosen = {model_id: model_by_id[model_id]}
-    elif len(model_by_id) == 1:
-        chosen = model_by_id
-    else:
-        # Unioning every model's ACL into one hub would over-grant. Require an
-        # explicit model_id to say which OWUI model IS this hub.
-        raise MigrationBlocked(
-            f"{len(model_by_id)} OWUI models found; pass --model-id to say which one "
-            "is this hub (unioning all would over-grant)"
-        )
-
-    for mid, ac_raw in chosen.items():
-        try:
-            ac = json.loads(ac_raw) if isinstance(ac_raw, str) else ac_raw
-        except Exception:  # noqa: BLE001
-            ac = ac_raw
-        if _owui_public(ac):
-            plan.add_grant(EVERYONE, hub_name, USE_HUB)
-            continue
-        # access_control = {"read": {"group_ids": [...], "user_ids": [...]}, "write": {...}}
-        for section in ("read", "write"):
-            block = (ac or {}).get(section, {}) if isinstance(ac, dict) else {}
-            for uid in block.get("user_ids", []) or []:
-                email = users.get(uid)
-                if email:
-                    plan.add_grant(email, hub_name, USE_HUB)
-            for gid in block.get("group_ids", []) or []:
-                name, members = groups.get(gid, ("", []))
-                for uid in members:
-                    email = users.get(uid)
-                    if email:
-                        plan.add_grant(email, hub_name, USE_HUB)
+            plan.expected.append((email, hub_name, perm, may_use and active))
+            if may_use:
+                plan.add_grant(email, hub_name, perm)
     return plan
+
+
+def effective_diff(store: GrantStore, plan: MigrationPlan) -> list[dict]:
+    return [
+        dict(subject=s, hub=h, permission=p, before=allowed, after=store.can(s, h, p))
+        for s, h, p, allowed in plan.expected
+        if store.can(s, h, p) != allowed
+    ]
 
 
 # --- apply / diff -----------------------------------------------------------
 
-def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True) -> None:
+
+def verify_effective(plan: MigrationPlan) -> list[dict]:
+    """Compare legacy decisions with a clean candidate before changing live access."""
+    if not plan.expected:
+        return []
+    from sqlalchemy import create_engine
+
+    candidate_engine = create_engine("sqlite://")
+    try:
+        candidate = GrantStore(candidate_engine)
+        candidate.grant_many(plan.grants)
+        for identity in plan.identities:
+            candidate.upsert_identity(**identity)
+        return effective_diff(candidate, plan)
+    finally:
+        candidate_engine.dispose()
+
+
+def apply(
+    store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True
+) -> None:
     """Apply a plan in one pass, then (optionally) make Casbin authoritative —
     the cutover. Grants get the use_hub implication for free via grant_many.
 
@@ -222,6 +395,9 @@ def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True)
         raise MigrationBlocked(
             f"refusing to cut over with unresolved conflicts: {plan.conflicts}"
         )
+    mismatch = verify_effective(plan)
+    if mismatch:
+        raise MigrationBlocked(f"effective access would change: {mismatch[:10]}")
     hubs = {normalize(h) for _s, h, _p in plan.grants if h and normalize(h) != "*"}
     if not authoritative:
         # a plain (non-cutover) apply: just add the grants, no marker
@@ -231,7 +407,17 @@ def apply(store: GrantStore, plan: MigrationPlan, *, authoritative: bool = True)
         return
     # The cutover: one atomic, hub-scoped, replace-semantics transaction that
     # also sets the per-hub authority markers.
-    store.apply_migration(plan.grants, plan.attrs, hubs, replace=True, authoritative=True)
+    try:
+        store.apply_migration(
+            plan.grants,
+            plan.attrs,
+            hubs,
+            replace=True,
+            authoritative=True,
+            identities=plan.identities,
+        )
+    except ValueError as exc:
+        raise MigrationBlocked(str(exc)) from exc
 
 
 def diff(store: GrantStore, plan: MigrationPlan) -> dict:
@@ -250,6 +436,6 @@ def diff(store: GrantStore, plan: MigrationPlan) -> dict:
     # not "extra".
     have = {(s, h, p) for s, h, p in store.list_grants() if h in hubs}
     return {
-        "missing": sorted(want - have),   # planned but not in store
-        "extra": sorted(have - want),     # in store but not planned (stale)
+        "missing": sorted(want - have),  # planned but not in store
+        "extra": sorted(have - want),  # in store but not planned (stale)
     }

@@ -20,6 +20,8 @@ prompt is flattened.
 """
 from __future__ import annotations
 
+import asyncio
+
 import base64
 import hashlib
 import json
@@ -115,6 +117,15 @@ def build_app() -> FastAPI:
         )
         wf_dispatcher = await wf_boot.start(hub_dir)
         app.state.workflows = wf_dispatcher
+        from . import deployment
+        from .access.reconcile import sync_owui
+        async def visibility_loop():
+            while True:
+                await asyncio.to_thread(sync_owui, hub_dir)
+                await asyncio.sleep(30)
+        registered = deployment.hubs(hub_dir)
+        visibility_task = (asyncio.create_task(visibility_loop())
+            if deployment.read(hub_dir) and Path(registered[0]['path']) == hub_dir.resolve() else None)
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -125,6 +136,12 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            if visibility_task is not None:
+                visibility_task.cancel()
+                try:
+                    await visibility_task
+                except asyncio.CancelledError:
+                    pass
             if wf_dispatcher is not None:
                 await wf_dispatcher.stop()
             await sched.stop()
@@ -441,13 +458,22 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
-    if not authoritative:
-        return
     verified = (
         request.headers.get("x-openwebui-user-email")
         or request.headers.get("x-hubzoid-user")
         or ""
     ).strip().lower()
+    try:
+        account_id = request.headers.get('x-openwebui-user-id')
+        if verified and account_id:
+            gs.upsert_identity(email=verified, owui_id=account_id)
+        blocked = bool(verified and gs.is_suspended(verified))
+    except Exception:
+        raise HTTPException(503, detail="access check unavailable")
+    if blocked:
+        raise HTTPException(403, detail="Your agent access is blocked. Contact your administrator.")
+    if not authoritative:
+        return
     if not verified:
         raise HTTPException(
             status_code=403,

@@ -1,13 +1,8 @@
-"""One place to get a handle to the hub-owned database.
+"""Database handles: one shared operational store per deployment.
 
-HubZoid owns the hub database. By default it is an embedded SQLite file at
-``<hub>/.hubzoid/hub.db`` (zero config, single node). Set ``DATABASE_URL`` to a
-Postgres URL to use a separately-hosted database instead — the same instance you
-can point Open WebUI at, so there is one database for the hub.
-
-We only ever create our OWN, ``hz_``-prefixed tables through this handle; we
-never read or write Open WebUI's schema. Thin by design: SQLAlchemy Core gives
-us one code path across SQLite and Postgres, no ORM and no models.
+Gateway discovery also works from operator CLI commands. OWUI owns its account
+schema; SQLite DBOS databases remain per hub. PostgreSQL can share a server/DB.
+Only Hubzoid tables are owned here; DBOS owns its execution schema.
 """
 from __future__ import annotations
 
@@ -37,17 +32,25 @@ def operational_url(hub_dir, env=None) -> str:
     markers, identities, access-change audit, workflow state — that every bridge
     of a deployment must agree on.
 
-    Precedence: ``HUBZOID_OPERATIONAL_DB`` (a gateway sets this to one shared
-    SQLite file so all its bridges share one Casbin store) → ``DATABASE_URL``
-    (Postgres, also shared) → the per-hub SQLite (standalone: same as the hub DB).
+    Precedence: the registered deployment manifest (`.hubzoid/deployment.json`,
+    written by the gateway and discovered by bridges and operator CLI commands)
+    is authoritative — so a CLI grant lands in the same store the running gateway
+    reads. A ``HUBZOID_OPERATIONAL_DB`` that disagrees with the manifest is a
+    misconfiguration and raises rather than silently splitting the store. With no
+    manifest (standalone): ``HUBZOID_OPERATIONAL_DB`` → ``DATABASE_URL`` (Postgres,
+    also shared) → the per-hub SQLite (same as the hub DB).
 
     Kept separate from the DBOS system DB (`dbos_url`), which stays per-bridge so
     N bridges never share one SQLite DBOS system database (unproven topology)."""
     env = env if env is not None else os.environ
-    url = (env.get("HUBZOID_OPERATIONAL_DB") or env.get("DATABASE_URL") or "").strip()
-    if url:
-        return url
-    return resolve_url(hub_dir, env)
+    from .deployment import read
+    configured = read(Path(hub_dir), env).get("operational_url")
+    explicit = (env.get("HUBZOID_OPERATIONAL_DB") or "").strip()
+    if configured:
+        if explicit and explicit != configured:
+            raise ValueError("HUBZOID_OPERATIONAL_DB differs from the registered deployment. Update the gateway configuration, not an individual bridge.")
+        return configured
+    return explicit or (env.get("DATABASE_URL") or "").strip() or resolve_url(hub_dir, env)
 
 
 def dbos_url(hub_dir, env=None) -> str:
@@ -56,6 +59,13 @@ def dbos_url(hub_dir, env=None) -> str:
     system DB. Postgres (via ``HUBZOID_DBOS_DB`` or ``DATABASE_URL``) can be shared
     — DBOS supports many instances on one Postgres."""
     env = env if env is not None else os.environ
+    from .deployment import read
+    for hub in read(Path(hub_dir), env).get('hubs', []):
+        if Path(hub['path']).resolve() == Path(hub_dir).resolve() and hub.get('dbos_url'):
+            explicit = (env.get('HUBZOID_DBOS_DB') or '').strip()
+            if explicit and explicit != hub['dbos_url']:
+                raise ValueError('HUBZOID_DBOS_DB differs from the registered deployment')
+            return hub['dbos_url']
     url = (env.get("HUBZOID_DBOS_DB") or "").strip()
     if url:
         return url

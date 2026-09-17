@@ -51,6 +51,9 @@ def decide(hub_dir: Path, ident, permission: str,
     groups, which after cutover would be a bypass."""
     if surfaces is None:
         surfaces = _allowed_surfaces()
+    pre_allowed, reason = is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: True)
+    if not pre_allowed:
+        return False, reason
     hub_dir = Path(hub_dir)
     hub_name = hub_dir.name
     from . import store_for
@@ -58,6 +61,8 @@ def decide(hub_dir: Path, ident, permission: str,
     try:
         gs = store_for(hub_dir)
         authoritative = gs.is_authoritative(hub_name)
+        if gs.is_suspended(getattr(ident, "user", None) or ""):
+            return False, "blocked"
     except Exception:  # noqa: BLE001 — can't determine authority -> deny, don't guess
         log.exception("access: store unavailable for %s; denying", hub_name)
         return (False, "store-error")

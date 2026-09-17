@@ -12,6 +12,7 @@ validates the OWUI session server-side and strips any inbound identity header
 (so a browser can't assert its own identity); a dev resolver keys off an env
 var. Either way, entry is gated by `can(subject, *, manage_access)`.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,14 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from pydantic import BaseModel, Field, ConfigDict
+from . import deployment
+from .access.identity import normalize
 
 from .access import store_for
 from .access.store import MANAGE_ACCESS, ORG, USE_HUB, LastAdminError
 
 log = logging.getLogger("hubzoid.portal")
-
-_PROD_HINTS = ("prod", "_prod", "prod_", "datadog")
 
 
 def _truthy_env(name: str) -> bool:
@@ -38,26 +40,19 @@ def _truthy_env(name: str) -> bool:
 class PortalAdmin:
     subject: str
     is_org_admin: bool
-    manageable: list[str]           # hubs this admin can edit
+    manageable: list[str]
 
 
-def _hub_perms(hub_dir: Path) -> list[str]:
-    """The permission set for a hub: use_hub + manage_access + its restricted
-    function stems."""
-    from .access.loader import load_restricted
-
-    perms = {USE_HUB, MANAGE_ACCESS}
-    try:
-        for _ft, perm in load_restricted(hub_dir):
-            perms.add(perm)
-    except Exception:  # noqa: BLE001
-        pass
-    return sorted(perms)
+class GrantRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    subject: str = Field(min_length=1, max_length=320)
+    hub: str = Field(min_length=1, max_length=200)
+    permission: str = Field(min_length=1, max_length=200)
 
 
-def _is_prod(perm: str) -> bool:
-    p = perm.lower()
-    return any(h in p for h in _PROD_HINTS)
+class PersonRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=320)
+    suspended: bool = True
 
 
 def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | None"]:
@@ -83,17 +78,19 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
         if dev and _truthy_env("HUBZOID_PORTAL_DEV"):
             log.warning(
                 "portal: HUBZOID_PORTAL_DEV is ON — trusting dev user %r without an "
-                "OWUI session. NEVER set this on a public deployment.", dev
+                "OWUI session. NEVER set this on a public deployment.",
+                dev,
             )
             subject = dev
         if not subject:
-            subject = _verify_owui_session(request)
+            subject = _verify_owui_session(request, hub_dir)
         if not subject:
             return None
         gs = store_for(hub_dir)
         org = gs.can(subject, ORG, MANAGE_ACCESS)
         manageable = [
-            h for h in _known_hubs(hub_dir, gs)
+            h
+            for h in _known_hubs(hub_dir, gs)
             if org or gs.can(subject, h, MANAGE_ACCESS)
         ]
         if not org and not manageable:
@@ -118,19 +115,25 @@ def _check_same_origin(request: Request) -> None:
     # Require a real http/https origin with an authority — 'null', an opaque
     # origin, or a missing header is rejected (it can't be proven same-origin).
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise HTTPException(status_code=403, detail="missing or invalid Origin on a mutation")
+        raise HTTPException(
+            status_code=403, detail="missing or invalid Origin on a mutation"
+        )
     req_host = request.headers.get("host", "")
     if not req_host or parsed.netloc != req_host:
         raise HTTPException(status_code=403, detail="cross-origin request refused")
 
 
-def _verify_owui_session(request: Request) -> str:
+def _verify_owui_session(request: Request, hub_dir: Path | None = None) -> str:
     """Validate the viewer's OWUI session cookie server-side and return the
     verified email, or '' — never trusting a client-sent identity header."""
     token = request.cookies.get("token") or ""
     if not token:
         return ""
-    base = os.environ.get("OWUI_INTERNAL_URL") or os.environ.get("WEBUI_URL")
+    base = (
+        deployment.owui_url(hub_dir)
+        if hub_dir
+        else (os.environ.get("OWUI_INTERNAL_URL") or os.environ.get("WEBUI_URL"))
+    )
     if not base:
         return ""
     try:
@@ -142,22 +145,25 @@ def _verify_owui_session(request: Request) -> str:
             timeout=5.0,
         )
         if r.status_code == 200:
-            return (r.json().get("email") or "").strip().lower()
+            user = r.json()
+            if user.get("role") == "pending":
+                return ""
+            email = normalize(user.get("email", ""))
+            if hub_dir and email:
+                store_for(hub_dir).upsert_identity(
+                    email=email, owui_id=user.get("id"), display=user.get("name")
+                )
+            return email
     except Exception:  # noqa: BLE001
         log.warning("portal: OWUI session verification failed")
     return ""
 
 
 def _known_hubs(hub_dir: Path, gs) -> list[str]:
-    """Hubs the portal knows about: this deployment's hub + any hub with grants."""
-    hubs = {hub_dir.name}
-    for _subj, hub, _perm in gs.list_grants():
-        if hub and hub != ORG:
-            hubs.add(hub)
-    return sorted(hubs)
+    return sorted(h["key"] for h in deployment.hubs(hub_dir))
 
 
-def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | None"] | None = None) -> APIRouter:
+def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     hub_dir = Path(hub_dir)
     resolver = admin_resolver or default_admin_resolver(hub_dir)
     router = APIRouter(prefix="/portal/api", tags=["portal"])
@@ -165,164 +171,346 @@ def build_router(hub_dir, admin_resolver: Callable[[Request], "PortalAdmin | Non
     def require_admin(request: Request) -> PortalAdmin:
         admin = resolver(request)
         if admin is None:
-            raise HTTPException(status_code=403, detail="not an admin")
+            raise HTTPException(
+                403, "Sign in with an account allowed to manage agent access."
+            )
         return admin
 
-    def _require_manage(admin: PortalAdmin, hub: str) -> None:
-        if not (admin.is_org_admin or hub in admin.manageable):
-            raise HTTPException(status_code=403, detail=f"cannot manage {hub}")
+    def allowed_hubs(admin):
+        return [
+            h
+            for h in deployment.hubs(hub_dir)
+            if admin.is_org_admin or h["key"] in admin.manageable
+        ]
 
-    def _require_view(admin: PortalAdmin, hub: str) -> None:
-        # a hub admin may only read the hubs they manage; an org admin, all.
-        if not (admin.is_org_admin or hub in admin.manageable):
-            raise HTTPException(status_code=403, detail=f"cannot view {hub}")
+    def require_hub(admin, hub):
+        if not admin.is_org_admin and hub not in admin.manageable:
+            raise HTTPException(403, f"Cannot manage {hub}")
+        try:
+            return deployment.hub_path(hub_dir, hub)
+        except KeyError:
+            raise HTTPException(404, "Hub is not registered in this deployment")
 
-    def _reject_reserved(subject: str, hub: str, perm: str, admin: PortalAdmin) -> None:
-        # The reserved wildcard subject '*' and org domain '*' are not general
-        # grant targets from the portal: only org admins, and only for the
-        # intended combos (public use_hub; org-scoped manage_access).
-        if subject == "*":
-            if not (admin.is_org_admin and perm.lower() == USE_HUB and hub != ORG):
-                raise HTTPException(403, "the wildcard subject is only for public use_hub (org admin)")
-        if hub == ORG and perm.lower() != MANAGE_ACCESS:
-            raise HTTPException(403, "the org domain only carries manage_access")
+    def selected(admin, hub):
+        if hub:
+            require_hub(admin, hub)
+            return [h for h in allowed_hubs(admin) if h["key"] == hub]
+        return allowed_hubs(admin)
 
     @router.get("/me")
-    def me(admin: PortalAdmin = Depends(require_admin)):
-        return {
-            "subject": admin.subject,
-            "org_admin": admin.is_org_admin,
-            "manageable": admin.manageable,
-        }
+    def me(admin=Depends(require_admin)):
+        return dict(
+            subject=admin.subject,
+            org_admin=admin.is_org_admin,
+            manageable=[h["key"] for h in allowed_hubs(admin)],
+        )
 
     @router.get("/hubs")
-    def hubs(admin: PortalAdmin = Depends(require_admin)):
+    def hubs(admin=Depends(require_admin)):
         gs = store_for(hub_dir)
-        out = []
-        for h in _known_hubs(hub_dir, gs):
-            if admin.is_org_admin or h in admin.manageable:
-                out.append({"key": h, "name": h, "perms": _hub_perms(hub_dir)})
-        return {"hubs": out}
+        return {
+            "hubs": [
+                dict(
+                    key=h["key"],
+                    name=h["name"],
+                    authoritative=gs.is_authoritative(h["key"]),
+                )
+                for h in allowed_hubs(admin)
+            ]
+        }
 
     @router.get("/permissions")
-    def permissions(hub: str, admin: PortalAdmin = Depends(require_admin)):
-        _require_view(admin, hub)
-        return {
-            "hub": hub,
-            "permissions": [
-                {"permission": p, "prod": _is_prod(p)} for p in _hub_perms(hub_dir)
-            ],
-        }
+    def permissions(hub: str, admin=Depends(require_admin)):
+        path = require_hub(admin, hub)
+        return dict(hub=hub, permissions=deployment.permission_catalog(path))
 
     @router.get("/access")
-    def access(hub: str, admin: PortalAdmin = Depends(require_admin)):
-        _require_view(admin, hub)
+    def access(
+        hub: str,
+        q: str = "",
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=200),
+        admin=Depends(require_admin),
+    ):
+        path = require_hub(admin, hub)
         gs = store_for(hub_dir)
-        # group grants by subject for this hub (+ the wildcard subject)
-        rows: dict[str, dict] = {}
-        for subject, dom, perm in gs.list_grants(hub):
-            r = rows.setdefault(subject, {"subject": subject, "perms": [],
-                                          "kind": "service" if subject.startswith("workflow:") else "person"})
-            r["perms"].append(perm)
-        for r in rows.values():
-            r["center"] = gs.get_attr(hub, r["subject"], "center")
-        return {
-            "hub": hub,
-            "editable": admin.is_org_admin or hub in admin.manageable,
-            "permissions": _hub_perms(hub_dir),
-            "rows": sorted(rows.values(), key=lambda r: r["subject"]),
-        }
+        rows = {}
+        for subject, domain, perm in gs.list_grants():
+            if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
+                row = rows.setdefault(
+                    subject,
+                    dict(
+                        subject=subject,
+                        perms=[],
+                        inherited=[],
+                        kind="service" if subject.startswith("workflow:") else "person",
+                    ),
+                )
+                row["perms" if domain == hub else "inherited"].append(perm)
+        for subject, row in rows.items():
+            row["center"] = gs.get_attr(hub, subject, "center")
+            row["effective"] = sorted(gs.permissions_for(subject, hub))
+            identity = gs.identity(subject) or {}
+            row["display"] = identity.get("display") or subject
+            row["status"] = (
+                "blocked"
+                if gs.is_suspended(subject)
+                else (
+                    "everyone"
+                    if subject == "*"
+                    else (
+                        "service"
+                        if row["kind"] == "service"
+                        else (
+                            "awaiting-signup"
+                            if not identity.get("owui_id")
+                            else (
+                                "pending-approval"
+                                if identity.get("pending")
+                                else "active"
+                            )
+                        )
+                    )
+                )
+            )
+        result = [
+            r
+            for r in rows.values()
+            if q.lower() in (r["subject"] + " " + r["display"]).lower()
+        ]
+        result.sort(key=lambda r: r["subject"])
+        return dict(
+            hub=hub,
+            editable=True,
+            authoritative=gs.is_authoritative(hub),
+            can_manage_admins=admin.is_org_admin,
+            permissions=deployment.permission_catalog(path),
+            total=len(result),
+            public=gs.can("__signed_in_preview__", hub, USE_HUB),
+            rows=result[offset : offset + limit],
+        )
+
+    def mutate(request, payload, admin, revoke=False):
+        _check_same_origin(request)
+        subject, hub, perm = map(
+            normalize, (payload.subject, payload.hub, payload.permission)
+        )
+        gs = store_for(hub_dir)
+        if hub == ORG:
+            if not admin.is_org_admin or perm != MANAGE_ACCESS or subject == "*":
+                raise HTTPException(
+                    403,
+                    "Only organization admins can manage organization administrators",
+                )
+        else:
+            path = require_hub(admin, hub)
+            known = {p["permission"] for p in deployment.permission_catalog(path)}
+            if perm not in known and not (
+                revoke and (subject, hub, perm) in gs.list_grants(hub)
+            ):
+                raise HTTPException(422, "Unknown permission for this hub")
+        if subject == "*" and not (admin.is_org_admin and perm == USE_HUB):
+            raise HTTPException(
+                403, "Only organization admins may change public hub access"
+            )
+        if not admin.is_org_admin and (
+            perm == MANAGE_ACCESS
+            or (revoke and perm == USE_HUB and gs.can(subject, hub, MANAGE_ACCESS))
+        ):
+            raise HTTPException(
+                403, "Only organization admins may change administrator access"
+            )
+        try:
+            if revoke:
+                gs.revoke(subject, hub, perm, actor=admin.subject)
+            else:
+                if gs.is_suspended(subject):
+                    raise HTTPException(
+                        409, "Reactivate this user before granting access"
+                    )
+                gs.grant(subject, hub, perm, actor=admin.subject)
+        except (ValueError, LastAdminError) as exc:
+            raise HTTPException(409, str(exc))
+        return dict(
+            ok=True,
+            visibility="Updates in Open WebUI within 30 seconds; use Sync now to retry.",
+        )
 
     @router.post("/access/grant")
-    def grant(request: Request, admin: PortalAdmin = Depends(require_admin),
-              payload: dict = Body(...)):
-        _check_same_origin(request)
-        subject = (payload.get("subject") or "").strip()
-        hub = (payload.get("hub") or "").strip()
-        perm = (payload.get("permission") or "").strip()
-        if not subject or not hub or not perm:
-            raise HTTPException(400, "subject, hub, permission required")
-        # only org admins may grant manage_access
-        if perm.lower() == MANAGE_ACCESS and not admin.is_org_admin:
-            raise HTTPException(403, "only org admins can grant manage_access")
-        _reject_reserved(subject, hub, perm, admin)
-        _require_manage(admin, hub)
-        store_for(hub_dir).grant(subject, hub, perm, actor=admin.subject)
-        return {"ok": True}
+    def grant(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
+        return mutate(request, payload, admin)
 
     @router.post("/access/revoke")
-    def revoke(request: Request, admin: PortalAdmin = Depends(require_admin),
-               payload: dict = Body(...)):
+    def revoke(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
+        return mutate(request, payload, admin, True)
+
+    @router.get("/people")
+    def people(
+        q: str = "",
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=200),
+        admin=Depends(require_admin),
+    ):
+        gs = store_for(hub_dir)
+        scopes = {h["key"] for h in allowed_hubs(admin)}
+        grants = [g for g in gs.list_grants() if admin.is_org_admin or g[1] in scopes]
+        visible = {g[0] for g in grants}
+        rows = []
+        for person in gs.identities():
+            sub = person["subject"]
+            if not admin.is_org_admin and sub not in visible:
+                continue
+            if q.lower() not in (sub + " " + (person["display"] or "")).lower():
+                continue
+            person["blocked"] = gs.is_suspended(sub)
+            person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
+            person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
+            rows.append(person)
+        return {"people": rows[offset : offset + limit], "total": len(rows)}
+
+    @router.post("/people/refresh")
+    def refresh_people(request: Request, admin=Depends(require_admin)):
         _check_same_origin(request)
-        subject = (payload.get("subject") or "").strip()
-        hub = (payload.get("hub") or "").strip()
-        perm = (payload.get("permission") or "").strip()
-        if perm.lower() == MANAGE_ACCESS and not admin.is_org_admin:
-            raise HTTPException(403, "only org admins can revoke manage_access")
-        _require_manage(admin, hub)
+        if not admin.is_org_admin:
+            raise HTTPException(403, "Organization admin required")
+        from .access.owui import directory
+
         try:
-            store_for(hub_dir).revoke(subject, hub, perm, actor=admin.subject)
-        except LastAdminError as e:
-            raise HTTPException(409, str(e))
+            rows = directory(hub_dir)
+            store_for(hub_dir).reconcile_accounts(
+                [
+                    dict(
+                        id=r["owui_id"],
+                        email=r["email"],
+                        name=r["display"],
+                        role=r["role"],
+                    )
+                    for r in rows
+                ]
+            )
+            return {"ok": True, "count": len(rows)}
+        except Exception:
+            log.exception("OWUI directory refresh failed")
+            raise HTTPException(
+                503, "Account refresh failed. Check OWUI service credentials and logs."
+            )
+
+    @router.post("/people/block")
+    def block(request: Request, payload: PersonRequest, admin=Depends(require_admin)):
+        _check_same_origin(request)
+        if not admin.is_org_admin:
+            raise HTTPException(403, "Organization admin required")
+        try:
+            store_for(hub_dir).suspend(
+                payload.subject, actor=admin.subject, suspended=payload.suspended
+            )
+        except (LastAdminError, ValueError) as exc:
+            raise HTTPException(409, str(exc))
         return {"ok": True}
 
     @router.get("/workflows")
-    def workflows(admin: PortalAdmin = Depends(require_admin)):
-        # Read the SHARED catalog (every hub's workflows), scoped to the hubs this
-        # admin manages. Falls back to the in-process registry (standalone).
-        gs = store_for(hub_dir)
-        hubs = None if admin.is_org_admin else admin.manageable
-        rows = gs.list_workflows(hubs)
-        if rows:
-            return {"workflows": rows}
-        try:
-            from .workflows import runtime as wf
+    def workflows(hub: str | None = None, admin=Depends(require_admin)):
+        from .workflows.observe import catalog
 
-            return {"workflows": [
-                {"hub": hub_dir.name, "name": w.name, "schedule": w.schedule,
-                 "timezone": w.timezone}
-                for w in wf.registry()
-                if admin.is_org_admin or hub_dir.name in admin.manageable
-            ]}
-        except Exception:  # noqa: BLE001
-            return {"workflows": []}
+        return {
+            "workflows": [
+                w for h in selected(admin, hub) for w in catalog(Path(h["path"]))
+            ]
+        }
+
+    @router.get("/runs")
+    def runs(
+        hub: str,
+        workflow: str | None = None,
+        run_id: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        admin=Depends(require_admin),
+    ):
+        from .workflows.observe import runs as read_runs
+
+        path = require_hub(admin, hub)
+        try:
+            return {
+                "runs": read_runs(
+                    path, name=workflow, run_id=run_id, limit=limit, offset=offset
+                )
+            }
+        except Exception:
+            log.exception("Workflow history unavailable")
+            raise HTTPException(
+                503,
+                "Run history unavailable; check the workflow database and server logs.",
+            )
 
     @router.get("/audit")
-    def audit(limit: int = 50, user: str = None, denied: bool = False,
-              admin: PortalAdmin = Depends(require_admin)):
+    def audit(
+        hub: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0, le=10000),
+        user: str | None = None,
+        denied: bool = False,
+        admin=Depends(require_admin),
+    ):
         from .access import audit as auditlib
 
-        rows = auditlib.read(hub_dir, limit=limit, user=user,
-                             decision=("deny" if denied else None))
-        return {"rows": rows}
+        rows = [
+            dict(r, hub=h["key"])
+            for h in selected(admin, hub)
+            for r in auditlib.read(
+                Path(h["path"]),
+                limit=limit + offset,
+                user=user,
+                decision="deny" if denied else None,
+            )
+        ]
+        rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return {"rows": rows[offset : offset + limit]}
 
     @router.get("/access-changes")
-    def access_changes(limit: int = 100, admin: PortalAdmin = Depends(require_admin)):
-        """Grant/revoke change events (who changed whose access), newest first —
-        scoped to the hubs this admin manages."""
-        rows = store_for(hub_dir).read_access_audit(limit if admin.is_org_admin else 500)
+    def changes(
+        hub: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        user: str | None = None,
+        admin=Depends(require_admin),
+    ):
+        scopes = [h["key"] for h in selected(admin, hub)]
+        if admin.is_org_admin and not hub:
+            scopes.append(ORG)
+        return {
+            "rows": store_for(hub_dir).read_access_audit(
+                limit, hubs=scopes, subject=user, offset=offset
+            )
+        }
+
+    @router.post("/sync")
+    def sync(request: Request, admin=Depends(require_admin)):
+        _check_same_origin(request)
         if not admin.is_org_admin:
-            mine = set(admin.manageable)
-            rows = [r for r in rows if (r.get("hub") in mine or r.get("hub") is None)][:limit]
-        return {"rows": rows}
+            raise HTTPException(403, "Organization admin required")
+        from .access.reconcile import sync_owui
+
+        return sync_owui(hub_dir)
 
     @router.get("/overview")
-    def overview(admin: PortalAdmin = Depends(require_admin)):
+    def overview(admin=Depends(require_admin)):
+        from .access.reconcile import sync_status
+
         gs = store_for(hub_dir)
-        grants = gs.list_grants()
-        if not admin.is_org_admin:
-            mine = set(admin.manageable)
-            grants = [g for g in grants if g[1] in mine]
-        subjects = {s for s, _h, _p in grants}
-        hubs = _known_hubs(hub_dir, gs)
-        if not admin.is_org_admin:
-            hubs = [h for h in hubs if h in admin.manageable]
-        return {
-            "hubs": len(hubs),
-            "grants": len(grants),
-            "people": len(subjects),
-            "authoritative": gs.is_authoritative(hub_dir.name),
-        }
+        hs = allowed_hubs(admin)
+        keys = {h["key"] for h in hs}
+        grants = [g for g in gs.list_grants() if g[1] in keys]
+        managed = sum(gs.is_authoritative(h) for h in keys)
+        return dict(
+            hubs=len(hs),
+            grants=len(grants),
+            people=len({g[0] for g in grants if g[0] != "*"}),
+            authoritative=managed == len(hs),
+            managed=managed,
+            legacy=len(hs) - managed,
+            visibility=sync_status(hub_dir),
+        )
 
     return router
 

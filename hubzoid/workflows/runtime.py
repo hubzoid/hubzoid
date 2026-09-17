@@ -2,8 +2,8 @@
 """The DBOS execution layer: `@workflow`, `@step`, and the in-zone dispatcher.
 
 DBOS is the durable-execution engine, embedded (no server). It is invisible to
-the author, who only writes `@workflow` / `@step` / `hub`. DBOS shares the ONE
-hub database (its system tables live alongside `hz_*`), SQLite by default.
+the author, who only writes `@workflow` / `@step` / `hub`. DBOS owns execution history in a per-hub SQLite database (or shared Postgres);
+access, workflow state and configuration share the deployment operational store.
 
 Boot order (server lifespan or CLI):
     init(hub_dir)              # construct the DBOS singleton over the hub DB
@@ -15,6 +15,7 @@ Durability is at-least-once, not exactly-once: a completed step is resumed from
 its checkpoint on restart; an interrupted step can re-run, so side effects must
 be idempotent.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -23,6 +24,7 @@ import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from datetime import timezone as utc_timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,13 +33,13 @@ from . import context
 
 log = logging.getLogger("hubzoid.workflows")
 
-_DBOS = None                     # the DBOS class, imported lazily
+_DBOS = None  # the DBOS class, imported lazily
 _INITED = False
 _LAUNCHED = False
 _HUB_DIR: Path | None = None
 _HUB_NAME: str = ""
 _ENGINE: Any = None
-_QUEUE = None                    # one durable queue per hub, global concurrency 1
+_QUEUE = None  # one durable queue per hub, global concurrency 1
 _lock = threading.Lock()
 
 
@@ -45,7 +47,7 @@ _lock = threading.Lock()
 class WorkflowDef:
     name: str
     fn: Callable
-    wrapped: Callable            # the DBOS-wrapped callable
+    wrapped: Callable  # the DBOS-wrapped callable
     schedule: str | None
     timezone: str | None
     on_failure: str | None
@@ -57,7 +59,10 @@ _REGISTRY: "dict[str, WorkflowDef]" = {}
 def _app_name(hub_name: str) -> str:
     """DBOS app name: 3–30 chars, lowercase, alnum + hyphen."""
     slug = re.sub(r"[^a-z0-9-]", "-", hub_name.lower()).strip("-") or "hub"
-    slug = f"hz-{slug}"[:30]
+    import hashlib
+
+    # Keep names distinct even when punctuation or long prefixes collide.
+    slug = f"hz-{slug[:17]}-{hashlib.sha256(hub_name.encode()).hexdigest()[:8]}"
     if len(slug) < 3:
         slug = (slug + "-hub")[:30]
     return slug
@@ -69,6 +74,8 @@ def init(hub_dir, hub_name: str | None = None) -> None:
     global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE
     with _lock:
         if _INITED:
+            if _HUB_DIR.resolve() != Path(hub_dir).resolve():
+                raise RuntimeError("Each hub needs its own workflow bridge process")
             return
         from dbos import DBOS, Queue
 
@@ -79,8 +86,12 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         # collision-safe); DBOS system tables stay PER-BRIDGE so a gateway's N
         # bridges never share one SQLite DBOS system database.
         _ENGINE = db.operational_engine(_HUB_DIR)
-        DBOS(config={"name": _app_name(_HUB_NAME),
-                     "system_database_url": db.dbos_url(_HUB_DIR)})
+        DBOS(
+            config={
+                "name": _app_name(_HUB_NAME),
+                "system_database_url": db.dbos_url(_HUB_DIR),
+            }
+        )
         # One durable queue per hub, global concurrency 1: two due workflows (or a
         # manual + scheduled run) in the same hub never overlap.
         _QUEUE = Queue(f"{_app_name(_HUB_NAME)}-wf", concurrency=1)
@@ -107,14 +118,20 @@ def _load_settings() -> dict:
         import yaml
 
         data = yaml.safe_load(path.read_text()) or {}
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise ValueError("workflows/settings.yaml must be a mapping")
+        return data
     except Exception:  # noqa: BLE001 — bad config never crashes a run
-        log.warning("workflows: could not read %s", path)
-        return {}
+        log.exception("workflows: could not read %s", path)
+        raise
 
 
-def workflow(schedule: str | None = None, *, timezone: str | None = None,
-             on_failure: str | None = None):
+def workflow(
+    schedule: str | None = None,
+    *,
+    timezone: str | None = None,
+    on_failure: str | None = None,
+):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
     per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob."""
@@ -122,24 +139,40 @@ def workflow(schedule: str | None = None, *, timezone: str | None = None,
 
     def deco(fn: Callable):
         name = fn.__name__
+        if name in _REGISTRY:
+            raise ValueError(f"duplicate workflow name: {name}")
+        if schedule:
+            from .schedule_grammar import next_after
+
+            next_after(schedule, timezone, datetime.now(utc_timezone.utc))
 
         @_DBOS.workflow(name=name)
         def wrapped(hub_name: str | None = None):
             hub_name = hub_name or _HUB_NAME
             with context.run_scope(
-                hub=hub_name, workflow=name, hub_dir=_HUB_DIR, engine=_ENGINE,
-                settings=_load_settings(), subject=f"workflow:{name}",
+                hub=hub_name,
+                workflow=name,
+                hub_dir=_HUB_DIR,
+                engine=_ENGINE,
+                settings=_load_settings(),
+                subject=f"workflow:{name}",
             ):
                 try:
                     return fn()
-                except Exception as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
+                except (
+                    Exception
+                ) as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
                     if on_failure:
                         _notify_failure(on_failure, name, exc)
                     raise
 
         _REGISTRY[name] = WorkflowDef(
-            name=name, fn=fn, wrapped=wrapped, schedule=schedule,
-            timezone=timezone, on_failure=on_failure,
+            name=name,
+            fn=fn,
+            wrapped=wrapped,
+            schedule=schedule,
+            timezone=timezone,
+            on_failure=on_failure,
         )
         log.info("workflows: registered %r (schedule=%r)", name, schedule)
         return wrapped
@@ -167,14 +200,18 @@ def _wrap_seams_as_steps() -> None:
     on (max 3) since these are external calls."""
     raw_llm, raw_agent = context._LLM, context._AGENT
     if raw_llm is not None and context._LLM_STEP is None:
+
         @_DBOS.step(retries_allowed=True, max_attempts=3)
         def _llm_step(prompt: str, hub_dir_str: str, subject: str):
             return raw_llm(prompt, hub_dir=Path(hub_dir_str), subject=subject)
+
         context._LLM_STEP = _llm_step
     if raw_agent is not None and context._AGENT_STEP is None:
+
         @_DBOS.step(retries_allowed=True, max_attempts=3)
         def _agent_step(task: str, hub_dir_str: str, subject: str):
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
+
         context._AGENT_STEP = _agent_step
 
 
@@ -188,8 +225,9 @@ def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
 
             httpx.post(target, json=payload, timeout=10.0)
         else:
-            log.error("workflow %r failed (on_failure=%r): %s",
-                      workflow_name, target, error)
+            log.error(
+                "workflow %r failed (on_failure=%r): %s", workflow_name, target, error
+            )
     except Exception:  # noqa: BLE001 — notification must never mask the failure
         log.exception("workflows: on_failure notify failed for %r", workflow_name)
 
@@ -219,13 +257,51 @@ def registry() -> list[WorkflowDef]:
     return list(_REGISTRY.values())
 
 
-def start(name: str, hub_name: str | None = None):
+def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
+    """Tear the DBOS engine down cleanly at bridge shutdown. In-flight runs get
+    up to `completion_timeout_sec` to finish; anything still running stays
+    recoverable in the system DB and resumes on the next launch (durability is
+    preserved — we do NOT cancel recoverable work). Best-effort: a failure here
+    must never hang or crash the shutdown path. Resets module state so the
+    process could re-init a hub afterwards."""
+    global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE
+    with _lock:
+        if not _INITED:
+            return
+        try:
+            if _DBOS is not None:
+                _DBOS.destroy(workflow_completion_timeout_sec=completion_timeout_sec)
+        except Exception:  # noqa: BLE001 — shutdown must be safe
+            log.exception("workflows: DBOS shutdown failed (continuing)")
+        finally:
+            _DBOS = None
+            _INITED = False
+            _LAUNCHED = False
+            _QUEUE = None
+            _REGISTRY = {}
+            _HUB_DIR = None
+            _HUB_NAME = None
+            _ENGINE = None
+            log.info("workflows: DBOS shut down")
+
+
+def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
     """Fire one workflow now (dispatcher + `hubzoid schedule run`). Enqueues on
     the hub's concurrency-1 queue so runs never overlap."""
     wf = _REGISTRY[name]
-    if _QUEUE is not None:
-        return _QUEUE.enqueue(wf.wrapped, hub_name or _HUB_NAME)
-    return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
+    from dbos import SetWorkflowID
+    from contextlib import nullcontext
+    import uuid
+
+    key = f"{hub_name or _HUB_NAME}:{name}:{scheduled_at}" if scheduled_at else None
+    with (
+        SetWorkflowID(str(uuid.uuid5(uuid.NAMESPACE_URL, key)))
+        if key
+        else nullcontext()
+    ):
+        if _QUEUE is not None:
+            return _QUEUE.enqueue(wf.wrapped, hub_name or _HUB_NAME)
+        return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
 
 
 def run_now(name: str, hub_name: str | None = None):
@@ -240,16 +316,70 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str]:
 
     now = now or datetime.now(timezone.utc)
     started: list[str] = []
+    failed: list[str] = []
     for wf in _REGISTRY.values():
         if not wf.schedule:
             continue
         try:
             if due_between(wf.schedule, wf.timezone, last, now):
-                start(wf.name)
+                from .schedule_grammar import next_after
+
+                due = next_after(wf.schedule, wf.timezone, last)
+                missed = 0
+                # Keep only the latest slot when a dispatcher is delayed.
+                while True:
+                    following = next_after(wf.schedule, wf.timezone, due)
+                    if following > now:
+                        break
+                    due, missed = following, missed + 1
+                start(wf.name, scheduled_at=due.astimezone(timezone.utc).isoformat())
+                from ..access import store_for
+
+                gs = store_for(_HUB_DIR)
+                health = gs.runtime_health(_HUB_NAME)
+                gs.set_runtime_health(
+                    _HUB_NAME,
+                    last_dispatch=now.isoformat(),
+                    missed=health.get("missed", 0) + missed,
+                )
                 started.append(wf.name)
         except Exception:  # noqa: BLE001 — one bad schedule never stalls the loop
+            failed.append(wf.name)
             log.exception("workflows: dispatch failed for %r", wf.name)
+    if failed:
+        raise RuntimeError("Could not dispatch workflows: " + ", ".join(failed))
     return started
+
+
+def downtime_missed(since: datetime, now: datetime | None = None) -> dict:
+    """Count scheduled slots that fell in (since, now] while no dispatcher was
+    running (e.g. across a bridge restart). Reporting only — the dispatcher does
+    NOT back-fill these; this just makes the downtime window visible."""
+    from .schedule_grammar import next_after
+
+    now = now or datetime.now(timezone.utc)
+    total = 0
+    per: dict[str, int] = {}
+    for wf in _REGISTRY.values():
+        if not wf.schedule:
+            continue
+        count = 0
+        cursor = since
+        # Cap the walk so a pathological schedule + long downtime can't spin.
+        for _ in range(100_000):
+            cursor = next_after(wf.schedule, wf.timezone, cursor)
+            if cursor > now:
+                break
+            count += 1
+        if count:
+            per[wf.name] = count
+            total += count
+    return {
+        "since": since.astimezone(timezone.utc).isoformat(),
+        "until": now.astimezone(timezone.utc).isoformat(),
+        "missed": total,
+        "by_workflow": per,
+    }
 
 
 def load_workflows(hub_dir) -> int:
@@ -261,6 +391,11 @@ def load_workflows(hub_dir) -> int:
     root = resolve_bucket(Path(hub_dir), "workflows")
     if root is None or not root.is_dir():
         return 0
+    from .observe import definitions
+
+    errors = [r for r in definitions(hub_dir) if r["error"]]
+    if errors:
+        raise ValueError(str(errors))
     before = len(_REGISTRY)
     for wf_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for py in sorted(wf_dir.glob("*.py")):
@@ -272,6 +407,7 @@ def load_workflows(hub_dir) -> int:
                 module = importlib.util.module_from_spec(spec)
                 try:
                     spec.loader.exec_module(module)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("workflows: failed to load %s", py)
+                    raise
     return len(_REGISTRY) - before

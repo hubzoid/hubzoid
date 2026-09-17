@@ -304,3 +304,37 @@ def test_upstream_sees_public_host_and_scheme(edge_url):
     )
     assert "host=hub.example.com" in r.text
     assert "proto=https" in r.text
+
+
+def test_portal_html_injection_preserves_compressed_response_cookies(monkeypatch):
+    import gzip
+    from starlette.testclient import TestClient
+
+    html = b'<html><body>Chat</body></html>'
+    real_client = httpx.AsyncClient
+
+    def upstream(request):
+        return httpx.Response(200, stream=httpx.ByteStream(gzip.compress(html)), headers=[
+            ('content-type', 'text/html; charset=utf-8'),
+            ('content-encoding', 'gzip'), ('etag', 'old-body'),
+            ('set-cookie', 'token=one; HttpOnly; Path=/'),
+            ('set-cookie', 'session=two; Secure; Path=/'),
+            ('x-content-type-options', 'nosniff'),
+        ])
+
+    monkeypatch.setattr(edge.httpx, 'AsyncClient', lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base='http://owui', routes=[edge.EdgeRoute('/portal', 'http://bridge')])
+    with TestClient(app) as client:
+        result = client.get('/')
+        assert result.status_code == 200
+        assert result.text.count('/hubzoid-portal-navigation.js') == 1
+        assert 'Chat</body>' not in result.text
+        assert result.headers.get_list('set-cookie') == [
+            'token=one; HttpOnly; Path=/', 'session=two; Secure; Path=/']
+        assert result.headers['x-content-type-options'] == 'nosniff'
+        assert 'etag' not in result.headers
+        assert 'content-encoding' not in result.headers
+        assert int(result.headers['content-length']) == len(result.content)
+        # Bridge/portal HTML must pass through untouched.
+        assert client.get('/portal/').content == html

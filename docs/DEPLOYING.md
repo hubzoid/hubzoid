@@ -514,3 +514,6 @@ Beyond those, the image behaves like a standard FastAPI / Uvicorn
 service: it listens on the env-var `PORT` (default 3080), accepts
 `.env`-style config as container env vars, and exposes Open WebUI's
 `/health` endpoint for liveness probes.
+
+For multi-hub setup, account ownership, migration preview, cutover and rollback,
+see [Administration](ADMINISTRATION.md).

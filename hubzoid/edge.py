@@ -33,6 +33,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from dataclasses import dataclass
 
 import httpx
@@ -194,6 +195,27 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
+        if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
+            from .portal_navigation import SCRIPT
+            return Response(SCRIPT, media_type='application/javascript')
+        # Only model ACLs for migrated hubs are locked. Shared groups still serve
+        # unmigrated hubs and OWUI's other resources during partial cutover.
+        if os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
+            from . import deployment
+            from .access import store_for
+            try:
+                cfg = deployment.read(Path('.'), require_hub=False)
+                body = await request.body()
+                payload = json.loads(body) if body else {}
+                model_id = payload.get('id') or request.query_params.get('id')
+                for h in cfg['hubs']:
+                    if h['model_id'] == model_id and store_for(Path(h['path'])).is_authoritative(h['key']):
+                        if payload.get('access_grants') is not None or 'delete' in request.url.path or request.method == 'DELETE':
+                            return Response('Agent access is managed at /portal/. Open WebUI accounts and legacy groups remain available.', status_code=403)
+            except Exception:
+                log.exception('Cannot verify managed model access')
+                return Response('Access configuration unavailable; retry later.',status_code=503)
         # OWUI access-UI lock: once Casbin is authoritative, block browser writes
         # to OWUI's group/model-access routes (even the owner-admin's) so access
         # is managed only in the Hubzoid portal. The Hubzoid service account
@@ -228,6 +250,18 @@ def build_edge_app(
         except httpx.ConnectError:
             return Response("upstream unavailable", status_code=502)
 
+        if portal_enabled and 'text/html' in resp.headers.get('content-type','') and _match(request.url.path, norm_routes) is None:
+            from .portal_navigation import inject
+            body = await resp.aread()
+            await resp.aclose()
+            headers = _response_headers(resp)
+            for k in ('content-length','content-encoding','etag'):
+                headers.pop(k,None)
+            result = Response(inject(body),status_code=resp.status_code,headers=headers)
+            for k,v in resp.headers.multi_items():
+                if k.lower() == 'set-cookie':
+                    result.raw_headers.append((b'set-cookie',v.encode('latin-1')))
+            return result
         sr = StreamingResponse(
             resp.aiter_raw(),
             status_code=resp.status_code,
