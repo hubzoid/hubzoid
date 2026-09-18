@@ -124,8 +124,13 @@ def build_app() -> FastAPI:
                 await asyncio.to_thread(sync_owui, hub_dir)
                 await asyncio.sleep(30)
         registered = deployment.hubs(hub_dir)
+        from .access import owui as owui_lib
+        # Only mirror to the chat app when there is one configured. A standalone
+        # bridge with no Open WebUI has nothing to sync — starting the loop there
+        # would just log a permanent, meaningless "sync failed".
         visibility_task = (asyncio.create_task(visibility_loop())
-            if deployment.read(hub_dir) and Path(registered[0]['path']) == hub_dir.resolve() else None)
+            if deployment.read(hub_dir) and Path(registered[0]['path']) == hub_dir.resolve()
+            and owui_lib.configured(hub_dir) else None)
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and

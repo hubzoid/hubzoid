@@ -13,6 +13,18 @@ from .. import deployment
 from ..gateway_provision import _signin_or_bootstrap
 
 
+def configured(hub_dir) -> bool:
+    """Whether an Open WebUI target is reachable to mirror visibility to. When
+    false (e.g. a standalone bridge with no gateway), there is simply nothing to
+    sync — callers should treat that as idle, not an error."""
+    env = {**dotenv_values(Path(hub_dir) / ".env"), **os.environ}
+    return bool(
+        deployment.owui_url(Path(hub_dir))
+        and env.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
+        and env.get("HUBZOID_GATEWAY_ADMIN_PASSWORD")
+    )
+
+
 @contextmanager
 def client_for(hub_dir):
     env = {**dotenv_values(Path(hub_dir) / ".env"), **os.environ}

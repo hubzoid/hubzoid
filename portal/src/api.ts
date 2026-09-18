@@ -58,9 +58,10 @@ export type Run = {
 };
 export type Person = {
   subject: string;
+  email?: string | null;
   display: string | null;
   owui_id: string | null;
-  pending: number;
+  pending: number | boolean;
   blocked: boolean;
   organization_admin: boolean;
   access: Record<string, string[]>;
@@ -76,6 +77,7 @@ export type AuditRow = {
   decision?: string;
   tool?: string;
   reason?: string;
+  surface?: string;
 };
 export type Sync = {
   state: string;
@@ -123,5 +125,6 @@ export function query(
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(values))
     if (v !== undefined && v !== "") q.set(k, String(v));
-  return "?" + q.toString();
+  const s = q.toString();
+  return s ? "?" + s : "";
 }

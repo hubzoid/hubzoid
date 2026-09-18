@@ -163,6 +163,62 @@ def _known_hubs(hub_dir: Path, gs) -> list[str]:
     return sorted(h["key"] for h in deployment.hubs(hub_dir))
 
 
+# ---- account state ----------------------------------------------------------
+#
+# The store keeps two independent block markers per subject and `is_suspended`
+# ORs them: `suspended:<subject>` (an admin's explicit block, or an
+# account_replaced safeguard) and `account_unavailable:<subject>` (derived from
+# Open WebUI: the account is pending approval, or vanished from the directory).
+# Only the first is cleared by "reactivate"; the second only clears when OWUI
+# reports the account as approved/present again. The portal exposes them apart
+# so the UI can tell "blocked by an admin" from "blocked by the chat app".
+
+_UNAVAILABLE_MSG = (
+    "This account is unavailable in the chat app (awaiting approval or removed). "
+    "Approve or restore it in Open WebUI, then refresh accounts."
+)
+
+
+def _account_flags(gs, subject: str) -> dict:
+    """Read the store's two block markers separately (read-only). `blocked` is
+    the OR of both and always equals `gs.is_suspended(subject)`."""
+    subject = normalize(subject)
+    with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
+        suspended = gs._meta_get(conn, "suspended:" + subject) == "1"
+        unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"
+    return dict(
+        suspended=suspended,
+        account_unavailable=unavailable,
+        blocked=suspended or unavailable,
+    )
+
+
+def _account_status(subject: str, identity: dict, flags: dict) -> str:
+    """One display status per subject. Precedence: an admin block beats
+    everything; then the structural kinds; then signup/approval progress; an
+    OWUI-side unavailable account that is *not* pending (deleted/missing) is
+    reported as `blocked` with `account_unavailable=true` alongside."""
+    if flags["suspended"]:
+        return "blocked"
+    if subject == "*":
+        return "everyone"
+    if subject.startswith("workflow:"):
+        return "service"
+    if not identity.get("owui_id"):
+        return "awaiting-signup"
+    if identity.get("pending"):
+        return "pending-approval"
+    if flags["account_unavailable"]:
+        return "blocked"
+    return "active"
+
+
+def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
+    identity = identity if identity is not None else (gs.identity(subject) or {})
+    flags = _account_flags(gs, subject)
+    return dict(flags, status=_account_status(normalize(subject), identity, flags))
+
+
 def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     hub_dir = Path(hub_dir)
     resolver = admin_resolver or default_admin_resolver(hub_dir)
@@ -252,27 +308,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             row["effective"] = sorted(gs.permissions_for(subject, hub))
             identity = gs.identity(subject) or {}
             row["display"] = identity.get("display") or subject
-            row["status"] = (
-                "blocked"
-                if gs.is_suspended(subject)
-                else (
-                    "everyone"
-                    if subject == "*"
-                    else (
-                        "service"
-                        if row["kind"] == "service"
-                        else (
-                            "awaiting-signup"
-                            if not identity.get("owui_id")
-                            else (
-                                "pending-approval"
-                                if identity.get("pending")
-                                else "active"
-                            )
-                        )
-                    )
-                )
-            )
+            row.update(_account_state(gs, subject, identity))
         result = [
             r
             for r in rows.values()
@@ -324,10 +360,13 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if revoke:
                 gs.revoke(subject, hub, perm, actor=admin.subject)
             else:
-                if gs.is_suspended(subject):
+                flags = _account_flags(gs, subject)
+                if flags["suspended"]:
                     raise HTTPException(
                         409, "Reactivate this user before granting access"
                     )
+                if flags["account_unavailable"]:
+                    raise HTTPException(409, _UNAVAILABLE_MSG)
                 gs.grant(subject, hub, perm, actor=admin.subject)
         except (ValueError, LastAdminError) as exc:
             raise HTTPException(409, str(exc))
@@ -362,7 +401,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 continue
             if q.lower() not in (sub + " " + (person["display"] or "")).lower():
                 continue
-            person["blocked"] = gs.is_suspended(sub)
+            person.update(_account_state(gs, sub, person))
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
             rows.append(person)
@@ -400,13 +439,26 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         _check_same_origin(request)
         if not admin.is_org_admin:
             raise HTTPException(403, "Organization admin required")
-        try:
-            store_for(hub_dir).suspend(
-                payload.subject, actor=admin.subject, suspended=payload.suspended
-            )
-        except (LastAdminError, ValueError) as exc:
-            raise HTTPException(409, str(exc))
-        return {"ok": True}
+        gs = store_for(hub_dir)
+        subject = normalize(payload.subject)
+        if not subject or subject == "*":
+            raise HTTPException(409, "a person or service is required")
+        before = _account_flags(gs, subject)
+        # Reactivate only clears the admin marker. When it isn't set there is
+        # nothing to do: skip the (audit-writing) store call rather than record
+        # a "reactivate" that changes nothing.
+        changed = payload.suspended or before["suspended"]
+        if changed:
+            try:
+                gs.suspend(subject, actor=admin.subject, suspended=payload.suspended)
+            except (LastAdminError, ValueError) as exc:
+                raise HTTPException(409, str(exc))
+        state = _account_state(gs, subject)
+        message = None
+        if not payload.suspended and state["account_unavailable"]:
+            prefix = "Admin block cleared. " if changed else "Not blocked by an admin. "
+            message = prefix + _UNAVAILABLE_MSG
+        return dict(ok=True, subject=subject, changed=changed, message=message, **state)
 
     @router.get("/workflows")
     def workflows(hub: str | None = None, admin=Depends(require_admin)):
