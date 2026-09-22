@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Bot, History, Menu as MenuIcon, Monitor, Moon, Sun, Users } from "lucide-react";
+import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
+import { Bot, History, Menu as MenuIcon, Monitor, Moon, Play, Sun, Users } from "lucide-react";
 import type { Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,24 +9,51 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "agents" | "people" | "activity";
+export type Area = "agents" | "runs" | "people" | "activity";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
-// (verified server-side). Signing in and out is the chat app's. Sign out clears
-// that shared session (same origin as the portal) and returns to the app, which
-// then shows its sign-in.
-function signOut() {
-  try {
-    localStorage.removeItem("token");
-  } catch {
-    /* private mode */
+// (verified server-side). Signing in and out is the chat app's. The session
+// cookie is HttpOnly, so it can only be cleared by the chat app's own signout
+// endpoint (same origin as the portal); a client-side cookie delete would not
+// invalidate it. Only redirect once the endpoint confirms it cleared the
+// session — a failed or unreachable call must NOT look like a successful logout.
+function SignOutButton() {
+  const { message } = App.useApp();
+  const [busy, setBusy] = useState(false);
+  async function onClick() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/v1/auths/signout", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`signout failed (${res.status})`);
+      const data = await res.json().catch(() => ({}));
+      try {
+        localStorage.removeItem("token"); // the chat-app SPA's own copy, if present
+      } catch {
+        /* private mode */
+      }
+      const redirect =
+        data && typeof data.redirect_url === "string" && data.redirect_url
+          ? data.redirect_url
+          : "/";
+      location.href = redirect;
+    } catch {
+      setBusy(false);
+      message.error("Couldn’t sign out. Check your connection and try again — you are still signed in.");
+    }
   }
-  document.cookie = "token=; Max-Age=0; path=/";
-  location.href = "/";
+  return (
+    <Button type="link" size="small" className="signout" loading={busy} onClick={onClick}>
+      Sign out
+    </Button>
+  );
 }
 
 const items = [
   { key: "agents", icon: <Bot size={18} />, label: <a href={href("/agents")}>Agents</a> },
+  { key: "runs", icon: <Play size={18} />, label: <a href={href("/runs")}>Runs</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
@@ -87,9 +114,7 @@ function Sidebar({
           <Text type="secondary">
             {me.org_admin ? "Organization administrator" : "Agent administrator"}
           </Text>
-          <a className="signout" onClick={signOut} role="button" tabIndex={0}>
-            Sign out
-          </a>
+          <SignOutButton />
         </div>
       </div>
     </>

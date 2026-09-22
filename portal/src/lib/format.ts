@@ -12,15 +12,33 @@ export function parseTime(value: number | string | null | undefined): Date | nul
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** An ISO string with no timezone marker (no Z, no ±hh:mm). Historical audit
+ *  lines were written with the server's local clock and no offset; we must not
+ *  silently reinterpret those as the viewer's local time. */
+function isNaiveIso(value: number | string | null | undefined): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) &&
+    !/([zZ]|[+-]\d{2}:?\d{2})$/.test(value)
+  );
+}
+
 export function formatTime(value: number | string | null | undefined) {
+  // Naive timestamp: show the recorded wall clock as-is, labelled, never converted.
+  if (isNaiveIso(value)) return `${value.replace("T", " ")} (server time)`;
   const date = parseTime(value);
-  return date ? date.toLocaleString() : "—";
+  // Show the viewer's zone explicitly (e.g. "… PDT") so timestamps recorded in
+  // UTC are never mistaken for local time.
+  return date ? date.toLocaleString(undefined, { timeZoneName: "short" }) : "—";
 }
 
 export function relativeTime(
   value: number | string | null | undefined,
   now = Date.now(),
 ) {
+  // No trustworthy instant for a naive timestamp — show the labelled wall clock
+  // rather than a misleading "2 hours ago".
+  if (isNaiveIso(value)) return formatTime(value);
   const date = parseTime(value);
   if (!date) return "—";
   const seconds = Math.round((date.getTime() - now) / 1000);

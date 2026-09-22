@@ -8,10 +8,38 @@ const ORG = "*";
 const EVERYONE = "*";
 const USE_HUB = "use_hub";
 const MANAGE_ACCESS = "manage_access";
+const LEGACY_MSG =
+  "This agent's access is still managed in the chat app — it has not been migrated to the dashboard.";
 
 const HOUR = 3600;
 const NOW = Math.floor(Date.now() / 1000);
 const iso = (secondsAgo) => new Date((NOW - secondsAgo) * 1000).toISOString();
+
+// Mirrors hubzoid/workflows/observe.STATUS_BUCKETS: a UI status filter maps to the
+// concrete DBOS states it covers, applied server-side before pagination.
+const STATUS_BUCKETS = {
+  succeeded: ["SUCCESS"],
+  failed: ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"],
+  running: ["PENDING", "ENQUEUED"],
+  cancelled: ["CANCELLED"],
+};
+const KNOWN_STATUSES = new Set([
+  "PENDING", "SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED", "ENQUEUED", "DELAYED",
+]);
+// Mirrors observe.resolve_statuses: absent → no filter; a supplied but unrecognized
+// value is a 422, never silently dropped (which would widen the query).
+function resolveStatuses(value) {
+  if (!value) return null;
+  const tokens = String(value).split(",").map((t) => t.trim()).filter(Boolean);
+  if (!tokens.length) return null;
+  const out = [];
+  for (const t of tokens) {
+    if (STATUS_BUCKETS[t]) out.push(...STATUS_BUCKETS[t]);
+    else if (KNOWN_STATUSES.has(t.toUpperCase())) out.push(t.toUpperCase());
+    else throw error(422, "Unknown run status filter. Use succeeded, failed, running or cancelled.");
+  }
+  return [...new Set(out)];
+}
 
 function createFixture() {
   const state = {
@@ -20,6 +48,7 @@ function createFixture() {
     mutations: [], // every POST body, in order
     delays: {}, // endpoint -> ms (e.g. { "/access": 700 })
     failNext: null, // { match: (endpoint, body) => boolean, status, detail }
+    failNextGet: null, // { endpoint, status, detail } — fail the next matching GET once
     visibility: { state: "ok", updated: NOW - 40 },
     schedulerHeartbeat: iso(30),
     hubs: [
@@ -58,6 +87,10 @@ function createFixture() {
       "workflow:monthly_close": { display: null, owui_id: null, pending: 0 },
     },
     suspended: new Set(["tomas.herrera@example.org"]),
+    // Accounts that vanished from the chat-app directory (deleted/renamed).
+    // Blocked in effect, but NOT an admin suspension — reactivate can't fix it.
+    unavailable: new Set(),
+    revision: 0, // policy revision; every grant/revoke/block bumps it
     grants: [
       ["admin@example.org", ORG, MANAGE_ACCESS],
       ["aisha.rahman@example.org", ORG, MANAGE_ACCESS],
@@ -114,22 +147,45 @@ function createFixture() {
           step("reconcile", 8_000, 9_000, null, "LedgerLockedError: period 2026-07 is locked by another close"),
         ]),
       ],
-      "finance:daily_ledger_check": [],
-      "finance:reissue_invoice": [],
+      "finance:daily_ledger_check": [
+        run("finance", "daily_ledger_check", "dlc-2026-09-18", "SUCCESS", NOW - 6 * HOUR, 3_200, "No exceptions.", null, [
+          step("scan", 0, 3_200, "ok"),
+        ]),
+      ],
+      "finance:reissue_invoice": [
+        // A currently-running (PENDING) workflow: completed/duration are null, so
+        // auto-refresh and the "running" status filter have something to catch.
+        running("finance", "reissue_invoice", "ri-2026-09-18", NOW - 2 * 60),
+      ],
       "support:ticket_digest": [],
-      "itops:patch_audit": [],
+      // A second support workflow with history, so the cross-agent Runs view spans
+      // more than one agent and more than one workflow name.
+      "support:sla_report": [
+        run("support", "sla_report", "td-2026-09-15", "SUCCESS", NOW - 3 * 24 * HOUR, 5_000, "Digest sent: 37 open tickets.", null, [
+          step("collect", 0, 4_000, "37 tickets"),
+          step("send", 4_000, 5_000, "Posted to #support"),
+        ]),
+        run("support", "sla_report", "td-2026-09-08", "CANCELLED", NOW - 10 * 24 * HOUR, 1_000, null, null, []),
+      ],
+      // Only visible to org admins; a hub admin scoped to finance must never see it.
+      "itops:patch_audit": [
+        run("itops", "patch_audit", "pa-2026-09-17", "ERROR", NOW - 30 * HOUR, 2_000, null, "PatchFailed: node web-3 unreachable", [
+          step("enumerate", 0, 1_000, "12 nodes"),
+          step("apply", 1_000, 2_000, null, "PatchFailed: node web-3 unreachable"),
+        ]),
+      ],
     },
   };
 
   const gs = {
     can(subject, hub, action) {
-      if (!subject || state.suspended.has(subject)) return false;
+      if (!subject || state.suspended.has(subject) || state.unavailable.has(subject)) return false;
       return state.grants.some(
         ([s, h, p]) => (s === subject || s === EVERYONE) && (h === hub || h === ORG) && (p === action || p === "*"),
       );
     },
     permissionsFor(subject, hub) {
-      if (state.suspended.has(subject)) return [];
+      if (state.suspended.has(subject) || state.unavailable.has(subject)) return [];
       return [...new Set(state.grants.filter(([s, h]) => (s === subject || s === EVERYONE) && (h === hub || h === ORG)).map(([, , p]) => p))].sort();
     },
     orgAdmins() {
@@ -147,6 +203,7 @@ function createFixture() {
       }
       if (!state.identities[subject] && subject !== EVERYONE)
         state.identities[subject] = { display: null, owui_id: null, pending: 0 };
+      state.revision += 1;
     },
     revoke(subject, hub, permission, actor) {
       const removesAdmin = hub === ORG && permission === MANAGE_ACCESS;
@@ -161,6 +218,7 @@ function createFixture() {
         state.grants = state.grants.filter(([s, h, p]) => !(s === subject && h === hub && p === permission));
       }
       gs.audit(actor, "revoke", subject, hub, permission);
+      state.revision += 1;
     },
   };
 
@@ -181,13 +239,24 @@ function createFixture() {
     if (subject.startsWith("workflow:")) return "service";
     if (!id.owui_id) return "awaiting-signup";
     if (id.pending) return "pending-approval";
+    if (state.unavailable.has(subject)) return "blocked";
     return "active";
   };
+  const accountFlags = (subject) => ({
+    suspended: state.suspended.has(subject),
+    account_unavailable: state.unavailable.has(subject),
+    blocked: state.suspended.has(subject) || state.unavailable.has(subject),
+  });
 
   async function handle(method, endpoint, params, body) {
     const a = admin();
     if (!a) throw error(403, "Sign in with an account allowed to manage agent access.");
     if (state.delays[endpoint]) await new Promise((r) => setTimeout(r, state.delays[endpoint]));
+    if (method === "GET" && state.failNextGet && state.failNextGet.endpoint === endpoint) {
+      const { status, detail } = state.failNextGet;
+      state.failNextGet = null;
+      throw error(status, detail);
+    }
     if (method === "POST") {
       state.mutations.push({ endpoint, ...body });
       if (state.failNext && state.failNext.match(endpoint, body)) {
@@ -228,12 +297,13 @@ function createFixture() {
         const limit = Number(params.limit || 50);
         return {
           hub,
-          editable: true,
+          editable: !!state.hubs.find((h) => h.key === hub).authoritative,
           authoritative: state.hubs.find((h) => h.key === hub).authoritative,
           can_manage_admins: a.org,
           permissions: state.catalogs[hub],
           total: list.length,
           public: gs.can("__signed_in_preview__", hub, USE_HUB),
+          revision: state.revision,
           rows: list.slice(offset, offset + limit),
         };
       }
@@ -243,11 +313,14 @@ function createFixture() {
         const subject = String(body.subject || "").trim().toLowerCase();
         const hub = String(body.hub || "").trim().toLowerCase();
         const perm = String(body.permission || "").trim().toLowerCase();
+        if (body.expected_revision != null && body.expected_revision !== state.revision)
+          throw error(409, "Access changed since you loaded it — someone else edited it. Reload and review the current access before saving.");
         if (hub === ORG) {
           if (!a.org || perm !== MANAGE_ACCESS || subject === EVERYONE)
             throw error(403, "Only organization admins can manage organization administrators");
         } else {
           requireHub(a, hub);
+          if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
           if (!state.catalogs[hub].some((p) => p.permission === perm)) throw error(422, "Unknown permission for this hub");
         }
         if (subject === EVERYONE && !(a.org && perm === USE_HUB)) throw error(403, "Only organization admins may change public hub access");
@@ -256,27 +329,69 @@ function createFixture() {
         if (revoke) gs.revoke(subject, hub, perm, a.subject);
         else {
           if (state.suspended.has(subject)) throw error(409, "Reactivate this user before granting access");
+          if (state.unavailable.has(subject))
+            throw error(409, "This account is no longer in the chat app. Access resumes if it reappears.");
           gs.grant(subject, hub, perm, a.subject);
         }
-        return { ok: true };
+        return { ok: true, revision: state.revision };
+      }
+      case "/access/apply": {
+        const subject = String(body.subject || "").trim().toLowerCase();
+        const hub = String(body.hub || "").trim().toLowerCase();
+        requireHub(a, hub);
+        if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
+        if (subject === EVERYONE) throw error(403, "Public access is changed with the public-access toggle");
+        const ops = body.operations || [];
+        const existing = new Set(state.grants.filter(([, h]) => h === hub).map(([s, , p]) => `${s}|${p}`));
+        let grants = false;
+        for (const op of ops) {
+          const perm = String(op.permission || "").trim().toLowerCase();
+          if (!a.org && (perm === MANAGE_ACCESS || (op.action === "revoke" && perm === USE_HUB && gs.can(subject, hub, MANAGE_ACCESS))))
+            throw error(403, "Only organization admins may change administrator access");
+          if (!state.catalogs[hub].some((p) => p.permission === perm) && !(op.action === "revoke" && existing.has(`${subject}|${perm}`)))
+            throw error(422, "Unknown permission for this hub");
+          grants = grants || op.action === "grant";
+        }
+        if (grants) {
+          if (state.suspended.has(subject)) throw error(409, "Reactivate this user before granting access");
+          if (state.unavailable.has(subject)) throw error(409, "This account is no longer in the chat app. Access resumes if it reappears.");
+        }
+        if (body.expected_revision != null && body.expected_revision !== state.revision)
+          throw error(409, "Access changed since you loaded it — someone else edited it. Reload and review the current access before saving.");
+        for (const op of ops) {
+          const perm = String(op.permission || "").trim().toLowerCase();
+          if (op.action === "revoke") gs.revoke(subject, hub, perm, a.subject);
+          else gs.grant(subject, hub, perm, a.subject);
+        }
+        return { ok: true, revision: state.revision };
       }
       case "/people": {
         const scopes = allowedHubs(a).map((h) => h.key);
         const visible = new Set(state.grants.filter(([, h]) => a.org || scopes.includes(h)).map(([s]) => s));
         const q = (params.q || "").toLowerCase();
+        if (params.agent) requireHub(a, params.agent);
         const rows = [];
         for (const [subject, id] of Object.entries(state.identities).sort()) {
           if (!a.org && !visible.has(subject)) continue;
           if (!(subject + " " + (id.display || "")).toLowerCase().includes(q)) continue;
+          const orgAdmin = gs.can(subject, ORG, MANAGE_ACCESS);
+          const access = Object.fromEntries(scopes.map((h) => [h, gs.permissionsFor(subject, h)]));
+          const isService = subject.startsWith("workflow:");
+          if (params.status && identityStatus(subject) !== params.status) continue;
+          if (params.role === "admin" && !orgAdmin) continue;
+          if (params.role === "service" && !isService) continue;
+          if (params.role === "regular" && (orgAdmin || isService)) continue;
+          if (params.agent && !(access[params.agent] || []).length) continue;
           rows.push({
             subject,
             email: subject.includes("@") ? subject : null,
             display: id.display,
             owui_id: id.owui_id,
             pending: id.pending,
-            blocked: state.suspended.has(subject),
-            organization_admin: gs.can(subject, ORG, MANAGE_ACCESS),
-            access: Object.fromEntries(scopes.map((h) => [h, gs.permissionsFor(subject, h)])),
+            status: identityStatus(subject),
+            ...accountFlags(subject),
+            organization_admin: orgAdmin,
+            access,
           });
         }
         const offset = Number(params.offset || 0);
@@ -293,11 +408,24 @@ function createFixture() {
         const suspended = body.suspended !== false;
         const admins = gs.orgAdmins();
         if (suspended && admins.includes(subject) && admins.length <= 1) throw error(409, "cannot suspend the last org admin");
-        if (suspended) state.grants = state.grants.filter(([s]) => s !== subject);
-        if (suspended) state.suspended.add(subject);
-        else state.suspended.delete(subject);
+        const before = accountFlags(subject);
+        const changed = suspended || before.suspended;
+        if (suspended) {
+          state.grants = state.grants.filter(([s]) => s !== subject);
+          state.suspended.add(subject);
+          state.revision += 1;
+        } else if (before.suspended) {
+          state.suspended.delete(subject);
+          state.revision += 1;
+        }
         gs.audit(a.subject, suspended ? "suspend" : "reactivate", subject, ORG, null);
-        return { ok: true };
+        const flags = accountFlags(subject);
+        let message = null;
+        if (!suspended && flags.account_unavailable)
+          message =
+            (changed ? "Admin block cleared. " : "Not blocked by an admin. ") +
+            "This account is no longer in the chat app. Access resumes if it reappears.";
+        return { ok: true, subject, changed, message, status: identityStatus(subject), ...flags };
       }
       case "/workflows": {
         const hubs = params.hub ? [params.hub] : allowedHubs(a).map((h) => h.key);
@@ -305,13 +433,32 @@ function createFixture() {
         return { workflows: hubs.flatMap((h) => state.workflows[h].map((w) => decorate(w, state))) };
       }
       case "/runs": {
-        requireHub(a, params.hub);
-        let runs = state.runs[`${params.hub}:${params.workflow}`] || [];
+        // A named agent scopes to one bridge (per-step detail on run_id); no agent
+        // → cross-agent over every agent this admin may manage. All filters run
+        // before pagination; ordering is (started desc, id desc) for determinism.
+        const scopes = params.hub ? [params.hub] : allowedHubs(a).map((h) => h.key);
+        if (params.hub) requireHub(a, params.hub);
+        const scopeSet = new Set(scopes);
+        let runs = [];
+        for (const [key, list] of Object.entries(state.runs)) {
+          if (scopeSet.has(key.split(":")[0])) runs.push(...list);
+        }
+        if (params.workflow) runs = runs.filter((r) => r.name === params.workflow);
         if (params.run_id) runs = runs.filter((r) => r.id === params.run_id);
+        const want = resolveStatuses(params.status); // throws 422 on an unknown filter
+        if (want) runs = runs.filter((r) => want.includes(r.status));
+        // Date window is on `created` (the ordering/pagination key), matching DBOS.
+        if (params.since) runs = runs.filter((r) => r.created != null && r.created >= Date.parse(params.since));
+        if (params.until) runs = runs.filter((r) => r.created != null && r.created <= Date.parse(params.until));
+        runs = runs
+          .slice()
+          .sort((x, y) => (y.created || 0) - (x.created || 0) || (x.id < y.id ? 1 : x.id > y.id ? -1 : 0));
+        if (params.run_id) return { runs, has_more: false };
         const offset = Number(params.offset || 0);
         const limit = Number(params.limit || 50);
         return {
-          runs: runs.slice(offset, offset + limit).map((r) => (params.run_id ? r : { ...r, steps: undefined })),
+          runs: runs.slice(offset, offset + limit).map((r) => ({ ...r, steps: undefined })),
+          has_more: runs.length > offset + limit,
         };
       }
       case "/audit": {
@@ -319,7 +466,13 @@ function createFixture() {
         if (params.hub) requireHub(a, params.hub);
         let rows = hubs.flatMap((h) => state.decisions[h].map((d) => ({ ...d, hub: h })));
         if (params.user) rows = rows.filter((r) => r.user === params.user.toLowerCase());
-        if (params.denied === "true") rows = rows.filter((r) => r.decision === "deny");
+        if (params.outcome === "allow" || params.outcome === "deny")
+          rows = rows.filter((r) => r.decision === params.outcome);
+        else if (params.denied === "true") rows = rows.filter((r) => r.decision === "deny");
+        if (params.tool) rows = rows.filter((r) => r.tool === params.tool);
+        if (params.surface) rows = rows.filter((r) => r.surface === params.surface);
+        if (params.since) rows = rows.filter((r) => r.ts >= params.since);
+        if (params.until) rows = rows.filter((r) => r.ts <= params.until);
         rows.sort((x, y) => (x.ts < y.ts ? 1 : -1));
         const offset = Number(params.offset || 0);
         const limit = Number(params.limit || 50);
@@ -331,6 +484,10 @@ function createFixture() {
         if (a.org && !params.hub) scopes.push(ORG);
         let rows = state.audit.filter((r) => scopes.includes(r.hub));
         if (params.user) rows = rows.filter((r) => r.subject === params.user.toLowerCase());
+        if (params.actor) rows = rows.filter((r) => r.actor === params.actor.toLowerCase());
+        if (params.action) rows = rows.filter((r) => r.action === params.action);
+        if (params.since) rows = rows.filter((r) => Number(r.ts) >= Number(params.since));
+        if (params.until) rows = rows.filter((r) => Number(r.ts) <= Number(params.until));
         const offset = Number(params.offset || 0);
         const limit = Number(params.limit || 50);
         return { rows: rows.slice(offset, offset + limit) };
@@ -392,12 +549,28 @@ function run(hub, name, id, status, startedSeconds, durationMs, output, err, ste
     id,
     name,
     status,
+    created: started, // synthetic runs create and start together
     started,
     completed: started + durationMs,
     duration_ms: durationMs,
     output,
     error: err,
     steps: steps.map((s) => ({ ...s, started: started + s.started, completed: started + s.completed })),
+  };
+}
+function running(hub, name, id, startedSeconds) {
+  return {
+    hub,
+    id,
+    name,
+    status: "PENDING",
+    created: startedSeconds * 1000,
+    started: startedSeconds * 1000,
+    completed: null,
+    duration_ms: null,
+    output: null,
+    error: null,
+    steps: [],
   };
 }
 function step(name, started, completed, output, err = null) {

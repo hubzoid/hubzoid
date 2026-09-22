@@ -81,20 +81,30 @@ identity header. Ordinary users cannot open its APIs.
 
 ## Grant access and verify the end-user experience
 
-1. Choose the agent in **Access**. Add the person's OWUI/signup email.
-2. Enable the needed tools. A tool grant automatically includes agent entry.
-3. The permission check changes immediately. Within 30 seconds, OWUI's model
-   picker reflects the new access. **Overview → Sync now** retries immediately.
+1. Open the agent and go to its **Access** tab. Use **Add person** and enter the
+   person's signup email.
+2. Tick the capabilities they need (a tool capability includes agent entry
+   automatically), then **Review changes** and **Save**.
+3. The permission check changes immediately. The chat app's model picker reflects
+   the new access within about 30 seconds; the portal retries that projection on
+   its own and only surfaces it if it keeps failing.
 4. Ask the person to sign in with that email and open the agent. They should see
    only their permitted tools. Refresh the model picker if it was already open.
-5. Review **Audit → Access changes** for who made the change and **Tool decisions**
-   for actual allow/deny decisions. Both views are scoped to the administrator.
+5. Review **Activity → Access changes** for who changed what and **Tool
+   decisions** for actual allow/deny decisions. Both are scoped to the administrator.
+   Filter by time range, agent, person, who-changed-it/action (access changes), or
+   tool/outcome/channel (tool decisions); filters and paging are kept in the URL, so a
+   filtered view is shareable and survives refresh and Back. **Details** on any row opens
+   the full record — precise time (in your timezone), actor, affected identity, agent,
+   capability/tool, channel and reason, with copyable identifiers. **People** has the
+   same filtering by account status, role and agent.
 
 The portal's **People** screen distinguishes accounts awaiting signup, pending
-OWUI approval, active accounts, services, and blocked people. **Refresh accounts**
-reads OWUI's directory; it does not create accounts. Organization admins can add
-or remove other organization admins there. Agent admins cannot change admin
-rights or use an entry revocation to remove another admin's rights.
+approval, active accounts, services, and blocked people. **Refresh accounts**
+re-reads the account directory; it does not create accounts. Organization admins
+add or remove other organization admins from a person's **Details**. Agent admins
+cannot change admin rights or use an entry revocation to remove another admin's
+rights.
 
 Revoking agent entry also removes that person's direct tool grants in that agent.
 Public access and organization-level admin rights are displayed as inherited
@@ -191,6 +201,89 @@ redirect operators to the portal. Chat permissions always come from the authorit
 for the selected hub; OWUI visibility is only a mirror. OWUI's own administrators
 may retain its privileged model visibility, but Hubzoid still checks agent entry.
 
+## Planned maintenance upgrade (the whole deployment)
+
+The upgrade is a short, explicit maintenance window run by an operator — there is no
+automatic migration on startup. It reuses the commands above (`access migrate`,
+`access sync`, `access diff`, `access rollback`) in this sequence. Do it once, per hub,
+with all access writers stopped.
+
+Prerequisites you must have to hand:
+- The OWUI source database for each hub (SQLite file path, or a PostgreSQL URL if OWUI
+  runs on Postgres) and each hub's **OWUI model ID** (the gateway's configured model
+  label, not necessarily the folder name).
+- The gateway admin email/password (`HUBZOID_GATEWAY_ADMIN_EMAIL` / `_PASSWORD`) so the
+  visibility sync can sign in to OWUI.
+- The email(s) of the existing OWUI administrator(s) who will own the dashboard.
+
+Procedure:
+
+1. **Stop the writers, but keep Open WebUI reachable.** Stop all bridges and the
+   visibility projector (nothing should edit access or project during the window). The
+   gateway normally supervises the OWUI subprocess, so stopping the gateway also stops
+   OWUI — but `access sync` and rollback's visibility restore call OWUI's API. So run
+   **OWUI privately** for the window: start it on its own, bound to loopback
+   (`127.0.0.1`), with `OWUI_INTERNAL_URL`/`WEBUI_URL` and `HUBZOID_GATEWAY_ADMIN_EMAIL`
+   / `_PASSWORD` set so the CLI can sign in — but with the bridges and projector down so
+   no chat traffic or projection races the migration.
+2. **Back up.** Copy the deployment manifest, the operational database, each OWUI
+   database, and the hub directories to a protected location. For SQLite, copy the files
+   while stopped (or use the SQLite online-backup API); for PostgreSQL, take a snapshot.
+   (`access migrate --apply` also writes its own 0600 pre-cutover snapshot under
+   `<hub>/.hubzoid/backups/`, but keep your full backup too — it is the verification and
+   rollback baseline, and it captures the ORIGINAL OWUI model visibility before any sync.)
+3. **Establish dashboard admins**, once, explicitly (audited):
+   ```bash
+   hubzoid access bootstrap --admin admin@example.org ./finance
+   ```
+4. **Preview, migrate, and verify BEFORE projecting**, per hub. Preview is a dry-run; it
+   checks a before/after matrix of permitted AND denied users and refuses an unverified or
+   empty plan. Run the confirming `diff` **immediately after `--apply`, before `sync`** —
+   `diff` rebuilds its baseline by reading the OWUI source, and `sync` will rewrite that
+   source's model visibility (replacing "public" with explicit per-user grants), so a
+   `--from-owui` diff run *after* sync compares against a changed baseline and can report
+   a false mismatch even though Hubzoid's permissions are unchanged.
+   ```bash
+   hubzoid access migrate ./finance \
+     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance           # preview (dry-run)
+   hubzoid access migrate ./finance \
+     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance --apply    # cut over (+ 0600 backup)
+   hubzoid access diff ./finance \
+     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance            # verify: expect 0 missing, 0 extra
+   ```
+   Re-running `--apply` on an already-migrated hub is refused (it would overwrite edits
+   made since migration); `--remigrate` overrides that only if you intend to discard them.
+5. **Project visibility, then verify the projection separately** (not with another
+   `--from-owui` diff — see above). `sync` is idempotent, so a clean second run is the
+   check that projection converged:
+   ```bash
+   hubzoid access sync ./finance   # projects Casbin → OWUI model visibility
+   hubzoid access sync ./finance   # run again: it should report state "ok" and change nothing
+   ```
+6. **Restart** the gateway and bridges (which resumes the normal visibility loop).
+7. **Smoke-test:** an admin opens the dashboard (the "Manage agent access" link in Open
+   WebUI) and sees the migrated agent as editable; a permitted user can enter the agent
+   and use its tools in chat; a denied user cannot; an ordinary user still uses chat
+   normally; visibility sync shows `ok`.
+
+**Rollback (if a hub fails verification):** with the bridges/projector still stopped and
+OWUI still running privately (step 1), restore that hub's pre-cutover snapshot — this
+restores grants, authority, AND the original OWUI model visibility saved in the backup.
+Restart leaves the rollback intact (the hub is legacy again). If OWUI is unreachable the
+command reports partial restoration and exits non-zero — keep the window open, fix
+connectivity, rerun the same command.
+```bash
+hubzoid access rollback /absolute/finance/.hubzoid/backups/access-....json ./finance
+```
+
+**After upgrade — where things live:** migrated agents' permissions are managed in the
+dashboard (the portal refuses and hides permission edits for a still-legacy agent, so
+nothing there is misleading or silently overwritten); accounts, sign-in and roles stay
+in Open WebUI. Migration flattens OWUI groups into direct grants, so if onboarding adds
+users to an OWUI group to grant agent access, after migration those new members need an
+explicit dashboard grant instead — confirm whether the deployment relies on group-based
+onboarding before scheduling the window.
+
 ## Workflow execution and inspection
 
 ```bash
@@ -225,8 +318,9 @@ Grant that identity the tool permissions it needs. `hub.state` is persistent
 per-hub/per-workflow state. Keep secrets inside steps, and do not return secrets
 in step outputs: authorized administrators can inspect execution results.
 
-**Workflows → View runs** shows DBOS status, start/completion, duration, result,
-error and execution steps. Hub names distinguish identically named workflows.
+An agent's **Runs & schedules** tab lists its workflows; **View runs** opens a
+workflow's run list, and a run shows status, start/completion, duration, result,
+error and its step timeline. Hub names distinguish identically named workflows.
 Use the CLI for manual runs; portal workflow inspection is read-only. DBOS is the
 source of execution history; Hubzoid does not maintain a second run database.
 
@@ -247,7 +341,7 @@ still need idempotency. Durability does not make external writes exactly-once.
 | Symptom | Check |
 |---|---|
 | Grant has no effect | Agent still marked legacy? Correct deployment manifest? Matching signup email? |
-| Agent not visible | Overview visibility status; service-account credentials; `access sync` |
+| Agent not visible | People screen sync status; service-account credentials; `access sync` |
 | Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
 | No execution history | Correct hub's DBOS database, workflow enabled, run actually submitted |

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -7,6 +7,7 @@ import {
   Drawer,
   Empty,
   Input,
+  Select,
   Space,
   Table,
   Tag,
@@ -17,7 +18,7 @@ import { HelpCircle, RefreshCw, Search } from "lucide-react";
 import { request, query, type Hub, type Me, type Overview, type Person } from "../api";
 import { errorText, useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
-import { agentHref, href, navigate, personHref } from "../hooks/useRoute";
+import { href, hrefWith, navigate, personHref, useHashQuery } from "../hooks/useRoute";
 import {
   AccountTag,
   CapabilityTag,
@@ -30,7 +31,6 @@ import {
   ORG,
   isService,
   personName,
-  personStatus,
   relativeTime,
 } from "../lib/format";
 import { orderCapabilities } from "./access/plan";
@@ -44,8 +44,12 @@ function HelpLabel({ text, help }: { text: string; help: string }) {
   return (
     <Space size={4}>
       {text}
-      <Tooltip title={help}>
-        <HelpCircle size={13} className="help-icon" aria-label={help} />
+      {/* Focusable + tap/click triggers so the explanation is reachable by
+          keyboard and touch, not hover only. */}
+      <Tooltip title={help} trigger={["hover", "focus", "click"]}>
+        <span className="help-icon" role="button" tabIndex={0} aria-label={help}>
+          <HelpCircle size={13} />
+        </span>
       </Tooltip>
     </Space>
   );
@@ -63,22 +67,32 @@ export function PeopleScreen({
   selected?: string;
 }) {
   const { message } = App.useApp();
-  const [input, setInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setSearch(input.trim());
-      setPage(1);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [input]);
+  // Filters live in the URL so refresh, Back and shared links restore the view.
+  const [q, setQuery] = useHashQuery();
+  const search = q.q || "";
+  const status = q.status || "";
+  const role = q.role || "";
+  const agent = q.agent || "";
+  const page = Math.max(1, Number(q.page) || 1);
+  const filtersActive = !!(search || status || role || agent);
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Keyed by a reset token (not the changing value) so a debounced commit doesn't
+  // remount the input and steal focus; Reset bumps it to clear the field.
+  const [resetToken, setResetToken] = useState(0);
+  // Cancel a pending search debounce on unmount so it cannot rewrite the next
+  // screen's URL query after navigation.
+  useEffect(() => () => clearTimeout(searchTimer.current), []);
   const data = useData<PeoplePage>(
-    "/people" + query({ q: search, offset: (page - 1) * PAGE, limit: PAGE }),
+    "/people" +
+      query({ q: search, status, role, agent, offset: (page - 1) * PAGE, limit: PAGE }),
   );
   const overview = useData<Overview>("/overview");
   const [refreshing, setRefreshing] = useState(false);
   const agentName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
+  const resetFilters = () => {
+    setResetToken((t) => t + 1); // remount the search input so its defaultValue clears
+    setQuery({ q: undefined, status: undefined, role: undefined, agent: undefined, page: undefined });
+  };
 
   async function refreshAccounts() {
     setRefreshing(true);
@@ -119,17 +133,69 @@ export function PeopleScreen({
 
         <div className="toolbar">
           <Input
+            key={`search:${resetToken}`}
             aria-label="Search people"
             prefix={<Search size={16} />}
             placeholder="Search by name or email"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+            defaultValue={search}
+            onChange={(e) => {
+              const v = e.target.value;
+              clearTimeout(searchTimer.current);
+              searchTimer.current = setTimeout(
+                () => setQuery({ q: v.trim() || undefined, page: undefined }),
+                250,
+              );
+            }}
             allowClear
-            style={{ maxWidth: 360 }}
+            style={{ maxWidth: 260 }}
           />
+          <Select
+            aria-label="Account status"
+            value={status || undefined}
+            onChange={(v) => setQuery({ status: v, page: undefined })}
+            placeholder="Any status"
+            allowClear
+            style={{ minWidth: 170 }}
+            options={[
+              { value: "active", label: "Active" },
+              { value: "awaiting-signup", label: "Not signed up yet" },
+              { value: "pending-approval", label: "Awaiting approval" },
+              { value: "blocked", label: "Blocked" },
+              { value: "service", label: "Service" },
+            ]}
+          />
+          <Select
+            aria-label="Role"
+            value={role || undefined}
+            onChange={(v) => setQuery({ role: v, page: undefined })}
+            placeholder="Any role"
+            allowClear
+            style={{ minWidth: 150 }}
+            options={[
+              { value: "admin", label: "Administrator" },
+              { value: "regular", label: "Regular" },
+              { value: "service", label: "Service" },
+            ]}
+          />
+          <Select
+            aria-label="Agent"
+            value={agent || undefined}
+            onChange={(v) => setQuery({ agent: v, page: undefined })}
+            placeholder="Any agent"
+            allowClear
+            style={{ minWidth: 170 }}
+            options={hubs.map((h) => ({ value: h.key, label: h.name }))}
+          />
+          {filtersActive && (
+            <Button type="link" onClick={resetFilters}>
+              Reset filters
+            </Button>
+          )}
+          <span style={{ marginLeft: "auto" }} />
           {data.data && (
             <Text type="secondary">
               {data.data.total} {data.data.total === 1 ? "person" : "people"}
+              {data.at ? ` · updated ${relativeTime(data.at)}` : ""}
             </Text>
           )}
         </div>
@@ -146,7 +212,7 @@ export function PeopleScreen({
               current: page,
               pageSize: PAGE,
               total: data.data.total,
-              onChange: setPage,
+              onChange: (p) => setQuery({ page: p > 1 ? String(p) : undefined }),
               showSizeChanger: false,
               hideOnSinglePage: true,
             }}
@@ -154,11 +220,13 @@ export function PeopleScreen({
               emptyText: (
                 <Empty
                   description={
-                    search
-                      ? `No one matching “${search}”.`
+                    filtersActive
+                      ? "No one matches these filters."
                       : "No one has access yet. Grant access from an agent’s Access tab; people appear here once they hold any access."
                   }
-                />
+                >
+                  {filtersActive && <Button onClick={resetFilters}>Reset filters</Button>}
+                </Empty>
               ),
             }}
             columns={[
@@ -175,7 +243,7 @@ export function PeopleScreen({
                 width: 170,
                 render: (_, p) => (
                   <Space size={4} wrap>
-                    <AccountTag status={personStatus(p)} />
+                    <AccountTag status={p.status} />
                     {p.organization_admin && <Tag color="geekblue">Org admin</Tag>}
                   </Space>
                 ),
@@ -333,8 +401,10 @@ function PersonDrawer({
     setBusy(true);
     setError("");
     try {
-      await request(path, body);
-      message.success(done);
+      // Prefer the backend's own explanation (e.g. reactivation that leaves
+      // access paused because the chat account is gone) over a blanket message.
+      const res = await request<{ message?: string | null }>(path, body);
+      message.success(res?.message || done);
       data.reload();
       onChanged();
     } catch (e) {
@@ -458,7 +528,7 @@ function PersonDrawer({
                     }
                   />
                 ),
-                children: <AccountTag status={personStatus(person)} />,
+                children: <AccountTag status={person.status} />,
               },
               {
                 key: "role",
@@ -493,7 +563,13 @@ function PersonDrawer({
                   <div key={h} className="agent-access">
                     <div className="agent-access-heading">
                       <Text strong>{hubs.find((x) => x.key === h)?.name ?? h}</Text>
-                      <a href={agentHref(h, "access")}>Edit access</a>
+                      <a
+                        href={hrefWith(`/agents/${encodeURIComponent(h)}/access`, {
+                          edit: person.subject,
+                        })}
+                      >
+                        Edit access
+                      </a>
                     </div>
                     <Space wrap size={[6, 6]}>
                       {orderCapabilities(perms, Object.keys(catalogs[h] ?? {})).map((p) => (
@@ -513,11 +589,14 @@ function PersonDrawer({
                 These apply across every agent and are recorded in Activity. Each asks for confirmation.
               </Paragraph>
               <Space wrap>
-                {person.blocked ? (
+                {person.suspended ? (
                   <Button loading={busy} onClick={confirmReactivate}>
                     Reactivate
                   </Button>
                 ) : (
+                  // Shown even when the chat account is unavailable: blocking is the
+                  // explicit offboard — it suspends them and removes every retained
+                  // grant, which an unavailable account still needs.
                   <Button danger loading={busy} onClick={confirmBlock}>
                     Block access
                   </Button>
@@ -528,6 +607,15 @@ function PersonDrawer({
                   </Button>
                 )}
               </Space>
+              {person.account_unavailable && !person.suspended && (
+                <Alert
+                  className="notice"
+                  type="warning"
+                  showIcon
+                  banner
+                  message="This person’s chat account is unavailable — removed or not found. Access resumes automatically if the account reappears; to offboard fully, remove it in the chat app."
+                />
+              )}
               <Paragraph type="secondary" style={{ marginTop: 12 }}>
                 To suspend or delete the chat account itself, use the <a href="/admin">chat app’s account settings</a>.
               </Paragraph>

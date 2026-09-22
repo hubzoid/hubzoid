@@ -114,6 +114,11 @@ class LastAdminError(Exception):
     """Raised when a write would remove the final org admin."""
 
 
+class RevisionConflict(Exception):
+    """Raised when a guarded write finds the policy revision has moved since the
+    caller loaded it (another admin edited access first)."""
+
+
 class GrantStore:
     """The access store for one deployment's database (one hub, or the shared
     gateway DB). Cheap to construct; holds a Casbin enforcer kept fresh against
@@ -138,6 +143,146 @@ class GrantStore:
                 text("SELECT rev FROM hz_policy_revision WHERE id=1")
             ).fetchone()
         return int(row[0]) if row else 0
+
+    def revision(self) -> int:
+        """Current policy revision. Every grant/revoke bumps it in the same
+        transaction, so callers can use it for optimistic concurrency."""
+        return self._read_revision()
+
+    def _read_revision_locked(self, conn) -> int:
+        """Read the revision while holding the write lock, so a concurrent commit
+        cannot slip in between the check and the writes that follow. On Postgres
+        that's SELECT ... FOR UPDATE; on SQLite a no-op UPDATE takes the DB write
+        lock before the read."""
+        if conn.engine.dialect.name == "sqlite":
+            conn.execute(text("UPDATE hz_policy_revision SET rev = rev WHERE id=1"))
+            row = conn.execute(
+                text("SELECT rev FROM hz_policy_revision WHERE id=1")
+            ).fetchone()
+        else:
+            row = conn.execute(
+                text("SELECT rev FROM hz_policy_revision WHERE id=1 FOR UPDATE")
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def access_snapshot(self) -> tuple[int, list[tuple[str, str, str]]]:
+        """A consistent (revision, every grant) pair, so the portal can hand the
+        editor a revision that matches exactly the rows it shows. Reading the two
+        separately risks new rows under an old revision (or the reverse), which
+        would defeat the concurrency guard.
+
+        Transaction isolation across two statements is not guaranteed the same way
+        on SQLite (rollback-journal vs WAL) and PostgreSQL (READ COMMITTED by
+        default), so we do a read-verify loop: read revision, read grants, read
+        revision again; if a write landed in between the revision moved and we
+        retry. This is correct on any engine and isolation level."""
+        self._refresh_if_stale()
+        last_rev = 0
+        for _ in range(8):
+            with self._engine.connect() as conn:
+                rev1 = int(
+                    conn.execute(
+                        text("SELECT rev FROM hz_policy_revision WHERE id=1")
+                    ).scalar()
+                    or 0
+                )
+                rows = conn.execute(
+                    text("SELECT subject, hub, permission FROM hz_grants")
+                ).fetchall()
+                rev2 = int(
+                    conn.execute(
+                        text("SELECT rev FROM hz_policy_revision WHERE id=1")
+                    ).scalar()
+                    or 0
+                )
+            if rev1 == rev2:
+                return rev1, [(s, h, p) for (s, h, p) in rows]
+            last_rev = rev2
+        # Extremely unlikely: writes on every attempt. Fall back to a locked read
+        # so the pair is at least internally consistent under the write lock.
+        with self._engine.begin() as conn:
+            rev = self._read_revision_locked(conn)
+            rows = conn.execute(
+                text("SELECT subject, hub, permission FROM hz_grants")
+            ).fetchall()
+        return rev or last_rev, [(s, h, p) for (s, h, p) in rows]
+
+    def _grant_in_txn(self, conn, subject, hub, permission, actor) -> None:
+        rows = [(subject, hub, permission)]
+        if hub != ORG and permission != USE_HUB:
+            rows.append((subject, hub, USE_HUB))
+        for s, h, p in rows:
+            self._insert_grant(conn, s, h, p)
+            self._audit(conn, actor, "grant", s, h, p)
+
+    def _revoke_in_txn(self, conn, subject, hub, permission, actor) -> None:
+        removes_admin = hub == ORG and permission == MANAGE_ACCESS
+        if removes_admin:
+            admins = self._org_admins_locked(conn)
+            if subject in admins and len(admins) <= 1:
+                raise LastAdminError(
+                    "cannot remove the last org admin; grant another first"
+                )
+        if hub != ORG and permission == USE_HUB:
+            for (removed,) in conn.execute(
+                text("SELECT permission FROM hz_grants WHERE subject=:s AND hub=:h"),
+                {"s": subject, "h": hub},
+            ):
+                if removed != USE_HUB:
+                    self._audit(conn, actor, "revoke", subject, hub, removed)
+            conn.execute(
+                text("DELETE FROM hz_grants WHERE subject=:s AND hub=:h"),
+                {"s": subject, "h": hub},
+            )
+        else:
+            conn.execute(
+                text(
+                    "DELETE FROM hz_grants WHERE subject=:s AND hub=:h AND permission=:p"
+                ),
+                {"s": subject, "h": hub, "p": permission},
+            )
+        if removes_admin and not self._org_admins(conn):
+            raise LastAdminError(
+                "cannot remove the last org admin; grant another first"
+            )
+        self._audit(conn, actor, "revoke", subject, hub, permission)
+
+    def apply_changes(
+        self,
+        subject: str,
+        hub: str,
+        operations: "Iterable[tuple[str, str]]",
+        *,
+        expected_revision: int | None = None,
+        actor: str | None = None,
+    ) -> int:
+        """Apply one subject's whole change set for a hub in a SINGLE transaction,
+        guarded by `expected_revision`. `operations` are (action, permission) with
+        action 'grant'|'revoke'. Mirrors grant()/revoke() semantics (use_hub
+        implication and cascade, last-admin protection). The revision is checked
+        under the write lock and the writes commit together, so a concurrent edit
+        cannot slip between the check and the apply. Returns the new revision;
+        raises RevisionConflict if the store moved since `expected_revision`."""
+        subject = normalize(subject)
+        hub = normalize(hub)
+        ops = [(a, normalize(p)) for a, p in operations]
+        for _action, p in ops:
+            _validate_grant(subject, hub, p)
+        with self._engine.begin() as conn:
+            current = self._read_revision_locked(conn)
+            if expected_revision is not None and current != expected_revision:
+                raise RevisionConflict(
+                    "Access changed since you loaded it — someone else edited it. "
+                    "Reload and review the current access before saving."
+                )
+            for action, p in ops:
+                if action == "revoke":
+                    self._revoke_in_txn(conn, subject, hub, p, actor)
+                else:
+                    self._grant_in_txn(conn, subject, hub, p, actor)
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+        return self.revision()
 
     def _refresh_if_stale(self) -> None:
         current = self._read_revision()
@@ -389,9 +534,19 @@ class GrantStore:
         return [w for w in out if allow is None or w["hub"] in allow]
 
     def read_access_audit(
-        self, limit: int = 100, *, hubs=None, subject=None, offset=0
+        self,
+        limit: int = 100,
+        *,
+        hubs=None,
+        subject=None,
+        actor=None,
+        action=None,
+        since=None,
+        until=None,
+        offset=0,
     ) -> list[dict]:
-        """Recent access CHANGE events (grant/revoke), newest first."""
+        """Recent access CHANGE events (grant/revoke), newest first. Filters are
+        applied in SQL, so pagination is over the filtered set, not the page."""
         clauses, params = [], {"n": limit, "offset": offset}
         if hubs is not None:
             if not hubs:
@@ -404,6 +559,18 @@ class GrantStore:
         if subject:
             clauses.append("subject = :subject")
             params["subject"] = normalize(subject)
+        if actor:
+            clauses.append("actor = :actor")
+            params["actor"] = normalize(actor)
+        if action:
+            clauses.append("action = :action")
+            params["action"] = action
+        if since is not None:
+            clauses.append("ts >= :since")
+            params["since"] = float(since)
+        if until is not None:
+            clauses.append("ts <= :until")
+            params["until"] = float(until)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self._engine.connect() as conn:
             rows = conn.execute(
@@ -430,15 +597,8 @@ class GrantStore:
         hub = normalize(hub)
         permission = normalize(permission)
         _validate_grant(subject, hub, permission)
-        rows = [(subject, hub, permission)]
-        # Implication: any hub-scoped permission implies use_hub (except in the
-        # org domain, where use_hub is meaningless).
-        if hub != ORG and permission not in (USE_HUB,):
-            rows.append((subject, hub, USE_HUB))
         with self._engine.begin() as conn:
-            for s, h, p in rows:
-                self._insert_grant(conn, s, h, p)
-                self._audit(conn, actor, "grant", s, h, p)
+            self._grant_in_txn(conn, subject, hub, permission, actor)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -451,43 +611,8 @@ class GrantStore:
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
-        removes_admin = hub == ORG and permission == MANAGE_ACCESS
         with self._engine.begin() as conn:
-            if removes_admin:
-                # Serialize concurrent admin revokes: FOR UPDATE on Postgres; on
-                # SQLite the write below takes the DB write lock. Then a
-                # check-BEFORE and a check-AFTER-delete both in the txn, so two
-                # revokes can never both pass and empty the admin set.
-                admins = self._org_admins_locked(conn)
-                if subject in admins and len(admins) <= 1:
-                    raise LastAdminError(
-                        "cannot remove the last org admin; grant another first"
-                    )
-            if hub != ORG and permission == USE_HUB:
-                for (removed,) in conn.execute(
-                    text(
-                        "SELECT permission FROM hz_grants WHERE subject=:s AND hub=:h"
-                    ),
-                    {"s": subject, "h": hub},
-                ):
-                    if removed != USE_HUB:
-                        self._audit(conn, actor, "revoke", subject, hub, removed)
-                conn.execute(
-                    text("DELETE FROM hz_grants WHERE subject=:s AND hub=:h"),
-                    {"s": subject, "h": hub},
-                )
-            else:
-                conn.execute(
-                    text(
-                        "DELETE FROM hz_grants WHERE subject=:s AND hub=:h AND permission=:p"
-                    ),
-                    {"s": subject, "h": hub, "p": permission},
-                )
-            if removes_admin and not self._org_admins(conn):
-                raise LastAdminError(
-                    "cannot remove the last org admin; grant another first"
-                )
-            self._audit(conn, actor, "revoke", subject, hub, permission)
+            self._revoke_in_txn(conn, subject, hub, permission, actor)
             self._bump_revision(conn)
         self._refresh_if_stale()
 

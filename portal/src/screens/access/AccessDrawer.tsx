@@ -10,8 +10,8 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { CheckCircle2, Circle, XCircle } from "lucide-react";
-import { request, query, type Access, type Hub } from "../../api";
+import { Circle, XCircle } from "lucide-react";
+import { ApiError, request, query, type Access, type Hub } from "../../api";
 import { errorText } from "../../hooks/useData";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
@@ -56,6 +56,14 @@ export function AccessDrawer({
   const [touched, setTouched] = useState(false);
   const [checking, setChecking] = useState(false);
   const catalog = useMemo(() => toCatalog(access.permissions), [access.permissions]);
+  const catalogPerms = useMemo(
+    () => new Set(access.permissions.map((p) => p.permission)),
+    [access.permissions],
+  );
+  // Grants for tools that no longer exist in the agent's catalogue. They can't
+  // be re-added, but must be individually removable — otherwise a renamed/
+  // deleted tool leaves a permission the editor can never clear.
+  const orphans = draft ? draft.row.perms.filter((p) => !catalogPerms.has(p)) : [];
   const subject = draft ? normalizeSubject(draft.subject) : "";
   const subjectError = draft?.mode === "add" ? validateSubject(draft.subject) : null;
   const changes = draft ? diff(draft.row.perms, draft.selected) : { added: [], removed: [] };
@@ -134,25 +142,27 @@ export function AccessDrawer({
     if (!draft || draft.step !== "review" || busy) return;
     const { operations } = draft;
     const target = access.hub; // the loaded response's agent, never the route
-    let progress = 0;
-    setDraft({ ...draft, step: "saving", progress });
-    for (const op of operations) {
-      try {
-        await request("/access/" + op.action, {
-          subject,
-          hub: target,
-          permission: op.permission,
-        });
-        progress += 1;
-        setDraft({ ...draft, step: "saving", progress });
-      } catch (e) {
-        setDraft({ ...draft, step: "failed", progress, failure: errorText(e) });
-        onReload();
-        return;
-      }
+    setDraft({ ...draft, step: "saving", progress: 0 });
+    try {
+      // One atomic request: the whole change set applies on the revision we
+      // loaded, or none of it does (a concurrent edit returns 409). No partial
+      // saves, so there is nothing to reconcile by hand.
+      await request("/access/apply", {
+        subject,
+        hub: target,
+        expected_revision: access.revision,
+        operations: operations.map((o) => ({ action: o.action, permission: o.permission })),
+      });
+      setDraft(null);
+      onSaved(subject, operations);
+    } catch (e) {
+      // A 4xx client rejection committed nothing; a 5xx or network drop is
+      // uncertain — the atomic write may have landed just before the response
+      // was lost. Say so honestly and reload to show the real current state.
+      const uncertain = e instanceof ApiError ? !e.certain : true;
+      setDraft({ ...draft, step: "failed", progress: 0, failure: errorText(e), uncertain });
+      onReload();
     }
-    setDraft(null);
-    onSaved(subject, operations);
   }
 
   const name = draft ? personName(subject || draft.subject, draft.row.display) : "";
@@ -162,7 +172,9 @@ export function AccessDrawer({
       : draft?.step === "saving"
         ? "Saving…"
         : draft?.step === "failed"
-          ? "Some changes were not saved"
+          ? draft.uncertain
+            ? "Save not confirmed"
+            : "Nothing was saved"
           : draft?.mode === "add"
             ? "Add a person"
             : "Edit access";
@@ -181,7 +193,7 @@ export function AccessDrawer({
       return (
         <Space className="drawer-actions">
           <Button type="primary" loading>
-            Saving {draft.progress + 1} of {draft.operations.length}…
+            Saving…
           </Button>
         </Space>
       );
@@ -283,17 +295,25 @@ export function AccessDrawer({
                 </Space>
               )}
 
-              {draft.row.status === "blocked" && (
+              {draft.row.suspended && (
                 <Alert
                   type="warning"
                   showIcon
-                  title="This person is blocked"
+                  title="This person is blocked by an administrator"
                   description={
                     <>
                       They cannot be granted access until they are reactivated.{" "}
                       <a href={personHref(draft.row.subject)}>Open their details under People.</a>
                     </>
                   }
+                />
+              )}
+              {draft.row.account_unavailable && !draft.row.suspended && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="Their chat account is unavailable"
+                  description="It was removed or not found. Access resumes automatically if the account reappears; it can’t be changed here."
                 />
               )}
 
@@ -341,6 +361,29 @@ export function AccessDrawer({
                       </div>
                     );
                   })}
+                  {orphans.map((p) => (
+                    <div className="capability" key={p}>
+                      <Checkbox
+                        checked={draft.selected.includes(p)}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            selected: toggle(draft.selected, p, e.target.checked),
+                          })
+                        }
+                      >
+                        <span className="capability-title">
+                          <Text strong>{p}</Text>
+                          <Tag>No longer available</Tag>
+                        </span>
+                      </Checkbox>
+                      <div className="capability-help">
+                        <Text type="secondary">
+                          This capability no longer exists in {hub.name}. You can remove it, but it can’t be granted again.
+                        </Text>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>
@@ -375,13 +418,16 @@ function ReviewList({
   const impliedEntry = added.includes(USE_HUB) && added.length > 1;
   const cascade = removed.includes(USE_HUB) && removed.length > 1;
   const sensitive = added.filter((p) => catalog[p]?.sensitive);
-  const status = (index: number) => {
-    if (draft.step === "review") return "planned";
-    if (index < draft.progress) return "done";
-    if (draft.step === "failed" && index === draft.progress) return "failed";
-    if (draft.step === "saving" && index === draft.progress) return "active";
-    return "pending";
-  };
+  // Applied atomically, so every row shares the same state. A confirmed failure
+  // is "failed" (nothing saved); an unconfirmed one is "unknown".
+  const status = () =>
+    draft.step === "failed"
+      ? draft.uncertain
+        ? "unknown"
+        : "failed"
+      : draft.step === "saving"
+        ? "active"
+        : "planned";
   return (
     <div className="review">
       <Space align="center" className="person-heading">
@@ -399,14 +445,20 @@ function ReviewList({
 
       {draft.step === "failed" && (
         <Alert
-          type="error"
+          type={draft.uncertain ? "warning" : "error"}
           showIcon
-          title={`Saved ${draft.progress} of ${draft.operations.length} ${draft.operations.length === 1 ? "change" : "changes"}`}
+          title={
+            draft.uncertain
+              ? "Couldn’t confirm whether the changes were saved"
+              : "No changes were saved"
+          }
           description={
             <>
               {draft.failure}
               <br />
-              Current access has been reloaded. Reopen {name} to see what applies now and try the rest again.
+              {draft.uncertain
+                ? `Reloading the current access. Reopen ${name} to see what actually applies now before trying again.`
+                : `Nothing changed. Reloading the current access — reopen ${name} to try again.`}
             </>
           }
         />
@@ -464,18 +516,16 @@ function ReviewList({
       )}
 
       <div className="section">
-        <Text strong>Requests</Text>
+        <Text strong>Changes</Text>
         <Paragraph type="secondary" style={{ margin: "4px 0 8px" }}>
-          Each change is saved with its own request, in this order. If one fails, the earlier ones stay saved and you’ll see exactly which did.
+          Applied together in one step. If it can’t be applied — for example someone else changed access first — nothing changes and you can review again.
         </Paragraph>
         <ol className="operation-list">
-          {draft.operations.map((op, i) => {
-            const s = status(i);
+          {draft.operations.map((op) => {
+            const s = status();
             return (
               <li key={`${op.action}:${op.permission}`} data-status={s}>
-                {s === "done" ? (
-                  <CheckCircle2 size={16} className="op-done" />
-                ) : s === "failed" ? (
+                {s === "failed" ? (
                   <XCircle size={16} className="op-failed" />
                 ) : (
                   <Circle size={16} className="op-pending" />
@@ -484,9 +534,8 @@ function ReviewList({
                   {op.action === "grant" ? "Allow" : "Remove"} {capabilityLabel(op.permission, catalog)}
                   {op.action === "revoke" && op.permission === USE_HUB && cascade ? " (and everything with it)" : ""}
                 </span>
-                {s === "failed" && <Tag color="red">Failed</Tag>}
-                {s === "done" && <Tag color="green">Saved</Tag>}
-                {s === "pending" && draft.step === "failed" && <Tag>Not attempted</Tag>}
+                {s === "failed" && <Tag color="red">Not saved</Tag>}
+                {s === "unknown" && <Tag color="gold">Unknown</Tag>}
               </li>
             );
           })}

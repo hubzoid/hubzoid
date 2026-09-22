@@ -19,7 +19,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel, Field, ConfigDict
@@ -27,7 +27,14 @@ from . import deployment
 from .access.identity import normalize
 
 from .access import store_for
-from .access.store import MANAGE_ACCESS, ORG, USE_HUB, LastAdminError
+from .access.store import (
+    MANAGE_ACCESS,
+    ORG,
+    USE_HUB,
+    EVERYONE,
+    LastAdminError,
+    RevisionConflict,
+)
 
 log = logging.getLogger("hubzoid.portal")
 
@@ -48,6 +55,25 @@ class GrantRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=320)
     hub: str = Field(min_length=1, max_length=200)
     permission: str = Field(min_length=1, max_length=200)
+    # Optional optimistic-concurrency guard: the policy revision the editor
+    # loaded. If it no longer matches, another admin changed access in the
+    # meantime and we refuse rather than apply an edit built on stale state.
+    expected_revision: int | None = None
+
+
+class ApplyOp(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    action: Literal["grant", "revoke"]
+    permission: str = Field(min_length=1, max_length=200)
+
+
+class ApplyRequest(BaseModel):
+    """A whole change set for one subject in one hub, applied atomically."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    subject: str = Field(min_length=1, max_length=320)
+    hub: str = Field(min_length=1, max_length=200)
+    expected_revision: int | None = None
+    operations: list[ApplyOp] = Field(min_length=1, max_length=100)
 
 
 class PersonRequest(BaseModel):
@@ -178,6 +204,15 @@ _UNAVAILABLE_MSG = (
     "Approve or restore it in Open WebUI, then refresh accounts."
 )
 
+# A hub whose access is not yet dashboard-managed (Casbin not authoritative) is still
+# governed by the chat app. Editing its access here would neither take effect nor
+# survive migration, so those edits are refused (in the API, not only the UI).
+_LEGACY_MSG = (
+    "This agent's access is still managed in the chat app — it has not been migrated "
+    "to the dashboard. Migrate the agent first; edits made here would not take effect "
+    "and would be overwritten by migration."
+)
+
 
 def _account_flags(gs, subject: str) -> dict:
     """Read the store's two block markers separately (read-only). `blocked` is
@@ -290,8 +325,12 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     ):
         path = require_hub(admin, hub)
         gs = store_for(hub_dir)
+        # One consistent read of (revision, every grant): the returned revision
+        # describes exactly the rows below, so the editor's concurrency guard is
+        # not defeated by new rows arriving under an old revision (or the reverse).
+        revision, all_grants = gs.access_snapshot()
         rows = {}
-        for subject, domain, perm in gs.list_grants():
+        for subject, domain, perm in all_grants:
             if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
                 row = rows.setdefault(
                     subject,
@@ -303,26 +342,49 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     ),
                 )
                 row["perms" if domain == hub else "inherited"].append(perm)
+
+        def effective_for(subject: str) -> list[str]:
+            # Mirrors GrantStore.permissions_for over the same snapshot: direct +
+            # org-wide + public wildcard. Suspended subjects hold nothing.
+            return sorted(
+                {
+                    p
+                    for (s, h, p) in all_grants
+                    if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
+                }
+            )
+
         for subject, row in rows.items():
             row["center"] = gs.get_attr(hub, subject, "center")
-            row["effective"] = sorted(gs.permissions_for(subject, hub))
             identity = gs.identity(subject) or {}
             row["display"] = identity.get("display") or subject
-            row.update(_account_state(gs, subject, identity))
+            state = _account_state(gs, subject, identity)
+            row.update(state)
+            # Effective access must match the enforcer: a blocked account (admin
+            # suspension OR an unavailable chat account) holds nothing, though its
+            # direct grants are preserved separately in `perms`.
+            row["effective"] = [] if state["blocked"] else effective_for(subject)
         result = [
             r
             for r in rows.values()
             if q.lower() in (r["subject"] + " " + r["display"]).lower()
         ]
         result.sort(key=lambda r: r["subject"])
+        public = any(
+            s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
+            for (s, h, p) in all_grants
+        )
         return dict(
             hub=hub,
-            editable=True,
+            # Editable only once the hub is dashboard-managed. A legacy (un-migrated)
+            # hub is read-only here; its access still lives in the chat app.
+            editable=gs.is_authoritative(hub),
             authoritative=gs.is_authoritative(hub),
             can_manage_admins=admin.is_org_admin,
             permissions=deployment.permission_catalog(path),
             total=len(result),
-            public=gs.can("__signed_in_preview__", hub, USE_HUB),
+            public=public,
+            revision=revision,
             rows=result[offset : offset + limit],
         )
 
@@ -340,6 +402,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 )
         else:
             path = require_hub(admin, hub)
+            if not gs.is_authoritative(hub):
+                raise HTTPException(409, _LEGACY_MSG)
             known = {p["permission"] for p in deployment.permission_catalog(path)}
             if perm not in known and not (
                 revoke and (subject, hub, perm) in gs.list_grants(hub)
@@ -356,6 +420,15 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             raise HTTPException(
                 403, "Only organization admins may change administrator access"
             )
+        if (
+            payload.expected_revision is not None
+            and gs.revision() != payload.expected_revision
+        ):
+            raise HTTPException(
+                409,
+                "Access changed since you loaded it — someone else edited it. "
+                "Reload and review the current access before saving.",
+            )
         try:
             if revoke:
                 gs.revoke(subject, hub, perm, actor=admin.subject)
@@ -370,10 +443,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 gs.grant(subject, hub, perm, actor=admin.subject)
         except (ValueError, LastAdminError) as exc:
             raise HTTPException(409, str(exc))
-        return dict(
-            ok=True,
-            visibility="Updates in Open WebUI within 30 seconds; use Sync now to retry.",
-        )
+        return dict(ok=True, revision=gs.revision())
 
     @router.post("/access/grant")
     def grant(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
@@ -383,15 +453,75 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def revoke(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
         return mutate(request, payload, admin, True)
 
+    @router.post("/access/apply")
+    def apply(request: Request, payload: ApplyRequest, admin=Depends(require_admin)):
+        """Apply one person's whole change set for a hub in a single guarded
+        transaction. Atomic: either every operation applies on the expected
+        revision, or none does (409 on a concurrent change)."""
+        _check_same_origin(request)
+        subject = normalize(payload.subject)
+        hub = normalize(payload.hub)
+        if hub == ORG:
+            raise HTTPException(400, "Organization admin rights are changed per person, not here")
+        if subject == EVERYONE:
+            raise HTTPException(403, "Public access is changed with the public-access toggle")
+        path = require_hub(admin, hub)
+        gs = store_for(hub_dir)
+        if not gs.is_authoritative(hub):
+            raise HTTPException(409, _LEGACY_MSG)
+        known = {p["permission"] for p in deployment.permission_catalog(path)}
+        existing = set(gs.list_grants(hub))
+        ops: list[tuple[str, str]] = []
+        grants = False
+        for op in payload.operations:
+            perm = normalize(op.permission)
+            if not admin.is_org_admin and (
+                perm == MANAGE_ACCESS
+                or (op.action == "revoke" and perm == USE_HUB and gs.can(subject, hub, MANAGE_ACCESS))
+            ):
+                raise HTTPException(
+                    403, "Only organization admins may change administrator access"
+                )
+            # A removed/renamed tool can still be revoked even though it left the
+            # catalogue, but never granted.
+            if perm not in known and not (
+                op.action == "revoke" and (subject, hub, perm) in existing
+            ):
+                raise HTTPException(422, "Unknown permission for this hub")
+            grants = grants or op.action == "grant"
+            ops.append((op.action, perm))
+        if grants:
+            flags = _account_flags(gs, subject)
+            if flags["suspended"]:
+                raise HTTPException(409, "Reactivate this user before granting access")
+            if flags["account_unavailable"]:
+                raise HTTPException(409, _UNAVAILABLE_MSG)
+        try:
+            revision = gs.apply_changes(
+                subject, hub, ops,
+                expected_revision=payload.expected_revision,
+                actor=admin.subject,
+            )
+        except RevisionConflict as exc:
+            raise HTTPException(409, str(exc))
+        except (ValueError, LastAdminError) as exc:
+            raise HTTPException(409, str(exc))
+        return dict(ok=True, revision=revision)
+
     @router.get("/people")
     def people(
         q: str = "",
+        status: str | None = None,
+        role: str | None = None,  # admin | regular | service
+        agent: str | None = None,  # only people with access to this hub
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=200),
         admin=Depends(require_admin),
     ):
         gs = store_for(hub_dir)
         scopes = {h["key"] for h in allowed_hubs(admin)}
+        if agent:
+            require_hub(admin, agent)  # never let a filter widen scope
         grants = [g for g in gs.list_grants() if admin.is_org_admin or g[1] in scopes]
         visible = {g[0] for g in grants}
         rows = []
@@ -404,6 +534,19 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             person.update(_account_state(gs, sub, person))
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
+            # Filters, applied before pagination.
+            if status and person["status"] != status:
+                continue
+            if role:
+                is_service = sub.startswith("workflow:")
+                if role == "admin" and not person["organization_admin"]:
+                    continue
+                if role == "service" and not is_service:
+                    continue
+                if role == "regular" and (person["organization_admin"] or is_service):
+                    continue
+            if agent and not person["access"].get(agent):
+                continue
             rows.append(person)
         return {"people": rows[offset : offset + limit], "total": len(rows)}
 
@@ -472,22 +615,62 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     @router.get("/runs")
     def runs(
-        hub: str,
+        hub: str | None = None,
         workflow: str | None = None,
         run_id: str | None = None,
+        status: str | None = None,  # comma list: succeeded|failed|running|cancelled
+        since: str | None = None,  # ISO 8601; applied before pagination
+        until: str | None = None,
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
         admin=Depends(require_admin),
     ):
-        from .workflows.observe import runs as read_runs
+        from .workflows.observe import (
+            runs as read_runs,
+            runs_across,
+            resolve_statuses,
+        )
 
-        path = require_hub(admin, hub)
+        # Validate the status filter up front: an unrecognized value is a client
+        # error (422), never silently ignored — dropping it would widen the query to
+        # every status instead of narrowing it. An absent filter stays None.
         try:
-            return {
-                "runs": read_runs(
-                    path, name=workflow, run_id=run_id, limit=limit, offset=offset
+            statuses = resolve_statuses(status)
+        except ValueError:
+            raise HTTPException(
+                422,
+                "Unknown run status filter. Use succeeded, failed, running or cancelled.",
+            )
+
+        # A named agent scopes to that one bridge (and carries per-step detail when a
+        # run_id is given). No agent → cross-agent history over every agent this
+        # administrator may manage; filters and pagination apply to the merged set.
+        try:
+            if hub:
+                path = require_hub(admin, hub)
+                rows = read_runs(
+                    path,
+                    name=workflow,
+                    run_id=run_id,
+                    statuses=statuses,
+                    start=since,
+                    end=until,
+                    limit=limit,
+                    offset=offset,
                 )
-            }
+                return {"runs": rows, "has_more": len(rows) >= limit and not run_id}
+            return runs_across(
+                allowed_hubs(admin),
+                name=workflow,
+                run_id=run_id,
+                statuses=statuses,
+                start=since,
+                end=until,
+                limit=limit,
+                offset=offset,
+            )
+        except HTTPException:
+            raise
         except Exception:
             log.exception("Workflow history unavailable")
             raise HTTPException(
@@ -502,10 +685,18 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         offset: int = Query(0, ge=0, le=10000),
         user: str | None = None,
         denied: bool = False,
+        outcome: str | None = None,  # allow | deny (supersedes `denied`)
+        tool: str | None = None,
+        surface: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
         admin=Depends(require_admin),
     ):
         from .access import audit as auditlib
 
+        decision = outcome if outcome in ("allow", "deny") else ("deny" if denied else None)
+        # Filters are applied inside read() before the tail cut, so paging is over
+        # the filtered set. `selected()` keeps every hub within the admin's scope.
         rows = [
             dict(r, hub=h["key"])
             for h in selected(admin, hub)
@@ -513,7 +704,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 Path(h["path"]),
                 limit=limit + offset,
                 user=user,
-                decision="deny" if denied else None,
+                decision=decision,
+                tool=tool,
+                surface=surface,
+                since=since,
+                until=until,
             )
         ]
         rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
@@ -525,6 +720,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
         user: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        since: float | None = None,
+        until: float | None = None,
         admin=Depends(require_admin),
     ):
         scopes = [h["key"] for h in selected(admin, hub)]
@@ -532,7 +731,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             scopes.append(ORG)
         return {
             "rows": store_for(hub_dir).read_access_audit(
-                limit, hubs=scopes, subject=user, offset=offset
+                limit, hubs=scopes, subject=user, actor=actor, action=action,
+                since=since, until=until, offset=offset,
             )
         }
 

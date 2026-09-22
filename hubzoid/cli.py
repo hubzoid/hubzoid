@@ -1531,6 +1531,7 @@ def access_migrate(
     model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub (required when multiple models exist)."),
     standalone_public: bool = typer.Option(False, "--standalone-public", help="Explicitly confirm legacy standalone signed-in public entry; verifies tools against the legacy CSV resolver."),
     apply: bool = typer.Option(False, "--apply", help="Actually apply + make Casbin authoritative (the cutover). Without this, dry-run."),
+    remigrate: bool = typer.Option(False, "--remigrate", help="Allow re-running --apply on an already-migrated hub (OVERWRITES dashboard edits made since migration). Off by default."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
 ) -> None:
     """Flatten legacy access (access.csv [+ Open WebUI]) into direct Casbin
@@ -1566,6 +1567,13 @@ def access_migrate(
         console.print(f"[dim]dry-run — vs current store: {len(d['missing'])} missing, "
                       f"{len(d['extra'])} extra. Re-run with --apply to cut over.[/dim]")
         return
+    # Prevent accidental re-import over permissions edited after migration: refuse a
+    # second cutover of an already dashboard-managed hub unless explicitly forced.
+    if gs.is_authoritative(hub_dir.resolve().name) and not remigrate:
+        console.print("[red]already migrated:[/red] this hub is dashboard-managed. "
+                      "Re-importing legacy access would overwrite edits made since "
+                      "migration. Pass --remigrate only if you intend to discard them.")
+        raise typer.Exit(2)
     if not plan.expected:
         console.print("[red]Cutover requires --from-owui model evidence or --standalone-public for a legacy standalone hub. CSV alone cannot prove existing model access.[/red]")
         raise typer.Exit(2)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -20,7 +20,8 @@ import {
   LoadState,
   PersonCell,
 } from "../../components/common";
-import { EVERYONE, USE_HUB, personName, toCatalog } from "../../lib/format";
+import { useHashQuery } from "../../hooks/useRoute";
+import { EVERYONE, USE_HUB, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
 
@@ -46,6 +47,34 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
   const [publicBusy, setPublicBusy] = useState(false);
+
+  // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
+  // open that person's editor directly instead of the whole access list.
+  const [q] = useHashQuery();
+  const openedEdit = useRef<string>("");
+  useEffect(() => {
+    const edit = q.edit ? normalizeSubject(q.edit) : "";
+    const token = `${hub.key}:${edit}`;
+    if (!edit || draft || openedEdit.current === token) return;
+    openedEdit.current = token;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await request<Access>(
+          "/access" + query({ hub: hub.key, q: edit, limit: 200 }),
+        );
+        if (cancelled) return;
+        const row = res.rows.find((r) => r.subject === edit);
+        setDraft(row ? draftFor(row) : { ...draftFor(), subject: edit });
+      } catch {
+        if (!cancelled) setDraft({ ...draftFor(), subject: edit });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [q.edit, draft, hub.key]);
+
   const access = data.data;
   const catalog = useMemo(() => toCatalog(access?.permissions), [access?.permissions]);
   const order = useMemo(
@@ -90,6 +119,13 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   }
 
   if (!access) return <LoadState error={data.error} retry={data.reload} />;
+
+  // After a save (esp. a partial failure) the rows are refetched. Lock the
+  // entry points until fresh data lands so nobody edits stale permissions. A legacy
+  // (un-migrated) hub is read-only here: its access lives in the chat app and the API
+  // refuses edits, so the controls are locked to match.
+  const refreshing = data.refreshing;
+  const locked = refreshing || !access.editable;
 
   const columns = [
     {
@@ -140,6 +176,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         ) : (
           <Button
             onClick={() => setDraft(draftFor(r))}
+            disabled={locked}
             aria-label={`Edit access for ${personName(r.subject, r.display)}`}
           >
             Edit access
@@ -157,7 +194,12 @@ export function AccessEditor({ hub }: { hub: Hub }) {
             People and services with direct access, and what each is allowed to do.
           </Paragraph>
         </div>
-        <Button type="primary" icon={<Plus size={16} />} onClick={() => setDraft(draftFor())}>
+        <Button
+          type="primary"
+          icon={<Plus size={16} />}
+          disabled={locked}
+          onClick={() => setDraft(draftFor())}
+        >
           Add person
         </Button>
       </div>
@@ -166,8 +208,8 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         <Alert
           type="warning"
           showIcon
-          title="This agent still uses legacy access"
-          description="Changes saved here take effect only after the agent is moved to managed access (hubzoid access migrate). Existing access continues to apply until then."
+          title="This agent’s access is managed in the chat app"
+          description="It hasn’t been moved to the dashboard yet, so access is read-only here and its existing access continues to apply. After migration (hubzoid access migrate) you can manage it here."
         />
       )}
       {notice && (
@@ -190,7 +232,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         >
           <Switch
             checked={access.public}
-            disabled={!access.can_manage_admins || publicBusy}
+            disabled={!access.can_manage_admins || publicBusy || locked}
             loading={publicBusy}
             aria-label="Public access"
             onChange={askPublic}
@@ -247,7 +289,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
               }
             >
               {!search && (
-                <Button type="primary" onClick={() => setDraft(draftFor())}>
+                <Button type="primary" disabled={locked} onClick={() => setDraft(draftFor())}>
                   Add the first person
                 </Button>
               )}

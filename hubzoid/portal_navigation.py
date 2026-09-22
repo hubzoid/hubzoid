@@ -1,11 +1,25 @@
-"""Small edge-owned enhancement; never patches installed OWUI bundles."""
+"""Small edge-owned enhancement; never patches installed OWUI bundles.
+
+Open WebUI is a single-page app: the page loads once and login/logout happen via
+in-app navigation without a full reload. So a one-shot check on load would show the
+link before an admin has signed in and leave it visible after they sign out. The
+script therefore RE-EVALUATES the session — adding the link when `/portal/api/me`
+authorizes and removing it otherwise — on load, on history navigation, when the tab
+regains focus, and on a slow interval. It is idempotent and never throws into chat."""
 SCRIPT = r'''
-(async () => {
-  try {
-    const response = await fetch('/portal/api/me', {credentials: 'same-origin'});
-    if (!response.ok || document.getElementById('hubzoid-manage-access')) return;
+(() => {
+  const ID = 'hubzoid-manage-access';
+  async function sync() {
+    let ok = false;
+    try {
+      const r = await fetch('/portal/api/me', {credentials: 'same-origin'});
+      ok = r.ok;
+    } catch (_) { ok = false; }  // chat stays usable if administration is unreachable
+    const existing = document.getElementById(ID);
+    if (!ok) { if (existing) existing.remove(); return; }   // signed out / not an admin
+    if (existing || !document.body) return;                 // already shown
     const link = document.createElement('a');
-    link.id = 'hubzoid-manage-access';
+    link.id = ID;
     link.href = '/portal/';
     link.textContent = 'Manage agent access ↗';
     link.title = 'Manage agent permissions and view workflow runs. Accounts remain in Open WebUI.';
@@ -13,7 +27,11 @@ SCRIPT = r'''
       padding:'10px 14px',background:'#fff',color:'#222',border:'1px solid #ddd',
       borderRadius:'8px',font:'13px system-ui',boxShadow:'0 2px 8px #0001'});
     document.body.appendChild(link);
-  } catch (_) { /* Chat remains usable if administration is unavailable. */ }
+  }
+  sync();
+  addEventListener('popstate', sync);
+  addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+  setInterval(sync, 15000);
 })();
 '''
 

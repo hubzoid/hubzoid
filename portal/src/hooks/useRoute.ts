@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * Hash routing so every screen is bookmarkable and the browser's back button
@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
  *   #/people[/<subject>]
  *   #/activity
  */
-export type Route = { path: string; parts: string[] };
+export type Route = { path: string; parts: string[]; query: Record<string, string> };
 
 export const DEFAULT_ROUTE = "/agents";
 
@@ -19,8 +19,28 @@ export function href(path: string) {
   return "#" + path;
 }
 
+/** Build a hash href with a query string (drops empty values). */
+export function hrefWith(path: string, query: Record<string, string | undefined>) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v) q.set(k, v);
+  const s = q.toString();
+  return "#" + path + (s ? "?" + s : "");
+}
+
 export function navigate(path: string) {
   location.hash = path;
+}
+
+/** Replace only the query of the current route (filters/pagination), keeping the
+ *  path. `replace` avoids stacking a history entry per keystroke. */
+export function setQuery(
+  path: string,
+  query: Record<string, string | undefined>,
+  replace = false,
+) {
+  const url = hrefWith(path, query);
+  if (replace) history.replaceState(null, "", url);
+  else location.hash = url.slice(1);
 }
 
 export const agentHref = (key: string, tab = "access") =>
@@ -30,7 +50,10 @@ export const personHref = (subject: string) =>
   href(`/people/${encodeURIComponent(subject)}`);
 
 function parse(hash: string): Route {
-  const path = hash.replace(/^#/, "") || DEFAULT_ROUTE;
+  const raw = hash.replace(/^#/, "") || DEFAULT_ROUTE;
+  const qIndex = raw.indexOf("?");
+  const path = (qIndex === -1 ? raw : raw.slice(0, qIndex)) || DEFAULT_ROUTE;
+  const search = qIndex === -1 ? "" : raw.slice(qIndex + 1);
   const parts = path
     .split("/")
     .slice(1)
@@ -41,7 +64,33 @@ function parse(hash: string): Route {
         return p;
       }
     });
-  return { path, parts };
+  const query: Record<string, string> = {};
+  for (const [k, v] of new URLSearchParams(search)) query[k] = v;
+  return { path, parts, query };
+}
+
+/**
+ * Read and update the current route's query string (filters + pagination), so a
+ * screen's investigation state lives in the URL: refresh, Back and shared links
+ * all restore it. Updating pushes a new hash (Back steps through filter states).
+ */
+export function useHashQuery(): [
+  Record<string, string>,
+  (next: Record<string, string | undefined>) => void,
+] {
+  const [query, setQ] = useState<Record<string, string>>(
+    () => parse(location.hash).query,
+  );
+  useEffect(() => {
+    const on = () => setQ(parse(location.hash).query);
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const update = useCallback((next: Record<string, string | undefined>) => {
+    const cur = parse(location.hash);
+    setQuery(cur.path, { ...cur.query, ...next });
+  }, []);
+  return [query, update];
 }
 
 /**

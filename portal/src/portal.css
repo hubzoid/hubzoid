@@ -181,9 +181,15 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.signout {
+.signout.ant-btn {
+  align-self: flex-start;
   margin-top: 2px;
-  cursor: pointer;
+  padding: 0;
+  height: auto;
+  color: var(--mute);
+}
+.signout.ant-btn:hover {
+  color: var(--accent);
 }
 
 .theme-toggle {

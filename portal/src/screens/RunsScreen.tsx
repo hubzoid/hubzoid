@@ -89,19 +89,28 @@ function WorkflowList({ hub }: { hub: Hub }) {
   const data = useData<{ workflows: Workflow[] }>("/workflows" + query({ hub: hub.key }));
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
   const workflows = data.data.workflows;
+  // last_dispatch / missed are the agent's scheduler-level values (the dispatcher
+  // serves all of this agent's workflows), not per-workflow — show them once.
+  const sched = workflows[0];
   return (
     <div className="panel">
       <div className="panel-heading">
         <div>
           <Title level={4}>Workflows in {hub.name}</Title>
           <Paragraph type="secondary">
-            Scheduled and manual workflows defined in this agent, with their next run and recent health.
+            Scheduled and manual workflows defined in this agent, with their next run.
           </Paragraph>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
           Refresh
         </Button>
       </div>
+      {sched && (
+        <Text type="secondary" className="hint">
+          Scheduler: last dispatch {sched.last_dispatch ? formatTime(sched.last_dispatch) : "never"}
+          {sched.missed ? ` · ${sched.missed} missed run${sched.missed === 1 ? "" : "s"}` : ""}
+        </Text>
+      )}
       <HealthAlerts workflows={workflows} />
       <Table<Workflow>
         rowKey={(w) => `${w.hub}:${w.name}`}
@@ -182,19 +191,6 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ) : (
                 <Text type="secondary">—</Text>
               ),
-          },
-          {
-            title: "Last dispatch",
-            key: "last",
-            render: (_, w) =>
-              w.last_dispatch ? <When value={w.last_dispatch} /> : <Text type="secondary">Never</Text>,
-          },
-          {
-            title: "Missed",
-            key: "missed",
-            width: 90,
-            render: (_, w) =>
-              w.missed ? <Tag color="gold">{w.missed}</Tag> : <Text type="secondary">0</Text>,
           },
           {
             title: "",
@@ -426,7 +422,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
       </div>
       <Space>
         <Button href={runsHref(hub, workflow)}>Back to runs</Button>
-        <Button href={agentHref(hub.key, "activity")}>See activity</Button>
+        <Button href={agentHref(hub.key, "activity")}>Agent activity</Button>
       </Space>
     </div>
   );

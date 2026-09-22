@@ -67,9 +67,15 @@ export function lockFor(
   access: Pick<Access, "can_manage_admins">,
   selected: string[],
 ): Lock {
-  if (row.status === "blocked")
+  // A blocked (admin-suspended) or unavailable (chat account gone) person can have
+  // EXISTING grants removed — offboarding — but must not receive NEW ones. So lock
+  // only a permission they do not already hold; leave held ones unlockable so they
+  // can be unchecked (revoked).
+  if ((row.suspended || row.account_unavailable) && !row.perms.includes(permission))
     return {
-      reason: "This person is blocked. Reactivate them under People before changing access.",
+      reason: row.suspended
+        ? "Blocked by an administrator — reactivate them under People to grant new access. Existing access can still be removed."
+        : "Their chat account is unavailable, so new access can't be added — but existing access can be removed.",
     };
   if (row.subject === EVERYONE)
     return { reason: "Public access is managed with the switch above." };
@@ -97,9 +103,11 @@ export function canRemoveAll(
   row: AccessRow,
   access: Pick<Access, "can_manage_admins">,
 ) {
+  // Available whenever there are direct grants to remove — including for a blocked or
+  // unavailable account, so retained access can be offboarded. `lockFor` returns null
+  // for a held permission even when blocked, so this stays true in that case.
   return (
     row.perms.length > 0 &&
-    row.status !== "blocked" &&
     row.subject !== EVERYONE &&
     lockFor(USE_HUB, row, access, []) === null
   );
@@ -139,6 +147,9 @@ export type Draft = {
   /** How many of `operations` completed. */
   progress: number;
   failure?: string;
+  /** A failed save whose outcome we couldn't confirm (network/5xx), as opposed
+   *  to a definite client rejection (4xx) that committed nothing. */
+  uncertain?: boolean;
   notice?: string;
 };
 

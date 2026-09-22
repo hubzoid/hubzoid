@@ -14,6 +14,7 @@ const AgentsScreen = lazy(() => import("./screens/AgentsScreen").then((m) => ({ 
 const AgentDetail = lazy(() => import("./screens/AgentDetail").then((m) => ({ default: m.AgentDetail })));
 const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
+const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 
 const TABS: AgentTab[] = ["access", "runs", "activity"];
 
@@ -112,6 +113,9 @@ function Router({
         );
       else screen = <AgentDetail hub={hub} hubs={list} tab={tab} rest={rest.slice(2)} />;
     }
+  } else if (area === "runs") {
+    active = "runs";
+    screen = <AllRunsScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
     screen = <PeopleScreen me={me.data} hubs={list} selected={rest[0]} />;
