@@ -1,52 +1,98 @@
-name: ci
+name: release
 
+# Release pipeline. The file keeps the name ci.yml because PyPI trusted
+# publishing is registered against this workflow file name.
+# Push a tag vX.Y.Z whose version matches pyproject.toml. Everything is
+# validated from the tag first; nothing is published unless every check
+# passes. Publishing runs in the `pypi` environment, so it can require a
+# manual approval in the repository settings.
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install
-        run: pip install -e '.[dev]'
-      - name: Test (unit + integration; e2e tiers auto-skip without keys)
-        run: pytest -q --no-header
-
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - name: Build sdist + wheel
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Tag matches the package version
         run: |
-          python -m pip install --upgrade build
-          python -m build
+          want="${GITHUB_REF_NAME#v}"
+          have=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "$want" = "$have" || { echo "tag $GITHUB_REF_NAME but pyproject says $have"; exit 1; }
+
+      - name: Build the Console from source
+        working-directory: portal
+        run: npm ci && npm run lint && npm run build
+
+      - name: Full test suite
+        run: |
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev]'
+          pytest -q --no-header
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: The wheel built from the sdist has the Console too
+        run: |
+          mkdir -p /tmp/from-sdist && python -m pip wheel --no-deps -w /tmp/from-sdist dist/*.tar.gz
+          python -c "import sys,zipfile,glob; w=glob.glob('/tmp/from-sdist/*.whl')[0]; n=zipfile.ZipFile(w).namelist(); sys.exit(0 if 'hubzoid/portal_dist/index.html' in n else 'Console missing from sdist-built wheel')"
+
+      - name: Clean install of the wheel works and serves the Console
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu dist/*.whl
+          /tmp/clean/bin/pip check
+          cd /tmp && /tmp/clean/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_install.py" "$GITHUB_REF_NAME"
+
       - uses: actions/upload-artifact@v4
         with:
           name: release-dists
           path: dist/
 
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image and check it starts
+        run: |
+          docker build -t hubzoid:candidate .
+          cp -r demo-hub /tmp/hub && chmod -R a+rwX /tmp/hub
+          printf 'MODEL=openrouter/anthropic/claude-haiku-4.5\nOPENROUTER_API_KEY=not-used\nBRIDGE_API_KEYS=ci-key\n' > /tmp/hub/.env
+          docker run -d --name candidate -p 3080:3080 -v /tmp/hub:/hub hubzoid:candidate
+          for i in $(seq 1 100); do curl -fs http://127.0.0.1:3080/health && break; sleep 3; done
+          curl -fs http://127.0.0.1:3080/health
+          ! curl -fs -m 3 http://127.0.0.1:8000/healthz
+          docker rm -f candidate
+
   publish:
-    needs: build
+    needs: [validate, image]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/hubzoid/
     permissions:
+      contents: write
       id-token: write
+      packages: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: release-dists
@@ -55,3 +101,26 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file <(python .github/scripts/changelog_section.py "$GITHUB_REF_NAME")
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Publish the image (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest

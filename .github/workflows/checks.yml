@@ -1,0 +1,49 @@
+name: checks
+
+# Light and fast: runs on every push and pull request. Nothing is published
+# here; the full gate runs in ci.yml (the release pipeline) when a version tag is pushed.
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev]'
+      - name: Unit and integration tests (no end-to-end tiers)
+        run: pytest -q --no-header -m "not e2e and not e2e_llm and not e2e_ui and not e2e_browser" --ignore=tests/e2e
+
+  console:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - name: Type-check and build
+        run: npm run build
