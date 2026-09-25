@@ -18,37 +18,18 @@ work. Do not use `hub.state` as a transactional counter across steps.
 from __future__ import annotations
 
 import json
-import threading
-from weakref import WeakSet
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 _MISSING = object()
-_ensured: WeakSet[Engine] = WeakSet()
-_lock = threading.Lock()
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS hz_workflow_kv (
-    hub      TEXT NOT NULL,
-    workflow TEXT NOT NULL,
-    k        TEXT NOT NULL,
-    v        TEXT,
-    PRIMARY KEY (hub, workflow, k)
-)
-"""
 
 
 def ensure_state_table(engine: Engine) -> None:
-    key = engine
-    if key in _ensured:
-        return
-    with _lock:
-        if key in _ensured:
-            return
-        with engine.begin() as conn:
-            conn.execute(text(_DDL))
-        _ensured.add(key)
+    """`hz_workflow_kv` lives in the operational store's versioned schema."""
+    from ..migrations import upgrade
+
+    upgrade(engine, "operational")
 
 
 class WorkflowState:

@@ -53,7 +53,9 @@ class History:
         self.engine = engine
         self.max = max(2, int(max_messages))
         self.ttl = ttl_seconds
-        _metadata.create_all(engine, tables=[_history])  # CREATE TABLE IF NOT EXISTS
+        from ..migrations import upgrade
+
+        upgrade(engine, "hub")  # hz_inbound_history, versioned (migrations/hub)
 
     def load(self, chat_id: str) -> "list[dict]":
         """Return the recent messages for `chat_id` (oldest first, capped).

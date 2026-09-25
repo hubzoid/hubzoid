@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import shutil
-import socket
 import subprocess
 import threading
 
@@ -12,58 +10,6 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from hubzoid.access.store import GrantStore, LastAdminError, RevisionConflict, USE_HUB
-
-
-@pytest.fixture(scope="module")
-def postgres_url(tmp_path_factory):
-    initdb, pg_ctl = shutil.which("initdb"), shutil.which("pg_ctl")
-    if not initdb or not pg_ctl:
-        pytest.skip("local PostgreSQL binaries are not installed")
-    root = tmp_path_factory.mktemp("hubzoid-postgres")
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    subprocess.run(
-        [
-            initdb,
-            "-D",
-            str(root / "data"),
-            "-U",
-            "hz_test",
-            "-A",
-            "trust",
-            "--no-locale",
-            "--encoding=UTF8",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        [
-            pg_ctl,
-            "-D",
-            str(root / "data"),
-            "-l",
-            str(root / "server.log"),
-            "-o",
-            f"-h 127.0.0.1 -p {port} -k ''",
-            "-w",
-            "start",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    try:
-        yield f"postgresql+psycopg://hz_test@127.0.0.1:{port}/postgres"
-    finally:
-        subprocess.run(
-            [pg_ctl, "-D", str(root / "data"), "-m", "immediate", "-w", "stop"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
 
 
 def test_postgres_concurrent_admin_revocation_and_policy_refresh(postgres_url):
@@ -420,10 +366,14 @@ def test_explicit_migration_on_postgres_operational_store(postgres_url, tmp_path
     eng = create_engine(postgres_url)
     with eng.begin() as conn:
         for t in ("hz_grants", "hz_meta", "hz_policy_revision", "hz_identities",
-                  "hz_identity_attrs", "hz_access_audit", "hz_workflows"):
+                  "hz_identity_attrs", "hz_access_audit", "hz_workflows", "hz_workflow_kv",
+                  "hz_usage", "hz_alembic_operational"):
             conn.execute(text(f"DROP TABLE IF EXISTS {t} CASCADE"))
     eng.dispose()
     access._stores.clear()
+    from hubzoid import migrations
+
+    migrations._done.clear()
 
     d = tmp_path / "pghub"
     (d / "restricted").mkdir(parents=True)

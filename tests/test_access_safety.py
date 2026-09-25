@@ -149,11 +149,12 @@ def test_cli_rollback_retries_visibility_failure(tmp_path, monkeypatch):
 def test_schema_cache_tracks_engine_lifetime():
     import gc
     import weakref
+    from hubzoid import migrations
     from hubzoid.access import db_tables
 
     engine = create_engine("sqlite://")
     db_tables.ensure_access_tables(engine)
-    assert engine in db_tables._done
+    assert engine in migrations._done
     ref = weakref.ref(engine)
     engine.dispose()
     del engine
@@ -161,7 +162,7 @@ def test_schema_cache_tracks_engine_lifetime():
     assert ref() is None
     other = create_engine("sqlite://")
     try:
-        assert other not in db_tables._done
+        assert other not in migrations._done
         assert GrantStore(other).list_grants() == []
     finally:
         other.dispose()

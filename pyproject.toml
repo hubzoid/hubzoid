@@ -71,6 +71,7 @@ dependencies = [
   "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
   "dbos>=3.1,<4",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
   "croniter>=6.2,<7",       # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
+  "alembic>=1.18,<2",       # migrations/: versioned schema for Hubzoid's own tables (open-webui pins 1.18.x)
 ]
 
 [project.optional-dependencies]
@@ -93,11 +94,11 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.access", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram", "hubzoid.workflows"]
+packages = ["hubzoid", "hubzoid.access", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram", "hubzoid.workflows", "hubzoid.migrations", "hubzoid.migrations.operational", "hubzoid.migrations.hub"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*"]
+hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*", "migrations/*/versions/*.py", "migrations/*/script.py.mako"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
