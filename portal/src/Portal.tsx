@@ -10,6 +10,7 @@ import { lightTheme, darkTheme, useThemeMode } from "./lib/theme";
 import "./portal.css";
 
 // Each screen is its own chunk so the first paint only needs the shell.
+const HomeScreen = lazy(() => import("./screens/HomeScreen").then((m) => ({ default: m.HomeScreen })));
 const AgentsScreen = lazy(() => import("./screens/AgentsScreen").then((m) => ({ default: m.AgentsScreen })));
 const AgentDetail = lazy(() => import("./screens/AgentDetail").then((m) => ({ default: m.AgentDetail })));
 const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
@@ -90,7 +91,10 @@ function Router({
   const list = hubs.data.hubs;
   let screen: ReactNode;
   let active: Area = "agents";
-  if (!area || area === "agents") {
+  if (!area || area === "home") {
+    active = "home";
+    screen = <HomeScreen />;
+  } else if (area === "agents") {
     if (!rest[0]) screen = <AgentsScreen me={me.data} hubs={list} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);

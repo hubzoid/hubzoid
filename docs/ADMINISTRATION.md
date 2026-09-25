@@ -130,6 +130,25 @@ ledger:
 Sensitivity is explicit metadata, not inferred from words such as `prod` in a name.
 Permission keys `use_hub` and `manage_access` are reserved by Hubzoid.
 
+## The Overview page
+
+The Console opens on **Overview**: how people use each agent over the last 24
+hours, 7 days or 30 days. Hub administrators see only their agents.
+
+| Number | Meaning |
+|---|---|
+| Conversations, messages | Chat turns on every surface: the chat app, Slack, WhatsApp, Telegram and the API. |
+| Active people | Signed-in people who sent at least one message. |
+| Tokens, estimated cost | Chat turns plus scheduled work and workflow model calls. Cost comes from the model's reported cost or LiteLLM's price table. Calls with no known price are left out and marked with `*`. |
+| Tool denials | Restricted tool calls that were refused. |
+| People with access | People with a grant in the Console. An agent still on chat app groups shows "In chat app". |
+| Runs, failed | Only for agents with schedules or workflows. |
+
+Every number comes from Hubzoid's own tables (`hz_usage`, the access decision
+log, grants and the workflow engine), never from the chat app's database, so it
+is the same whichever chat app fronts the agents. Usage is counted from the
+release that added it. Before that, the page says when counting started.
+
 ## Migrate existing customers
 
 Migration keeps the existing preview and atomic cutover. Start with a clone.

@@ -357,6 +357,50 @@ body {
   font-weight: 600;
 }
 
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat {
+  border: 1px solid var(--line);
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--ant-color-text-secondary, inherit);
+  opacity: 0.8;
+}
+
+.stat-hint {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-sub {
+  font-size: 12px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-note {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.home-table .ant-table-cell {
+  white-space: nowrap;
+}
+
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

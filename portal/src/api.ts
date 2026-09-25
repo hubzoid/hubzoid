@@ -123,6 +123,47 @@ export type Overview = {
   visibility: Sync;
 };
 
+export type SummaryHub = {
+  key: string;
+  name: string;
+  managed: boolean;
+  chats: number;
+  messages: number;
+  active_users: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number | null;
+  unpriced: number;
+  last_activity: number | null;
+  users_with_access: number | null;
+  everyone: boolean | null;
+  denials: number;
+  has_workflows: boolean;
+  runs: number | null;
+  failed: number | null;
+};
+export type Summary = {
+  period: "24h" | "7d" | "30d";
+  since: number;
+  generated: number;
+  recording_since: number | null;
+  has_workflows: boolean;
+  runs_available: boolean;
+  totals: {
+    chats: number;
+    messages: number;
+    active_users: number;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number | null;
+    unpriced: number;
+    denials: number;
+    runs: number | null;
+    failed: number | null;
+  };
+  hubs: SummaryHub[];
+};
+
 // status 0 means the request never got a response (network/abort): the server
 // may or may not have applied it. `certain` is true only when we have a response
 // that tells us the outcome definitively — a 4xx client rejection means nothing

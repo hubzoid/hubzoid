@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Bot, History, Menu as MenuIcon, Monitor, Moon, Play, Sun, Users } from "lucide-react";
+import { Bot, History, LayoutDashboard, Menu as MenuIcon, Monitor, Moon, Play, Sun, Users } from "lucide-react";
 import type { Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "agents" | "runs" | "people" | "activity";
+export type Area = "home" | "agents" | "runs" | "people" | "activity";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -52,6 +52,7 @@ function SignOutButton() {
 }
 
 const items = [
+  { key: "home", icon: <LayoutDashboard size={18} />, label: <a href={href("/home")}>Overview</a> },
   { key: "agents", icon: <Bot size={18} />, label: <a href={href("/agents")}>Agents</a> },
   { key: "runs", icon: <Play size={18} />, label: <a href={href("/runs")}>Runs</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
@@ -60,7 +61,7 @@ const items = [
 
 function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {
   return (
-    <a className={`brand${compact ? " compact" : ""}`} href={href("/agents")} aria-label="Hubzoid">
+    <a className={`brand${compact ? " compact" : ""}`} href={href("/home")} aria-label="Hubzoid">
       <img src={isDark ? wordmarkDark : wordmarkLight} alt="Hubzoid" className="brand-wordmark" />
     </a>
   );

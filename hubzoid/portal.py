@@ -745,6 +745,87 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
         return sync_owui(hub_dir)
 
+    _PERIODS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+
+    @router.get("/summary")
+    def summary(period: str = "7d", admin=Depends(require_admin)):
+        """The Console home: usage per hub from Hubzoid's own tables (usage,
+        access decisions, grants, DBOS runs). Nothing is read from the chat UI.
+        A number Hubzoid cannot know is null ("unavailable"), never zero."""
+        import time as _time
+        from datetime import datetime, timezone
+
+        from . import db
+        from . import usage as usage_lib
+        from .access import audit as auditlib
+        from .access.identity import normalize
+
+        if period not in _PERIODS:
+            raise HTTPException(422, "period must be one of 24h, 7d, 30d")
+        now = _time.time()
+        since = now - _PERIODS[period]
+        hs = allowed_hubs(admin)
+        engine = db.operational_engine(hub_dir)
+        usage = usage_lib.summary(engine, {Path(h["path"]).name: h["key"] for h in hs}, since)
+        denials = auditlib.denials(engine, since, [normalize(Path(h["path"]).name) for h in hs])
+        gs = store_for(hub_dir)
+        grants = gs.list_grants()
+        from .workflows.observe import catalog, run_counts
+
+        with_work = []
+        for h in hs:
+            try:
+                if catalog(Path(h["path"])):
+                    with_work.append(h)
+            except Exception:  # noqa: BLE001 — a broken workflows/ still has a row
+                log.exception("summary: could not read workflows for %s", h["key"])
+                with_work.append(h)
+        runs, runs_ok = {}, True
+        if with_work:
+            try:
+                runs = run_counts(with_work, datetime.fromtimestamp(since, timezone.utc).isoformat())
+            except Exception:  # noqa: BLE001
+                log.exception("summary: run history unavailable")
+                runs_ok = False
+        work_keys = {h["key"] for h in with_work}
+        rows = []
+        for h in hs:
+            key = h["key"]
+            u = usage["hubs"].get(key, {})
+            managed = gs.is_authoritative(key)
+            subjects = {g[0] for g in grants if g[1] == key and not g[0].startswith("workflow:")}
+            r = runs.get(key, {"runs": 0, "failed": 0, "cancelled": 0}) if runs_ok else None
+            rows.append(dict(
+                key=key, name=h.get("name") or key, managed=managed,
+                chats=u.get("chats", 0), messages=u.get("messages", 0),
+                active_users=u.get("active_users", 0),
+                input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
+                cost_usd=u.get("cost_usd"), unpriced=u.get("unpriced", 0),
+                last_activity=u.get("last_activity"),
+                # Legacy hubs keep access in the chat app's groups: unknown here.
+                users_with_access=len(subjects - {"*"}) if managed else None,
+                everyone="*" in subjects if managed else None,
+                denials=denials.get(normalize(Path(h["path"]).name), 0),
+                has_workflows=key in work_keys,
+                runs=r["runs"] if r and key in work_keys else None,
+                failed=r["failed"] if r and key in work_keys else None,
+            ))
+        costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
+        totals = dict(
+            chats=sum(r["chats"] for r in rows), messages=sum(r["messages"] for r in rows),
+            active_users=usage["active_users"],
+            input_tokens=sum(r["input_tokens"] for r in rows),
+            output_tokens=sum(r["output_tokens"] for r in rows),
+            cost_usd=round(sum(costs), 6) if costs else None,
+            unpriced=sum(r["unpriced"] for r in rows),
+            denials=sum(r["denials"] for r in rows),
+            runs=sum(r["runs"] or 0 for r in rows) if with_work and runs_ok else None,
+            failed=sum(r["failed"] or 0 for r in rows) if with_work and runs_ok else None,
+        )
+        return dict(period=period, since=since, generated=now,
+                    recording_since=usage["recording_since"], has_workflows=bool(with_work),
+                    runs_available=runs_ok, totals=totals, hubs=rows)
+
     @router.get("/overview")
     def overview(admin=Depends(require_admin)):
         from .access.reconcile import sync_status

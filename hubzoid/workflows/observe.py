@@ -503,3 +503,35 @@ def runs_across(
             for url, members in groups.items()
         )
     return {"runs": page, "has_more": has_more}
+
+
+def run_counts(hubs, since: str) -> dict[str, dict]:
+    """Runs started since `since` (ISO) per hub key: total, failed, cancelled.
+    Hubs with no DBOS database yet are absent (they have never run anything)."""
+    from dbos import DBOSClient
+
+    out: dict[str, dict] = {}
+    for url, members in _source_groups(hubs).items():
+        apps = [app for app, _ in members]
+        app_to_hub = dict(members)
+        single = members[0][1] if len(members) == 1 else None
+        client = DBOSClient(system_database_url=url, application_name=apps[0],
+                            retry_connection_errors=False)
+        try:
+            rows = client.list_workflows(start_time=since, application_name=apps,
+                                         load_input=False, load_output=False)
+        finally:
+            client.destroy()
+        for _, key in members:
+            out.setdefault(key, {"runs": 0, "failed": 0, "cancelled": 0})
+        for w in rows:
+            key = app_to_hub.get(w.application_name) or single
+            if key is None:
+                continue
+            counts = out[key]
+            counts["runs"] += 1
+            if w.status in ("ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"):
+                counts["failed"] += 1
+            elif w.status == "CANCELLED":
+                counts["cancelled"] += 1
+    return out

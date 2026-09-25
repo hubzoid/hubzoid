@@ -84,3 +84,53 @@ def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
             )
     except Exception:  # noqa: BLE001 — usage is telemetry; it must never break work
         log.warning("usage: could not record a %s row for %s", kind, hub, exc_info=True)
+
+
+def summary(engine, hubs: dict[str, str], since: float) -> dict:
+    """Usage per hub since `since` (epoch seconds), for the Console home.
+
+    `hubs` maps the hub name stored in the rows (the folder name) to the key the
+    Console routes on. Messages, conversations and active users count chat turns
+    only; tokens and cost include workflow model calls. `unpriced` counts rows
+    that used tokens but have no price, so a cost total is never shown as
+    complete when it is not. `recording_since` is the first row ever written:
+    before it, Hubzoid was not counting."""
+    out: dict = {"hubs": {}, "active_users": 0, "recording_since": None}
+    if not hubs:
+        return out
+    from . import migrations
+
+    migrations.upgrade(engine, "operational")
+    names = {f"h{i}": name for i, name in enumerate(hubs)}
+    in_hubs = "hub IN (" + ", ".join(f":{k}" for k in names) + ")"
+    params = {"s": since, **names}
+    with engine.connect() as c:
+        rows = c.execute(text(
+            "SELECT hub,"
+            " SUM(CASE WHEN kind='chat' THEN 1 ELSE 0 END),"
+            " COUNT(DISTINCT CASE WHEN kind='chat' THEN chat_id END),"
+            " COUNT(DISTINCT CASE WHEN kind='chat' THEN subject END),"
+            " SUM(input_tokens), SUM(output_tokens), SUM(cost_usd),"
+            " SUM(CASE WHEN cost_usd IS NULL AND COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) > 0"
+            "     THEN 1 ELSE 0 END)"
+            f" FROM hz_usage WHERE ts >= :s AND {in_hubs} GROUP BY hub"), params).fetchall()
+        last = dict(c.execute(text(
+            f"SELECT hub, MAX(ts) FROM hz_usage WHERE kind='chat' AND {in_hubs} GROUP BY hub"),
+            names).fetchall())
+        out["active_users"] = c.execute(text(
+            f"SELECT COUNT(DISTINCT subject) FROM hz_usage WHERE kind='chat' AND ts >= :s AND {in_hubs}"),
+            params).scalar() or 0
+        out["recording_since"] = c.execute(text("SELECT MIN(ts) FROM hz_usage")).scalar()
+    for hub, messages, chats, users, tin, tout, cost, unpriced in rows:
+        key = hubs.get(hub)
+        if key is None:
+            continue
+        out["hubs"][key] = {
+            "messages": int(messages or 0), "chats": int(chats or 0), "active_users": int(users or 0),
+            "input_tokens": int(tin or 0), "output_tokens": int(tout or 0),
+            "cost_usd": float(cost) if cost is not None else None, "unpriced": int(unpriced or 0),
+        }
+    for hub, ts in last.items():
+        if hub in hubs:
+            out["hubs"].setdefault(hubs[hub], {})["last_activity"] = ts
+    return out

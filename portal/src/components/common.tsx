@@ -26,7 +26,7 @@ import {
   type Sentence,
   EVERYONE,
 } from "../lib/format";
-import { href, DEFAULT_ROUTE } from "../hooks/useRoute";
+import { href } from "../hooks/useRoute";
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -93,7 +93,7 @@ export function LoadState({
 export function RecoveryScreen({
   title,
   subtitle,
-  to = DEFAULT_ROUTE,
+  to = "/agents",
   label = "Back to agents",
 }: {
   title: string;

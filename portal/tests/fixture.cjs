@@ -496,6 +496,48 @@ function createFixture() {
         if (!a.org) throw error(403, "Organization admin required");
         state.visibility = { state: "ok", models: 2, updated: NOW };
         return state.visibility;
+      case "/summary": {
+        const periods = { "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400 };
+        const period = params.period || "7d";
+        if (!periods[period]) throw error(422, "period must be one of 24h, 7d, 30d");
+        const scale = { "24h": 1, "7d": 6, "30d": 22 }[period];
+        const usage = {
+          finance: { chats: 12, messages: 48, active_users: 5, input_tokens: 182000, output_tokens: 24100, cost_usd: 1.84, unpriced: 0, last_activity: NOW - 2 * HOUR, denials: 2 },
+          support: { chats: 30, messages: 95, active_users: 11, input_tokens: 410000, output_tokens: 61000, cost_usd: 3.9, unpriced: 3, last_activity: NOW - 300, denials: 0 },
+          itops: { chats: 0, messages: 0, active_users: 0, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, last_activity: null, denials: 0 },
+        };
+        const hubs = allowedHubs(a).map((h) => {
+          const u = usage[h.key];
+          const flows = state.workflows[h.key] || [];
+          const subjects = new Set(state.grants.filter(([s, hub]) => hub === h.key && !s.startsWith("workflow:")).map(([s]) => s));
+          return {
+            key: h.key, name: h.name, managed: h.authoritative,
+            chats: u.chats * scale, messages: u.messages * scale, active_users: u.active_users,
+            input_tokens: u.input_tokens * scale, output_tokens: u.output_tokens * scale,
+            cost_usd: u.cost_usd == null ? null : Math.round(u.cost_usd * scale * 100) / 100,
+            unpriced: u.unpriced * scale, last_activity: u.last_activity,
+            users_with_access: h.authoritative ? [...subjects].filter((s) => s !== EVERYONE).length : null,
+            everyone: h.authoritative ? subjects.has(EVERYONE) : null,
+            denials: u.denials * scale, has_workflows: flows.length > 0,
+            runs: flows.length ? 4 * scale : null, failed: flows.length ? (h.key === "finance" ? scale : 0) : null,
+          };
+        });
+        const sum = (k) => hubs.reduce((n, h) => n + (h[k] || 0), 0);
+        const costs = hubs.map((h) => h.cost_usd).filter((c) => c != null);
+        const withWork = hubs.some((h) => h.has_workflows);
+        return {
+          period, since: NOW - periods[period], generated: NOW, recording_since: NOW - 20 * 86400,
+          has_workflows: withWork, runs_available: true,
+          totals: {
+            chats: sum("chats"), messages: sum("messages"), active_users: sum("active_users"),
+            input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"),
+            cost_usd: costs.length ? costs.reduce((a2, b) => a2 + b, 0) : null,
+            unpriced: sum("unpriced"), denials: sum("denials"),
+            runs: withWork ? sum("runs") : null, failed: withWork ? sum("failed") : null,
+          },
+          hubs,
+        };
+      }
       case "/overview": {
         const hs = allowedHubs(a);
         const keys = new Set(hs.map((h) => h.key));

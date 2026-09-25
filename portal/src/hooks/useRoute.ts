@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
  * works without a server-side router (the SPA is served as static files).
  *
  * Routes:
+ *   #/home (the default)
  *   #/agents
  *   #/agents/<key>/access | runs | activity
  *   #/agents/<key>/runs/<workflow>[/<run id>]
@@ -13,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
  */
 export type Route = { path: string; parts: string[]; query: Record<string, string> };
 
-export const DEFAULT_ROUTE = "/agents";
+export const DEFAULT_ROUTE = "/home";
 
 export function href(path: string) {
   return "#" + path;

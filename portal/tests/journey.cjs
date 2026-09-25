@@ -80,8 +80,26 @@ function step(name) {
     const lastMutation = () => state.mutations[state.mutations.length - 1];
 
     // ---- landing -----------------------------------------------------------
-    step("Agents landing lists every agent with its access state and attention items");
+    step("Overview is the landing page: chat numbers first, then one row per agent");
     await go("");
+    await page.getByRole("heading", { name: "Overview", level: 2 }).waitFor();
+    const totals = page.getByRole("list", { name: "Totals" });
+    await totals.getByText("Conversations").waitFor();
+    await totals.getByText("252").waitFor(); // (12 + 30) conversations x 6 for the default 7 days
+    await totals.getByText("Workflow runs").waitFor();
+    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("In chat app").waitFor();
+    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("None yet").waitFor();
+    await page.getByText("30 days", { exact: true }).click();
+    await totals.getByText("924").waitFor();
+    assert.ok((await hash()).includes("period=30d"), await hash());
+    await page.locator(".ant-segmented-item-selected", { hasText: "30 days" }).waitFor();
+    await page.waitForTimeout(400); // let the selection thumb settle for the screenshot
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview.png"), fullPage: true });
+    await page.getByRole("link", { name: "Support Assistant", exact: true }).click();
+    assert.equal(await hash(), "#/agents/support/access");
+
+    step("Agents lists every agent with its access state and attention items");
+    await go("/agents");
     await page.getByRole("heading", { name: "Agents", level: 2 }).waitFor();
     for (const name of ["Finance Assistant", "Support Assistant", "IT Ops Assistant"])
       await page.getByRole("link", { name, exact: true }).waitFor();
