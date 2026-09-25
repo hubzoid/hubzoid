@@ -9,7 +9,8 @@ factories build from the same FunctionTool registry:
                    never even shown a door it cannot open (no wasted turn, no
                    leak of the tool's name and schema to the unauthorized).
   * on_invoke   -> re-checks at call time and fails closed, writing the decision
-                   to the audit log. This is the wall: it holds even if the tool
+                   to the audit log (a call whose row cannot be written is
+                   refused). This is the wall: it holds even if the tool
                    is reached another way (a prompt injection naming it, the
                    Claude path which does not consult is_enabled, or a test).
 
@@ -18,6 +19,7 @@ it returns the registry unchanged, so nothing about an existing hub moves.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 import os
@@ -91,10 +93,16 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
     async def _guarded_invoke(ctx, input_str):
         ident = current_identity()
         allowed, reason = decide(hub_dir, ident, permission, surfaces)
-        audit.record(
-            hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
+        recorded = await asyncio.to_thread(
+            audit.record, hub_dir, user=ident.user, surface=ident.surface, tool=ft.name,
             decision=("allow" if allowed else "deny"), reason=reason,
         )
+        if allowed and not recorded:
+            # Every restricted call that runs has an audit row: no row, no call.
+            return (
+                f"[access denied: '{ft.name}' could not be recorded in the access "
+                "log, so it was not run. Try again shortly.]"
+            )
         if not allowed:
             return (
                 f"[access denied: '{ft.name}' requires the '{permission}' "

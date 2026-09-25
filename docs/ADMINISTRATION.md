@@ -46,7 +46,7 @@ Default SQLite layout:
 | Accounts, sessions, chats, model visibility | OWUI | `gateway-data/webui.db` |
 | Grants, identities, change history, workflow state | Hubzoid | `gateway-data/hubzoid-operational.db` |
 | Workflow execution history and checkpoints | DBOS | `<hub>/.hubzoid/dbos.db` per hub |
-| Tool decisions | Hubzoid | `<hub>/logs/access-YYYY-MM.jsonl` |
+| Tool decisions, usage | Hubzoid | `gateway-data/hubzoid-operational.db` |
 
 This is one **deployment configuration**, not one physical SQLite file. Separate
 DBOS files avoid sharing an unsupported multi-application SQLite execution store.

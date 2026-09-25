@@ -206,11 +206,11 @@ def test_apply_guards_restricted_tools_end_to_end(tmp_path):
 # ---------------------------------------------------------------------------
 # audit
 # ---------------------------------------------------------------------------
-def test_audit_writes_month_partitioned_file(tmp_path):
-    auditlib.record(tmp_path, user="p", surface="owui", tool="t", decision="allow", reason="group")
-    files = list((tmp_path / "logs").glob("access-*.jsonl"))
-    assert len(files) == 1
-    assert files[0].name.startswith("access-")
+def test_audit_writes_a_database_row_not_a_file(tmp_path):
+    assert auditlib.record(tmp_path, user="P", surface="owui", tool="t", decision="allow", reason="group")
+    assert not (tmp_path / "logs").exists()
+    (row,) = auditlib.read(tmp_path)
+    assert (row["user"], row["tool"], row["decision"]) == ("p", "t", "allow")
 
 
 def test_audit_read_filters(tmp_path):

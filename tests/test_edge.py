@@ -182,7 +182,13 @@ class _Server:
 def _bridge_app() -> Starlette:
     async def any_path(request):
         return PlainTextResponse(f"BRIDGE:{request.url.path}")
-    return Starlette(routes=[Route("/{path:path}", any_path)])
+
+    async def identity(request):
+        seen = sorted(k for k in request.headers if k.startswith(("x-hubzoid-", "x-openwebui-")))
+        return PlainTextResponse("IDENTITY:" + ",".join(seen))
+
+    return Starlette(routes=[Route("/artifacts/identity", identity),
+                             Route("/{path:path}", any_path)])
 
 
 def _owui_app() -> Starlette:
@@ -338,3 +344,39 @@ def test_portal_html_injection_preserves_compressed_response_cookies(monkeypatch
         assert int(result.headers['content-length']) == len(result.content)
         # Bridge/portal HTML must pass through untouched.
         assert client.get('/portal/').content == html
+
+
+def _raw_get(base: str, path: str, headers: dict | None = None) -> tuple[int, str]:
+    """GET without client-side path normalization (httpx collapses `..`)."""
+    import http.client
+    from urllib.parse import urlsplit
+
+    u = urlsplit(base)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    try:
+        conn.request("GET", path, headers=headers or {})
+        r = conn.getresponse()
+        return r.status, r.read().decode()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("path", [
+    "/artifacts/../v1/chat/completions",
+    "/artifacts/%2e%2e/v1/chat/completions",
+    "/artifacts/./x",
+    "/api/v1/../v1/groups/create",
+])
+def test_dot_segments_cannot_escape_a_route(edge_url, path):
+    base, _ = edge_url
+    status, body = _raw_get(base, path)
+    assert status == 400 and "BRIDGE" not in body and "OWUI" not in body
+
+
+def test_client_identity_headers_are_dropped(edge_url):
+    base, _ = edge_url
+    r = httpx.get(base + "/artifacts/identity", timeout=10, headers={
+        "X-Hubzoid-User": "admin@example.org", "X-Hubzoid-Groups": "finance",
+        "X-OpenWebUI-User-Email": "admin@example.org", "X-Hubzoid-Surface": "owui",
+    })
+    assert r.status_code == 200 and r.text == "IDENTITY:"

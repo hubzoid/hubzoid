@@ -46,6 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from . import _request_ctx
 from .scheduling import ScheduledTask, ScheduleState
 
 log = logging.getLogger("hubzoid.schedule")
@@ -410,6 +411,26 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
                              model=task.model)
 
 
+def service_subject(task_name: str) -> str:
+    """The identity a markdown task runs as, granted like a person in the
+    Console: `workflow:md:<task>`. A restricted tool is reachable only when
+    this subject holds its permission."""
+    return f"workflow:md:{task_name}"
+
+
+def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: float) -> None:
+    from . import _request_ctx, usage as usage_lib
+
+    raw = _request_ctx.drain_usage()
+    usage_lib.record(
+        hub_dir, hub=hub_dir.name, surface="workflow", kind="agent",
+        subject=service_subject(task.name), model=raw.get("model") or task.model,
+        input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
+        cost_usd=raw.get("cost_usd"), status=raw.get("status") or status,
+        duration_ms=int((time.monotonic() - t0) * 1000),
+    )
+
+
 async def run_task(hub_dir: Path, task: ScheduledTask, *,
                    runtime_factory: Callable = _default_runtime_factory,
                    capture: bool = True,
@@ -417,8 +438,19 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     """Run one scheduled task to completion (or its caps). Never raises —
     every failure mode is a `RunResult(result="error")` with the log path.
 
+    The run acts as the task's service identity (`service_subject`), and each
+    agent round writes a usage row.
+
     `capture=False` skips the commit/push, for callers (the DBOS executor in
     workflows/markdown.py) that run them as their own checkpointed steps."""
+    from .access import Identity, identity_scope
+
+    with identity_scope(Identity.make(service_subject(task.name), surface="workflow")):
+        return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture)
+
+
+async def _run_task(hub_dir: Path, task: ScheduledTask, *,
+                    runtime_factory: Callable, capture: bool) -> RunResult:
     hub_dir = Path(hub_dir).resolve()
     started = time.monotonic()
     started_dt = datetime.now()
@@ -497,8 +529,14 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
             log.info("schedule[%s] round %d/%d%s", task.name, round_no,
                      task.max_rounds, f" (carry: {carry[:80]})" if carry else "")
             t0 = time.monotonic()
+            round_status = "error"
             try:
-                reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
+                with _request_ctx.chat_scope(None):
+                    try:
+                        reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
+                        round_status = "error" if "[agent error:" in reply else "ok"
+                    finally:
+                        _record_round_usage(hub_dir, task, round_status, t0)
             except asyncio.TimeoutError:
                 rlog.emit(event="round_timeout", round=round_no,
                           timeout=task.timeout)

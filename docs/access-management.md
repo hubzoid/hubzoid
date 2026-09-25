@@ -139,13 +139,14 @@ denylist. That is a per-secret call, not the default.
 ## The audit log
 
 Every allow and every deny is written where the decision is made, the runtime,
-because Open WebUI never sees a tool call. One JSON line per decision, in
-month-partitioned files so nothing grows without bound:
+because Open WebUI never sees a tool call. Each decision is one row in the
+operational database (`hz_access_decisions`): time, hub, user, surface, tool,
+decision and reason. A restricted call whose row cannot be written is refused,
+so every call that ran is in the log. The Console's Activity page shows it.
 
-```
-<hub>/logs/access-2026-06.jsonl
-{"ts": "...", "user": "anjali", "surface": "owui", "tool": "erp_sales", "decision": "deny", "reason": "no-group"}
-```
+Hubs upgraded from releases that wrote `<hub>/logs/access-YYYY-MM.jsonl` files
+get those files imported once, the first time the hub records or reads a
+decision. The files are left in place.
 
 Read it with:
 

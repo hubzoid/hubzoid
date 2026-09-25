@@ -16,7 +16,8 @@ from hubzoid import migrations
 from hubzoid.migrations import SchemaError
 
 OPERATIONAL = {"hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
-               "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage"}
+               "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
+               "hz_access_decisions"}
 
 
 @pytest.fixture(autouse=True)

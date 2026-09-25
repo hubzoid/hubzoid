@@ -86,8 +86,7 @@
   <div class="card">
     <span class="who lock">Audit log</span>
     <h3>Every decision, written where the decision is made</h3>
-    <p>The allow or deny happens in the runtime dispatch, so the log is written there, not in OpenWebUI, which never sees a tool call. One append per decision: <code>{ts, user, surface, tool, decision, reason}</code>. Read it with <code>hubzoid audit &lt;hub&gt;</code>. This is the one view OpenWebUI does not give you.</p>
-    <p><b>One file does not grow forever.</b> Logs are date partitioned, one file per month: <code>logs/access-2026-06.jsonl</code>. The writer picks the file from the date, so rotation needs no trigger and no extra dependency. <code>hubzoid audit</code> reads across the months and filters by date, person, or decision. Switch to daily files if a hub is high volume.</p>
+    <p>The allow or deny happens in the runtime dispatch, so the log is written there, not in OpenWebUI, which never sees a tool call. One row per decision in the operational database: <code>{ts, hub, user, surface, tool, decision, reason}</code>. A call whose row cannot be written is refused. Read it with <code>hubzoid audit &lt;hub&gt;</code> or on the Console's Activity page. This is the one view OpenWebUI does not give you.</p>
     <p class="small">Retention is a policy knob: default keep twelve months, archive instead of delete for clients with compliance retention rules. Append only by design, so the trail is never rewritten. A searchable UI (self hosted Langfuse) is the later upgrade, not needed for this.</p>
   </div>
 

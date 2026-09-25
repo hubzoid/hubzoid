@@ -55,6 +55,20 @@ _HOP_BY_HOP = frozenset({
     "te", "trailers", "transfer-encoding", "upgrade",
 })
 
+# Identity headers are set by trusted callers on loopback (Open WebUI, the Slack
+# and inbound adapters) when they call a bridge. A client on the public port has
+# no business sending them, so the edge drops them before forwarding anything.
+_IDENTITY_PREFIXES = ("x-hubzoid-", "x-openwebui-")
+
+
+def _has_dot_segment(path: str) -> bool:
+    """`.` or `..` path segments. The prefix checks below run on the path as
+    sent, while the upstream client collapses dot segments, so
+    `/b/x/artifacts/../v1/chat/completions` would pass the artifact route and
+    arrive as `/v1/chat/completions`. Browsers never send them."""
+    return any(seg in (".", "..") for seg in path.split("/"))
+
+
 # The artifact path on a single bridge. The single-hub topology routes exactly
 # this prefix to the bridge; the gateway prepends a per-hub prefix.
 DEFAULT_ARTIFACT_PREFIX = "/artifacts"
@@ -113,7 +127,7 @@ def _forward_target(
 def _request_headers(
     request: Request, public_scheme: str = ""
 ) -> list[tuple[bytes, bytes]]:
-    """Forward the client's headers upstream, minus hop-by-hop.
+    """Forward the client's headers upstream, minus hop-by-hop and identity headers.
 
     The inbound `Host` is PRESERVED (standard reverse-proxy behaviour). The
     edge is the public front door, so Open WebUI must build absolute URLs -
@@ -133,6 +147,7 @@ def _request_headers(
         (k, v)
         for k, v in request.headers.raw
         if k.decode("latin-1").lower() not in _HOP_BY_HOP
+        and not k.decode("latin-1").lower().startswith(_IDENTITY_PREFIXES)
     ]
     if public_scheme and not any(
         k.decode("latin-1").lower() == "x-forwarded-proto" for k, _ in headers
@@ -195,6 +210,8 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        if _has_dot_segment(request.url.path):
+            return Response("Bad request", status_code=400)
         portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import SCRIPT
@@ -278,6 +295,9 @@ def build_edge_app(
     async def ws_handler(websocket: WebSocket) -> None:
         # Only Open WebUI uses websockets (socket.io); bridges don't. Relay
         # every websocket to OWUI verbatim.
+        if _has_dot_segment(websocket.url.path):
+            await websocket.close(code=1008)
+            return
         target = owui_ws_base + websocket.url.path
         if websocket.url.query:
             target += "?" + websocket.url.query

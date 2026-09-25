@@ -929,8 +929,8 @@ def audit(
 ) -> None:
     """Show the access log: who called which restricted tool, allowed or denied.
 
-    Reads `<hub>/logs/access-*.jsonl`, the append-only trail the runtime writes
-    for every access decision. Open WebUI does not record tool-level access, so
+    Reads the decision log the runtime writes to the operational database for
+    every restricted tool call. Open WebUI does not record tool-level access, so
     this is the only place it exists.
     """
     from .access import audit as auditlib
