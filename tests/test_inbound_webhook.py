@@ -146,3 +146,78 @@ def test_whatsapp_and_webhook_coexist_under_one_slug(tmp_path):
     assert client.post("/webhooks/h/ci", headers={"Authorization": "Bearer s"},
                        json={"ok": 1}).status_code == 200
     assert events[0]["body"] == {"ok": 1}
+
+
+# ---------------------------------------------------------------------------
+# repeated deliveries, GitHub signatures, ?token=
+# ---------------------------------------------------------------------------
+def _post(client, body, **headers):
+    return client.post("/webhooks/myhub/alerts", content=body,
+                       headers={"Authorization": "Bearer s", "Content-Type": "application/json",
+                                **headers})
+
+
+def test_retried_delivery_with_the_same_id_is_stored_once(tmp_path):
+    events = []
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=events.append)))
+    assert _post(client, b'{"n": 1}', **{"X-GitHub-Delivery": "d-1"}).text == "ok"
+    assert _post(client, b'{"n": 1}', **{"X-GitHub-Delivery": "d-1"}).text == "duplicate"
+    assert _post(client, b'{"n": 1}', **{"X-GitHub-Delivery": "d-2"}).text == "ok"
+    assert len(events) == 2
+
+
+def test_identical_body_without_an_id_is_a_repeat_only_briefly(tmp_path, monkeypatch):
+    from hubzoid.inbound import harness, webhook
+
+    events = []
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=events.append)))
+    now = [1_000_000.0]
+    monkeypatch.setattr(harness.time, "time", lambda: now[0])
+    assert _post(client, b'{"n": 1}').text == "ok"
+    now[0] += 60
+    assert _post(client, b'{"n": 1}').text == "duplicate"        # a quick retry
+    now[0] += 3 * webhook.DUPLICATE_WINDOW_SECONDS
+    assert _post(client, b'{"n": 1}').text == "ok"               # a genuine later event
+    assert len(events) == 2
+
+
+def test_failed_store_lets_the_retry_through(tmp_path):
+    calls = []
+
+    def flaky(event):
+        calls.append(event)
+        if len(calls) == 1:
+            raise OSError("disk full")
+
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=flaky)))
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).status_code == 500
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "ok"
+    assert len(calls) == 2
+
+
+def test_github_signature_header_is_accepted(tmp_path):
+    events = []
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="gh", name="alerts", hmac=True,
+                                                     sink=events.append)))
+    body = b'{"action": "opened"}'
+    sig = "sha256=" + hmac.new(b"gh", body, hashlib.sha256).hexdigest()
+    r = client.post("/webhooks/myhub/alerts", content=body,
+                    headers={"X-Hub-Signature-256": sig, "Content-Type": "application/json"})
+    assert r.status_code == 200 and len(events) == 1
+    bad = client.post("/webhooks/myhub/alerts", content=body,
+                      headers={"X-Hub-Signature-256": "sha256=00", "Content-Type": "application/json"})
+    assert bad.status_code == 403
+
+
+def test_query_token_still_works_but_warns(tmp_path, caplog):
+    import logging
+
+    from hubzoid.inbound import webhook
+
+    webhook._TOKEN_WARNED = False
+    events = []
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=events.append)))
+    with caplog.at_level(logging.WARNING):
+        r = client.post("/webhooks/myhub/alerts?token=s", json={"n": 1})
+    assert r.status_code == 200 and len(events) == 1
+    assert "?token=" in caplog.text

@@ -65,10 +65,12 @@ class WebhookConfig:
 
     - ``secret``  the shared secret (required; the surface is off without it).
     - ``name``    the path segment, e.g. ``squadcast`` -> ``/webhooks/<hub>/squadcast``.
-    - ``hmac``    when True, verify ``X-Signature-256: sha256=<hex>`` as
-                  HMAC-SHA256(secret, raw body) — the style Squadcast/GitHub use.
-                  When False, accept the secret verbatim via ``Authorization:
-                  Bearer <secret>``, ``X-Webhook-Secret: <secret>``, or ``?token=``.
+    - ``hmac``    when True, verify ``X-Signature-256: sha256=<hex>`` (or
+                  GitHub's ``X-Hub-Signature-256``) as HMAC-SHA256(secret, raw
+                  body). When False, accept the secret verbatim via
+                  ``Authorization: Bearer <secret>`` or ``X-Webhook-Secret:
+                  <secret>``; ``?token=`` still works but is deprecated (query
+                  strings end up in access logs).
     - ``sink``    called with the parsed event dict on every verified delivery.
     """
 
@@ -83,7 +85,8 @@ class WebhookConfig:
         if not self.secret:
             return False
         if self.hmac:
-            header = headers.get("x-signature-256") or headers.get("X-Signature-256")
+            header = (headers.get("x-signature-256") or headers.get("X-Signature-256")
+                      or headers.get("x-hub-signature-256") or headers.get("X-Hub-Signature-256"))
             if not header or not header.startswith(_SIG_PREFIX):
                 return False
             provided = header[len(_SIG_PREFIX):]
@@ -97,9 +100,47 @@ class WebhookConfig:
         if auth.lower().startswith("bearer "):
             if _ct_equal(auth[7:].strip(), self.secret):
                 return True
-        supplied = (headers.get("x-webhook-secret") or headers.get("X-Webhook-Secret")
-                    or query.get("token") or "")
-        return bool(supplied) and _ct_equal(supplied, self.secret)
+        supplied = headers.get("x-webhook-secret") or headers.get("X-Webhook-Secret") or ""
+        if supplied:
+            return _ct_equal(supplied, self.secret)
+        token = query.get("token") or ""
+        if token and _ct_equal(token, self.secret):
+            global _TOKEN_WARNED
+            if not _TOKEN_WARNED:
+                _TOKEN_WARNED = True
+                log.warning("webhook %s: the secret arrived as ?token= in the URL, which "
+                            "ends up in access logs. Send it as the X-Webhook-Secret or "
+                            "Authorization: Bearer header instead.", self.name)
+            return True
+        return False
+
+
+_TOKEN_WARNED = False
+
+# Headers providers use to identify a delivery, so a retried delivery is
+# recognized and stored once. Without one, an identical body within
+# DUPLICATE_WINDOW_SECONDS counts as the same delivery.
+DELIVERY_ID_HEADERS = ("x-github-delivery", "x-delivery-id", "x-webhook-id",
+                       "idempotency-key", "x-request-id")
+DUPLICATE_WINDOW_SECONDS = 600
+
+
+def delivery_keys(name: str, raw_body: bytes, headers: Mapping[str, str],
+                  now: float) -> "tuple[str, list[str]]":
+    """The dedup key to claim for this delivery, and keys that mark it a repeat.
+
+    A provider delivery id is remembered indefinitely. A body hash is bucketed
+    in DUPLICATE_WINDOW_SECONDS windows (this one and the previous), so two
+    identical legitimate events far apart are both accepted."""
+    for h in DELIVERY_ID_HEADERS:
+        value = headers.get(h) or headers.get(h.title())
+        if value:
+            key = f"{name}:id:{value}"
+            return key, [key]
+    digest = hashlib.sha256(raw_body).hexdigest()
+    bucket = int(now // DUPLICATE_WINDOW_SECONDS)
+    key = f"{name}:body:{digest}:{bucket}"
+    return key, [key, f"{name}:body:{digest}:{bucket - 1}"]
 
 
 def webhook_config_from_env(env: Mapping[str, str], *, hub_dir: Path | None = None,

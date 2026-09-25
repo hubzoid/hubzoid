@@ -240,7 +240,7 @@ def build_app(
             msgs, ingest, stream_interval,
         )
     if webhook is not None:
-        routes += _webhook_routes(base, webhook)
+        routes += _webhook_routes(base, webhook, dedup)
     return Starlette(routes=routes)
 
 
@@ -465,18 +465,27 @@ def _telegram_routes(base, tg, dedup, history, resolver, dispatch_fn, bridge_url
 # ---------------------------------------------------------------------------
 # Generic webhook (machine-to-hub: alerting, CI, automations)
 # ---------------------------------------------------------------------------
-def _webhook_routes(base, cfg: "WebhookConfig"):
+def _webhook_routes(base, cfg: "WebhookConfig", dedup: "Dedup | None" = None):
     """A generic authenticated receiver at ``<base>/<cfg.name>``.
 
-    No roster, no LLM, no reply — verify the secret (or HMAC), parse the body,
-    hand it to the sink, ack. A failed sink returns 500 so the provider retries;
-    a bad secret returns 403 before the sink ever runs.
+    No roster, no LLM, no reply — verify the secret (or HMAC), drop a repeated
+    delivery, parse the body, hand it to the sink, ack. A failed sink returns 500
+    (and forgets the delivery) so the provider's retry is stored; a bad secret
+    returns 403 before anything else runs.
     """
+    from .webhook import delivery_keys
+
     async def post_handler(request):
         raw = await request.body()
         if not cfg.authenticate(raw_body=raw, headers=request.headers,
                                 query=request.query_params):
             return PlainTextResponse("forbidden", status_code=403)
+        claim = None
+        if dedup is not None:
+            claim, repeats = delivery_keys(cfg.name, raw, request.headers, time.time())
+            if any(dedup.seen(k) for k in repeats) or not dedup.claim(claim):
+                log.info("webhook: %s repeated delivery ignored", cfg.name)
+                return PlainTextResponse("duplicate")
         # Parse JSON when we can, but never reject a non-JSON body — some
         # providers post form-encoded or plain text. Keep the raw text either way.
         text = raw.decode("utf-8", "replace")
@@ -497,6 +506,8 @@ def _webhook_routes(base, cfg: "WebhookConfig"):
                 cfg.sink(event)
         except Exception:  # noqa: BLE001 — a sink failure must signal a retry
             log.exception("webhook: sink failed for %s", cfg.name)
+            if claim is not None:
+                dedup.release(claim)
             return PlainTextResponse("sink error", status_code=500)
         return PlainTextResponse("ok")
 

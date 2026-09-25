@@ -38,6 +38,15 @@ class Dedup:
         return True
 
 
+    def seen(self, message_id: str) -> bool:
+        """Whether `message_id` was already claimed (no claim is made)."""
+        return (self.dir / _marker_name(message_id)).exists()
+
+    def release(self, message_id: str) -> None:
+        """Forget a claim, so a redelivery is accepted (e.g. after a failed store)."""
+        (self.dir / _marker_name(message_id)).unlink(missing_ok=True)
+
+
 def _marker_name(message_id: str) -> str:
     """A fixed-length, path-safe filename for any id (hashed, so `/` etc. are safe)."""
     return hashlib.sha256((message_id or "").encode("utf-8")).hexdigest()
