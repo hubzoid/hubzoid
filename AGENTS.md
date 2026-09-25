@@ -1,5 +1,21 @@
 # AGENTS.md. for AI editors working on the hubzoid platform
 
+## Product direction · 2026-09-22
+
+Read [the product brief](docs/PRODUCT_CONTEXT.md) before product, architecture,
+or user-facing work. Its revision is HZ-VISION-2026-09-22-v1.
+
+Hubzoid is the single open-source product focus: shared context and capabilities
+used through workflows, chat, and personal assistants through MCP. The primary
+audience is AI-capable builders bringing useful personal agents to their teams.
+Independent adoption and sustained use guide growth. Enterprise assistance is
+a secondary path. GitZoid is a sample application direction.
+
+This brief supersedes older services-led product positioning. It is direction,
+not a release feature list. Memory, frontend, onboarding, hosting, and other
+architecture choices remain open. This context update authorizes no migration.
+The engineering, compatibility, licensing, and validation rules below still apply.
+
 This file guides AI coding tools (Claude Code, Cursor, Codex, Copilot, Gemini
 CLI, etc.) editing the hubzoid platform source. The per-hub `demo-hub/AGENTS.md`
 is a different thing. that's the runtime prompt for the hub's main agent.
