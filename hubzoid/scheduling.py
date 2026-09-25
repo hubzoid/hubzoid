@@ -30,9 +30,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +47,8 @@ log = logging.getLogger("hubzoid.schedule")
 
 STATE_DIRNAME = ".hubzoid"
 STATE_FILENAME = "schedule-state.json"
+MISSED_LOG_DAYS = 31         # how long a task's missed_log keeps its entries
+_STATE_LOCK = threading.Lock()   # the file lock below covers other processes
 
 # Frontmatter defaults. Kept here so the CLI, docs and tests agree.
 DEFAULT_TIMEOUT = 1800      # seconds per round
@@ -432,10 +438,17 @@ class ScheduleState:
 
         { "<task>": { "first_seen_at": epoch, "last_fired_at": epoch,
                       "last_result": "done|incomplete|error",
-                      "last_run_log": "<path>", "...iso mirrors..." } }
+                      "last_run_log": "<path>",
+                      "missed_log": [["<iso utc>", <slots skipped>], ...],
+                      "...iso mirrors..." } }
 
     Epoch seconds are authoritative; `*_iso` keys are human mirrors for anyone
-    cat-ing the file on a server.
+    cat-ing the file on a server. `missed_log` has one entry per catch-up run
+    that stood in for more than one cron slot, kept for `MISSED_LOG_DAYS`.
+
+    The scheduler and the run executor write this file from different threads
+    (and a manual `hubzoid schedule run` from another process), so every
+    read-modify-write holds a lock and writes through its own temp file.
     """
 
     def __init__(self, hub_dir: Path):
@@ -452,11 +465,33 @@ class ScheduleState:
                 log.warning("schedule-state unreadable (%s); starting fresh", exc)
         return {}
 
+    @contextmanager
+    def _locked(self):
+        """Serialize read-modify-write across threads and processes."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with _STATE_LOCK, open(self.path.with_name(STATE_FILENAME + ".lock"), "a") as fh:
+            try:
+                import fcntl
+            except ImportError:  # not POSIX: the thread lock alone
+                yield
+                return
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def _write(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(self.path)              # atomic on POSIX
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=STATE_FILENAME + ".",
+                                   suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps(data, indent=2))
+            os.replace(tmp, self.path)      # atomic on POSIX
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
     def get(self, task_name: str) -> dict[str, Any]:
         return self._read().get(task_name, {})
@@ -464,28 +499,62 @@ class ScheduleState:
     def record_seen(self, task_name: str, now: datetime) -> None:
         """Stamp first_seen_at once. A task discovered now anchors *now* — it
         fires at its next future match, not retroactively on install."""
-        data = self._read()
-        entry = data.setdefault(task_name, {})
-        if "first_seen_at" not in entry:
-            entry["first_seen_at"] = now.timestamp()
-            entry["first_seen_iso"] = now.isoformat(timespec="seconds")
-            self._write(data)
+        with self._locked():
+            data = self._read()
+            entry = data.setdefault(task_name, {})
+            if "first_seen_at" not in entry:
+                entry["first_seen_at"] = now.timestamp()
+                entry["first_seen_iso"] = now.isoformat(timespec="seconds")
+                self._write(data)
 
     def record_fired(self, task_name: str, when: datetime, *,
-                     result: str, run_log: str | None = None) -> None:
-        data = self._read()
-        entry = data.setdefault(task_name, {})
-        entry["last_fired_at"] = when.timestamp()
-        entry["last_fired_iso"] = when.isoformat(timespec="seconds")
-        entry["last_result"] = result
-        if run_log:
-            entry["last_run_log"] = run_log
-        self._write(data)
+                     result: str, run_log: str | None = None, missed: int = 0) -> None:
+        """Stamp a fire. `missed` > 0 adds a `missed_log` entry: the cron slots
+        this catch-up run stood in for beyond its own."""
+        with self._locked():
+            data = self._read()
+            entry = data.setdefault(task_name, {})
+            entry["last_fired_at"] = when.timestamp()
+            entry["last_fired_iso"] = when.isoformat(timespec="seconds")
+            entry["last_result"] = result
+            if run_log:
+                entry["last_run_log"] = run_log
+            if missed or "missed_log" in entry:
+                at = when.astimezone(timezone.utc)
+                kept = [e for e in entry.get("missed_log") or []
+                        if _within(e, at - timedelta(days=MISSED_LOG_DAYS))]
+                if missed:
+                    kept.append([at.isoformat(timespec="seconds"), int(missed)])
+                entry["missed_log"] = kept
+            self._write(data)
 
     def anchor(self, task_name: str) -> datetime | None:
         entry = self.get(task_name)
         ts = entry.get("last_fired_at") or entry.get("first_seen_at")
         return datetime.fromtimestamp(ts) if ts else None
+
+
+def _within(entry: Any, cutoff: datetime) -> bool:
+    """Whether a `missed_log` entry is well formed and not older than `cutoff`."""
+    try:
+        at = datetime.fromisoformat(entry[0])
+        return at.tzinfo is not None and at >= cutoff
+    except (TypeError, ValueError, IndexError, KeyError):
+        return False
+
+
+def missed_slots(task: ScheduledTask, due_at: datetime, now: datetime) -> int:
+    """Cron matches after `due_at` up to `now`: the slots one catch-up run for
+    `due_at` stands in for. 0 in normal operation. Capped so a long downtime
+    under an every-minute cron cannot spin."""
+    if task.cron is None:
+        return 0
+    count = 0
+    nxt = next_fire(task.cron, due_at)
+    while nxt is not None and nxt <= now and count < 100_000:
+        count += 1
+        nxt = next_fire(task.cron, nxt)
+    return count
 
 
 def next_fire_for(task: ScheduledTask, state: ScheduleState,

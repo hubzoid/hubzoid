@@ -63,6 +63,52 @@ def test_pause_stops_dispatch_and_resume_catches_up_once(hub, tmp_path):
     assert all(a[0].startswith("cli:") for a in _audit(tmp_path))
 
 
+def _two_due_tasks(hub):
+    (hub / "schedule" / "second.md").write_text('---\nschedule: "0 3 * * *"\nrun: "true"\n---\n\nx\n')
+    for name in ("daily", "second"):
+        sch.ScheduleState(hub).record_fired(name, datetime.now() - timedelta(days=3), result="done")
+
+
+def test_a_pause_landing_mid_tick_stops_the_next_dispatch(hub):
+    """A pause is a barrier: once it is stored, no later dispatch queues the task,
+    even one in a tick that started before it."""
+    from hubzoid.access import store_for
+
+    _two_due_tasks(hub)
+    queued = []
+
+    def dispatch(task, slot, claimed):
+        queued.append(task.name)
+        store_for(hub).set_workflow_paused(hub.name, "md:second", True, actor="cli:test")
+
+    s = scheduler_lib.Scheduler(hub, dispatch_task=dispatch)
+    assert asyncio.run(s.check_once()) == ["daily"] and queued == ["daily"]
+    assert sch.ScheduleState(hub).get("second")["last_result"] == "done"  # still due on resume
+
+
+def test_a_backup_hold_landing_mid_tick_stops_the_next_dispatch(hub):
+    """Once a backup has set its hold, no new markdown task or eval run is
+    queued, even by a tick that started before it."""
+    from hubzoid.access import store_for
+    from hubzoid.evals import schedule as evals_schedule
+
+    _two_due_tasks(hub)
+    (hub / "evals").mkdir()
+    (hub / "evals" / "smoke.md").write_text('---\nschedule: "* * * * *"\n---\nhi\n')
+    (case,) = evals_schedule.scheduled_cases(hub)
+    sch.ScheduleState(hub).record_fired(evals_schedule.state_key(case),
+                                        datetime.now() - timedelta(days=1), result="pass")
+    queued = []
+
+    def dispatch(task, slot, claimed):
+        queued.append(task.name)
+        store_for(hub).set_schedule_hold("backup", 60, actor="test")
+
+    s = scheduler_lib.Scheduler(hub, dispatch_task=dispatch,
+                                dispatch_evals=lambda names, now: queued.append("evals"))
+    assert asyncio.run(s.check_once()) == ["daily"] and queued == ["daily"]
+
+
 def test_unknown_name_is_refused(hub):
     r = CliRunner().invoke(cli.app, ["schedule", "pause", str(hub), "nope"])
     assert r.exit_code == 2 and "no task or workflow" in r.output

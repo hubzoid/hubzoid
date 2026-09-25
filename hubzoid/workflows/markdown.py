@@ -13,10 +13,12 @@ A run is split into checkpointed steps:
   1. work   - the agent rounds, or the `run:` command. Never repeated: if the
               process dies mid-step, the recovered run reports the interruption
               instead of doing the work again (the same outcome as before DBOS:
-              a crashed run waits for its next slot).
+              a crashed run waits for its next slot). A webhook run is given
+              the exact event files it claimed.
   2. commit - the declared `commit:` paths only; skipped when nothing changed.
-  3. push   - `pull --rebase` then push; safe to retry. A rebase conflict fails
-              the run cleanly and leaves the commit local.
+  3. push   - `pull --rebase` then push, only when step 2 made a commit. Safe
+              to retry. A rebase conflict fails the run cleanly and leaves the
+              commit local.
   4. finish - record the result; archive the webhook events the run handled.
 
 All tasks share one registered DBOS workflow (`hz_markdown_task`); the run's
@@ -65,7 +67,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
         return task
 
     @DBOS.step()
-    def work(task_name: str, overrides: dict, run: str) -> dict:
+    def work(task_name: str, overrides: dict, run: str, claimed: list[str]) -> dict:
         from .state import WorkflowState
         from .. import db
 
@@ -76,8 +78,14 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
                     "error": "interrupted by a restart; not re-run (the next slot runs it)",
                     "run_log": marker[key]}
         task = _task(task_name, overrides)
+        # The run is told exactly which webhook events it owns, so one that
+        # lands after the claim is left for the next run.
+        events = [p for p in claimed if Path(p).exists()]
+        if claimed and not events:
+            return {"result": "done", "rounds": 0, "summary": "its events were already handled",
+                    "error": "", "run_log": None}
         marker[key] = "starting"
-        result = asyncio.run(runner.run_task(hub_dir, task, capture=False))
+        result = asyncio.run(runner.run_task(hub_dir, task, capture=False, events=events))
         marker[key] = str(result.run_log)
         return {"result": result.result, "rounds": result.rounds, "summary": result.summary,
                 "error": result.error, "run_log": str(result.run_log)}
@@ -105,14 +113,16 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
     def md_task(task_name: str, claimed: list[str], overrides: dict) -> dict:
         run = DBOS.workflow_id
         started = datetime.now().isoformat(timespec="seconds")
-        outcome = work(task_name, overrides, run)
+        outcome = work(task_name, overrides, run, claimed)
         if outcome["result"] == "done":
             task = _task(task_name, overrides)
             if task.commit:
                 try:
                     sha = commit(task_name, overrides, outcome["summary"], started)
                     outcome["commit_sha"] = sha
-                    if task.push:
+                    # Push only this run's commit: with nothing committed, a
+                    # push would publish whatever else is unpushed locally.
+                    if task.push and sha:
                         push()
                         outcome["pushed"] = True
                 except Exception as exc:  # noqa: BLE001 — a git failure fails the run
@@ -154,6 +164,15 @@ def enqueue_task(task_name: str, slot: str, claimed: list[str] | None = None,
     with SetWorkflowID(run_id(task_name, slot)):
         return runtime._MD_QUEUE.enqueue(_FNS["md_task"], task_name,
                                          list(claimed or []), dict(overrides or {}))
+
+
+def active_runs(task_name: str) -> list[str]:
+    """Ids of this task's runs that are queued or running."""
+    from dbos import DBOS
+
+    return [w.workflow_id for w in DBOS.list_workflows(
+        workflow_id_prefix=run_id(task_name, ""), status=["PENDING", "ENQUEUED"],
+        load_input=False, load_output=False)]
 
 
 def enqueue_evals(names: list[str], now: datetime):

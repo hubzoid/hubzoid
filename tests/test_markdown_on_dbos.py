@@ -137,6 +137,80 @@ def test_webhook_events_archived_only_when_done(repo):
     assert pending_events(hub, "squadcast") == []  # archived after DONE
 
 
+def test_a_run_handles_only_the_events_it_claimed(repo):
+    """An event that lands after the claim is not given to the run, and stays
+    pending for the next one."""
+    hub, _, env = repo
+    from hubzoid.inbound.webhook import pending_events
+
+    _task(hub, "alerts", 'on_webhook: squadcast\nrun: \'printf "%s" "$HUBZOID_WEBHOOK_EVENTS" > got.txt\'')
+    claimed = _events(hub, "squadcast", 1)
+    later = _events(hub, "squadcast", 1)[-1]  # lands after the scheduler claimed
+    out, _ = _run(hub, env, "alerts", "events-1", claimed)
+    assert out["result"] == "done"
+    assert (hub / "got.txt").read_text() == claimed[0]
+    assert [str(p) for p in pending_events(hub, "squadcast")] == [later]
+
+
+def test_a_run_with_nothing_to_commit_pushes_nothing(repo):
+    """`push: true` publishes the run's own commit only. With no change there is
+    no commit, so an unrelated unpushed local commit stays local."""
+    hub, remote, env = repo
+    (hub / "notes.txt").write_text("operator draft")
+    _git(hub.parent, "add", "hub/notes.txt")
+    _git(hub.parent, "commit", "-m", "operator draft not for pushing")
+    _task(hub, "noop", 'run: "true"\ncommit: ["data.txt"]\npush: true\nschedule: "0 3 * * *"')
+    out, _ = _run(hub, env, "noop", "s1")
+    assert out["result"] == "done" and out["commit_sha"] is None and not out.get("pushed")
+    log = subprocess.run(["git", "--git-dir", str(remote), "log", "--oneline"],
+                         capture_output=True, text=True).stdout
+    assert "operator draft" not in log
+
+
+_SCHEDULER = textwrap.dedent('''
+    import asyncio, json, sys
+    from datetime import datetime, timedelta
+    from dbos import DBOS
+    from hubzoid import scheduler as scheduler_lib
+    from hubzoid.workflows import runtime
+    runtime.init(sys.argv[1])
+    runtime.launch()
+
+    def settle():
+        for w in DBOS.list_workflows(workflow_id_prefix="md:alerts:"):
+            try:
+                DBOS.retrieve_workflow(w.workflow_id).get_result()
+            except Exception:
+                pass
+
+    s = scheduler_lib.Scheduler(sys.argv[1])
+    t0 = datetime(2026, 9, 25, 10, 0, 5)
+    first = asyncio.run(s.check_once(t0))
+    during = asyncio.run(s.check_once(t0 + timedelta(minutes=1)))
+    settle()
+    retried = asyncio.run(s.check_once(t0 + timedelta(minutes=2)))
+    settle()
+    ids = [w.workflow_id for w in DBOS.list_workflows(workflow_id_prefix="md:alerts:")]
+    print("OUT " + json.dumps([first, during, retried, ids]))
+    runtime.shutdown()
+''')
+
+
+def test_a_failed_webhook_run_is_retried_once_it_has_ended(repo):
+    """The events of a run that did not finish DONE stay pending, and the task is
+    queued again once that run is no longer queued or running."""
+    hub, _, env = repo
+    _task(hub, "alerts", 'on_webhook: squadcast\nrun: "sleep 2; exit 1"')
+    _events(hub, "squadcast", 1)
+    proc = subprocess.run([sys.executable, "-c", _SCHEDULER, str(hub)],
+                          capture_output=True, text=True, timeout=180, env=env)
+    line = next((ln for ln in proc.stdout.splitlines() if ln.startswith("OUT ")), None)
+    assert line, proc.stderr[-2000:]
+    first, during, retried, ids = json.loads(line[4:])
+    assert first == ["alerts"] and during == [] and retried == ["alerts"]
+    assert len(ids) == 2
+
+
 _START_AND_HANG = textwrap.dedent('''
     import sys, time
     from hubzoid.workflows import markdown, runtime

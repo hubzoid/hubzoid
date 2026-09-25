@@ -86,21 +86,29 @@ on_webhook: squadcast         # fires when a /webhooks/<hub>/squadcast event lan
 commit: ["output/"]           # (optional) same commit/push/write/model keys apply
 ---
 
-Read every new event under `.inbound/webhooks/squadcast/`, and for each downtime
-event notify the on-call coordinator. Delete each file once handled (the runner
-also archives handled events for you on a successful run).
+Read each event file this run was given (the harness lists them), and for each
+downtime event notify the on-call coordinator. The runner archives the files
+for you when the run finishes DONE.
 ```
 
 - The value must match the receiver's `WEBHOOK_INBOUND_NAME` (the endpoint /
   inbox folder). `on_webhook: true` is shorthand for the default name `webhook`.
 - A task is **either** `schedule:` **or** `on_webhook:`, never both.
-- **Due-ness:** the task is due whenever an unprocessed event is waiting. The
-  scheduler fires it (idle-gated, one run at a time, exactly like a cron task),
-  and on a **successful** run archives the events it claimed into
-  `.inbound/webhooks/<name>/.processed/` so they are not handled twice. A failed
-  or crashed run leaves the events pending, so the task stays due and **retries**
-  — at-least-once delivery. Events that arrive mid-run are handled by the next
-  tick, never silently dropped.
+- **Due-ness:** the task is due whenever an unprocessed event is waiting and no
+  run of it is queued or running. The scheduler fires it (idle-gated, exactly
+  like a cron task), and when the run finishes DONE archives the events it
+  claimed into `.inbound/webhooks/<name>/.processed/` so they are not handled
+  twice. A failed, incomplete or crashed run leaves the events pending, so the
+  task is queued again once that run has ended and **retries**. This is
+  at-least-once delivery. Events that arrive while a run is queued or running
+  wait for the next run, never silently dropped.
+- **Which events a run owns:** the scheduler claims the pending files when it
+  queues the run, and only those are archived. An agent task finds the claimed
+  files listed in its round prompt. A `run:` script finds them in the
+  `HUBZOID_WEBHOOK_EVENTS` environment variable, one absolute path per line.
+  Handle exactly those files. Any other file in the inbox arrived later and
+  belongs to the next run. A manual `hubzoid schedule run` claims nothing, so
+  the prompt has no list and the variable is not set.
 - **Why not dispatch straight to the agent?** A machine event has no roster
   identity, so dispatching it into the chat path would force a synthetic
   privileged user on a public endpoint. Keeping the webhook as an authenticated
@@ -158,7 +166,9 @@ no platform change needed.
 After a `DONE` round, if the task declares `commit:` paths, Hubzoid stages
 and commits **exactly those pathspecs** — message
 `schedule(<task>): <agent's one-line summary>` — and with `push: true` does
-`git pull --rebase` then `git push`. A rebase conflict aborts cleanly: the
+`git pull --rebase` then `git push`. A run that changed none of its paths
+makes no commit and pushes nothing, so it never publishes other local
+commits. A rebase conflict aborts cleanly: the
 commit stays local, the run is recorded as `error`, a human resolves.
 
 The scoping is the safety property for unattended servers: a dirty tree
@@ -179,6 +189,8 @@ Prereqs on the box, once: the hub's repo has a remote + tracking branch,
 * **Catch-up**: next-fire is computed from the task's last fire (or first
   discovery). If the server was down over Monday 03:07, the task fires once
   on the first tick after boot — once, not once per missed week.
+  The count of skipped slots goes into the task's `missed_log` in
+  `.hubzoid/schedule-state.json`, kept for 31 days.
 * A brand-new task file anchors at discovery: it first fires at its next
   *future* cron match (use `hubzoid schedule run` to test immediately).
 * One markdown run at a time per hub, across processes (the engine's queue),

@@ -286,6 +286,61 @@ def test_state_survives_corrupt_file(tmp_path):
     assert state.get("x").get("first_seen_at")
 
 
+def test_state_writes_are_safe_across_threads_and_processes(tmp_path):
+    """The scheduler and the run executor write the state file from different
+    threads, and a manual run writes it from another process: no write may
+    fail or drop another task's entry."""
+    import sys
+    import threading
+
+    code = ("import sys\nfrom datetime import datetime\nfrom hubzoid import scheduling as sch\n"
+            "s = sch.ScheduleState(sys.argv[1])\n"
+            "for i in range(40):\n"
+            "    s.record_fired(f'p{sys.argv[2]}-{i}', datetime.now(), result='done')\n")
+    procs = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path), str(n)])
+             for n in range(3)]
+    state, errors = sch.ScheduleState(tmp_path), []
+
+    def writer(n):
+        try:
+            for i in range(40):
+                state.record_fired(f"t{n}-{i}", datetime.now(), result="done")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert [p.wait(timeout=60) for p in procs] == [0, 0, 0]
+    assert errors == []
+    assert len(json.loads(state.path.read_text())) == 4 * 40 + 3 * 40
+    assert not list(state.path.parent.glob("*.tmp"))
+
+
+def test_catch_up_run_records_the_missed_slots(tmp_path):
+    from datetime import timezone
+
+    hub, s, fired = _sched_env(tmp_path)                        # daily at 03:00
+    sch.ScheduleState(hub).record_fired("daily", datetime(2026, 9, 20, 12, 0), result="done")
+    now = datetime(2026, 9, 25, 12, 0)                          # down over five 03:00 slots
+    assert asyncio.run(s.check_once(now)) == ["daily"]
+    assert fired == [("daily", "20260921T0300")]                # one run stands in for all
+    ((at, count),) = sch.ScheduleState(hub).get("daily")["missed_log"]
+    assert count == 4 and datetime.fromisoformat(at) == now.astimezone(timezone.utc)
+    assert asyncio.run(s.check_once(datetime(2026, 9, 26, 3, 0, 30))) == ["daily"]
+    assert len(sch.ScheduleState(hub).get("daily")["missed_log"]) == 1  # on time: nothing missed
+
+
+def test_missed_log_keeps_31_days(tmp_path):
+    state = sch.ScheduleState(tmp_path)
+    state.record_fired("t", datetime(2026, 8, 1, 12, 0), result="queued", missed=3)
+    state.record_fired("t", datetime(2026, 8, 20, 12, 0), result="queued", missed=2)
+    state.record_fired("t", datetime(2026, 9, 10, 12, 0), result="done")
+    assert [c for _, c in state.get("t")["missed_log"]] == [2]
+
+
 # ===========================================================================
 # runner: the round harness
 # ===========================================================================
@@ -1119,16 +1174,22 @@ def test_webhook_task_due_only_when_event_pending(tmp_path):
 
 
 def _webhook_sched(tmp_path):
+    """A scheduler with a fake engine: `active` holds the task names that have a
+    run queued or running."""
     hub = tmp_path / "hub"
     _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
-    queued = []
+    queued, active = [], set()
     s = scheduler_lib.Scheduler(
-        hub, dispatch_task=lambda task, slot, claimed: queued.append((task.name, slot, claimed)))
-    return hub, s, queued
+        hub, dispatch_task=lambda task, slot, claimed: queued.append((task.name, slot, claimed)),
+        task_active=lambda name: name in active)
+    return hub, s, queued, active
+
+
+_T0 = datetime(2026, 9, 25, 10, 0, 5)
 
 
 def test_scheduler_queues_on_event_with_the_claimed_events(tmp_path):
-    hub, s, queued = _webhook_sched(tmp_path)
+    hub, s, queued, _ = _webhook_sched(tmp_path)
     assert asyncio.run(s.check_once()) == [] and queued == []   # empty inbox
     ev = _drop_event(hub, "squadcast", {"event": "down"})
     assert asyncio.run(s.check_once()) == ["alerts"]
@@ -1136,21 +1197,58 @@ def test_scheduler_queues_on_event_with_the_claimed_events(tmp_path):
     assert name == "alerts" and slot.startswith("events-") and claimed == [str(ev)]
 
 
-def test_scheduler_does_not_requeue_while_the_run_is_pending(tmp_path):
-    hub, s, queued = _webhook_sched(tmp_path)
-    _drop_event(hub, "squadcast", {"event": "down"})
-    assert asyncio.run(s.check_once()) == ["alerts"]
-    assert asyncio.run(s.check_once()) == []                    # same events: already queued
+def test_scheduler_does_not_requeue_while_a_run_is_queued_or_running(tmp_path):
+    hub, s, queued, active = _webhook_sched(tmp_path)
+    _drop_event(hub, "squadcast", {"n": 1})
+    assert asyncio.run(s.check_once(_T0)) == ["alerts"]
+    active.add("alerts")                                        # queued, then running
+    _drop_event(hub, "squadcast", {"n": 2})                     # lands meanwhile: waits
+    assert asyncio.run(s.check_once(_T0 + timedelta(minutes=1))) == []
     assert len(queued) == 1
 
 
-def test_scheduler_new_event_queues_another_run(tmp_path):
-    hub, s, queued = _webhook_sched(tmp_path)
+def test_scheduler_retries_events_a_finished_run_left_pending(tmp_path):
+    """A failed or incomplete run leaves its events pending: once it has ended,
+    the task is queued again under a new run id, with the events still waiting."""
+    hub, s, queued, active = _webhook_sched(tmp_path)
+    ev = _drop_event(hub, "squadcast", {"n": 1})
+    asyncio.run(s.check_once(_T0))
+    active.add("alerts")
+    assert asyncio.run(s.check_once(_T0 + timedelta(seconds=30))) == []
+    active.clear()                                              # it ended without DONE
+    assert asyncio.run(s.check_once(_T0 + timedelta(minutes=1))) == ["alerts"]
+    assert [c for _, _, c in queued] == [[str(ev)], [str(ev)]]
+    assert queued[0][1] != queued[1][1]
+
+
+def test_scheduler_same_batch_in_the_same_minute_is_one_run_id(tmp_path):
+    """Two schedulers that see the same events in the same minute queue the
+    same run id, which the engine runs once."""
+    hub, s, queued, _ = _webhook_sched(tmp_path)
     _drop_event(hub, "squadcast", {"n": 1})
-    asyncio.run(s.check_once())
-    _drop_event(hub, "squadcast", {"n": 2})                     # lands while run 1 is queued
-    assert asyncio.run(s.check_once()) == ["alerts"]
-    assert len(queued) == 2 and queued[0][1] != queued[1][1]
+    asyncio.run(s.check_once(_T0))
+    asyncio.run(s.check_once(_T0 + timedelta(seconds=30)))
+    assert len(queued) == 2 and queued[0][1] == queued[1][1]
+
+
+def test_agent_run_is_told_its_claimed_events_every_round(tmp_path):
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    rt = StubRuntime(["STATUS: CONTINUE — one left", "STATUS: DONE — handled"])
+    ev = str(hub / ".inbound" / "webhooks" / "squadcast" / "1-a.json")
+    res = asyncio.run(runner.run_task(hub, _task(name="alerts"),
+                                      runtime_factory=_factory_for(rt), events=[ev]))
+    assert res.ok and len(rt.prompts) == 2
+    assert all(ev in p and "handles only these files" in p for p in rt.prompts)
+    assert "Webhook events" not in runner.build_prompt(_task(), hub, round_no=1)
+
+
+def test_script_run_gets_its_claimed_events_in_the_environment(tmp_path):
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    t = _task(name="s", run=['printf "%s" "$HUBZOID_WEBHOOK_EVENTS" > got.txt'], run_shell=True)
+    res = asyncio.run(runner.run_task(hub, t, events=["/a/1.json", "/a/2.json"]))
+    assert res.ok and (hub / "got.txt").read_text() == "/a/1.json\n/a/2.json"
 
 
 def test_cli_list_shows_webhook_trigger(tmp_path):

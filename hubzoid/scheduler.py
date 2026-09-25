@@ -18,11 +18,24 @@ rules builders already rely on:
 
 A dispatch stamps the task as fired, so it waits for its next match. The run's
 id is `md:<task>:<slot>`, so a slot is never queued twice even if two ticks (or
-two processes) see it due.
+two processes) see it due. A catch-up run that stands in for several missed
+slots records how many in the task's `missed_log`.
+
+A webhook task (`on_webhook:`) has no cron: it is due while events wait in its
+inbox and no run of it is queued or running (the engine's run list is the
+source of truth, so this holds across restarts). A run archives the events it
+claimed only when it finishes DONE, so a failed or incomplete run leaves them
+pending and the task is queued again once that run has ended. Its slot is
+`events-<minute>-<hash of the claimed files>`, so two schedulers that see the
+same batch in the same minute still queue one run.
+
+Pause and the backup hold are read again right before each run is queued, so
+a pause or hold that lands mid-tick stops every dispatch after it.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -30,7 +43,7 @@ from pathlib import Path
 from typing import Callable
 
 from .evals import schedule as evals_schedule
-from .scheduling import ScheduledTask, ScheduleState, is_due, load_tasks
+from .scheduling import ScheduledTask, ScheduleState, is_due, load_tasks, missed_slots
 
 log = logging.getLogger("hubzoid.schedule")
 
@@ -69,16 +82,17 @@ class Scheduler:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         dispatch_task: Callable | None = None,    # (task, slot, claimed) -> None
         dispatch_evals: Callable | None = None,   # (names, now) -> None
+        task_active: Callable | None = None,      # (task name) -> a run is queued or running
     ):
         self.hub_dir = Path(hub_dir).resolve()
         self.is_busy = is_busy
         self.tick_seconds = tick_seconds
         self._dispatch_task = dispatch_task or _dbos_dispatch_task
         self._dispatch_evals = dispatch_evals or _dbos_dispatch_evals
+        self._task_active = task_active or _dbos_task_active
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._deferred_logged: set[str] = set()
-        self._dispatched: set[str] = set()   # webhook runs already queued
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> bool:
@@ -194,8 +208,15 @@ class Scheduler:
         self._deferred_logged = {k for k in self._deferred_logged
                                  if not k.startswith("evals:")}
 
+        def queue() -> bool:
+            if _held(self.hub_dir):  # read again: a backup may have started mid-tick
+                return False
+            self._dispatch_evals(names, now)
+            return True
+
         try:
-            await asyncio.to_thread(self._dispatch_evals, names, now)
+            if not await asyncio.to_thread(queue):
+                return []
         except Exception:  # noqa: BLE001 — the tick loop must survive anything
             log.exception("could not queue the due evals")
             return []
@@ -209,31 +230,45 @@ class Scheduler:
         from .scheduling import next_fire_for
 
         claimed: list[str] = []
+        missed = 0
         if task.is_webhook:
             # The events this run is responsible for. They are archived only
             # when the run finishes DONE, so a failed run leaves them pending.
             from .inbound.webhook import pending_events
 
             claimed = [str(p) for p in pending_events(self.hub_dir, task.on_webhook)]
-            import hashlib
-
-            slot = "events-" + hashlib.sha256("|".join(sorted(claimed)).encode()).hexdigest()[:16]
-            if f"{task.name}:{slot}" in self._dispatched:
-                return False  # already queued; its events stay pending until it finishes
+            digest = hashlib.sha256("|".join(sorted(claimed)).encode()).hexdigest()[:16]
+            slot = f"events-{now.strftime('%Y%m%dT%H%M')}-{digest}"
         else:
             due_at = next_fire_for(task, ScheduleState(self.hub_dir), now) or now
             slot = due_at.strftime("%Y%m%dT%H%M")
+            missed = missed_slots(task, due_at, now)
         trigger = f"on_webhook {task.on_webhook}" if task.is_webhook else task.schedule
+
+        def queue() -> bool:
+            # One run of a webhook task at a time: new events wait for it to end.
+            if task.is_webhook and self._task_active(task.name):
+                return False
+            # Read again right before queueing, so a pause or backup hold that
+            # landed during this tick stops the dispatch.
+            if _held(self.hub_dir) or f"md:{task.name}" in _paused(self.hub_dir):
+                log.info("schedule[%s] not queued: paused or held since the tick began",
+                         task.name)
+                return False
+            self._dispatch_task(task, slot, claimed)
+            return True
+
         try:
-            await asyncio.to_thread(self._dispatch_task, task, slot, claimed)
+            if not await asyncio.to_thread(queue):
+                return False
         except Exception:  # noqa: BLE001 — the tick loop must survive anything
             log.exception("schedule[%s] could not be queued", task.name)
             return False
-        if task.is_webhook:
-            self._dispatched.add(f"{task.name}:{slot}")
-        else:
-            ScheduleState(self.hub_dir).record_fired(task.name, now, result="queued")
-        log.info("schedule[%s] queued (%s, slot %s)", task.name, trigger, slot)
+        if not task.is_webhook:
+            ScheduleState(self.hub_dir).record_fired(task.name, now, result="queued",
+                                                     missed=missed)
+        log.info("schedule[%s] queued (%s, slot %s%s)", task.name, trigger, slot,
+                 f", {missed} missed slot(s) folded in" if missed else "")
         return True
 
 
@@ -267,6 +302,12 @@ def _dbos_dispatch_task(task: ScheduledTask, slot: str, claimed: list[str]) -> N
     from .workflows import markdown
 
     markdown.enqueue_task(task.name, slot, claimed)
+
+
+def _dbos_task_active(task_name: str) -> bool:
+    from .workflows import markdown
+
+    return bool(markdown.active_runs(task_name))
 
 
 def _dbos_dispatch_evals(names: list[str], now: datetime) -> None:

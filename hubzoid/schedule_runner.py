@@ -56,6 +56,9 @@ log = logging.getLogger("hubzoid.schedule")
 # helps nobody.
 _MAX_CONSECUTIVE_ERRORS = 3
 
+# A `run:` script triggered by webhook events finds the files it owns here.
+EVENTS_ENV = "HUBZOID_WEBHOOK_EVENTS"
+
 _STATUS_RE = re.compile(
     r"^\s*STATUS:\s*(DONE|CONTINUE)\b[\s—:\-]*(.*?)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -95,8 +98,10 @@ def parse_status(text: str) -> tuple[str | None, str]:
 # Prompt assembly
 # ---------------------------------------------------------------------------
 def build_prompt(task: ScheduledTask, hub_dir: Path, *, round_no: int,
-                 carry: str = "") -> str:
-    """Harness preamble + the hub author's instructions (the md body)."""
+                 carry: str = "", events: list[str] | None = None) -> str:
+    """Harness preamble + the hub author's instructions (the md body).
+
+    `events` are the webhook event files this run claimed (absolute paths)."""
     writable = "\n".join(f"  - {p}/" for p in task.writable_paths())
     state_file = f"{task.scratch_rel}/state.json"
     carry_block = ""
@@ -104,6 +109,13 @@ def build_prompt(task: ScheduledTask, hub_dir: Path, *, round_no: int,
         carry_block = (
             f"\nPrevious round ended with: {carry}\n"
             f"Read {state_file} and resume — do not redo finished work.\n"
+        )
+    events_rule = ""
+    if events:
+        events_rule = (
+            "- Webhook events: this run handles only these files. Any other file in\n"
+            "  the inbox arrived later and is left for the next run:\n"
+            + "".join(f"    {p}\n" for p in events)
         )
     return f"""[Hubzoid scheduled task "{task.name}" — round {round_no}/{task.max_rounds} — {datetime.now().strftime('%Y-%m-%d %H:%M')}]
 
@@ -130,7 +142,7 @@ Operating rules:
   instead of overwriting it.
 - Budget: about {task.timeout // 60} minutes this round. If the remaining work
   doesn't fit, save state and hand off to the next round instead of rushing.
-
+{events_rule}
 Finish protocol (MANDATORY): end your reply with exactly ONE final line —
   STATUS: DONE — <one-line summary of what changed>
 when the task's goal is fully met, or
@@ -315,7 +327,7 @@ def _tail(fh, cap: int) -> str:
 
 
 def _run_command(cmd: list[str], *, shell: bool, cwd: str,
-                 timeout: int) -> tuple[int, str, str]:
+                 timeout: int, env: dict[str, str] | None = None) -> tuple[int, str, str]:
     """Run a command in its OWN process group and return (rc, stdout, stderr).
 
     Output goes to temp files (bounded read-back via `_tail`), NOT in-memory
@@ -330,7 +342,7 @@ def _run_command(cmd: list[str], *, shell: bool, cwd: str,
     with tempfile.TemporaryFile() as outf, tempfile.TemporaryFile() as errf:
         proc = subprocess.Popen(
             cmd[0] if shell else cmd,
-            shell=shell, cwd=cwd,
+            shell=shell, cwd=cwd, env=env,
             stdout=outf, stderr=errf,
             start_new_session=True,
         )
@@ -350,7 +362,7 @@ def _run_command(cmd: list[str], *, shell: bool, cwd: str,
 
 
 def _execute_script(hub_dir: Path, task: ScheduledTask, result: "RunResult",
-                    rlog: "RunLog") -> None:
+                    rlog: "RunLog", events: list[str] | None = None) -> None:
     """Run a `run:` command as a subprocess in the hub dir. Never raises.
 
     Fills result.result ('done' on exit 0, else 'error'), result.summary
@@ -358,8 +370,11 @@ def _execute_script(hub_dir: Path, task: ScheduledTask, result: "RunResult",
     path: a deterministic build/sync script that needs no LLM. The command
     is operator-authored and git-committed (same trust boundary as the OS
     crontab it replaces), so a shell string is run through the shell.
+    The webhook event files the run claimed are in HUBZOID_WEBHOOK_EVENTS,
+    one absolute path per line.
     """
     cmd = task.run or []
+    env = {**os.environ, EVENTS_ENV: "\n".join(events)} if events else None
     display = cmd[0] if task.run_shell else " ".join(shlex.quote(c) for c in cmd)
     result.rounds = 1
     rlog.emit(event="script_start", command=display, shell=task.run_shell,
@@ -367,7 +382,7 @@ def _execute_script(hub_dir: Path, task: ScheduledTask, result: "RunResult",
     log.info("schedule[%s] run: %s", task.name, display)
     try:
         rc, out, err = _run_command(cmd, shell=task.run_shell,
-                                    cwd=str(hub_dir), timeout=task.timeout)
+                                    cwd=str(hub_dir), timeout=task.timeout, env=env)
     except subprocess.TimeoutExpired:
         result.result = "error"
         result.error = f"script timed out after {task.timeout}s"
@@ -434,6 +449,7 @@ def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: flo
 async def run_task(hub_dir: Path, task: ScheduledTask, *,
                    runtime_factory: Callable = _default_runtime_factory,
                    capture: bool = True,
+                   events: list[str] | None = None,
                    ) -> RunResult:
     """Run one scheduled task to completion (or its caps). Never raises —
     every failure mode is a `RunResult(result="error")` with the log path.
@@ -442,15 +458,19 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     agent round writes a usage row.
 
     `capture=False` skips the commit/push, for callers (the DBOS executor in
-    workflows/markdown.py) that run them as their own checkpointed steps."""
+    workflows/markdown.py) that run them as their own checkpointed steps.
+    `events` are the webhook event files the run claimed: named in every
+    round's prompt, or passed to a `run:` script in HUBZOID_WEBHOOK_EVENTS."""
     from .access import Identity, identity_scope
 
     with identity_scope(Identity.make(service_subject(task.name), surface="workflow")):
-        return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture)
+        return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture,
+                               events=events or [])
 
 
 async def _run_task(hub_dir: Path, task: ScheduledTask, *,
-                    runtime_factory: Callable, capture: bool) -> RunResult:
+                    runtime_factory: Callable, capture: bool,
+                    events: list[str]) -> RunResult:
     hub_dir = Path(hub_dir).resolve()
     started = time.monotonic()
     started_dt = datetime.now()
@@ -464,7 +484,7 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     rlog.emit(event="run_start", task=task.name, schedule=task.schedule,
               timeout=task.timeout, max_rounds=task.max_rounds,
               max_turns=task.max_turns, writable=task.writable_paths(),
-              commit=task.commit, push=task.push)
+              commit=task.commit, push=task.push, events=events)
     log.info("schedule[%s] run start (timeout=%ss, max_rounds=%s) — log: %s",
              task.name, task.timeout, task.max_rounds, log_path)
     state.record_fired(task.name, started_dt, result="running",
@@ -475,7 +495,7 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     # loop so a long script never stalls concurrent chat requests.
     if task.is_script:
         try:
-            await asyncio.to_thread(_execute_script, hub_dir, task, result, rlog)
+            await asyncio.to_thread(_execute_script, hub_dir, task, result, rlog, events)
             if result.result == "done" and task.commit and capture:
                 _capture_commit(hub_dir, task, result, rlog, started_dt)
         except Exception as exc:  # noqa: BLE001 — never raise; run_task's contract
@@ -524,7 +544,7 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             await rt.aopen()
         for round_no in range(1, task.max_rounds + 1):
             result.rounds = round_no
-            prompt = build_prompt(task, hub_dir, round_no=round_no, carry=carry)
+            prompt = build_prompt(task, hub_dir, round_no=round_no, carry=carry, events=events)
             rlog.emit(event="round_start", round=round_no, carry=carry)
             log.info("schedule[%s] round %d/%d%s", task.name, round_no,
                      task.max_rounds, f" (carry: {carry[:80]})" if carry else "")
