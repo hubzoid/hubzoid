@@ -68,7 +68,7 @@ checks every workflow file loads.
 
 | Call | What it does | Retried |
 |---|---|---|
-| `hub.call_llm(prompt, *, response_format="text", response_model=None, model=None, system=None)` | One model call with no tools. Returns text; with `response_format="json"` the parsed JSON; with a Pydantic `response_model` a validated instance. | Once, since it has no side effects |
+| `hub.call_llm(prompt, *, response_format="text", response_model=None, model=None, system=None)` | One model call with no tools. Returns text; with `response_format="json"` a dict (the reply must be a JSON object); with a Pydantic `response_model` a validated instance. | Once, since it has no side effects |
 | `hub.call_agent(task, *, response_model=None)` | The hub's full agent, with its tools, skills and knowledge. | Only with `agent_max_attempts: N` in `workflows/settings.yaml`, since a retry can repeat a write |
 | `hub.decide(state, questions, *, model="typesafe/jev-1.13")` | Experimental. A typed decision from TypeSafe's Jev through OpenRouter. Each question has a `type` (`noul`, `choice` or `score`), `instructions` and `criteria`; returns the answers with probabilities and confidence. Needs `OPENROUTER_API_KEY`. | Once |
 

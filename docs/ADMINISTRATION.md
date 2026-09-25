@@ -142,7 +142,7 @@ hours, 7 days or 30 days. Hub administrators see only their agents.
 | Tokens, estimated cost | Chat turns plus scheduled work and workflow model calls. Cost comes from the model's reported cost or LiteLLM's price table. Calls with no known price are left out and marked with `*`. |
 | Tool denials | Restricted tool calls that were refused. |
 | People with access | People with a grant in the Console. An agent still on chat app groups shows "In chat app". |
-| Runs, failed | Only for agents with schedules or workflows. |
+| Runs, failed, missed slots | Only for agents with schedules or workflows. Missed slots are scheduled times skipped while the hub was down (a markdown task then runs once to catch up, a code workflow waits for its next slot). |
 
 Every number comes from Hubzoid's own tables (`hz_usage`, the access decision
 log, grants and the workflow engine), never from the chat app's database, so it
