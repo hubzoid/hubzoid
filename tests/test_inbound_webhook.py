@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 
+import pytest
 from starlette.testclient import TestClient
 
 from hubzoid.inbound.env import missing_webhook_vars, webhook_config_from_env
@@ -221,3 +222,38 @@ def test_query_token_still_works_but_warns(tmp_path, caplog):
         r = client.post("/webhooks/myhub/alerts?token=s", json={"n": 1})
     assert r.status_code == 200 and len(events) == 1
     assert "?token=" in caplog.text
+
+
+def test_a_store_cut_short_does_not_swallow_the_retry(tmp_path):
+    """The process dies after the delivery is accepted but before its event is
+    stored. The provider retries, and the retry must be stored, not dropped."""
+    class Killed(BaseException):  # not an Exception: no handler cleanup runs
+        pass
+
+    calls = []
+
+    def dies_first(event):
+        calls.append(event)
+        if len(calls) == 1:
+            raise Killed()
+
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=dies_first)))
+    with pytest.raises(Killed):
+        _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"})
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "ok"
+    assert len(calls) == 2
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "duplicate"
+
+
+def test_a_delivery_being_stored_elsewhere_is_retried_not_dropped(tmp_path):
+    from hubzoid.inbound.dedup import Dedup
+
+    events = []
+    client = TestClient(_app(tmp_path, WebhookConfig(secret="s", name="alerts", sink=events.append)))
+    with Dedup(tmp_path / ".inbound" / "dedup").holding("alerts:id:r-1") as held:
+        assert held
+        r = _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"})
+        assert r.status_code == 503 and events == []
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "ok"
+    assert _post(client, b'{"n": 1}', **{"X-Request-Id": "r-1"}).text == "duplicate"
+    assert len(events) == 1

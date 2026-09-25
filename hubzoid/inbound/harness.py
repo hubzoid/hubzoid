@@ -470,7 +470,7 @@ def _webhook_routes(base, cfg: "WebhookConfig", dedup: "Dedup | None" = None):
 
     No roster, no LLM, no reply — verify the secret (or HMAC), drop a repeated
     delivery, parse the body, hand it to the sink, ack. A failed sink returns 500
-    (and forgets the delivery) so the provider's retry is stored; a bad secret
+    (and records nothing) so the provider's retry is stored; a bad secret
     returns 403 before anything else runs.
     """
     from .webhook import delivery_keys
@@ -480,12 +480,27 @@ def _webhook_routes(base, cfg: "WebhookConfig", dedup: "Dedup | None" = None):
         if not cfg.authenticate(raw_body=raw, headers=request.headers,
                                 query=request.query_params):
             return PlainTextResponse("forbidden", status_code=403)
-        claim = None
-        if dedup is not None:
-            claim, repeats = delivery_keys(cfg.name, raw, request.headers, time.time())
-            if any(dedup.seen(k) for k in repeats) or not dedup.claim(claim):
+        if dedup is None:
+            return store(request, raw)
+        claim, repeats = delivery_keys(cfg.name, raw, request.headers, time.time())
+        # The dedup marker is written only after the sink stored the event, so a
+        # crash in between leaves no marker and the provider's retry is stored.
+        # Holding the key keeps a concurrent copy of the delivery out meanwhile.
+        with dedup.holding(claim) as held:
+            if not held:
+                log.info("webhook: %s delivery is being stored already, asking for a retry",
+                         cfg.name)
+                return PlainTextResponse("in progress", status_code=503)
+            if any(dedup.seen(k) for k in repeats):
                 log.info("webhook: %s repeated delivery ignored", cfg.name)
                 return PlainTextResponse("duplicate")
+            response = store(request, raw)
+            if response.status_code == 200:
+                dedup.claim(claim)
+            return response
+
+    def store(request, raw):
+        """Parse the body and hand the event to the sink: 200 when stored, else 500."""
         # Parse JSON when we can, but never reject a non-JSON body — some
         # providers post form-encoded or plain text. Keep the raw text either way.
         text = raw.decode("utf-8", "replace")
@@ -506,8 +521,6 @@ def _webhook_routes(base, cfg: "WebhookConfig", dedup: "Dedup | None" = None):
                 cfg.sink(event)
         except Exception:  # noqa: BLE001 — a sink failure must signal a retry
             log.exception("webhook: sink failed for %s", cfg.name)
-            if claim is not None:
-                dedup.release(claim)
             return PlainTextResponse("sink error", status_code=500)
         return PlainTextResponse("ok")
 

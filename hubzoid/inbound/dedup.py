@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -42,9 +43,34 @@ class Dedup:
         """Whether `message_id` was already claimed (no claim is made)."""
         return (self.dir / _marker_name(message_id)).exists()
 
-    def release(self, message_id: str) -> None:
-        """Forget a claim, so a redelivery is accepted (e.g. after a failed store)."""
-        (self.dir / _marker_name(message_id)).unlink(missing_ok=True)
+    @contextmanager
+    def holding(self, message_id: str):
+        """Lock `message_id` while its delivery is stored, for claim-after-store.
+
+        Yields False, without the lock, when another delivery of the same id holds
+        it now. Inside the block the caller checks `seen`, stores, then `claim`s.
+        The lock is an flock on a side file, which the kernel drops when the
+        process dies, so a crash before the claim leaves no marker and the
+        provider's retry is accepted. POSIX only, like the migration lock.
+        """
+        import fcntl
+
+        lock = self.dir / (_marker_name(message_id) + ".lock")
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            yield True
+            # Once claimed, every later holder finds the marker, so the lock file
+            # can go. Without a claim it stays: removing it could let two
+            # deliveries lock two different files and both store.
+            if self.seen(message_id):
+                lock.unlink(missing_ok=True)
+        finally:
+            os.close(fd)
 
 
 def _marker_name(message_id: str) -> str:
