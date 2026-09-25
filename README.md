@@ -69,6 +69,11 @@ Using OpenAI, Anthropic, Azure OpenAI, or OpenRouter? Add a key and model to
 Want the guided tour? `hubzoid init my-hub --template demo` gives a **Hubzoid
 Guide** agent that explains the framework as you chat.
 
+Automating work? `hubzoid init my-watchtower --template watchtower` gives a
+scheduled workflow that checks bundled sample metrics, explains a threshold
+breach with a structured model call, and shows a failed run and its recovery.
+See its README.
+
 <details>
 <summary>Python version and build caveats</summary>
 
@@ -460,7 +465,7 @@ bridge through that same port, so set `HUBZOID_PUBLIC_URL=https://your.host` in
 
 ```
 hubzoid init [NAME]              Scaffold a new hub folder under the current directory.
-  --template, -t NAME              "minimal" (default) or "demo" (guided tour).
+  --template, -t NAME              "minimal" (default), "demo" (guided tour) or "watchtower" (workflow sample).
 hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a hub.
   --port INT                       Public Open WebUI port (default 3080).
   --bridge-port INT                FastAPI bridge port (default 8000, loopback).

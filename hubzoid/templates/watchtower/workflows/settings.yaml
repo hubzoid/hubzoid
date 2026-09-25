@@ -1,0 +1,6 @@
+# Settings for this hub's workflows, read with hub.setting(...).
+watchtower:
+  p95_ms: 800          # p95 latency threshold, milliseconds
+  error_rate: 0.02     # error-rate threshold, 0.02 = 2%
+  window_minutes: 15   # how far back each check looks
+  min_points: 3        # samples over a threshold before it counts as a breach

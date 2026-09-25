@@ -55,6 +55,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
 | `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
+| `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |

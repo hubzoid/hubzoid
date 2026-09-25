@@ -78,7 +78,8 @@ def init(
         help="Which bundled template to use. 'minimal' (default) scaffolds a tiny, "
         "runnable hub with one example of each file type. 'demo' scaffolds the full "
         "guided tour with a Hubzoid Guide agent, four teaching skills, and six "
-        "knowledge pages.",
+        "knowledge pages. 'watchtower' scaffolds a workflow-first sample: a scheduled "
+        "check on bundled sample metrics that explains threshold breaches.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
 ) -> None:
@@ -1315,12 +1316,18 @@ def schedule_run(
                 console.print(f"[cyan]→ running workflow {match}[/cyan]")
                 try:
                     result = _wf.run_now(match)
+                except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
+                    console.print(f"[red]✗ workflow {match} failed: {type(run_exc).__name__}: {run_exc}[/red]")
+                    console.print("[dim]The failed run is in `hubzoid schedule status` and the Console's Runs page.[/dim]")
+                    raise typer.Exit(1)
                 finally:
                     _wf.shutdown()
                 console.print(f"[green]✓ workflow {match} returned:[/green] {result!r}")
                 return
             known_wf = ", ".join(sorted(wf_names))
             _wf.shutdown()
+        except typer.Exit:
+            raise
         except Exception as e:  # noqa: BLE001 — report, then fall through to the error
             _wf.shutdown()
             known_wf = f"(workflow load failed: {e})"
