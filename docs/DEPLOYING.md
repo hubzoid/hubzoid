@@ -470,24 +470,32 @@ instances; the gateway shares one login surface by design.)
 
 If `pip install hubzoid` fails on your target OS (PyAV build issues,
 Python-version traps, missing system libraries), build the Docker image
-from the `Dockerfile` at the repo root and run it instead. hubzoid disables
+from the `Dockerfile` at the repo root and run it instead. It installs the
+checked-out source with the reviewed dependency set in `requirements.lock`,
+so the image version is the version you checked out. hubzoid disables
 Open WebUI's local embedding model, so first boot is fast regardless.
 
 ```bash
-docker build --build-arg HUBZOID_VERSION=0.4.0 -t hubzoid:0.4.0 .
+git checkout v<version>          # the release you want
+docker build -t hubzoid:<version> .
 
 docker run -d --restart unless-stopped \
   --name devops-agent \
   -p 3080:3080 \
   -v "$PWD/devops-agent:/hub" \
   --env-file "$PWD/devops-agent/.env" \
-  hubzoid:0.4.0
+  hubzoid:<version>
 ```
 
-The image is a drop-in replacement for `hubzoid run`. State persists in
-the bind-mounted hub folder. Put a reverse proxy in front of port 3080
-the same way Path A does (see step 6 above). `MODEL=claude-local` does
-not work inside the image (no `claude` CLI); use a portable API key.
+The image is a drop-in replacement for `hubzoid run` (it runs
+`hubzoid run /hub`; pass other arguments after the image name, e.g.
+`hubzoid:<version> run /hub --slack`). State persists in the bind-mounted
+hub folder. Publish only port 3080: the edge there serves the chat UI,
+artifact downloads, the portal and MCP, while the bridge stays on
+127.0.0.1 inside the container. `docker/docker-compose.yml` does the same.
+Put a reverse proxy in front of port 3080 the same way Path A does (see
+step 6 above). `MODEL=claude-local` does not work inside the image (no
+`claude` CLI); use a portable API key.
 
 Hubzoid does not publish a prebuilt image. Build it yourself from the
 `Dockerfile`; it's a few minutes one-time and stays under your control.

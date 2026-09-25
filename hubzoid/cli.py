@@ -199,7 +199,7 @@ def run(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     port: int = typer.Option(None, "--port", help="Open WebUI port. Default: 3080 (or PORT env)."),
     bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port. Default: 8000 (or BRIDGE_PORT env)."),
-    host: str = typer.Option("127.0.0.1", "--host", help="Interface Open WebUI binds to. Use 0.0.0.0 to expose on LAN."),
+    host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the UI binds to (or HUBZOID_HOST env). Use 0.0.0.0 to expose on LAN; the bridge always stays on 127.0.0.1."),
     no_ui: bool = typer.Option(False, "--no-ui", help="Skip Open WebUI; bridge only."),
     slack: bool = typer.Option(
         False,
@@ -467,7 +467,7 @@ def run(
 def gateway(
     hubs: list[Path] = typer.Argument(..., help="Hub directories to front with one shared Open WebUI."),
     port: int = typer.Option(None, "--port", help="Public port the shared UI is reached on. Default: 3080 (or PORT env)."),
-    host: str = typer.Option("127.0.0.1", "--host", help="Interface the public edge binds to. Use 0.0.0.0 to expose."),
+    host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public edge binds to (or HUBZOID_HOST env). Use 0.0.0.0 to expose."),
     public_url: str = typer.Option(None, "--public-url", help="Public base URL (e.g. https://hub.example.com); used to build per-hub artifact download links. Falls back to HUBZOID_PUBLIC_URL."),
     name: str = typer.Option("Hubzoid", "--name", help="Shared Open WebUI display name."),
     data_dir: Path = typer.Option(None, "--data-dir", help="Shared Open WebUI state dir. Default: ./.hubzoid-gateway."),

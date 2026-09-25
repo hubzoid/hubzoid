@@ -1,18 +1,19 @@
 # docker-compose for hubzoid.
 #
-# Mount your hub folder as a volume. The HUB_DIR env var below points to its
-# path inside the container.
+# Mount your hub folder as a volume at /hub:
 #
-#   HUB_PATH=/path/to/your/hub docker compose up
+#   HUB_PATH=/path/to/your/hub docker compose -f docker/docker-compose.yml up
+#
+# Only the edge port (3080: chat UI, artifact downloads, portal, MCP) is
+# published. The bridge stays on 127.0.0.1 inside the container.
 
 services:
   hubzoid:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     ports:
-      - "3080:3080"   # Open WebUI
-      - "8000:8000"   # FastAPI bridge
+      - "3080:3080"
     volumes:
       - ${HUB_PATH:-../demo-hub}:/hub
     environment:

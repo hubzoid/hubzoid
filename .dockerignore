@@ -24,3 +24,7 @@ demo-hub/.openwebui-data
 .idea
 .vscode
 *.swp
+
+# Hub runtime state never belongs in an image
+**/.hubzoid
+.venvs

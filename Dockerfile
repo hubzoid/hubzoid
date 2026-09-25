@@ -1,26 +1,30 @@
 # syntax=docker/dockerfile:1
 #
-# Optional Hubzoid runner image. Use when `pip install hubzoid` fails on the
-# host (PyAV build issues, Python-version traps, missing system libraries).
+# Hubzoid runner image, built from this source tree with the reviewed
+# dependency set in requirements.lock, so the image version is the checked-out
+# version. Use it when `pip install hubzoid` fails on the host (PyAV build
+# issues, Python-version traps, missing system libraries).
 #
 # Build:
-#   docker build --build-arg HUBZOID_VERSION=0.4.0 -t hubzoid:0.4.0 .
+#   docker build -t hubzoid .
 #
 # Run (single agent):
 #   docker run -d --restart unless-stopped \
 #     -p 3080:3080 \
 #     -v "$PWD/my-hub:/hub" \
 #     --env-file "$PWD/my-hub/.env" \
-#     hubzoid:0.4.0
+#     hubzoid
 #
-# Run with the Slack chat surface too (Socket Mode — no extra port needed):
+# Run with the Slack chat surface too (Socket Mode, no extra port needed):
 #   docker run -d --restart unless-stopped \
 #     -p 3080:3080 \
 #     -v "$PWD/my-hub:/hub" \
 #     --env-file "$PWD/my-hub/.env" \
-#     hubzoid:0.4.0 run /hub --slack
-#   # SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be in your --env-file.
-#   # Missing tokens log a warning and the container keeps running (web UI only).
+#     hubzoid run /hub --slack
+#
+# Only port 3080 (the edge: chat UI, artifact downloads, portal, MCP) is
+# meant to be published. The bridge listens on 127.0.0.1 inside the
+# container and is never reachable from outside it.
 #
 # MODEL=claude-local does NOT work inside the image (no `claude` CLI).
 # Use a portable API key (OpenRouter, OpenAI, Anthropic).
@@ -42,26 +46,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Non-root user.
 RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
 USER hubzoid
-WORKDIR /hub
 
 ENV PATH=/home/hubzoid/.local/bin:$PATH \
-    HF_HOME=/home/hubzoid/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/home/hubzoid/.cache/huggingface \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PORT=3080 \
-    BRIDGE_PORT=8000
+    BRIDGE_PORT=8000 \
+    HUBZOID_HOST=0.0.0.0
 
-# Override at build time: --build-arg HUBZOID_VERSION=<version>
-ARG HUBZOID_VERSION=0.4.0
-RUN pip install --user "hubzoid==${HUBZOID_VERSION}"
+# Reviewed dependencies first (cached layer), then the package itself.
+COPY --chown=hubzoid requirements.lock /tmp/hubzoid-src/requirements.lock
+RUN pip install --user -r /tmp/hubzoid-src/requirements.lock
+COPY --chown=hubzoid pyproject.toml README.md LICENSE /tmp/hubzoid-src/
+COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
+RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
 
-# Pre-bake Open WebUI's embedding model (~400 MB) so first container start
-# does not stall while downloading from Hugging Face. Removes a cold-start
-# failure mode and lets the container run in NAT-less private subnets.
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-    SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
-
+WORKDIR /hub
 EXPOSE 3080
 
-ENTRYPOINT ["hubzoid", "run", "/hub"]
+ENTRYPOINT ["hubzoid"]
+CMD ["run", "/hub"]
