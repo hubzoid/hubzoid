@@ -43,9 +43,11 @@ versioning and backup have to be right before, not after.
 - Names: markdown tasks are `md:<name>` internally, Python workflows keep their
   function name, so the two never collide. The service identity for grants is
   `workflow:<name>` for both.
-- Versioning: the DBOS application version covers the Hubzoid version,
-  `workflows/**/*.py` and `schedule/*.md`. On upgrade or edit, runs from other
-  code are cancelled at start and stay visible as CANCELLED. Drain before a
+- Versioning: the DBOS application version covers the Hubzoid version and
+  `workflows/**/*.py`. Markdown runs read their task file at run time, so
+  `schedule/*.md` is not part of it. On upgrade or edit, code-workflow runs from
+  other code are cancelled at start and stay visible as CANCELLED, and markdown
+  runs that were queued but not started are queued again. Drain before a
   planned upgrade.
 - Python workflows get one queue each (one run at a time per workflow). A
   per-hub cap is available in `workflows/settings.yaml`, not on by default.
@@ -112,7 +114,8 @@ versioning and backup have to be right before, not after.
 ## Open questions
 - Jev's OpenRouter endpoint is alpha; `hub.decide` is pinned to one tested request
   shape and marked experimental.
-- Usage rows are not pruned in R1; a retention setting can follow if needed.
+- Usage rows and access decision rows are not pruned in R1; a retention
+  setting can follow if needed.
 
 ## Definition of done
 - An existing deployment with markdown schedules upgrades with no hub file
