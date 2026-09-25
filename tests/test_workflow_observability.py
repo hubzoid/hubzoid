@@ -104,3 +104,100 @@ def test_empty_dispatcher_releases_runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "shutdown", lambda: stopped.append(True))
     assert asyncio.run(boot.start(tmp_path)) is None
     assert stopped == [True]
+
+
+def _two_due_workflows(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "_HUB_DIR", tmp_path)
+    monkeypatch.setattr(runtime, "_HUB_NAME", tmp_path.name)
+    monkeypatch.setattr(
+        runtime,
+        "_REGISTRY",
+        {
+            name: SimpleNamespace(name=name, schedule="* * * * *", timezone=None)
+            for name in ("first", "second")
+        },
+    )
+
+
+def test_pause_during_a_tick_stops_the_next_start(monkeypatch, tmp_path):
+    from hubzoid.access import store_for
+
+    _two_due_workflows(monkeypatch, tmp_path)
+    called = []
+
+    def start(name, **kwargs):
+        called.append(name)
+        # `hubzoid schedule pause second` lands while this tick is running
+        store_for(tmp_path).set_workflow_paused(tmp_path.name, "second", True, actor="t")
+
+    monkeypatch.setattr(runtime, "start", start)
+    now = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+    assert runtime.tick(last=now - timedelta(minutes=1), now=now) == ["first"]
+    assert called == ["first"]
+
+
+def test_backup_hold_during_a_tick_stops_the_next_start(monkeypatch, tmp_path):
+    from hubzoid.access import store_for
+
+    _two_due_workflows(monkeypatch, tmp_path)
+    called = []
+
+    def start(name, **kwargs):
+        called.append(name)
+        store_for(tmp_path).set_schedule_hold("backup", 60, actor="t")
+
+    monkeypatch.setattr(runtime, "start", start)
+    now = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+    # None: the dispatcher keeps `last`, so "second" fires when the hold ends
+    assert runtime.tick(last=now - timedelta(minutes=1), now=now) is None
+    assert called == ["first"]
+
+
+def test_skipped_slots_are_logged_by_date(monkeypatch, tmp_path):
+    from hubzoid.access import store_for
+
+    monkeypatch.setattr(runtime, "_HUB_DIR", tmp_path)
+    monkeypatch.setattr(runtime, "_HUB_NAME", tmp_path.name)
+    monkeypatch.setattr(
+        runtime,
+        "_REGISTRY",
+        {"minutely": SimpleNamespace(name="minutely", schedule="* * * * *", timezone=None)},
+    )
+    monkeypatch.setattr(runtime, "start", lambda name, **kwargs: None)
+    now = datetime(2026, 3, 1, 0, 5, tzinfo=timezone.utc)
+    recent = (now - timedelta(days=3)).isoformat()
+    gs = store_for(tmp_path)
+    gs.set_runtime_health(
+        tmp_path.name,
+        missed=9,
+        missed_log=[[(now - timedelta(days=40)).isoformat(), 7], [recent, 2]],
+    )
+    # delayed 5 minutes: 00:01..00:04 are skipped, 00:05 runs
+    assert runtime.tick(last=now - timedelta(minutes=5), now=now) == ["minutely"]
+    health = gs.runtime_health(tmp_path.name)
+    assert health["missed"] == 13
+    # the 40-day-old entry is pruned, this tick's skips are added
+    assert health["missed_log"] == [[recent, 2], [now.isoformat(), 4]]
+
+
+def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
+    import asyncio
+    from hubzoid.access import store_for
+    from hubzoid.workflows import boot
+
+    monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
+    monkeypatch.setattr(boot.Dispatcher, "prepare", lambda self: 1)
+    monkeypatch.setattr(boot.Dispatcher, "start_loop", lambda self: None)
+    monkeypatch.setattr(
+        runtime,
+        "_REGISTRY",
+        {"minutely": SimpleNamespace(name="minutely", schedule="* * * * *", timezone=None)},
+    )
+    gs = store_for(tmp_path)
+    beat = datetime.now(timezone.utc) - timedelta(minutes=10)
+    gs.set_runtime_health(tmp_path.name, heartbeat=beat.isoformat())
+    assert asyncio.run(boot.start(tmp_path)) is not None
+    health = gs.runtime_health(tmp_path.name)
+    down = health["downtime"]
+    assert down["missed"] in (10, 11)  # 11 only if a minute turns during the call
+    assert health["missed_log"] == [[down["until"], down["missed"]]]

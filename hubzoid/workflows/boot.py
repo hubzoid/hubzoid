@@ -170,7 +170,8 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
     now = datetime.now(timezone.utc)
     # Record (but never back-fill) any scheduled code-workflow slots that would
     # have fired while the previous dispatcher was down, so the operator sees the
-    # gap. (Markdown tasks catch up once by their own anchor rule.)
+    # gap (`downtime`, and dated in `missed_log` for the Console). (Markdown
+    # tasks catch up once by their own anchor rule.)
     downtime = None
     prior = gs.runtime_health(Path(hub_dir).name)
     prior_beat = prior.get("heartbeat")
@@ -197,6 +198,7 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
         enabled=True,
         error=disp.load_error,
         downtime=downtime,
+        missed_log=runtime.missed_log(prior, downtime["missed"] if downtime else 0, now),
         heartbeat=now.isoformat(),
     )
     if code_on and n:

@@ -185,6 +185,81 @@ def test_interrupted_work_is_not_redone_after_restart(repo):
     assert (hub / "starts.txt").read_text().count("started") == 1  # not run again
 
 
+# One process per phase. argv: hub, workflow code version, phase. A fixed
+# version stands in for editing workflow code or upgrading Hubzoid.
+_UNDER_VERSION = textwrap.dedent('''
+    import json, os, sys, time
+    from dbos import DBOS
+    from dbos._queue import Queue
+    from hubzoid.workflows import markdown, runtime
+    hub, version, phase = sys.argv[1], sys.argv[2], sys.argv[3]
+    runtime._workflow_code_version = lambda *a: version
+    real_enqueue = Queue.enqueue
+    if phase == "enqueue-fails":
+        def enqueue(self, *a, **k):
+            raise RuntimeError("database is locked")
+        Queue.enqueue = enqueue
+    if phase == "crash-after-enqueue":
+        def enqueue(self, *a, **k):
+            handle = real_enqueue(self, *a, **k)
+            if handle.get_workflow_id().endswith(":requeued"):
+                os._exit(9)
+            return handle
+        Queue.enqueue = enqueue
+    runtime.init(hub)
+    runtime.launch()  # the sweep of runs from other code runs here
+    if phase == "queue":
+        markdown.enqueue_task("slow", "s1")
+        markdown.enqueue_task("sync", "s1")  # waits behind "slow"
+        print("QUEUED", flush=True)
+        time.sleep(120)
+    if phase == "recover":
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            st = DBOS.get_workflow_status("md:sync:s1:requeued")
+            if st and st.status in ("SUCCESS", "ERROR"):
+                break
+            time.sleep(0.5)
+    runs = {w.workflow_id: w.status for w in DBOS.list_workflows(workflow_id_prefix="md:sync:")}
+    print("RUNS " + json.dumps(runs), flush=True)
+    runtime.shutdown()
+''')
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")
+def test_queued_run_survives_a_code_change_even_if_requeue_is_interrupted(repo):
+    """A markdown run still queued when the workflow code changes is queued again
+    under the new code. The old run is cancelled only once its replacement is
+    queued, so a failed or interrupted re-queue loses nothing: the next start
+    re-queues it, and the slot runs exactly once."""
+    hub, _, env = repo
+    _task(hub, "slow", 'run: "echo started >> starts.txt; sleep 60"\nschedule: "0 3 * * *"')
+    _task(hub, "sync", 'run: "echo x >> count.txt"\nschedule: "0 3 * * *"')
+
+    def phase(version, name):
+        proc = subprocess.run([sys.executable, "-c", _UNDER_VERSION, str(hub), version, name],
+                              capture_output=True, text=True, timeout=180, env=env)
+        runs = next((ln for ln in proc.stdout.splitlines() if ln.startswith("RUNS ")), None)
+        return proc.returncode, json.loads(runs[5:]) if runs else proc.stderr[-2000:]
+
+    proc = subprocess.Popen([sys.executable, "-c", _UNDER_VERSION, str(hub), "wf-old", "queue"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    deadline = time.time() + 90
+    while time.time() < deadline and not (hub / "starts.txt").exists():
+        time.sleep(0.3)
+    assert (hub / "starts.txt").exists(), "the task never started"
+    proc.send_signal(signal.SIGKILL)  # "sync" is still queued behind "slow"
+    proc.wait(timeout=30)
+
+    _, runs = phase("wf-new", "enqueue-fails")
+    assert runs == {"md:sync:s1": "ENQUEUED"}  # not cancelled without a replacement
+    code, _ = phase("wf-new", "crash-after-enqueue")
+    assert code == 9  # killed after the re-queue, before the cancel
+    _, runs = phase("wf-new", "recover")
+    assert runs == {"md:sync:s1": "CANCELLED", "md:sync:s1:requeued": "SUCCESS"}
+    assert (hub / "count.txt").read_text().count("x") == 1
+
+
 def test_console_lists_markdown_tasks_and_names_their_runs(repo):
     hub, _, env = repo
     _task(hub, "sync", 'run: "true"\nschedule: "0 3 * * *"')

@@ -23,7 +23,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from datetime import timezone as utc_timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -389,7 +389,11 @@ def _cancel_runs_from_other_code() -> None:
     DBOS never resumes them under a new application version, but a pending run
     still holds the queue's single slot, so one run interrupted before a code
     change or upgrade would block every later run. Cancelled runs stay in the
-    run list with status CANCELLED."""
+    run list with status CANCELLED.
+
+    A queued markdown run is re-queued before it is cancelled, never after: a
+    crash or error in between leaves the old run queued (this code never
+    dequeues it), so the next start finds it and tries again."""
     try:
         stale = [
             w
@@ -402,6 +406,8 @@ def _cancel_runs_from_other_code() -> None:
         log.exception("workflows: could not list runs from previous code")
         return
     for w in stale:
+        if not _requeue_markdown(w):
+            continue
         try:
             _DBOS.cancel_workflow(w.workflow_id)
             log.warning(
@@ -410,19 +416,21 @@ def _cancel_runs_from_other_code() -> None:
             )
         except Exception:  # noqa: BLE001
             log.exception("workflows: could not cancel stale run %s", w.workflow_id)
-            continue
-        _requeue_markdown(w)
 
 
-def _requeue_markdown(w) -> None:
+def _requeue_markdown(w) -> bool:
     """A markdown task or eval suite that was queued but never started under the
     previous code is queued again under the current code, so its slot is not
     lost (the scheduler already stamped it as fired). One that was interrupted
-    mid-run is not repeated, as before DBOS."""
+    mid-run is not repeated, as before DBOS.
+
+    The replacement's id is derived from the old run's, so queueing it again
+    after a crash is a no-op. Returns False only when a replacement was needed
+    and could not be queued: the old run must then stay as it is."""
     from . import markdown
 
     if w.status != "ENQUEUED" or w.name not in (markdown.MD_WORKFLOW, markdown.EVAL_WORKFLOW):
-        return
+        return True
     try:
         args = list((w.input or {}).get("args") or [])
         from dbos import SetWorkflowID
@@ -431,8 +439,11 @@ def _requeue_markdown(w) -> None:
         with SetWorkflowID(f"{w.workflow_id}:requeued"):
             _MD_QUEUE.enqueue(fn, *args)
         log.warning("workflows: re-queued %s under the current code", w.workflow_id)
+        return True
     except Exception:  # noqa: BLE001
-        log.exception("workflows: could not re-queue %s", w.workflow_id)
+        log.exception("workflows: could not re-queue %s; left queued for the next start",
+                      w.workflow_id)
+        return False
 
 
 def registry() -> list[WorkflowDef]:
@@ -500,10 +511,33 @@ def run_now(name: str, hub_name: str | None = None):
     return start(name, hub_name).get_result()
 
 
+MISSED_LOG_DAYS = 31
+
+
+def missed_log(health: dict, count: int, now: datetime) -> list:
+    """The hub's dated record of skipped scheduled slots, for runtime health:
+    `[utc_iso, count]` pairs from the last MISSED_LOG_DAYS days, plus one for
+    `count` slots skipped at `now` when there are any. The Console reads it."""
+    now = now.astimezone(timezone.utc)
+    cutoff = now - timedelta(days=MISSED_LOG_DAYS)
+    kept = []
+    for entry in health.get("missed_log") or []:
+        try:
+            at = datetime.fromisoformat(entry[0])
+            if (at if at.tzinfo else at.replace(tzinfo=timezone.utc)) >= cutoff:
+                kept.append([entry[0], int(entry[1])])
+        except (TypeError, ValueError, IndexError):
+            continue  # a malformed entry is dropped, never fatal
+    if count:
+        kept.append([now.isoformat(), int(count)])
+    return kept
+
+
 def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
     """Dispatcher step: start every scheduled workflow due in (last, now].
     Returns the names started, or None while a backup holds new runs (the
-    caller keeps `last`, so a slot inside the hold fires when it ends).
+    caller keeps `last`, so a slot inside the hold fires when it ends; runs
+    already started in this tick are not repeated, their ids are per slot).
     Missed fires are skipped (not back-filled)."""
     from .schedule_grammar import due_between
 
@@ -512,9 +546,10 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
     failed: list[str] = []
     from ..access import store_for
 
-    if store_for(_HUB_DIR).schedule_hold():
+    gs = store_for(_HUB_DIR)
+    if gs.schedule_hold():
         return None
-    paused = store_for(_HUB_DIR).paused_workflows(_HUB_NAME)
+    paused = gs.paused_workflows(_HUB_NAME)
     for wf in _REGISTRY.values():
         if not wf.schedule or wf.name in paused:
             continue
@@ -530,15 +565,19 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
                     if following > now:
                         break
                     due, missed = following, missed + 1
+                # A backup or a pause can begin while earlier workflows in this
+                # tick start, so both are read again right before this one.
+                if gs.schedule_hold():
+                    return None
+                if wf.name in gs.paused_workflows(_HUB_NAME):
+                    continue
                 start(wf.name, scheduled_at=due.astimezone(timezone.utc).isoformat())
-                from ..access import store_for
-
-                gs = store_for(_HUB_DIR)
                 health = gs.runtime_health(_HUB_NAME)
                 gs.set_runtime_health(
                     _HUB_NAME,
                     last_dispatch=now.isoformat(),
                     missed=health.get("missed", 0) + missed,
+                    missed_log=missed_log(health, missed, now),
                 )
                 started.append(wf.name)
         except Exception:  # noqa: BLE001 — one bad schedule never stalls the loop
