@@ -1,19 +1,24 @@
-# docker-compose for hubzoid.
+# docker-compose for hubzoid: one hub, SQLite (the default profile).
 #
-# Mount your hub folder as a volume at /hub:
+# Mount your hub folder at /hub. Its databases, chat data and runtime state
+# live inside that folder (.hubzoid/, .openwebui-data/), so they persist on the
+# host and `hubzoid backup` covers them:
 #
-#   HUB_PATH=/path/to/your/hub docker compose -f docker/docker-compose.yml up
+#   HUB_PATH=/path/to/your/hub docker compose -f docker/docker-compose.yml up -d
+#
+# For PostgreSQL, add the override file (see docker-compose.postgres.yml).
 #
 # Only the edge port (3080: chat UI, artifact downloads, portal, MCP) is
 # published. The bridge stays on 127.0.0.1 inside the container.
 
 services:
   hubzoid:
+    image: ${HUBZOID_IMAGE:-hubzoid:local}
     build:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "3080:3080"
+      - "${HUBZOID_PUBLISH:-3080}:3080"
     volumes:
       - ${HUB_PATH:-../demo-hub}:/hub
     environment:

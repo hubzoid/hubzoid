@@ -102,6 +102,31 @@ def _workflow_code_version(hub_dir: Path, app_name: str) -> str:
     return "wf-" + digest.hexdigest()[:16]
 
 
+MIN_SQLITE_FOR_PY312 = (3, 42, 0)
+
+
+def sqlite_problem(url: str) -> str | None:
+    """Why the workflow engine cannot run on this SQLite, or None.
+
+    DBOS 3 on Python 3.12+ stamps rows with `unixepoch('subsec')`, which needs
+    SQLite 3.42. Older SQLite returns NULL there and the engine fails to start.
+    Python builds that link an old system SQLite (Debian 12's, Ubuntu 22.04's)
+    hit this; python.org, uv and Homebrew builds, Debian 13 and Ubuntu 24.04
+    ship a newer one. PostgreSQL is unaffected."""
+    import sqlite3
+    import sys
+
+    if not url.startswith("sqlite") or sys.version_info < (3, 12):
+        return None
+    have = tuple(int(x) for x in sqlite3.sqlite_version.split(".")[:3])
+    if have >= MIN_SQLITE_FOR_PY312:
+        return None
+    return (f"this Python uses SQLite {sqlite3.sqlite_version}, and the workflow engine needs "
+            "SQLite 3.42 or newer on Python 3.12. Scheduled tasks and workflows cannot run. "
+            "Use a Python build with a newer SQLite (python.org, uv, Homebrew, Debian 13, "
+            "Ubuntu 24.04) or PostgreSQL.")
+
+
 def init(hub_dir, hub_name: str | None = None) -> None:
     """Construct the DBOS singleton over this hub's database. Idempotent. Must
     run before any workflow module is imported (the decorator needs DBOS)."""
@@ -113,6 +138,9 @@ def init(hub_dir, hub_name: str | None = None) -> None:
             return
         from dbos import DBOS
 
+        problem = sqlite_problem(db.dbos_url(Path(hub_dir)))
+        if problem:
+            raise RuntimeError(problem[0].upper() + problem[1:])
         _DBOS = DBOS
         _HUB_DIR = Path(hub_dir)
         _HUB_NAME = hub_name or _HUB_DIR.name

@@ -13,7 +13,7 @@ from hubzoid import doctor as doc
 # Every id doctor can report. Ids are only ever added: a rename breaks scripts.
 STABLE_IDS = {
     "hub.dir", "hub.agents_md", "hub.env", "runtime.build", "schedule.tasks",
-    "workflows.definitions", "access.restricted", "identity.resolver", "deps.versions",
+    "workflows.definitions", "access.restricted", "identity.resolver", "deps.versions", "deps.sqlite",
     "db.operational", "db.hub", "db.read", "auth.bridge_keys", "auth.chat_signin",
     "exposure.bind", "model.credentials", "backup.age", "scheduler.health",
 }
@@ -122,3 +122,24 @@ def test_json_output_and_exit_code(hub, monkeypatch):
 
     r = CliRunner().invoke(cli.app, ["doctor", str(hub / "missing"), "--json"])
     assert r.exit_code == 2 and json.loads(r.output)["checks"][0]["id"] == "hub.dir"
+
+
+def test_old_sqlite_on_python_312_is_a_failure(hub, monkeypatch):
+    """DBOS needs unixepoch('subsec') (SQLite 3.42) on Python 3.12; Debian 12's
+    Python links SQLite 3.40, where the engine silently fails to start."""
+    import sqlite3
+    import sys
+
+    from hubzoid.workflows import runtime
+
+    monkeypatch.setattr(sys, "version_info", (3, 12, 3, "final", 0))
+    monkeypatch.setattr(sqlite3, "sqlite_version", "3.40.1")
+    c = _by_id(doc.run(hub))["deps.sqlite"]
+    assert c.status == "fail" and "3.42" in c.summary
+    assert not runtime._INITED
+    with pytest.raises(RuntimeError, match="needs SQLite 3.42"):
+        runtime.init(hub)                        # refused before DBOS is touched
+    assert not runtime._INITED
+    assert runtime.sqlite_problem("postgresql+psycopg://h/db") is None
+    monkeypatch.setattr(sqlite3, "sqlite_version", "3.46.1")
+    assert runtime.sqlite_problem("sqlite:///x") is None

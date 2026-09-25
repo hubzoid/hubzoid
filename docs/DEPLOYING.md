@@ -411,6 +411,7 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 | Symptom | Check |
 |---|---|
 | Anything | Run `hubzoid doctor <hub>` first. |
+| Scheduled tasks never run; log says the workflow engine did not start | `hubzoid doctor` `deps.sqlite`: on Python 3.12 the engine needs SQLite 3.42+. Use a Python build with a newer SQLite (python.org, uv, Homebrew, Debian 13, Ubuntu 24.04) or PostgreSQL. |
 | `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the OWUI ready line. hubzoid disables Open WebUI's local embedding model, so boot is quick (tens of seconds), not the minutes it would take while fetching that model. |
 | Boot fails with `WEBUI_AUTH=true requires WEBUI_SECRET_KEY` | Hubzoid is refusing to start with an unsafe config; set the key in `.env`. |
 | Boot fails with `OAuth client IDs are set but WEBUI_URL is not` | Set `WEBUI_URL=https://your.host` in `.env`. |
@@ -562,8 +563,35 @@ Put a reverse proxy in front of port 3080 the same way Path A does (see
 step 6 above). `MODEL=claude-local` does not work inside the image (no
 `claude` CLI); use a portable API key.
 
-Hubzoid does not publish a prebuilt image. Build it yourself from the
-`Dockerfile`; it's a few minutes one-time and stays under your control.
+Each release is also published as a multi-architecture image
+(`ghcr.io/hubzoid/hubzoid:<version>`, amd64 and arm64), built by the release
+pipeline from the tagged source. Building it yourself gives the same result.
+
+### Docker Compose: SQLite or PostgreSQL
+
+```bash
+# SQLite (default): state lives in the mounted hub folder
+HUB_PATH=$PWD/my-hub docker compose -f docker/docker-compose.yml up -d
+
+# PostgreSQL: adds a database container; its port is not published
+HUB_PATH=$PWD/my-hub POSTGRES_PASSWORD=<letters and digits> \
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up -d
+```
+
+`HUBZOID_IMAGE` picks the image (default `hubzoid:local`, built from this
+checkout). Operator commands run inside the container:
+
+```bash
+docker compose -f docker/docker-compose.yml exec hubzoid hubzoid doctor /hub
+docker compose -f docker/docker-compose.yml exec hubzoid hubzoid backup /hub --out /hub/backup.tar.gz
+```
+
+To upgrade, back up, stop, pull or build the new image and start again: the
+new version upgrades its tables at start ([UPGRADING.md](UPGRADING.md)).
+
+On Linux, the container runs as an unprivileged user, so the mounted hub folder
+must be writable by it (for example `chown -R 999:999 my-hub`, or run with
+`--user "$(id -u):$(id -g)"`).
 
 ## Path C: ECS, Kubernetes, other orchestrators
 

@@ -105,6 +105,24 @@ def _versions() -> Check:
     return Check("deps.versions", "info", f"hubzoid {found.get('hubzoid')}", found)
 
 
+def _sqlite(hub: Path) -> Check | None:
+    import sqlite3
+
+    from . import db
+    from .workflows.runtime import sqlite_problem
+
+    try:
+        url = db.dbos_url(hub)
+    except Exception:  # noqa: BLE001 — reported by the db checks
+        return None
+    problem = sqlite_problem(url)
+    if problem:
+        return Check("deps.sqlite", "fail", problem[0].upper() + problem[1:], {"sqlite": sqlite3.sqlite_version})
+    if url.startswith("sqlite"):
+        return Check("deps.sqlite", "ok", f"SQLite {sqlite3.sqlite_version}", {"sqlite": sqlite3.sqlite_version})
+    return None
+
+
 def _schema(hub: Path) -> list[Check]:
     from sqlalchemy import create_engine
 
@@ -288,6 +306,9 @@ def run(hub: Path) -> list[Check]:
 
     settingslib.load(hub)
     checks.append(_versions())
+    sqlite_check = _sqlite(hub)
+    if sqlite_check:
+        checks.append(sqlite_check)
     checks += _schema(hub)
     checks += _auth()
     checks.append(_exposure())

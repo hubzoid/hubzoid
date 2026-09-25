@@ -59,6 +59,10 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
   built and tested from its tag before PyPI, the GitHub release and a
   multi-architecture image on GHCR are published.
 - `hubzoid.__version__` comes from the package metadata.
+- The workflow engine refuses to start, with a clear message, on Python 3.12
+  with SQLite older than 3.42 (DBOS needs `unixepoch('subsec')`); doctor reports
+  it as `deps.sqlite`. The Docker image moves to Debian 13 (SQLite 3.46) for
+  this reason. Compose files for SQLite and PostgreSQL are in `docker/`.
 - New docs: [workflows](docs/workflows.md), [backup](docs/BACKUP.md),
   [upgrading](docs/UPGRADING.md), SQLite or PostgreSQL and supported
   topologies in [deploying](docs/DEPLOYING.md), and [SECURITY.md](SECURITY.md).

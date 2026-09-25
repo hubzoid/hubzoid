@@ -31,7 +31,10 @@
 #
 # See docs/DEPLOYING.md for the full production walkthrough.
 
-FROM python:3.12-slim-bookworm
+# Debian 13 (trixie): its SQLite 3.46 supports what the workflow engine needs
+# on Python 3.12. Debian 12's SQLite 3.40 does not, and scheduled work would
+# not start.
+FROM python:3.12-slim-trixie
 
 # Runtime + build deps. ffmpeg is needed at runtime by Open WebUI's audio path.
 # The libav-dev packages and build-essential cover the PyAV build deps in case

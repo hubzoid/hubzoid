@@ -1,0 +1,35 @@
+# PostgreSQL profile: add this file to the default one.
+#
+#   HUB_PATH=/path/to/your/hub POSTGRES_PASSWORD=<letters and digits> \
+#     docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up -d
+#
+# Hubzoid's tables, the workflow engine's (schema `dbos`) and Open WebUI's all
+# go into one PostgreSQL database, each upgraded by its owner at start. Uploads
+# and hub runtime files still live in the mounted hub folder. The database port
+# is not published. Back it up with pg_dump (docs/BACKUP.md).
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: hubzoid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: hubzoid
+    volumes:
+      - hubzoid-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hubzoid -d hubzoid"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  hubzoid:
+    environment:
+      DATABASE_URL: postgresql+psycopg://hubzoid:${POSTGRES_PASSWORD}@db:5432/hubzoid
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  hubzoid-pg:
