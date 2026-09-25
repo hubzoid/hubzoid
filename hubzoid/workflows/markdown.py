@@ -45,10 +45,14 @@ def run_id(task_name: str, slot: str) -> str:
 
 
 def task_name_from_id(workflow_id: str) -> str | None:
-    """The markdown task a run belongs to, from its workflow id."""
-    if workflow_id.startswith("md:"):
-        return workflow_id[3:].rsplit(":", 1)[0] if workflow_id.count(":") >= 2 else workflow_id[3:]
-    return None
+    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>`,
+    plus `:requeued` for each time a code change re-queued it."""
+    if not workflow_id.startswith("md:"):
+        return None
+    rest = workflow_id[3:]
+    while rest.endswith(":requeued"):
+        rest = rest[: -len(":requeued")]
+    return rest.rsplit(":", 1)[0] if ":" in rest else rest
 
 
 def register(DBOS, hub_dir: Path, hub_name: str) -> None:

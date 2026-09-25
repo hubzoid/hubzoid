@@ -404,3 +404,13 @@ def test_list_form_run_task(repo):
     out, _ = _run(hub, env, "digest", "20260926T0600")
     assert out["result"] == "done"
     assert (hub / "digest.txt").read_text() == "sent"
+
+
+def test_run_ids_name_their_task_even_when_requeued():
+    from hubzoid.workflows.markdown import task_name_from_id
+
+    assert task_name_from_id("md:sync:20260925T0300") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300:requeued") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300:requeued:requeued") == "sync"
+    assert task_name_from_id("md:alerts:events-20260925T0300-abcdef0123456789") == "alerts"
+    assert task_name_from_id("wf-123") is None
