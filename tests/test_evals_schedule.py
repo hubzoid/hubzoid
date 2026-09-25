@@ -16,7 +16,7 @@ import pytest
 from hubzoid import scheduler as scheduler_lib
 from hubzoid.evals import schedule as evals_schedule
 from hubzoid.evals.results import CaseResult, SuiteResult
-from hubzoid.scheduling import RunLock, ScheduleState
+from hubzoid.scheduling import ScheduleState
 
 
 EVERY_MINUTE = "* * * * *"
@@ -73,9 +73,17 @@ class _Recorder:
 
 
 def _sched(hub, recorder, *, busy=False):
+    """A scheduler whose eval dispatch records the queued names. What a queued
+    suite does when it runs is tested against DBOS in test_markdown_on_dbos."""
+
+    def dispatch_evals(names, now):
+        recorder.calls.append(sorted(names))
+        if getattr(recorder, "raises", False):
+            raise RuntimeError("engine down")
+
     return scheduler_lib.Scheduler(
-        hub, is_busy=lambda: busy, run_evals=recorder,
-        run_task=lambda *a, **k: (_ for _ in ()).throw(AssertionError("agent harness ran")),
+        hub, is_busy=lambda: busy, dispatch_evals=dispatch_evals,
+        dispatch_task=lambda *a, **k: (_ for _ in ()).throw(AssertionError("agent harness ran")),
     )
 
 
@@ -190,61 +198,31 @@ def test_deferred_run_fires_once_the_hub_is_idle(tmp_path):
     assert rec.calls == [["c"]]
 
 
-def test_run_lock_blocks_a_concurrent_run(tmp_path):
+def test_queued_suite_waits_for_its_next_match(tmp_path):
+    """Queuing stamps the anchor, so an every-minute case isn't queued again on
+    the next tick of the same minute."""
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     rec = _Recorder()
     sched = _sched(hub, rec)
     now = _now()
     asyncio.run(sched.check_once(now))
-
-    other = RunLock(hub)
-    assert other.acquire("someone-else")
-    try:
-        assert asyncio.run(sched.check_once(now + timedelta(minutes=5))) == []
-    finally:
-        other.release()
-    assert rec.calls == []
+    fire_at = now + timedelta(minutes=5)
+    asyncio.run(sched.check_once(fire_at))
+    asyncio.run(sched.check_once(fire_at + timedelta(seconds=30)))
+    assert rec.calls == [["c"]]
+    assert ScheduleState(hub).get("eval:c")["last_result"] == "queued"
 
 
-def test_a_failing_suite_still_records_the_anchor(tmp_path):
-    """Otherwise a persistently failing case re-fires on every single tick."""
+def test_a_failed_dispatch_keeps_the_suite_due_and_the_loop_alive(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
-    rec = _Recorder(ok=False)
+    rec = _Recorder()
+    rec.raises = True
     sched = _sched(hub, rec)
     now = _now()
     asyncio.run(sched.check_once(now))
-    fire_at = now + timedelta(minutes=5)
-    asyncio.run(sched.check_once(fire_at))
-    # Same minute, next tick: the anchor moved to fire_at, so the every-minute
-    # cron's next match is fire_at+1min and the case is not due again yet.
-    asyncio.run(sched.check_once(fire_at + timedelta(seconds=30)))
-    assert rec.calls == [["c"]]
-    assert ScheduleState(hub).get("eval:c")["last_result"] == "fail"
-
-
-def test_a_crashing_eval_run_does_not_kill_the_tick_loop(tmp_path):
-    hub = _hub(tmp_path, {"c.md": _scheduled()})
-
-    async def boom(*a, **k):
-        raise RuntimeError("model down")
-
-    sched = _sched(hub, boom)
-    now = _now()
-    asyncio.run(sched.check_once(now))
-    asyncio.run(sched.check_once(now + timedelta(minutes=5)))      # must not raise
-
-
-def test_lock_is_released_after_a_crash(tmp_path):
-    hub = _hub(tmp_path, {"c.md": _scheduled()})
-
-    async def boom(*a, **k):
-        raise RuntimeError("model down")
-
-    sched = _sched(hub, boom)
-    now = _now()
-    asyncio.run(sched.check_once(now))
-    asyncio.run(sched.check_once(now + timedelta(minutes=5)))
-    assert RunLock(hub).acquire("after")
+    assert asyncio.run(sched.check_once(now + timedelta(minutes=5))) == []   # no raise
+    rec.raises = False
+    assert asyncio.run(sched.check_once(now + timedelta(minutes=5))) == ["eval:c"]
 
 
 # ---------------------------------------------------------------------------

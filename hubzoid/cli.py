@@ -1227,14 +1227,13 @@ def schedule_run(
     model: str = typer.Option(None, "--model", help="Override the model for this run (LLM tasks), e.g. claude-local/opus."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the round-1 prompt (LLM) or the command (script) and exit."),
 ) -> None:
-    """Fire one task NOW, in-process — for testing and manual runs.
+    """Fire one task NOW — for testing and manual runs.
 
     Uses the hub's configured MODEL (claude-local or any OpenAI/LiteLLM id),
-    the same as a scheduler fire. Ignores the cron schedule and the idle
-    gate, but still takes the run lock, so it can't overlap a scheduler run.
-    Exit 0 = the agent reported DONE; 1 = incomplete/error.
+    the same as a scheduler fire, and runs on the hub's DBOS engine on the same
+    one-at-a-time queue, so it can't overlap a scheduled run. Ignores the cron
+    schedule and the idle gate. Exit 0 = the agent reported DONE; 1 = otherwise.
     """
-    import asyncio
     import logging as _logging
 
     from . import schedule_runner as runner
@@ -1270,8 +1269,9 @@ def schedule_run(
             from .workflows import runtime as _wf
 
             _wf_ctx.configure(
-                llm=lambda prompt, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, prompt, subject=subject),
-                agent=lambda task, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, task, subject=subject),
+                llm=lambda spec, hub_dir=None, subject=None: _agent_rt.complete_once(hub_dir, spec, subject=subject),
+                agent=lambda task, hub_dir=None, subject=None: _agent_rt.run_once(hub_dir, task, subject=subject),
+                decide=lambda spec, hub_dir=None, subject=None: _agent_rt.decide_once(hub_dir, spec, subject=subject),
             )
             _wf.init(hub)
             _wf.load_workflows(hub)
@@ -1281,11 +1281,16 @@ def schedule_run(
             match = next((n for n in wf_names if n == task_name or n == want), None)
             if match:
                 console.print(f"[cyan]→ running workflow {match}[/cyan]")
-                result = _wf.run_now(match)
+                try:
+                    result = _wf.run_now(match)
+                finally:
+                    _wf.shutdown()
                 console.print(f"[green]✓ workflow {match} returned:[/green] {result!r}")
                 return
             known_wf = ", ".join(sorted(wf_names))
+            _wf.shutdown()
         except Exception as e:  # noqa: BLE001 — report, then fall through to the error
+            _wf.shutdown()
             known_wf = f"(workflow load failed: {e})"
 
         known = ", ".join(sorted(by_name)) or "(none)"
@@ -1319,25 +1324,39 @@ def schedule_run(
     # Manual runs should be observable in the terminal.
     _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    lock = sch.RunLock(hub)
-    if not lock.acquire(task.name):
-        console.print("[red]another scheduled run is in progress (lock held); try again later.[/red]")
-        raise typer.Exit(1)
-    try:
-        if task.is_script:
-            console.print(f"[cyan]→ running {task.name}[/cyan] (script, timeout {task.timeout}s)")
-        else:
-            console.print(f"[cyan]→ running {task.name}[/cyan] (timeout {task.timeout}s/round, ≤{task.max_rounds} rounds)")
-        result = asyncio.run(runner.run_task(hub, task))
-    finally:
-        lock.release()
-
-    console.print(f"[dim]run log: {result.run_log}[/dim]")
-    if result.ok:
-        sha = f" · committed {result.commit_sha[:10]}" if result.commit_sha else ""
-        console.print(f"[green]✓ done in {result.rounds} round(s)[/green]: {result.summary or '(no summary)'}{sha}")
+    if task.is_script:
+        console.print(f"[cyan]→ running {task.name}[/cyan] (script, timeout {task.timeout}s)")
     else:
-        console.print(f"[red]✗ {result.result} after {result.rounds} round(s)[/red] {result.error}")
+        console.print(f"[cyan]→ running {task.name}[/cyan] (timeout {task.timeout}s/round, ≤{task.max_rounds} rounds)")
+    # Queued on the hub's DBOS engine like a scheduled fire (the same one-at-a-
+    # time markdown queue, so it can't overlap a scheduled run), then awaited.
+    from datetime import datetime as _dt
+
+    from .workflows import markdown as _md
+    from .workflows import runtime as _wf
+
+    overrides = {"timeout": timeout, "max_rounds": max_rounds,
+                 "model": None if task.is_script else model}
+    try:
+        _wf.init(hub)
+        _wf.launch()
+        handle = _md.enqueue_task(task.name, "manual-" + _dt.now().strftime("%Y%m%dT%H%M%S"),
+                                  overrides=overrides)
+        try:
+            outcome = handle.get_result()
+        except Exception as exc:  # noqa: BLE001 — the run failed; report it
+            console.print(f"[red]✗ {task.name} failed:[/red] {exc}")
+            raise typer.Exit(1)
+    finally:
+        _wf.shutdown()
+    console.print(f"[dim]run log: {outcome.get('run_log')}[/dim]")
+    if outcome.get("result") == "done":
+        sha = f" · committed {outcome['commit_sha'][:10]}" if outcome.get("commit_sha") else ""
+        console.print(f"[green]✓ done in {outcome.get('rounds')} round(s)[/green]: "
+                      f"{outcome.get('summary') or '(no summary)'}{sha}")
+    else:
+        console.print(f"[red]✗ {outcome.get('result')} after {outcome.get('rounds')} round(s)[/red] "
+                      f"{outcome.get('error') or ''}")
         raise typer.Exit(1)
 
 

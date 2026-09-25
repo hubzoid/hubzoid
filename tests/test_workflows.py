@@ -17,9 +17,9 @@ def _reset_seams():
     # The call_llm/call_agent seams are module globals (set by server/cli boot or
     # runtime.launch); reset them around every façade test so a prior test that
     # launched DBOS can't leak a step-wrapped seam into these hermetic tests.
-    wctx._LLM = wctx._AGENT = wctx._LLM_STEP = wctx._AGENT_STEP = None
+    wctx._LLM = wctx._AGENT = wctx._DECIDE = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._DECIDE_STEP = None
     yield
-    wctx._LLM = wctx._AGENT = wctx._LLM_STEP = wctx._AGENT_STEP = None
+    wctx._LLM = wctx._AGENT = wctx._DECIDE = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._DECIDE_STEP = None
 
 
 @pytest.fixture()
@@ -91,11 +91,12 @@ def test_hub_user_can_consults_access_store(engine, tmp_path, monkeypatch):
 
 def test_call_llm_seam(engine, tmp_path):
     calls = []
-    wctx.configure(llm=lambda prompt, **kw: calls.append((prompt, kw)) or "REVIEW")
+    wctx.configure(llm=lambda spec, **kw: calls.append((spec, kw)) or {"text": "REVIEW", "json": None})
     try:
         with run_scope(hub="finance", workflow="w", hub_dir=tmp_path, engine=engine):
             assert hub.call_llm("hello") == "REVIEW"
-        assert calls[0][0] == "hello"
+        assert calls[0][0]["prompt"] == "hello"
+        assert calls[0][0]["response_format"] == "text"
         assert calls[0][1]["hub_dir"] == tmp_path
     finally:
         wctx._LLM = None

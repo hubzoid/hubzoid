@@ -28,7 +28,7 @@ os.environ["HUBZOID_OPERATIONAL_DB"] = f"sqlite:///{_d}/ops.db"
 os.environ["HUBZOID_DBOS_DB"] = f"sqlite:///{_d}/dbos.db"
 os.environ["GITHUB_TOKEN"] = "ghp_test"
 from hubzoid.workflows import runtime, context
-context.configure(llm=lambda prompt, **kw: "[stub review]")
+context.configure(llm=lambda spec, **kw: {"text": "[stub review]", "json": None})
 HUB = %r
 runtime.init(HUB, hub_name="test-hub")
 runtime.load_workflows(HUB)

@@ -1,33 +1,24 @@
-"""In-process scheduler — fires `<hub>/schedule/*.md` and `<hub>/evals/*.md`.
+"""The markdown-task scheduler: decides WHEN `<hub>/schedule/*.md` tasks and
+`<hub>/evals/*.md` cases are due, and hands each due one to DBOS to run.
 
-Two task sources, one timing mechanism. A due file from `schedule/` runs the
-agent harness (`schedule_runner`, rounds until `STATUS: DONE`); a due case from
-`evals/` runs the deterministic eval runner (`evals.schedule.run_due`), because
-whether an eval passed is not something a model should be deciding. Everything
-below — cron, anchors, idle gate, lock, catch-up — is shared.
+Execution is on the hub's DBOS engine (`workflows/markdown.py`): each due task
+becomes one durable run on the hub's markdown queue (one run at a time per hub,
+across processes), visible in the run history. This module keeps the timing
+rules builders already rely on:
 
-
-Started by the FastAPI bridge's lifespan (`server.build_app`), so deploying a
-hub IS deploying its background jobs: one long-lived process, no extra
-systemd units or crontabs. Mirrors the lifecycle of Claude Code's
-cronScheduler:
-
-  * a cheap **tick** every `tick_seconds` (default 30): re-load the task
-    files (picking up live edits — the md files are the source of truth),
-    compute due-ness from each task's anchor, and fire what's due;
-  * **idle gate**: a task never starts while a chat request is in flight
-    (`is_busy()`); it stays due and fires on a later tick;
+  * a cheap **tick** every `tick_seconds` (default 30): re-load the task files
+    (edits apply live), compute due-ness from each task's anchor, dispatch;
+  * **idle gate**: a task is not dispatched while a chat request is in flight
+    (`is_busy()`); it stays due and goes on a later tick;
   * **missed-run catch-up** is inherent in the anchor model (see
     `scheduling.py`): downtime across a cron match makes the task due on the
-    first tick after startup — it fires once, not once per missed match;
-  * **one run at a time**, cross-process: the `RunLock` also excludes a
-    concurrent manual `hubzoid schedule run`;
+    first tick after startup, once, not once per missed match;
+  * **machine-local time** for cron expressions;
   * kill switch: `HUBZOID_DISABLE_SCHEDULE=1` disables the loop entirely.
 
-Failure containment: a crashing task run is logged and recorded in
-schedule-state; the loop itself never dies. Because `record_fired` stamps at
-run *start*, a crashing task waits for its next cron match instead of
-re-firing every tick.
+A dispatch stamps the task as fired, so it waits for its next match. The run's
+id is `md:<task>:<slot>`, so a slot is never queued twice even if two ticks (or
+two processes) see it due.
 """
 from __future__ import annotations
 
@@ -38,9 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from . import schedule_runner
 from .evals import schedule as evals_schedule
-from .scheduling import RunLock, ScheduledTask, ScheduleState, is_due, load_tasks
+from .scheduling import ScheduledTask, ScheduleState, is_due, load_tasks
 
 log = logging.getLogger("hubzoid.schedule")
 
@@ -77,17 +67,18 @@ class Scheduler:
         *,
         is_busy: Callable[[], bool] = lambda: False,
         tick_seconds: float = DEFAULT_TICK_SECONDS,
-        run_task: Callable = schedule_runner.run_task,   # injectable for tests
-        run_evals: Callable = evals_schedule.run_due,    # injectable for tests
+        dispatch_task: Callable | None = None,    # (task, slot, claimed) -> None
+        dispatch_evals: Callable | None = None,   # (names, now) -> None
     ):
         self.hub_dir = Path(hub_dir).resolve()
         self.is_busy = is_busy
         self.tick_seconds = tick_seconds
-        self._run_task = run_task
-        self._run_evals = run_evals
+        self._dispatch_task = dispatch_task or _dbos_dispatch_task
+        self._dispatch_evals = dispatch_evals or _dbos_dispatch_evals
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._deferred_logged: set[str] = set()
+        self._dispatched: set[str] = set()   # webhook runs already queued
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> bool:
@@ -171,7 +162,7 @@ class Scheduler:
                     self._deferred_logged.add(task.name)
                 continue
             self._deferred_logged.discard(task.name)
-            if await self._fire(task):
+            if await self._fire(task, now):
                 fired.append(task.name)
 
         fired += await self._check_evals(state, now)
@@ -200,49 +191,56 @@ class Scheduler:
         self._deferred_logged = {k for k in self._deferred_logged
                                  if not k.startswith("evals:")}
 
-        lock = RunLock(self.hub_dir)
-        if not lock.acquire("evals"):
-            log.info("evals due but another run holds the lock; skipping this tick")
-            return []
         try:
-            log.info("evals firing: %s", ", ".join(names))
-            await self._run_evals(self.hub_dir, due, state, now=now)
+            await asyncio.to_thread(self._dispatch_evals, names, now)
         except Exception:  # noqa: BLE001 — the tick loop must survive anything
-            log.exception("scheduled eval run crashed")
-        finally:
-            lock.release()
+            log.exception("could not queue the due evals")
+            return []
+        for c in due:  # stamped now, so they wait for their next match
+            state.record_fired(evals_schedule.state_key(c), now, result="queued")
+        log.info("evals queued: %s", ", ".join(names))
         return [f"eval:{n}" for n in names]
 
-    async def _fire(self, task: ScheduledTask) -> bool:
-        """Run the task under the cross-process lock. False = lock-skipped."""
-        lock = RunLock(self.hub_dir)
-        if not lock.acquire(task.name):
-            log.info("schedule[%s] due but another run holds the lock; "
-                     "skipping this tick", task.name)
-            return False
-        # Claim the events this run is responsible for BEFORE it starts, so a
-        # delivery that lands mid-run stays pending and re-fires next tick rather
-        # than being silently archived as handled.
-        claimed: list = []
+    async def _fire(self, task: ScheduledTask, now: datetime) -> bool:
+        """Queue one run of `task` on DBOS and stamp it as fired."""
+        from .scheduling import next_fire_for
+
+        claimed: list[str] = []
         if task.is_webhook:
+            # The events this run is responsible for. They are archived only
+            # when the run finishes DONE, so a failed run leaves them pending.
             from .inbound.webhook import pending_events
-            claimed = pending_events(self.hub_dir, task.on_webhook)
-        result = None
+
+            claimed = [str(p) for p in pending_events(self.hub_dir, task.on_webhook)]
+            import hashlib
+
+            slot = "events-" + hashlib.sha256("|".join(sorted(claimed)).encode()).hexdigest()[:16]
+            if f"{task.name}:{slot}" in self._dispatched:
+                return False  # already queued; its events stay pending until it finishes
+        else:
+            due_at = next_fire_for(task, ScheduleState(self.hub_dir), now) or now
+            slot = due_at.strftime("%Y%m%dT%H%M")
+        trigger = f"on_webhook {task.on_webhook}" if task.is_webhook else task.schedule
         try:
-            trigger = f"on_webhook {task.on_webhook}" if task.is_webhook else task.schedule
-            log.info("schedule[%s] firing (%s)", task.name, trigger)
-            result = await self._run_task(self.hub_dir, task)
-            log.info("schedule[%s] finished: %s (%d round(s)%s)",
-                     task.name, result.result, result.rounds,
-                     f", commit {result.commit_sha[:10]}" if result.commit_sha else "")
-        except Exception:  # noqa: BLE001 — run_task shouldn't raise, but belt+braces
-            log.exception("schedule[%s] run crashed", task.name)
-        finally:
-            lock.release()
-        # Archive the claimed events only on success — a failed or crashed run
-        # leaves them pending so the task stays due and retries (at-least-once).
-        if task.is_webhook and claimed and result is not None and result.ok:
-            from .inbound.webhook import archive_events
-            archive_events(claimed)
-            log.info("schedule[%s] archived %d handled event(s)", task.name, len(claimed))
+            await asyncio.to_thread(self._dispatch_task, task, slot, claimed)
+        except Exception:  # noqa: BLE001 — the tick loop must survive anything
+            log.exception("schedule[%s] could not be queued", task.name)
+            return False
+        if task.is_webhook:
+            self._dispatched.add(f"{task.name}:{slot}")
+        else:
+            ScheduleState(self.hub_dir).record_fired(task.name, now, result="queued")
+        log.info("schedule[%s] queued (%s, slot %s)", task.name, trigger, slot)
         return True
+
+
+def _dbos_dispatch_task(task: ScheduledTask, slot: str, claimed: list[str]) -> None:
+    from .workflows import markdown
+
+    markdown.enqueue_task(task.name, slot, claimed)
+
+
+def _dbos_dispatch_evals(names: list[str], now: datetime) -> None:
+    from .workflows import markdown
+
+    markdown.enqueue_evals(names, now)

@@ -153,11 +153,16 @@ def test_editing_agents_md_is_caught_as_a_regression(tmp_path):
 def test_scheduled_case_fires_through_the_real_scheduler(tmp_path):
     """Step 5: a `schedule:` case fired by the actual tick loop, end to end.
 
-    Nothing is stubbed here — the scheduler computes due-ness, takes the lock,
-    dispatches to the eval runner, which builds a real runtime and calls a real
-    model. Only the clock is supplied.
+    Nothing is stubbed here — the scheduler computes due-ness and queues the
+    suite on the hub's workflow engine, whose run builds a real runtime and
+    calls a real model. Only the clock is supplied.
     """
+    import time
+
+    from dbos import DBOS
+
     from hubzoid import scheduler as scheduler_lib
+    from hubzoid.workflows import runtime as wf_runtime
 
     hub = _hub(tmp_path)
     _case(hub, "scheduled-refund",
@@ -171,8 +176,19 @@ def test_scheduled_case_fires_through_the_real_scheduler(tmp_path):
         await sched.check_once(now)                      # anchors, fires nothing
         return await sched.check_once(now + timedelta(minutes=5))
 
-    fired = asyncio.run(go())
-    assert fired == ["eval:scheduled-refund"], fired
+    wf_runtime.init(hub)
+    wf_runtime.launch()
+    try:
+        fired = asyncio.run(go())
+        assert fired == ["eval:scheduled-refund"], fired
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            runs = DBOS.list_workflows(workflow_id_prefix="eval:")
+            if runs and runs[0].status in ("SUCCESS", "ERROR"):
+                break
+            time.sleep(2)
+    finally:
+        wf_runtime.shutdown()
 
     from hubzoid.evals import report as report_lib
     suite = report_lib.latest(hub)

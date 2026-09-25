@@ -373,12 +373,18 @@ def _record_claude_usage(message) -> None:
                + int(get("cache_read_input_tokens", 0) or 0)
                + int(get("cache_creation_input_tokens", 0) or 0))
         out = int(get("output_tokens", 0) or 0)
+        # The concrete model(s) that answered; used to estimate cost when the
+        # SDK reports none (subscription mode).
+        model_usage = getattr(message, "model_usage", None) or {}
+        model = next(iter(model_usage), None) if isinstance(model_usage, dict) else None
         _request_ctx.record_usage({
             "input_tokens": inp,
             "output_tokens": out,
             "total_tokens": inp + out,
             "cost_usd": getattr(message, "total_cost_usd", None),
             "num_turns": getattr(message, "num_turns", None),
+            "model": model,
+            "status": "error" if getattr(message, "is_error", False) else "ok",
         })
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("claude usage capture skipped: %s", exc)
@@ -678,6 +684,7 @@ class ClaudeRuntime:
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
             self.last_error = exc
+            _request_ctx.note_usage(status="error")
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
             return
 
@@ -709,3 +716,51 @@ class ClaudeRuntime:
         return "".join(pieces)
 
 
+
+
+async def claude_complete(prompt: str, *, system: str | None = None,
+                          model_setting: str | None = None) -> tuple[str, dict]:
+    """One tool-free, single-turn Claude call for `hub.call_llm` on claude-local.
+
+    No tools, no MCP servers, no skills and no hub instructions: a plain model
+    call through the Claude Agent SDK (claude-local has no API key, so this is
+    the direct route). Returns the text and a usage dict. Raises when the SDK
+    reports the run failed."""
+    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, query
+    from claude_agent_sdk.types import TextBlock
+
+    opts: dict[str, Any] = dict(
+        system_prompt=system or "You are a precise assistant. Answer the request directly.",
+        tools=[],
+        allowed_tools=[],
+        mcp_servers={},
+        setting_sources=[],
+        max_turns=1,
+    )
+    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
+    if pin is not None:
+        opts["model"] = pin
+    parts: list[str] = []
+    final: str | None = None
+    usage: dict = {}
+    async for message in query(prompt=prompt, options=ClaudeAgentOptions(**opts)):
+        if isinstance(message, AssistantMessage):
+            parts += [b.text for b in message.content if isinstance(b, TextBlock)]
+        elif isinstance(message, ResultMessage):
+            final = getattr(message, "result", None)
+            raw = getattr(message, "usage", None) or {}
+            get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
+            model_usage = getattr(message, "model_usage", None) or {}
+            usage = {
+                "input_tokens": int(get("input_tokens", 0) or 0)
+                + int(get("cache_read_input_tokens", 0) or 0)
+                + int(get("cache_creation_input_tokens", 0) or 0),
+                "output_tokens": int(get("output_tokens", 0) or 0),
+                "cost_usd": getattr(message, "total_cost_usd", None),
+                "model": next(iter(model_usage), None) if isinstance(model_usage, dict) else None,
+            }
+            if getattr(message, "is_error", False):
+                raise RuntimeError(
+                    f"claude run ended with {getattr(message, 'subtype', 'error')}"
+                )
+    return ("".join(parts) or final or ""), usage

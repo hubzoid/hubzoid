@@ -137,6 +137,42 @@ def catalog(hub_dir) -> list[dict]:
         row["missed"] = health.get("missed", 0)
         row["heartbeat"] = health.get("heartbeat")
         row["downtime"] = health.get("downtime")
+    return rows + markdown_catalog(hub_dir)
+
+
+def markdown_catalog(hub_dir) -> list[dict]:
+    """The hub's `schedule/*.md` tasks, in the same row shape as code workflows.
+    They run whenever their files exist (HUBZOID_DISABLE_SCHEDULE=1 stops them)."""
+    import os
+
+    from .. import scheduling as sch
+
+    hub_dir = Path(hub_dir)
+    tasks, problems = sch.load_tasks(hub_dir)
+    disabled = (os.environ.get("HUBZOID_DISABLE_SCHEDULE") or "").strip().lower() in (
+        "1", "true", "yes", "on")
+    state = sch.ScheduleState(hub_dir)
+    now = datetime.now()
+    rows = []
+    for t in tasks:
+        on = t.enabled and not disabled
+        nxt = None if (t.is_webhook or not on) else sch.next_fire_for(t, state, now)
+        last = state.get(t.name)
+        rows.append(dict(
+            hub=hub_dir.name.lower(), name=f"md:{t.name}", kind="markdown",
+            source=f"schedule/{t.name}.md",
+            schedule=(f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule),
+            timezone="server local time", error=None, enabled=on,
+            state=("disabled" if not on else "event" if t.is_webhook else "scheduled"),
+            next_run=nxt.astimezone().isoformat() if nxt else None,
+            last_dispatch=last.get("last_fired_iso"), missed=0,
+            heartbeat=None, downtime=None,
+        ))
+    for problem in problems:
+        rows.append(dict(hub=hub_dir.name.lower(), name="md:?", kind="markdown",
+                         source="schedule/", schedule=None, timezone="server local time",
+                         error=problem, enabled=False, state="error", next_run=None,
+                         last_dispatch=None, missed=0, heartbeat=None, downtime=None))
     return rows
 
 
@@ -201,10 +237,17 @@ def _run_row(hub_name: str, w) -> dict:
     created = w.created_at
     started = w.dequeued_at or w.created_at
     completed = w.completed_at
+    from . import markdown
+
+    name = w.name
+    if w.name == markdown.MD_WORKFLOW:
+        name = f"md:{markdown.task_name_from_id(w.workflow_id) or '?'}"
+    elif w.name == markdown.EVAL_WORKFLOW:
+        name = "evals"
     return dict(
         hub=hub_name,
         id=w.workflow_id,
-        name=w.name,
+        name=name,
         status=w.status,
         created=created,
         started=started,
@@ -257,9 +300,16 @@ def runs(
     client = DBOSClient(
         system_database_url=url, application_name=app, retry_connection_errors=False
     )
+    prefix = None
+    if name and name.startswith("md:"):
+        # Markdown tasks share one DBOS workflow; the run id carries the task.
+        from . import markdown
+
+        name, prefix = markdown.MD_WORKFLOW, f"{name}:"
     try:
         result = client.list_workflows(
             name=name,
+            workflow_id_prefix=prefix,
             workflow_ids=[run_id] if run_id else None,
             status=resolve_statuses(statuses),
             start_time=start,

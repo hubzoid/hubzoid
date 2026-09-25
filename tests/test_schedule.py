@@ -287,25 +287,6 @@ def test_state_survives_corrupt_file(tmp_path):
 
 
 # ===========================================================================
-# run lock
-# ===========================================================================
-def test_runlock_excludes_and_releases(tmp_path):
-    a, b = sch.RunLock(tmp_path), sch.RunLock(tmp_path)
-    assert a.acquire("t1")
-    assert not b.acquire("t2")                                 # held by live pid
-    a.release()
-    assert b.acquire("t2")
-    b.release()
-
-
-def test_runlock_steals_stale_dead_pid(tmp_path):
-    lock_path = tmp_path / sch.STATE_DIRNAME / sch.LOCK_FILENAME
-    lock_path.parent.mkdir(parents=True)
-    lock_path.write_text(json.dumps({"pid": 99999999, "task": "ghost"}))
-    assert sch.RunLock(tmp_path).acquire("t")                  # dead holder -> steal
-
-
-# ===========================================================================
 # runner: the round harness
 # ===========================================================================
 def test_parse_status_variants():
@@ -570,22 +551,30 @@ def _sched_env(tmp_path, *, busy=False):
     _write_task(hub, "daily", 'schedule: "0 3 * * *"')
     fired = []
 
-    async def fake_run(hub_dir, task):
-        fired.append(task.name)
-        sch.ScheduleState(hub_dir).record_fired(task.name, datetime.now(), result="done")
-        return runner.RunResult(task=task.name, result="done", rounds=1)
+    def fake_dispatch(task, slot, claimed):
+        fired.append((task.name, slot))
 
-    s = scheduler_lib.Scheduler(hub, is_busy=lambda: busy, run_task=fake_run)
+    s = scheduler_lib.Scheduler(hub, is_busy=lambda: busy, dispatch_task=fake_dispatch)
     return hub, s, fired
 
 
-def test_scheduler_fires_due_task_once(tmp_path):
+def test_scheduler_queues_due_task_once(tmp_path):
     hub, s, fired = _sched_env(tmp_path)
     state = sch.ScheduleState(hub)
     state.record_fired("daily", datetime.now() - timedelta(days=2), result="done")
     assert asyncio.run(s.check_once()) == ["daily"]
-    assert fired == ["daily"]
-    assert asyncio.run(s.check_once()) == []                    # anchored: not due now
+    assert [name for name, _ in fired] == ["daily"]
+    assert sch.ScheduleState(hub).get("daily")["last_result"] == "queued"
+    assert asyncio.run(s.check_once()) == []                    # stamped at dispatch: not due now
+
+
+def test_scheduler_slot_is_the_due_time(tmp_path):
+    hub, s, fired = _sched_env(tmp_path)
+    anchor = datetime.now().replace(hour=1, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    sch.ScheduleState(hub).record_fired("daily", anchor, result="done")
+    asyncio.run(s.check_once())
+    (_, slot), = fired
+    assert slot == (anchor.replace(hour=3)).strftime("%Y%m%dT%H%M")  # the 03:00 match after the anchor
 
 
 def test_scheduler_not_due_before_match(tmp_path):
@@ -604,30 +593,27 @@ def test_scheduler_defers_while_busy(tmp_path):
     assert asyncio.run(s.check_once()) == ["daily"]
 
 
-def test_scheduler_skips_when_lock_held(tmp_path):
-    hub, s, fired = _sched_env(tmp_path)
-    sch.ScheduleState(hub).record_fired("daily", datetime.now() - timedelta(days=2),
-                                        result="done")
-    other = sch.RunLock(hub)
-    assert other.acquire("manual-run")
-    assert asyncio.run(s.check_once()) == []                    # lock-skip, not fired
-    other.release()
-    assert asyncio.run(s.check_once()) == ["daily"]
-
-
 def test_scheduler_ignores_disabled_tasks(tmp_path):
     hub = tmp_path / "hub"
     _write_task(hub, "off", 'schedule: "0 3 * * *"\nenabled: false')
     sch.ScheduleState(hub).record_fired("off", datetime.now() - timedelta(days=2),
                                         result="done")
     fired = []
-
-    async def fake_run(h, t):
-        fired.append(t.name)
-        return runner.RunResult(task=t.name, result="done")
-
-    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+    s = scheduler_lib.Scheduler(hub, dispatch_task=lambda t, slot, c: fired.append(t.name))
     assert asyncio.run(s.check_once()) == [] and fired == []
+
+
+def test_scheduler_keeps_task_due_when_queueing_fails(tmp_path):
+    hub = tmp_path / "hub"
+    _write_task(hub, "daily", 'schedule: "0 3 * * *"')
+    sch.ScheduleState(hub).record_fired("daily", datetime.now() - timedelta(days=2), result="done")
+
+    def broken(task, slot, claimed):
+        raise RuntimeError("engine down")
+
+    s = scheduler_lib.Scheduler(hub, dispatch_task=broken)
+    assert asyncio.run(s.check_once()) == []
+    assert sch.ScheduleState(hub).get("daily")["last_result"] == "done"  # still due next tick
 
 
 def test_scheduler_disable_env_kills_start(tmp_path, monkeypatch):
@@ -684,11 +670,23 @@ def test_cli_schedule_run_unknown_task(tmp_path):
     assert "job" in res.output                                  # lists known tasks
 
 
-def test_cli_schedule_run_executes_and_reports(tmp_path, monkeypatch):
+@pytest.fixture
+def fresh_dbos_logging():
+    """The CLI runs DBOS in-process. DBOS binds its log handler to the stdout it
+    first sees, and each CliRunner invocation swaps stdout, so drop the stale
+    handler between invocations (a real CLI process only ever has one stdout)."""
+    import logging
+
+    for h in list(logging.getLogger("dbos").handlers):
+        logging.getLogger("dbos").removeHandler(h)
+    yield
+
+
+def test_cli_schedule_run_executes_and_reports(tmp_path, monkeypatch, fresh_dbos_logging):
     hub = tmp_path / "hub"
     _write_task(hub, "job", 'schedule: "0 3 * * *"')
 
-    async def fake_run(hub_dir, task):
+    async def fake_run(hub_dir, task, **kw):
         return runner.RunResult(task=task.name, result="done", rounds=2,
                                 summary="all synced", run_log=hub / "log.jsonl")
 
@@ -698,11 +696,11 @@ def test_cli_schedule_run_executes_and_reports(tmp_path, monkeypatch):
     assert "done in 2 round(s)" in res.output and "all synced" in res.output
 
 
-def test_cli_schedule_run_failure_exits_nonzero(tmp_path, monkeypatch):
+def test_cli_schedule_run_failure_exits_nonzero(tmp_path, monkeypatch, fresh_dbos_logging):
     hub = tmp_path / "hub"
     _write_task(hub, "job", 'schedule: "0 3 * * *"')
 
-    async def fake_run(hub_dir, task):
+    async def fake_run(hub_dir, task, **kw):
         return runner.RunResult(task=task.name, result="incomplete", rounds=10,
                                 run_log=hub / "log.jsonl")
 
@@ -1120,76 +1118,39 @@ def test_webhook_task_due_only_when_event_pending(tmp_path):
     assert sch.is_due(task, state, hub_dir=hub) is True         # event waiting
 
 
-def test_scheduler_fires_on_event_then_archives(tmp_path):
+def _webhook_sched(tmp_path):
     hub = tmp_path / "hub"
     _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
-    fired = []
-
-    async def fake_run(hub_dir, task):
-        fired.append(task.name)
-        return runner.RunResult(task=task.name, result="done", rounds=1)
-
-    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
-
-    # No event -> not due, nothing fires.
-    assert asyncio.run(s.check_once()) == []
-    assert fired == []
-
-    # Event lands -> fires once; the handled event is archived out of the inbox.
-    _drop_event(hub, "squadcast", {"event": "down"})
-    assert asyncio.run(s.check_once()) == ["alerts"]
-    from hubzoid.inbound.webhook import pending_events, inbox_dir
-    assert pending_events(hub, "squadcast") == []              # drained
-    assert (inbox_dir(hub, "squadcast") / ".processed").is_dir()
-    assert fired == ["alerts"]                                 # fired exactly once
+    queued = []
+    s = scheduler_lib.Scheduler(
+        hub, dispatch_task=lambda task, slot, claimed: queued.append((task.name, slot, claimed)))
+    return hub, s, queued
 
 
-def test_scheduler_does_not_refire_drained_inbox(tmp_path):
-    hub = tmp_path / "hub"
-    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
-
-    async def fake_run(hub_dir, task):
-        return runner.RunResult(task=task.name, result="done", rounds=1)
-
-    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
-    _drop_event(hub, "squadcast", {"event": "down"})
-    assert asyncio.run(s.check_once()) == ["alerts"]           # handled
-    assert asyncio.run(s.check_once()) == []                   # inbox drained -> quiet
-
-
-def test_scheduler_failed_run_keeps_event_for_retry(tmp_path):
-    hub = tmp_path / "hub"
-    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
-    outcomes = ["error", "done"]
-
-    async def fake_run(hub_dir, task):
-        return runner.RunResult(task=task.name, result=outcomes.pop(0), rounds=1)
-
-    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
+def test_scheduler_queues_on_event_with_the_claimed_events(tmp_path):
+    hub, s, queued = _webhook_sched(tmp_path)
+    assert asyncio.run(s.check_once()) == [] and queued == []   # empty inbox
     ev = _drop_event(hub, "squadcast", {"event": "down"})
-    from hubzoid.inbound.webhook import pending_events
-    assert asyncio.run(s.check_once()) == ["alerts"]           # run #1 errored
-    assert pending_events(hub, "squadcast") == [ev]            # NOT archived -> stays due
-    assert asyncio.run(s.check_once()) == ["alerts"]           # run #2 retries, succeeds
-    assert pending_events(hub, "squadcast") == []              # now archived
-
-
-def test_scheduler_midrun_event_stays_pending(tmp_path):
-    """An event that lands DURING a run isn't archived as handled by that run."""
-    hub = tmp_path / "hub"
-    _write_task(hub, "alerts", "on_webhook: squadcast", body="x")
-    ev1 = _drop_event(hub, "squadcast", {"n": 1})
-    late = {}
-
-    async def fake_run(hub_dir, task):
-        late["ev2"] = _drop_event(hub, "squadcast", {"n": 2})   # arrives mid-run
-        return runner.RunResult(task=task.name, result="done", rounds=1)
-
-    s = scheduler_lib.Scheduler(hub, run_task=fake_run)
     assert asyncio.run(s.check_once()) == ["alerts"]
-    from hubzoid.inbound.webhook import pending_events
-    # ev1 archived (claimed), ev2 still pending (landed after the claim).
-    assert pending_events(hub, "squadcast") == [late["ev2"]]
+    ((name, slot, claimed),) = queued
+    assert name == "alerts" and slot.startswith("events-") and claimed == [str(ev)]
+
+
+def test_scheduler_does_not_requeue_while_the_run_is_pending(tmp_path):
+    hub, s, queued = _webhook_sched(tmp_path)
+    _drop_event(hub, "squadcast", {"event": "down"})
+    assert asyncio.run(s.check_once()) == ["alerts"]
+    assert asyncio.run(s.check_once()) == []                    # same events: already queued
+    assert len(queued) == 1
+
+
+def test_scheduler_new_event_queues_another_run(tmp_path):
+    hub, s, queued = _webhook_sched(tmp_path)
+    _drop_event(hub, "squadcast", {"n": 1})
+    asyncio.run(s.check_once())
+    _drop_event(hub, "squadcast", {"n": 2})                     # lands while run 1 is queued
+    assert asyncio.run(s.check_once()) == ["alerts"]
+    assert len(queued) == 2 and queued[0][1] != queued[1][1]
 
 
 def test_cli_list_shows_webhook_trigger(tmp_path):

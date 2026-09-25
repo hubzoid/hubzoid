@@ -271,7 +271,7 @@ class OpenAIAgentsRuntime:
                         if line:
                             yield line
             # Surface final token usage for the usage envelope (best-effort).
-            _record_openai_usage(result)
+            _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
                 _request_ctx.drain_artifacts(), "".join(shown))
@@ -280,6 +280,7 @@ class OpenAIAgentsRuntime:
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             self.last_error = exc
+            _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
 
     async def run(self, prompt: str) -> str:
@@ -289,7 +290,15 @@ class OpenAIAgentsRuntime:
         return "".join(pieces)
 
 
-def _record_openai_usage(result) -> None:
+def _agent_model_name(agent) -> str | None:
+    """The model id an Agents SDK agent runs on (a string or a LitellmModel)."""
+    model = getattr(agent, "model", None)
+    if isinstance(model, str):
+        return model
+    return getattr(model, "model", None)
+
+
+def _record_openai_usage(result, model: str | None = None) -> None:
     """Surface the OpenAI Agents run's token usage for the usage envelope.
 
     `result.context_wrapper.usage` accumulates across the run. The OpenAI path
@@ -309,6 +318,8 @@ def _record_openai_usage(result) -> None:
             "total_tokens": int(getattr(usage, "total_tokens", inp + out) or (inp + out)),
             "cost_usd": None,
             "num_turns": getattr(usage, "requests", None),
+            "model": model,
+            "status": "ok",
         })
     except Exception as exc:  # noqa: BLE001 — telemetry must never break chat
         log.debug("openai usage capture skipped: %s", exc)
@@ -344,16 +355,22 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     text the chat surface shows.
     """
     import asyncio
+    import time
 
+    from . import _request_ctx, usage as usage_lib
     from .access import Identity, identity_scope
 
     ident = Identity.make(subject, surface="workflow") if subject else None
+    started = time.monotonic()
+    raw: dict = {}
 
     async def _go() -> str:
         rt = build(Path(hub_dir))
         await rt.aopen()
         try:
-            text = await rt.run(prompt)
+            with _request_ctx.chat_scope(None):
+                text = await rt.run(prompt)
+                raw.update(_request_ctx.drain_usage())
         finally:
             await rt.aclose()
         err = getattr(rt, "last_error", None)
@@ -367,4 +384,116 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
                 return asyncio.run(_go())
         return asyncio.run(_go())
 
-    return _run()
+    status = "error"
+    try:
+        text = _run()
+        status = "ok"
+        return text
+    finally:
+        usage_lib.record(
+            hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="agent",
+            subject=subject, model=raw.get("model"),
+            input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
+            cost_usd=raw.get("cost_usd"), status=status,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
+    """One tool-free model call: the seam behind a workflow's `hub.call_llm`.
+
+    `spec` is plain data (so a DBOS step can checkpoint it): prompt, system,
+    model (default: the hub's model), response_format ("text" or "json") and an
+    optional JSON Schema. LiteLLM models use their JSON mode; claude-local runs a
+    single turn with no tools. Both get the same instruction and the same
+    tolerant parsing. Returns {"text", "json", "model"} and records a usage row.
+    """
+    import asyncio
+    import time
+
+    from . import structured, usage as usage_lib
+
+    hub_dir = Path(hub_dir)
+    model_id = (spec.get("model") or "").strip() or _resolve_model_id(hub_dir, settingslib.load(hub_dir))
+    want_json = spec.get("response_format") == "json"
+    prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json else "")
+    system = spec.get("system")
+    started = time.monotonic()
+    usage: dict = {}
+    status = "error"
+    try:
+        if model_id.lower().startswith("claude-local"):
+            from .factory_claude import claude_complete
+
+            text, usage = asyncio.run(claude_complete(prompt, system=system, model_setting=model_id))
+        else:
+            import litellm
+
+            messages = ([{"role": "system", "content": system}] if system else []) + [
+                {"role": "user", "content": prompt}]
+            kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 1}
+            if want_json:
+                kwargs["response_format"] = {"type": "json_object"}
+            resp = litellm.completion(**kwargs)
+            text = resp.choices[0].message.content or ""
+            u = getattr(resp, "usage", None)
+            try:
+                cost = litellm.completion_cost(completion_response=resp)
+            except Exception:  # noqa: BLE001 — unknown price: estimate later or leave empty
+                cost = None
+            usage = {"input_tokens": getattr(u, "prompt_tokens", None),
+                     "output_tokens": getattr(u, "completion_tokens", None),
+                     "cost_usd": cost, "model": model_id}
+        result = {"text": text, "json": structured.extract_json(text) if want_json else None,
+                  "model": usage.get("model") or model_id}
+        status = "ok"
+        return result
+    finally:
+        usage_lib.record(
+            hub_dir, hub=hub_dir.name, surface="workflow", kind="llm", subject=subject,
+            model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
+            status=status, duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+
+
+def decide_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
+    """A typed decision from TypeSafe's Jev via OpenRouter's decisions endpoint:
+    the seam behind a workflow's `hub.decide` (experimental; the endpoint is
+    alpha). `spec` holds model, state and questions exactly as the API takes
+    them. Returns the API's JSON (answers, model, usage) and records a usage row.
+    """
+    import os
+    import time
+
+    import httpx
+
+    from . import usage as usage_lib
+
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("hub.decide needs OPENROUTER_API_KEY in the hub's .env")
+    body = {"model": spec["model"], "state": spec["state"], "questions": spec["questions"]}
+    started = time.monotonic()
+    data: dict = {}
+    status = "error"
+    try:
+        resp = httpx.post(DECISIONS_URL, json=body, timeout=60.0,
+                          headers={"Authorization": f"Bearer {key}"})
+        if resp.status_code >= 400:
+            raise RuntimeError(f"decisions API {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        status = "ok"
+        return data
+    finally:
+        u = data.get("usage") or {}
+        usage_lib.record(
+            hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="decide",
+            subject=subject, model=data.get("model") or spec["model"],
+            input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
+            cost_usd=u.get("cost"), status=status,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )

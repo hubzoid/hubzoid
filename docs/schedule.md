@@ -18,15 +18,16 @@ is deploying its schedule — no extra systemd timers or crontabs.
 schedule/knowledge-refresh.md     <- you write this
         │  (cron match, hub idle)
         ▼
-hubzoid scheduler (in-process)    <- tick every 30s, one run at a time
-        │
+hubzoid scheduler                  <- tick every 30s, decides what is due
+        │  queues one durable run
         ▼
-run harness                        <- fresh-context rounds until STATUS: DONE
-  agent = the hub's own Runtime    <- claude-local OR any OpenAI/LiteLLM model
-  tools = run_git, write_hub_file  <- injected for the run only, path-guarded
-        │
-        ▼
-scoped git commit (+ push)         <- only the declared paths, never the rest
+the hub's workflow engine (DBOS)   <- one markdown run at a time per hub
+  step: work                       <- rounds until STATUS: DONE, or the run: command
+    agent = the hub's own Runtime  <- claude-local OR any OpenAI/LiteLLM model
+    tools = run_git, write_hub_file <- injected for the run only, path-guarded
+  step: commit                     <- only the declared paths, never the rest
+  step: push                       <- pull --rebase, then push
+  step: finish                     <- record the result, archive handled events
 ```
 
 ## A task file
@@ -177,7 +178,15 @@ Prereqs on the box, once: the hub's repo has a remote + tracking branch,
   on the first tick after boot — once, not once per missed week.
 * A brand-new task file anchors at discovery: it first fires at its next
   *future* cron match (use `hubzoid schedule run` to test immediately).
-* One run at a time per hub, enforced with a lock file across processes.
+* One markdown run at a time per hub, across processes (the engine's queue),
+  so two tasks never commit or push over each other.
+* Each run is durable and appears in the Console's run history (named
+  `md:<task>`) next to code workflows.
+* A run interrupted by a restart or crash is not repeated: its work step
+  reports the interruption and the task runs again at its next slot. A run that
+  finished its work but was stopped before commit or push resumes from there.
+* The push step retries once on its own; a rebase conflict fails the run and
+  leaves the commit local for a human.
 * Kill switch: `HUBZOID_DISABLE_SCHEDULE=1` in the environment.
 
 ## Observability
@@ -216,9 +225,10 @@ tail -f <hub>/.hubzoid/schedule/<task>/runs/<ts>.jsonl   # during
 git -C <hub> diff                                         # after (drop commit: while testing)
 ```
 
-`schedule run` uses the same harness, model and lock as a scheduled fire —
-if it works manually, the cron fire is the same thing on a timer. Exit code
-0 means the agent reported DONE.
+`schedule run` queues the task on the same engine and queue as a scheduled
+fire (so it waits for a scheduled run in progress, never overlaps it) and waits
+for the result — if it works manually, the cron fire is the same thing on a
+timer. Exit code 0 means the agent reported DONE.
 
 ## Production
 

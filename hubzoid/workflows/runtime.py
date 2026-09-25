@@ -40,6 +40,7 @@ _HUB_DIR: Path | None = None
 _HUB_NAME: str = ""
 _ENGINE: Any = None
 _QUEUE = None  # one durable queue per hub, global concurrency 1
+_MD_QUEUE = None  # markdown schedule tasks + scheduled evals: one at a time per hub
 _APP_VERSION: str | None = None  # this process's workflow-code version
 _lock = threading.Lock()
 
@@ -127,6 +128,10 @@ def init(hub_dir, hub_name: str | None = None) -> None:
                 "application_version": _APP_VERSION,
             }
         )
+        # Markdown schedule tasks and scheduled evals run on this same engine.
+        from . import markdown
+
+        markdown.register(DBOS, _HUB_DIR, _HUB_NAME)
         _INITED = True
         log.info("workflows: DBOS initialised for hub %r", _HUB_NAME)
 
@@ -228,9 +233,9 @@ def step(fn: Callable | None = None, *, max_attempts: int = 1):
 
 
 def _agent_max_attempts() -> int:
-    """How many times a failed `hub.call_llm` / `hub.call_agent` step is tried.
+    """How many times a failed `hub.call_agent` step is tried.
 
-    Both run the hub's full agent, tools included, so a retry can repeat a
+    It runs the hub's full agent, tools included, so a retry can repeat a
     message or write the first attempt already made. Default 1 (no retry). A
     hub whose agent calls are safe to repeat opts in with
     `agent_max_attempts: N` in workflows/settings.yaml."""
@@ -242,6 +247,17 @@ def _agent_max_attempts() -> int:
         return 1
 
 
+def _hub_workflow_cap() -> int | None:
+    """Optional limit on code workflows running at once in this hub (none by
+    default): `max_concurrent_workflows: N` in workflows/settings.yaml."""
+    try:
+        raw = _load_settings().get("max_concurrent_workflows")
+        return max(1, int(raw)) if raw is not None else None
+    except Exception:  # noqa: BLE001 — a bad value means no cap, loudly
+        log.warning("workflows: invalid max_concurrent_workflows; no hub cap")
+        return None
+
+
 def _seam_step():
     attempts = _agent_max_attempts()
     if attempts > 1:
@@ -250,16 +266,20 @@ def _seam_step():
 
 
 def _wrap_seams_as_steps() -> None:
-    """Wrap the configured call_llm/call_agent seams in DBOS steps so a completed
-    model/agent call is checkpointed and NOT re-invoked on recovery. A failed
-    call is not retried unless the hub opts in (see `_agent_max_attempts`); an
-    interrupted one can still re-run on recovery (at-least-once)."""
-    raw_llm, raw_agent = context._LLM, context._AGENT
+    """Wrap the configured seams in DBOS steps so a completed call is
+    checkpointed and NOT re-invoked on recovery. Arguments and results are
+    plain data (a spec dict in, a result dict out), so DBOS can store them.
+
+    `call_llm` and `decide` have no side effects, so a failed call is retried
+    once. `call_agent` runs tools, so it is retried only when the hub opts in
+    (see `_agent_max_attempts`). An interrupted step can still re-run on
+    recovery (at-least-once)."""
+    raw_llm, raw_agent, raw_decide = context._LLM, context._AGENT, context._DECIDE
     if raw_llm is not None and context._LLM_STEP is None:
 
-        @_seam_step()
-        def _llm_step(prompt: str, hub_dir_str: str, subject: str):
-            return raw_llm(prompt, hub_dir=Path(hub_dir_str), subject=subject)
+        @_DBOS.step(retries_allowed=True, max_attempts=2)
+        def _llm_step(spec: dict, hub_dir_str: str, subject: str):
+            return raw_llm(spec, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._LLM_STEP = _llm_step
     if raw_agent is not None and context._AGENT_STEP is None:
@@ -269,6 +289,13 @@ def _wrap_seams_as_steps() -> None:
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._AGENT_STEP = _agent_step
+    if raw_decide is not None and context._DECIDE_STEP is None:
+
+        @_DBOS.step(retries_allowed=True, max_attempts=2)
+        def _decide_step(spec: dict, hub_dir_str: str, subject: str):
+            return raw_decide(spec, hub_dir=Path(hub_dir_str), subject=subject)
+
+        context._DECIDE_STEP = _decide_step
 
 
 def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
@@ -292,14 +319,25 @@ def launch() -> None:
     global _LAUNCHED
     if _LAUNCHED:
         return
-    global _QUEUE
+    global _QUEUE, _MD_QUEUE
     _wrap_seams_as_steps()
     _DBOS.launch()
     # One durable queue per hub, global concurrency 1: two due workflows (or a
     # manual + scheduled run) in the same hub never overlap. DBOS 3 persists queue
     # config in the system database, so it is registered once that exists.
+    # Code workflows: one run at a time PER WORKFLOW (a partition per workflow
+    # name), so a long workflow never starves an unrelated one. An optional
+    # hub-wide cap comes from `max_concurrent_workflows` in workflows/settings.yaml.
     _QUEUE = _DBOS.register_queue(
-        f"{_app_name(_HUB_NAME)}-wf", global_concurrency=1, on_conflict="always_update"
+        f"{_app_name(_HUB_NAME)}-wf",
+        global_concurrency=_hub_workflow_cap(),
+        partition_concurrency=1,
+        on_conflict="always_update",
+    )
+    # Markdown tasks keep their historical rule: one run at a time per hub, which
+    # also keeps git commits/pushes of different tasks from overlapping.
+    _MD_QUEUE = _DBOS.register_queue(
+        f"{_app_name(_HUB_NAME)}-md", global_concurrency=1, on_conflict="always_update"
     )
     _cancel_runs_from_other_code()
     _LAUNCHED = True
@@ -328,7 +366,7 @@ def _cancel_runs_from_other_code() -> None:
         stale = [
             w
             for w in _DBOS.list_workflows(
-                status=["PENDING", "ENQUEUED"], queue_name=_QUEUE.name
+                status=["PENDING", "ENQUEUED"], queue_name=[_QUEUE.name, _MD_QUEUE.name]
             )
             if w.app_version != _APP_VERSION
         ]
@@ -344,6 +382,29 @@ def _cancel_runs_from_other_code() -> None:
             )
         except Exception:  # noqa: BLE001
             log.exception("workflows: could not cancel stale run %s", w.workflow_id)
+            continue
+        _requeue_markdown(w)
+
+
+def _requeue_markdown(w) -> None:
+    """A markdown task or eval suite that was queued but never started under the
+    previous code is queued again under the current code, so its slot is not
+    lost (the scheduler already stamped it as fired). One that was interrupted
+    mid-run is not repeated, as before DBOS."""
+    from . import markdown
+
+    if w.status != "ENQUEUED" or w.name not in (markdown.MD_WORKFLOW, markdown.EVAL_WORKFLOW):
+        return
+    try:
+        args = list((w.input or {}).get("args") or [])
+        from dbos import SetWorkflowID
+
+        fn = markdown._FNS["md_task" if w.name == markdown.MD_WORKFLOW else "eval_suite"]
+        with SetWorkflowID(f"{w.workflow_id}:requeued"):
+            _MD_QUEUE.enqueue(fn, *args)
+        log.warning("workflows: re-queued %s under the current code", w.workflow_id)
+    except Exception:  # noqa: BLE001
+        log.exception("workflows: could not re-queue %s", w.workflow_id)
 
 
 def registry() -> list[WorkflowDef]:
@@ -358,7 +419,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     must never hang or crash the shutdown path. Resets module state so the
     process could re-init a hub afterwards."""
     global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE
-    global _APP_VERSION
+    global _APP_VERSION, _MD_QUEUE
     with _lock:
         if not _INITED:
             return
@@ -372,6 +433,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             _INITED = False
             _LAUNCHED = False
             _QUEUE = None
+            _MD_QUEUE = None
             _REGISTRY = {}
             _HUB_DIR = None
             _HUB_NAME = None
@@ -380,14 +442,16 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             # Rebuilt on the next launch, with that hub's retry setting.
             context._LLM_STEP = None
             context._AGENT_STEP = None
+            context._DECIDE_STEP = None
             log.info("workflows: DBOS shut down")
 
 
 def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
     """Fire one workflow now (dispatcher + `hubzoid schedule run`). Enqueues on
-    the hub's concurrency-1 queue so runs never overlap."""
+    the hub's workflow queue in this workflow's partition, so two runs of the
+    same workflow never overlap while different workflows run side by side."""
     wf = _REGISTRY[name]
-    from dbos import SetWorkflowID
+    from dbos import SetEnqueueOptions, SetWorkflowID
     from contextlib import nullcontext
     import uuid
 
@@ -398,7 +462,8 @@ def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
         else nullcontext()
     ):
         if _QUEUE is not None:
-            return _QUEUE.enqueue(wf.wrapped, hub_name or _HUB_NAME)
+            with SetEnqueueOptions(queue_partition_key=name):
+                return _QUEUE.enqueue(wf.wrapped, hub_name or _HUB_NAME)
         return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
 
 

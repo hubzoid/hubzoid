@@ -1,10 +1,11 @@
 # Hubzoid workflows. MIT licensed like the rest of the repository.
 """Boot the workflow engine and run the per-minute dispatcher.
 
-Called from the server lifespan (and the CLI). Laptop-safety: workflows only
-fire when the deployment is marked — `HUBZOID_SCHEDULES=1` for a single
-`hubzoid run`, or automatically under `hubzoid gateway`. A bare laptop `run`
-loads nothing here, so a laptop never fires production.
+Called from the server lifespan (and the CLI). The hub's DBOS engine runs all
+scheduled work: markdown `schedule/*.md` tasks and scheduled evals (on whenever
+their files exist, as before) and code `workflows/*.py`. Laptop-safety for code
+workflows: they only fire when the deployment is marked — `HUBZOID_SCHEDULES=1`
+for a single `hubzoid run`, or automatically under `hubzoid gateway`.
 
 This module never imports an agent runtime SDK; the LLM/agent seam
 (`context.configure`) is wired by the caller (server.py / cli.py).
@@ -30,26 +31,51 @@ def _truthy(val: str | None) -> bool:
 
 
 def schedules_enabled(env: dict | None = None) -> bool:
-    """Whether this deployment should fire scheduled workflows. DBOS-workflows
-    only — the markdown agent-task scheduler has its own, unchanged gate."""
+    """Whether this deployment should fire scheduled CODE workflows
+    (`workflows/*.py`). Markdown tasks have their own, unchanged gate
+    (`markdown_work`)."""
     env = env if env is not None else os.environ
     return _truthy(env.get("HUBZOID_SCHEDULES")) or _truthy(env.get("HUBZOID_GATEWAY"))
+
+
+def markdown_work(hub_dir, env: dict | None = None) -> bool:
+    """Whether the hub has markdown schedule tasks or scheduled evals to run.
+    On whenever the files exist, as before; `HUBZOID_DISABLE_SCHEDULE=1` is the
+    kill switch."""
+    env = env if env is not None else os.environ
+    if _truthy(env.get("HUBZOID_DISABLE_SCHEDULE")):
+        return False
+    from ..evals import schedule as evals_schedule
+    from ..scheduling import load_tasks
+
+    tasks, problems = load_tasks(Path(hub_dir))
+    return bool(any(t.enabled for t in tasks) or problems
+                or evals_schedule.scheduled_cases(Path(hub_dir)))
 
 
 class Dispatcher:
     """Owns the DBOS engine for a hub and the per-minute tick loop."""
 
-    def __init__(self, hub_dir, hub_name: str | None = None):
+    def __init__(self, hub_dir, hub_name: str | None = None, *, code: bool = True):
         self.hub_dir = Path(hub_dir)
         self.hub_name = hub_name
+        self.code = code          # dispatch scheduled code workflows too
+        self.load_error: str | None = None
         self._task: asyncio.Task | None = None
         self._last = datetime.now(timezone.utc)
         self._n = 0
 
     def prepare(self) -> int:
-        """Init DBOS over the hub DB, load the workflows, launch. Returns count."""
+        """Init DBOS over the hub DB, load the code workflows, launch. Returns
+        the number of code workflows. A broken workflow module disables code
+        workflows for this boot but never the markdown tasks."""
         runtime.init(self.hub_dir, hub_name=self.hub_name)
-        runtime.load_workflows(self.hub_dir)
+        if self.code:
+            try:
+                runtime.load_workflows(self.hub_dir)
+            except Exception as exc:  # noqa: BLE001
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                log.exception("workflows: could not load workflows/; code workflows off this boot")
         runtime.launch()
         self._n = len(runtime.registry())
         return self._n
@@ -109,38 +135,43 @@ class Dispatcher:
 
 
 async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
-    """Prepare + start the dispatcher if schedules are enabled and workflows
-    exist. Returns the Dispatcher (to stop() at shutdown) or None."""
+    """Start the hub's DBOS engine when there is scheduled work: markdown tasks
+    or scheduled evals (on whenever their files exist), or code workflows (when
+    schedules are enabled for this deployment). Starts the per-minute tick for
+    code workflows. Returns the Dispatcher (to stop() at shutdown) or None."""
     from ..access import store_for
 
     gs = store_for(hub_dir)
-    if not schedules_enabled():
+    code_on = schedules_enabled()
+    md_on = await asyncio.to_thread(markdown_work, hub_dir)
+    if not code_on and not md_on:
         gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=None)
         log.info(
             "workflows: schedules idle (set HUBZOID_SCHEDULES=1 to enable on this box)"
         )
         return None
-    disp = Dispatcher(hub_dir, hub_name)
+    disp = Dispatcher(hub_dir, hub_name, code=code_on)
     try:
         n = await asyncio.to_thread(disp.prepare)
-    except Exception as exc:  # a bad workflow module never blocks chat
+    except Exception as exc:  # the engine failed to start; chat still works
         await asyncio.to_thread(runtime.shutdown)
         gs.set_runtime_health(
             Path(hub_dir).name, enabled=False, error=f"{type(exc).__name__}: {exc}"
         )
-        log.exception("workflows: failed to prepare; schedules disabled this boot")
+        log.exception("workflows: engine failed to start; scheduled work off this boot")
         return None
-    if n == 0:
+    if n == 0 and not md_on:
         await disp.stop()
         log.info("workflows: none defined under <hub>/workflows/")
         return None
     now = datetime.now(timezone.utc)
-    # Record (but never back-fill) any scheduled slots that would have fired
-    # while the previous dispatcher was down, so the operator can see the gap.
+    # Record (but never back-fill) any scheduled code-workflow slots that would
+    # have fired while the previous dispatcher was down, so the operator sees the
+    # gap. (Markdown tasks catch up once by their own anchor rule.)
     downtime = None
     prior = gs.runtime_health(Path(hub_dir).name)
     prior_beat = prior.get("heartbeat")
-    if prior_beat:
+    if prior_beat and n:
         try:
             since = datetime.fromisoformat(prior_beat)
             if since.tzinfo is None:
@@ -161,9 +192,10 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
     gs.set_runtime_health(
         Path(hub_dir).name,
         enabled=True,
-        error=None,
+        error=disp.load_error,
         downtime=downtime,
         heartbeat=now.isoformat(),
     )
-    disp.start_loop()
+    if code_on and n:
+        disp.start_loop()
     return disp

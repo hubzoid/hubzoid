@@ -211,23 +211,40 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
     _git(top, "commit", "-m", message, "--", *specs)
     sha = _git(top, "rev-parse", "HEAD")
     if push:
-        pr = subprocess.run(["git", "-C", str(top), "pull", "--rebase"],
-                            capture_output=True, text=True, check=False)
-        if pr.returncode != 0:
-            subprocess.run(["git", "-C", str(top), "rebase", "--abort"],
-                           capture_output=True, text=True, check=False)
-            raise RuntimeError(
-                "git pull --rebase failed (conflict?). The commit exists "
-                "locally but was NOT pushed; resolve by hand.\n" + pr.stderr.strip()
-            )
-        ps = subprocess.run(["git", "-C", str(top), "push"],
-                            capture_output=True, text=True, check=False)
-        if ps.returncode != 0:
-            raise RuntimeError(
-                "git push failed. The commit exists locally but was NOT "
-                "pushed.\n" + ps.stderr.strip()
-            )
+        push_head(hub_dir)
     return sha
+
+
+def push_head(hub_dir: Path) -> None:
+    """Integrate the remote (`pull --rebase`) and push. Safe to repeat: pushing
+    an already-pushed branch is a no-op. A rebase conflict is aborted cleanly
+    and raised, leaving the commit local for a human to resolve."""
+    top = repo_toplevel(Path(hub_dir))
+    if top is None:
+        raise RuntimeError(f"{hub_dir} is not inside a git repository; cannot push.")
+    pr = subprocess.run(["git", "-C", str(top), "pull", "--rebase"],
+                        capture_output=True, text=True, check=False)
+    if pr.returncode != 0:
+        subprocess.run(["git", "-C", str(top), "rebase", "--abort"],
+                       capture_output=True, text=True, check=False)
+        raise RuntimeError(
+            "git pull --rebase failed (conflict?). The commit exists "
+            "locally but was NOT pushed; resolve by hand.\n" + pr.stderr.strip()
+        )
+    ps = subprocess.run(["git", "-C", str(top), "push"],
+                        capture_output=True, text=True, check=False)
+    if ps.returncode != 0:
+        raise RuntimeError(
+            "git push failed. The commit exists locally but was NOT "
+            "pushed.\n" + ps.stderr.strip()
+        )
+
+
+def commit_message(task: ScheduledTask, summary: str, started: str) -> str:
+    """The commit message for a task run: its DONE summary, else the run date."""
+    date = started[:10]
+    summary = re.sub(r"\s+", " ", summary or "").strip()[:100]
+    return f"schedule({task.name}): {summary or f'run {date}'}"
 
 
 # ---------------------------------------------------------------------------
@@ -242,9 +259,7 @@ def _capture_commit(hub_dir: Path, task: ScheduledTask, result: "RunResult",
     `commit_paths`. The message is synthesized from the run's summary (the
     agent's DONE note for LLM tasks, or `ran <cmd>` for script tasks).
     """
-    date = started_dt.strftime("%Y-%m-%d")
-    summary = re.sub(r"\s+", " ", result.summary).strip()[:100]
-    msg = f"schedule({task.name}): {summary or f'run {date}'}"
+    msg = commit_message(task, result.summary, started_dt.isoformat())
     try:
         sha = commit_paths(hub_dir, task.commit, msg, push=task.push)
     except RuntimeError as exc:
@@ -397,9 +412,13 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
 
 async def run_task(hub_dir: Path, task: ScheduledTask, *,
                    runtime_factory: Callable = _default_runtime_factory,
+                   capture: bool = True,
                    ) -> RunResult:
     """Run one scheduled task to completion (or its caps). Never raises —
-    every failure mode is a `RunResult(result="error")` with the log path."""
+    every failure mode is a `RunResult(result="error")` with the log path.
+
+    `capture=False` skips the commit/push, for callers (the DBOS executor in
+    workflows/markdown.py) that run them as their own checkpointed steps."""
     hub_dir = Path(hub_dir).resolve()
     started = time.monotonic()
     started_dt = datetime.now()
@@ -425,7 +444,7 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
     if task.is_script:
         try:
             await asyncio.to_thread(_execute_script, hub_dir, task, result, rlog)
-            if result.result == "done" and task.commit:
+            if result.result == "done" and task.commit and capture:
                 _capture_commit(hub_dir, task, result, rlog, started_dt)
         except Exception as exc:  # noqa: BLE001 — never raise; run_task's contract
             # e.g. a git pre-commit hook / index lock raises CalledProcessError,
@@ -532,7 +551,7 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
                         task.name, result.rounds)
 
         # Capture: commit (and push) ONLY the declared paths, only on DONE.
-        if done and task.commit:
+        if done and task.commit and capture:
             _capture_commit(hub_dir, task, result, rlog, started_dt)
     except Exception as exc:  # noqa: BLE001 — scheduler must survive anything
         result.result = "error"

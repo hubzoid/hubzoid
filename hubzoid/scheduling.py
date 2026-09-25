@@ -10,9 +10,11 @@ Three layers, mirroring Claude Code's cron system:
 
   * **declaration / state (this module)** — parse cron expressions, discover
     and validate `schedule/*.md`, persist per-task fire anchors in
-    `<hub>/.hubzoid/schedule-state.json`, and a coarse cross-process run lock.
+    `<hub>/.hubzoid/schedule-state.json`.
   * **scheduler (`scheduler.py`)** — the in-process tick loop that decides
-    *when* to fire (idle-gated, missed-run catch-up).
+    *when* to fire (idle-gated, missed-run catch-up) and queues each due task on
+    the hub's DBOS engine (`workflows/markdown.py`), which runs one markdown task
+    at a time per hub.
   * **execution (`schedule_runner.py`)** — the round harness that runs a
     task's instructions through the hub's own Runtime until done.
 
@@ -28,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -42,7 +43,6 @@ log = logging.getLogger("hubzoid.schedule")
 
 STATE_DIRNAME = ".hubzoid"
 STATE_FILENAME = "schedule-state.json"
-LOCK_FILENAME = "schedule.lock"
 
 # Frontmatter defaults. Kept here so the CLI, docs and tests agree.
 DEFAULT_TIMEOUT = 1800      # seconds per round
@@ -526,58 +526,3 @@ def is_due(task: ScheduledTask, state: ScheduleState,
     now = now or datetime.now()
     nxt = next_fire_for(task, state, now)
     return nxt is not None and nxt <= now
-
-
-# ---------------------------------------------------------------------------
-# Cross-process run lock: <hub>/.hubzoid/schedule.lock
-# ---------------------------------------------------------------------------
-class RunLock:
-    """One scheduled run at a time per hub, across processes.
-
-    Guards the bridge's scheduler vs a manual `hubzoid schedule run` (or two
-    bridges misconfigured onto one hub). A lock whose pid is dead is stale
-    and silently stolen — crashes must not wedge the schedule forever.
-    """
-
-    def __init__(self, hub_dir: Path):
-        self.path = Path(hub_dir) / STATE_DIRNAME / LOCK_FILENAME
-        self._held = False
-
-    def _holder_alive(self) -> bool:
-        try:
-            info = json.loads(self.path.read_text())
-            pid = int(info.get("pid", -1))
-        except (OSError, ValueError, json.JSONDecodeError):
-            return False
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)                  # signal 0: existence probe
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True                      # exists, owned by someone else
-        return True
-
-    def acquire(self, task_name: str = "") -> bool:
-        if self.path.exists() and self._holder_alive():
-            return False
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({
-            "pid": os.getpid(),
-            "task": task_name,
-            "acquired_at": datetime.now().isoformat(timespec="seconds"),
-        }))
-        self._held = True
-        return True
-
-    def release(self) -> None:
-        if self._held:
-            self.path.unlink(missing_ok=True)
-            self._held = False
-
-    def __enter__(self) -> "RunLock":
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.release()

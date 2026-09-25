@@ -96,6 +96,15 @@ def record_usage(usage: dict) -> None:
     holder.update(usage or {})
 
 
+def note_usage(**fields) -> None:
+    """Add fields (e.g. status="error", model=...) to this request's usage
+    without replacing what the backend recorded. No-op outside a scope."""
+    holder = _current_usage.get()
+    if holder is None:
+        return
+    holder.update(fields)
+
+
 def drain_usage() -> dict:
     """Return usage recorded this request and clear it. Empty when the backend
     reported none (e.g. an older SDK without partial usage)."""

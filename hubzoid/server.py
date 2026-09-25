@@ -62,6 +62,13 @@ def _hub_dir() -> Path:
 def build_app() -> FastAPI:
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
+    # Bring Hubzoid's own tables to the current schema before serving anything;
+    # a schema this version can't use stops the bridge here, loudly.
+    from . import db as dblib
+    from . import migrations
+
+    migrations.upgrade(dblib.operational_engine(hub_dir), "operational")
+    migrations.upgrade(dblib.engine_for(hub_dir), "hub")
     rt = runtime_lib.build(hub_dir)
 
     # Model label shown in /v1/models. Falls back to the runtime's name
@@ -106,22 +113,30 @@ def build_app() -> FastAPI:
         # request instead raises ClosedResourceError / cancel-scope errors.
         await browser_mgr.start()
         await rt.aopen()
-        sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
-        sched.start()   # no-op when <hub>/schedule/ is empty or disabled
-        app.state.scheduler = sched
-        # Deterministic workflows on DBOS (a second, side-by-side source). Only
-        # fire when the box is marked (HUBZOID_SCHEDULES / gateway); a bare
-        # laptop `run` leaves them idle. hub.call_llm/call_agent reuse this hub's
-        # runtime via the run_once seam.
+        # All scheduled work runs on the hub's DBOS engine: markdown
+        # schedule/*.md tasks and scheduled evals (whenever their files exist)
+        # and code workflows (when the box is marked: HUBZOID_SCHEDULES /
+        # gateway). The engine starts first; the markdown scheduler then decides
+        # when each task is due and queues it there. hub.call_llm/call_agent/
+        # decide reach this hub's runtime through the seams below.
         from . import runtime as _agent_rt
         from .workflows import boot as wf_boot
         from .workflows import context as wf_ctx
         wf_ctx.configure(
-            llm=lambda prompt, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, prompt, subject=subject),
-            agent=lambda task, hub_dir=None, subject=None, **kw: _agent_rt.run_once(hub_dir, task, subject=subject),
+            llm=lambda spec, hub_dir=None, subject=None: _agent_rt.complete_once(hub_dir, spec, subject=subject),
+            agent=lambda task, hub_dir=None, subject=None: _agent_rt.run_once(hub_dir, task, subject=subject),
+            decide=lambda spec, hub_dir=None, subject=None: _agent_rt.decide_once(hub_dir, spec, subject=subject),
         )
         wf_dispatcher = await wf_boot.start(hub_dir)
         app.state.workflows = wf_dispatcher
+        from .workflows import runtime as _wf_runtime
+        sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
+        if _wf_runtime._LAUNCHED:
+            sched.start()   # no-op when <hub>/schedule/ is empty or disabled
+        elif wf_boot.markdown_work(hub_dir):
+            log.error("scheduled markdown tasks are not running: the workflow engine "
+                      "did not start (see the error above)")
+        app.state.scheduler = sched
         from . import deployment
         from .access.reconcile import sync_owui
         async def visibility_loop():
@@ -277,14 +292,16 @@ def build_app() -> FastAPI:
             )
 
         inflight.enter()
+        started = time.monotonic()
         try:
             with _request_ctx.chat_scope(chat_id):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
-                    usage = _usage_envelope()
+                    raw_usage = _request_ctx.drain_usage()
         finally:
             inflight.leave()
-        return JSONResponse(_blocking_envelope(text, model_label, usage))
+        await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
+        return JSONResponse(_blocking_envelope(text, model_label, _usage_envelope(raw_usage)))
 
     # ------------------------------------------------------------------
     # Per-chat artifact + upload routes.
@@ -398,6 +415,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
                   identity=None, hub_dir: Path | None = None) -> AsyncIterator[bytes]:
     if inflight:
         inflight.enter()
+    started = time.monotonic()
     try:
         # Role chunk first (OpenAI convention).
         first = _chunk("", model=model)
@@ -413,7 +431,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
             # Drain usage while still inside chat_scope (the runtime set it
             # there); build the OpenAI usage envelope for the final chunk.
-            usage = _usage_envelope()
+            raw_usage = _request_ctx.drain_usage()
+            usage = _usage_envelope(raw_usage)
+        await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
 
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
@@ -434,13 +454,38 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             inflight.leave()
 
 
-def _usage_envelope() -> dict:
-    """Drain the turn's usage and return the OpenAI usage envelope
-    (prompt/completion/total tokens) that populates Open WebUI's native
-    per-message token column. Must be called while the request's chat_scope is
-    still active. Cost/usage analytics itself is emitted via OTel (opt-in,
-    see hubzoid.otel); this envelope is the one piece that needs no backend."""
-    raw = _request_ctx.drain_usage()
+async def _record_turn(hub_dir, identity, chat_id, raw: dict, started: float) -> None:
+    """Write this chat turn's usage row (hubzoid.usage), off the event loop."""
+    if hub_dir is None:
+        return
+    from . import usage as usage_lib
+
+    def _int(key):
+        try:
+            return int(raw.get(key)) if raw.get(key) is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    await asyncio.to_thread(
+        usage_lib.record, hub_dir,
+        hub=Path(hub_dir).name,
+        surface=getattr(identity, "surface", None) or "api",
+        kind="chat",
+        subject=getattr(identity, "user", None),
+        chat_id=chat_id,
+        model=raw.get("model"),
+        input_tokens=_int("input_tokens"),
+        output_tokens=_int("output_tokens"),
+        cost_usd=raw.get("cost_usd"),
+        status=raw.get("status") or "ok",
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+def _usage_envelope(raw: dict) -> dict:
+    """The OpenAI usage envelope (prompt/completion/total tokens) from a turn's
+    drained usage; it populates the chat UI's per-message token column. The
+    Console's own numbers come from hubzoid.usage rows, not from this."""
 
     def _n(key: str) -> int:
         # Never raise: a malformed usage value must not 500 the chat response.
