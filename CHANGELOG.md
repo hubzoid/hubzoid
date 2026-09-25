@@ -21,15 +21,20 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
   workflows. Optional hub-wide cap: `max_concurrent_workflows`.
 - `hubzoid schedule pause | resume | cancel`, recorded in the access log. The
   Console shows paused work but has no run buttons.
-- Webhooks: GitHub's `X-Hub-Signature-256` signatures are accepted,
+- Webhooks: GitHub's `X-Hub-Signature-256` signatures are accepted, and
   repeated deliveries (by delivery id, or an identical body shortly after) are
-  dropped, and a failed sink releases the delivery for a retry.
+  dropped. A delivery counts as seen only once it is stored, so a crash never
+  swallows the provider's retry. A webhook task is told the event files it owns
+  (a line in its prompt, or `HUBZOID_WEBHOOK_EVENTS` for `run:` scripts), and a
+  run that did not finish is retried once it has ended.
+- A scheduled task whose run changed nothing no longer pushes.
 - New sample: `hubzoid init <name> --template watchtower`.
 
 ### Console
 - Opens on **Overview**: conversations, messages, active people, tokens,
   estimated cost and tool denials for 24 hours, 7 days or 30 days, then one row
-  per agent. Workflow numbers appear only for agents that have them. All from
+  per agent. Workflow numbers (runs, failed, missed slots) appear only for
+  agents that have them. All from
   Hubzoid's own tables, never the chat app's database.
 - Every chat turn and workflow model call writes a usage row (`hz_usage`): time,
   hub, surface, user, chat, model, tokens, estimated cost, status and duration.
@@ -58,6 +63,9 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 - Pull requests run a light check (tests, Console lint and build). A release is
   built and tested from its tag before PyPI, the GitHub release and a
   multi-architecture image on GHCR are published.
+- Backups leave database passwords out of the saved deployment manifest
+  unless `--include-secrets`, and restore checks every target path in an
+  archive before it touches anything.
 - `hubzoid.__version__` comes from the package metadata.
 - The workflow engine refuses to start, with a clear message, on Python 3.12
   with SQLite older than 3.42 (DBOS needs `unixepoch('subsec')`); doctor reports
