@@ -131,8 +131,9 @@ class Hub:
         """One model call with no tools.
 
         response_format="text" (default) returns a string; "json" returns the
-        parsed JSON value. Passing a Pydantic model class as `response_model`
-        asks for JSON matching its schema and returns a validated instance.
+        parsed JSON object as a dict (anything else raises ModelOutputError).
+        Passing a Pydantic model class as `response_model` asks for JSON
+        matching its schema and returns a validated instance.
         `model` overrides the hub's model (any LiteLLM id, or claude-local).
         Side-effect free, so a failed call may be retried."""
         if _LLM is None:
@@ -205,12 +206,16 @@ class Hub:
 
 
 def _validated(value, response_model, raw_text: str):
-    """Return `value`, or a `response_model` instance validated from it."""
+    """Return `value` (a JSON object), or a `response_model` instance validated
+    from it. Checked here, after the checkpointed call, so the caller gets
+    ModelOutputError with the raw reply."""
+    from ..structured import ModelOutputError
+
     if response_model is None:
+        if not isinstance(value, dict):
+            raise ModelOutputError("the model's JSON is not an object", raw_text)
         return value
     from pydantic import ValidationError
-
-    from ..structured import ModelOutputError
 
     try:
         return response_model.model_validate(value)

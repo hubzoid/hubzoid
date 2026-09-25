@@ -104,10 +104,12 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
                 "log, so it was not run. Try again shortly.]"
             )
         if not allowed:
+            # Say "logged" only when the row exists. Either way the call is refused.
             return (
                 f"[access denied: '{ft.name}' requires the '{permission}' "
                 "permission, which the current user does not have. "
-                "This attempt was logged.]"
+                + ("This attempt was logged.]" if recorded else
+                   "This attempt could not be logged.]")
             )
         return await original_invoke(ctx, input_str)
 

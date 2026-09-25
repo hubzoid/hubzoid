@@ -102,6 +102,7 @@ def test_workflow_columns_only_for_hubs_with_work(client):
     body = client.get("/portal/api/summary").json()
     assert body["has_workflows"] is False and body["totals"]["runs"] is None
     assert body["hubs"][0]["runs"] is None
+    assert body["hubs"][0]["missed"] is None and body["totals"]["missed"] is None
 
     (client.hub / "schedule").mkdir()
     (client.hub / "schedule" / "daily.md").write_text('---\nschedule: "0 3 * * *"\nrun: "true"\n---\n\nx\n')
@@ -109,9 +110,53 @@ def test_workflow_columns_only_for_hubs_with_work(client):
     assert body["has_workflows"] is True
     assert body["hubs"][0]["has_workflows"] is True
     assert body["totals"]["runs"] == 0   # no DBOS database yet: nothing has run
+    assert body["hubs"][0]["missed"] == 0 and body["totals"]["missed"] == 0   # no records yet
+
+
+def _ago(seconds: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(time.time() - seconds, timezone.utc).isoformat()
+
+
+def test_missed_slots_are_counted_per_period(client):
+    """Both dispatchers keep dated [time, count] records of skipped slots: code
+    workflows in the hub's runtime health, markdown tasks in schedule state."""
+    import json
+
+    from hubzoid.scheduling import ScheduleState
+
+    (client.hub / "schedule").mkdir()
+    (client.hub / "schedule" / "daily.md").write_text('---\nschedule: "0 3 * * *"\nrun: "true"\n---\n\nx\n')
+    state = ScheduleState(client.hub)
+    state.path.parent.mkdir(parents=True, exist_ok=True)
+    state.path.write_text(json.dumps({"daily": {"missed_log": [
+        [_ago(2 * 3600), 2], [_ago(3 * 86400), 5], ["not a time", 9]]}}))
+    client.gs.set_runtime_health(client.hub.name, missed_log=[[_ago(3600), 1], [_ago(10 * 86400), 4]])
+
+    def missed(period):
+        body = client.get("/portal/api/summary", params={"period": period}).json()
+        assert body["totals"]["missed"] == body["hubs"][0]["missed"]
+        return body["hubs"][0]["missed"]
+
+    assert (missed("24h"), missed("7d"), missed("30d")) == (3, 8, 12)
 
 
 def test_a_hub_admin_sees_only_their_hubs(client):
     client.admin["who"] = PortalAdmin(subject="h@x.org", is_org_admin=False, manageable=[])
     body = client.get("/portal/api/summary").json()
     assert body["hubs"] == [] and body["totals"]["messages"] == 0
+
+
+def test_recording_since_comes_only_from_the_given_hubs(client):
+    """A hub admin never sees when another hub started recording."""
+    from hubzoid import usage
+
+    now = time.time()
+    _usage(client.eng, hub="other", ts=now - 20 * 86400, subject="x@x.org", chat_id="o1")
+    assert usage.summary(client.eng, {"support": "support"}, now - 86400)["recording_since"] is None
+    _usage(client.eng, ts=now - 3600, subject="a@x.org", chat_id="c1")
+    got = usage.summary(client.eng, {"support": "support"}, now - 86400)["recording_since"]
+    assert got == pytest.approx(now - 3600, abs=5)
+    both = usage.summary(client.eng, {"support": "support", "other": "other"}, now - 86400)
+    assert both["recording_since"] == pytest.approx(now - 20 * 86400, abs=5)

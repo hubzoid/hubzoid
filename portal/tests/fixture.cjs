@@ -520,6 +520,7 @@ function createFixture() {
             everyone: h.authoritative ? subjects.has(EVERYONE) : null,
             denials: u.denials * scale, has_workflows: flows.length > 0,
             runs: flows.length ? 4 * scale : null, failed: flows.length ? (h.key === "finance" ? scale : 0) : null,
+            missed: flows.length ? (h.key === "itops" ? 3 : 0) : null,
           };
         });
         const sum = (k) => hubs.reduce((n, h) => n + (h[k] || 0), 0);
@@ -534,6 +535,7 @@ function createFixture() {
             cost_usd: costs.length ? costs.reduce((a2, b) => a2 + b, 0) : null,
             unpriced: sum("unpriced"), denials: sum("denials"),
             runs: withWork ? sum("runs") : null, failed: withWork ? sum("failed") : null,
+            missed: withWork ? sum("missed") : null,
           },
           hubs,
         };

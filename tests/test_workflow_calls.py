@@ -93,6 +93,20 @@ def test_call_llm_schema_mismatch_is_a_clear_error(tmp_path):
         wctx._LLM = None
 
 
+@pytest.mark.parametrize("reply", ['[{"team": "payments"}]', '"payments"', "42"])
+def test_call_llm_json_must_be_an_object(tmp_path, reply):
+    eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    llm, _ = _seam(reply)
+    wctx.configure(llm=llm)
+    try:
+        with run_scope(hub="sales", workflow="w", hub_dir=tmp_path, engine=eng):
+            with pytest.raises(structured.ModelOutputError, match="not an object") as err:
+                hub.call_llm("route it", response_format="json")
+        assert err.value.raw == reply
+    finally:
+        wctx._LLM = None
+
+
 def test_call_agent_structured_answer(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
     tasks = []

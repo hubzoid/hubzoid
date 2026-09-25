@@ -240,6 +240,16 @@ def test_a_call_that_cannot_be_logged_does_not_run(gateway, monkeypatch):
     assert "could not be recorded" in out and "ledger:" not in out
 
 
+def test_a_denied_call_that_cannot_be_logged_says_so(gateway, monkeypatch):
+    alpha, _ = gateway
+    denied = _call(_tool(alpha), Identity.make("erin@example.org", surface="owui"))
+    assert "access denied" in denied and "This attempt was logged." in denied
+    monkeypatch.setattr(auditlib, "record", lambda *a, **k: False)
+    out = _call(_tool(alpha), Identity.make("erin@example.org", surface="owui"))
+    assert "access denied" in out and "ledger:" not in out
+    assert "could not be logged" in out and "was logged" not in out
+
+
 def test_old_decision_files_are_imported_once(tmp_path):
     hub = _hub(tmp_path, "old")
     (hub / "logs").mkdir()

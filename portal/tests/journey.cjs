@@ -87,6 +87,8 @@ function step(name) {
     await totals.getByText("Conversations").waitFor();
     await totals.getByText("252").waitFor(); // (12 + 30) conversations x 6 for the default 7 days
     await totals.getByText("Workflow runs").waitFor();
+    await totals.getByText("Missed slots").waitFor();
+    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).locator(".ant-typography-warning", { hasText: "3" }).waitFor();
     await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("In chat app").waitFor();
     await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("None yet").waitFor();
     await page.getByText("30 days", { exact: true }).click();

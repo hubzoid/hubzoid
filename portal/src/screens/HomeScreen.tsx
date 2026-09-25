@@ -113,7 +113,7 @@ export function HomeScreen() {
             />
           ) : s.recording_since > s.since ? (
             <Text type="secondary" className="home-note">
-              Counting since {formatTime(s.recording_since)}, when this deployment started recording usage.
+              Counting since {formatTime(s.recording_since)}, when usage was first recorded for these agents.
             </Text>
           ) : null}
           <div className="stat-grid" role="list" aria-label="Totals">
@@ -141,6 +141,11 @@ export function HomeScreen() {
                 <Stat
                   label="Failed runs"
                   value={s.runs_available ? count(s.totals.failed) : "Unavailable"}
+                />
+                <Stat
+                  label="Missed slots"
+                  value={s.totals.missed == null ? "Unavailable" : count(s.totals.missed)}
+                  hint="Scheduled times that were skipped, for example while the server was stopped."
                 />
               </>
             )}
@@ -210,6 +215,17 @@ export function HomeScreen() {
                       render: (_: unknown, row: SummaryHub) =>
                         row.has_workflows ? (
                           row.failed ? <Text type="danger">{count(row.failed)}</Text> : count(row.failed)
+                        ) : (
+                          ""
+                        ),
+                    },
+                    {
+                      title: "Missed",
+                      key: "missed",
+                      align: "right" as const,
+                      render: (_: unknown, row: SummaryHub) =>
+                        row.has_workflows ? (
+                          row.missed ? <Text type="warning">{count(row.missed)}</Text> : count(row.missed)
                         ) : (
                           ""
                         ),

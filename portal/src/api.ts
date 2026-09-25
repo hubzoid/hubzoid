@@ -141,6 +141,7 @@ export type SummaryHub = {
   has_workflows: boolean;
   runs: number | null;
   failed: number | null;
+  missed: number | null;
 };
 export type Summary = {
   period: "24h" | "7d" | "30d";
@@ -160,6 +161,7 @@ export type Summary = {
     denials: number;
     runs: number | null;
     failed: number | null;
+    missed: number | null;
   };
   hubs: SummaryHub[];
 };

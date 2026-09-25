@@ -93,8 +93,10 @@ def summary(engine, hubs: dict[str, str], since: float) -> dict:
     Console routes on. Messages, conversations and active users count chat turns
     only; tokens and cost include workflow model calls. `unpriced` counts rows
     that used tokens but have no price, so a cost total is never shown as
-    complete when it is not. `recording_since` is the first row ever written:
-    before it, Hubzoid was not counting."""
+    complete when it is not. `recording_since` is the first row written for
+    these hubs: numbers before it are not known to be complete. Rows of other
+    hubs never inform it, so a hub admin learns nothing of hubs outside their
+    scope."""
     out: dict = {"hubs": {}, "active_users": 0, "recording_since": None}
     if not hubs:
         return out
@@ -120,7 +122,8 @@ def summary(engine, hubs: dict[str, str], since: float) -> dict:
         out["active_users"] = c.execute(text(
             f"SELECT COUNT(DISTINCT subject) FROM hz_usage WHERE kind='chat' AND ts >= :s AND {in_hubs}"),
             params).scalar() or 0
-        out["recording_since"] = c.execute(text("SELECT MIN(ts) FROM hz_usage")).scalar()
+        out["recording_since"] = c.execute(text(
+            f"SELECT MIN(ts) FROM hz_usage WHERE {in_hubs}"), names).scalar()
     for hub, messages, chats, users, tin, tout, cost, unpriced in rows:
         key = hubs.get(hub)
         if key is None:
