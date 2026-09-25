@@ -1,4 +1,4 @@
-# Hubzoid MCP server. MIT licensed like the rest of the repository.
+# Hubzoid MCP server. Apache-2.0 licensed like the rest of the repository.
 """Hosted MCP server — expose a hub's tools + knowledge over Streamable HTTP.
 
 The inverse of `loaders/mcp.py` (which *consumes* MCP servers): this module

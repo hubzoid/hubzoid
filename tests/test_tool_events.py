@@ -1,6 +1,6 @@
 """Tests for the tool-activity blockquote formatter.
 
-One line per tool call: ``> ✓ **name** `args```. Errors get a separate
+One line per tool call: ``> ↳ **name** `args```. Errors get a separate
 ``> ⚠ **name** message`` line because the agent's reply may not always
 surface failures clearly. No matching "returned" line on success.
 """
@@ -10,11 +10,11 @@ from hubzoid import tool_events
 
 
 # ---------------------------------------------------------------------------
-# format_call: one line per call, ✓ icon, no result size
+# format_call: one line per call, ↳ icon, no result size
 # ---------------------------------------------------------------------------
 def test_format_call_with_dict_args():
     out = tool_events.format_call("read_knowledge", {"name": "jexl-expressions"})
-    assert "✓" in out
+    assert "↳" in out
     assert "**read_knowledge**" in out
     assert "name=jexl-expressions" in out
     # Wrapped in blank-line-padded blockquote for clean rendering.
@@ -55,7 +55,7 @@ def test_format_call_strips_backticks():
 # ---------------------------------------------------------------------------
 def test_format_call_full_mode_is_inline_blockquote():
     out = tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="full")
-    assert out.startswith("\n\n> ✓ ")
+    assert out.startswith("\n\n> ↳ ")
     assert "**read_knowledge**" in out
 
 

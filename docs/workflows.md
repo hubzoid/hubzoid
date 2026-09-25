@@ -61,7 +61,9 @@ def daily_report():
 - `hub.state` is a small durable dictionary per workflow, for things like "last
   item handled". It survives restarts and upgrades.
 
-`hubzoid new workflow <name> <hub>` scaffolds one. `hubzoid doctor <hub>`
+`hubzoid new workflow <name> <hub>` scaffolds a manual, model-free example.
+Run it with `hubzoid schedule run <hub> <function_name>` using the command printed
+by the scaffold. Add a schedule only after testing its effects. `hubzoid doctor <hub>`
 checks every workflow file loads.
 
 ## Calling a model
@@ -79,7 +81,7 @@ no tools. If the reply does not match `response_model`, the call raises
 
 Each call is saved as a step, so a workflow that resumes after a restart does
 not pay for the same call twice. Each call also writes a usage row: tokens and
-estimated cost appear on the Console's **Overview**.
+estimated cost appear on the Console's **Agents** dashboard.
 
 ## Who a workflow acts as
 

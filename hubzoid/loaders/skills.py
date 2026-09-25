@@ -21,7 +21,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import frontmatter
-from .._fs import resolve_bucket
+from .._fs import agent_read_refusal, resolve_bucket
 
 log = logging.getLogger("hubzoid")
 
@@ -47,7 +47,7 @@ def load_hub(hub_dir: Path) -> list[LoadedSkill]:
 
     A malformed hub skill raises (fail loud) — it only affects that one hub.
     """
-    return _scan_dir(resolve_bucket(hub_dir, "skills"))
+    return _scan_dir(resolve_bucket(hub_dir, "skills"), hub_dir=hub_dir)
 
 
 def load_all(hub_dir: Path) -> list[LoadedSkill]:
@@ -80,7 +80,7 @@ def load_core() -> list[LoadedSkill]:
                      resilient=True)
 
 
-def _scan_dir(skills_dir: Path | None, *, resilient: bool = False) -> list[LoadedSkill]:
+def _scan_dir(skills_dir: Path | None, *, resilient: bool = False, hub_dir: Path | None = None) -> list[LoadedSkill]:
     if skills_dir is None:
         return []
     out: list[LoadedSkill] = []
@@ -91,7 +91,7 @@ def _scan_dir(skills_dir: Path | None, *, resilient: bool = False) -> list[Loade
             md = _find_skill_file(child)
         elif child.is_file() and child.suffix.lower() == ".md" and not child.name.startswith("."):
             md = child
-        if md is None:
+        if md is None or agent_read_refusal(hub_dir or skills_dir.parent, md):
             continue
         try:
             out.append(_load_one(md))

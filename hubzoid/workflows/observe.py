@@ -122,10 +122,10 @@ def catalog(hub_dir) -> list[dict]:
             row["state"] = "error"
         elif row["name"] in paused:
             row["state"] = "paused"
-        elif not enabled:
-            row["state"] = "disabled"
         elif not row["schedule"]:
             row["state"] = "manual"
+        elif not enabled:
+            row["state"] = "disabled"
         elif stale:
             row["state"] = "stale"
         else:
@@ -169,8 +169,8 @@ def markdown_catalog(hub_dir) -> list[dict]:
             source=f"schedule/{t.name}.md",
             schedule=(f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule),
             timezone="server local time", error=None, enabled=on,
-            state=("paused" if f"md:{t.name}" in paused else "disabled" if not on
-                   else "event" if t.is_webhook else "scheduled"),
+            state=("paused" if f"md:{t.name}" in paused else "definition-disabled" if not t.enabled
+                   else "disabled" if disabled else "event" if t.is_webhook else "scheduled"),
             next_run=nxt.astimezone().isoformat() if nxt else None,
             last_dispatch=last.get("last_fired_iso"), missed=0,
             heartbeat=None, downtime=None,

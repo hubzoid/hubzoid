@@ -1,5 +1,5 @@
 export type Me = { subject: string; org_admin: boolean; manageable: string[] };
-export type Hub = { key: string; name: string; authoritative: boolean };
+export type Hub = { key: string; name: string; model_id?: string; can_chat?: boolean; authoritative: boolean };
 export type Permission = {
   permission: string;
   label: string;

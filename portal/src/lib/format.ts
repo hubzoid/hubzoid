@@ -109,7 +109,7 @@ export function validateSubject(raw: string): string | null {
   const value = raw.trim().toLowerCase();
   if (!value) return "Enter an email address.";
   if (value === EVERYONE) return "Use the public access control instead.";
-  if (/^workflow:[a-z0-9_.-]+$/.test(value)) return null;
+  if (/^workflow:(?:md:)?[a-z0-9_.-]+$/.test(value)) return null;
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return null;
   return "Enter a valid email address (or workflow:<name> for a service).";
 }
@@ -180,6 +180,7 @@ export function personStatus(p: {
 
 export function workflowState(state: string): Presentation {
   switch (state) {
+    case "definition-disabled": return { label: "Disabled in file", color: "default", hint: "Enable this task in its schedule file when it is ready." };
     case "scheduled":
       return { label: "Scheduled", color: "green", hint: "The scheduler is running and will fire this on time." };
     case "manual":
@@ -387,3 +388,27 @@ export function describeDecision(row: AuditRow, ctx: ActivityContext): Sentence 
     detail,
   };
 }
+
+/** Keep unfamiliar cron expressions exact rather than inventing a schedule. */
+export function describeCron(cron: string): string {
+  const p = cron.trim().split(/\s+/);
+  if (p.length !== 5) return "Custom schedule";
+  const [minute, hour, day, month, weekday] = p;
+  if (day !== "*" || month !== "*") return "Custom schedule";
+  if (hour === "*" && weekday === "*" && minute === "*") return "Every minute";
+  if (hour === "*" && weekday === "*" && /^\*\/\d+$/.test(minute)) return `Every ${minute.slice(2)} minutes`;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+    const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+    if (weekday === "*") return `Daily at ${time}`;
+    if (weekday === "1-5") return `Weekdays at ${time}`;
+    if (/^[0-7]$/.test(weekday)) return `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(weekday) % 7]} at ${time}`;
+  }
+  return "Custom schedule";
+}
+
+export function prettyOutput(value?: string | null): string {
+  if (!value) return "";
+  try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+}
+
+export const short = (n: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n);

@@ -56,6 +56,8 @@ def _start(captured_env, tmp_path, **overrides):
 # Off-flags
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("flag", [
+    "ENABLE_SIGNUP",
+    "ENABLE_OAUTH_SIGNUP",
     "ENABLE_COMMUNITY_SHARING",
     "ENABLE_DIRECT_CONNECTIONS",
     "ENABLE_EVALUATION_ARENA_MODELS",
@@ -443,3 +445,10 @@ def test_operator_env_beats_mcp_key_defaults(captured_env, tmp_path, monkeypatch
     monkeypatch.setenv("ENABLE_API_KEYS", "False")
     env = _start(captured_env, tmp_path, enable_api_keys=True)
     assert env["ENABLE_API_KEYS"] == "False"
+
+
+@pytest.mark.parametrize("flag", ["ENABLE_SIGNUP", "ENABLE_OAUTH_SIGNUP"])
+def test_signup_operator_override_is_preserved(captured_env, tmp_path, monkeypatch, flag):
+    monkeypatch.setenv(flag, "True")
+    env = _start(captured_env, tmp_path)
+    assert env[flag] == "True"

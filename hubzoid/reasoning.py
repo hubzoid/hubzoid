@@ -65,7 +65,7 @@ def normalize_thinking(raw: str | None) -> str:
 #   compact -> a collapsible <details> dropdown per call (web folds it; the
 #              Slack adapter strips it). Short label visible, args on expand.
 #              Default — keeps provenance without burying the answer.
-#   full    -> the legacy inline `> ✓ **tool** \`args\`` blockquote on every
+#   full    -> the legacy inline `> ↳ **tool** \`args\`` blockquote on every
 #              surface (verbose; useful for debugging).
 #   off     -> emit nothing.
 TOOL_MODES = ("off", "compact", "full")

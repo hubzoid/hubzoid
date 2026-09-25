@@ -1,32 +1,27 @@
 import { useState } from "react";
 import { Button, Card, Empty, Input, Space, Tag, Tooltip, Typography } from "antd";
 import { Search } from "lucide-react";
-import { query, type Hub, type Me, type Overview, type Workflow } from "../api";
-import { useData } from "../hooks/useData";
+import { type Hub, type SummaryHub, type Workflow } from "../api";
 import { agentHref } from "../hooks/useRoute";
-import { AgentAvatar, PageHeader } from "../components/common";
+import { AgentAvatar } from "../components/common";
+
+import { Cost } from "../components/UsageCost";
+
+import { short } from "../lib/format";
 
 const { Text } = Typography;
 
-export function AgentsScreen({ hubs }: { me: Me; hubs: Hub[] }) {
+export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?: Workflow[]; usage?: SummaryHub[] }) {
   const [search, setSearch] = useState("");
-  const overview = useData<Overview>("/overview");
-  const workflows = useData<{ workflows: Workflow[] }>("/workflows" + query({}));
   const list = hubs.filter(
     (h) =>
       h.name.toLowerCase().includes(search.toLowerCase()) ||
       h.key.toLowerCase().includes(search.toLowerCase()),
   );
-  const byHub = (key: string) => (workflows.data?.workflows ?? []).filter((w) => w.hub === key);
+  const byHub = (key: string) => (workflows ?? []).filter((w) => w.hub === key);
 
   return (
     <>
-      <PageHeader
-        eyebrow="Your workspace"
-        title="Agents"
-        description="Choose an agent to decide who can use it, check its scheduled work, or review what happened."
-      />
-
       <div className="agents-bar">
         <Input
           aria-label="Search agents"
@@ -39,7 +34,6 @@ export function AgentsScreen({ hubs }: { me: Me; hubs: Hub[] }) {
         />
         <Text type="secondary" className="agents-count">
           {hubs.length} {hubs.length === 1 ? "agent" : "agents"}
-          {overview.data ? ` · ${overview.data.people} people` : ""}
         </Text>
       </div>
 
@@ -55,6 +49,7 @@ export function AgentsScreen({ hubs }: { me: Me; hubs: Hub[] }) {
         <div className="agent-grid">
           {list.map((h) => {
             const flows = byHub(h.key);
+            const metrics = usage?.find((row) => row.key === h.key);
             const scheduled = flows.filter((w) => w.schedule).length;
             const stale = flows.some((w) => w.state === "stale");
             const broken = flows.some((w) => w.state === "error");
@@ -86,14 +81,14 @@ export function AgentsScreen({ hubs }: { me: Me; hubs: Hub[] }) {
                       <Tag color="gold">Legacy access</Tag>
                     </Tooltip>
                   )}
-                  {workflows.data &&
+                  {workflows &&
                     (stale ? (
                       <Tag color="red">Scheduler stopped</Tag>
                     ) : broken ? (
                       <Tag color="red">Workflow error</Tag>
                     ) : scheduled ? (
                       <Tag>
-                        {scheduled} scheduled {scheduled === 1 ? "workflow" : "workflows"}
+                        {flows.length} {flows.length === 1 ? "workflow" : "workflows"} · {scheduled} with a schedule
                       </Tag>
                     ) : flows.length ? (
                       <Tag>{flows.length} manual {flows.length === 1 ? "workflow" : "workflows"}</Tag>
@@ -101,6 +96,18 @@ export function AgentsScreen({ hubs }: { me: Me; hubs: Hub[] }) {
                       <Tag>No workflows</Tag>
                     ))}
                 </Space>
+                {metrics && <dl className="agent-card-usage" aria-label={`${h.name} usage`}>
+                  <div>
+                    <dt>Tokens used</dt>
+                    <dd>{short(metrics.input_tokens + metrics.output_tokens)}</dd>
+                    <small>{short(metrics.input_tokens)} in · {short(metrics.output_tokens)} out</small>
+                  </div>
+                  <div>
+                    <dt>Approx. cost</dt>
+                    <dd><Cost usd={metrics.cost_usd} unpriced={metrics.unpriced} /></dd>
+                    <small>USD</small>
+                  </div>
+                </dl>}
                 <div className="agent-card-actions" onClick={(e) => e.stopPropagation()}>
                   <Button type="primary" href={agentHref(h.key, "access")}>
                     Manage access

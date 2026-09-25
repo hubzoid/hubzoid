@@ -20,7 +20,7 @@ sub-agents.
 Hubzoid is two things layered on top of each other.
 
 1. **The open-source framework.** The Python package you just installed.
-   MIT licensed. The substrate. Lives at `github.com/hubzoid/hubzoid`.
+   Apache-2.0 licensed. The substrate. Lives at `github.com/hubzoid/hubzoid`.
 2. **The Hubzoid consulting practice.** A service company that deploys
    role-scoped hubs for mid-enterprise organizations in six weeks, fixed
    scope, fixed price. Lives at `hubzoid.com`.

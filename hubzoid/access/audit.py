@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """The access decision log, written where the decision is made: the runtime.
 
 Open WebUI never sees a tool call, so the allow/deny can only be recorded here.

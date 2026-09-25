@@ -54,9 +54,9 @@ class Check:
 # than silently corrupting eval verdicts.
 
 _THINK_RE = re.compile(r"<think>.*?(?:</think>|\Z)", re.DOTALL | re.IGNORECASE)
-_DETAILS_RE = re.compile(r"<details>\s*<summary>\s*[✓⚠].*?(?:</details>|\Z)",
+_DETAILS_RE = re.compile(r"<details>\s*<summary>\s*[✓↳⚠].*?(?:</details>|\Z)",
                          re.DOTALL | re.IGNORECASE)
-_TOOL_LINE_RE = re.compile(r"^[ \t]*>[ \t]*[✓⚠].*$", re.MULTILINE)
+_TOOL_LINE_RE = re.compile(r"^[ \t]*>[ \t]*[✓↳⚠].*$", re.MULTILINE)
 _BLANK_RUN_RE = re.compile(r"\n{3,}")
 
 

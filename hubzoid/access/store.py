@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """The one access store: per-hub permissions on Casbin, direct grants only.
 
 This is the single authority every surface consults through `can(subject, hub,
@@ -463,6 +463,37 @@ class GrantStore:
                 self._audit(conn, "bootstrap", "activate", None, ORG, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
+
+    def provision_owner(self, subject: str, hub: str, *, fresh: bool = False) -> bool:
+        """Provision a configured, verified owner once per hub, never on every login.
+
+        Caller verifies the account and matches it to operator configuration.
+        The marker survives grant revocation and prevents login restoring access.
+        Existing hubs retain their authority mode until explicitly migrated.
+        """
+        subject, hub = normalize(subject), normalize(hub)
+        _validate_grant(subject, hub, USE_HUB)
+        marker = f"initial_owner:{hub}"
+        with self._engine.begin() as conn:
+            self._read_revision_locked(conn)
+            if self._meta_get(conn, marker):
+                return False
+            if self._meta_get(conn, "suspended:" + subject) == "1":
+                return False
+            # Organization setup is once per store, not once per hub. Adding
+            # another hub to a gateway must not restore a revoked org role or
+            # replace the administrators chosen by an earlier bootstrap.
+            if not self._meta_get(conn, "bootstrapped"):
+                self._grant_in_txn(conn, subject, ORG, MANAGE_ACCESS, "owner-setup")
+            self._grant_in_txn(conn, subject, hub, USE_HUB, "owner-setup")
+            self._ensure_identity(conn, subject)
+            self._meta_set(conn, marker, subject)
+            self._meta_set(conn, "bootstrapped", "1")
+            if fresh:
+                self._meta_set(conn, f"casbin_authoritative:{hub}", "1")
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+        return True
 
     def _org_admins(self, conn) -> set[str]:
         rows = conn.execute(

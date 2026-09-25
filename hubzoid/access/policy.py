@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """The access decision. Pure functions, no I/O, trivially testable.
 
 A restricted tool requires a permission (its file's normalized stem). A caller

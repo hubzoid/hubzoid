@@ -55,7 +55,7 @@ export function toggle(selected: string[], permission: string, on: boolean) {
   return selected.filter((p) => p !== permission);
 }
 
-export type Lock = { reason: string } | null;
+export type Lock = { reason: string; label?: "Inherited" | "Required" } | null;
 
 /**
  * Why a checkbox cannot be changed, or null when it can. The backend enforces
@@ -81,6 +81,7 @@ export function lockFor(
     return { reason: "Public access is managed with the switch above." };
   if (row.inherited.includes(permission))
     return {
+      label: "Inherited",
       reason:
         "Held through organization administrator rights. Change it under People.",
     };
@@ -92,6 +93,7 @@ export function lockFor(
     return { reason: "Only organization administrators can change this." };
   if (permission === USE_HUB && selected.some((p) => p !== USE_HUB))
     return {
+      label: "Required",
       reason:
         "Required by the other selected capabilities. Use “Remove all access” to take everything away.",
     };

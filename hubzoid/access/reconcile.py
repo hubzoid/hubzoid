@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """One-way visibility projection: Casbin `use_hub` -> Open WebUI model visibility.
 
 Casbin is the authority; OWUI's model visibility is a mirror Hubzoid owns, so a
@@ -111,6 +111,9 @@ def sync_owui(hub_dir) -> dict:
 def sync_status(hub_dir) -> dict:
     from . import store_for
 
+    from .. import deployment
+    if not deployment.read(hub_dir):
+        return {"state": "direct"}
     gs = store_for(hub_dir)
     return gs.metadata("visibility_sync", {"state": "not-run"})
 

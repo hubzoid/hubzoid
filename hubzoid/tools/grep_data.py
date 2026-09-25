@@ -15,6 +15,7 @@ Each cap returns a refine hint so the model knows what to narrow next.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -22,8 +23,8 @@ from pathlib import Path
 
 from agents import function_tool
 
-from .. import _fs
 from .._fs import resolve_bucket
+from .files import _read_refusal
 from ._caps import truncate_with_overflow
 
 # --- Caps ------------------------------------------------------------------
@@ -70,24 +71,23 @@ def make(ctx) -> list:
         if rd is None:
             return "[grep_data: raw_data/ is not present in this hub.]"
 
-        target = _resolve_inside_hub(hub_dir, path)
-        if target is None:
-            return f"[grep_data refused: {path!r} is outside the hub directory]"
-        if _fs.is_under_restricted(hub_dir, target):
-            return f"[grep_data refused: {path!r} is in the restricted/ folder]"
+        target = hub_dir / path
+        reason = _read_refusal(hub_dir, target)
+        if reason:
+            return f"[grep_data refused: {path!r}: {reason}]"
         if not target.exists():
             return f"[grep_data: {path!r} not found]"
 
         context = max(0, min(5, int(context)))
 
         if shutil.which("rg"):
-            hits = _run_rg(pattern, target, context)
+            hits = _run_rg(pattern, target, context, hub_dir)
         else:
             try:
                 regex = re.compile(pattern)
             except re.error as exc:
                 return f"[grep_data: invalid regex {pattern!r} ({exc})]"
-            hits = _run_python(regex, target, context)
+            hits = _run_python(regex, target, context, hub_dir)
 
         body = _format(hits, hub_dir)
         body, _ = truncate_with_overflow(
@@ -102,82 +102,73 @@ def make(ctx) -> list:
     return [grep_data]
 
 
-# --- Path resolution -------------------------------------------------------
-def _resolve_inside_hub(hub_dir: Path, path: str) -> Path | None:
-    target = (hub_dir / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
-    hub_root = hub_dir.resolve()
-    if target == hub_root or hub_root in target.parents:
-        return target
-    return None
-
-
 # --- Backends --------------------------------------------------------------
-def _run_rg(pattern: str, target: Path, context: int) -> list[tuple[str, int, str]]:
-    """Shell out to ripgrep. Returns [(rel_path_from_target, line_no, line_text)]."""
-    cmd = ["rg", "--line-number", "--no-heading", "--color", "never"]
-    for d in IGNORE_DIRS:
-        cmd.extend(["--glob", f"!{d}"])
-    if context:
-        cmd.extend(["-C", str(context)])
-    cmd.extend(["--", pattern, str(target)])
+def _run_rg(pattern: str, target: Path, context: int, hub_dir: Path) -> list[tuple[str, int, str]]:
+    """Search batches of approved files, never give rg a directory to recurse.
 
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return []
+    --no-config prevents local ripgrep configuration from adding a preprocessor
+    or changing traversal. JSON preserves filenames and surrounding context.
+    """
+    from itertools import islice
 
+    paths = iter(_walk(target, hub_dir))
     out: list[tuple[str, int, str]] = []
-    for line in proc.stdout.splitlines():
-        parsed = _parse_rg_line(line, target)
-        if parsed:
-            out.append(parsed)
-    return out
-
-
-def _parse_rg_line(line: str, target: Path) -> tuple[str, int, str] | None:
-    """rg lines: '<path>:<lineno>:<content>' (or '-' for context separator)."""
-    if not line or line == "--":
-        return None
-    parts = line.split(":", 2)
-    if len(parts) < 3:
-        return None
-    raw_path, lineno_str, content = parts
-    try:
-        lineno = int(lineno_str)
-    except ValueError:
-        return None
-    return (raw_path, lineno, content)
-
-
-def _run_python(regex: re.Pattern, target: Path, context: int) -> list[tuple[str, int, str]]:
-    """Walk target with os.walk; skip ignored dirs, binaries, oversized files."""
-    out: list[tuple[str, int, str]] = []
-    if target.is_file():
-        out.extend(_grep_file(regex, target, context))
-        return out
-
-    for p in _walk(target):
-        out.extend(_grep_file(regex, p, context))
-        if len(out) > MAX_MATCHES * 2:  # short-circuit; cap-format trims later
+    while batch := list(islice(paths, 64)):
+        cmd = ["rg", "--no-config", "--json", "--max-count", str(MAX_PER_FILE + 1)]
+        if context:
+            cmd.extend(["-C", str(context)])
+        cmd.extend(["--", pattern, *(str(p) for p in batch)])
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        except subprocess.TimeoutExpired:
+            break
+        allowed = {str(p) for p in batch}
+        for line in proc.stdout.splitlines():
+            event = json.loads(line)
+            if event.get("type") not in ("match", "context"):
+                continue
+            data = event["data"]
+            path = data["path"].get("text")
+            content = data["lines"].get("text")
+            if path in allowed and content is not None:
+                out.append((path, data["line_number"], content.rstrip("\r\n")))
+        if len(out) > MAX_MATCHES * 2:
             break
     return out
 
 
-def _walk(root: Path):
-    """Yield files under root, skipping ignored dirs and obvious binaries."""
+def _run_python(regex: re.Pattern, target: Path, context: int, hub_dir: Path) -> list[tuple[str, int, str]]:
+    out: list[tuple[str, int, str]] = []
+    for p in _walk(target, hub_dir):
+        out.extend(_grep_file(regex, p, context))
+        if len(out) > MAX_MATCHES * 2:
+            break
+    return out
+
+
+def _walk(root: Path, hub_dir: Path):
+    """The same per-file authorization and traversal for BOTH search backends."""
     import os
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
-        for fn in filenames:
-            p = Path(dirpath) / fn
-            try:
-                if p.stat().st_size > MAX_FILE_BYTES:
-                    continue
-            except OSError:
-                continue
-            yield p
+
+    def allowed_file(p: Path) -> bool:
+        if _read_refusal(hub_dir, p):
+            return False
+        try:
+            return p.is_file() and p.stat().st_size <= MAX_FILE_BYTES
+        except OSError:
+            return False
+
+    if root.is_file():
+        if allowed_file(root):
+            yield root.absolute()
+        return
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [d for d in dirnames
+                       if d not in IGNORE_DIRS and not _read_refusal(hub_dir, Path(dirpath) / d)]
+        for name in filenames:
+            p = Path(dirpath) / name
+            if allowed_file(p):
+                yield p.absolute()
 
 
 def _grep_file(regex: re.Pattern, path: Path, context: int) -> list[tuple[str, int, str]]:

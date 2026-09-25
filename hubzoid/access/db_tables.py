@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Schema for the access store's tables in the shared operational database.
 
 All tables are `hz_`-prefixed (we never touch Open WebUI's schema). They are

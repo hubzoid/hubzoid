@@ -15,10 +15,12 @@ not introduce a separate auth layer. Pick a mode, drop the lines in, restart.
 | E. LDAP / Active Directory | enterprise on-prem identity |
 | F. Reverse-proxy trusted header (oauth2-proxy, Cloudflare Access) | identity terminated upstream |
 
-Each agent runs its own Open WebUI process with its own SQLite user database
-under `<hub>/.openwebui-data/webui.db`. Adding alice@example.com to one agent
-does not give her access to the others. This is intentional: agents are
-independent products.
+A standalone hub defaults to its own SQLite user database under
+`<hub>/.openwebui-data/webui.db`. A gateway shares one Open WebUI account
+database across its hubs. `DATABASE_URL` selects PostgreSQL when configured;
+Hubzoid's MCP key, group and OAuth lookups use the same store. Accounts and hub
+permissions remain separate: creating an account does not grant access to all
+agents. Use Console to grant each person's agent and capability access.
 
 ## Mode A: no auth (default)
 
@@ -27,7 +29,9 @@ port is in. Fine for localhost dev. Not fine for anything else.
 
 ## Mode B: email + password
 
-Six lines in `.env`. Admin invites everyone else.
+Public registration is off by default. Administrators create teammate accounts
+in **Admin Panel → Users** (`/admin`) in the chat app, then grant their agent
+access in Console. Account creation does not send an invitation email.
 
 ```bash
 WEBUI_AUTH=true
@@ -43,6 +47,13 @@ Boot once. OWUI sees `WEBUI_ADMIN_*` on a fresh DB and seeds you as admin
 without needing a public signup window. Restart hubzoid after deleting the
 two `WEBUI_ADMIN_*` lines. Then sign in at `/` with the email and password
 you set. From the admin panel, add the rest of your team.
+
+Both `ENABLE_SIGNUP` and `ENABLE_OAUTH_SIGNUP` default to false. Explicit
+operator settings can opt into registration. If persistent OWUI configuration
+is enabled, also turn off **Enable New Sign Ups** in its administrator settings;
+a previously saved value may take precedence over environment defaults. Existing
+accounts and administrator-created accounts continue to work. Initial owner setup
+is still possible on a fresh database.
 
 Hubzoid refuses to boot if `WEBUI_AUTH=true` and `WEBUI_SECRET_KEY` is not
 set, so that OWUI's public fallback secret (`t0p-s3cr3t`) never ends up
@@ -262,3 +273,14 @@ agent.
   terminates TLS and forwards. Public exposure is via the proxy.
 - See `docs/DEPLOYING.md` (coming with the native-venv prod doc) for
   Caddyfile + systemd templates.
+
+## Console owner and access
+
+Keep the designated owner email configured until its first verified login has
+provisioned Hubzoid permissions. The account must be an Open WebUI administrator.
+Only that configured account receives the initial owner grants. Subsequent logins
+do not restore revoked permissions. Local single-user mode uses `admin@localhost`.
+
+Authentication and account approval remain here in Open WebUI. Agent entry and
+restricted tools for managed hubs are granted in the Hubzoid Console. OIDC group
+synchronization does not replace those grants. See [access management](access-management.md).

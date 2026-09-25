@@ -7,6 +7,7 @@ shared OWUI's connection env and the edge's per-hub artifact routes.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -323,12 +324,19 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
     assert "/b/support/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
 
 
-def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
+@pytest.mark.parametrize("database_url", [None, "postgresql+psycopg://test@localhost/shared"])
+def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_url):
     """Each bridge is told where the SHARED gateway DB lives (HUBZOID_OWUI_DB),
     so the restricted-tool group lookup (access.owui_groups) reads the gateway's
     webui.db — not the nonexistent per-hub .openwebui-data/webui.db. Without
     this, restricted-tool access is dead in gateway mode."""
     sales, support = tmp_path / "sales", tmp_path / "support"
+    if database_url:
+        monkeypatch.setenv("DATABASE_URL", database_url)
+        monkeypatch.setenv("DATABASE_SCHEMA", "shared_owui")
+    else:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("DATABASE_SCHEMA", raising=False)
     for h in (sales, support):
         h.mkdir()
         (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
@@ -337,11 +345,18 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
         gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
         gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
     ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+    def fake_plan_with_hub_env(hub_dirs):
+        # settings.load mutates the process environment during plan creation.
+        os.environ["DATABASE_URL"] = "postgresql+psycopg://wrong@localhost/wrong"
+        os.environ["DATABASE_SCHEMA"] = "wrong"
+        return fake_plan
+    monkeypatch.setattr(gateway, "plan", fake_plan_with_hub_env)
 
     from hubzoid import webui
 
     def fake_start_gateway(**kwargs):
+        assert os.environ.get("DATABASE_URL") == database_url
+        assert os.environ.get("DATABASE_SCHEMA") == ("shared_owui" if database_url else None)
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
@@ -372,6 +387,11 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
     assert bridge_envs, "no bridges launched"
     for e in bridge_envs:
         assert e.get("HUBZOID_OWUI_DB") == expected
+        assert e.get("DATABASE_URL") == database_url
+    from hubzoid import deployment
+    manifest = deployment.read(sales)
+    assert manifest["owui_database_url"] == (database_url or f"sqlite:///{expected}")
+    assert manifest["owui_database_schema"] == ("shared_owui" if database_url else None)
 
 
 def _gateway_harness(tmp_path, monkeypatch):

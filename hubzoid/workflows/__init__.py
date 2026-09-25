@@ -1,4 +1,4 @@
-# Hubzoid workflows. MIT licensed like the rest of the repository.
+# Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
 """Scheduled deterministic workflows on embedded DBOS, behind a thin façade.
 
 A workflow runs a defined sequence of steps, including agent calls, to complete

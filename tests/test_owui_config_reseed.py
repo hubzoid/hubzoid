@@ -1,93 +1,29 @@
-"""One-time OWUI config reseed when OWUI_NATIVE_MCP first turns on.
-
-Clears the stale (previously-ignored) `config` table so OWUI re-seeds from env,
-runs exactly once (so admin-registered tool servers persist after), touches only
-the config table (users/groups/etc. untouched), and is safe on a fresh dir.
-"""
+"""Hubzoid owns connection wiring, not saved integration or account settings."""
 from __future__ import annotations
-
+import json
 import sqlite3
-
 from hubzoid import webui
 
-MARKER = ".hubzoid-owui-native-mcp-seeded"
+
+def test_owned_wiring_refresh_preserves_other_settings(tmp_path):
+    with sqlite3.connect(tmp_path / "webui.db") as con:
+        con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
+        original = {"openai.api_keys": ["old"], "openai.api_base_urls": ["http://old/v1"],
+                    "tool_server.connections": [{"id": "example"}], "user.permissions": {"tools": False}}
+        con.executemany("INSERT INTO config VALUES (?, ?)", [(k,json.dumps(v)) for k,v in original.items()])
+    webui._seed_owui_config_once(tmp_path)
+    webui._sync_owned_connections(tmp_path, {"OPENAI_API_KEYS": "fresh;other", "OPENAI_API_BASE_URLS": "http://one/v1;http://two/v1"})
+    with sqlite3.connect(tmp_path / "webui.db") as con:
+        values = {k:json.loads(v) for k,v in con.execute("SELECT key,value FROM config")}
+    assert values["openai.api_keys"] == ["fresh", "other"]
+    assert values["openai.api_base_urls"] == ["http://one/v1", "http://two/v1"]
+    for k in ("tool_server.connections", "user.permissions"):
+        assert values[k] == original[k]
+    webui._sync_owned_connections(tmp_path, {"OPENAI_API_KEYS": "rotated"})
+    with sqlite3.connect(tmp_path / "webui.db") as con:
+        assert json.loads(con.execute("SELECT value FROM config WHERE key='openai.api_keys'").fetchone()[0]) == ["rotated"]
 
 
-def _make_db(data_dir):
-    data_dir.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(data_dir / "webui.db")
-    con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
-    con.execute('CREATE TABLE "user" (id TEXT, email TEXT)')
-    con.execute("INSERT INTO config VALUES ('user.permissions', '{\"tools\": false}')")
-    con.execute("INSERT INTO config VALUES ('tool_server.connections', '[]')")
-    con.execute('INSERT INTO "user" VALUES (\'u1\', \'a@x.org\')')
-    con.commit()
-    con.close()
-
-
-def _config_count(data_dir):
-    con = sqlite3.connect(data_dir / "webui.db")
-    n = con.execute("SELECT count(*) FROM config").fetchone()[0]
-    con.close()
-    return n
-
-
-def test_reseed_clears_config_but_not_users(tmp_path):
-    dd = tmp_path / "data"
-    _make_db(dd)
-    webui._seed_owui_config_once(dd)
-    assert _config_count(dd) == 0                      # stale config cleared
-    con = sqlite3.connect(dd / "webui.db")
-    assert con.execute('SELECT count(*) FROM "user"').fetchone()[0] == 1   # users kept
-    con.close()
-    assert (dd / MARKER).exists()
-
-
-def test_reseed_is_one_time_and_preserves_admin_data(tmp_path):
-    dd = tmp_path / "data"
-    _make_db(dd)
-    webui._seed_owui_config_once(dd)                   # clears + marks
-    # Admin registers a tool server AFTER the reseed (persistence now on):
-    con = sqlite3.connect(dd / "webui.db")
-    con.execute("INSERT INTO config VALUES ('tool_server.connections', '[{\"id\":\"linear\"}]')")
-    con.commit()
-    con.close()
-    webui._seed_owui_config_once(dd)                   # marker present -> no-op
-    assert _config_count(dd) == 1                      # admin's server preserved
-
-
-def test_reseed_fresh_dir_no_db(tmp_path):
-    dd = tmp_path / "data"                             # no webui.db yet
-    webui._seed_owui_config_once(dd)
-    assert (dd / MARKER).exists()
-    assert not (dd / "webui.db").exists()              # does not fabricate a DB
-
-
-def test_reseed_retries_if_delete_fails(tmp_path):
-    # A webui.db with no `config` table (unexpected shape): DELETE errors, so we
-    # must NOT write the marker - leave it to retry next boot.
-    dd = tmp_path / "data"
-    dd.mkdir(parents=True)
-    con = sqlite3.connect(dd / "webui.db")
-    con.execute("CREATE TABLE other (x INT)")
-    con.commit()
-    con.close()
-    webui._seed_owui_config_once(dd)
-    assert not (dd / MARKER).exists()                  # not marked -> will retry
-
-
-def test_reseed_skips_when_tool_servers_registered(tmp_path):
-    # A hub that already has tool servers is in a working persistent state -
-    # never wipe it. (Guards the rare case of turning the flag on over a hub that
-    # was already using native MCP.)
-    dd = tmp_path / "data"
-    dd.mkdir(parents=True)
-    con = sqlite3.connect(dd / "webui.db")
-    con.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
-    con.execute("INSERT INTO config VALUES ('user.permissions', '{\"tools\": false}')")
-    con.execute("INSERT INTO config VALUES ('tool_server.connections', '[{\"id\":\"linear\"}]')")
-    con.commit()
-    con.close()
-    webui._seed_owui_config_once(dd)
-    assert _config_count(dd) == 2                       # preserved, not wiped
-    assert (dd / MARKER).exists()                       # still marked as handled
+def test_fresh_database_is_not_fabricated(tmp_path):
+    webui._sync_owned_connections(tmp_path, {"OPENAI_API_KEYS": "fresh"})
+    assert not (tmp_path / "webui.db").exists()

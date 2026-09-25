@@ -533,3 +533,30 @@ def test_roster_cannot_open_mcp_front_door(tmp_path, monkeypatch):
 
     app = mcp_server.build_mcp_app(hub)
     assert _call(app, _rpc("tools/list")).status_code == 401
+
+
+def test_authenticated_mcp_cannot_read_private_files(hub, mcp_app, monkeypatch):
+    """An otherwise authorized MCP caller gets the same file wall as chat."""
+    from hubzoid.tools import grep_data
+    monkeypatch.setattr(grep_data.shutil, "which", lambda _: None)
+    marker = "MCP_PRIVATE_CANARY_9214"
+    (hub / ".env").write_text(marker)
+    state = hub / ".openwebui-data"
+    state.mkdir()
+    (state / "webui.db").write_text(marker)
+    (hub / "raw_data").mkdir()
+    (hub / "raw_data" / "public.txt").write_text("public needle")
+    (hub / "restricted" / "secret.txt").write_text(marker)
+    for path in (".env", ".openwebui-data/webui.db"):
+        result = _result(_call(mcp_app, _rpc("tools/call", {
+            "name": "read_file", "arguments": {"path": path},
+        })))
+        text = result["content"][0]["text"]
+        assert "refused" in text
+        assert marker not in text
+    result = _result(_call(mcp_app, _rpc("tools/call", {
+        "name": "grep_data", "arguments": {"pattern": "needle|CANARY", "path": "."},
+    })))
+    text = result["content"][0]["text"]
+    assert "public needle" in text
+    assert marker not in text

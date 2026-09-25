@@ -30,6 +30,10 @@ Environment variables explicitly supported:
                          Default: 0 (links never expire).
   MODEL_LABEL            Optional name shown to OpenAI-compatible clients in
                          /v1/models. If blank, derived from AGENTS.md `name`.
+  ENABLE_SIGNUP          Open WebUI public email registration. Default: false;
+                         administrators add accounts through the chat admin panel.
+  ENABLE_OAUTH_SIGNUP    Automatic account creation through SSO. Default: false;
+                         explicitly opt in for an SSO onboarding deployment.
   WEBUI_NAME             Optional Open WebUI display name. If blank, Open
                          WebUI uses its default.
   PORT                   Open WebUI port. Default: 3080.
@@ -69,7 +73,7 @@ Environment variables explicitly supported:
                          (e.g. `read_knowledge`, `grep_data`) is surfaced.
                            compact (default) -> a collapsible dropdown per call
                              on the web UI; hidden on Slack.
-                           full -> the legacy inline `> ✓ tool` blockquote on
+                           full -> the legacy inline `> ↳ tool` blockquote on
                              every surface (verbose; useful for debugging).
                            off -> emit nothing.
                          Aliases: true->compact, false/hide->off, inline->full.

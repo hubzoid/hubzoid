@@ -82,3 +82,59 @@ def is_under_restricted(hub_dir: Path, target: Path) -> bool:
     if actual is not None:
         roots.append(actual.resolve())
     return any(resolved == r or r in resolved.parents for r in roots)
+
+
+# Public content is separate from operator credentials and runtime state.
+# Match path components, case-insensitively, before AND after resolving links.
+_PRIVATE_DIRS = frozenset({
+    "restricted", ".hubzoid", ".openwebui-data", ".git", ".hg", ".svn",
+    ".ssh", ".aws", ".gnupg",
+})
+
+
+def agent_read_refusal(hub_dir: Path, target: Path) -> str | None:
+    """Explain why a public content path is unreadable, or return None.
+
+    Applied before reads and to each recursively discovered file. Database
+    sidecars/backups and dotenv variants are private regardless of location;
+    SQLite signatures also catch renamed databases. This is not an OS sandbox
+    for trusted hub-local Python tools or concurrent hostile filesystem writers.
+    """
+    import os
+    import re
+    import stat
+
+    try:
+        root = hub_dir.resolve()
+        lexical_root = Path(os.path.abspath(hub_dir))
+        lexical = Path(os.path.abspath(target))
+        resolved = lexical.resolve()
+        try:
+            logical_parts = lexical.relative_to(lexical_root).parts
+        except ValueError:
+            logical_parts = lexical.relative_to(root).parts
+        resolved_parts = resolved.relative_to(root).parts
+        for part in (*logical_parts, *resolved_parts):
+            name = part.casefold()
+            if name in _PRIVATE_DIRS or name == ".webui_secret_key":
+                return "private hub state or restricted content"
+            if name.startswith(".env") or re.search(r"\.env(?:[.\-~].*)?$", name):
+                return "environment/credential file"
+            if re.search(r"\.(?:db|db3|sqlite|sqlite3|duckdb|mdb|accdb)(?:[.\-~].*)?$", name):
+                return "database or database sidecar"
+        if resolved.exists():
+            mode = resolved.stat().st_mode
+            if stat.S_ISREG(mode):
+                with resolved.open("rb") as stream:
+                    header = stream.read(16)
+                if (header == b"SQLite format 3\x00"
+                    or header[:4] in (b"\x37\x7f\x06\x82", b"\x37\x7f\x06\x83")
+                    or header[:8] == b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"):
+                    return "database or database sidecar"
+            elif not stat.S_ISDIR(mode):
+                return "not a regular content file"
+    except ValueError:
+        return "outside the hub directory"
+    except (OSError, RuntimeError):
+        return "path cannot be safely read"
+    return None

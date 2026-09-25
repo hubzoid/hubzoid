@@ -1,167 +1,103 @@
-# Access control: per-role tool gating
+# Access management
 
-Open WebUI decides who logs in (see [auth.md](auth.md)). This decides what a
-logged-in person may do once inside: which tools they can call. The model is
-never the gate. Every decision is deterministic code that runs before the tool,
-and every decision is logged.
+Open WebUI owns accounts and sign-in. Hubzoid owns access to agents and restricted
+tools. Administrators use **Admin Console → Agents → Access**, with the same verified
+chat session. Permissions are enforced outside the model.
 
-A hub with no `restricted/` folder is unaffected by any of this. Access control
-is entirely opt-in: you turn it on by adding the folder.
+## Accounts and grants
 
-## The model in one line
+Public sign-up is closed by default. An administrator creates login accounts in
+Open WebUI, then grants agent access in the Admin Console. **Add person** grants
+permissions to an email address; it does not create an account or send an
+invitation. Access can be prepared before the matching account exists.
 
-A critical tool lives in a file. The file name is the permission. An Open WebUI
-group of the same name is the key.
+The capability picker shows names and compact Inherited, Required or Locked
+labels. Question-mark buttons expose descriptions and restriction details on
+hover, keyboard focus or tap. Review and confirm before changes are saved.
 
-```
-restricted/erp.py   ->  permission "erp"   ->  OWUI group "erp"
-restricted/finance.py  ->  permission "finance"  ->  OWUI group "finance"
-```
+## Three independent permissions
 
-Being in the group unlocks every `@function_tool` in that file. The match is
-case insensitive and whitespace trimmed, so `ERP`, `erp`, and `" erp "`
-are the same door.
-
-## Setup
-
-### 1. Put the tool in `restricted/`
-
-Same as `tools_local/`, but the folder is `restricted/` and the file name is the
-permission. Name the file by what it should mean to the client (`sales.py`,
-`finance.py`), not necessarily by the system behind it.
-
-```python
-# <hub>/restricted/erp.py
-from agents import function_tool
-
-@function_tool
-def erp_sales(store: str = "ALL") -> str:
-    """Sales from the ERP."""
-    ...
-```
-
-### 2. Create the matching Open WebUI group
-
-In Open WebUI, create a group named `erp` and add the people who should reach
-that tool. Group membership is the grant. A person in two groups has both. There
-is no separate grant screen: Open WebUI's own group management is the admin UI.
-
-### 3. That is it, with Open WebUI
-
-Nothing else to wire. Open WebUI forwards the logged-in user's email to the
-bridge, and hubzoid looks up that user's groups in Open WebUI's own database (the
-Groups screen from step 2). So adding a person to the `erp` group grants them
-the `erp` permission on their **next message**. No proxy, no logout, no
-restart. Removing them revokes it just as fast. This is the client-editable
-model: the admin manages access entirely in the Open WebUI Groups UI, with no
-developer.
-
-(Under the hood: hubzoid sets `ENABLE_FORWARD_USER_INFO_HEADERS` when it launches
-Open WebUI, so each request carries `X-OpenWebUI-User-Email`; the bridge resolves
-that email to the user's groups via OWUI's `group_member` table, read-only and
-fail-closed.)
-
-**Other fronts, or a custom identity source (advanced).** The bridge also accepts
-explicit headers from a trusted reverse proxy. Groups are **unioned**, not
-overridden: a caller carries their OWUI groups, their roster groups (see below),
-and any header groups together.
-
-| Header | Meaning |
+| Capability | What it allows |
 |---|---|
-| `X-Hubzoid-User` | the user id (display + audit) |
-| `X-Hubzoid-Groups` | comma-separated group names; unioned onto the OWUI + roster groups |
-| `X-Hubzoid-Surface` | the front the request came from (default `owui`) |
+| Use this agent (`use_hub`) | Enter the hub through supported authenticated surfaces and use unrestricted tools |
+| A restricted module, such as `erp` | Call that module's tools; agent entry is included |
+| Manage access (`manage_access`) | Review/change access; this alone does not grant chat or restricted tools |
 
-**Roster parity across surfaces.** A hub's `identity/access.csv` (or `access.py`)
-is now consulted on the Open WebUI and MCP paths too, keyed by the logged-in
-email, not only on WhatsApp/Telegram. So a coordinator granted a group in the
-roster gets the matching permission on every surface, with no duplicate OWUI
-group to maintain. This is **additive**: an email absent from the roster keeps
-exactly its OWUI groups (nobody is locked out), and the roster can grant
-restricted-tool permissions but **cannot** open the MCP front door
-(`MCP_ACCESS_GROUP`), which stays OWUI-admin-only. Editing the CSV takes effect
-on the next request — no restart. A live `access.py` backing must define
-`groups_for_email(email)` to participate on these surfaces; a legacy file with
-only `resolve(surface, handle)` is never handed an email.
+An organization administrator manages access across the deployment. That is not
+a blanket grant to use every agent or every restricted tool. People with no entry
+permission do not see a managed hub in the chat picker, including chat-app admins.
+The bridge checks access again at execution.
 
-Use these when you terminate auth at a proxy (see [auth.md](auth.md) Mode F) or
-front the hub with something other than Open WebUI. They are trusted because
-reaching the bridge already requires its API key, and end users talk to the
-front, never to the bridge directly. A request that resolves to no groups can
-reach no restricted tool: fail closed is the default.
+## First owner
 
-## What is enforced, and where
+A newly initialized local hub provisions the verified `admin@localhost` account
+once. A shared deployment uses the designated existing Open WebUI administrator
+matching `WEBUI_ADMIN_EMAIL` or `HUBZOID_GATEWAY_ADMIN_EMAIL`. Configure it before
+the first sign-in. No ordinary user or arbitrary admin is promoted automatically.
 
-Two layers, both built from the same tool registry, so both backends are covered:
+On an unbootstrapped deployment the owner receives organization administration,
+with entry provisioned once per configured hub. An existing administration
+bootstrap is preserved. Adding a hub never restores a revoked organization role.
+Removing access later is intentional and
+is not undone on the next sign-in. Fresh hubs become authoritative; existing hubs
+keep their prior access mode until explicitly migrated.
 
-1. **Hidden.** The agent is offered only the tools the current user may use.
-   An ungranted restricted tool is not shown at all (OpenAI Agents SDK, via
-   per-run `is_enabled`). The agent never sees a door it cannot open.
-2. **Denied.** Every restricted tool re-checks at call time and fails closed,
-   writing the decision to the audit log. This holds even if the tool is reached
-   another way (a prompt injection naming it, the Claude backend, a test).
+See [administration](ADMINISTRATION.md) for recovery and migration commands.
 
-The deny layer is the wall. The hidden layer is the clean experience. The Claude
-backend gets the deny layer (it does not consult `is_enabled`); the OpenAI
-backend, the default, gets both.
+## Grant a teammate access
 
-## Surfaces: Slack and scheduled runs
+1. Open **Agents → the agent → Access → Add person**.
+2. Enter the exact email the person uses for chat sign-in.
+3. Choose capabilities, review the changes, and save.
+4. Share the chat URL. No account or invitation is created by an access grant.
+   Create or approve the account in the chat app if your sign-in policy requires it.
+5. Verify with that person's account that allowed agents appear and a disallowed
+   tool stays unavailable.
 
-A restricted door needs a verified person behind it. Open WebUI carries that.
-Slack, Telegram, and scheduled background runs do not, so they get the
-non-restricted tools only, and a restricted door is never reachable from them.
-The Slack adapter declares `X-Hubzoid-Surface: slack` so this is enforced, not
-assumed. Scheduled tasks run with no user, so they are anonymous and refused
-every restricted tool by the same fail-closed default.
+Changes apply atomically. If someone else edited access first, reload and review
+again. A lost response can leave the save uncertain; refresh before retrying.
+Use **People** to distinguish an administrator block from a pending or unavailable
+chat account. Reactivation does not recreate grants removed by an explicit block.
 
-To change which surfaces may reach restricted tools, set
-`HUBZOID_RESTRICTED_SURFACES` (comma-separated). Default: `owui,web,api`.
+## Restrict a tool
 
-## Secrets
+Put the tool factory in `restricted/<capability>.py`. All tools returned by that
+module share its capability name. Keep credentials in `restricted/.env` or your
+runtime's secret injection. Do not return secrets from a tool or workflow step.
 
-Secrets for restricted tools live in `restricted/.env`, which the runtime loads
-into the process environment at startup. The file-reading tools (`read_file`,
-`list_files`, `grep_data`) refuse any path under `restricted/`, so the model
-cannot read a credential by reading the file, even though the restricted tool's
-own code reads it to do its work. The model only ever sees the tool's result,
-never the secret.
+Optional `identity/permissions.yaml` gives capabilities useful labels,
+descriptions and sensitivity indicators. Fields are optional; no new required
+hub file is introduced. The Console discovers capability names without executing
+the restricted Python modules.
 
-```
-<hub>/restricted/.env        # ERP_PASSWORD=...  (model cannot read this)
-<hub>/restricted/erp.py   # the tool that uses it (gated by the erp group)
-```
+A Python workflow acts as `workflow:<function>`. A Markdown task acts as
+`workflow:md:<task>`. Grant the service identity only the tools the task needs.
+In Console, open **Add person**, select **Service**, and enter that exact
+identity (for example `workflow:md:daily-notes`). This grant does not create a
+credential or start the task.
 
-This protects ordinary secrets well. For a crown-jewel secret like an SSH key
-into a client's production system, hold it in a separate process under a
-different operating system user, so the kernel keeps the agent out rather than a
-denylist. That is a per-secret call, not the default.
+The built-in **Save shared knowledge** capability (`curator`) controls
+`remember`. Grant it in Console to people or workflow identities that should
+create or replace documents under `knowledge/_learned/`. These documents are
+shared agent knowledge, not private conversation memory. No `restricted/curator.py`
+file is required to make this capability appear.
 
-## The audit log
+## Existing hubs
 
-Every allow and every deny is written where the decision is made, the runtime,
-because Open WebUI never sees a tool call. Each decision is one row in the
-operational database (`hz_access_decisions`): time, hub, user, surface, tool,
-decision and reason. A restricted call whose row cannot be written is refused,
-so every call that ran is in the log. The Console's Activity page shows it.
+Unmigrated hubs retain their legacy group/roster rules. The Console labels this
+mode and does not pretend its draft grants have replaced the old authority.
+Follow the backup, dry-run and activation procedure in [ADMINISTRATION.md](ADMINISTRATION.md).
+The older mechanics remain documented in [legacy-access.md](legacy-access.md)
+for migration and diagnosis only. Do not use that guide to configure a new
+managed hub.
 
-Hubs upgraded from releases that wrote `<hub>/logs/access-YYYY-MM.jsonl` files
-get those files imported once, the first time the hub records or reads a
-decision. The files are left in place.
+## Administration boundary
 
-Read it with:
+Open WebUI's account, sign-in, connection and upstream administration controls
+remain available. Its functions and automations are Open WebUI features; they do
+not edit Hubzoid's hub-folder workflows or runtime configuration. Configure hub
+workflows in `schedule/` or `workflows/`, and inspect them in the Console.
 
-```bash
-hubzoid audit <hub>              # recent decisions
-hubzoid audit <hub> --denied     # only refusals
-hubzoid audit <hub> --user priya # one person
-```
-
-## Not yet here
-
-Per-person row and field scoping (a branch manager seeing only their own store's
-rows) is a separate axis, enforced at the data layer from the same verified
-identity, not by files or groups. It is out of scope for this layer. The tool
-gate answers "can this person touch ERP at all," not "which rows."
-
-For multi-hub setup, account ownership, migration preview, cutover and rollback,
-see [Administration](ADMINISTRATION.md).
+Agent prompts are not an authorization boundary. Do not expose the bridge port
+directly, trust browser-supplied identity headers, or enable development identity
+overrides on a shared deployment. See [DEPLOYING.md](DEPLOYING.md).

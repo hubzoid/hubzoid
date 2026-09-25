@@ -1,4 +1,4 @@
-import { Breadcrumb, Tabs, Tag, Tooltip } from "antd";
+import { Button, Breadcrumb, Tabs, Tag, Tooltip } from "antd";
 import type { Hub } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
 import { AgentAvatar, PageHeader } from "../components/common";
@@ -45,6 +45,7 @@ export function AgentDetail({
           </>
         }
       />
+      {hub.can_chat && hub.model_id && <Button href={`/?models=${encodeURIComponent(hub.model_id)}`} style={{ marginBottom: 16 }}>Open chat with {hub.name} ↗</Button>}
       <Tabs
         activeKey={tab}
         onChange={(key) => navigate(`/agents/${encodeURIComponent(hub.key)}/${key}`)}

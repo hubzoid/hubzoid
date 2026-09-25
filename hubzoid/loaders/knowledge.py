@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import frontmatter
-from .._fs import resolve_bucket
+from .._fs import agent_read_refusal, resolve_bucket
 
 log = logging.getLogger("hubzoid")
 
@@ -34,6 +34,8 @@ def load_all(hub_dir: Path) -> list[LoadedKnowledge]:
     out: list[LoadedKnowledge] = []
     for path in sorted(kdir.rglob("*.md"), key=lambda p: p.as_posix().lower()):
         if path.name.startswith(".") or path.name.lower() == "_index.md":
+            continue
+        if agent_read_refusal(hub_dir, path):
             continue
         # Isolate per-file failures: one malformed doc (e.g. broken YAML
         # frontmatter) must never blank the whole knowledge scan — skip and

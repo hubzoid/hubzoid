@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Load restricted tools from `<hub>/restricted/*.py` and tag each with the
 permission its file name implies.
 

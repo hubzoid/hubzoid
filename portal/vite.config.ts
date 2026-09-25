@@ -1,11 +1,20 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { readFileSync } from 'node:fs'
 
 // Served by the FastAPI bridge at /portal, built to hubzoid/portal_dist so the
 // package ships a static SPA (no Node at runtime).
 export default defineConfig({
   base: '/portal/',
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'bundled-font-licenses',
+    generateBundle() {
+      for (const name of ['Inter-OFL.txt', 'JetBrainsMono-OFL.txt']) {
+        this.emitFile({ type: 'asset', fileName: `licenses/${name}`,
+          source: readFileSync(new URL(`./src/assets/brand/fonts/${name}`, import.meta.url), 'utf8') })
+      }
+    },
+  }],
   build: {
     outDir: '../hubzoid/portal_dist',
     emptyOutDir: true,

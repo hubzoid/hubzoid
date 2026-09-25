@@ -9,6 +9,26 @@ from types import SimpleNamespace
 from hubzoid.workflows import observe, runtime
 
 
+def test_manual_workflow_is_available_with_schedules_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv('HUBZOID_SCHEDULES', '0')
+    monkeypatch.setattr(observe, 'definitions', lambda _: [dict(
+        name='first_check', schedule=None, timezone='UTC', error=None)])
+    assert observe.catalog(tmp_path)[0]['state'] == 'manual'
+
+
+def test_markdown_disabled_in_file_is_distinct_from_deployment(tmp_path, monkeypatch):
+    folder = tmp_path / 'schedule'
+    folder.mkdir()
+    for name, enabled in [('example', 'false'), ('daily', 'true')]:
+        (folder / f'{name}.md').write_text(
+            f'---\nschedule: "0 9 * * *"\nenabled: {enabled}\n---\nCheck the hub.\n')
+    monkeypatch.setenv('HUBZOID_DISABLE_SCHEDULE', '1')
+    rows = {r['name']: r for r in observe.markdown_catalog(tmp_path)}
+    assert rows['md:example']['state'] == 'definition-disabled'
+    assert rows['md:daily']['state'] == 'disabled'
+    assert all(r['next_run'] is None for r in rows.values())
+
+
 def test_stale_detection():
     now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     # Fresh heartbeat -> not stale.

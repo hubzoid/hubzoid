@@ -165,7 +165,7 @@ def test_model_can_load_promoted_agent_as_skill(runtime):
 # status lines, not silent pauses.
 # ---------------------------------------------------------------------------
 def test_streaming_surfaces_tool_calls_inline(runtime):
-    """Streamed output must contain a `> ✓ **tool_name**` blockquote when
+    """Streamed output must contain a `> ↳ **tool_name**` blockquote when
     the model calls a tool — one line per call, no separate confirm.
     """
     async def collect():
@@ -175,8 +175,8 @@ def test_streaming_surfaces_tool_calls_inline(runtime):
         return "".join(chunks)
 
     full = asyncio.new_event_loop().run_until_complete(collect())
-    # One ✓ marker per tool call. No 🔧 (collapsed into ✓ at call start).
-    assert "✓" in full, f"no tool-activity marker in stream:\n{full!r}"
+    # One ↳ marker per tool call. No 🔧 (collapsed into ↳ at call start).
+    assert "↳" in full, f"no tool-activity marker in stream:\n{full!r}"
     assert "🔧" not in full, f"old two-line format detected:\n{full!r}"
     # The model called read_knowledge, so its short name should appear.
     assert "read_knowledge" in full

@@ -40,7 +40,7 @@ the required experience, accounting for transition costs and practical
 portability. Neither custom UI nor a larger dependency is automatically
 disallowed; neither is justified by feature breadth alone.
 
-Hubzoid is **MIT, all of it** (see `LICENSING.md`) — there is no enterprise
+Hubzoid is **Apache-2.0, all of it** (see `LICENSING.md`) — there is no enterprise
 edition, license key, or paid tier in this repo; don't add feature gating.
 
 Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
@@ -84,7 +84,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
   must not `import open_webui` at module load (keeps cold-start fast and lets
   the bridge run headless via `--no-ui`).
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
-  execution backends (today: OpenAI Agents SDK and Claude Agent SDK). A
+  execution backends (today: OpenAI Agents SDK Claude Agent SDK and Codex app-server). A
   single hub folder must produce identical manual-testing surface across
   backends — same tool names, same input schemas, same outputs, same skills,
   same knowledge. To keep that invariant:
@@ -97,7 +97,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
       (`hubzoid/factory_claude.py: to_claude_tool`).
     - Runtime-specific construction (`Agent(...)`, `ClaudeAgentOptions(...)`,
       `Runner.run_streamed(...)`, `query(...)`) lives ONLY in
-      `factory.py`, `factory_claude.py`, `runtime.py`, `server.py`,
+      `factory.py`, `factory_claude.py`, `factory_codex.py`, `runtime.py`, `server.py`,
       and `cli.py`. Adding it elsewhere is a review-blocking smell.
     - Before adding a new tool or loader, ask: "would this behave the same
       under either backend?" If no, redesign or push the divergence into

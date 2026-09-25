@@ -58,6 +58,7 @@ function createFixture() {
     ],
     catalogs: {
       finance: [
+        perm("curator", "Save shared knowledge", "Use remember to create or replace shared agent knowledge."),
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
         perm("ledger", "Read ledger", "View accounting entries and balances."),

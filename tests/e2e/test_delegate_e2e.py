@@ -53,6 +53,6 @@ def test_delegate_dispatches_and_returns():
 
     out = asyncio.new_event_loop().run_until_complete(collect())
     # The subagent dispatch surfaces as a tool-activity marker for the Agent tool.
-    assert "✓" in out, f"no tool-activity marker (no dispatch?):\n{out!r}"
+    assert "↳" in out, f"no tool-activity marker (no dispatch?):\n{out!r}"
     # And the answer makes it back through the main agent.
     assert "down" in out.lower(), f"delegate answer not relayed:\n{out!r}"

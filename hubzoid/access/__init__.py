@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Access management: per-role tool gating for a hub, enforced in the runtime.
 
 The model is never the gate. A restricted tool lives in `<hub>/restricted/`, its

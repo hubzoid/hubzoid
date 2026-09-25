@@ -54,65 +54,59 @@ _OWUI_NATIVE_MCP_ENV = {
 
 
 def _seed_owui_config_once(data_dir: Path) -> None:
-    """One-time, when OWUI_NATIVE_MCP first turns on: clear OWUI's stale config
-    so it re-seeds from the CURRENT env now that persistence is on.
+    """Retained for compatibility; existing administrator settings are durable.
 
-    Why it is needed. OWUI's ``config`` table can hold a frozen snapshot from an
-    older OWUI/hubzoid version or an earlier persistence-on period. With
-    persistence off that snapshot was ignored; turning persistence on would make
-    it override the env (e.g. a stale ``tools=false`` permission hiding the tools
-    UI). So on the transition boot we drop the table and let OWUI write a fresh
-    one from env. From then on the env is the default and admin edits persist -
-    exactly the intended model.
-
-    Why it is safe. Only the ``config`` key-value table is touched. Users,
-    groups, models and access grants live in their own tables, and with
-    persistence off nothing in ``config`` was surviving restarts anyway, so
-    nothing durable is lost. A marker file makes it run exactly once, so
-    admin-registered tool servers (written after this) persist normally. A fresh
-    hub has no webui.db yet - OWUI simply seeds from env on first boot, and the
-    marker records that. Best-effort: any failure logs and lets the boot proceed.
+    Native MCP defaults now seed only absent keys through OWUI itself. Never
+    erase saved configuration just because an integration is enabled.
     """
-    marker = Path(data_dir) / ".hubzoid-owui-native-mcp-seeded"
-    if marker.exists():
-        return
+    return None
+
+
+def _local_task_headers(configs: dict, connection_env: dict[str, str]) -> dict:
+    """Forward only OWUI's task TYPE (e.g. title_generation) to local bridges.
+
+    {{TASK}} expands metadata.task, NOT task_body or message content. This
+    configuration is restricted to Hubzoid-owned loopback /v1 connections.
+    Remote/custom connections are not changed.
+    """
+    from urllib.parse import urlparse
+    for index, url in enumerate(connection_env.get("OPENAI_API_BASE_URLS", "").split(";")):
+        parsed = urlparse(url)
+        if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.path != "/v1":
+            continue
+        entry = configs.setdefault(str(index), dict(configs.get(url, {})))
+        entry.setdefault("headers", {})["X-Hubzoid-Task"] = "{{TASK}}"
+    return configs
+
+
+def _sync_owned_connections(data_dir: Path, connection_env: dict[str, str]) -> None:
+    """Refresh only Hubzoid-owned bridge wiring before OWUI reads persistence.
+
+    Users, integrations and all other saved settings remain untouched. A failed
+    update fails startup instead of serving a picker wired to stale credentials.
+    """
     db = Path(data_dir) / "webui.db"
-    if db.is_file():
-        try:
-            con = sqlite3.connect(db)
-            try:
-                # Safety: if an admin has already registered tool servers, the hub
-                # is already in a working persistent state - never wipe that. Only
-                # the stale, never-persisted transition case needs a reset.
-                row = con.execute(
-                    "SELECT value FROM config WHERE key = 'tool_server.connections'"
-                ).fetchone()
-                registered = False
-                if row and row[0]:
-                    try:
-                        parsed = row[0] if isinstance(row[0], list) else json.loads(row[0])
-                        registered = isinstance(parsed, list) and len(parsed) > 0
-                    except (ValueError, TypeError):
-                        registered = False
-                if registered:
-                    log.info("owui-native-mcp: tool servers already registered; skipping config reseed")
-                else:
-                    con.execute("DELETE FROM config")
-                    con.commit()
-                    log.info("owui-native-mcp: reseeded OWUI config from env (one-time)")
-            finally:
-                con.close()
-        except sqlite3.Error:
-            # Leave the marker unwritten so we retry on the next boot.
-            log.warning("owui-native-mcp: config reseed skipped", exc_info=True)
+    if not db.exists():
+        return
+    with sqlite3.connect(db) as con:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='config'").fetchone():
             return
-    try:
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-        marker.write_text("hubzoid: OWUI config seeded from env for native MCP\n")
-    except OSError:
-        log.warning("owui-native-mcp: could not write seed marker", exc_info=True)
+        for key, env_key in (("openai.api_base_urls", "OPENAI_API_BASE_URLS"),
+                             ("openai.api_keys", "OPENAI_API_KEYS")):
+            if env_key in connection_env:
+                con.execute("UPDATE config SET value=? WHERE key=?",
+                            (json.dumps(connection_env[env_key].split(";")), key))
+        row = con.execute("SELECT value FROM config WHERE key='openai.api_configs'").fetchone()
+        if row:
+            configs = _local_task_headers(json.loads(row[0]), connection_env)
+            con.execute("UPDATE config SET value=? WHERE key='openai.api_configs'", (json.dumps(configs),))
+
 
 _DEFAULT_OWUI_ENV: dict[str, str] = {
+    # Accounts are created by administrators; first-owner setup is upstream.
+    # Operators may explicitly opt into email or SSO account registration.
+    "ENABLE_SIGNUP": _OFF,
+    "ENABLE_OAUTH_SIGNUP": _OFF,
     # --- Strip platform / branding leaks --------------------------------
     "ENABLE_COMMUNITY_SHARING": _OFF,        # "Share to Open WebUI Community" CTA
     "ENABLE_DIRECT_CONNECTIONS": _OFF,       # users plug in their own provider keys
@@ -129,6 +123,7 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_RETRIEVAL_QUERY_GENERATION": _OFF, # RAG query rewriter: not used (hubzoid doesn't RAG)
     "ENABLE_API_KEY": _OFF,                  # per-user API keys defeat auth (name on OWUI <=0.9.5)
     "ENABLE_API_KEYS": _OFF,                 # same toggle, renamed in OWUI 0.9.6+
+    "DEFAULT_INTERFACE_SETTINGS": '{"showChangelog": false}',
     "ENABLE_VERSION_UPDATE_CHECK": _OFF,     # do not phone home from customer prod
     "ENABLE_MEMORY": _OFF,                   # OWUI's user-memory conflicts with hubzoid memory
     "ENABLE_OLLAMA_API": _OFF,               # we do not proxy ollama
@@ -472,7 +467,9 @@ def start(
     # OWUI (applied via direct assignment in _spawn_owui).
     connection_env = {
         "OPENAI_API_BASE_URL": f"http://127.0.0.1:{bridge_port}/v1",
+        "OPENAI_API_BASE_URLS": f"http://127.0.0.1:{bridge_port}/v1",
         "OPENAI_API_KEY": api_key,
+        "OPENAI_API_KEYS": api_key,
         "DEFAULT_MODELS": model_label,
         # Forward the logged-in user's identity to the bridge so per-role tool
         # access can resolve their groups. OWUI sends X-OpenWebUI-User-Email
@@ -578,7 +575,10 @@ def _spawn_owui(
 
     # 1. Wiring + per-hub state. Not operator-overridable.
     env["DATA_DIR"] = str(data_dir)
+    configs = _local_task_headers(json.loads(env.get("OPENAI_API_CONFIGS", "{}")), connection_env)
+    connection_env = {**connection_env, "OPENAI_API_CONFIGS": json.dumps(configs)}
     env.update(connection_env)
+    _sync_owned_connections(data_dir, connection_env)
 
     # 2. Auth default off for local dev. Operator overrides via .env.
     env.setdefault("WEBUI_AUTH", "False")
@@ -607,8 +607,7 @@ def _spawn_owui(
     if os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY:
         for key, value in _OWUI_NATIVE_MCP_ENV.items():
             env.setdefault(key, value)
-        # Make "env is the default" actually hold: on the first native-MCP boot,
-        # drop the stale (previously-ignored) config so OWUI re-seeds from env.
+        # Preserve saved integration settings while enabling native MCP defaults.
         _seed_owui_config_once(data_dir)
 
     # 6. The big strip. Apply hubzoid defaults; operator .env wins.

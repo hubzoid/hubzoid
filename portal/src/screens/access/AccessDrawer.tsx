@@ -6,11 +6,13 @@ import {
   Checkbox,
   Drawer,
   Input,
+  Radio,
   Space,
   Tag,
   Typography,
+  Tooltip,
 } from "antd";
-import { Circle, XCircle } from "lucide-react";
+import { Circle, CircleHelp, XCircle } from "lucide-react";
 import { ApiError, request, query, type Access, type Hub } from "../../api";
 import { errorText } from "../../hooks/useData";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
@@ -37,6 +39,14 @@ import {
 
 const { Text, Title, Paragraph } = Typography;
 
+function CapabilityHelp({ label, text }: { label: string; text: string }) {
+  return <Tooltip title={text} trigger={["hover", "focus", "click"]}>
+    <button type="button" className="capability-info" aria-label={`About ${label}`}>
+      <CircleHelp size={16} aria-hidden="true" />
+    </button>
+  </Tooltip>;
+}
+
 export function AccessDrawer({
   hub,
   access,
@@ -53,6 +63,7 @@ export function AccessDrawer({
   onReload: () => void;
 }) {
   const { modal } = App.useApp();
+  const [identityType, setIdentityType] = useState<"person" | "service">("person");
   const [touched, setTouched] = useState(false);
   const [checking, setChecking] = useState(false);
   const catalog = useMemo(() => toCatalog(access.permissions), [access.permissions]);
@@ -239,6 +250,7 @@ export function AccessDrawer({
   return (
     <Drawer
       title={title}
+      aria-label={title}
       open={!!draft}
       onClose={close}
       size={520}
@@ -260,13 +272,14 @@ export function AccessDrawer({
             <>
               {draft.mode === "add" ? (
                 <div className="field">
+                  <Radio.Group aria-label="Identity type" value={identityType} onChange={(e) => { setIdentityType(e.target.value); setDraft({ ...draft, subject: e.target.value === "service" ? "workflow:" : "" }); }} options={[{label: "Person", value: "person"}, {label: "Service", value: "service"}]} />
                   <label className="field-label" htmlFor="access-subject">
-                    Email address or service identity
+                    {identityType === "person" ? "Email address" : "Service identity"}
                   </label>
                   <Input
                     id="access-subject"
                     autoFocus
-                    placeholder="name@example.com"
+                    placeholder={identityType === "person" ? "name@example.com" : "workflow:reporting"}
                     value={draft.subject}
                     status={touched && subjectError ? "error" : undefined}
                     onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
@@ -275,7 +288,7 @@ export function AccessDrawer({
                   <Text type={touched && subjectError ? "danger" : "secondary"} className="field-help">
                     {touched && subjectError
                       ? subjectError
-                      : "Grants access to this identity; it does not create an account or send an invitation. The person signs up in the chat app with this email."}
+                      : identityType === "service" ? "Use a stable workflow:name identity for a configured service. This does not create credentials." : "No invitation is sent. Share the chat URL and ask them to sign in with this exact email. An administrator must create or approve their chat account if required."}
                   </Text>
                 </div>
               ) : (
@@ -318,10 +331,10 @@ export function AccessDrawer({
               )}
 
               <div className="section">
-                <Title level={5}>Capabilities</Title>
-                <Paragraph type="secondary">
-                  Choose what {draft.mode === "add" ? "this person" : name} can do in {hub.name}. Nothing is saved until you review and confirm.
-                </Paragraph>
+                <div className="capabilities-heading">
+                  <Title level={2} style={{ fontSize: 16, margin: 0 }}>Capabilities</Title>
+                  <CapabilityHelp label="capabilities" text="Choose what this person can do. Changes are saved only after you review and confirm." />
+                </div>
                 <div className="capabilities" role="group" aria-label="Capabilities">
                   {access.permissions.map((p) => {
                     const lock = lockFor(p.permission, draft.row, access, draft.selected);
@@ -333,7 +346,7 @@ export function AccessDrawer({
                       !draft.selected.includes(USE_HUB) &&
                       !inherited;
                     return (
-                      <div className="capability" key={p.permission}>
+                      <div className="capability capability-row" key={p.permission}>
                         <Checkbox
                           checked={checked}
                           disabled={!!lock}
@@ -349,15 +362,14 @@ export function AccessDrawer({
                             {p.sensitive && <Tag color="orange">Sensitive</Tag>}
                           </span>
                         </Checkbox>
-                        <div className="capability-help">
-                          {p.description && <Text type="secondary">{p.description} </Text>}
-                          {lock && <Text type="warning">{lock.reason}</Text>}
-                          {!lock && publicOnly && (
-                            <Text type="secondary">
-                              Already available to everyone signed in. A direct grant keeps their access if public access is turned off later.
-                            </Text>
-                          )}
-                        </div>
+                        {lock && <Text type="warning" className="capability-state">{lock.label ?? "Locked"}</Text>}
+                        {!lock && publicOnly && <Text type="secondary" className="capability-state">Public</Text>}
+                        {(p.description || lock || publicOnly) && <CapabilityHelp label={p.label} text={[
+                          p.description,
+                          lock?.reason,
+                          !lock && publicOnly ? "Available to everyone signed in. A direct grant keeps access if public access is turned off." : undefined,
+                        ].filter(Boolean).join(" ")} />}
+
                       </div>
                     );
                   })}

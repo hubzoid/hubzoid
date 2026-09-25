@@ -1,66 +1,104 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
-"""One place Hubzoid touches Open WebUI's database.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
+"""Shared SQLite/Postgres access to Open WebUI's identity and OAuth tables.
 
-Every read of OWUI's own tables (groups, API keys, per-user OAuth tokens)
-goes through here so there is a single accessor to point at a different
-store later. Today that store is OWUI's SQLite file (`webui.db`); a move to
-a shared Postgres is a change in this one module, not a scatter of
-`sqlite3.connect` calls across the package.
-
-Read-only and fail-closed by construction: `connect_ro` opens the file in
-SQLite read-only mode (`?mode=ro`) so a Hubzoid read never contends with
-OWUI's own writes, and returns None (rather than raising) when the DB is
-absent or unopenable, so every caller degrades to "no data" — which, for
-the access layer, means deny.
+Use OWUI's DATABASE_URL when configured; never fall back to a stale SQLite
+file on connection failure. Read connections enforce read-only transactions.
+Only OAuth refresh uses the explicitly separate write connection.
 """
 from __future__ import annotations
 
+import logging
 import os
-import sqlite3
+from functools import lru_cache
 from pathlib import Path
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection, URL, make_url
+from sqlalchemy.pool import NullPool
+
+log = logging.getLogger("hubzoid.access")
 
 
 def db_path(hub_dir) -> Path:
-    """Path to OWUI's database for this hub.
+    """Legacy SQLite path (also the gateway's OWUI data-directory hint)."""
+    from .. import deployment
 
-    `HUBZOID_OWUI_DB` overrides (tests, or a relocated data dir); otherwise
-    the canonical `<hub>/.openwebui-data/webui.db` OWUI is launched against.
-    """
+    configured = deployment.read(Path(hub_dir)).get("owui_db")
     override = os.environ.get("HUBZOID_OWUI_DB")
-    if override:
-        return Path(override)
-    return Path(hub_dir) / ".openwebui-data" / "webui.db"
+    return Path(configured or override or Path(hub_dir) / ".openwebui-data" / "webui.db")
 
 
-def connect_ro(hub_dir) -> sqlite3.Connection | None:
-    """A read-only connection to OWUI's DB, or None if it cannot be opened.
+def _normalize_url(value: str) -> URL:
+    url = make_url(value)
+    if url.drivername in {"postgres", "postgresql", "postgresql+asyncpg"}:
+        url = url.set(drivername="postgresql+psycopg")
+    if url.get_backend_name() not in {"sqlite", "postgresql"}:
+        raise ValueError("Open WebUI identity storage requires SQLite or PostgreSQL")
+    return url
 
-    Callers must close what they get. A None return is the fail-closed
-    signal: no DB, a locked file, or a bad path all resolve to "no data".
-    """
-    db = db_path(Path(hub_dir))
-    if not db.is_file():
-        return None
+
+def database_config(hub_dir) -> tuple[URL, str | None]:
+    """Resolve the registered deployment or OWUI environment configuration."""
+    from .. import deployment
+
+    manifest = deployment.read(Path(hub_dir))
+    registered = manifest.get("owui_database_url")
+    explicit = os.environ.get("DATABASE_URL")
+    schema = os.environ.get("DATABASE_SCHEMA") or None
+    if registered:
+        if explicit and _normalize_url(explicit) != _normalize_url(registered):
+            raise ValueError("DATABASE_URL differs from the registered Open WebUI database")
+        registered_schema = manifest.get("owui_database_schema") or None
+        if schema and schema != registered_schema:
+            raise ValueError("DATABASE_SCHEMA differs from the registered Open WebUI schema")
+        return _normalize_url(registered), registered_schema
+    if explicit:
+        return _normalize_url(explicit), schema
+    return URL.create("sqlite", database=str(db_path(hub_dir).resolve())), None
+
+
+@lru_cache(maxsize=32)
+def _engine(url: URL):
+    # No idle DB connections or stale transaction snapshots between requests.
+    # Engines cache dialect setup only; every caller must close its connection.
+    args = {"timeout": 5.0} if url.get_backend_name() == "sqlite" else {"connect_timeout": 5}
+    return create_engine(url, poolclass=NullPool, connect_args=args, hide_parameters=True)
+
+
+def _connect(hub_dir, *, readonly: bool) -> Connection | None:
+    con = None
     try:
-        return sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
-        return None
-
-
-def connect_rw(hub_dir) -> sqlite3.Connection | None:
-    """A read-write connection to OWUI's DB, or None if it cannot be opened.
-
-    The one writer path: refreshing an expired per-user token and writing the
-    fresh one back into ``oauth_session`` (OWUI never refreshes these itself for
-    a Hubzoid model). WAL so a write never blocks OWUI's or a bridge's reads;
-    keep the write short. Callers must close what they get.
-    """
-    db = db_path(Path(hub_dir))
-    if not db.is_file():
-        return None
-    try:
-        con = sqlite3.connect(str(db), timeout=5.0)
-        con.execute("PRAGMA journal_mode=WAL")
+        url, schema = database_config(hub_dir)
+        if url.get_backend_name() == "sqlite":
+            path = Path(url.database or "").resolve()
+            if not path.is_file():
+                return None
+            # URI mode=rw also refuses accidental creation on the refresh path.
+            url = URL.create("sqlite", database=path.as_uri(),
+                             query={"mode": "ro" if readonly else "rw", "uri": "true"})
+        con = _engine(url).connect()
+        if url.get_backend_name() == "postgresql":
+            if readonly:
+                con.execute(text("SET TRANSACTION READ ONLY"))
+            if schema:
+                # One exact schema, transaction-local; never interpolate SQL.
+                search_path = '"' + schema.replace('"', '""') + '"'
+                con.execute(text("SELECT set_config('search_path', :schema, true)"),
+                            {"schema": search_path})
         return con
-    except sqlite3.Error:
+    except Exception:
+        if con is not None:
+            con.close()
+        # Driver exceptions can contain a password/URL. Do not log their text.
+        log.warning("Open WebUI database unavailable or misconfigured; denying lookup")
         return None
+
+
+def connect_ro(hub_dir) -> Connection | None:
+    """Read-only connection, or None (fail closed). Caller must close it."""
+    return _connect(hub_dir, readonly=True)
+
+
+def connect_rw(hub_dir) -> Connection | None:
+    """Existing DB connection for OAuth refresh only. Caller commits/closes."""
+    return _connect(hub_dir, readonly=False)

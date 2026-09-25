@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT, like the rest of the repo (see LICENSING.md).
+# Hubzoid access management. Apache-2.0, like the rest of the repo (see LICENSING.md).
 """Resolve identity for a hub, from either surface-native handle or email.
 
 This is the generic identity seam every non-web surface plugs into. A hub opts

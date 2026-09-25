@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Per-request caller identity: who is calling, in which groups, on which surface.
 
 This is the verified claim the access checks read. The bridge (`server.py`) sets

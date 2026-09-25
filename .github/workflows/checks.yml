@@ -25,6 +25,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install audited Codex CLI for model-free isolation tests
+        run: npm install -g @openai/codex@0.147.0
       - name: Install
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev]'
       - name: Unit and integration tests (no end-to-end tiers)
@@ -47,3 +52,5 @@ jobs:
       - run: npm run lint
       - name: Type-check and build
         run: npm run build
+      - name: Browser journeys
+        run: npx playwright install --with-deps chromium && npm test

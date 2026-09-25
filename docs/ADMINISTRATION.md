@@ -3,8 +3,9 @@
 Hubzoid has two audiences: builders configure agents, tools and workflows;
 end users sign in and use the agents they have been granted. Open WebUI owns
 accounts and authentication. Hubzoid owns agent/tool permissions and execution
-inspection. The portal is at `/portal/`; administrators also see **Manage agent
-access** in Open WebUI when using the Hubzoid edge.
+inspection. The Admin Console is at `/portal/`. Organization administrators and people with
+Manage access see **Admin Console** above their profile in the Open WebUI sidebar
+when using the Hubzoid edge. The collapsed sidebar shows an icon with a tooltip.
 
 ## One deployment, several agents
 
@@ -65,19 +66,34 @@ Use PostgreSQL for multiple production workers and rehearse deployment upgrades.
 
 ## Fresh installation
 
-First start the gateway to register its hubs. Then initialize a Hubzoid admin:
+New hubs created with `hubzoid init` carry an optional local installation marker.
+At the first verified owner session, Hubzoid grants organization administration
+and entry and activates managed access for those fresh hubs. On a local,
+auth-disabled standalone hub this is `admin@localhost`. On a shared deployment,
+set `WEBUI_ADMIN_EMAIL` or `HUBZOID_GATEWAY_ADMIN_EMAIL` to the intended Open WebUI
+administrator. Sign in with that account and open chat or `/portal/`.
+
+The verified account must have Open WebUI's admin role and match the configured
+email. Other admins and ordinary users receive no automatic grants. The
+provisioning marker is durable: a later login does not restore revoked access.
+Organization administration is bootstrapped once per store. Existing chosen
+administrators are preserved, including when another hub joins the gateway.
+Existing hubs keep their authority mode until migration; initializing an existing
+hub does not mark it fresh. Never copy `.hubzoid/` state into a new deployment.
+
+For headless operation or recovery, explicit bootstrap remains available:
 
 ```bash
 hubzoid access bootstrap --admin operator@example.com ./finance
-# Fresh hubs only: make each hub authoritative explicitly.
+# Activate only a fresh hub, or use the migration procedure for an existing hub.
 hubzoid access bootstrap --authoritative ./finance
-hubzoid access bootstrap --authoritative ./operations
 ```
 
-Use migration below for existing hubs. An OWUI admin is not automatically a
-Hubzoid admin. Sign in to OWUI using the bootstrapped email, then open `/portal/`.
-The portal reuses and verifies that session; it does not accept a browser-supplied
-identity header. Ordinary users cannot open its APIs.
+Bootstrap administration does not imply every tool capability. Check **Use this
+agent** separately for chat. Keep `WEBUI_AUTH=true` on shared deployments.
+Accounts, password/SSO and account approval stay in Open WebUI; there is no second
+Console credential. A grant sends no invitation. Share the chat URL with the exact
+email that received the grant.
 
 ## Grant access and verify the end-user experience
 
@@ -130,24 +146,30 @@ ledger:
 Sensitivity is explicit metadata, not inferred from words such as `prod` in a name.
 Permission keys `use_hub` and `manage_access` are reserved by Hubzoid.
 
-## The Overview page
+## The Agents page
 
-The Console opens on **Overview**: how people use each agent over the last 24
-hours, 7 days or 30 days. Hub administrators see only their agents.
+The Console opens on **Agents**, combining five summary cards and the agent
+cards below them. Choose the last 24 hours, 7 days or 30 days; Refresh reloads
+totals, agents and workflow status. A small update time appears beside Refresh.
+Hub administrators see only their agents.
 
 | Number | Meaning |
 |---|---|
-| Conversations, messages | Chat turns on every surface: the chat app, Slack, WhatsApp, Telegram and the API. |
-| Active people | Signed-in people who sent at least one message. |
-| Tokens, estimated cost | Chat turns plus scheduled work and workflow model calls. Cost comes from the model's reported cost or LiteLLM's price table. Calls with no known price are left out and marked with `*`. |
-| Tool denials | Restricted tool calls that were refused. |
-| People with access | People with a grant in the Console. An agent still on chat app groups shows "In chat app". |
-| Runs, failed, missed slots | Only for agents with schedules or workflows. Missed slots are scheduled times skipped while the hub was down (a markdown task then runs once to catch up, a code workflow waits for its next slot). |
+| Messages | Human messages across chat surfaces, with conversation count below. Background title/suggestion calls are excluded. |
+| Users | People who sent a message in the selected period, not everyone granted access. |
+| Tokens used | Input and output tokens, including background and workflow model calls. |
+| Workflow runs | Runs in the selected period, with failed count below when applicable. |
+| Approx. cost | USD estimate from reported model cost or token prices; unpriced calls are excluded and marked with `*`. The help icon explains subscription billing and estimates. |
 
-Every number comes from Hubzoid's own tables (`hz_usage`, the access decision
-log, grants and the workflow engine), never from the chat app's database, so it
-is the same whichever chat app fronts the agents. Usage is counted from the
-release that added it. Before that, the page says when counting started.
+Usage comes from Hubzoid's recorded operational data, not historical chat-app
+messages. Open an agent card for access, **Runs & schedules**, or Activity.
+Global Runs is no longer a navigation entry; existing direct links still work.
+
+Public email and SSO account registration default to off. Administrators create
+accounts through **Admin Panel → Users** in the chat app (`/admin`), then grant
+agent access in Console. Console does not duplicate account creation or show a
+Manage accounts shortcut. Explicit sign-up overrides and existing persisted OWUI
+settings remain operator-controlled; see [authentication](auth.md).
 
 ## Migrate existing customers
 
@@ -307,8 +329,8 @@ onboarding before scheduling the window.
 ```bash
 hubzoid new workflow daily-report ./finance
 hubzoid doctor ./finance
-hubzoid schedule run ./finance daily-report --dry-run
-hubzoid schedule run ./finance daily-report
+hubzoid schedule run ./finance daily_report --dry-run
+hubzoid schedule run ./finance daily_report
 hubzoid schedule list ./finance
 hubzoid schedule status ./finance
 ```
@@ -325,7 +347,7 @@ idempotency and code changes. For operators:
   reject the markdown-only `--timeout`, `--max-rounds` and `--model` options.
 - Each workflow and task acts as its own service identity (`workflow:<name>`,
   `workflow:md:<task>`). Grant it the tool permissions it needs.
-- The Console's **Runs** page and an agent's **Runs & schedules** tab list every
+- An agent's **Runs & schedules** tab lists every
   run with its steps, result and error. They are read only. Run, pause, resume
   and cancel with `hubzoid schedule` on the server.
 - DBOS holds the execution history. Hubzoid keeps no second run database.
@@ -366,3 +388,14 @@ not inherited by other hubs, OWUI or the edge. Put deployment-wide OWUI service
 credentials in the gateway process environment and the operator CLI environment.
 Account refresh failures are visible and do not treat a partial/failed directory
 response as a mass account deletion.
+
+## Upstream administration and hub runtime
+
+Open WebUI retains its account, authentication, connection, functions and
+automation controls. These belong to that application. Hubzoid workflows are
+loaded from the hub folder and are inspected in the Console. Do not configure an
+Open WebUI automation expecting it to become a Hubzoid workflow.
+
+Standalone picker visibility is checked directly against Hubzoid permissions at
+the edge. Gateway deployments also maintain the Open WebUI visibility mirror.
+A mirror warning is not evidence that execution access has been granted.

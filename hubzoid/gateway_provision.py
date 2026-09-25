@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Seed per-hub identity + access into the shared gateway Open WebUI.
 
 A gateway fronts N hubs through ONE Open WebUI, so per-hub identity cannot

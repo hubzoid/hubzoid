@@ -1,4 +1,4 @@
-# Hubzoid admin portal. MIT licensed like the rest of the repository.
+# Hubzoid admin portal. Apache-2.0 licensed like the rest of the repository.
 """The admin portal: a read-mostly JSON API + a static React SPA.
 
 Five screens (Overview, Workflows, Access, Permissions, Audit), **view-only
@@ -111,7 +111,7 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
         if not subject:
             subject = _verify_owui_session(request, hub_dir)
         if not subject:
-            return None
+            raise HTTPException(401, "Sign in to continue.")
         gs = store_for(hub_dir)
         org = gs.can(subject, ORG, MANAGE_ACCESS)
         manageable = [
@@ -170,6 +170,8 @@ def _verify_owui_session(request: Request, hub_dir: Path | None = None) -> str:
             headers={"Authorization": f"Bearer {token}"},
             timeout=5.0,
         )
+        if r.status_code >= 500:
+            raise HTTPException(503, "The account service is unavailable. Try again shortly.")
         if r.status_code == 200:
             user = r.json()
             if user.get("role") == "pending":
@@ -179,9 +181,24 @@ def _verify_owui_session(request: Request, hub_dir: Path | None = None) -> str:
                 store_for(hub_dir).upsert_identity(
                     email=email, owui_id=user.get("id"), display=user.get("name")
                 )
+                # Authentication remains in OWUI. Only the configured owner is
+                # provisioned, once; an arbitrary admin/member cannot self-promote.
+                owner = (os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
+                         or os.environ.get("WEBUI_ADMIN_EMAIL") or "").strip().lower()
+                if not _truthy_env("WEBUI_AUTH") and not deployment.read(hub_dir):
+                    owner = "admin@localhost"
+                if user.get("role") == "admin" and email == owner:
+                    for h in deployment.hubs(hub_dir):
+                        path = Path(h["path"])
+                        store_for(path).provision_owner(
+                            email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()
+                        )
             return email
+    except HTTPException:
+        raise
     except Exception:  # noqa: BLE001
         log.warning("portal: OWUI session verification failed")
+        raise HTTPException(503, "Could not verify the account service. Try again shortly.")
     return ""
 
 
@@ -288,6 +305,24 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             return [h for h in allowed_hubs(admin) if h["key"] == hub]
         return allowed_hubs(admin)
 
+    @router.get("/chat-access")
+    def chat_access(request: Request):
+        """Used by the edge to filter OWUI's picker, including OWUI admins.
+
+        This is not the Console admin gate. Ordinary signed-in members need
+        their own effective entry decision too. The bridge still enforces entry.
+        """
+        subject = _verify_owui_session(request, hub_dir)
+        if not subject:
+            raise HTTPException(401, "Sign in to see your agents.")
+        gs = store_for(hub_dir)
+        blocked = gs.is_suspended(subject)
+        denied = []
+        for h in deployment.hubs(hub_dir):
+            if blocked or (gs.is_authoritative(h["key"]) and not gs.can(subject, h["key"], USE_HUB)):
+                denied.append(h["model_id"])
+        return {"denied": denied}
+
     @router.get("/me")
     def me(admin=Depends(require_admin)):
         return dict(
@@ -304,6 +339,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 dict(
                     key=h["key"],
                     name=h["name"],
+                    model_id=h["model_id"],
+                    can_chat=not gs.is_suspended(admin.subject) and (not gs.is_authoritative(h["key"]) or gs.can(admin.subject, h["key"], USE_HUB)),
                     authoritative=gs.is_authoritative(h["key"]),
                 )
                 for h in allowed_hubs(admin)

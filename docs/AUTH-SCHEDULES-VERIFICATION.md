@@ -86,8 +86,8 @@ maintenance window and is not a distributed transaction across OWUI and the
 operational store; no live production cutover was performed; real-LLM/provider
 tests are excluded from this model-free acceptance. **Nothing committed or pushed.**
 
-## Continuation
+## Current guidance
 
-The latest run results and any actionable remaining checks are recorded at the
-end of [the hand-back](../AUTH-SCHEDULES-HANDBACK.md). Earlier historical “open”
-sections in that file are superseded by the session 4 status and final addendum.
+This is historical verification evidence. For the current setup and upgrade
+procedure, use [administration](ADMINISTRATION.md) and [upgrading](UPGRADING.md).
+Release readiness must be established against the candidate being deployed.

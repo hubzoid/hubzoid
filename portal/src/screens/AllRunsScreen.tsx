@@ -165,7 +165,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={4}>Runs across your agents</Title>
+          <Title level={1} style={{ fontSize: 28 }}>Runs across your agents</Title>
           <Paragraph type="secondary">
             Every workflow run from the agents you manage, newest first. Filter, then
             open a run to see its result and steps. Scheduler health lives on each
@@ -294,7 +294,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
               title: "Run",
               key: "id",
               render: (_, r) => (
-                <a href={detailHref(r)} className="identity">
+                <a href={detailHref(r)} className="identity run-id-link" title={r.id}>
                   {r.id}
                 </a>
               ),

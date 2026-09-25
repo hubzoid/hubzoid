@@ -9,7 +9,7 @@ You were loaded because the user said something like "hi", "greet me", or
 asked you to demonstrate a skill.
 
 1. Call the `hello` tool (defined in `tools_local/hello.py`) with the
-   user's name if you know it, otherwise leave the argument blank.
+   user's name if you know it, otherwise pass `name: "there"` explicitly.
 2. Pass the tool's output through verbatim, then add one short sentence
    noting that this greeting went through one skill and one tool.
 

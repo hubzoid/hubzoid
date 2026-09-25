@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for being here. Hubzoid is MIT and we're glad to have you.
+Thanks for being here. Hubzoid is Apache-2.0 and we're glad to have you.
 
 Hubzoid is built by a small team that does not want to maintain a large surface.
 So the contribution model is deliberately **light**: we'd rather have a clear
@@ -22,7 +22,7 @@ git commit -s -m "fix: ..."
 ```
 
 The `-s` adds a `Signed-off-by` line certifying you wrote the change and can
-contribute it under the MIT license (see [DCO](https://developercertificate.org/)).
+contribute it under the Apache License 2.0 (see [DCO](https://developercertificate.org/)).
 That's all we ask — no CLA.
 
 ## 3. A feature or anything non-trivial → propose it as text, not code
@@ -38,7 +38,7 @@ through writing one; [`proposals/TEMPLATE.md`](proposals/TEMPLATE.md) is the for
 
 ## Honest note
 
-Hubzoid is released under MIT so you're never locked in. We steer direction,
+Hubzoid is released under Apache-2.0 so you're never locked in. We steer direction,
 and we may decline good code simply because we don't want to maintain it. That's
 not a knock on your work — it's the doctrine that keeps the project small enough
 to trust.
@@ -103,5 +103,5 @@ To keep the invariant:
 
 ## License
 
-By contributing, you agree your contribution is licensed under the MIT
+By contributing, you agree your contribution is licensed under the Apache-2.0
 License (see `LICENSE`), and you certify the DCO sign-off above.

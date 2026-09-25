@@ -1,0 +1,18 @@
+{
+  "source": "Hubzoid Studio, assets/fonts",
+  "imported": "2026-09-25",
+  "assets": [
+    {
+      "path": "portal/src/assets/brand/fonts/inter-latin-variable.woff2",
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+    },
+    {
+      "path": "portal/src/assets/brand/fonts/Inter-OFL.txt",
+      "sha256": "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345"
+    },
+    {
+      "path": "portal/src/assets/brand/fonts/JetBrainsMono-OFL.txt",
+      "sha256": "403581b69dac5cff4079205e01c6b467e56af449ecbd7247693ddb1baafa005b"
+    }
+  ]
+}

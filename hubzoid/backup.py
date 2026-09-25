@@ -1,4 +1,4 @@
-# Hubzoid. MIT licensed like the rest of the repository.
+# Hubzoid. Apache-2.0 licensed like the rest of the repository.
 """`hubzoid backup` and `hubzoid restore`: one archive of a deployment's state.
 
 The archive holds every SQLite database (copied with SQLite's online backup, so
@@ -541,7 +541,13 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
         root = next(r for r in index["roots"] if r["id"] == rid)
         target = targets[rid] if root["kind"] == "file" else targets[rid] / rel
         if target.exists() and _in_use(target):
-            raise BackupError(f"{target} is in use. Stop the hub or gateway, then restore.")
+            raise BackupError(
+                f"{target} may be in use: a lock or SQLite journal remains. "
+                "Stop the hub or gateway before restoring. If all writers are "
+                "already stopped, preserve the database and its sidecars, then "
+                "checkpoint it with SQLite as described in the upgrade guide. "
+                "Do not delete journal files to force a restore."
+            )
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     first_parent = next(iter(targets.values())).parent

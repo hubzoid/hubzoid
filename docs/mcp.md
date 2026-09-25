@@ -145,5 +145,5 @@ real public URL or the provider redirect will fail.
   itself is revoked or has expired.
 - **Turn it off:** remove `OWUI_NATIVE_MCP` (or set it to `0`).
 
-Full design, the exact data path, and the OWUI-upgrade checklist:
-[per-user-tool-connections.html](per-user-tool-connections.html).
+For deployment and upgrade checks, see [administration](ADMINISTRATION.md) and
+[upgrading](UPGRADING.md). Preserve saved tool-server connections when upgrading.

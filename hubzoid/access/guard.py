@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT, like the rest of the repo (see LICENSING.md).
+# Hubzoid access management. Apache-2.0, like the rest of the repo (see LICENSING.md).
 """Wrap a restricted FunctionTool so the gate runs in code before it executes.
 
 Two layers, exactly as the design says, and both backends get them because both

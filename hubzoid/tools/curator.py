@@ -1,17 +1,17 @@
 """Core-shipped curator tool: a gated `remember` that persists learnings.
 
 This ships with hubzoid, so every hub has it — but it is GATED. The tool
-carries the ``curator`` permission, so only a caller who is in the hub's
-``curator`` Open WebUI group, on a verified-login surface (owui/web/api/mcp),
-can invoke it. Anonymous callers, the CLI, Slack, and scheduled runs are
-refused (fail-closed, same wall as `restricted/` tools). A hub that never
-creates a ``curator`` group therefore never exposes it to anyone.
+carries the ``curator`` permission, shown in Console as Save shared knowledge.
+On a managed hub, the caller needs that grant on an allowed surface (including
+the trusted workflow surface). Unmigrated hubs retain legacy group membership.
+Anonymous callers and disallowed surfaces are refused by the same guard as
+`restricted/` tools; installing the tool does not grant permission to use it.
 
 It is user-invoked, not autonomous: the tool description instructs the model to
 call ``remember`` ONLY when the user explicitly asks to remember/save/note
 something, never on its own initiative. "Self-learning" here means a human
-curator teaching the hub in-chat, not the hub curating itself unattended (which
-the fail-closed gate above already forbids for scheduled runs).
+curator teaching the hub in-chat. A workflow needs an explicit curator grant and
+instructions to save knowledge; the tool does not autonomously learn from chats.
 
 What it does. ``remember(topic, content)`` writes a single knowledge document
 to ``<hub>/knowledge/_learned/<slug>.md`` with frontmatter ``name:

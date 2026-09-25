@@ -257,5 +257,5 @@ def test_owui_resolve_missing_db_is_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Access management wires restricted tools (MIT, no license gate)
+# Access management wires restricted tools (Apache-2.0, no license gate)
 # ---------------------------------------------------------------------------

@@ -1,11 +1,11 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Resolve a user's Open WebUI group names from OWUI's own database.
 
 Open WebUI forwards the logged-in user's email to the bridge as
 `X-OpenWebUI-User-Email` (when `ENABLE_FORWARD_USER_INFO_HEADERS` is on, which
 hubzoid sets when it launches OWUI), but it does not forward group membership.
-So the bridge reads the email and looks up that user's groups in OWUI's SQLite
-DB, where the admin manages them on the Groups screen. This is what makes
+So the bridge reads the email and looks up that user's groups in OWUI's
+database, where the admin manages them on the Groups screen. This is what makes
 "add a person to the `erp` group in Open WebUI" actually grant the `erp`
 permission, with no separate proxy and no logout: the next request re-reads.
 
@@ -15,10 +15,10 @@ yields no groups, so a lookup failure denies rather than grants.
 from __future__ import annotations
 
 import logging
-import os
-import sqlite3
-from pathlib import Path
 
+from sqlalchemy import text
+
+from . import owui_db
 from .identity import normalize
 
 log = logging.getLogger("hubzoid.access")
@@ -33,15 +33,8 @@ SELECT g.name
 FROM "group" g
 JOIN group_member gm ON gm.group_id = g.id
 JOIN "user" u ON u.id = gm.user_id
-WHERE lower(u.email) = lower(?)
+WHERE lower(u.email) = lower(:email)
 """
-
-
-def _db_path(hub_dir: Path) -> Path:
-    override = os.environ.get("HUBZOID_OWUI_DB")
-    if override:
-        return Path(override)
-    return Path(hub_dir) / ".openwebui-data" / "webui.db"
 
 
 def resolve_groups(hub_dir, email: str | None) -> set[str]:
@@ -52,16 +45,15 @@ def resolve_groups(hub_dir, email: str | None) -> set[str]:
     """
     if not email:
         return set()
-    db = _db_path(Path(hub_dir))
-    if not db.is_file():
+    con = owui_db.connect_ro(hub_dir)
+    if con is None:
         return set()
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
         try:
-            rows = con.execute(_QUERY, (email,)).fetchall()
+            rows = con.execute(text(_QUERY), {"email": email}).fetchall()
         finally:
             con.close()
-    except sqlite3.Error:
-        log.warning("OWUI group lookup failed for %r", email, exc_info=True)
+    except Exception:
+        log.warning("OWUI group lookup failed; denying")
         return set()
     return {normalize(r[0]) for r in rows if r and r[0]}

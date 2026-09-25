@@ -1,4 +1,4 @@
-# Hubzoid workflows. MIT licensed like the rest of the repository.
+# Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
 """Plain-language schedules → a cron string, evaluated in the workflow's zone.
 
 The author writes a plain phrase (or a raw 5-field cron); we translate to cron

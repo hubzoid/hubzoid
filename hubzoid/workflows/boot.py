@@ -1,4 +1,4 @@
-# Hubzoid workflows. MIT licensed like the rest of the repository.
+# Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
 """Boot the workflow engine and run the per-minute dispatcher.
 
 Called from the server lifespan (and the CLI). The hub's DBOS engine runs all

@@ -91,7 +91,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         : `Turn off public access to ${hub.name}?`,
       content: next
         ? "Anyone with a chat account will be able to use this agent. Restricted tools still require their own capabilities."
-        : "Only people listed with direct access will be able to use this agent. Direct grants are not affected.",
+        : "People with Use this agent or a tool capability can chat. Manage access alone does not grant chat access.",
       okText: next ? "Open to everyone" : "Turn off public access",
       okButtonProps: { danger: !next },
       cancelText: "Cancel",
@@ -189,7 +189,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={4}>Who can use {hub.name}</Title>
+          <Title level={2}>Access to {hub.name}</Title>
           <Paragraph type="secondary">
             People and services with direct access, and what each is allowed to do.
           </Paragraph>
@@ -244,7 +244,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
             <Text type="secondary">
               {access.public
                 ? "Everyone who can sign in can use this agent. Direct grants below still control restricted tools."
-                : "Only the people listed below can use this agent."}
+                : "Chat requires Use this agent or a tool capability. Manage access alone allows administration."}
             </Text>
           </div>
         </div>

@@ -50,7 +50,7 @@ def test_fresh_parent_with_only_dotfiles(tmp_path):
 def test_fresh_parent_with_readme_and_requirements(tmp_path):
     (tmp_path / "README.md").write_text("# project\n")
     (tmp_path / "requirements.txt").write_text("flask\n")
-    (tmp_path / "LICENSE").write_text("MIT\n")
+    (tmp_path / "LICENSE").write_text("Apache-2.0\n")
     assert _parent_looks_fresh(tmp_path, ignore="ignored")
 
 
@@ -227,4 +227,27 @@ def test_init_never_copies_template_runtime_state(tmp_path, monkeypatch):
     result = _run_init(tmp_path / "work", "hub", "--template", "tpl")
     assert result.exit_code == 0, result.output
     assert (tmp_path / "work" / "hub" / "AGENTS.md").is_file()
-    assert not (tmp_path / "work" / "hub" / ".hubzoid").exists()
+    assert {p.name for p in (tmp_path / "work" / "hub" / ".hubzoid").iterdir()} == {"fresh-install"}
+    assert not (tmp_path / "work" / "hub" / ".hubzoid" / "artifact_secret").exists()
+
+
+def test_init_explicit_codex_model_and_existing_model_preserved(tmp_path):
+    first = _run_init(tmp_path, "codex-hub", "--model", "codex-local")
+    assert first.exit_code == 0, first.output
+    env = tmp_path / "codex-hub" / ".env"
+    assert "\nMODEL=codex-local\n" in env.read_text()
+    old = env.read_bytes()
+    again = _run_init(tmp_path, "codex-hub", "--model", "claude-local")
+    assert again.exit_code == 0
+    assert env.read_bytes() == old
+
+
+def test_first_runtime_selection(monkeypatch):
+    import hubzoid.cli as cli
+    monkeypatch.setattr(cli, "_available_local_models", lambda: ["codex-local"])
+    assert cli._choose_initial_model() == "codex-local"
+    monkeypatch.setattr(cli, "_available_local_models", lambda: [])
+    assert cli._choose_initial_model() is None
+    monkeypatch.setattr(cli, "_available_local_models", lambda: ["claude-local", "codex-local"])
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **kw: 2)
+    assert cli._choose_initial_model() == "codex-local"

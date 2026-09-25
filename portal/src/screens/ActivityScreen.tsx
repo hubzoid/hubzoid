@@ -161,7 +161,7 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={4}>{hub ? `Activity in ${hub.name}` : "Activity across your agents"}</Title>
+          <Title level={hub ? 2 : 1} style={{ fontSize: 28 }}>{hub ? `Activity in ${hub.name}` : "Activity across your agents"}</Title>
           <Paragraph type="secondary">
             {feed === "changes"
               ? "Who changed access, for whom, and to what. Recorded every time access is granted, removed, blocked or migrated."

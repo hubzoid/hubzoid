@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 
 from agents import function_tool
-from jinja2 import StrictUndefined, Template
+from jinja2 import StrictUndefined
+from jinja2.sandbox import SandboxedEnvironment
 from jinja2.exceptions import TemplateError
 
 
@@ -31,7 +32,7 @@ def make(ctx) -> list:  # noqa: ARG001
         except json.JSONDecodeError as exc:
             return f"[render_jinja: invalid JSON context — {exc}]"
         try:
-            return Template(template, undefined=StrictUndefined).render(**ctx_obj)
+            return SandboxedEnvironment(undefined=StrictUndefined).from_string(template).render(**ctx_obj)
         except TemplateError as exc:
             return f"[render_jinja: {exc}]"
 

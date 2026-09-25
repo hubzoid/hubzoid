@@ -21,6 +21,8 @@ _CLAUDE_DEFAULT_TIER = "sonnet"  # mirror factory_claude._CLAUDE_LOCAL_DEFAULT
 
 def engine(model_id: str | None) -> str:
     """Which runtime engine a model id belongs to."""
+    if (model_id or "").strip().lower().startswith("codex-local"):
+        return "codex"
     return "claude" if (model_id or "").strip().lower().startswith(_CLAUDE_PREFIX) \
         else "litellm"
 
@@ -38,6 +40,8 @@ def norm(model_id: str | None) -> str:
     """Canonical identity used for equality comparison within one engine."""
     if engine(model_id) == "claude":
         return f"claude::{resolve_tier(model_id)}"
+    if engine(model_id) == "codex":
+        return "codex::" + ((model_id or "").strip().partition("/")[2] or "default")
     return f"litellm::{(model_id or '').strip()}"
 
 

@@ -1,4 +1,4 @@
-# Hubzoid workflows. MIT licensed like the rest of the repository.
+# Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
 """Durable per-workflow key/value state in the one hub-owned database.
 
 `hub.state` is dict-like memory that survives across runs (e.g. "last commit

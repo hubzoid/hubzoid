@@ -22,9 +22,11 @@ function step(name) {
   const browser = await chromium.launch({ headless: true });
   const fixture = createFixture();
   const { state } = fixture;
+  let diagnosticPage;
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
     const page = await context.newPage();
+    diagnosticPage = page;
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));
     page.on("console", (m) => {
@@ -80,29 +82,53 @@ function step(name) {
     const lastMutation = () => state.mutations[state.mutations.length - 1];
 
     // ---- landing -----------------------------------------------------------
-    step("Overview is the landing page: chat numbers first, then one row per agent");
+    step("The landing page combines five totals and agent cards, with compact navigation");
     await go("");
-    await page.getByRole("heading", { name: "Overview", level: 2 }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
+    assert.equal(await page.title(), "Hubzoid Admin Console");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "1440px landing has no clipped content");
     const totals = page.getByRole("list", { name: "Totals" });
-    await totals.getByText("Conversations").waitFor();
-    await totals.getByText("252").waitFor(); // (12 + 30) conversations x 6 for the default 7 days
+    await totals.getByText("Across 252 conversations").waitFor();
+    assert.equal(await totals.getByRole("listitem").count(), 5);
     await totals.getByText("Workflow runs").waitFor();
-    await totals.getByText("Missed slots").waitFor();
-    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).locator(".ant-typography-warning", { hasText: "3" }).waitFor();
-    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("In chat app").waitFor();
-    await page.getByRole("row").filter({ hasText: "IT Ops Assistant" }).getByText("None yet").waitFor();
+    assert.equal(await page.getByRole("link", { name: "Overview", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: "Runs", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: /Manage accounts/ }).count(), 0);
+    assert.equal(await page.getByText(/Counting since|Snapshot|How people are using/).count(), 0);
+    const boxes = await totals.getByRole("listitem").evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().top));
+    assert.ok(boxes.every(y => y === boxes[0]), "Five totals fit on one desktop row");
+    const costHelp = page.getByRole("button", { name: "About Approx. cost" });
+    await costHelp.focus();
+    await page.getByRole("tooltip").filter({ hasText: "Subscription-backed" }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
+    await costHelp.click();
+    await page.getByRole("tooltip").filter({ hasText: "Subscription-backed" }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
+    const financeUsage = page.getByLabel("Finance Assistant usage", { exact: true });
+    await financeUsage.getByText("$11.04", { exact: true }).waitFor();
+    await financeUsage.getByText("1.2M", { exact: true }).waitFor();
+    await page.getByLabel("Support Assistant usage", { exact: true }).getByText("$23.40*", { exact: true }).waitFor();
+    await page.getByLabel("IT Ops Assistant usage", { exact: true }).getByText("—", { exact: true }).waitFor();
     await page.getByText("30 days", { exact: true }).click();
-    await totals.getByText("924").waitFor();
+    await totals.getByText("Across 924 conversations").waitFor();
     assert.ok((await hash()).includes("period=30d"), await hash());
-    await page.locator(".ant-segmented-item-selected", { hasText: "30 days" }).waitFor();
-    await page.waitForTimeout(400); // let the selection thumb settle for the screenshot
+    await financeUsage.getByText("$40.48", { exact: true }).waitFor();
+    await financeUsage.getByText("4.5M", { exact: true }).waitFor();
+    state.failNextGet = { endpoint: "/summary", status: 503, detail: "Temporary outage" };
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.getByText("Couldn’t refresh totals", { exact: true }).waitFor();
+    await totals.getByText("Across 924 conversations").waitFor();
+    await page.getByRole("link", { name: "Finance Assistant", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.getByText("Couldn’t refresh totals", { exact: true }).waitFor({ state: "hidden" });
+    await page.locator(".updated-at").waitFor();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview.png"), fullPage: true });
     await page.getByRole("link", { name: "Support Assistant", exact: true }).click();
     assert.equal(await hash(), "#/agents/support/access");
 
     step("Agents lists every agent with its access state and attention items");
     await go("/agents");
-    await page.getByRole("heading", { name: "Agents", level: 2 }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
     for (const name of ["Finance Assistant", "Support Assistant", "IT Ops Assistant"])
       await page.getByRole("link", { name, exact: true }).waitFor();
     // Simplified landing: attention shows only as per-card tags, no alerts/counts.
@@ -117,7 +143,7 @@ function step(name) {
     // ---- access: readable rows -----------------------------------------------
     step("Access tab shows readable capabilities, inherited rights and account states");
     await go("/agents/finance/access");
-    await page.getByRole("heading", { name: "Who can use Finance Assistant" }).waitFor();
+    await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
     const priyaRow = page.getByRole("row").filter({ hasText: "Priya Natarajan" });
     await priyaRow.getByText("Read ledger", { exact: true }).waitFor();
     await priyaRow.getByText("Manage invoices", { exact: true }).waitFor();
@@ -129,13 +155,60 @@ function step(name) {
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-access.png"), fullPage: true });
 
+    step("Warning helper text is readable in both themes and the compact logo keeps its visible size");
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate(mode => localStorage.setItem("hz-theme", mode), mode);
+      await page.reload();
+      await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+      await drawer().locator(".ant-typography-warning").first().waitFor();
+      const ratios = await drawer().locator(".ant-typography-warning").evaluateAll(nodes => {
+        const lum = color => {
+          const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => v / 255);
+          const lin = rgb.map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+          return lin[0] * .2126 + lin[1] * .7152 + lin[2] * .0722;
+        };
+        return nodes.map(node => {
+          let parent = node, bg = "rgb(255,255,255)";
+          while (parent) {
+            const c = getComputedStyle(parent).backgroundColor;
+            if (c !== "transparent" && c !== "rgba(0, 0, 0, 0)") { bg = c; break; }
+            parent = parent.parentElement;
+          }
+          const a = lum(getComputedStyle(node).color), b = lum(bg);
+          return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+        });
+      });
+      assert.ok(ratios.every(r => r >= 4.5), `${mode} warning contrast: ${ratios}`);
+      await drawer().getByRole("button", { name: "Cancel" }).click();
+    }
+    await page.setViewportSize({ width: 873, height: 750 });
+    await go("/agents");
+    await page.locator(".topbar .brand-wordmark").waitFor();
+    const logo = await page.locator(".topbar .brand-wordmark").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight, fit: getComputedStyle(el).objectFit }));
+    assert.deepEqual(logo, { width: 134, height: 30, fit: "none" });
+    await page.getByRole("link", { name: "Manage access", exact: true }).first().waitFor();
+    const darkContrast = await page.locator(".ant-btn-primary, .ant-tag-green, .ant-tag-success").evaluateAll(nodes => {
+      const lum = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => v / 255)
+        .map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+        .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      return nodes.filter(n => n.getBoundingClientRect().width).map(n => {
+        const s = getComputedStyle(n), a = lum(s.color), b = lum(s.backgroundColor);
+        return (Math.max(a,b) + .05) / (Math.min(a,b) + .05);
+      });
+    });
+    assert.ok(darkContrast.length >= 2 && darkContrast.every(r => r >= 4.5), `Dark action/tag contrast: ${darkContrast}`);
+    await page.screenshot({ path: path.join(shots, "hubzoid-console-dark-logo.png"), fullPage: true });
+    await page.evaluate(() => localStorage.setItem("hz-theme", "light"));
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.reload();
+
     // ---- stale hub responses --------------------------------------------------
     step("Switching agents never shows the previous agent's people while the new list loads");
     state.delays["/access"] = 700;
     await page.evaluate(() => {
       location.hash = "/agents/support/access";
     });
-    await page.getByRole("heading", { name: "Who can use Support Assistant" }).waitFor();
+    await page.getByRole("heading", { name: "Access to Support Assistant" }).waitFor();
     assert.equal(await page.getByText("Priya Natarajan").count(), 0, "finance rows must vanish immediately");
     await page.getByRole("row").filter({ hasText: "Mei Lin Chen" }).getByText("Work tickets").waitFor();
     await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
@@ -162,7 +235,9 @@ function step(name) {
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     const entry = drawer().getByRole("checkbox", { name: /Use this agent/ });
     assert.equal(await entry.isDisabled(), true, "entry is locked while other capabilities are selected");
-    await drawer().getByText("Required by the other selected capabilities").waitFor();
+    await drawer().getByText("Required", { exact: true }).waitFor();
+    await drawer().getByRole("button", { name: "About Use this agent", exact: true }).focus();
+    await page.getByRole("tooltip").filter({ hasText: "Required by the other selected capabilities" }).waitFor();
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).uncheck();
     await drawer().getByRole("checkbox", { name: /Run payroll/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
@@ -222,7 +297,7 @@ function step(name) {
     // ---- add a person: validation, implied entry, minimal requests ----------------------
     step("Adding a person validates the identity and skips the implied entry grant");
     await page.getByRole("button", { name: "Add person" }).click();
-    const subject = drawer().getByRole("textbox", { name: "Email address or service identity" });
+    const subject = drawer().getByRole("textbox", { name: "Email address" });
     await subject.fill("not an email");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
@@ -243,9 +318,24 @@ function step(name) {
     await page.getByRole("row").filter({ hasText: "ravi.menon" }).getByText("Not signed up yet").waitFor();
     state.mutations.length = 0;
 
+    step("A Markdown workflow can receive the built-in remember capability from Console");
+    await page.getByRole("button", { name: "Add person" }).click();
+    await drawer().getByRole("radio", { name: "Service", exact: true }).check();
+    await drawer().getByRole("textbox", { name: "Service identity" }).fill("workflow:md:daily-notes");
+    await drawer().getByRole("checkbox", { name: /Save shared knowledge/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Save change" }).click();
+    await page.getByText("Access updated for workflow:md:daily-notes.").waitFor();
+    assert.equal(lastMutation().subject, "workflow:md:daily-notes");
+    assert.deepEqual(lastMutation().operations, [{ action: "grant", permission: "curator" }]);
+    await page.getByRole("row").filter({ hasText: "workflow:md:daily-notes" }).getByText("Service", { exact: true }).waitFor();
+    state.grants = state.grants.filter(([subject]) => subject !== "workflow:md:daily-notes");
+    state.mutations.length = 0;
+    await page.reload();
+
     step("Adding someone who already has access switches to editing their current access");
     await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address or service identity" }).fill(PRIYA);
+    await drawer().getByRole("textbox", { name: "Email address" }).fill(PRIYA);
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("already has access to Finance Assistant").waitFor();
     assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isChecked(), true);
@@ -255,7 +345,7 @@ function step(name) {
 
     step("Granting to a blocked person surfaces the server's refusal with context");
     await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address or service identity" }).fill("tomas.herrera@example.org");
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("tomas.herrera@example.org");
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByRole("button", { name: "Save change" }).click();
     await drawer().getByText("Nothing was saved").waitFor();
@@ -333,7 +423,7 @@ function step(name) {
     // ---- concurrency: a change since load is refused --------------------------------------
     step("An edit built on stale access is refused when another admin changed it first");
     await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address or service identity" }).fill("concurrent.user@example.org");
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("concurrent.user@example.org");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     state.revision += 1; // another administrator changed access after this drawer loaded
@@ -550,7 +640,7 @@ function step(name) {
 
     // (d) Leaving the screen clears the interval — no further /runs calls.
     await cpage.goto(`${ORIGIN}/portal/#/agents`);
-    await cpage.getByRole("heading", { name: "Agents", level: 2 }).waitFor();
+    await cpage.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
     const afterLeave = runsGets;
     await cpage.clock.runFor(35000);
     assert.equal(runsGets, afterLeave, "auto-refresh interval must stop when the Runs screen unmounts");
@@ -766,7 +856,7 @@ function step(name) {
     await go("/nowhere/at/all");
     await page.getByText("Page not found").waitFor();
     await page.getByRole("link", { name: "Back to agents" }).click();
-    await page.getByRole("heading", { name: "Agents", level: 2 }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).waitFor();
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
@@ -791,16 +881,19 @@ function step(name) {
     assert.equal(await page.getByRole("link", { name: "Support Assistant", exact: true }).count(), 0);
     await page.getByText("Agent administrator").waitFor();
     await go("/agents/finance/access");
-    await page.getByRole("heading", { name: "Who can use Finance Assistant" }).waitFor();
+    await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
     assert.equal(await page.getByRole("switch", { name: "Public access" }).isDisabled(), true);
     await page.getByRole("button", { name: "Edit access for Aisha Rahman" }).click();
     assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true);
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
-    await drawer().getByText("Held through organization administrator rights").waitFor();
+    await drawer().getByText("Inherited", { exact: true }).first().waitFor();
+    await drawer().getByRole("button", { name: "About Manage access", exact: true }).click();
+    await page.getByRole("tooltip").filter({ hasText: "Held through organization administrator rights" }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Remove all access" }).count(), 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: "Edit access for Finance Admin" }).click();
-    await drawer().getByText("Only organization administrators can change this.").first().waitFor();
+    await drawer().getByRole("button", { name: "About Manage access", exact: true }).hover();
+    await page.getByRole("tooltip").filter({ hasText: "Only organization administrators can change this." }).waitFor();
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await go("/agents/support/access");
     await page.getByText("Agent not found").waitFor();
@@ -816,6 +909,11 @@ function step(name) {
     state.role = "org";
     await page.reload(); // back to a full org-admin session
     await page.setViewportSize({ width: 390, height: 844 });
+    await go("/agents");
+    await page.getByRole("list", { name: "Totals" }).getByText("Messages", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("listitem").count(), 5);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Mobile dashboard has no horizontal overflow");
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview-mobile.png"), fullPage: true });
     await go("/agents/finance/access");
     await page.getByRole("button", { name: "Open navigation" }).click();
     await page.getByRole("dialog").getByRole("link", { name: "People" }).waitFor();
@@ -832,7 +930,7 @@ function step(name) {
     state.role = "user";
     await page.reload(); // fresh session as an ordinary (non-admin) user
     await go("");
-    await page.getByText("Sign in with an account allowed to manage agent access.").waitFor();
+    await page.getByText("Console access is not enabled for this account").waitFor();
     assert.equal(await page.getByRole("link", { name: "Agents" }).count(), 0);
     await page.getByRole("link", { name: "Go to the chat app" }).waitFor();
 
@@ -856,13 +954,26 @@ function step(name) {
       if (u.pathname === "/owui-stub")
         return route.fulfill({
           contentType: "text/html",
-          body: '<!doctype html><html><body><div id="app">chat</div>'
+          body: '<!doctype html><html><body><div id="app">chat</div><nav id="sidebar" style="width:240px"><div style="display:flex"><span role="button" aria-haspopup="true"><button aria-label="User menu">User</button></span></div></nav>'
             + '<script src="/hubzoid-portal-navigation.js" defer></script></body></html>',
         });
       return route.fulfill({ status: 404, body: "" });
     });
     await navPage.goto(`${ORIGIN}/owui-stub`);
     await navPage.locator("#hubzoid-manage-access").waitFor(); // shown for an admin session
+    assert.equal(await navPage.locator('#sidebar #hubzoid-manage-access').count(), 1);
+    assert.equal(await navPage.locator('#hubzoid-manage-access').getAttribute('title'), 'Hubzoid Admin Console — manage access and view workflow runs');
+    assert.ok(await navPage.locator('#hubzoid-manage-access').evaluate(el => el.nextElementSibling.querySelector('button[aria-label="User menu"]') !== null));
+    assert.equal(await navPage.locator('#hubzoid-manage-access span').isVisible(), true);
+    // Sidebar replacement, as in OWUI's compact layout, must reattach one icon.
+    await navPage.evaluate(() => {
+      document.querySelector('#sidebar').outerHTML = '<nav id="sidebar" style="width:42px"><div style="display:flex"><span role="button" aria-haspopup="true"><button aria-label="User menu">User</button></span></div></nav>';
+    });
+    await navPage.locator('#sidebar #hubzoid-manage-access[data-compact]').waitFor();
+    assert.equal(await navPage.locator('#hubzoid-manage-access span').isVisible(), false);
+    assert.equal(await navPage.locator('#hubzoid-manage-access').count(), 1);
+    await navPage.locator('#hubzoid-manage-access').focus();
+    assert.equal(await navPage.evaluate(() => document.activeElement.id), 'hubzoid-manage-access');
     // SPA logout: /me now 403; an in-app navigation fires popstate (no reload).
     navLoggedIn = false;
     await navPage.evaluate(() => dispatchEvent(new PopStateEvent("popstate")));
@@ -875,6 +986,12 @@ function step(name) {
 
     assert.deepEqual(errors, [], "no console or page errors");
     console.log(`\nPASS: ${steps.length} journeys`);
+  } catch (error) {
+    if (diagnosticPage) {
+      fs.writeFileSync(path.join(shots, "hubzoid-journey-failure.html"), await diagnosticPage.content());
+      await diagnosticPage.screenshot({ path: path.join(shots, "hubzoid-journey-failure.png") });
+    }
+    throw error;
   } finally {
     await browser.close();
   }

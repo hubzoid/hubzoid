@@ -7,7 +7,7 @@ name = "hubzoid"
 version = "1.0.1"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
 maintainers = [{ name = "HubZoid", email = "hello@hubzoid.com" }]
@@ -29,7 +29,7 @@ classifiers = [
   "Intended Audience :: Developers",
   "Topic :: Software Development :: Libraries",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -96,6 +96,7 @@ Changelog = "https://github.com/hubzoid/hubzoid/releases"
 [tool.setuptools]
 packages = ["hubzoid", "hubzoid.access", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram", "hubzoid.workflows", "hubzoid.migrations", "hubzoid.migrations.operational", "hubzoid.migrations.hub"]
 include-package-data = true
+license-files = ["LICENSE", "NOTICE"]
 
 [tool.setuptools.package-data]
 hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*", "migrations/*/versions/*.py", "migrations/*/script.py.mako"]

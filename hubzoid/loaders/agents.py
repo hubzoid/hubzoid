@@ -27,6 +27,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import frontmatter
+from .._fs import agent_read_refusal
 
 
 class AgentSpec(BaseModel):
@@ -58,6 +59,9 @@ def load_main(hub_dir: Path) -> LoadedAgent:
             f"No AGENTS.md at {path}. "
             f"Every hub needs an AGENTS.md at its root."
         )
+    reason = agent_read_refusal(hub_dir, path)
+    if reason:
+        raise ValueError(f"Agent definition refused: {reason}")
     return _load_one(path, default_name=_safe_id(hub_dir.name))
 
 
@@ -97,10 +101,10 @@ def load_subagents(hub_dir: Path) -> list[LoadedAgent]:
                 mds = sorted(child.glob("*.md"))
                 if mds:
                     match = mds[0]
-            if match is None:
+            if match is None or agent_read_refusal(hub_dir, match):
                 continue
             out.append(_load_one(match, default_name=_safe_id(child.name)))
-        elif child.is_file() and child.suffix.lower() == ".md":
+        elif child.is_file() and child.suffix.lower() == ".md" and not agent_read_refusal(hub_dir, child):
             # Flat layout. The stem becomes the default name; frontmatter
             # `name:` still wins if present (handled in _load_one).
             out.append(_load_one(child, default_name=_safe_id(child.stem)))

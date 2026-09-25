@@ -1,5 +1,11 @@
 # Deploying Hubzoid to production
 
+For the current account, owner and permission flow, start with
+[ADMINISTRATION.md](ADMINISTRATION.md). The group/model-ACL procedures later in
+this guide describe legacy or manually wired deployments; managed hub permissions
+are changed in the Console. Test a copied deployment before a production upgrade.
+
+
 `hubzoid run <hub>` is the production entry point. Wrap it in `systemd`
 (or your container orchestrator of choice), and for any public
 deployment put a reverse proxy in front of Open WebUI's port to handle
@@ -51,6 +57,14 @@ DATABASE_URL=postgresql+psycopg://hubzoid:<password>@db.internal:5432/hubzoid
 
 Use the `postgresql+psycopg://` form. Hubzoid installs the psycopg 3 driver
 only, and Open WebUI reads the same `DATABASE_URL`.
+
+MCP API-key authentication, Open WebUI group memberships and connected MCP
+OAuth credentials are read from that same database. `DATABASE_SCHEMA`, when
+set, selects Open WebUI's schema for these lookups. The gateway records both
+values in its deployment manifest; conflicting bridge settings deny lookup
+instead of reading another store. Read connections enforce read-only access;
+only the OAuth refresh path writes a renewed encrypted token. A connection
+failure never falls back to an older local `webui.db`.
 
 With `DATABASE_URL` set, three sets of tables share that database, each
 upgraded by its owner at start:
@@ -439,9 +453,11 @@ to all of them, fronted by the edge router. Each hub becomes a selectable
 model. If the bridges already run as their own systemd units, add
 `--no-bridges` so the gateway only starts the shared UI — and set
 `HUBZOID_OWUI_DB=<data-dir>/webui.db` in each bridge's environment yourself
-(the gateway injects it automatically for bridges it launches; without it,
-restricted-tool group lookups read a per-hub DB that doesn't exist in
-gateway mode and every restricted tool is denied). This same variable also
+(the gateway injects it automatically for bridges it launches). SQLite identity
+lookups discover the shared path from the deployment manifest, with this
+variable as the fallback for unregistered bridges. With PostgreSQL, use the
+registered manifest or the same `DATABASE_URL` and `DATABASE_SCHEMA` as the
+shared Open WebUI; database lookup does not use the SQLite path. The path also
 tells the bridge where OWUI stored uploaded files (they sit in
 `<data-dir>/uploads` next to the DB) — without it, chat attachments resolve
 against a per-hub dir that never fills in gateway mode and every upload is
@@ -476,8 +492,9 @@ gateway then creates for every hub:
 * a **team group** named after the hub (its slug), with **read access** to
   that model only.
 
-Your only manual step is adding people to their team's group in
-**Admin Panel → Users → Groups**. New hub in the command line → provisioned
+For new managed hubs, grant people **Use this agent** and tool capabilities in
+**Console → Agents → Access**. For an unmigrated hub, its existing team group
+continues to apply until the explicit migration in [ADMINISTRATION.md](ADMINISTRATION.md). New hub in the command line → provisioned
 on next boot. Provisioning is idempotent and deliberately conservative:
 identity fields (name, description, suggestions, avatar) are refreshed from
 the hub every boot — including removals, so deleting a `suggestions:` block
@@ -618,3 +635,15 @@ service: it listens on the env-var `PORT` (default 3080), accepts
 
 For multi-hub setup, account ownership, migration preview, cutover and rollback,
 see [Administration](ADMINISTRATION.md).
+
+## Local Codex runtime
+
+`MODEL=codex-local` is available with the audited Codex CLI 0.147.0. Follow the
+[provider setup](providers.md#local-codex) for file-backed login as the service
+account, model pinning and isolation details. The standard Docker image does not
+include Codex; use a custom image with the pinned CLI and persistent private
+service-account credential storage. Do not mount an operator's entire home.
+Hubzoid uses temporary per-request configuration and saves refreshed login tokens
+back to the configured credential store. Ensure it is writable by the service
+account and excluded from hub data, backups shared with users, and source control.
+CLI/model upgrades require repeating the real-CLI tool-isolation tests.

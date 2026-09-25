@@ -48,7 +48,8 @@ def _write(path: Path, data: dict) -> None:
 
 
 def save(
-    path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str
+    path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str,
+    owui_database_url: str | None = None, owui_database_schema: str | None = None,
 ) -> None:
     _validate_hub_keys(hubs)
     path = path.resolve()
@@ -60,6 +61,8 @@ def save(
             operational_url=operational_url,
             owui_url=owui_url,
             owui_db=owui_db,
+            owui_database_url=owui_database_url,
+            owui_database_schema=owui_database_schema,
         ),
     )
     for hub in hubs:
@@ -69,14 +72,24 @@ def save(
 
 
 def hubs(hub_dir: Path) -> list[dict]:
-    return read(hub_dir).get("hubs") or [
-        dict(
-            key=Path(hub_dir).name.lower(),
-            name=Path(hub_dir).name,
-            path=str(Path(hub_dir).resolve()),
-            model_id=Path(hub_dir).name,
-        )
-    ]
+    registered = read(hub_dir).get("hubs")
+    if registered:
+        return registered
+    from dotenv import dotenv_values
+    from .loaders.agents import load_main
+
+    values = dotenv_values(Path(hub_dir) / ".env")
+    try:
+        name = load_main(hub_dir).spec.name or Path(hub_dir).name
+    except (FileNotFoundError, ValueError):
+        name = Path(hub_dir).name
+    label = values.get("MODEL_LABEL") or os.environ.get("MODEL_LABEL")
+    slug = "".join(c if c.isalnum() else "-" for c in name.strip().lower())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return [dict(key=Path(hub_dir).name.lower(), name=name,
+                 path=str(Path(hub_dir).resolve()),
+                 model_id=label or slug.strip("-") or "agent")]
 
 
 def hub_path(hub_dir: Path, key: str) -> Path:
@@ -102,7 +115,9 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
     from ._fs import resolve_bucket
     import yaml
 
-    names = {"use_hub", "manage_access"}
+    # remember ships with every hub; it has no restricted/<permission>.py file
+    # for the directory scan to discover.
+    names = {"use_hub", "manage_access", "curator"}
     restricted = resolve_bucket(hub_dir, "restricted")
     if restricted:
         names.update(
@@ -117,7 +132,8 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
         if meta_path and meta_path.exists()
         else {}
     )
-    labels = {"use_hub": "Use this agent", "manage_access": "Manage access"}
+    labels = {"use_hub": "Use this agent", "manage_access": "Manage access",
+              "curator": "Save shared knowledge"}
     out = []
     for name in sorted(names):
         m = metadata.get(name, {})
@@ -127,7 +143,11 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
             dict(
                 permission=name,
                 label=m.get("label", labels.get(name, name.replace("_", " ").title())),
-                description=m.get("description", ""),
+                description=m.get("description", {
+                    "use_hub": "Chat with this agent and use its unrestricted tools.",
+                    "manage_access": "Review and change permissions. Does not grant chat or restricted tools.",
+                    "curator": "Use remember to create or replace learned knowledge shared by this agent.",
+                }.get(name, "Use the restricted tools assigned to this capability.")),
                 sensitive=bool(m.get("sensitive", False)),
             )
         )

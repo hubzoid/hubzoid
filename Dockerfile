@@ -26,7 +26,8 @@
 # meant to be published. The bridge listens on 127.0.0.1 inside the
 # container and is never reachable from outside it.
 #
-# MODEL=claude-local does NOT work inside the image (no `claude` CLI).
+# Local CLI backends require operator-provisioned CLI binaries and logins.
+# The base image does not install Codex; use a hosted provider by default.
 # Use a portable API key (OpenRouter, OpenAI, Anthropic).
 #
 # See docs/DEPLOYING.md for the full production walkthrough.
@@ -62,7 +63,7 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
 COPY --chown=hubzoid requirements.lock /tmp/hubzoid-src/requirements.lock
 RUN pip install --user --extra-index-url https://download.pytorch.org/whl/cpu \
       -r /tmp/hubzoid-src/requirements.lock
-COPY --chown=hubzoid pyproject.toml README.md LICENSE /tmp/hubzoid-src/
+COPY --chown=hubzoid pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
 COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
 RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
 

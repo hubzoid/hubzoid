@@ -7,13 +7,14 @@ CLI (`cli.py`) consume without caring which engine sits underneath:
   * `stream(prompt)`     -> async iterator of text deltas (SSE-friendly)
   * `run(prompt)`        -> single accumulated response string
 
-Two backends today:
-  * OpenAI Agents SDK (default) — `OpenAIAgentsRuntime`, in this file.
+Three backends today:
+  * OpenAI Agents SDK (provider-prefixed models) — `OpenAIAgentsRuntime`, in this file.
   * Claude Agent SDK (`MODEL=claude-local`) — `ClaudeRuntime`, in
     `factory_claude.py`.
+  * Codex app-server (`MODEL=codex-local`) — `CodexRuntime`, in `factory_codex.py`.
 
 Loaders and tool implementations are runtime-neutral by contract (see
-AGENTS.md). Only this module and the two factory files know which engine is
+AGENTS.md). Only this module and the runtime factory files know which engine is
 in play. Keep it that way.
 """
 from __future__ import annotations
@@ -122,6 +123,11 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
                 "hub %s: no MODEL in .env; defaulting to %s",
                 hub_dir.name, model_id,
             )
+
+    if model_id == "codex-local" or model_id.startswith("codex-local/"):
+        from .factory_codex import build_codex_runtime
+        return build_codex_runtime(hub_dir, extra_tools=extra_tools,
+                                   max_turns=max_turns, model_override=model_id)
 
     if model_id.lower().startswith("claude-local"):
         from .factory_claude import build_claude_runtime
@@ -330,7 +336,7 @@ def _record_openai_usage(result, model: str | None = None) -> None:
 def describe(hub_dir: Path) -> str:
     settings = settingslib.load(hub_dir)
     model = _resolve_model_id(hub_dir, settings)
-    backend = "claude-local" if model.lower().startswith("claude-local") else "openai-agents"
+    backend = "codex-local" if model.startswith("codex-local") else "claude-local" if model.lower().startswith("claude-local") else "openai-agents"
     return json.dumps({"backend": backend, "model": model})
 
 
@@ -411,7 +417,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
     import asyncio
     import time
 
-    from . import structured, usage as usage_lib
+    from . import _request_ctx, structured, usage as usage_lib
 
     hub_dir = Path(hub_dir)
     model_id = (spec.get("model") or "").strip() or _resolve_model_id(hub_dir, settingslib.load(hub_dir))
@@ -422,7 +428,19 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
     usage: dict = {}
     status = "error"
     try:
-        if model_id.lower().startswith("claude-local"):
+        if model_id == "codex-local" or model_id.startswith("codex-local/"):
+            from .factory_codex import CodexRuntime
+            async def codex_complete():
+                rt = CodexRuntime(name="workflow", instructions=system or "Answer the user's request.",
+                                  registry={}, model_setting=model_id, tool_mode="off")
+                with _request_ctx.chat_scope(None):
+                    answer = await rt.run(prompt)
+                    measured = _request_ctx.drain_usage()
+                if rt.last_error:
+                    raise AgentRunError(str(rt.last_error)) from rt.last_error
+                return answer, measured
+            text, usage = asyncio.run(codex_complete())
+        elif model_id.lower().startswith("claude-local"):
             from .factory_claude import claude_complete
 
             text, usage = asyncio.run(claude_complete(prompt, system=system, model_setting=model_id))

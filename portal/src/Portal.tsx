@@ -11,7 +11,6 @@ import "./portal.css";
 
 // Each screen is its own chunk so the first paint only needs the shell.
 const HomeScreen = lazy(() => import("./screens/HomeScreen").then((m) => ({ default: m.HomeScreen })));
-const AgentsScreen = lazy(() => import("./screens/AgentsScreen").then((m) => ({ default: m.AgentsScreen })));
 const AgentDetail = lazy(() => import("./screens/AgentDetail").then((m) => ({ default: m.AgentDetail })));
 const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
@@ -61,19 +60,21 @@ function Router({
   const me = useData<Me>("/me");
   const hubs = useData<{ hubs: Hub[] }>("/hubs");
 
+  const status = me.status ?? hubs.status;
   if (!me.data || !hubs.data)
     return (
       <div className="gate">
-        <Typography.Title level={3}>Hubzoid administration</Typography.Title>
+        <Typography.Title level={1} style={{ fontSize: 28 }}>Hubzoid Admin Console</Typography.Title>
         {me.error || hubs.error ? (
           <Alert
             type="error"
             showIcon
-            title={me.error || hubs.error}
+            title={status === 401 ? "Sign in to continue" : status === 403 ? "Console access is not enabled for this account" : "Couldn’t connect to the Console"}
             description={
               <>
-                Sign in to the chat app with an account that is allowed to manage agent access, then come back here.
+                {status === 401 ? "Use your chat account to sign in, then return here." : status === 403 ? "Ask your hub owner for Manage access. You can still open chat to use the agents available to you." : "Check your connection and try again. Your access has not changed."}
                 <div style={{ marginTop: 12 }}>
+                  <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
                   <Button type="primary" href="/">
                     Go to the chat app
                   </Button>
@@ -92,10 +93,9 @@ function Router({
   let screen: ReactNode;
   let active: Area = "agents";
   if (!area || area === "home") {
-    active = "home";
-    screen = <HomeScreen />;
+    screen = <HomeScreen hubs={list} reloadHubs={hubs.reload} />;
   } else if (area === "agents") {
-    if (!rest[0]) screen = <AgentsScreen me={me.data} hubs={list} />;
+    if (!rest[0]) screen = <HomeScreen hubs={list} reloadHubs={hubs.reload} />;
     else {
       const hub = list.find((h) => h.key === rest[0]);
       const tab = (rest[1] || "access") as AgentTab;

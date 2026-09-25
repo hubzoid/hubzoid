@@ -29,8 +29,23 @@ Knowing the boundaries helps you report the right thing:
   person or service identity, and every decision is logged. A call that cannot
   be logged does not run.
 - **Download links** are signed per hub.
-- **Secrets** for restricted tools live in `restricted/.env`, which the agent's
-  file tools cannot read.
+- **Public file reads**, in chat and MCP, exclude dotenv files (including
+  nested files and variants), databases/sidecars, `restricted/`, and private
+  runtime/credential directories such as `.hubzoid/`, `.openwebui-data/` and
+  `.git/`. Search checks every candidate before reading, with or without
+  ripgrep. Resolved symlink targets receive the same checks; SQLite headers
+  also block renamed databases. Name-based knowledge/skill loading applies
+  this boundary too.
+- **Chat files**: the current chat's uploads and artifacts remain readable
+  through their scoped tools; dotenv and database checks still apply there.
+  Generic readers do not expose other chats' private runtime directories.
+- **Templates** render in Jinja's sandbox without filesystem access.
+
+These guards apply to the built-in tools. Hub-local Python, workflow code and
+external integrations are trusted operator-installed code, not an OS sandbox;
+their authors must enforce their own data access. Do not copy credentials into
+public knowledge or raw-data text files. Restart running bridges/MCP servers
+after upgrading so their tool registries load the fix.
 
 `hubzoid doctor` flags the common misconfigurations: a missing or public bridge
 key, chat sign-in off on an exposed port, and missing model credentials. See

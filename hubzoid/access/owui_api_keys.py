@@ -1,4 +1,4 @@
-# Hubzoid MCP access management. MIT licensed like the rest of the repository.
+# Hubzoid MCP access management. Apache-2.0 licensed like the rest of the repository.
 """Resolve an Open WebUI per-user API key to the owning user's email.
 
 This is the credential story for the hosted MCP surface: a user mints an
@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import hmac
 import logging
-import sqlite3
 import time
 from pathlib import Path
 
-from .owui_groups import _db_path
+from sqlalchemy import inspect, text
+
+from . import owui_db
 
 log = logging.getLogger("hubzoid.access")
 
@@ -72,22 +73,21 @@ def resolve_email(hub_dir: Path, token: str | None) -> str | None:
     token = (token or "").strip()
     if not token:
         return None
-    db = _db_path(Path(hub_dir))
-    if not db.is_file():
+    con = owui_db.connect_ro(hub_dir)
+    if con is None:
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
         try:
-            columns = {r[1] for r in con.execute('PRAGMA table_info("user")')}
+            columns = {c["name"] for c in inspect(con).get_columns("user")}
             query = _QUERY.replace(
                 "u.id\n",
                 "u.id, " + ("u.role" if "role" in columns else "'user'") + "\n",
             )
-            rows = con.execute(query).fetchall()
+            rows = con.execute(text(query)).fetchall()
         finally:
             con.close()
-    except sqlite3.Error as exc:
-        log.warning("api-key lookup failed (%s); denying", exc)
+    except Exception:
+        log.warning("Open WebUI api-key lookup failed; denying")
         return None
 
     now = time.time()

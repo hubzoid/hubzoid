@@ -60,11 +60,12 @@ def test_run_propagates_bridge_port_to_bridge_env(monkeypatch):
     captured: list[dict] = []
 
     class _FakeProc:
-        def wait(self):
+        def wait(self, timeout=None):
+            self.returncode = 0
             return 0
 
         def poll(self):
-            return None
+            return getattr(self, "returncode", None)
 
         def terminate(self):
             pass

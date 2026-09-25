@@ -35,7 +35,7 @@ If you want to control them explicitly, add a YAML frontmatter block:
 ---
 name: my-bot                                 # optional; shown in /v1/models
 description: A helpful, concise assistant.   # optional; used as handoff trigger for sub agents
-model: openrouter/anthropic/claude-haiku-4.5 # optional; overrides .env MODEL
+model: openrouter/anthropic/claude-haiku-4.5 # optional; used when .env MODEL is unset
 ---
 
 Body is the system prompt. Anything here goes verbatim into the agent's

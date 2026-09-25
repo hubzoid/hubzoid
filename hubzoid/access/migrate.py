@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """One-time migration of legacy access into the Casbin store (direct grants).
 
 Two legacy sources, both flattened to direct `(subject, hub, permission)` grants:

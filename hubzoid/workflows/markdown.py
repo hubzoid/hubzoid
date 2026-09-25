@@ -1,4 +1,4 @@
-# Hubzoid workflows. MIT licensed like the rest of the repository.
+# Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
 """Markdown schedule tasks (`<hub>/schedule/*.md`) and scheduled evals, run on DBOS.
 
 This module is only the executor. *When* a task is due is unchanged and lives in

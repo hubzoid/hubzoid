@@ -219,3 +219,34 @@ def test_policy_surface_gate_beats_grant():
     assert called == []  # can() never ran — a grant is necessary, not sufficient
 
 
+
+
+def test_initial_owner_is_one_time_and_preserves_revocation(store):
+    assert store.provision_owner("owner@example.com", "finance", fresh=True)
+    assert store.is_authoritative("finance")
+    assert store.can("owner@example.com", "finance", USE_HUB)
+    store.revoke("owner@example.com", "finance", USE_HUB)
+    assert not store.provision_owner("owner@example.com", "finance", fresh=True)
+    assert not store.can("owner@example.com", "finance", USE_HUB)
+    assert not store.provision_owner("replacement@example.com", "finance")
+    assert not store.can("replacement@example.com", ORG, MANAGE_ACCESS)
+
+
+def test_initial_owner_keeps_existing_hub_authority_mode(store):
+    store.provision_owner("owner@example.com", "finance")
+    assert not store.is_authoritative("finance")
+
+
+def test_adding_hub_does_not_restore_revoked_owner_org_role(store):
+    store.provision_owner("owner@example.com", "finance", fresh=True)
+    store.grant("ops@example.com", ORG, MANAGE_ACCESS)
+    store.revoke("owner@example.com", ORG, MANAGE_ACCESS)
+    assert store.provision_owner("owner@example.com", "support", fresh=True)
+    assert not store.can("owner@example.com", ORG, MANAGE_ACCESS)
+    assert store.can("owner@example.com", "support", USE_HUB)
+
+
+def test_owner_setup_respects_existing_admin_bootstrap(store):
+    store.bootstrap(["ops@example.com"])
+    store.provision_owner("owner@example.com", "finance")
+    assert not store.can("owner@example.com", ORG, MANAGE_ACCESS)

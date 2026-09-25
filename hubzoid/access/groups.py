@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """The one place a caller's groups are assembled from every source.
 
 A person can be granted a group in more than one store, and which stores are

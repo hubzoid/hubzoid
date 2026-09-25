@@ -41,6 +41,11 @@ jobs:
         working-directory: portal
         run: npm ci && npm run lint && npm run build
 
+      - name: Codex isolation fixture and Console journeys
+        run: |
+          npm install -g @openai/codex@0.147.0
+          cd portal && npx playwright install --with-deps chromium && npm test
+
       - name: Full test suite
         run: |
           pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev]'

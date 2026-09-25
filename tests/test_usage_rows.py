@@ -72,3 +72,19 @@ def test_streamed_slack_turn_counts_as_slack(client):
         assert r.status_code == 200 and "[DONE]" in r.text
     (row,) = _rows(hub)
     assert (row["surface"], row["subject"], row["input_tokens"]) == ("slack", "bo@example.org", 900)
+
+
+def test_owui_background_call_is_not_another_chat_message(client):
+    c, hub = client
+    with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=_answer):
+        for task in ("", "title_generation"):
+            r = c.post("/v1/chat/completions",
+                       headers={"Authorization": "Bearer k-usage",
+                                "X-OpenWebUI-User-Email": "ann@example.org",
+                                "X-OpenWebUI-Chat-Id": "actual-chat-id",
+                                "X-Hubzoid-Task": task},
+                       json={"model": "sales", "messages": [{"role": "user", "content": "hello"}]})
+            assert r.status_code == 200
+    rows = _rows(hub)
+    assert [r["kind"] for r in rows] == ["chat", "background"]
+    assert {r["chat_id"] for r in rows} == {"actual-chat-id"}

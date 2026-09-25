@@ -1,6 +1,6 @@
 """File operations.
 
-  * `read_file`        — read anything under the hub directory (read-only).
+  * `read_file`        — read public content under the hub directory (read-only).
   * `list_files`       — glob the hub directory.
   * `write_artifact`   — write to the current chat's artifacts directory.
                          Returns a markdown download link the agent passes
@@ -58,11 +58,10 @@ def make(ctx) -> list:
             File contents. Large results are truncated with a hint pointing
             at an overflow file under output/<session>/ that holds the full text.
         """
-        target = (hub_dir / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
-        if hub_dir.resolve() not in target.parents and target != hub_dir.resolve():
-            return f"[read_file refused: {path!r} is outside the hub directory]"
-        if _fs.is_under_restricted(hub_dir, target):
-            return f"[read_file refused: {path!r} is in the restricted/ folder]"
+        target = hub_dir / path
+        reason = _read_refusal(hub_dir, target)
+        if reason:
+            return f"[read_file refused: {path!r}: {reason}]"
         if not target.is_file():
             return f"[read_file: {path!r} not found]"
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -90,9 +89,11 @@ def make(ctx) -> list:
             Newline-separated list of relative paths, capped at 100 entries.
             Footer hints at how to narrow if more entries exist.
         """
+        if Path(glob).is_absolute() or ".." in Path(glob).parts:
+            return "[list_files refused: glob must stay inside the hub directory]"
         matches = sorted(
             p for p in hub_dir.glob(glob)
-            if p.is_file() and not _fs.is_under_restricted(hub_dir, p)
+            if not _read_refusal(hub_dir, p) and p.is_file()
         )
         if not matches:
             return ""
@@ -223,6 +224,10 @@ def _read_upload_full_impl(hub_dir: Path, filename: str) -> str:
     if not target.is_file():
         return f"[read_upload_full: {safe_name!r} not found; uploads: {_list_dir_names(upload_dir) or '(none)'}]"
 
+    reason = _fs.agent_read_refusal(upload_dir, upload_dir / safe_name)
+    if reason:
+        return f"[read_upload_full refused: {safe_name!r}: {reason}]"
+
     payload = target.read_bytes()
     meta = uploads_lib.read_meta(upload_dir, safe_name)
     if meta and isinstance(meta.get("kind"), str):
@@ -270,6 +275,10 @@ def _read_upload_impl(
     if not target.is_file():
         return f"[read_upload: {safe_name!r} not found; uploads: {_list_dir_names(upload_dir) or '(none)'}]"
 
+    reason = _fs.agent_read_refusal(upload_dir, upload_dir / safe_name)
+    if reason:
+        return f"[read_upload refused: {safe_name!r}: {reason}]"
+
     payload = target.read_bytes()
     meta = uploads_lib.read_meta(upload_dir, safe_name)
     if meta and isinstance(meta.get("kind"), str):
@@ -313,6 +322,27 @@ def _with_path_header(target: Path, body: str) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers.
 # ---------------------------------------------------------------------------
+def _read_refusal(hub_dir: Path, target: Path) -> str | None:
+    """Public content plus this chat's uploads/artifacts, never another chat's."""
+    reason = _fs.agent_read_refusal(hub_dir, target)
+    chat_id = memlib.sanitize_chat_id(_request_ctx.get_chat_id())
+    if reason and chat_id:
+        # Existing overflow hints use read_file for the current chat's output.
+        # Only these explicit session scopes may cross the private state wall.
+        chat_root = memlib.chat_root(hub_dir, chat_id)
+        for scope in (chat_root / "uploads", chat_root / "artifacts"):
+            try:
+                scope.resolve().relative_to(hub_dir.resolve())
+                target.absolute().relative_to(scope.absolute())
+                if scope.resolve() != scope.absolute():
+                    continue
+            except (ValueError, OSError, RuntimeError):
+                continue
+            if _fs.agent_read_refusal(scope, target) is None:
+                return None
+    return reason
+
+
 def _artifact_dir(hub_dir: Path, fallback: Path) -> Path:
     chat_id = _request_ctx.get_chat_id()
     if chat_id:

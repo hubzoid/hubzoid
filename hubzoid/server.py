@@ -300,6 +300,8 @@ def build_app() -> FastAPI:
                     raw_usage = _request_ctx.drain_usage()
         finally:
             inflight.leave()
+        if request.headers.get("x-hubzoid-task", "").strip():
+            raw_usage = {**raw_usage, "kind": "background"}
         await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
         return JSONResponse(_blocking_envelope(text, model_label, _usage_envelope(raw_usage)))
 
@@ -470,7 +472,7 @@ async def _record_turn(hub_dir, identity, chat_id, raw: dict, started: float) ->
         usage_lib.record, hub_dir,
         hub=Path(hub_dir).name,
         surface=getattr(identity, "surface", None) or "api",
-        kind="chat",
+        kind=raw.get("kind", "chat"),
         subject=getattr(identity, "user", None),
         chat_id=chat_id,
         model=raw.get("model"),
@@ -551,7 +553,10 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
             status_code=403,
             detail=(
                 f"You do not have access to the '{hub_dir.name}' hub. "
-                "Ask an admin to grant you access."
+                f"Signed in as {verified}. "
+                + ("Open Console → Agents → Access to review your chat permission."
+                   if gs.can(verified, hub_dir.name, "manage_access") else
+                   "Ask your hub administrator for chat access, then start a new chat.")
             ),
         )
 
@@ -642,6 +647,7 @@ def _derive_chat_id(body: dict[str, Any], request: Request, messages: list) -> s
         candidates.append(meta.get("chat_id"))
         candidates.append(meta.get("conversation_id"))
     candidates.append(request.headers.get("x-hubzoid-chat-id"))
+    candidates.append(request.headers.get("x-openwebui-chat-id"))
     candidates.append(body.get("user"))
 
     for raw in candidates:

@@ -40,8 +40,9 @@ def _private_hub_copy(tmp_path_factory):
     shutil.copytree(
         SOURCE_HUB,
         dst,
-        ignore=shutil.ignore_patterns(".hubzoid", ".openwebui-data", ".git", "__pycache__"),
+        ignore=shutil.ignore_patterns(".hubzoid", ".openwebui-data", ".git", "__pycache__", ".env"),
     )
+    (dst / ".env").write_text("MODEL=claude-local\nBRIDGE_API_KEYS=dev\nHUBZOID_DISABLE_SCHEDULE=1\n")
     TEST_HUB = dst
     yield
     TEST_HUB = SOURCE_HUB
@@ -84,6 +85,10 @@ def _cleanup():
 def client(monkeypatch):
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(TEST_HUB))
     monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    # build_app loads the fixture's .env with override=True. Register all its
+    # keys with monkeypatch so they cannot disable unrelated scheduler tests.
+    monkeypatch.setenv("MODEL", "claude-local")
+    monkeypatch.setenv("HUBZOID_DISABLE_SCHEDULE", "1")
     from hubzoid.server import build_app
     return TestClient(build_app())
 

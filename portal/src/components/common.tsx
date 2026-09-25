@@ -45,7 +45,7 @@ export function PageHeader({
     <div className="page-header">
       <div>
         {eyebrow && <div className="eyebrow">{eyebrow}</div>}
-        <Title level={2} style={{ margin: 0 }}>
+        <Title level={1} style={{ margin: 0, fontSize: 28 }}>
           {title}
         </Title>
         {description && (

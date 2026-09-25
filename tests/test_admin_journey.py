@@ -67,7 +67,7 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
         "new",
     }
     ps = c.get("/portal/api/permissions?hub=ops").json()["permissions"]
-    assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub"}
+    assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator"}
     assert (
         c.post(
             "/portal/api/access/grant",
@@ -88,6 +88,22 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
     assert {(w["hub"], w["name"]) for w in workflows} == {
         (p.name, "daily") for p in dirs
     }
+
+
+@pytest.mark.parametrize("subject", ["curator@example.com", "workflow:md:daily-notes"])
+def test_console_can_grant_and_revoke_builtin_curator(deployment_client, subject):
+    c, gs, _, _ = deployment_client
+    catalog = c.get("/portal/api/permissions?hub=finance").json()["permissions"]
+    curator = next(p for p in catalog if p["permission"] == "curator")
+    assert curator["label"] == "Save shared knowledge"
+    assert "remember" in curator["description"]
+    payload = dict(subject=subject, hub="finance", permission="curator")
+    assert c.post("/portal/api/access/grant", json=payload).status_code == 200
+    assert gs.can(subject, "finance", "curator")
+    assert gs.can(subject, "finance", "use_hub")
+    assert not gs.can(subject, "ops", "curator")
+    assert c.post("/portal/api/access/revoke", json=payload).status_code == 200
+    assert not gs.can(subject, "finance", "curator")
 
 
 def test_hub_admin_audit_and_account_isolation(deployment_client):
@@ -349,5 +365,5 @@ def test_edge_partial_migration_and_navigation(deployment_client, monkeypatch):
             x.post("/api/v1/groups/create", json={"name": "old-team"}).status_code
             != 403
         )
-        assert "Manage agent access" in x.get("/hubzoid-portal-navigation.js").text
+        assert "Hubzoid Admin Console" in x.get("/hubzoid-portal-navigation.js").text
     assert b"/hubzoid-portal-navigation.js" in inject(b"<html><body>Chat</body></html>")

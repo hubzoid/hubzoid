@@ -1,7 +1,7 @@
 # Hosted MCP server — bring your own intelligence
 
 A hub can serve its tools and knowledge to **external MCP clients** — Claude
-Code, Cursor, any Streamable-HTTP MCP client. The caller brings their own
+Code, Codex, Hermes, Cursor, and other Streamable-HTTP MCP clients. The caller brings their own
 model (their subscription, their harness, their context); the hub provides
 curated tools, org knowledge, and per-role access control. The inverse of
 `connectors/.mcp.json`, which is the hub *consuming* MCP servers.
@@ -39,22 +39,60 @@ Their agent now has the hub's tools (`read_knowledge`, `grep_data`, hub-local
 tools, …) and, at connect time, receives the hub's instructions so it knows
 what the hub is and how to use them.
 
+### Codex
+
+Add to `~/.codex/config.toml` (or the relevant Codex project configuration):
+
+```toml
+[mcp_servers.hubzoid]
+url = "https://hub.example.com/mcp"
+bearer_token_env_var = "HUBZOID_MCP_TOKEN"
+```
+
+Set `HUBZOID_MCP_TOKEN` in the environment that launches Codex to the user's
+Open WebUI API key. No custom plugin is required. See the
+[official Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+### Hermes
+
+Add to Hermes' `config.yaml`:
+
+```yaml
+mcp_servers:
+  hubzoid:
+    url: "https://hub.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${HUBZOID_MCP_TOKEN}"
+```
+
+Store the API key in Hermes' secret environment. This uses static bearer
+credentials, so do not enable OAuth for this connection. See the
+[official Hermes MCP reference](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference).
+
+These clients support Hubzoid's transport/authentication contract. Hubzoid's
+regressions exercise MCP HTTP calls and token revocation; they do not claim
+end-to-end testing of every client version. A plugin could package setup and
+instructions later, but is not needed to connect.
+
 ## Identity & access
 
 The Bearer token is resolved **read-only against Open WebUI's own database**
-(`api_key` table → user email → OWUI groups). Revocation = delete the key in
-OWUI; expiry is honored; disabling `ENABLE_API_KEYS` kills the whole surface.
+(`api_key` table → user identity), on SQLite or PostgreSQL. It is a **per-user
+API key**, not the browser login JWT or a bridge secret. Deleting the key revokes
+MCP access; expiry, pending approval and suspended accounts are enforced.
+Set `MCP_SERVER=false` and restart to remove the MCP surface entirely.
 
 Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
-* unrestricted tools: available to any authenticated caller,
-* `restricted/<perm>.py` tools: require the caller to be in the OWUI group
-  `<perm>` — same rule as the web UI, and hidden from `tools/list` otherwise
-  (the invoke-time guard fails closed regardless, and every decision lands
-  in the audit log),
-* `BRIDGE_API_KEYS` are **never** accepted on `/mcp` — the bridge key is
-  infrastructure trust, not a user.
+* On a Console-managed hub, the caller needs `use_hub` to connect, plus the
+  named grant for each restricted capability. The built-in `remember` tool
+  requires `curator`, shown in Console as **Save shared knowledge**.
+* Unmigrated hubs retain their legacy group/roster permissions. Their optional
+  `MCP_ACCESS_GROUP` also gates entry to the entire endpoint.
+* Restricted tools are hidden from `tools/list` when unavailable and checked
+  again on invocation. The audit log records access decisions.
+* `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
 
 Chat-scoped tools (`write_artifact`, `read_upload`, …) are not exposed —
 they need a live chat to resolve their directories. Model-delegates are not
@@ -77,29 +115,35 @@ mcp_instructions: |
 ---
 ```
 
-## Gateway mode — set MCP_ACCESS_GROUP
+## Gateway mode
 
 Each MCP-enabled hub gets its own endpoint: `https://<host>/b/<slug>/mcp`.
 Detection is strictly per-hub: `MCP_SERVER=true` must be in **that hub's**
-`.env` file. Bridges run separately from the gateway (`--no-bridges`,
-systemd) must set `HUBZOID_OWUI_DB=<gateway-data>/webui.db` in their
-environment so key/group lookups read the shared user database.
+`.env` file. The gateway registers the shared Open WebUI database URL and
+optional `DATABASE_SCHEMA` in its deployment manifest. Key, group and OAuth
+lookups support SQLite and PostgreSQL; a configured database failure denies
+access rather than falling back to a local SQLite copy.
 
-**Important:** in gateway mode one shared user database backs every hub, and
-a minted API key belongs to the *user*, not to a team. Without a per-hub
-gate, any logged-in user of any team can reach an MCP hub's **unrestricted**
-tools and knowledge — the chat UI's per-model ACLs do not apply here. Gate
-each hub's whole MCP surface on an OWUI group:
+Separately managed bridges (`--no-bridges`, systemd) should use the same
+deployment manifest, or the same `DATABASE_URL`/`DATABASE_SCHEMA` as Open WebUI.
+For SQLite without a manifest, set `HUBZOID_OWUI_DB=<gateway-data>/webui.db`.
+Keep that path in separate bridges for shared uploads even with PostgreSQL;
+`DATABASE_URL` takes precedence for database lookups.
+
+A shared account does not grant entry to every Console-managed hub. Grant
+**Use this agent** in each intended hub; the same `use_hub` check protects chat
+and MCP. Open WebUI model visibility is not the MCP authorization boundary.
+
+For an **unmigrated** gateway, set the legacy entry group on each hub:
 
 ```dotenv
-# SalesHub/sales-hub/.env
 MCP_SERVER=true
-MCP_ACCESS_GROUP=sales        # only members of the OWUI group "sales" get past auth
+MCP_ACCESS_GROUP=sales
 ```
 
-Non-members get 401 before seeing a single tool name. Single-hub
-deployments can usually leave it unset (everyone in that OWUI *is* the
-team).
+After that hub's permissions become authoritative in Hubzoid, direct grants
+replace this legacy group gate. Do not rely on an Open WebUI group to grant or
+revoke managed-hub access. See [access management](access-management.md).
 
 ## Operational notes
 

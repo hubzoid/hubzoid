@@ -267,6 +267,29 @@ def build_edge_app(
         except httpx.ConnectError:
             return Response("upstream unavailable", status_code=502)
 
+        # OWUI administrators bypass its own model ACL. Apply Hubzoid's entry
+        # decision to the picker for every verified viewer; execution is still
+        # checked by each bridge. Do not fall back to an unfiltered list on error.
+        if portal_enabled and request.method == "GET" and request.url.path.rstrip("/") == "/api/models" and resp.status_code == 200:
+            body = await resp.aread()
+            await resp.aclose()
+            route = _match("/portal", norm_routes)
+            if route is None:
+                return Response("Agent access is unavailable. Try again.", status_code=503)
+            try:
+                access = await client.get(route.upstream + "/portal/api/chat-access",
+                                          headers=_request_headers(request, public_scheme))
+                if access.status_code != 200:
+                    return Response("Sign in to see your agents." if access.status_code == 401 else "Agent access is unavailable. Try again.",
+                                    status_code=401 if access.status_code == 401 else 503)
+                denied = set(access.json()["denied"])
+                payload = json.loads(body)
+                payload["data"] = [m for m in payload["data"] if m.get("id") not in denied]
+                from starlette.responses import JSONResponse
+                return JSONResponse(payload)
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                return Response("Agent access is unavailable. Try again.", status_code=503)
+
         if portal_enabled and 'text/html' in resp.headers.get('content-type','') and _match(request.url.path, norm_routes) is None:
             from .portal_navigation import inject
             body = await resp.aread()

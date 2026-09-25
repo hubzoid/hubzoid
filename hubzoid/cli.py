@@ -21,6 +21,7 @@ import base64
 import importlib.resources as resources
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -42,6 +43,24 @@ app = typer.Typer(
     help="An open-source framework for production AI agents.",
 )
 console = Console()
+
+
+def _stop_processes(procs, *, timeout: float = 8.0) -> None:
+    """Let child services close databases before the supervising process exits.
+
+    In a container, exiting PID 1 kills its remaining children immediately.
+    Signal all services first, then give them a shared, bounded grace period.
+    """
+    active = [p for p in procs if p is not None and p.poll() is None]
+    for p in active:
+        p.terminate()
+    deadline = time.monotonic() + timeout
+    for p in active:
+        try:
+            p.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
 
 
 def _public_scheme(env: dict, *urls: str) -> str:
@@ -66,6 +85,40 @@ def _public_scheme(env: dict, *urls: str) -> str:
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
+def _available_local_models() -> list[str]:
+    """Only authenticated CLIs are offered; never reads credentials into output."""
+    available = []
+    claude = shutil.which("claude")
+    if claude:
+        try:
+            result = subprocess.run([claude, "auth", "status", "--json"], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and json.loads(result.stdout).get("loggedIn") is True:
+                available.append("claude-local")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    from .factory_codex import codex_available
+    if codex_available():
+        available.append("codex-local")
+    return available
+
+
+def _choose_initial_model() -> str | None:
+    choices = _available_local_models()
+    if not choices:
+        return None
+    if len(choices) == 1:
+        console.print(f"Using authenticated local runtime: {choices[0]}")
+        return choices[0]
+    console.print("Available local runtimes:")
+    for i, choice in enumerate(choices, 1):
+        console.print(f"  {i}. {choice}")
+    while True:
+        selected = typer.prompt("Choose the runtime for this hub", default=1, type=int)
+        if 1 <= selected <= len(choices):
+            return choices[selected - 1]
+        console.print("Choose one of the listed numbers.")
+
+
 @app.command()
 def init(
     name: Path = typer.Argument(
@@ -82,6 +135,7 @@ def init(
         "check on bundled sample metrics that explains threshold breaches.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
+    model: str | None = typer.Option(None, "--model", help="Model for a new hub, e.g. codex-local, claude-local or a provider model id."),
 ) -> None:
     """Scaffold a new hub. Also drops agents-repo wrapper files if the parent looks fresh.
 
@@ -121,6 +175,7 @@ def init(
     # about to create does not itself disqualify the parent.
     parent_is_fresh = (not is_in_place) and _parent_looks_fresh(parent, ignore=hub_dir.name)
 
+    fresh_hub = not (hub_dir / "AGENTS.md").exists()
     hub_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Scaffold the hub folder from the bundled template.
@@ -150,8 +205,14 @@ def init(
     else:
         import secrets as _secrets
 
+        selected_model = model or (_choose_initial_model() if fresh_hub and sys.stdin.isatty() else None)
+        starter = _STARTER_ENV
+        if selected_model:
+            if any(c in selected_model for c in "\n\r#"):
+                raise typer.BadParameter("Model must be a single model identifier.")
+            starter = starter.replace("MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)", f"MODEL={selected_model}")
         env_dst.write_text(
-            _STARTER_ENV.replace(
+            starter.replace(
                 "# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees",
                 f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated, first one is what Open WebUI sees",
             )
@@ -172,6 +233,11 @@ def init(
             dst.write_text(content)
             parent_written.append(dst)
 
+    if fresh_hub:
+        setup_dir = hub_dir / ".hubzoid"
+        setup_dir.mkdir(exist_ok=True)
+        (setup_dir / "fresh-install").touch(mode=0o600)
+
     # 3. Report.
     console.print(f"[green]Initialized hub at[/green] {hub_dir}")
     if written:
@@ -184,8 +250,8 @@ def init(
             console.print(f"  + {p.name}")
 
     console.print("\nNext:")
-    console.print(f"  1. edit {hub_dir.name}/.env if you do not have `claude` CLI logged in")
-    console.print(f"  2. hubzoid run {hub_dir.name}")
+    console.print(f"  1. Configure the model in {hub_dir / '.env'} (local runtime uses the service account’s CLI login).")
+    console.print(f"  2. hubzoid run {shlex.quote(str(hub_dir))}")
     if template == "minimal":
         console.print(
             "\n[dim]Want the guided tour instead? "
@@ -446,9 +512,8 @@ def run(
 
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
-        for p in (edge_proc, ui_proc, slack_proc, inbound_proc, bridge_proc):
-            if p is not None and p.poll() is None:
-                p.terminate()
+        # Unwind Popen.wait before waiting for children in finally. Waiting
+        # inside the signal handler can re-enter Popen's non-reentrant lock.
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
@@ -457,9 +522,7 @@ def run(
     try:
         bridge_proc.wait()
     finally:
-        for p in (edge_proc, ui_proc, slack_proc, inbound_proc):
-            if p is not None and p.poll() is None:
-                p.terminate()
+        _stop_processes((edge_proc, ui_proc, slack_proc, inbound_proc, bridge_proc))
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +570,14 @@ def gateway(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
 
+    # The shared OWUI and all bridges use deployment-wide storage. plan() loads
+    # individual hub .env files; the last hub must not redirect the shared DB.
+    for key in ("DATABASE_URL", "DATABASE_SCHEMA"):
+        if key in deployment_env:
+            os.environ[key] = deployment_env[key]
+        else:
+            os.environ.pop(key, None)
+
     ui_port = port or int(os.environ.get("PORT", "3080"))
     pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
@@ -532,7 +603,9 @@ def gateway(
                        (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL','').startswith('postgres') else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
         operational_url=shared_op_url,
         owui_url=f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}",
-        owui_db=str(gw_data / "webui.db"))
+        owui_db=str(gw_data / "webui.db"),
+        owui_database_url=deployment_env.get("DATABASE_URL") or f"sqlite:///{gw_data / 'webui.db'}",
+        owui_database_schema=deployment_env.get("DATABASE_SCHEMA"))
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
@@ -577,24 +650,15 @@ def gateway(
     if launch_bridges:
         for b in gp.backends:
             bridge_env = os.environ.copy()
-            # Point each bridge's access-control group lookup at the SHARED
-            # gateway DB. Each bridge is launched as `hubzoid run <hub> --no-ui`,
-            # so by default access.owui_groups would read <hub>/.openwebui-data/
-            # webui.db — which never exists in gateway mode (users/groups live in
-            # the one shared OWUI DB at <gw_data>/webui.db). Without this override
-            # every restricted tool is denied for every gateway user. Only
-            # relevant in --launch-bridges mode; external bridges (--no-bridges)
-            # must set HUBZOID_OWUI_DB themselves. See docs/DEPLOYING.md.
+            # Shared OWUI data directory for uploads and legacy SQLite readers.
+            # Identity readers use the manifest's database URL (Postgres or
+            # SQLite); keep this path even when DATABASE_URL selects Postgres.
             bridge_env["HUBZOID_OWUI_DB"] = str(gw_data / "webui.db")
             # Per-hub public base so this bridge's artifact links resolve
             # through the edge back to itself. Only injected when the hub's
             # own .env doesn't already pin HUBZOID_PUBLIC_URL.
             if pub:
                 bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
-            # Users/groups/api-keys live in the SHARED gateway DB, not in
-            # <hub>/.openwebui-data (which never exists in gateway mode) —
-            # point access-control lookups (owui_groups, owui_api_keys) at it.
-            bridge_env["HUBZOID_OWUI_DB"] = str(gw_data / "webui.db")
             # Pin the MCP flags per hub. plan() read each hub's own .env
             # file; the plan loop also loaded every .env into THIS process's
             # env (override=True), so values left behind by hub A would
@@ -753,9 +817,6 @@ def gateway(
 
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down gateway...[/cyan]")
-        for p in reversed(procs):
-            if p.poll() is None:
-                p.terminate()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
@@ -764,9 +825,7 @@ def gateway(
     try:
         owui_proc.wait()
     finally:
-        for p in procs:
-            if p is not owui_proc and p.poll() is None:
-                p.terminate()
+        _stop_processes(reversed(procs))
 
 
 # ---------------------------------------------------------------------------
@@ -1664,8 +1723,8 @@ def _build_plan(hub_dir: Path, from_owui: str | None, model_id: str | None, stan
         if read(hub_dir):
             raise migrate.MigrationBlocked('registered gateways require OWUI model evidence')
         if not from_owui:
-            from .access.owui_groups import _db_path
-            local_owui = _db_path(hub_dir)
+            from .access.owui_db import db_path
+            local_owui = db_path(hub_dir)
             if local_owui.is_file():
                 from_owui = f'sqlite:///{local_owui.resolve()}'
             else:
@@ -1847,20 +1906,20 @@ app.add_typer(
 
 
 _WORKFLOW_TEMPLATE = '''\
-"""The {name} workflow. Runs a defined sequence of steps on a schedule.
+"""The {name} workflow. A manual example with durable steps and state.
 
 A workflow coordinates steps, calls agents, retains state, retries, and resumes
-after a restart. Edit the schedule and the body. Read a secret INSIDE a step,
+after a restart. Add a schedule only when ready. Read a secret INSIDE a step,
 never at the top (step inputs are checkpointed).
 """
 from hubzoid import workflow, step, hub
 
 
-@workflow(schedule="every 2 minutes", timezone="Asia/Kolkata")
+@workflow()  # Manual first. Add a schedule and timezone when ready.
 def {func}():
     # example: durable, idempotent work
     seen = hub.state.get("seen", 0)
-    result = hub.call_llm("Say hello and count to three.")
+    result = {{"message": "Your workflow is ready"}}
     do_something(result)
     hub.state["seen"] = seen + 1
     return seen + 1
@@ -1868,8 +1927,7 @@ def {func}():
 
 @step   # a durable side effect — make it idempotent (at-least-once)
 def do_something(result):
-    token = hub.secret("some_token")   # resolved HERE, inside the step
-    print(f"[{name}] {{result}} (token {{'set' if token else 'unset'}})")
+    print(f"[{name}] {{result}}")
 '''
 
 
@@ -1893,7 +1951,7 @@ def new_workflow(
     console.print(f"[green]created[/green] {wf_dir / 'main.py'}")
     console.print(
         "[dim]run it once: [/dim]"
-        f"hubzoid schedule run {func} {hub_dir}"
+        f"hubzoid schedule run {shlex.quote(str(hub_dir))} {func}"
     )
 
 
@@ -1927,6 +1985,8 @@ _STARTER_ENV = """\
 # uncomment one of the alternative stanzas. Set the matching API key.
 
 MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)
+# MODEL=codex-local            # Codex CLI login; see docs/providers.md for supported version
+# MODEL=codex-local/<model-id> # optional Codex model pin
 # MODEL=claude-local/sonnet     # explicit; same as bare `claude-local`
 # MODEL=claude-local/opus       # opt in to Opus
 # MODEL=claude-local/haiku      # opt in to Haiku (~3x faster TTFT, but tends to ask before executing documented workflows)

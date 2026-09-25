@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { request } from "../api";
+import { ApiError, request } from "../api";
 
 export const errorText = (e: unknown) =>
   e instanceof Error ? e.message : String(e);
 
-type Loaded<T> = { path: string; data?: T; error?: string; rev: number; at?: number };
+type Loaded<T> = { path: string; data?: T; error?: string; status?: number; rev: number; at?: number };
 
 /**
  * Fetch one JSON resource and keep it in sync with `path`.
@@ -39,6 +39,7 @@ export function useData<T>(path: string | null, opts?: { keepStale?: boolean }) 
             path,
             data: keep ? s.data : undefined,
             error: errorText(e),
+            status: e instanceof ApiError ? e.status : 0,
             rev: revision,
             at: keep ? s.at : undefined,
           };
@@ -57,6 +58,7 @@ export function useData<T>(path: string | null, opts?: { keepStale?: boolean }) 
   return {
     data: current.data,
     error: current.error,
+    status: current.status,
     loading: path !== null && current.data === undefined && !current.error,
     refreshing,
     at: current.at,

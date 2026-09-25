@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Bot, History, LayoutDashboard, Menu as MenuIcon, Monitor, Moon, Play, Sun, Users } from "lucide-react";
+import { Bot, History, Menu as MenuIcon, Monitor, Moon, Sun, Users } from "lucide-react";
 import type { Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -52,9 +52,7 @@ function SignOutButton() {
 }
 
 const items = [
-  { key: "home", icon: <LayoutDashboard size={18} />, label: <a href={href("/home")}>Overview</a> },
   { key: "agents", icon: <Bot size={18} />, label: <a href={href("/agents")}>Agents</a> },
-  { key: "runs", icon: <Play size={18} />, label: <a href={href("/runs")}>Runs</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
@@ -76,9 +74,9 @@ function ThemeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void
       className="theme-toggle"
       aria-label="Color theme"
       options={[
-        { value: "light", icon: <Sun size={14} />, title: "Light" },
-        { value: "dark", icon: <Moon size={14} />, title: "Dark" },
-        { value: "system", icon: <Monitor size={14} />, title: "Match system" },
+        { value: "light", icon: <Sun size={14} />, title: "Light", label: <span className="sr-only">Light</span> },
+        { value: "dark", icon: <Moon size={14} />, title: "Dark", label: <span className="sr-only">Dark</span> },
+        { value: "system", icon: <Monitor size={14} />, title: "Match system", label: <span className="sr-only">Match system</span> },
       ]}
     />
   );
@@ -107,7 +105,6 @@ function Sidebar({
       <div className="sidebar-footer">
         <ThemeToggle mode={mode} setMode={setMode} />
         <a href="/">Open chat ↗</a>
-        {me.org_admin && <a href="/admin">Manage accounts ↗</a>}
         <div className="account">
           <Text type="secondary" className="identity">
             {me.subject}
@@ -179,7 +176,7 @@ export function Shell({
         </Layout.Sider>
       )}
       <Layout.Content className="content">
-        <main className="main">{children}</main>
+        <div className="main">{children}</div>
       </Layout.Content>
     </Layout>
   );

@@ -112,7 +112,7 @@ export function PeopleScreen({
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <Title level={4}>People and services</Title>
+            <Title level={1} style={{ fontSize: 28 }}>People and services</Title>
             <Paragraph type="secondary">
               Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here.
             </Paragraph>
@@ -124,7 +124,6 @@ export function PeopleScreen({
                   Refresh accounts
                 </Button>
               </Tooltip>
-              <Button href="/admin">Manage accounts ↗</Button>
             </Space>
           )}
         </div>
@@ -259,7 +258,7 @@ export function PeopleScreen({
                       {entries.map(([h, perms]) => (
                         <Tooltip key={h} title={`${perms.length} ${perms.length === 1 ? "capability" : "capabilities"} — open for details`}>
                           <Tag>
-                            {agentName(h)} · {perms.length}
+                            {agentName(h)} · {perms.length} {perms.length === 1 ? "capability" : "capabilities"}
                           </Tag>
                         </Tooltip>
                       ))}
@@ -321,6 +320,7 @@ function SyncStatus({
       setBusy(false);
     }
   }
+  if (v.state === "direct") return null;
   if (v.state === "error")
     return (
       <Alert
@@ -329,7 +329,7 @@ function SyncStatus({
         title="Recent access changes haven’t reached the chat app yet"
         description={
           <>
-            Access is enforced regardless, but the agent list people see in the chat app may be out of date. This retries automatically every 30 seconds.
+            Access is enforced regardless, but the agent list people see in the chat app may be out of date. Retry below after checking the chat connection.
             {v.updated ? ` Last attempt ${relativeTime(v.updated)}.` : ""}
           </>
         }
@@ -552,7 +552,7 @@ function PersonDrawer({
           />
 
           <div className="section">
-            <Title level={5}>Access by agent</Title>
+            <Title level={2} style={{ fontSize: 16 }}>Access by agent</Title>
             {access.length === 0 ? (
               <Text type="secondary">
                 {person.blocked ? "All access was removed when they were blocked." : "No direct access to any agent you manage."}
@@ -584,7 +584,7 @@ function PersonDrawer({
 
           {me.org_admin && (
             <div className="section">
-              <Title level={5}>Administrative actions</Title>
+              <Title level={2} style={{ fontSize: 16 }}>Administrative actions</Title>
               <Paragraph type="secondary">
                 These apply across every agent and are recorded in Activity. Each asks for confirmation.
               </Paragraph>

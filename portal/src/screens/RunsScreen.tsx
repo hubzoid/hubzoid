@@ -22,7 +22,7 @@ import {
   When,
   WorkflowStateTag,
 } from "../components/common";
-import { formatDuration, formatTime, workflowState } from "../lib/format";
+import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
@@ -44,7 +44,7 @@ export function RunsScreen({
   run?: string;
 }) {
   if (workflow && run) return <RunDetail hub={hub} workflow={workflow} run={run} />;
-  if (workflow) return <RunList hub={hub} workflow={workflow} />;
+  if (workflow) return <RunList key={`${hub.key}:${workflow}`} hub={hub} workflow={workflow} />;
   return <WorkflowList hub={hub} />;
 }
 
@@ -96,7 +96,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={4}>Workflows in {hub.name}</Title>
+          <Title level={2}>Workflows in {hub.name}</Title>
           <Paragraph type="secondary">
             Scheduled and manual workflows defined in this agent, with their next run.
           </Paragraph>
@@ -125,8 +125,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
                 <>
                   <div>No workflows defined in {hub.name}.</div>
                   <Text type="secondary">
-                    Add a <Text code>@workflow</Text> function under{" "}
-                    <Text code>workflows/&lt;name&gt;/main.py</Text> in the agent folder and restart the bridge.
+                    Start with a <a href="https://hubzoid.com/docs/guides/markdown-tasks">Markdown scheduled task</a> for a plain-language brief. For Python steps, run <Text code copyable>hubzoid new workflow my-workflow &lt;hub-folder&gt;</Text>, then follow the printed run command.
                   </Text>
                 </>
               }
@@ -154,13 +153,14 @@ function WorkflowList({ hub }: { hub: Hub }) {
             render: (_, w) =>
               w.schedule ? (
                 <>
+                  <div>{describeCron(w.schedule)}</div>
                   <Text code>{w.schedule}</Text>
                   <div>
                     <Text type="secondary">{w.timezone}</Text>
                   </div>
                 </>
               ) : (
-                <Text type="secondary">—</Text>
+                <Text type="secondary">On demand</Text>
               ),
           },
           {
@@ -219,7 +219,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
       />
       <div className="panel-heading">
         <div>
-          <Title level={4}>
+          <Title level={2}>
             Runs of {workflow} <Text type="secondary">· {hub.name}</Text>
           </Title>
           <Paragraph type="secondary">Most recent first. Open a run to see its result and steps.</Paragraph>
@@ -264,7 +264,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               title: "Run",
               key: "id",
               render: (_, r) => (
-                <a href={runsHref(hub, workflow, r.id)} className="identity">
+                <a href={runsHref(hub, workflow, r.id)} className="identity run-id-link" title={r.id}>
                   {r.id}
                 </a>
               ),
@@ -354,7 +354,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
       {crumbs}
       <div className="panel-heading">
         <div>
-          <Title level={4}>
+          <Title level={2}>
             <Space>
               <span>Run of {workflow}</span>
               <RunStatusTag status={r.status} />
@@ -372,18 +372,18 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         size="small"
         column={{ xs: 1, sm: 2, lg: 4 }}
         items={[
-          { key: "id", label: "Run id", children: <span className="identity">{r.id}</span> },
+          { key: "id", label: "Run id", children: <Text className="identity" copyable>{r.id}</Text> },
           { key: "started", label: "Started", children: formatTime(r.started) },
           { key: "completed", label: "Completed", children: formatTime(r.completed) },
           { key: "duration", label: "Duration", children: formatDuration(r.duration_ms) },
         ]}
       />
       <div className="section">
-        <Title level={5}>Result</Title>
+        <Title level={3}>Result</Title>
         {r.error ? (
           <Alert type="error" showIcon title="The run failed" description={<pre className="output">{r.error}</pre>} />
         ) : r.output ? (
-          <pre className="output">{r.output}</pre>
+          <pre className="output">{prettyOutput(r.output)}</pre>
         ) : (
           <Text type="secondary">
             {/pending|enqueued/i.test(r.status) ? "Still running — no output yet." : "The run produced no output."}
@@ -391,7 +391,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         )}
       </div>
       <div className="section">
-        <Title level={5}>Steps</Title>
+        <Title level={3}>Steps</Title>
         {steps.length === 0 ? (
           <Text type="secondary">No steps were recorded for this run.</Text>
         ) : (
@@ -413,7 +413,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
               ),
               children: (
                 <pre className="output">
-                  {step.error || step.output || "No output recorded."}
+                  {step.error || prettyOutput(step.output) || "No output recorded."}
                 </pre>
               ),
             }))}

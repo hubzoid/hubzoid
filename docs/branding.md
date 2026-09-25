@@ -120,6 +120,7 @@ to flip one back on.
 | `ENABLE_VERSION_UPDATE_CHECK` | Phones home to check for OWUI updates. |
 | `ENABLE_MEMORY` | OWUI's user-memory feature. Conflicts with hubzoid's per-session memory tools. Will revisit when hubzoid ships per-user memory. |
 | `ENABLE_OLLAMA_API` | Proxies Ollama. Hubzoid does not. |
+| `ENABLE_SIGNUP`, `ENABLE_OAUTH_SIGNUP` | Public email and SSO account registration. Administrators add accounts; explicit operator opt-in remains supported. |
 | `SHOW_ADMIN_DETAILS` | Shows admin emails to regular users. |
 | `ENABLE_PERSISTENT_CONFIG` | **Critical, do not flip.** When true, OWUI pins settings to SQLite on first boot and ignores env-var changes forever. Breaks hubzoid's entire env-var-as-source-of-truth model. |
 

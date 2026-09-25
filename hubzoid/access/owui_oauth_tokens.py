@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Read + decrypt a user's per-tool OAuth token from Open WebUI's database.
 
 When a user connects an MCP tool in OWUI (``+ -> Integrations -> Tools``, an
@@ -28,6 +28,8 @@ import logging
 import os
 import time
 from pathlib import Path
+
+from sqlalchemy import text
 
 from . import owui_db
 
@@ -105,7 +107,8 @@ def resolve_user_id(hub_dir, email: str | None) -> str | None:
         return None
     try:
         row = con.execute(
-            'SELECT id FROM "user" WHERE lower(email) = lower(?) LIMIT 1', (email,)
+            text('SELECT id FROM "user" WHERE lower(email) = lower(:email) LIMIT 1'),
+            {"email": email}
         ).fetchone()
     except Exception:  # noqa: BLE001 — any schema drift denies, never crashes chat
         log.warning("OWUI user-id lookup failed for %r", email, exc_info=True)
@@ -134,10 +137,10 @@ def read_token(hub_dir, user_id: str, server_id: str) -> dict | None:
         return None
     try:
         row = con.execute(
-            "SELECT token FROM oauth_session "
-            "WHERE user_id = ? AND provider = ? "
-            "ORDER BY created_at DESC LIMIT 1",
-            (user_id, mcp_provider(server_id)),
+            text("SELECT token FROM oauth_session "
+                 "WHERE user_id = :user_id AND provider = :provider "
+                 "ORDER BY created_at DESC LIMIT 1"),
+            {"user_id": user_id, "provider": mcp_provider(server_id)},
         ).fetchone()
     except Exception:  # noqa: BLE001
         log.warning("OWUI token lookup failed (server %r)", server_id, exc_info=True)
@@ -171,9 +174,9 @@ def read_session(hub_dir, user_id: str, server_id: str) -> dict | None:
         return None
     try:
         row = con.execute(
-            "SELECT id, token FROM oauth_session "
-            "WHERE user_id = ? AND provider = ? ORDER BY created_at DESC LIMIT 1",
-            (user_id, mcp_provider(server_id)),
+            text("SELECT id, token FROM oauth_session "
+                 "WHERE user_id = :user_id AND provider = :provider ORDER BY created_at DESC LIMIT 1"),
+            {"user_id": user_id, "provider": mcp_provider(server_id)},
         ).fetchone()
     except Exception:  # noqa: BLE001
         log.warning("OWUI session read failed (server %r)", server_id, exc_info=True)
@@ -212,8 +215,10 @@ def write_session(hub_dir, session_id: str, token: dict) -> bool:
         return False
     try:
         con.execute(
-            "UPDATE oauth_session SET token = ?, expires_at = ?, updated_at = ? WHERE id = ?",
-            (enc, int(exp) if exp else now + 3600, now, session_id),
+            text("UPDATE oauth_session SET token = :token, expires_at = :expires_at, "
+                 "updated_at = :updated_at WHERE id = :id"),
+            {"token": enc, "expires_at": int(exp) if exp else now + 3600,
+             "updated_at": now, "id": session_id},
         )
         con.commit()
         return True
@@ -237,9 +242,9 @@ def connected_server_ids(hub_dir, user_id: str) -> set[str]:
         return set()
     try:
         rows = con.execute(
-            "SELECT DISTINCT provider FROM oauth_session "
-            "WHERE user_id = ? AND provider LIKE ?",
-            (user_id, f"{_MCP_PREFIX}%"),
+            text("SELECT DISTINCT provider FROM oauth_session "
+                 "WHERE user_id = :user_id AND provider LIKE :prefix"),
+            {"user_id": user_id, "prefix": f"{_MCP_PREFIX}%"},
         ).fetchall()
     except Exception:  # noqa: BLE001
         log.warning("OWUI connected-servers lookup failed", exc_info=True)

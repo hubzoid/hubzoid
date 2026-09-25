@@ -1,4 +1,4 @@
-# Hubzoid access management. MIT licensed like the rest of the repository.
+# Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """Read the admin-registered MCP tool servers from Open WebUI's config.
 
 OWUI keeps every tool-server connection (OpenAPI and MCP) as one JSON list
@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 
+from sqlalchemy import text
+
 from . import owui_db
 
 log = logging.getLogger("hubzoid.access")
@@ -35,7 +37,7 @@ def _load_connections(hub_dir) -> list[dict]:
     if con is None:
         return []
     try:
-        row = con.execute("SELECT value FROM config WHERE key = ?", (_KEY,)).fetchone()
+        row = con.execute(text('SELECT value FROM config WHERE "key" = :key'), {"key": _KEY}).fetchone()
     except Exception:  # noqa: BLE001 — schema drift => no servers, never crash
         log.warning("OWUI tool-server config read failed", exc_info=True)
         return []

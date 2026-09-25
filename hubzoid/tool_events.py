@@ -12,7 +12,7 @@ it sensibly:
                        leading `> ` prefix.
 
 Format:
-    > ✓ **tool_name** `arg1=value1 arg2=value2`
+    > ↳ **tool_name** `arg1=value1 arg2=value2`
 
 Errors get a separate ⚠ line because the agent's reply may not always
 surface the failure clearly:
@@ -34,9 +34,9 @@ def format_call(name: str, args: object | None = None, *, mode: str = "full") ->
 
     `mode` (the ``SHOW_TOOLS`` setting) chooses the rendering:
 
-      * ``full``    -> legacy inline blockquote ``> ✓ **tool_name** `args``` .
+      * ``full``    -> legacy inline blockquote ``> ↳ **tool_name** `args``` .
                        Shown verbatim on every surface (verbose / debug).
-      * ``compact`` -> a collapsible ``<details>`` dropdown: a short ``✓ name``
+      * ``compact`` -> a collapsible ``<details>`` dropdown: a short ``↳ name``
                        summary the web UI folds, with the args in the body
                        (revealed on expand). The Slack adapter strips it.
       * ``off``     -> emit nothing (returns ``""``).
@@ -48,13 +48,13 @@ def format_call(name: str, args: object | None = None, *, mode: str = "full") ->
         return ""
     preview = _preview(args)
     if mode == "compact":
-        summary = f"✓ {_escape(name)}"
+        summary = f"↳ {_escape(name)}"
         body = f"`{preview}`" if preview else "_(no arguments)_"
         return f"\n\n<details>\n<summary>{summary}</summary>\n\n{body}\n\n</details>\n\n"
     body = f"**{_escape(name)}**"
     if preview:
         body = f"{body} `{preview}`"
-    return f"\n\n> ✓ {body}\n\n"
+    return f"\n\n> ↳ {body}\n\n"
 
 
 def format_artifact_footer(artifacts: list, shown_text: str = "") -> str:
@@ -92,6 +92,7 @@ def format_error(name: str, message: str | None = None) -> str:
     surface the failure clearly.
     """
     body = f"**{_escape(name)}**"
+    message = message or "The tool did not complete. The agent may retry or ask for more information."
     if message:
         first_line = message.splitlines()[0][:120]
         body = f"{body} {_escape(first_line)}"
