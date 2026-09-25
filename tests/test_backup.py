@@ -91,6 +91,9 @@ def test_backup_then_restore_at_a_new_path(tmp_path):
     assert not any("/cache/" in n for n in names)                          # no model cache
     assert any(n.endswith("output/s1/report.txt") or n.endswith("s1/report.txt") for n in names)
     assert len(index["sqlite"]) >= 2 and index["not_included"] == []
+    import hubzoid
+
+    assert bk.read_index(archive)["hubzoid"] == hubzoid.__version__
 
     new = tmp_path / "moved"
     result = bk.restore(archive, [(str(tmp_path / "live"), str(new))])

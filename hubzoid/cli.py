@@ -845,75 +845,36 @@ def restore_cmd(
 @app.command()
 def doctor(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
+    as_json: bool = typer.Option(False, "--json", help="Print the checks as JSON (stable check ids)."),
 ) -> None:
-    """Validate a hub: AGENTS.md, sub-agents, skills, knowledge, tools, .env."""
+    """Check a hub and its deployment: files, agent build, schedules, schema,
+    auth, exposure, model credentials, backups and scheduled work. Read only.
+    Exits 1 when any check fails."""
+    import json as _json
+
+    from . import doctor as doctor_lib
+
     hub = hub.resolve()
-    problems: list[str] = []
-    notes: list[str] = []
-
     if not hub.is_dir():
-        console.print(f"[red]Hub directory not found:[/red] {hub}")
-        raise typer.Exit(2)
-
-    if not (hub / "AGENTS.md").is_file():
-        problems.append("missing AGENTS.md at hub root")
-
-    env_path = hub / ".env"
-    if not env_path.is_file():
-        notes.append(f"no .env at {env_path} (run `hubzoid init` to scaffold one, or create it by hand)")
-
-    # Try to actually build the runtime — this is the most thorough check.
-    # Picks the backend based on MODEL (openai-agents by default,
-    # claude-local when MODEL=claude-local).
-    try:
-        from . import runtime as runtime_lib
-        rt = runtime_lib.build(hub)
-        notes.append(f"runtime built: {rt.name!r} via {type(rt).__name__}")
-    except Exception as exc:  # noqa: BLE001
-        problems.append(f"runtime build failed: {type(exc).__name__}: {exc}")
-
-    # Scheduled tasks: parse + cron-validate <hub>/schedule/*.md.
-    try:
-        from . import scheduling as sch
-        stasks, sproblems = sch.load_tasks(hub)
-        enabled = [t for t in stasks if t.enabled]
-        if stasks:
-            extra = f", {len(stasks) - len(enabled)} disabled" if len(stasks) != len(enabled) else ""
-            notes.append(f"schedule: {len(enabled)} enabled task(s){extra}")
-        problems.extend(f"schedule/{p}" for p in sproblems)
-    except Exception as exc:  # noqa: BLE001
-        problems.append(f"schedule load failed: {type(exc).__name__}: {exc}")
-
-    from .workflows.observe import definitions
-    for w in definitions(hub):
-        if w['error']:
-            problems.append(f"{w['source']}: {w['error']}")
+        if as_json:
+            print(_json.dumps({"format": doctor_lib.FORMAT, "hub": str(hub), "ok": False, "checks": [
+                {"id": "hub.dir", "status": "fail", "summary": "Hub directory not found", "detail": None}]}))
         else:
-            notes.append(f"workflow: {w['name']} ({w['schedule'] or 'manual'}, {w['timezone']})")
-
-    # Access management: note restricted tools if the hub declares any.
-    try:
-        from . import access
-        restricted = access.load_restricted(hub)
-        if restricted:
-            notes.append(f"access management: {len(restricted)} restricted tool(s)")
-    except Exception as exc:  # noqa: BLE001
-        problems.append(f"access check failed: {type(exc).__name__}: {exc}")
-
-    # Identity resolver: an opt-in per-hub roster (identity/access.csv or .py) the
-    # WhatsApp/Telegram surfaces use to map a sender to an email + groups.
-    try:
-        from .access.resolver import load_resolver
-        if load_resolver(hub) is not None:
-            notes.append("identity: roster resolver present (identity/access.csv or .py)")
-    except Exception as exc:  # noqa: BLE001
-        problems.append(f"identity resolver failed to load: {type(exc).__name__}: {exc}")
-
-    for n in notes:
-        console.print(f"[green]✓[/green] {n}")
-    for p in problems:
-        console.print(f"[red]✗[/red] {p}")
-    if problems:
+            console.print(f"[red]Hub directory not found:[/red] {hub}")
+        raise typer.Exit(2)
+    checks = doctor_lib.run(hub)
+    result = doctor_lib.report(hub, checks)
+    if as_json:
+        print(_json.dumps(result, indent=2, default=str))
+    else:
+        marks = {"ok": "[green]✓[/green]", "info": "[dim]·[/dim]", "warn": "[yellow]![/yellow]",
+                 "fail": "[red]✗[/red]"}
+        for c in checks:
+            console.print(f"{marks[c.status]} {c.summary} [dim]({c.id})[/dim]")
+            if c.status in ("warn", "fail") and isinstance(c.detail, list):
+                for line in c.detail:
+                    console.print(f"    [dim]{line}[/dim]")
+    if not result["ok"]:
         raise typer.Exit(1)
 
 

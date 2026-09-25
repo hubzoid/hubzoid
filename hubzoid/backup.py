@@ -244,8 +244,6 @@ def _hold(p: Plan, seconds: float, actor: str):
 def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: float = 600,
            actor: str = "cli", poll: float = 2.0, say=log.info) -> dict:
     """Write one archive of the deployment containing `hub_dir` to `out`."""
-    from . import __version__
-
     p = plan(hub_dir, include_secrets=include_secrets)
     out = Path(out).resolve()
     if out.exists():
@@ -265,6 +263,8 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
                 + ". Try again later, cancel them with `hubzoid schedule cancel`,"
                 " or pass --wait 0 to take the backup anyway.")
         index = _write_archive(p, out, include_secrets)
+        for s in stores:  # read by `hubzoid doctor` (backup.age)
+            s.set_metadata("backup:last", {"at": time.time(), "path": str(out), "by": actor})
     finally:
         for s in stores:
             try:
@@ -272,14 +272,16 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
             except Exception:  # noqa: BLE001 — the hold also expires on its own
                 log.warning("backup: could not clear the schedule hold", exc_info=True)
         say("Scheduled runs resumed.")
-    index["hubzoid"] = __version__
     return index
 
 
 def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
+    from . import __version__
+
     exclude = {out}
     index = {
         "format": FORMAT,
+        "hubzoid": __version__,
         "created": datetime.now().astimezone().isoformat(timespec="seconds"),
         "hubs": [{"key": k, "path": str(v)} for k, v in p.hubs],
         "roots": [r.to_json() for r in p.roots],

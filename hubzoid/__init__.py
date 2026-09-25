@@ -5,7 +5,12 @@ with a polished web UI. See README.md.
 """
 from __future__ import annotations
 
-__version__ = "0.9.5"
+try:  # one source of truth: pyproject.toml, via the installed package metadata
+    from importlib.metadata import version as _version
+
+    __version__ = _version("hubzoid")
+except Exception:  # noqa: BLE001 — running from a source tree that is not installed
+    __version__ = "0+unknown"
 
 from .factory import build_agent  # noqa: E402,F401  (public re-export)
 

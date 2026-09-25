@@ -20,6 +20,38 @@ deployments get short notes at the end.
 
 If you don't have a reason to pick B or C, pick A.
 
+## Supported topologies
+
+| Topology | Databases | Notes |
+|---|---|---|
+| One hub on one machine (`hubzoid run`) | SQLite files under `<hub>/.hubzoid/` and `<hub>/.openwebui-data/` | The quick start. Back up with `hubzoid backup`. |
+| Several hubs behind one chat app on one machine (`hubzoid gateway`) | One shared SQLite operational database in the gateway's `--data-dir`, one SQLite DBOS file per hub | The common production shape. |
+| Either of the above with PostgreSQL | `DATABASE_URL` for Hubzoid and DBOS (and Open WebUI if you choose) | For production that needs managed backups or a separate database server. |
+| The Docker image | Either SQLite on a volume or PostgreSQL | See Path B. |
+
+Not supported:
+
+- Two processes serving the same hub at once. Each hub has one bridge.
+- Several machines sharing one set of SQLite files (for example over NFS).
+  Use PostgreSQL when processes run on different machines.
+- Several hubs sharing one SQLite DBOS file. The gateway refuses this.
+
+## Checking a deployment
+
+`hubzoid doctor <hub>` checks a hub and its deployment without changing
+anything: files, the agent build, schedules, database schema, bridge keys,
+chat sign-in, the public bind, model credentials, backup age and scheduled
+work. It exits 1 when any check fails.
+
+```bash
+hubzoid doctor ./alpha            # readable
+hubzoid doctor ./alpha --json     # for scripts and monitoring
+```
+
+Each check has a stable id such as `auth.bridge_keys`, `db.operational`,
+`backup.age` or `scheduler.health`, and a status of `ok`, `info`, `warn` or
+`fail`. New checks may be added; existing ids are never renamed.
+
 ## Path A: native venv on a single Linux box
 
 The walkthrough below uses Ubuntu 24.04 on AWS EC2. The same steps work
@@ -348,6 +380,7 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 
 | Symptom | Check |
 |---|---|
+| Anything | Run `hubzoid doctor <hub>` first. |
 | `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the OWUI ready line. hubzoid disables Open WebUI's local embedding model, so boot is quick (tens of seconds), not the minutes it would take while fetching that model. |
 | Boot fails with `WEBUI_AUTH=true requires WEBUI_SECRET_KEY` | Hubzoid is refusing to start with an unsafe config; set the key in `.env`. |
 | Boot fails with `OAuth client IDs are set but WEBUI_URL is not` | Set `WEBUI_URL=https://your.host` in `.env`. |
