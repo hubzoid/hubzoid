@@ -146,6 +146,8 @@ class Scheduler:
         watching scheduled_tasks.json.
         """
         now = now or datetime.now()
+        if _held(self.hub_dir):
+            return []  # a backup is running; due tasks fire when it ends
         tasks, _problems = load_tasks(self.hub_dir)
         state = ScheduleState(self.hub_dir)
         paused = _paused(self.hub_dir)
@@ -244,6 +246,21 @@ def _paused(hub_dir: Path) -> set[str]:
     except Exception:  # noqa: BLE001 — a store hiccup must not stop the schedule
         log.warning("scheduler: could not read paused tasks", exc_info=True)
         return set()
+
+
+def _held(hub_dir: Path) -> bool:
+    """True while `hubzoid backup` holds new scheduled runs. A store hiccup
+    reads as no hold: a backup only delays runs, it must never lose them."""
+    try:
+        from .access import store_for
+
+        hold = store_for(hub_dir).schedule_hold()
+    except Exception:  # noqa: BLE001
+        log.warning("scheduler: could not read the backup hold", exc_info=True)
+        return False
+    if hold:
+        log.debug("scheduler: new runs held (%s)", hold.get("reason"))
+    return bool(hold)
 
 
 def _dbos_dispatch_task(task: ScheduledTask, slot: str, claimed: list[str]) -> None:

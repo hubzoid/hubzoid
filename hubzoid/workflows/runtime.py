@@ -472,9 +472,11 @@ def run_now(name: str, hub_name: str | None = None):
     return start(name, hub_name).get_result()
 
 
-def tick(*, last: datetime, now: datetime | None = None) -> list[str]:
+def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
     """Dispatcher step: start every scheduled workflow due in (last, now].
-    Returns the names started. Missed fires are skipped (not back-filled)."""
+    Returns the names started, or None while a backup holds new runs (the
+    caller keeps `last`, so a slot inside the hold fires when it ends).
+    Missed fires are skipped (not back-filled)."""
     from .schedule_grammar import due_between
 
     now = now or datetime.now(timezone.utc)
@@ -482,6 +484,8 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str]:
     failed: list[str] = []
     from ..access import store_for
 
+    if store_for(_HUB_DIR).schedule_hold():
+        return None
     paused = store_for(_HUB_DIR).paused_workflows(_HUB_NAME)
     for wf in _REGISTRY.values():
         if not wf.schedule or wf.name in paused:

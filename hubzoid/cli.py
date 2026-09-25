@@ -769,6 +769,77 @@ def gateway(
 
 
 # ---------------------------------------------------------------------------
+# backup / restore
+# ---------------------------------------------------------------------------
+@app.command("backup")
+def backup_cmd(
+    hub: Path = typer.Argument(Path("."), help="A hub directory. A hub in a gateway backs up the whole gateway."),
+    out: Path = typer.Option(None, "--out", "-o", help="Archive path. Default: ./hubzoid-backup-<time>.tar.gz"),
+    include_secrets: bool = typer.Option(False, "--include-secrets", help="Also save .env files and signing keys."),
+    wait: int = typer.Option(600, "--wait", help="Seconds to wait for running scheduled work. 0 = do not wait."),
+) -> None:
+    """Save a deployment's state to one archive while it keeps serving chat.
+
+    New scheduled runs are held and running ones finish first. Hub content
+    (AGENTS.md, skills, knowledge) belongs in git and is not included, nor are
+    PostgreSQL databases (see docs/BACKUP.md)."""
+    from datetime import datetime as _dt
+
+    from . import backup as backup_lib
+
+    out = out or Path.cwd() / f"hubzoid-backup-{_dt.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    try:
+        index = backup_lib.backup(hub.resolve(), out, include_secrets=include_secrets,
+                                  wait=wait, actor=_operator(), say=console.print)
+    except (backup_lib.BackupError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Backup written:[/green] {out.resolve()} "
+                  f"({len(index['roots'])} locations, {len(index['sqlite'])} databases)")
+    console.print("The archive holds user accounts and chats. Store it like a secret.")
+    if not include_secrets:
+        console.print("Secrets were left out. Keep a copy of each .env elsewhere.")
+    for url in index["not_included"]:
+        console.print(f"[yellow]Not included (PostgreSQL):[/yellow] {url}. Back it up with pg_dump.")
+
+
+@app.command("restore")
+def restore_cmd(
+    archive: Path = typer.Argument(..., exists=True, dir_okay=False, help="An archive from hubzoid backup."),
+    move: list[str] = typer.Option([], "--move", help="OLD=NEW: restore paths under OLD to NEW instead. Repeatable."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show where everything would go and stop."),
+) -> None:
+    """Put a backup back. Stop the hub or gateway first.
+
+    Everything returns to its original path unless moved with --move. What is
+    at a target now is kept beside it as <name>.pre-restore-<time>."""
+    from . import backup as backup_lib
+
+    moves = []
+    for m in move:
+        old, sep, new = m.partition("=")
+        if not sep or not old or not new:
+            console.print(f"[red]--move expects OLD=NEW, got {m!r}[/red]")
+            raise typer.Exit(2)
+        moves.append((old, str(Path(new).expanduser().resolve())))
+    try:
+        planned = backup_lib.restore_plan(archive, moves)
+        if dry_run:
+            for root, target in planned:
+                console.print(f"{root['path']} -> {target}" + (" (exists; kept aside)" if target.exists() else ""))
+            return
+        result = backup_lib.restore(archive, moves, say=console.print)
+    except backup_lib.BackupError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    for aside in result["kept"]:
+        console.print(f"Previous state kept at {aside}")
+    for url in result["not_included"]:
+        console.print(f"[yellow]Not in this archive (PostgreSQL):[/yellow] {url}. Restore it with pg_restore.")
+    console.print("[green]Restore complete.[/green] Start the hub or gateway, then run `hubzoid doctor`.")
+
+
+# ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
 @app.command()

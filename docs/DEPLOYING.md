@@ -266,27 +266,29 @@ is on per [docs/auth.md](auth.md)).
 
 ### 7. Backup
 
-Per agent, back up `<hub>/.openwebui-data/` nightly. It holds the SQLite
-user database, uploads, and OWUI cache. The hub markdown (AGENTS.md,
-skills/, knowledge/) is in git and does not need to be backed up
-separately.
-
-Drop the following at `/etc/cron.daily/hubzoid-backup` (`chmod +x`):
+`hubzoid backup` saves each agent's databases, chat UI data and runtime
+state to one archive while chat keeps working. The hub markdown (AGENTS.md,
+skills/, knowledge/) is in git and is not included. Drop the following at
+`/etc/cron.daily/hubzoid-backup` (`chmod +x`):
 
 ```bash
 #!/bin/sh
 set -e
 date=$(date +%F)
 cd /opt/hubzoid/agents
-tar czf /var/backups/hubzoid-${date}.tgz */.openwebui-data
+for hub in */AGENTS.md; do
+  name=$(dirname "$hub")
+  .venv/bin/hubzoid backup "$name" --out "/var/backups/hubzoid-${name}-${date}.tar.gz"
+done
 # Ship offsite, e.g.:
-# aws s3 cp /var/backups/hubzoid-${date}.tgz s3://your-bucket/hubzoid/
-find /var/backups -name 'hubzoid-*.tgz' -mtime +14 -delete
+# aws s3 cp /var/backups/ s3://your-bucket/hubzoid/ --recursive --exclude '*' --include "hubzoid-*-${date}.tar.gz"
+find /var/backups -name 'hubzoid-*.tar.gz' -mtime +14 -delete
 ```
 
-Restore = stop the service, replace `.openwebui-data/` with the
-unpacked backup, start. Keep `WEBUI_SECRET_KEY` stable across restores;
-changing it invalidates all existing sessions.
+Restore: stop the service, `hubzoid restore <archive>`, start. Keep
+`WEBUI_SECRET_KEY` stable across restores; changing it signs everyone out.
+See [BACKUP.md](BACKUP.md) for what is saved, moving to a new machine and
+PostgreSQL.
 
 ### 8. Updating hubzoid
 
@@ -296,7 +298,7 @@ across versions. Back up first, then upgrade in place:
 ```bash
 sudo -iu hubzoid
 cd /opt/hubzoid/agents
-tar czf /tmp/pre-upgrade-$(date +%F).tgz */.openwebui-data
+for hub in */AGENTS.md; do .venv/bin/hubzoid backup "$(dirname "$hub")" --out "/tmp/pre-upgrade-$(dirname "$hub")-$(date +%F).tar.gz"; done
 # Edit requirements.txt: bump hubzoid==<new-version>
 source .venv/bin/activate
 pip install -r requirements.txt

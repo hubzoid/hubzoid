@@ -135,9 +135,9 @@ Permission keys `use_hub` and `manage_access` are reserved by Hubzoid.
 Migration keeps the existing preview and atomic cutover. Start with a clone.
 Keep the current gateway version/database backups until end-user checks pass.
 
-1. Back up the deployment manifest, OWUI database, operational database and hub
-   directories. Stop writes for a consistent SQLite file backup (or use SQLite's
-   online backup API); use a database snapshot for PostgreSQL.
+1. Back up with `hubzoid backup <hub>` (it covers the whole gateway: manifest,
+   OWUI database, operational database and each hub's state). For PostgreSQL,
+   also take a `pg_dump`. See [BACKUP.md](BACKUP.md).
 2. On the clone, export any function-backed access roster to an explicit CSV;
    remove the live access function before migrating. Computed permissions cannot
    be safely enumerated automatically.
@@ -226,9 +226,8 @@ Procedure:
    (`127.0.0.1`), with `OWUI_INTERNAL_URL`/`WEBUI_URL` and `HUBZOID_GATEWAY_ADMIN_EMAIL`
    / `_PASSWORD` set so the CLI can sign in — but with the bridges and projector down so
    no chat traffic or projection races the migration.
-2. **Back up.** Copy the deployment manifest, the operational database, each OWUI
-   database, and the hub directories to a protected location. For SQLite, copy the files
-   while stopped (or use the SQLite online-backup API); for PostgreSQL, take a snapshot.
+2. **Back up.** Run `hubzoid backup <hub>` and keep the archive in a protected location.
+   For PostgreSQL, also take a `pg_dump` ([BACKUP.md](BACKUP.md)).
    (`access migrate --apply` also writes its own 0600 pre-cutover snapshot under
    `<hub>/.hubzoid/backups/`, but keep your full backup too — it is the verification and
    rollback baseline, and it captures the ORIGINAL OWUI model visibility before any sync.)

@@ -87,16 +87,19 @@ class Dispatcher:
             )
             now = datetime.now(timezone.utc)
             error = None
+            held = False
             try:
                 started = await asyncio.to_thread(
                     runtime.tick, last=self._last, now=now
                 )
+                held = started is None
                 if started:
                     log.info("workflows: fired %s", started)
             except Exception as exc:  # noqa: BLE001 — the loop must never die
                 error = f"{type(exc).__name__}: dispatch failed; check server logs"
                 log.exception("workflows: dispatcher tick failed")
-            self._last = now
+            if not held:
+                self._last = now
             from ..access import store_for
 
             try:

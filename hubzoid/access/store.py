@@ -1111,6 +1111,27 @@ class GrantStore:
         with self._engine.begin() as c:
             self._audit(c, actor, action, None, normalize(hub), target)
 
+    HOLD_KEY = "maintenance:hold"
+
+    def schedule_hold(self) -> dict | None:
+        """An active hold on new scheduled runs for every hub on this store
+        (set by `hubzoid backup`), or None. A hold expires on its own, so a
+        backup that dies cannot stop the schedule for good."""
+        import time
+
+        hold = self.metadata(self.HOLD_KEY)
+        return hold if hold and float(hold.get("until", 0)) > time.time() else None
+
+    def set_schedule_hold(self, reason: str, seconds: float, *, actor: str) -> None:
+        import time
+
+        self.set_metadata(self.HOLD_KEY, {"reason": reason, "by": actor,
+                                          "until": time.time() + seconds})
+
+    def clear_schedule_hold(self) -> None:
+        with self._engine.begin() as c:
+            c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": self.HOLD_KEY})
+
     def metadata(self, key: str, default=None):
         import json
 
