@@ -210,8 +210,10 @@ def _snapshot(src: Path, dst: Path, *, drop_hold: bool) -> None:
         source.close()
 
 
-def running_runs(p: Plan) -> list[str]:
-    """Scheduled runs that are queued or running, across the deployment."""
+def running_runs(p: Plan, unknown: list[str] | None = None) -> list[str]:
+    """Scheduled runs that are queued or running, across the deployment. A hub
+    whose run history cannot be read (for example a DBOS database from an older
+    release, before the upgrade) is added to `unknown` instead."""
     from dbos import DBOSClient
 
     from .workflows.runtime import _app_name
@@ -221,56 +223,94 @@ def running_runs(p: Plan) -> list[str]:
         path = _sqlite_path(url)
         if path is not None and not path.exists():
             continue  # this hub has never run anything scheduled
-        client = DBOSClient(system_database_url=url, application_name=_app_name(hub_name))
         try:
-            rows = client.list_workflows(status=["PENDING", "ENQUEUED"],
-                                         load_input=False, load_output=False)
-            busy += [f"{hub_name}: {r.workflow_id}" for r in rows]
-        finally:
-            client.destroy()
+            client = DBOSClient(system_database_url=url, application_name=_app_name(hub_name),
+                                retry_connection_errors=False)
+            try:
+                rows = client.list_workflows(status=["PENDING", "ENQUEUED"],
+                                             load_input=False, load_output=False)
+            finally:
+                client.destroy()
+        except Exception:  # noqa: BLE001 — never block a backup on reading run history
+            log.warning("backup: could not read run history for %s", hub_name, exc_info=True)
+            if unknown is not None and hub_name not in unknown:
+                unknown.append(hub_name)
+            continue
+        busy += [f"{hub_name}: {r.workflow_id}" for r in rows]
     return sorted(set(busy))
 
 
-def _hold(p: Plan, seconds: float, actor: str):
-    from .access.store import GrantStore
-    from .db import _engine_for_url
+class _Store:
+    """The few `hz_meta` writes a backup makes, done with plain SQL so a backup
+    never creates or migrates a table. That matters when the new release backs
+    up a deployment the old release wrote, before the first start upgrades it."""
 
-    stores = [GrantStore(_engine_for_url(url)) for url in p.stores]
-    for s in stores:
-        s.set_schedule_hold("backup", seconds, actor=actor)
-    return stores
+    def __init__(self, url: str):
+        from sqlalchemy import create_engine, inspect
+
+        self.engine = create_engine(url)
+        self.ok = inspect(self.engine).has_table("hz_meta")
+
+    def put(self, key: str, value: dict) -> None:
+        if not self.ok:
+            return
+        from sqlalchemy import text
+
+        with self.engine.begin() as c:
+            c.execute(text("INSERT INTO hz_meta(k, v) VALUES(:k, :v) "
+                           "ON CONFLICT (k) DO UPDATE SET v=excluded.v"),
+                      {"k": key, "v": json.dumps(value)})
+
+    def drop(self, key: str) -> None:
+        if not self.ok:
+            return
+        from sqlalchemy import text
+
+        with self.engine.begin() as c:
+            c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": key})
+
+
+HOLD_KEY = "maintenance:hold"  # read by GrantStore.schedule_hold
 
 
 def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: float = 600,
            actor: str = "cli", poll: float = 2.0, say=log.info) -> dict:
-    """Write one archive of the deployment containing `hub_dir` to `out`."""
+    """Write one archive of the deployment containing `hub_dir` to `out`.
+    Reads the databases, never migrates them."""
     p = plan(hub_dir, include_secrets=include_secrets)
     out = Path(out).resolve()
     if out.exists():
         raise BackupError(f"{out} already exists")
-    stores = _hold(p, wait + _HOLD_MARGIN, actor)
+    stores = [_Store(url) for url in p.stores if _sqlite_path(url) is None or _sqlite_path(url).exists()]
     try:
+        for s in stores:
+            s.put(HOLD_KEY, {"reason": "backup", "by": actor, "until": time.time() + wait + _HOLD_MARGIN})
         say("New scheduled runs are held. Chat keeps working.")
+        unknown: list[str] = []
         deadline = time.monotonic() + wait
-        busy = running_runs(p)
+        busy = running_runs(p, unknown)
         while busy and time.monotonic() < deadline:
             say(f"Waiting for {len(busy)} scheduled run(s) to finish")
             time.sleep(poll)
-            busy = running_runs(p)
+            busy = running_runs(p, unknown)
         if busy and wait > 0:
             raise BackupError(
                 "Scheduled runs are still in progress: " + ", ".join(busy[:10])
                 + ". Try again later, cancel them with `hubzoid schedule cancel`,"
                 " or pass --wait 0 to take the backup anyway.")
+        if unknown:
+            say("Run history could not be read for: " + ", ".join(unknown)
+                + ". If those hubs are running scheduled work, stop them first.")
         index = _write_archive(p, out, include_secrets)
         for s in stores:  # read by `hubzoid doctor` (backup.age)
-            s.set_metadata("backup:last", {"at": time.time(), "path": str(out), "by": actor})
+            s.put("backup:last", {"at": time.time(), "path": str(out), "by": actor})
     finally:
         for s in stores:
             try:
-                s.clear_schedule_hold()
+                s.drop(HOLD_KEY)
             except Exception:  # noqa: BLE001 — the hold also expires on its own
                 log.warning("backup: could not clear the schedule hold", exc_info=True)
+            s.engine.dispose()
         say("Scheduled runs resumed.")
     return index
 

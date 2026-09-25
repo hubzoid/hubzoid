@@ -17,5 +17,8 @@ A clear, concrete description. What did you expect instead?
 - Backend (`MODEL=`):
 - OS / Python:
 
-## Logs
-<!-- Relevant output from `hubzoid doctor <hub>` or the bridge, if any. -->
+## Diagnostics
+<!-- Paste the output of `hubzoid doctor <hub> --json`. It contains no secrets,
+     but check it before posting. Add relevant bridge or gateway log lines. -->
+
+<!-- Security problem? Do not file it here. See SECURITY.md. -->

@@ -36,6 +36,36 @@ Not supported:
   Use PostgreSQL when processes run on different machines.
 - Several hubs sharing one SQLite DBOS file. The gateway refuses this.
 
+## SQLite or PostgreSQL
+
+SQLite is the default and needs no setup: each hub keeps its databases in its
+own folder. It suits one machine and a single bridge per hub. Choose PostgreSQL
+when you want a managed database, point-in-time backups, or processes on more
+than one machine.
+
+```bash
+pip install "hubzoid[postgres]"
+# in the environment of the hub, or of the gateway and every bridge:
+DATABASE_URL=postgresql+psycopg://hubzoid:<password>@db.internal:5432/hubzoid
+```
+
+Use the `postgresql+psycopg://` form. Hubzoid installs the psycopg 3 driver
+only, and Open WebUI reads the same `DATABASE_URL`.
+
+With `DATABASE_URL` set, three sets of tables share that database, each
+upgraded by its owner at start:
+
+| Tables | Owner | Upgraded by |
+|---|---|---|
+| `hz_*` (access, audit, usage, workflow state) | Hubzoid | Hubzoid's migrations |
+| schema `dbos` (runs and checkpoints) | DBOS | DBOS |
+| accounts, chats, files | Open WebUI | Open WebUI |
+
+To keep them apart, set `HUBZOID_OPERATIONAL_DB` and `HUBZOID_DBOS_DB` to
+other databases. Moving an existing SQLite deployment's data to PostgreSQL is
+not automated in this release: start PostgreSQL deployments fresh, or copy the
+data yourself. Back up PostgreSQL with `pg_dump` ([BACKUP.md](BACKUP.md)).
+
 ## Checking a deployment
 
 `hubzoid doctor <hub>` checks a hub and its deployment without changing

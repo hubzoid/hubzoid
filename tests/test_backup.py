@@ -159,7 +159,7 @@ def test_backup_holds_new_runs_and_waits_for_running_ones(tmp_path, monkeypatch)
 
     seen = {"holds": [], "calls": 0}
 
-    def running(plan):
+    def running(plan, unknown=None):
         seen["calls"] += 1
         seen["holds"].append(store_for(hub).schedule_hold() is not None)
         return ["hub: md:daily:x"] if seen["calls"] < 3 else []
@@ -170,7 +170,7 @@ def test_backup_holds_new_runs_and_waits_for_running_ones(tmp_path, monkeypatch)
     assert store_for(hub).schedule_hold() is None  # released afterwards
 
     # A run that never finishes: the backup gives up and still releases the hold.
-    monkeypatch.setattr(bk, "running_runs", lambda plan: ["hub: md:daily:stuck"])
+    monkeypatch.setattr(bk, "running_runs", lambda plan, unknown=None: ["hub: md:daily:stuck"])
     with pytest.raises(bk.BackupError, match="md:daily:stuck"):
         bk.backup(hub, tmp_path / "c.tar.gz", wait=0.05, poll=0.01)
     assert store_for(hub).schedule_hold() is None and not (tmp_path / "c.tar.gz").exists()
@@ -320,3 +320,27 @@ def test_running_runs_sees_a_live_scheduled_run(tmp_path):
     finally:
         proc.kill()
         proc.wait(timeout=30)
+
+
+def test_backing_up_an_older_release_changes_no_schema(tmp_path):
+    """The upgrade guide backs up with the new release before its first start.
+    The copy must be of the old databases as they are: nothing is migrated."""
+    hub = _hub(tmp_path / "live")
+    (hub / ".hubzoid").mkdir()
+    old = sqlite3.connect(hub / ".hubzoid" / "hub.db")      # a 0.9.x operational store
+    old.execute("CREATE TABLE hz_meta (k TEXT PRIMARY KEY, v TEXT)")
+    old.execute("CREATE TABLE hz_grants (subject TEXT, hub TEXT, permission TEXT)")
+    old.commit()
+    old.close()
+    dbos = sqlite3.connect(hub / ".hubzoid" / "dbos.db")     # a DBOS database this client can't read
+    dbos.execute("CREATE TABLE something_else (x)")
+    dbos.commit()
+    dbos.close()
+    said = []
+    bk.backup(hub, tmp_path / "old.tar.gz", wait=5, say=said.append)
+    tables = {r[0] for r in sqlite3.connect(hub / ".hubzoid" / "hub.db").execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert tables == {"hz_meta", "hz_grants"}  # no Alembic table, nothing new
+    assert any("could not be read" in line for line in said)
+    keys = [r[0] for r in sqlite3.connect(hub / ".hubzoid" / "hub.db").execute("SELECT k FROM hz_meta")]
+    assert keys == ["backup:last"]  # the hold was lifted

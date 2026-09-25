@@ -14,6 +14,9 @@ upgrade per repo, another hub may do something entirely different.
 Tasks fire **inside `hubzoid run`** (the bridge process). Deploying the hub
 is deploying its schedule — no extra systemd timers or crontabs.
 
+For exact, step-by-step work in Python, see [code workflows](workflows.md).
+Both run on the same engine and share run history and controls.
+
 ```
 schedule/knowledge-refresh.md     <- you write this
         │  (cron match, hub idle)

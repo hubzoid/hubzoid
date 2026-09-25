@@ -313,69 +313,24 @@ hubzoid schedule list ./finance
 hubzoid schedule status ./finance
 ```
 
-Definitions live in `workflows/<name>/*.py`, with literal schedule/timezone values
-on `@workflow`. `doctor` checks syntax, duplicates and schedules without executing
-workflow modules for its workflow inspection. Manual dry-run **does not import
-or execute workflow code or launch DBOS**. Workflow runs reject markdown-only
-`--timeout`, `--max-rounds` and `--model` overrides; configure execution in code.
+Markdown tasks (`schedule/*.md`) and code workflows (`workflows/<name>/*.py`)
+both run on each hub's DBOS engine. [workflows.md](workflows.md) covers writing
+them, model calls (`hub.call_llm`, `hub.call_agent`, `hub.decide`), retries,
+idempotency and code changes. For operators:
 
-```python
-from hubzoid import workflow, step, hub
-
-@step(max_attempts=3)
-def collect():
-    return "summary inputs"
-
-@workflow("daily 06:00", timezone="Asia/Kolkata")
-def daily_report():
-    return hub.call_agent("Summarize: " + collect())
-```
-
-Agent calls use this hub's configured backend and its workflow service identity.
-Grant that identity the tool permissions it needs. `hub.state` is persistent
-per-hub/per-workflow state. Keep secrets inside steps, and do not return secrets
-in step outputs: authorized administrators can inspect execution results.
-
-An agent's **Runs & schedules** tab lists its workflows; **View runs** opens a
-workflow's run list, and a run shows status, start/completion, duration, result,
-error and its step timeline. Hub names distinguish identically named workflows.
-Use the CLI for manual runs; portal workflow inspection is read-only. DBOS is the
-source of execution history; Hubzoid does not maintain a second run database.
-
-Gateway deployments enable workflows. Standalone `hubzoid run` requires
-`HUBZOID_SCHEDULES=1`. The existing markdown scheduler retains its own enablement
-and history. Both definitions appear in schedule list/status; the portal workflow
-view is specifically for code-defined DBOS workflows.
-
-The dispatcher wakes at minute boundaries; execution may start later because of
-load or the per-hub concurrency-one queue. Scheduled invocations use deterministic
-hub/workflow/slot IDs so duplicate dispatchers sharing the same DBOS database do
-not execute a slot twice. Delayed ticks skip older slots and record the skipped
-count. Downtime is not backfilled. Steps are at-least-once; external side effects
-still need idempotency. Durability does not make external writes exactly-once.
-
-**Failures and retries.** `hub.call_agent` and `hub.call_llm` run the hub's full
-agent, tools included, so a failed call is **not retried**: a retry could repeat a
-message or write the first attempt already made. The step raises, the run is
-marked failed, and `on_failure` fires. A hub whose agent calls are safe to repeat
-opts in with `agent_max_attempts: 3` in `workflows/settings.yaml`. Your own
-`@step(max_attempts=N)` retries apply only to that step, so use them for steps
-you have made idempotent.
-
-**Restarts and code changes.** A run interrupted by a stop or crash resumes on the
-next start: completed steps are not repeated, and the interrupted step runs again.
-Runs are tied to the hub's workflow code (a hash of the Hubzoid version and
-`workflows/**/*.py`; code a workflow imports from outside `workflows/` is not
-covered). After you edit a workflow or upgrade Hubzoid, older interrupted or
-queued runs are **not** resumed on the new code: they are cancelled at the next
-start (status `CANCELLED` in the run list), so they can't block the hub's queue.
-To change workflow code or upgrade Hubzoid safely:
-
-1. Drain: wait until `hubzoid schedule status` lists no run as `PENDING` or
-   `ENQUEUED`, ideally between scheduled slots.
-2. Deploy the change and restart.
-3. Check the run list. A run cancelled because of the change will not continue;
-   start a fresh run with `hubzoid schedule run` if it is still needed.
+- Gateway deployments schedule code workflows. A standalone `hubzoid run` needs
+  `HUBZOID_SCHEDULES=1`. Markdown tasks run whenever their files exist
+  (`HUBZOID_DISABLE_SCHEDULE=1` turns them off).
+- Manual dry runs do not import workflow code or start DBOS. Workflow runs
+  reject the markdown-only `--timeout`, `--max-rounds` and `--model` options.
+- Each workflow and task acts as its own service identity (`workflow:<name>`,
+  `workflow:md:<task>`). Grant it the tool permissions it needs.
+- The Console's **Runs** page and an agent's **Runs & schedules** tab list every
+  run with its steps, result and error. They are read only. Run, pause, resume
+  and cancel with `hubzoid schedule` on the server.
+- DBOS holds the execution history. Hubzoid keeps no second run database.
+- Before a code change or upgrade, drain queued runs. Runs left from older code
+  are cancelled at the next start (see [workflows.md](workflows.md)).
 
 ## Troubleshooting
 

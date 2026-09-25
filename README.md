@@ -148,9 +148,10 @@ you already trust.
 - **Credential isolation:** secrets for restricted tools cannot be read through
   the agent's file tools. Supported MCP services can use a different encrypted
   OAuth token for every user.
-- **Auditability:** allow and deny decisions on restricted tools are appended
-  to an audit log with the user, surface, tool, result, and reason. Read it
-  with `hubzoid audit`.
+- **Auditability:** allow and deny decisions on restricted tools are recorded
+  in the database with the user, surface, tool, result, and reason. A call that
+  cannot be recorded does not run. Read it with `hubzoid audit` or in the
+  Console's Activity page.
 - **Deployment choice:** run on a Linux host, in Docker, or under ECS,
   Kubernetes, and other orchestrators. Keep telemetry local or send standard
   OpenTelemetry traces to your collector or Langfuse.
@@ -254,8 +255,10 @@ Put a markdown task in `schedule/` and the hub becomes an unattended agent. A
 task runs on a five-field cron or fires from an incoming webhook, using the same
 persona, skills, knowledge, tools, and model as chat inside a bounded run with
 timeouts, persistent progress, and path-scoped writes. Each run produces a live
-JSONL log and can commit or push only declared paths. See
-[scheduled tasks](docs/schedule.md).
+JSONL log and can commit or push only declared paths. For exact steps in
+Python, write a code workflow instead. Both run on the hub's durable workflow
+engine, with run history in the Console. See
+[scheduled tasks](docs/schedule.md) and [code workflows](docs/workflows.md).
 
 ## Gateway
 
@@ -474,11 +477,15 @@ hubzoid run [PATH]               Start the FastAPI bridge plus Open WebUI for a 
   --whatsapp / --telegram          Also start the inbound webhook surfaces inline.
 hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges.
 hubzoid schedule list [PATH]     List the hub's scheduled tasks + next fire times.
-hubzoid schedule run PATH TASK   Fire one task NOW, in-process.
-hubzoid schedule status [PATH]   Show recorded fire history per task.
+hubzoid schedule run PATH TASK   Fire one task or workflow NOW.
+hubzoid schedule status [PATH]   Show recent runs and errors.
+hubzoid schedule pause|resume PATH NAME   Stop or restart scheduled runs of one task.
+hubzoid schedule cancel PATH RUN_ID       Cancel a queued or running run.
+hubzoid backup [PATH]            Save the deployment's state to one archive.
+hubzoid restore ARCHIVE          Put a backup back (--move OLD=NEW to relocate).
 hubzoid eval run [PATH]          Run evals/*.md against the hub's agent (exit code = CI gate).
 hubzoid eval list/status/explain Inspect and debug eval cases.
-hubzoid doctor [PATH]            Validate hub config and report issues.
+hubzoid doctor [PATH] [--json]   Check the hub and deployment; stable check ids.
 hubzoid audit [PATH]             Show the access log for restricted tools.
 hubzoid test [PATH]              Send one prompt to the agent and print the response.
 hubzoid slack run/manifest/systemd [PATH]     Run the hub as a Slack bot. See docs/slack.md.
