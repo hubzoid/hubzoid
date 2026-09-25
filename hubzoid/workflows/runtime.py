@@ -480,8 +480,11 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str]:
     now = now or datetime.now(timezone.utc)
     started: list[str] = []
     failed: list[str] = []
+    from ..access import store_for
+
+    paused = store_for(_HUB_DIR).paused_workflows(_HUB_NAME)
     for wf in _REGISTRY.values():
-        if not wf.schedule:
+        if not wf.schedule or wf.name in paused:
             continue
         try:
             if due_between(wf.schedule, wf.timezone, last, now):

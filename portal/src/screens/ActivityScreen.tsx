@@ -238,6 +238,9 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
                 { value: "revoke", label: "Removed" },
                 { value: "suspend", label: "Blocked" },
                 { value: "reactivate", label: "Reactivated" },
+                { value: "workflow_pause", label: "Paused a workflow" },
+                { value: "workflow_resume", label: "Resumed a workflow" },
+                { value: "run_cancel", label: "Cancelled a run" },
               ]}
             />
           </>

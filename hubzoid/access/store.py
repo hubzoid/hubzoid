@@ -1088,6 +1088,29 @@ class GrantStore:
         with self._engine.begin() as c:
             self._meta_set(c, "workflow_health:" + normalize(hub), json.dumps(old))
 
+    def paused_workflows(self, hub: str) -> set[str]:
+        """Scheduled work the operator paused in `hub` (`md:<task>` for markdown
+        tasks, the function name for code workflows). Dispatchers skip these."""
+        return set(self.metadata("workflow_paused:" + normalize(hub), []) or [])
+
+    def set_workflow_paused(self, hub: str, name: str, paused: bool, *, actor: str) -> None:
+        """Pause or resume one workflow's schedule, audited in the same transaction."""
+        import json
+
+        key = "workflow_paused:" + normalize(hub)
+        with self._engine.begin() as c:
+            raw = self._meta_get(c, key)
+            names = set(json.loads(raw) if raw else [])
+            names = (names | {name}) if paused else (names - {name})
+            self._meta_set(c, key, json.dumps(sorted(names)))
+            self._audit(c, actor, "workflow_pause" if paused else "workflow_resume",
+                        None, normalize(hub), name)
+
+    def audit_run_control(self, hub: str, action: str, target: str, *, actor: str) -> None:
+        """Record an operator's run control (e.g. a cancel) in the access audit."""
+        with self._engine.begin() as c:
+            self._audit(c, actor, action, None, normalize(hub), target)
+
     def metadata(self, key: str, default=None):
         import json
 

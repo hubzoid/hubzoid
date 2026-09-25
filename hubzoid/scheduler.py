@@ -148,9 +148,10 @@ class Scheduler:
         now = now or datetime.now()
         tasks, _problems = load_tasks(self.hub_dir)
         state = ScheduleState(self.hub_dir)
+        paused = _paused(self.hub_dir)
         fired: list[str] = []
         for task in tasks:
-            if not task.enabled:
+            if not task.enabled or f"md:{task.name}" in paused:
                 continue
             if not is_due(task, state, now, hub_dir=self.hub_dir):
                 self._deferred_logged.discard(task.name)
@@ -232,6 +233,17 @@ class Scheduler:
             ScheduleState(self.hub_dir).record_fired(task.name, now, result="queued")
         log.info("schedule[%s] queued (%s, slot %s)", task.name, trigger, slot)
         return True
+
+
+def _paused(hub_dir: Path) -> set[str]:
+    """Names the operator paused (`hubzoid schedule pause`); empty if unreadable."""
+    try:
+        from .access import store_for
+
+        return store_for(hub_dir).paused_workflows(Path(hub_dir).name)
+    except Exception:  # noqa: BLE001 — a store hiccup must not stop the schedule
+        log.warning("scheduler: could not read paused tasks", exc_info=True)
+        return set()
 
 
 def _dbos_dispatch_task(task: ScheduledTask, slot: str, claimed: list[str]) -> None:

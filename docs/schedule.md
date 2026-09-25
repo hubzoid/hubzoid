@@ -208,6 +208,23 @@ tail -f <hub>/.hubzoid/schedule/<task>/runs/*.jsonl
 Add `.hubzoid/` to the hub's `.gitignore` (the `hubzoid init` template
 already has it) — it's runtime state, not content.
 
+## Pausing, resuming and cancelling
+
+Run controls are on the server command line only. The Console shows paused
+tasks and every control in Activity, but has no buttons for them.
+
+```bash
+hubzoid schedule pause <hub> <task>       # stop new runs; a running one finishes
+hubzoid schedule resume <hub> <task>      # one catch-up run if a slot was missed
+hubzoid schedule cancel <hub> <run-id>    # e.g. md:<task>:20260925T0300
+```
+
+The same commands take a code workflow's name. A pause is stored in the
+operational database, so every bridge on a shared database sees it. Each
+control is written to the access audit with the operator as
+`cli:<user>@<host>`. Cancelling a queued run stops it before it starts. A
+running run stops at its next step, and work already done is not undone.
+
 ## Testing a task (do this before trusting the cron)
 
 ```bash

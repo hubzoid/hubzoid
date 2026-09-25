@@ -184,6 +184,14 @@ export function workflowState(state: string): Presentation {
       return { label: "Scheduled", color: "green", hint: "The scheduler is running and will fire this on time." };
     case "manual":
       return { label: "Manual", color: "default", hint: "No schedule; runs only when started explicitly." };
+    case "event":
+      return { label: "On webhook", color: "green", hint: "Runs when its webhook receives an event." };
+    case "paused":
+      return {
+        label: "Paused",
+        color: "orange",
+        hint: "An operator paused this schedule. Resume it on the server with `hubzoid schedule resume`.",
+      };
     case "disabled":
       return { label: "Schedules off", color: "default", hint: "Schedules are disabled for this deployment." };
     case "stale":
@@ -233,13 +241,21 @@ export type ActivityContext = {
   people: (subject: string) => string;
 };
 
+/** `md:<task>` is a markdown schedule task; anything else is a code workflow. */
+function workflowLabel(name?: string | null) {
+  if (!name) return "a workflow";
+  return name.startsWith("md:") ? `the ${name.slice(3)} schedule` : `the ${name} workflow`;
+}
+
 export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sentence {
   const who =
     row.actor === "owui-identity"
       ? "Account sync"
       : row.actor === "bootstrap"
         ? "Initial setup"
-        : row.actor
+        : row.actor?.startsWith("cli:")
+          ? `Server operator (${row.actor.slice(4)})`
+          : row.actor
           ? ctx.people(row.actor)
           : "System";
   const subjectName = row.subject ? ctx.people(row.subject) : "";
@@ -301,6 +317,14 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [text("A new chat account reused "), person(subjectName), text("’s email")],
         detail: "Previous access was removed and the identity blocked until an administrator reviews it.",
       };
+    // Run controls come from `hubzoid schedule pause | resume | cancel` on the
+    // server; the target is kept in the permission column.
+    case "workflow_pause":
+      return { tone: "negative", parts: [actor(who), text(" paused "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+    case "workflow_resume":
+      return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+    case "run_cancel":
+      return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName)] };
     case "account_unavailable":
       return {
         tone: "negative",

@@ -115,10 +115,13 @@ def catalog(hub_dir) -> list[dict]:
     # enabled but no dispatcher heartbeat has landed recently.
     stale = enabled and _stale(health.get("heartbeat"), now)
     rows = definitions(hub_dir)
+    paused = gs.paused_workflows(Path(hub_dir).name)
     for row in rows:
         row["enabled"] = enabled and not row["error"]
         if row["error"] or health.get("error"):
             row["state"] = "error"
+        elif row["name"] in paused:
+            row["state"] = "paused"
         elif not enabled:
             row["state"] = "disabled"
         elif not row["schedule"]:
@@ -153,9 +156,12 @@ def markdown_catalog(hub_dir) -> list[dict]:
         "1", "true", "yes", "on")
     state = sch.ScheduleState(hub_dir)
     now = datetime.now()
+    from ..access import store_for
+
+    paused = store_for(hub_dir).paused_workflows(hub_dir.name)
     rows = []
     for t in tasks:
-        on = t.enabled and not disabled
+        on = t.enabled and not disabled and f"md:{t.name}" not in paused
         nxt = None if (t.is_webhook or not on) else sch.next_fire_for(t, state, now)
         last = state.get(t.name)
         rows.append(dict(
@@ -163,7 +169,8 @@ def markdown_catalog(hub_dir) -> list[dict]:
             source=f"schedule/{t.name}.md",
             schedule=(f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule),
             timezone="server local time", error=None, enabled=on,
-            state=("disabled" if not on else "event" if t.is_webhook else "scheduled"),
+            state=("paused" if f"md:{t.name}" in paused else "disabled" if not on
+                   else "event" if t.is_webhook else "scheduled"),
             next_run=nxt.astimezone().isoformat() if nxt else None,
             last_dispatch=last.get("last_fired_iso"), missed=0,
             heartbeat=None, downtime=None,

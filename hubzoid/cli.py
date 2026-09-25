@@ -1360,6 +1360,95 @@ def schedule_run(
         raise typer.Exit(1)
 
 
+def _operator() -> str:
+    """Who ran a control command: the server account, recorded in the audit.
+    Run controls act with the authority of whoever can run commands here."""
+    import getpass
+    import socket
+
+    return f"cli:{getpass.getuser()}@{socket.gethostname()}"
+
+
+def _schedule_target(hub: Path, name: str) -> str:
+    """Resolve a task or workflow name to its stored form (`md:<task>` for a
+    markdown task, the function name for a code workflow)."""
+    from . import scheduling as sch
+    from .workflows.observe import definitions
+
+    if name.startswith("md:"):
+        name = name[3:]
+    tasks, _ = sch.load_tasks(hub)
+    if any(t.name == name for t in tasks):
+        return f"md:{name}"
+    want = name.replace("-", "_")
+    for w in definitions(hub):
+        if w["name"] in (name, want):
+            return w["name"]
+    console.print(f"[red]no task or workflow {name!r} under {hub}[/red]")
+    raise typer.Exit(2)
+
+
+@schedule_app.command("pause")
+def schedule_pause(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    name: str = typer.Argument(..., help="Markdown task (schedule/<name>.md) or code workflow name."),
+) -> None:
+    """Stop scheduled runs of one task or workflow until resumed. Runs already
+    queued or running are not stopped (use `cancel`); manual runs still work.
+    Recorded in the access audit."""
+    from .access import store_for
+
+    hub = hub.resolve()
+    target = _schedule_target(hub, name)
+    store_for(hub).set_workflow_paused(hub.name, target, True, actor=_operator())
+    console.print(f"[yellow]paused[/yellow] {target} in {hub.name}. "
+                  f"Resume with: hubzoid schedule resume {hub} {name}")
+
+
+@schedule_app.command("resume")
+def schedule_resume(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    name: str = typer.Argument(..., help="Markdown task or code workflow name."),
+) -> None:
+    """Resume scheduled runs. A markdown task that became due while paused runs
+    once (the same catch-up as after downtime); code workflows don't back-fill."""
+    from .access import store_for
+
+    hub = hub.resolve()
+    target = _schedule_target(hub, name)
+    store_for(hub).set_workflow_paused(hub.name, target, False, actor=_operator())
+    console.print(f"[green]resumed[/green] {target} in {hub.name}")
+
+
+@schedule_app.command("cancel")
+def schedule_cancel(
+    hub: Path = typer.Argument(..., help="Hub directory."),
+    run_id: str = typer.Argument(..., help="The run id (from `hubzoid schedule status` or the Console)."),
+) -> None:
+    """Cancel a queued or running run. Best effort: a run stops at its next
+    step boundary, and work already done (a sent message, a git push, a script's
+    effects) is not undone. Recorded in the access audit."""
+    from dbos import DBOSClient
+
+    from . import db
+    from .access import store_for
+    from .workflows.runtime import _app_name
+
+    hub = hub.resolve()
+    client = DBOSClient(system_database_url=db.dbos_url(hub),
+                        application_name=_app_name(hub.name))
+    try:
+        status = client.retrieve_workflow(run_id).get_status()
+        if status.status not in ("PENDING", "ENQUEUED"):
+            console.print(f"[yellow]{run_id} is already {status.status}; nothing to cancel[/yellow]")
+            return
+        client.cancel_workflow(run_id)
+    finally:
+        client.destroy()
+    store_for(hub).audit_run_control(hub.name, "run_cancel", run_id, actor=_operator())
+    console.print(f"[yellow]cancel requested[/yellow] for {run_id} (stops at its next step)")
+
+
 @schedule_app.command("status")
 def schedule_status(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
