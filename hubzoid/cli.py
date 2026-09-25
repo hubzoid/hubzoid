@@ -89,13 +89,13 @@ def init(
       → writes ./requirements.txt, ./.gitignore, ./README.md, ./devops-agent/...
 
     Second run in the same directory:
-      $ hubzoid init irs-agent
-      → writes ./irs-agent/... only. Parent files are left alone.
+      $ hubzoid init sales-agent
+      → writes ./sales-agent/... only. Parent files are left alone.
 
     Get the full guided tour instead:
       $ hubzoid init my-hub --template demo
 
-    The result is a Samarth-style multi-hub agents repo built one hub at a time.
+    The result is a multi-hub agents repo built one hub at a time.
     """
     # Resolve. If `name` is just a folder name, drop it under cwd. If it is
     # `.`, init in cwd itself (legacy / "I am already in my hub dir" case).

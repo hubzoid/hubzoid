@@ -41,32 +41,32 @@ def _loader(mapping: dict[str, Settings]):
 # Planning
 # ---------------------------------------------------------------------------
 def test_plan_builds_aligned_connection_env(tmp_path):
-    irs, gpms = tmp_path / "irs", tmp_path / "gpms"
-    irs.mkdir(); gpms.mkdir()
+    sales, support = tmp_path / "sales", tmp_path / "support"
+    sales.mkdir(); support.mkdir()
     load = _loader({
-        str(irs): _settings(irs, 8000, keys=("irs-key",), label="irs-agent"),
-        str(gpms): _settings(gpms, 8001, keys=("gpms-key",), label="gpms-agent"),
+        str(sales): _settings(sales, 8000, keys=("sales-key",), label="sales-agent"),
+        str(support): _settings(support, 8001, keys=("support-key",), label="support-agent"),
     })
-    gp = gateway.plan([irs, gpms], load=load)
+    gp = gateway.plan([sales, support], load=load)
     env = gp.connection_env()
     assert env["ENABLE_OPENAI_API"] == "True"
     assert env["OPENAI_API_BASE_URLS"] == "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1"
     # Keys are positionally aligned with the URLs.
-    assert env["OPENAI_API_KEYS"] == "irs-key;gpms-key"
+    assert env["OPENAI_API_KEYS"] == "sales-key;support-key"
 
 
 def test_plan_edge_routes_namespace_per_hub(tmp_path):
-    irs, gpms = tmp_path / "irs", tmp_path / "gpms"
-    irs.mkdir(); gpms.mkdir()
+    sales, support = tmp_path / "sales", tmp_path / "support"
+    sales.mkdir(); support.mkdir()
     load = _loader({
-        str(irs): _settings(irs, 8000),
-        str(gpms): _settings(gpms, 8001),
+        str(sales): _settings(sales, 8000),
+        str(support): _settings(support, 8001),
     })
-    gp = gateway.plan([irs, gpms], load=load)
+    gp = gateway.plan([sales, support], load=load)
     routes = gp.edge_routes()
     assert routes == [
-        {"prefix": "/b/irs/artifacts", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/irs"},
-        {"prefix": "/b/gpms/artifacts", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/gpms"},
+        {"prefix": "/b/sales/artifacts", "upstream": "http://127.0.0.1:8000", "strip_prefix": "/b/sales"},
+        {"prefix": "/b/support/artifacts", "upstream": "http://127.0.0.1:8001", "strip_prefix": "/b/support"},
     ]
 
 
@@ -158,9 +158,9 @@ def test_plan_rejects_inbound_port_collision(tmp_path):
 
 
 def test_plan_public_url_per_hub(tmp_path):
-    irs = tmp_path / "irs"; irs.mkdir()
-    gp = gateway.plan([irs], load=_loader({str(irs): _settings(irs, 8000)}))
-    assert gp.public_url_for("https://hub.example.com/", gp.backends[0]) == "https://hub.example.com/b/irs"
+    sales = tmp_path / "sales"; sales.mkdir()
+    gp = gateway.plan([sales], load=_loader({str(sales): _settings(sales, 8000)}))
+    assert gp.public_url_for("https://hub.example.com/", gp.backends[0]) == "https://hub.example.com/b/sales"
 
 
 def test_plan_dedupes_colliding_slugs(tmp_path):
@@ -180,21 +180,21 @@ def test_plan_captures_per_hub_identity(tmp_path):
     """The plan carries each hub's display identity (name, description,
     suggestions from AGENTS.md frontmatter, logo from branding/) so the
     gateway can provision per-model config in Open WebUI."""
-    irs = tmp_path / "irs"
-    irs.mkdir()
-    (irs / "AGENTS.md").write_text(
-        "---\nname: IRS Agent\ndescription: Tax filing helper\n"
-        "suggestions:\n  - How do I file?\n  - What is TDS?\n---\nbody"
+    sales = tmp_path / "sales"
+    sales.mkdir()
+    (sales / "AGENTS.md").write_text(
+        "---\nname: Sales Agent\ndescription: Sales order helper\n"
+        "suggestions:\n  - How do I place an order?\n  - What is TDS?\n---\nbody"
     )
-    (irs / "branding").mkdir()
-    (irs / "branding" / "logo.png").write_bytes(b"png-bytes")
+    (sales / "branding").mkdir()
+    (sales / "branding" / "logo.png").write_bytes(b"png-bytes")
 
-    gp = gateway.plan([irs], load=_loader({str(irs): _settings(irs, 8000)}))
+    gp = gateway.plan([sales], load=_loader({str(sales): _settings(sales, 8000)}))
     b = gp.backends[0]
-    assert b.display_name == "IRS Agent"
-    assert b.description == "Tax filing helper"
-    assert b.suggestions == ("How do I file?", "What is TDS?")
-    assert b.logo == irs / "branding" / "logo.png"
+    assert b.display_name == "Sales Agent"
+    assert b.description == "Sales order helper"
+    assert b.suggestions == ("How do I place an order?", "What is TDS?")
+    assert b.logo == sales / "branding" / "logo.png"
 
 
 def test_plan_identity_defaults_are_empty(tmp_path):
@@ -251,9 +251,9 @@ def test_connection_env_forward_headers_operator_override(tmp_path, monkeypatch)
     """Identity forwarding defaults on (access control needs the email), but an
     operator who explicitly turns it off in the environment keeps that choice —
     connection_env must not hard-force it."""
-    irs = tmp_path / "irs"; irs.mkdir()
+    sales = tmp_path / "sales"; sales.mkdir()
     monkeypatch.setenv("ENABLE_FORWARD_USER_INFO_HEADERS", "false")
-    gp = gateway.plan([irs], load=_loader({str(irs): _settings(irs, 8000)}))
+    gp = gateway.plan([sales], load=_loader({str(sales): _settings(sales, 8000)}))
     assert gp.connection_env()["ENABLE_FORWARD_USER_INFO_HEADERS"] == "false"
 
 
@@ -261,14 +261,14 @@ def test_connection_env_forward_headers_operator_override(tmp_path, monkeypatch)
 # CLI wiring
 # ---------------------------------------------------------------------------
 def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
-    irs, gpms = tmp_path / "irs", tmp_path / "gpms"
-    for h in (irs, gpms):
+    sales, support = tmp_path / "sales", tmp_path / "support"
+    for h in (sales, support):
         h.mkdir()
         (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
 
     fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=irs, slug="irs", bridge_port=8000, api_key="irs-key", model_label="irs-agent"),
-        gateway.GatewayBackend(hub_dir=gpms, slug="gpms", bridge_port=8001, api_key="gpms-key", model_label="gpms-agent"),
+        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
+        gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
     ))
     monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
 
@@ -297,14 +297,14 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["gateway", str(irs), str(gpms), "--public-url", "https://host", "--port", "3080"],
+        ["gateway", str(sales), str(support), "--public-url", "https://host", "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
 
     # Shared OWUI got both bridges, positionally aligned.
     conn = captured["connection_env"]
     assert conn["OPENAI_API_BASE_URLS"] == "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1"
-    assert conn["OPENAI_API_KEYS"] == "irs-key;gpms-key"
+    assert conn["OPENAI_API_KEYS"] == "sales-key;support-key"
 
     # Two bridges launched headless on their ports.
     bridge_cmds = [c["cmd"] for c in popen_calls if "run" in c["cmd"]]
@@ -315,12 +315,12 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
     # Per-hub public URL injected into each bridge's env.
     bridge_envs = [c["env"] for c in popen_calls if "run" in c["cmd"]]
     pub_urls = sorted(e.get("HUBZOID_PUBLIC_URL", "") for e in bridge_envs)
-    assert pub_urls == ["https://host/b/gpms", "https://host/b/irs"]
+    assert pub_urls == ["https://host/b/sales", "https://host/b/support"]
 
     # The edge got per-hub artifact routes.
     edge_env = next(c["env"] for c in popen_calls if "hubzoid.edge:_factory" in c["cmd"])
-    assert "/b/irs/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
-    assert "/b/gpms/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
+    assert "/b/sales/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
+    assert "/b/support/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
 
 
 def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
@@ -328,14 +328,14 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
     so the restricted-tool group lookup (access.owui_groups) reads the gateway's
     webui.db — not the nonexistent per-hub .openwebui-data/webui.db. Without
     this, restricted-tool access is dead in gateway mode."""
-    irs, gpms = tmp_path / "irs", tmp_path / "gpms"
-    for h in (irs, gpms):
+    sales, support = tmp_path / "sales", tmp_path / "support"
+    for h in (sales, support):
         h.mkdir()
         (h / "AGENTS.md").write_text("---\nname: x\n---\nbody")
 
     fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=irs, slug="irs", bridge_port=8000, api_key="irs-key", model_label="irs-agent"),
-        gateway.GatewayBackend(hub_dir=gpms, slug="gpms", bridge_port=8001, api_key="gpms-key", model_label="gpms-agent"),
+        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
+        gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
     ))
     monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
 
@@ -363,7 +363,7 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch):
     gwdata = tmp_path / "gwdata"
     result = CliRunner().invoke(
         cli.app,
-        ["gateway", str(irs), str(gpms), "--data-dir", str(gwdata), "--port", "3080"],
+        ["gateway", str(sales), str(support), "--data-dir", str(gwdata), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
 
@@ -378,16 +378,16 @@ def _gateway_harness(tmp_path, monkeypatch):
     """Shared fake-process harness for gateway CLI wiring tests."""
     from hubzoid import webui
 
-    irs = tmp_path / "irs"
-    irs.mkdir()
-    (irs / "AGENTS.md").write_text(
-        "---\nname: IRS Agent\ndescription: Tax helper\nsuggestions:\n  - How do I file?\n---\nbody"
+    sales = tmp_path / "sales"
+    sales.mkdir()
+    (sales / "AGENTS.md").write_text(
+        "---\nname: Sales Agent\ndescription: Sales helper\nsuggestions:\n  - How do I place an order?\n---\nbody"
     )
     fake_plan = gateway.GatewayPlan(backends=(
         gateway.GatewayBackend(
-            hub_dir=irs, slug="irs", bridge_port=8000, api_key="k",
-            model_label="irs-agent", display_name="IRS Agent",
-            description="Tax helper", suggestions=("How do I file?",),
+            hub_dir=sales, slug="sales", bridge_port=8000, api_key="k",
+            model_label="sales-agent", display_name="Sales Agent",
+            description="Sales helper", suggestions=("How do I place an order?",),
         ),
     ))
     monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
@@ -407,7 +407,7 @@ def _gateway_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-    return irs
+    return sales
 
 
 def test_gateway_provisions_when_admin_creds_set(tmp_path, monkeypatch):
@@ -417,7 +417,7 @@ def test_gateway_provisions_when_admin_creds_set(tmp_path, monkeypatch):
     a fresh data dir."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
     monkeypatch.setenv("WEBUI_AUTH", "true")
@@ -427,20 +427,20 @@ def test_gateway_provisions_when_admin_creds_set(tmp_path, monkeypatch):
     def fake_provision(*, base_url, email, password, hubs, allow_bootstrap, client=None):
         calls.update(base_url=base_url, email=email, password=password,
                      hubs=hubs, allow_bootstrap=allow_bootstrap)
-        return ["irs-agent: created (group 'irs' has read access)"]
+        return ["sales-agent: created (group 'sales' has read access)"]
     monkeypatch.setattr(gwp, "provision", fake_provision)
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
     assert calls["email"] == "admin@org.com"
     assert calls["password"] == "s3cret"
     assert calls["allow_bootstrap"] is True    # fresh data dir: no webui.db yet
     spec = calls["hubs"][0]
-    assert spec.model_id == "irs-agent"
-    assert spec.group == "irs"
-    assert spec.suggestions == ("How do I file?",)
+    assert spec.model_id == "sales-agent"
+    assert spec.group == "sales"
+    assert spec.suggestions == ("How do I place an order?",)
     assert "created" in result.output
 
 
@@ -450,7 +450,7 @@ def test_gateway_no_bootstrap_on_established_data_dir(tmp_path, monkeypatch):
     should fail loudly, not quietly sign up a stray user)."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
     monkeypatch.setenv("WEBUI_AUTH", "true")
@@ -466,7 +466,7 @@ def test_gateway_no_bootstrap_on_established_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(gwp, "provision", fake_provision)
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(gw), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(gw), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
     assert calls["allow_bootstrap"] is False
@@ -479,7 +479,7 @@ def test_gateway_provisioning_requires_auth_on(tmp_path, monkeypatch):
     that names WEBUI_AUTH."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
     monkeypatch.delenv("WEBUI_AUTH", raising=False)
@@ -487,7 +487,7 @@ def test_gateway_provisioning_requires_auth_on(tmp_path, monkeypatch):
                         lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
     assert "WEBUI_AUTH" in result.output
@@ -498,7 +498,7 @@ def test_gateway_provision_skip_message_when_owui_not_ready(tmp_path, monkeypatc
     readiness, not tell the operator to set variables they already set."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
     monkeypatch.setenv("WEBUI_AUTH", "true")
@@ -508,7 +508,7 @@ def test_gateway_provision_skip_message_when_owui_not_ready(tmp_path, monkeypatc
                         lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
     assert "not ready" in result.output.lower()
@@ -520,7 +520,7 @@ def test_gateway_branding_failure_never_kills_boot(tmp_path, monkeypatch):
     the gateway boot — warn and continue."""
     from hubzoid import branding
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
 
     def boom(*a, **k):
         raise PermissionError("read-only install")
@@ -528,7 +528,7 @@ def test_gateway_branding_failure_never_kills_boot(tmp_path, monkeypatch):
     monkeypatch.setattr(branding, "apply", boom)
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
 
@@ -538,14 +538,14 @@ def test_gateway_skips_provisioning_without_creds(tmp_path, monkeypatch):
     and the boot proceeds normally."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_EMAIL", raising=False)
     monkeypatch.delenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", raising=False)
     monkeypatch.setattr(gwp, "provision",
                         lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
 
@@ -555,7 +555,7 @@ def test_gateway_provisioning_failure_never_kills_boot(tmp_path, monkeypatch):
     gateway keeps running — it must never take the boot down."""
     from hubzoid import gateway_provision as gwp
 
-    irs = _gateway_harness(tmp_path, monkeypatch)
+    sales = _gateway_harness(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "admin@org.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "wrong")
     monkeypatch.setenv("WEBUI_AUTH", "true")
@@ -563,7 +563,7 @@ def test_gateway_provisioning_failure_never_kills_boot(tmp_path, monkeypatch):
                         lambda **kw: (_ for _ in ()).throw(gwp.ProvisionError("bad creds")))
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
     assert "provision" in result.output.lower()
@@ -575,12 +575,12 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
     using the gateway baseline CSS that keeps Workspace visible for admins."""
     from hubzoid import branding, webui
 
-    irs = tmp_path / "irs"
-    irs.mkdir()
-    (irs / "AGENTS.md").write_text("---\nname: x\n---\nbody")
+    sales = tmp_path / "sales"
+    sales.mkdir()
+    (sales / "AGENTS.md").write_text("---\nname: x\n---\nbody")
 
     fake_plan = gateway.GatewayPlan(backends=(
-        gateway.GatewayBackend(hub_dir=irs, slug="irs", bridge_port=8000, api_key="k", model_label="irs-agent"),
+        gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="k", model_label="sales-agent"),
     ))
     monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
 
@@ -609,7 +609,7 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
     (gwdata / "branding" / "logo.png").write_bytes(b"GWLOGO")
 
     result = CliRunner().invoke(
-        cli.app, ["gateway", str(irs), "--data-dir", str(gwdata), "--port", "3080"],
+        cli.app, ["gateway", str(sales), "--data-dir", str(gwdata), "--port", "3080"],
     )
     assert result.exit_code == 0, result.output
 

@@ -229,7 +229,7 @@ class TestNormalizeOwuiUploads:
         assert f"read_upload('{name}')" in out
         assert "<source" not in out and "<context>" not in out and "### Task" not in out
         # 2b) the on-disk canonical path is advertised too, so path-accepting tools
-        #     / shell scripts (e.g. the IRS test_template.py <file> flow) still work
+        #     / shell scripts (e.g. a hub script taking a <file> path) still work
         assert str(copied) in out
         # 3) user query preserved verbatim at the end
         assert out.endswith("review this")
@@ -248,7 +248,7 @@ class TestNormalizeOwuiUploads:
         assert "read_upload" not in out
 
     def test_unresolved_file_becomes_loud_note_not_silent_drop(self, tmp_path, owui_uploads):
-        """The failure that burned IRS: a referenced file that isn't on disk must
+        """The production failure: a referenced file that isn't on disk must
         produce a visible note the agent relays, never a silent 'not found'."""
         from hubzoid.server import _normalize_owui_uploads
         prompt = _make_owui_prompt([("gone-id", "missing.json", "chunk")], user_query="read it")

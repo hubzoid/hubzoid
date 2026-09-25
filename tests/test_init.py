@@ -169,7 +169,7 @@ def test_init_second_run_does_not_overwrite_wrapper(tmp_path):
 
 
 def test_init_multi_hub_layout(tmp_path):
-    """Samarth-style: multiple `hubzoid init` calls yield sibling hubs."""
+    """Multi-hub: multiple `hubzoid init` calls yield sibling hubs."""
     _run_init(tmp_path, "devops-agent")
     _run_init(tmp_path, "support-agent")
     _run_init(tmp_path, "research-agent")

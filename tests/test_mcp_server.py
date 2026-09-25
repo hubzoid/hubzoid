@@ -374,9 +374,9 @@ def test_gateway_plan_no_mcp_env_bleed(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_access_group_gates_whole_surface(tmp_path, monkeypatch):
     hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=("clickup",))  # not in "irs"
+    db = _mk_owui_db(tmp_path / "webui.db", groups=("clickup",))  # not in "sales"
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "irs")
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
     from hubzoid import mcp_server
 
     app = mcp_server.build_mcp_app(hub)
@@ -386,9 +386,9 @@ def test_access_group_gates_whole_surface(tmp_path, monkeypatch):
 
 def test_access_group_admits_members(tmp_path, monkeypatch):
     hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=("IRS",))  # case-insensitive
+    db = _mk_owui_db(tmp_path / "webui.db", groups=("SALES",))  # case-insensitive
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "irs")
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
     from hubzoid import mcp_server
 
     app = mcp_server.build_mcp_app(hub)
@@ -400,9 +400,9 @@ def test_gateway_plan_carries_access_group(tmp_path):
     from hubzoid import gateway
 
     hub = _mk_gateway_hub(tmp_path, "alpha", 8100, mcp=True)
-    (hub / ".env").write_text("BRIDGE_PORT=8100\nMCP_SERVER=true\nMCP_ACCESS_GROUP=irs\n")
+    (hub / ".env").write_text("BRIDGE_PORT=8100\nMCP_SERVER=true\nMCP_ACCESS_GROUP=sales\n")
     gp = gateway.plan([hub])
-    assert gp.backends[0].mcp_access_group == "irs"
+    assert gp.backends[0].mcp_access_group == "sales"
 
 
 # ---------------------------------------------------------------------------
@@ -539,10 +539,10 @@ def test_roster_cannot_open_mcp_front_door(tmp_path, monkeypatch):
 
     reset_roster_cache()
     hub = _mk_hub(tmp_path)
-    _add_roster(hub, "alice@example.com", "irs")  # roster claims the door group
-    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # OWUI does NOT grant irs
+    _add_roster(hub, "alice@example.com", "sales")  # roster claims the door group
+    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # OWUI does NOT grant sales
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "irs")
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
     from hubzoid import mcp_server
 
     app = mcp_server.build_mcp_app(hub)

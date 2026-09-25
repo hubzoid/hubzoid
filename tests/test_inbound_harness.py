@@ -96,12 +96,12 @@ def test_whatsapp_bad_signature_is_rejected(tmp_path):
 def test_whatsapp_known_sender_gets_rendered_reply(tmp_path):
     send = _recorder()
     disp = _dispatcher("**Reply**")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": ["coordinator"]}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": ["coordinator"]}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=send, dispatch_fn=disp)
     raw, headers = _wa_post(_wa_text_payload("919800000001", "wamid.1", "hello"))
     r = TestClient(app).post("/webhooks/whatsapp", content=raw, headers=headers)
     assert r.status_code == 200
-    assert disp.calls[-1]["user_email"] == "ravi@isha.org"
+    assert disp.calls[-1]["user_email"] == "ravi@example.org"
     assert disp.calls[-1]["groups"] == ["coordinator"]
     assert send.calls[-1]["to"] == "919800000001"
     assert send.calls[-1]["text"] == "*Reply*"   # WhatsApp flavor applied
@@ -109,7 +109,7 @@ def test_whatsapp_known_sender_gets_rendered_reply(tmp_path):
 
 def test_whatsapp_marks_read_and_typing_before_dispatch(tmp_path):
     reads = []
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=_recorder(), dispatch_fn=_dispatcher(),
                   mark_read=lambda **kw: reads.append(kw) or {})
     raw, headers = _wa_post(_wa_text_payload("919800000001", "wamid.MR", "hi"))
@@ -132,7 +132,7 @@ def test_whatsapp_unknown_sender_gets_notice_and_no_dispatch(tmp_path):
 def test_whatsapp_image_ingests_and_stitches_marker_into_dispatch(tmp_path):
     send = _recorder()
     disp = _dispatcher("ok")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     seen = []
 
     def fake_ingest(*, surface, token, media, chat_id):
@@ -158,7 +158,7 @@ def test_whatsapp_empty_reply_sends_fallback_not_silence(tmp_path):
     # Code-review #4: a blank rendered reply used to leave the user in silence.
     send = _recorder()
     disp = _dispatcher("")   # renders to nothing
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=send, dispatch_fn=disp)
     raw, headers = _wa_post(_wa_text_payload("919800000001", "wamid.E", "hi"))
     TestClient(app).post("/webhooks/whatsapp", content=raw, headers=headers)
@@ -169,7 +169,7 @@ def test_whatsapp_empty_reply_sends_fallback_not_silence(tmp_path):
 def test_whatsapp_duplicate_delivery_dispatched_once(tmp_path):
     send = _recorder()
     disp = _dispatcher()
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=send, dispatch_fn=disp)
     client = TestClient(app)
     raw, headers = _wa_post(_wa_text_payload("919800000001", "wamid.SAME", "hi"))
@@ -202,7 +202,7 @@ def test_telegram_bad_secret_rejected(tmp_path):
 def test_telegram_contact_share_enrolls(tmp_path):
     send = _recorder()
     binds = Bindings(tmp_path / "b")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": ["coordinator"]}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": ["coordinator"]}})
     app = _tg_app(tmp_path, resolver=resolver, send_message=send,
                   dispatch_fn=_dispatcher(), bindings=binds)
     update = {"update_id": 5, "message": {
@@ -220,13 +220,13 @@ def test_telegram_text_from_verified_gets_reply(tmp_path):
     disp = _dispatcher("**Reply**")
     binds = Bindings(tmp_path / "b")
     binds.bind("42", "919800000001")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": ["coordinator"]}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": ["coordinator"]}})
     app = _tg_app(tmp_path, resolver=resolver, send_message=send, dispatch_fn=disp, bindings=binds)
     update = {"update_id": 6, "message": {"from": {"id": 42, "first_name": "Ravi"}, "text": "hi"}}
     r = TestClient(app).post("/webhooks/telegram", json=update,
                              headers={"X-Telegram-Bot-Api-Secret-Token": "TS"})
     assert r.status_code == 200
-    assert disp.calls[-1]["user_email"] == "ravi@isha.org"
+    assert disp.calls[-1]["user_email"] == "ravi@example.org"
     assert send.calls[-1]["text"] == "<b>Reply</b>"   # Telegram HTML flavor
 
 
@@ -234,7 +234,7 @@ def test_telegram_verified_shows_typing_before_reply(tmp_path):
     actions = []
     binds = Bindings(tmp_path / "b")
     binds.bind("42", "919800000001")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": ["coordinator"]}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": ["coordinator"]}})
     app = _tg_app(tmp_path, resolver=resolver, send_message=_recorder(),
                   dispatch_fn=_dispatcher(), bindings=binds,
                   send_chat_action=lambda **kw: actions.append(kw) or {})
@@ -262,7 +262,7 @@ def test_telegram_photo_ingests_and_stitches_marker_into_dispatch(tmp_path):
     disp = _dispatcher("ok")
     binds = Bindings(tmp_path / "b")
     binds.bind("42", "919800000001")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     seen = []
 
     def fake_ingest(*, surface, token, media, chat_id):
@@ -290,7 +290,7 @@ def test_telegram_streaming_sends_placeholder_then_edits_with_final(tmp_path):
     sends, edits = [], []
     binds = Bindings(tmp_path / "b")
     binds.bind("42", "919800000001")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
 
     def streaming_dispatch(**kw):
         cb = kw.get("on_delta")
@@ -315,7 +315,7 @@ def test_second_turn_carries_prior_history(tmp_path):
     # Slack/OWUI parity: the 2nd message sends the full array (prior user +
     # assistant, then the new user turn) so the agent has memory.
     disp = _dispatcher("The colour is blue.")
-    resolver = _roster({"919800000001": {"email": "ravi@isha.org", "groups": []}})
+    resolver = _roster({"919800000001": {"email": "ravi@example.org", "groups": []}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=_recorder(), dispatch_fn=disp)
     client = TestClient(app)
     raw1, h1 = _wa_post(_wa_text_payload("919800000001", "wamid.T1", "My colour is blue."))
@@ -332,8 +332,8 @@ def test_second_turn_carries_prior_history(tmp_path):
 def test_history_isolated_between_two_senders(tmp_path):
     disp = _dispatcher("ok")
     resolver = _roster({
-        "919800000001": {"email": "a@isha.org", "groups": []},
-        "919800000002": {"email": "b@isha.org", "groups": []},
+        "919800000001": {"email": "a@example.org", "groups": []},
+        "919800000002": {"email": "b@example.org", "groups": []},
     })
     app = _wa_app(tmp_path, resolver=resolver, send_text=_recorder(), dispatch_fn=disp)
     client = TestClient(app)
@@ -389,7 +389,7 @@ def test_whatsapp_handler_waits_for_chat_lock(tmp_path):
     # Prove the WhatsApp handler dispatches only after acquiring the chat lock:
     # hold it, fire a message, and confirm no dispatch happens until we release.
     disp = _dispatcher("ok")
-    resolver = _roster({"918888888888": {"email": "a@isha.org", "groups": []}})
+    resolver = _roster({"918888888888": {"email": "a@example.org", "groups": []}})
     app = _wa_app(tmp_path, resolver=resolver, send_text=_recorder(), dispatch_fn=disp)
     client = TestClient(app)
     lk = _chat_lock("whatsapp-918888888888")
@@ -415,7 +415,7 @@ def test_whatsapp_handler_waits_for_chat_lock(tmp_path):
 def test_telegram_handler_waits_for_chat_lock(tmp_path):
     disp = _dispatcher("ok")
     binds = Bindings(tmp_path / "b"); binds.bind("77777", "918888888888")
-    resolver = _roster({"918888888888": {"email": "a@isha.org", "groups": []}})
+    resolver = _roster({"918888888888": {"email": "a@example.org", "groups": []}})
     app = _tg_app(tmp_path, resolver=resolver, send_message=_recorder(),
                   dispatch_fn=disp, bindings=binds)
     client = TestClient(app)

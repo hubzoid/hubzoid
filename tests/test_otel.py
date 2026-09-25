@@ -17,7 +17,7 @@ def test_claude_env_carries_otel_vars_and_user_hub_attributes():
     env = otel.claude_otel_env(
         endpoint="http://collector:4318",
         user="priya",
-        hub="irs-hub",
+        hub="sales-hub",
         surface="owui",
     )
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
@@ -30,7 +30,7 @@ def test_claude_env_carries_otel_vars_and_user_hub_attributes():
 
     attrs = _parse_attrs(env)
     assert attrs["hubzoid.user"] == "priya"
-    assert attrs["hubzoid.hub"] == "irs-hub"
+    assert attrs["hubzoid.hub"] == "sales-hub"
     assert attrs["hubzoid.surface"] == "owui"
     # user.id mirrors the OWUI user so trace backends' NATIVE user views
     # (Langfuse Users tab keys on user.id) attribute to the real person, not
@@ -66,21 +66,21 @@ def test_claude_env_protocol_defaults_http_but_honors_operator_override(monkeypa
 
 def test_claude_env_empty_when_no_endpoint():
     # Off by default: no endpoint configured -> emit nothing, no behavior change.
-    assert otel.claude_otel_env(endpoint=None, user="priya", hub="irs-hub", surface="owui") == {}
-    assert otel.claude_otel_env(endpoint="", user="priya", hub="irs-hub", surface="owui") == {}
+    assert otel.claude_otel_env(endpoint=None, user="priya", hub="sales-hub", surface="owui") == {}
+    assert otel.claude_otel_env(endpoint="", user="priya", hub="sales-hub", surface="owui") == {}
 
 
 def test_attribute_values_are_sanitized_to_preserve_format():
     # A comma or equals in an identity must not corrupt the k=v,k=v format.
     env = otel.claude_otel_env(
-        endpoint="http://c:4318", user="a,b=c", hub="irs-hub", surface="owui"
+        endpoint="http://c:4318", user="a,b=c", hub="sales-hub", surface="owui"
     )
     pairs = env["OTEL_RESOURCE_ATTRIBUTES"].split(",")
     assert len(pairs) == 4  # the comma in the user value did not add an extra pair
     attrs = _parse_attrs(env)
     assert "," not in attrs["hubzoid.user"]
     assert "," not in attrs["user.id"]
-    assert attrs["hubzoid.hub"] == "irs-hub"
+    assert attrs["hubzoid.hub"] == "sales-hub"
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ def test_options_for_turn_injects_identity_when_otel_enabled():
     from hubzoid.factory_claude import ClaudeRuntime
 
     rt = ClaudeRuntime(name="x", options=ClaudeAgentOptions(tools=[]),
-                       hub="irs-hub", otel_endpoint="http://c:4318")
+                       hub="sales-hub", otel_endpoint="http://c:4318")
     with idmod.identity_scope(idmod.Identity.make(user="priya", surface="owui")):
         opts = rt._options_for_turn()
 
@@ -118,7 +118,7 @@ def test_options_for_turn_injects_identity_when_otel_enabled():
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     attrs = dict(kv.split("=", 1) for kv in env["OTEL_RESOURCE_ATTRIBUTES"].split(","))
     assert attrs["hubzoid.user"] == "priya"
-    assert attrs["hubzoid.hub"] == "irs-hub"
+    assert attrs["hubzoid.hub"] == "sales-hub"
 
 
 def test_options_for_turn_is_noop_when_otel_disabled():
@@ -127,7 +127,7 @@ def test_options_for_turn_is_noop_when_otel_disabled():
     from hubzoid.factory_claude import ClaudeRuntime
 
     base = ClaudeAgentOptions(tools=[])
-    rt = ClaudeRuntime(name="x", options=base, hub="irs-hub", otel_endpoint=None)
+    rt = ClaudeRuntime(name="x", options=base, hub="sales-hub", otel_endpoint=None)
     assert rt._options_for_turn() is base  # untouched shared options
 
 
@@ -137,7 +137,7 @@ def test_options_for_turn_is_noop_when_otel_disabled():
 def test_openai_otel_setup_noop_when_disabled():
     from hubzoid import otel
 
-    assert otel.openai_otel_setup(endpoint=None, hub="irs-hub") is False
+    assert otel.openai_otel_setup(endpoint=None, hub="sales-hub") is False
 
 
 def test_openai_otel_setup_registers_litellm_callback(monkeypatch):
@@ -152,5 +152,5 @@ def test_openai_otel_setup_registers_litellm_callback(monkeypatch):
 
     from hubzoid import otel
 
-    assert otel.openai_otel_setup(endpoint="http://c:4318", hub="irs-hub") is True
+    assert otel.openai_otel_setup(endpoint="http://c:4318", hub="sales-hub") is True
     assert "otel" in fake.callbacks

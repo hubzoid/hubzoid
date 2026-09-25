@@ -166,11 +166,11 @@ def test_write_artifact_falls_back_to_webui_url(ctx, monkeypatch):
     # commonly forget HUBZOID_PUBLIC_URL. The same public host fronts both, so
     # the download link falls back to WEBUI_URL instead of localhost.
     monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
-    monkeypatch.setenv("WEBUI_URL", "https://samarth.hubzoid.com/")
+    monkeypatch.setenv("WEBUI_URL", "https://hub.example.com/")
     write = _by_name(files_mod.make(ctx), "write_artifact")
     with _request_ctx.chat_scope("c1"):
         result = _call(write, filename="x.txt", content="x")
-    assert "https://samarth.hubzoid.com/artifacts/c1/x.txt" in result
+    assert "https://hub.example.com/artifacts/c1/x.txt" in result
 
 
 def test_write_artifact_public_url_wins_over_webui_url(ctx, monkeypatch):

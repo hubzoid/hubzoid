@@ -151,7 +151,7 @@ sudo systemctl status hubzoid@devops-agent
 ```
 
 For each additional agent, repeat with the new hub folder's name:
-`systemctl enable --now hubzoid@irs-agent`. One unit file, any number of
+`systemctl enable --now hubzoid@sales-agent`. One unit file, any number of
 agents.
 
 Live logs:
@@ -244,7 +244,7 @@ devops.agents.example.com {
     }
 }
 
-irs.agents.example.com {
+sales.agents.example.com {
     reverse_proxy 127.0.0.1:3081 {
         flush_interval -1
         transport http {
@@ -357,12 +357,12 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 ## Multi-hub on one Open WebUI (`hubzoid gateway`)
 
 `hubzoid run` is one Open WebUI per hub — full isolation, but N heavy OWUI
-processes. When you have a hub per team (IRS, GPMS, …) on one box, want them
+processes. When you have a hub per team (sales, support, …) on one box, want them
 **light**, share branding, and need per-team *access* (not per-team URLs),
 run one shared Open WebUI over many headless bridges instead:
 
 ```bash
-hubzoid gateway irs-agent gpms-agent finance-agent \
+hubzoid gateway sales-agent support-agent finance-agent \
   --host 0.0.0.0 --port 3080 \
   --public-url https://hub.example.com
 ```
@@ -431,8 +431,8 @@ team's chats could route to the other team's agent.
 1. Turn on auth (`WEBUI_AUTH=true` + the block from [docs/auth.md](auth.md))
    on the gateway — set these in the environment the `hubzoid gateway`
    process inherits.
-2. In **Admin Panel → Users → Groups**, create a group per team (`IRS`,
-   `GPMS`, …) and add members.
+2. In **Admin Panel → Users → Groups**, create a group per team (`Sales`,
+   `Support`, …) and add members.
 3. In **Workspace → Models**, open each agent's model, set **Access Control
    → Private**, and assign its team's group. Users outside the group won't
    see it.

@@ -70,9 +70,9 @@ external-safe version in frontmatter — it wins when present:
 
 ```yaml
 ---
-name: IRS Hub
+name: Sales Hub
 mcp_instructions: |
-  Tools and knowledge for IRS donation reconciliation. Prefer grep_data
+  Tools and knowledge for sales order reconciliation. Prefer grep_data
   for raw ledger lookups; read_knowledge for policy documents.
 ---
 ```
@@ -92,9 +92,9 @@ tools and knowledge — the chat UI's per-model ACLs do not apply here. Gate
 each hub's whole MCP surface on an OWUI group:
 
 ```dotenv
-# IRSHub/irs-hub/.env
+# SalesHub/sales-hub/.env
 MCP_SERVER=true
-MCP_ACCESS_GROUP=irs        # only members of the OWUI group "irs" get past auth
+MCP_ACCESS_GROUP=sales        # only members of the OWUI group "sales" get past auth
 ```
 
 Non-members get 401 before seeing a single tool name. Single-hub

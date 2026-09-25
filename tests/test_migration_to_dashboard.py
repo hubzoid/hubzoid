@@ -6,6 +6,7 @@ edits work — and that an operator rollback returns it to legacy read-only. Thi
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -20,13 +21,12 @@ import hubzoid.db as db
 from hubzoid.access import migrate
 from hubzoid.portal import PortalAdmin, build_router
 
+# Optional rehearsal against protected copies of real OWUI databases: set
+# HUBZOID_REHEARSAL_OWUI_DBS to a comma-separated list of webui.db paths.
 REAL_OWUI = {
-    "samarth_diamond": Path(
-        "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/SamarthDiamond/SamarthDiamondHub/.openwebui-data/webui.db"
-    ),
-    "samarth_jewellery": Path(
-        "/Users/shreyarao/Desktop/WaveAssist/Hubzoid/SamarthJewellery/SamarthJewelleryHub/.openwebui-data/webui.db"
-    ),
+    Path(p).parent.parent.name or Path(p).name: Path(p)
+    for p in os.environ.get("HUBZOID_REHEARSAL_OWUI_DBS", "").split(",")
+    if p.strip()
 }
 
 
@@ -110,7 +110,8 @@ def test_manual_migration_makes_the_agent_dashboard_managed(deployment):
                   json={"subject": "x@fin.io", "hub": c.hub, "permission": "use_hub"}).status_code == 409
 
 
-@pytest.mark.parametrize("name,src", list(REAL_OWUI.items()))
+@pytest.mark.skipif(not REAL_OWUI, reason="set HUBZOID_REHEARSAL_OWUI_DBS to rehearse")
+@pytest.mark.parametrize("name,src", list(REAL_OWUI.items()) or [("none", Path("/nonexistent"))])
 def test_rehearse_migration_against_real_customer_owui_copy(tmp_path, name, src):
     """Rehearsal against a PROTECTED COPY of the real customer OWUI database (never the
     original). Both currently have no registered OWUI model for the hub, so the explicit

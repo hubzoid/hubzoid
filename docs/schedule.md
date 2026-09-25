@@ -7,7 +7,7 @@ hub's own agent executes unattended.
 
 Hubzoid owns the mechanism — discovery, cron timing, the bounded run harness,
 logging, scoped git capture. The hub author owns the policy — the schedule,
-the instructions, the paths. There is no fixed built-in job: an IRS hub may
+the instructions, the paths. There is no fixed built-in job: a sales hub may
 keep `knowledge/` in step with code commits, an Odoo hub may document each
 upgrade per repo, another hub may do something entirely different.
 

@@ -37,12 +37,12 @@ def _file_tools(hub: Path) -> dict:
 
 def _seed(hub: Path):
     (hub / "restricted").mkdir()
-    (hub / "restricted" / ".env").write_text("ORNATE_PASSWORD=supersecret\n")
-    (hub / "restricted" / "ornate.py").write_text("# tool code with no secret\n")
+    (hub / "restricted" / ".env").write_text("ERP_PASSWORD=supersecret\n")
+    (hub / "restricted" / "erp.py").write_text("# tool code with no secret\n")
     (hub / "notes.txt").write_text("just a public note\n")
     rd = hub / "raw_data"
     rd.mkdir()
-    (rd / "data.txt").write_text("ORNATE_PASSWORD lookalike but harmless\n")
+    (rd / "data.txt").write_text("ERP_PASSWORD lookalike but harmless\n")
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def _force_python_backend(monkeypatch):
 def test_grep_refuses_restricted_folder(tmp_path):
     _seed(tmp_path)
     tool = gd.make(_Ctx(tmp_path))[0]
-    out = _invoke(tool, pattern="ORNATE_PASSWORD", path="restricted")
+    out = _invoke(tool, pattern="ERP_PASSWORD", path="restricted")
     assert "refused" in out.lower()
     assert "supersecret" not in out
 
@@ -101,7 +101,7 @@ def test_grep_refuses_restricted_folder(tmp_path):
 def test_grep_refuses_restricted_env_directly(tmp_path):
     _seed(tmp_path)
     tool = gd.make(_Ctx(tmp_path))[0]
-    out = _invoke(tool, pattern="ORNATE_PASSWORD", path="restricted/.env")
+    out = _invoke(tool, pattern="ERP_PASSWORD", path="restricted/.env")
     assert "refused" in out.lower()
     assert "supersecret" not in out
 

@@ -43,12 +43,12 @@ def test_stream_reply_forwards_email_header_and_surface():
         bridge_url="http://x/v1", api_key="k", model="m",
         messages=[{"role": "user", "content": "hi"}],
         on_delta=lambda _d: None,
-        user_email="priya@isha.org",
+        user_email="priya@example.org",
         http_client=fake,
     )
     headers = fake.stream.call_args.kwargs["headers"]
     assert headers["X-Hubzoid-Surface"] == "slack"
-    assert headers["X-OpenWebUI-User-Email"] == "priya@isha.org"
+    assert headers["X-OpenWebUI-User-Email"] == "priya@example.org"
 
 
 def test_stream_reply_omits_email_header_when_none():
@@ -87,14 +87,14 @@ def test_owui_group_lookup_is_case_insensitive(tmp_path, monkeypatch):
         'CREATE TABLE "group"(id TEXT, name TEXT);'
         'CREATE TABLE "user"(id TEXT, email TEXT);'
         'CREATE TABLE group_member(group_id TEXT, user_id TEXT);'
-        "INSERT INTO \"group\" VALUES('g1','ornate');"
+        "INSERT INTO \"group\" VALUES('g1','erp');"
         "INSERT INTO \"user\" VALUES('u1','john.doe@corp.com');"
         "INSERT INTO group_member VALUES('g1','u1');"
     )
     con.commit()
     con.close()
     # Slack forwards mixed-case; must still match the lowercased OWUI email
-    assert owui_groups.resolve_groups(tmp_path, "John.Doe@CORP.com") == {"ornate"}
+    assert owui_groups.resolve_groups(tmp_path, "John.Doe@CORP.com") == {"erp"}
 
 
 def test_lookup_email_extracts_profile_email():

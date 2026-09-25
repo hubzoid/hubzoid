@@ -17,7 +17,7 @@ tool". A judge inventing evidence produces false regressions, which is the one
 failure mode that makes a suite worth less than no suite at all.
 
 **Why there is no separate rules file.** The golden rules are already written
-down in `AGENTS.md` (the Hubzoid Test Hub's "Behaviour rules", the IRS hub's
+down in `AGENTS.md` (the Hubzoid Test Hub's "Behaviour rules", a production hub's
 voice rules). Restating them in an `evals/RULES.md` would create a second
 source of truth that drifts, and a stale rules file makes an eval pass for the
 wrong reason — worse than having no eval.

@@ -306,7 +306,7 @@ work). Changes are picked up on the next start.
 <summary>Multi-hub agents repo</summary>
 
 Run `hubzoid init` more than once in the same directory and you get a
-Samarth-style multi-hub layout with one parent `requirements.txt`:
+A multi-hub layout with one parent `requirements.txt`:
 
 ```bash
 mkdir my-agents && cd my-agents

@@ -393,7 +393,7 @@ def _parse_model_pin(model_setting: str | None) -> str | None:
     Bare `claude-local` (no suffix) defaults to **Sonnet 4.x**. We
     originally defaulted to Haiku for low TTFT, but Haiku tends to ask
     the user to choose between options instead of executing documented
-    workflows — reproducibly broke the IRS-hub QA pipeline that the
+    workflows — reproducibly broke a production hub's QA pipeline that the
     prs-agent Claude Code session handled cleanly on Sonnet. Sonnet's
     decisiveness on routing rules matters more than Haiku's latency for
     agentic hubs. Operators who specifically want Haiku speed opt in

@@ -38,14 +38,14 @@ def sample_tool(store: str = "ALL") -> str:
 # normalize + identity
 # ---------------------------------------------------------------------------
 def test_normalize_is_case_insensitive_and_trimmed():
-    assert normalize("  Ornate ") == "ornate"
+    assert normalize("  ERP ") == "erp"
     assert normalize("ERP") == "erp"
     assert normalize("") == ""
 
 
 def test_identity_make_normalizes_groups_and_surface():
-    ident = Identity.make("priya", ["Ornate", " Finance ", "", "ornate"], surface="OWUI")
-    assert ident.groups == frozenset({"ornate", "finance"})
+    ident = Identity.make("priya", ["ERP", " Finance ", "", "erp"], surface="OWUI")
+    assert ident.groups == frozenset({"erp", "finance"})
     assert ident.surface == "owui"
     assert ident.user == "priya"
     assert not ident.is_anonymous
@@ -58,7 +58,7 @@ def test_anonymous_default():
 
 def test_identity_scope_sets_and_restores():
     assert access.current_identity().is_anonymous
-    with identity_scope(Identity.make("p", ["ornate"], surface="owui")):
+    with identity_scope(Identity.make("p", ["erp"], surface="owui")):
         assert access.current_identity().user == "p"
     assert access.current_identity().is_anonymous  # restored
 
@@ -67,23 +67,23 @@ def test_identity_scope_sets_and_restores():
 # policy
 # ---------------------------------------------------------------------------
 def test_policy_allows_matching_group():
-    owner = Identity.make("priya", ["ornate"], surface="owui")
-    assert is_allowed(owner, "ornate") == (True, "group")
-    assert is_allowed(owner, "Ornate")[0] is True  # case-insensitive match
+    owner = Identity.make("priya", ["erp"], surface="owui")
+    assert is_allowed(owner, "erp") == (True, "group")
+    assert is_allowed(owner, "ERP")[0] is True  # case-insensitive match
 
 
 def test_policy_denies_without_group():
-    owner = Identity.make("priya", ["ornate"], surface="owui")
-    assert is_allowed(owner, "erp") == (False, "no-group")
+    owner = Identity.make("priya", ["erp"], surface="owui")
+    assert is_allowed(owner, "hr") == (False, "no-group")
 
 
 def test_policy_denies_anonymous():
-    assert is_allowed(access.ANONYMOUS, "ornate") == (False, "anonymous")
+    assert is_allowed(access.ANONYMOUS, "erp") == (False, "anonymous")
 
 
 def test_policy_denies_non_owui_surface_even_with_group():
-    slack = Identity.make("p", ["ornate"], surface="slack")
-    allowed, reason = is_allowed(slack, "ornate")
+    slack = Identity.make("p", ["erp"], surface="slack")
+    allowed, reason = is_allowed(slack, "erp")
     assert allowed is False
     assert reason == "surface:slack"
 
@@ -96,8 +96,8 @@ def test_policy_passes_through_unrestricted():
 # guard
 # ---------------------------------------------------------------------------
 def test_guard_allows_and_logs_when_permitted(tmp_path):
-    guarded = guard.guard_tool(sample_tool, "ornate", tmp_path)
-    with identity_scope(Identity.make("priya", ["ornate"], surface="owui")):
+    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
+    with identity_scope(Identity.make("priya", ["erp"], surface="owui")):
         out = _invoke(guarded, store="BLR")
     assert out == "ran:BLR"
     rows = auditlib.read(tmp_path)
@@ -107,44 +107,44 @@ def test_guard_allows_and_logs_when_permitted(tmp_path):
 
 
 def test_guard_denies_and_logs_when_not_permitted(tmp_path):
-    guarded = guard.guard_tool(sample_tool, "ornate", tmp_path)
+    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     with identity_scope(Identity.make("anjali", ["stock"], surface="owui")):
         out = _invoke(guarded, store="BLR")
     assert "access denied" in out.lower()
-    assert "ornate" in out
+    assert "erp" in out
     rows = auditlib.read(tmp_path)
     assert rows[-1]["decision"] == "deny"
     assert rows[-1]["reason"] == "no-group"
 
 
 def test_guard_denies_anonymous(tmp_path):
-    guarded = guard.guard_tool(sample_tool, "ornate", tmp_path)
+    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     out = _invoke(guarded, store="X")  # no identity bound
     assert "access denied" in out.lower()
 
 
 def test_guard_is_enabled_reflects_identity(tmp_path):
-    guarded = guard.guard_tool(sample_tool, "ornate", tmp_path)
+    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     assert guarded.is_enabled(None, None) is False  # anonymous
-    with identity_scope(Identity.make("p", ["ornate"], surface="owui")):
-        assert guarded.is_enabled(None, None) is True
     with identity_scope(Identity.make("p", ["erp"], surface="owui")):
+        assert guarded.is_enabled(None, None) is True
+    with identity_scope(Identity.make("p", ["hr"], surface="owui")):
         assert guarded.is_enabled(None, None) is False
 
 
 def test_guard_leaves_original_untouched(tmp_path):
-    guard.guard_tool(sample_tool, "ornate", tmp_path)
+    guard.guard_tool(sample_tool, "erp", tmp_path)
     # The original sample_tool is the module-level FunctionTool; replace() copies.
     assert sample_tool.is_enabled is True
 
 
 def test_restricted_surfaces_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "kiosk")
-    guarded = guard.guard_tool(sample_tool, "ornate", tmp_path)
+    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     # owui no longer allowed; kiosk is.
-    with identity_scope(Identity.make("p", ["ornate"], surface="owui")):
+    with identity_scope(Identity.make("p", ["erp"], surface="owui")):
         assert guarded.is_enabled(None, None) is False
-    with identity_scope(Identity.make("p", ["ornate"], surface="kiosk")):
+    with identity_scope(Identity.make("p", ["erp"], surface="kiosk")):
         assert guarded.is_enabled(None, None) is True
 
 
@@ -155,13 +155,13 @@ _RESTRICTED_TOOL_SRC = '''
 from agents import function_tool
 
 @function_tool
-def ornate_sales(store: str = "ALL") -> str:
-    "Ornate sales lookup."
+def erp_sales(store: str = "ALL") -> str:
+    "ERP sales lookup."
     return "sales:" + store
 
 @function_tool
-def ornate_stock(store: str = "ALL") -> str:
-    "Ornate stock lookup."
+def erp_stock(store: str = "ALL") -> str:
+    "ERP stock lookup."
     return "stock:" + store
 '''
 
@@ -169,9 +169,9 @@ def ornate_stock(store: str = "ALL") -> str:
 def _make_restricted_hub(tmp_path: Path) -> Path:
     rdir = tmp_path / "restricted"
     rdir.mkdir()
-    (rdir / "ornate.py").write_text(_RESTRICTED_TOOL_SRC)
+    (rdir / "erp.py").write_text(_RESTRICTED_TOOL_SRC)
     (rdir / "_private.py").write_text("X = 1\n")  # ignored (underscore)
-    (rdir / ".env").write_text("ORNATE_PASSWORD=secret\n")  # ignored (not .py)
+    (rdir / ".env").write_text("ERP_PASSWORD=secret\n")  # ignored (not .py)
     return tmp_path
 
 
@@ -179,7 +179,7 @@ def test_load_restricted_tags_permission_by_filename(tmp_path):
     _make_restricted_hub(tmp_path)
     loaded = loader.load_restricted(tmp_path)
     names = {ft.name: perm for ft, perm in loaded}
-    assert names == {"ornate_sales": "ornate", "ornate_stock": "ornate"}
+    assert names == {"erp_sales": "erp", "erp_stock": "erp"}
 
 
 def test_load_restricted_empty_without_folder(tmp_path):
@@ -194,12 +194,12 @@ def test_apply_unchanged_without_restricted_folder(tmp_path):
 def test_apply_guards_restricted_tools_end_to_end(tmp_path):
     _make_restricted_hub(tmp_path)
     registry = access.apply(tmp_path, {"existing": sample_tool})
-    assert "ornate_sales" in registry and "existing" in registry
-    guarded = registry["ornate_sales"]
+    assert "erp_sales" in registry and "existing" in registry
+    guarded = registry["erp_sales"]
     # denied anonymous
     assert "access denied" in _invoke(guarded, store="ALL").lower()
-    # allowed for an owner in the ornate group
-    with identity_scope(Identity.make("priya", ["ornate"], surface="owui")):
+    # allowed for an owner in the erp group
+    with identity_scope(Identity.make("priya", ["erp"], surface="owui")):
         assert _invoke(guarded, store="ALL") == "sales:ALL"
 
 
@@ -238,7 +238,7 @@ def _make_owui_db(path):
         CREATE TABLE "group" (id TEXT, name TEXT);
         CREATE TABLE group_member (id TEXT, group_id TEXT, user_id TEXT);
         INSERT INTO "user" VALUES ('u1', 'priya@x.com');
-        INSERT INTO "group" VALUES ('g1', 'ornate'), ('g2', 'Finance');
+        INSERT INTO "group" VALUES ('g1', 'erp'), ('g2', 'Finance');
         INSERT INTO group_member VALUES ('m1', 'g1', 'u1'), ('m2', 'g2', 'u1');
         '''
     )
@@ -252,7 +252,7 @@ def test_owui_resolve_groups(tmp_path):
     data.mkdir()
     _make_owui_db(data / "webui.db")
     # normalized, so "Finance" -> "finance"
-    assert owui_groups.resolve_groups(tmp_path, "priya@x.com") == {"ornate", "finance"}
+    assert owui_groups.resolve_groups(tmp_path, "priya@x.com") == {"erp", "finance"}
     assert owui_groups.resolve_groups(tmp_path, "nobody@x.com") == set()
     assert owui_groups.resolve_groups(tmp_path, None) == set()
 
@@ -269,7 +269,7 @@ def test_access_wires_restricted_tools(tmp_path):
     _make_restricted_hub(tmp_path)
     reg = access.apply(tmp_path, {})
     # The restricted tool is wired.
-    assert "ornate_sales" in reg
+    assert "erp_sales" in reg
 
 
 def test_no_restricted_folder_registry_unchanged(tmp_path):

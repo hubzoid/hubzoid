@@ -10,8 +10,10 @@ exists.
 
 The model is stubbed (we assert on what the bridge hands the runtime + what lands
 on disk), so this spends no tokens. It runs the full HTTP ingest path: auth,
-chat-id derivation, `_normalize_owui_uploads`, chat_scope. Skips when the test
-hub isn't checked out beside the repo.
+chat-id derivation, `_normalize_owui_uploads`, chat_scope. It runs against a
+private copy of the test hub's authored files (no runtime state), so local state
+in the real hub (for example an access migration that makes it require sign-in)
+can't change the result. Skips when the test hub isn't checked out beside the repo.
 """
 from __future__ import annotations
 
@@ -22,12 +24,27 @@ import pytest
 from fastapi.testclient import TestClient
 
 # HubzoidTestHub lives beside the HubZoid repo: <...>/Hubzoid/HubzoidTestHub/test-hub
-TEST_HUB = Path(__file__).resolve().parents[3] / "HubzoidTestHub" / "test-hub"
+SOURCE_HUB = Path(__file__).resolve().parents[3] / "HubzoidTestHub" / "test-hub"
+TEST_HUB = SOURCE_HUB  # replaced by a private copy in _private_hub_copy
 
 pytestmark = pytest.mark.skipif(
-    not TEST_HUB.is_dir(),
-    reason=f"HubzoidTestHub not present at {TEST_HUB}",
+    not SOURCE_HUB.is_dir(),
+    reason=f"HubzoidTestHub not present at {SOURCE_HUB}",
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _private_hub_copy(tmp_path_factory):
+    global TEST_HUB
+    dst = tmp_path_factory.mktemp("hub") / SOURCE_HUB.name
+    shutil.copytree(
+        SOURCE_HUB,
+        dst,
+        ignore=shutil.ignore_patterns(".hubzoid", ".openwebui-data", ".git", "__pycache__"),
+    )
+    TEST_HUB = dst
+    yield
+    TEST_HUB = SOURCE_HUB
 
 _E2E_PREFIX = "e2e-single-store"
 
@@ -51,8 +68,7 @@ def _canonical(chat_id: str, name: str) -> Path:
 
 @pytest.fixture(autouse=True)
 def _cleanup():
-    """Remove only the artifacts this suite stages, before and after, so the
-    real test hub's own chat state is never touched."""
+    """Remove the artifacts this suite stages, before and after each test."""
     def _purge():
         chats = TEST_HUB / ".hubzoid" / "chats"
         for d in chats.glob(f"{_E2E_PREFIX}*"):
@@ -120,7 +136,7 @@ def test_owui_document_lands_in_single_store(client):
     assert ".openwebui-data" not in prompt
     assert "<source" not in prompt and "<context>" not in prompt
     # The canonical on-disk path is advertised so path-accepting tools / scripts
-    # (the IRS test_template.py <file> flow) keep working — no IRS-side change needed.
+    # (a hub script taking a <file> path) keep working — no hub-side change needed.
     assert str(copied) in prompt
     assert prompt.rstrip().endswith("Summarize this.")
 
@@ -143,7 +159,7 @@ def test_owui_image_gets_vision_marker(client):
 
 
 def test_unresolved_owui_file_is_loud_not_silent(client):
-    """The exact failure that burned IRS: a referenced file whose bytes are gone
+    """The exact production failure: a referenced file whose bytes are gone
     must surface a visible note the agent relays — never a silent drop that makes
     a user paste the whole file into chat."""
     name = "e2e_missing.json"

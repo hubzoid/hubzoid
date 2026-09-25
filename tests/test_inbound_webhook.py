@@ -92,8 +92,8 @@ def _app(tmp_path, cfg, slug="myhub"):
 def test_route_is_namespaced_by_slug_and_name(tmp_path):
     events = []
     cfg = WebhookConfig(secret="s", name="squadcast", sink=events.append)
-    client = TestClient(_app(tmp_path, cfg, slug="ishahub"))
-    r = client.post("/webhooks/ishahub/squadcast",
+    client = TestClient(_app(tmp_path, cfg, slug="acme"))
+    r = client.post("/webhooks/acme/squadcast",
                     headers={"Authorization": "Bearer s"}, json={"event": "down"})
     assert r.status_code == 200 and r.text == "ok"
     assert events and events[0]["body"] == {"event": "down"}
@@ -105,8 +105,8 @@ def test_route_is_namespaced_by_slug_and_name(tmp_path):
 def test_bad_secret_is_rejected_before_sink(tmp_path):
     events = []
     cfg = WebhookConfig(secret="s", name="squadcast", sink=events.append)
-    client = TestClient(_app(tmp_path, cfg, slug="ishahub"))
-    r = client.post("/webhooks/ishahub/squadcast",
+    client = TestClient(_app(tmp_path, cfg, slug="acme"))
+    r = client.post("/webhooks/acme/squadcast",
                     headers={"Authorization": "Bearer wrong"}, json={"event": "down"})
     assert r.status_code == 403
     assert events == []  # sink never ran

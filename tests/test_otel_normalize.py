@@ -134,8 +134,8 @@ def test_promotes_hub_to_langfuse_tag():
     # hubzoid.hub is only metadata (Langfuse can't group by it); also emit it as
     # a Langfuse tag (`langfuse.trace.tags`, a string array) so per-hub cost is a
     # first-class group-able dimension.
-    body = _request(resource_attrs={"hubzoid.hub": "gpms-hub"}, span_attrs={"input_tokens": 1})
-    assert _span_tags(otel.normalize_otlp_traces(body)) == ["gpms-hub"]
+    body = _request(resource_attrs={"hubzoid.hub": "support-hub"}, span_attrs={"input_tokens": 1})
+    assert _span_tags(otel.normalize_otlp_traces(body)) == ["support-hub"]
 
 
 def test_no_hub_tag_when_no_hub_in_resource():
@@ -144,9 +144,9 @@ def test_no_hub_tag_when_no_hub_in_resource():
 
 
 def test_hub_tag_is_idempotent():
-    body = _request(resource_attrs={"hubzoid.hub": "irs-hub"}, span_attrs={"input_tokens": 1})
+    body = _request(resource_attrs={"hubzoid.hub": "sales-hub"}, span_attrs={"input_tokens": 1})
     twice = otel.normalize_otlp_traces(otel.normalize_otlp_traces(body))
-    assert _span_tags(twice) == ["irs-hub"]  # not ["irs-hub", "irs-hub"]
+    assert _span_tags(twice) == ["sales-hub"]  # not ["sales-hub", "sales-hub"]
 
 
 # --- normalize_otlp_traces: robustness --------------------------------------

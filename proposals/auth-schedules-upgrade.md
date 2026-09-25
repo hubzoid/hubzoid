@@ -7,7 +7,7 @@ the in-repo build contract; where wording conflicts, `ACCESS-SOURCE-OF-TRUTH.md`
 wins for access and `implementation-plan.html` for runtime + portal.
 
 ## Problem
-Three gaps today, all observed on the Isha hubs:
+Three gaps today, all observed on a production multi-hub deployment:
 1. **No scheduled deterministic work.** The only scheduler runs markdown *agent
    tasks* (`schedule/*.md`) through the LLM harness. There is no way to run a
    plain, durable, code-defined job (e.g. "review new PRs every 2 min") that
@@ -24,7 +24,7 @@ Three gaps today, all observed on the Isha hubs:
 
 ## Why now
 GitZoid is the first real deterministic workflow we want to run *on* Hubzoid,
-and the Isha deployment has ~9 hubs with real per-hub restricted-function
+and one production deployment has ~9 hubs with real per-hub restricted-function
 permissions that OWUI groups model badly. Both land together or not at all: a
 workflow's service identity is granted through the same access system.
 

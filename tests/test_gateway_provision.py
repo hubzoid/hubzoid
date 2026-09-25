@@ -100,10 +100,10 @@ def _specs(tmp_path, *, logo=False):
         logo_path = tmp_path / "logo.png"
         logo_path.write_bytes(b"PNGBYTES")
     return [
-        gwp.HubSpec(model_id="irs-agent", name="IRS Agent", group="irs",
-                    suggestions=("How do I file?", "What is TDS?"),
-                    description="Tax helper", logo=logo_path),
-        gwp.HubSpec(model_id="gpms-agent", name="GPMS", group="gpms"),
+        gwp.HubSpec(model_id="sales-agent", name="Sales Agent", group="sales",
+                    suggestions=("How do I place an order?", "What is TDS?"),
+                    description="Sales helper", logo=logo_path),
+        gwp.HubSpec(model_id="support-agent", name="Support", group="support"),
     ]
 
 
@@ -122,19 +122,19 @@ def test_provision_creates_groups_and_models(tmp_path):
     _provision(fake, _specs(tmp_path))
 
     # One group per hub.
-    assert sorted(g["name"] for g in fake.groups.values()) == ["gpms", "irs"]
+    assert sorted(g["name"] for g in fake.groups.values()) == ["sales", "support"]
 
     # One model row per hub, meta carrying the per-hub identity.
-    irs = fake.models["irs-agent"]
-    assert irs["name"] == "IRS Agent"
-    assert irs["meta"]["description"] == "Tax helper"
-    assert irs["meta"]["suggestion_prompts"] == [
-        {"content": "How do I file?"}, {"content": "What is TDS?"},
+    sales = fake.models["sales-agent"]
+    assert sales["name"] == "Sales Agent"
+    assert sales["meta"]["description"] == "Sales helper"
+    assert sales["meta"]["suggestion_prompts"] == [
+        {"content": "How do I place an order?"}, {"content": "What is TDS?"},
     ]
 
     # Private ACL: the hub's group got read access.
-    gid = next(g["id"] for g in fake.groups.values() if g["name"] == "irs")
-    assert fake.grants["irs-agent"] == [
+    gid = next(g["id"] for g in fake.groups.values() if g["name"] == "sales")
+    assert fake.grants["sales-agent"] == [
         {"principal_type": "group", "principal_id": gid, "permission": "read"},
     ]
 
@@ -142,7 +142,7 @@ def test_provision_creates_groups_and_models(tmp_path):
 def test_provision_embeds_logo_as_data_uri(tmp_path):
     fake = FakeOWUI(users={"a@x.com": "pw"})
     _provision(fake, _specs(tmp_path, logo=True))
-    url = fake.models["irs-agent"]["meta"]["profile_image_url"]
+    url = fake.models["sales-agent"]["meta"]["profile_image_url"]
     assert url == "data:image/png;base64," + base64.b64encode(b"PNGBYTES").decode()
 
 
@@ -151,7 +151,7 @@ def test_provision_omits_empty_fields(tmp_path):
     no empty keys that would shadow OWUI defaults, and no error."""
     fake = FakeOWUI(users={"a@x.com": "pw"})
     _provision(fake, _specs(tmp_path))
-    meta = fake.models["gpms-agent"]["meta"]
+    meta = fake.models["support-agent"]["meta"]
     assert "suggestion_prompts" not in meta
     assert "profile_image_url" not in meta
     assert "description" not in meta
@@ -177,12 +177,12 @@ def test_provision_update_never_sends_access_grants(tmp_path):
     fake = FakeOWUI(users={"a@x.com": "pw"})
     _provision(fake, _specs(tmp_path))
     # Admin tightens the ACL by hand between boots.
-    fake.grants["irs-agent"] = [{"principal_type": "user", "principal_id": "u9",
+    fake.grants["sales-agent"] = [{"principal_type": "user", "principal_id": "u9",
                                  "permission": "read"}]
 
     _provision(fake, _specs(tmp_path))
-    assert fake.models["irs-agent"].get("access_grants") is None
-    assert fake.grants["irs-agent"] == [{"principal_type": "user",
+    assert fake.models["sales-agent"].get("access_grants") is None
+    assert fake.grants["sales-agent"] == [{"principal_type": "user",
                                          "principal_id": "u9",
                                          "permission": "read"}]
 
@@ -192,12 +192,12 @@ def test_provision_update_preserves_admin_meta_keys(tmp_path):
     (e.g. capabilities) survive; hubzoid only refreshes its own fields."""
     fake = FakeOWUI(users={"a@x.com": "pw"})
     _provision(fake, _specs(tmp_path))
-    fake.models["irs-agent"]["meta"]["capabilities"] = {"vision": True}
+    fake.models["sales-agent"]["meta"]["capabilities"] = {"vision": True}
 
     _provision(fake, _specs(tmp_path))
-    meta = fake.models["irs-agent"]["meta"]
+    meta = fake.models["sales-agent"]["meta"]
     assert meta["capabilities"] == {"vision": True}
-    assert meta["description"] == "Tax helper"
+    assert meta["description"] == "Sales helper"
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ def test_provision_bootstraps_first_admin_via_signup(tmp_path):
     fake = FakeOWUI(users={})
     _provision(fake, _specs(tmp_path))
     assert "a@x.com" in fake.users
-    assert "irs-agent" in fake.models
+    assert "sales-agent" in fake.models
 
 
 def test_provision_bad_credentials_raise(tmp_path):
@@ -233,8 +233,8 @@ def test_probe_error_takes_neither_create_nor_update_path(tmp_path):
     the create path re-sends access_grants and could clobber an admin's
     hand-tightened ACL. Skip the hub this boot instead."""
     fake = FakeOWUI(users={"a@x.com": "pw"}, fail_paths={"/api/v1/models/model"})
-    actions = _provision(fake, [gwp.HubSpec(model_id="irs-agent", name="IRS", group="irs")])
-    assert "irs-agent" not in fake.models
+    actions = _provision(fake, [gwp.HubSpec(model_id="sales-agent", name="Sales", group="sales")])
+    assert "sales-agent" not in fake.models
     assert ("POST", "/api/v1/models/create") not in fake.requests
     assert any("skip" in a.lower() for a in actions)
 
@@ -245,11 +245,11 @@ def test_provision_update_removes_stale_identity_fields(tmp_path):
     (admin-owned keys like capabilities still survive — see the merge test)."""
     fake = FakeOWUI(users={"a@x.com": "pw"})
     _provision(fake, _specs(tmp_path))       # seeds description + suggestions
-    fake.models["irs-agent"]["meta"]["capabilities"] = {"vision": True}
+    fake.models["sales-agent"]["meta"]["capabilities"] = {"vision": True}
 
-    bare = [gwp.HubSpec(model_id="irs-agent", name="IRS Agent", group="irs")]
+    bare = [gwp.HubSpec(model_id="sales-agent", name="Sales Agent", group="sales")]
     _provision(fake, bare)
-    meta = fake.models["irs-agent"]["meta"]
+    meta = fake.models["sales-agent"]["meta"]
     assert "description" not in meta
     assert "suggestion_prompts" not in meta
     assert meta["capabilities"] == {"vision": True}
@@ -260,9 +260,9 @@ def test_provision_one_bad_hub_does_not_block_others(tmp_path):
     that hub and still provisions the rest."""
     fake = FakeOWUI(users={"a@x.com": "pw"}, fail_paths={"/api/v1/groups/create"})
     # First hub needs a group create (fails); second hub's group pre-exists.
-    fake.groups["g0"] = {"id": "g0", "name": "gpms", "description": ""}
+    fake.groups["g0"] = {"id": "g0", "name": "support", "description": ""}
 
     actions = _provision(fake, _specs(tmp_path))
-    assert "irs-agent" not in fake.models       # skipped
-    assert "gpms-agent" in fake.models          # still provisioned
+    assert "sales-agent" not in fake.models       # skipped
+    assert "support-agent" in fake.models          # still provisioned
     assert any("skip" in a.lower() for a in actions)

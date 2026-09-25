@@ -14,12 +14,12 @@ A critical tool lives in a file. The file name is the permission. An Open WebUI
 group of the same name is the key.
 
 ```
-restricted/ornate.py   ->  permission "ornate"   ->  OWUI group "ornate"
+restricted/erp.py   ->  permission "erp"   ->  OWUI group "erp"
 restricted/finance.py  ->  permission "finance"  ->  OWUI group "finance"
 ```
 
 Being in the group unlocks every `@function_tool` in that file. The match is
-case insensitive and whitespace trimmed, so `Ornate`, `ornate`, and `" ornate "`
+case insensitive and whitespace trimmed, so `ERP`, `erp`, and `" erp "`
 are the same door.
 
 ## Setup
@@ -31,18 +31,18 @@ permission. Name the file by what it should mean to the client (`sales.py`,
 `finance.py`), not necessarily by the system behind it.
 
 ```python
-# <hub>/restricted/ornate.py
+# <hub>/restricted/erp.py
 from agents import function_tool
 
 @function_tool
-def ornate_sales(store: str = "ALL") -> str:
-    """Sales from the Ornate ERP."""
+def erp_sales(store: str = "ALL") -> str:
+    """Sales from the ERP."""
     ...
 ```
 
 ### 2. Create the matching Open WebUI group
 
-In Open WebUI, create a group named `ornate` and add the people who should reach
+In Open WebUI, create a group named `erp` and add the people who should reach
 that tool. Group membership is the grant. A person in two groups has both. There
 is no separate grant screen: Open WebUI's own group management is the admin UI.
 
@@ -50,8 +50,8 @@ is no separate grant screen: Open WebUI's own group management is the admin UI.
 
 Nothing else to wire. Open WebUI forwards the logged-in user's email to the
 bridge, and hubzoid looks up that user's groups in Open WebUI's own database (the
-Groups screen from step 2). So adding a person to the `ornate` group grants them
-the `ornate` permission on their **next message**. No proxy, no logout, no
+Groups screen from step 2). So adding a person to the `erp` group grants them
+the `erp` permission on their **next message**. No proxy, no logout, no
 restart. Removing them revokes it just as fast. This is the client-editable
 model: the admin manages access entirely in the Open WebUI Groups UI, with no
 developer.
@@ -127,8 +127,8 @@ own code reads it to do its work. The model only ever sees the tool's result,
 never the secret.
 
 ```
-<hub>/restricted/.env        # ORNATE_PASSWORD=...  (model cannot read this)
-<hub>/restricted/ornate.py   # the tool that uses it (gated by the ornate group)
+<hub>/restricted/.env        # ERP_PASSWORD=...  (model cannot read this)
+<hub>/restricted/erp.py   # the tool that uses it (gated by the erp group)
 ```
 
 This protects ordinary secrets well. For a crown-jewel secret like an SSH key
@@ -144,7 +144,7 @@ month-partitioned files so nothing grows without bound:
 
 ```
 <hub>/logs/access-2026-06.jsonl
-{"ts": "...", "user": "anjali", "surface": "owui", "tool": "ornate_sales", "decision": "deny", "reason": "no-group"}
+{"ts": "...", "user": "anjali", "surface": "owui", "tool": "erp_sales", "decision": "deny", "reason": "no-group"}
 ```
 
 Read it with:
@@ -160,7 +160,7 @@ hubzoid audit <hub> --user priya # one person
 Per-person row and field scoping (a branch manager seeing only their own store's
 rows) is a separate axis, enforced at the data layer from the same verified
 identity, not by files or groups. It is out of scope for this layer. The tool
-gate answers "can this person touch Ornate at all," not "which rows."
+gate answers "can this person touch ERP at all," not "which rows."
 
 For multi-hub setup, account ownership, migration preview, cutover and rollback,
 see [Administration](ADMINISTRATION.md).

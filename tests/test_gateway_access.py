@@ -22,8 +22,8 @@ from hubzoid.access import guard, identity_scope
 
 
 @function_tool
-def ornate_sales(store: str = "ALL") -> str:
-    "Restricted Ornate sales lookup."
+def erp_sales(store: str = "ALL") -> str:
+    "Restricted ERP sales lookup."
     return "sales:" + store
 
 
@@ -51,7 +51,7 @@ def _make_owui_db(hub_dir: Path) -> None:
         CREATE TABLE "group" (id TEXT, name TEXT);
         CREATE TABLE group_member (id TEXT, group_id TEXT, user_id TEXT);
         INSERT INTO "user" VALUES ('u1', 'priya@x.com');
-        INSERT INTO "group" VALUES ('g1', 'ornate');
+        INSERT INTO "group" VALUES ('g1', 'erp');
         INSERT INTO group_member VALUES ('m1', 'g1', 'u1');
         '''
     )
@@ -62,8 +62,8 @@ def _make_owui_db(hub_dir: Path) -> None:
 def _plan(hub: Path) -> gateway.GatewayPlan:
     return gateway.GatewayPlan(backends=(
         gateway.GatewayBackend(
-            hub_dir=hub, slug="ornate", bridge_port=8000,
-            api_key="k", model_label="ornate-agent",
+            hub_dir=hub, slug="erp", bridge_port=8000,
+            api_key="k", model_label="erp-agent",
         ),
     ))
 
@@ -78,7 +78,7 @@ def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
     """End-to-end: the audit line flips from deny/anonymous to allow/group
     the moment OWUI forwards the email (which the drop-in enables)."""
     _make_owui_db(tmp_path)
-    guarded = guard.guard_tool(ornate_sales, "ornate", tmp_path)
+    guarded = guard.guard_tool(erp_sales, "erp", tmp_path)
 
     # Case A — OWUI did NOT forward the email (pre-fix gateway): no header.
     ident_a = server._derive_identity({}, _FakeRequest(headers={}), tmp_path)

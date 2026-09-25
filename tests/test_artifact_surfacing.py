@@ -188,7 +188,7 @@ def test_repeated_write_then_footer_yields_one_link_per_file(ctx, monkeypatch):
     # End-to-end through the real record->drain->format path: the agent writes
     # the form, the first validate fails, it rewrites the same file, then a
     # successful validate surfaces the encoded sidecar. The footer must show
-    # exactly one link per distinct file (the bug from the live IRS chat).
+    # exactly one link per distinct file (the bug from a live production chat).
     monkeypatch.setenv("BRIDGE_PORT", "9000")
     monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
     write = _by_name(files_mod.make(ctx), "write_artifact")

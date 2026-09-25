@@ -64,39 +64,39 @@ def test_roster_group_reaches_owui_identity(tmp_path):
     """The bug, fixed: a roster-only coordinator resolves the group on OWUI."""
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
-    groups = effective_groups(tmp_path, email="ravi@isha.org", surface="owui")
+    groups = effective_groups(tmp_path, email="ravi@example.org", surface="owui")
     assert "coordinator" in groups
 
 
 def test_owui_only_user_not_in_roster_is_not_locked_out(tmp_path):
     """Additive, never a gate: an email absent from the roster keeps its OWUI
     groups instead of being denied."""
-    _make_owui_db(tmp_path, "priya@x.com", "ornate")
+    _make_owui_db(tmp_path, "priya@x.com", "erp")
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
     groups = effective_groups(tmp_path, email="priya@x.com", surface="owui")
-    assert groups == {"ornate"}
+    assert groups == {"erp"}
 
 
 def test_union_of_owui_and_roster(tmp_path):
     """A person in both stores carries both groups."""
-    _make_owui_db(tmp_path, "ravi@isha.org", "ornate")
+    _make_owui_db(tmp_path, "ravi@example.org", "erp")
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
-    groups = effective_groups(tmp_path, email="ravi@isha.org", surface="owui")
-    assert groups == {"ornate", "coordinator"}
+    groups = effective_groups(tmp_path, email="ravi@example.org", surface="owui")
+    assert groups == {"erp", "coordinator"}
 
 
 def test_no_roster_folder_is_owui_only(tmp_path):
-    _make_owui_db(tmp_path, "priya@x.com", "ornate")
+    _make_owui_db(tmp_path, "priya@x.com", "erp")
     groups = effective_groups(tmp_path, email="priya@x.com", surface="owui")
-    assert groups == {"ornate"}
+    assert groups == {"erp"}
 
 
 def test_header_groups_still_union(tmp_path):
@@ -112,11 +112,11 @@ def test_header_groups_still_union(tmp_path):
 def test_derive_identity_unifies_roster_on_owui_login(tmp_path):
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
-    req = _FakeRequest({"x-openwebui-user-email": "ravi@isha.org"})
+    req = _FakeRequest({"x-openwebui-user-email": "ravi@example.org"})
     ident = server._derive_identity({}, req, tmp_path)
-    assert ident.user == "ravi@isha.org"
+    assert ident.user == "ravi@example.org"
     assert "coordinator" in ident.groups
     assert ident.surface == "owui"
 
@@ -124,14 +124,14 @@ def test_derive_identity_unifies_roster_on_owui_login(tmp_path):
 def test_derive_identity_roster_reloads_without_restart(tmp_path):
     p = _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
-    req = _FakeRequest({"x-openwebui-user-email": "ravi@isha.org"})
+    req = _FakeRequest({"x-openwebui-user-email": "ravi@example.org"})
     ident1 = server._derive_identity({}, req, tmp_path)
     assert "auditor" not in ident1.groups
     p.write_text(textwrap.dedent("""\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator;auditor
+        919800000001,ravi@example.org,coordinator;auditor
     """))
     ident2 = server._derive_identity({}, req, tmp_path)
     assert "auditor" in ident2.groups  # no restart, same process
@@ -140,7 +140,7 @@ def test_derive_identity_roster_reloads_without_restart(tmp_path):
 def test_derive_identity_anonymous_when_no_email(tmp_path):
     _write(tmp_path, "identity/access.csv", """\
         phone,email,groups
-        919800000001,ravi@isha.org,coordinator
+        919800000001,ravi@example.org,coordinator
     """)
     ident = server._derive_identity({}, _FakeRequest({}), tmp_path)
     assert ident.is_anonymous

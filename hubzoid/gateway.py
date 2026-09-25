@@ -1,7 +1,7 @@
 """Gateway planning — one Open WebUI fronting many hub bridges.
 
 `hubzoid run` is one bridge + one Open WebUI per hub. That is full isolation
-but N heavy OWUI processes. For a team-of-teams deployment (IRS hub, GPMS
+but N heavy OWUI processes. For a team-of-teams deployment (sales hub, support
 hub, …) where the weight matters and per-team *access* — not per-team URLs —
 is what's wanted, `hubzoid gateway` runs **one** Open WebUI over **N**
 bridges:

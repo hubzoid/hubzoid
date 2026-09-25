@@ -14,7 +14,7 @@ directly. Everything after the inbox reuses the hub's existing brain
 ## Public path — namespaced per hub
 
 Every inbound route lives under **`/webhooks/<hub-slug>/<surface>`**, e.g.
-`/webhooks/nurturing/whatsapp`, `/webhooks/irs/squadcast`. The `<hub-slug>` is the
+`/webhooks/nurturing/whatsapp`, `/webhooks/sales/squadcast`. The `<hub-slug>` is the
 hub's folder name (URL-slugified), or `HUBZOID_HUB_SLUG` if you pin one.
 
 Namespacing by hub is what lets **one public front door serve many inbound hubs
@@ -50,8 +50,8 @@ Presence-activated, exactly like `restricted/`. Drop **one** of these in the hub
 ### `identity/access.csv` — a table you edit
 ```
 phone,email,groups,center
-919800000001,ravi@isha.org,coordinator,adyar
-919800000002,priya@isha.org,coordinator,bangalore
+919800000001,ravi@example.org,coordinator,adyar
+919800000002,priya@example.org,coordinator,bangalore
 ```
 - `phone` — required, any format (`+91 98000-00001` works; normalized to digits).
 - `email` — the identity key (lowercased to match Open WebUI).
@@ -214,7 +214,7 @@ WEBHOOK_INBOUND_NAME=squadcast   # optional; the path segment. Default: webhook
 WEBHOOK_INBOUND_HMAC=false       # optional; see auth below. Default: false
 ```
 The endpoint is then `https://<host>/webhooks/<hub>/<WEBHOOK_INBOUND_NAME>`, e.g.
-`https://ishahub.isha.in/webhooks/nurturing/squadcast`.
+`https://hub.example.com/webhooks/nurturing/squadcast`.
 
 **Auth — two modes:**
 - **Shared secret (default).** Send the secret any one of three ways:

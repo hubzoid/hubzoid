@@ -39,9 +39,9 @@ def test_multiple_blocks_and_tool_lines_preserved():
 
 
 def test_full_mode_reasoning_text_is_stripped_too():
-    raw = "<think>\nThe user's seat was released because GPMS...\n</think>\nAnswer"
+    raw = "<think>\nThe user's seat was released because Support...\n</think>\nAnswer"
     visible, _ = strip_thinking(raw)
-    assert "GPMS" not in visible
+    assert "Support" not in visible
     assert visible.strip() == "Answer"
 
 

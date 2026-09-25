@@ -51,15 +51,15 @@ def test_single_hub_only_artifacts_to_bridge(path, to_bridge):
 
 def test_gateway_strip_prefix_rewrites_artifact_path():
     routes = (
-        edge.EdgeRoute(prefix="/b/irs/artifacts", upstream="http://bridge-irs", strip_prefix="/b/irs"),
-        edge.EdgeRoute(prefix="/b/gpms/artifacts", upstream="http://bridge-gpms", strip_prefix="/b/gpms"),
+        edge.EdgeRoute(prefix="/b/sales/artifacts", upstream="http://bridge-sales", strip_prefix="/b/sales"),
+        edge.EdgeRoute(prefix="/b/support/artifacts", upstream="http://bridge-support", strip_prefix="/b/support"),
     )
-    up, fwd = edge._forward_target("/b/irs/artifacts/chat-9/report.json", routes, "http://owui")
-    assert up == "http://bridge-irs"
+    up, fwd = edge._forward_target("/b/sales/artifacts/chat-9/report.json", routes, "http://owui")
+    assert up == "http://bridge-sales"
     assert fwd == "/artifacts/chat-9/report.json"        # bridge sees its native path
     # Other hub's prefix lands on its own bridge.
-    up2, fwd2 = edge._forward_target("/b/gpms/artifacts/c/x", routes, "http://owui")
-    assert up2 == "http://bridge-gpms"
+    up2, fwd2 = edge._forward_target("/b/support/artifacts/c/x", routes, "http://owui")
+    assert up2 == "http://bridge-support"
     assert fwd2 == "/artifacts/c/x"
     # The UI (no artifact prefix) goes to OWUI untouched.
     assert edge._forward_target("/chat", routes, "http://owui") == ("http://owui", "/chat")

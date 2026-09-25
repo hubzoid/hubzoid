@@ -23,10 +23,10 @@ from hubzoid.factory_claude import ClaudeRuntime, _identity_preamble
 # 1. The pure helper.
 # ---------------------------------------------------------------------------
 def test_preamble_names_the_resolved_owui_user():
-    ident = Identity.make(user="jane@sadhguru.org", groups=["testers"], surface="owui")
+    ident = Identity.make(user="jane@example.org", groups=["testers"], surface="owui")
     with identity_scope(ident):
         text = _identity_preamble()
-    assert "jane@sadhguru.org" in text
+    assert "jane@example.org" in text
     assert "owui" in text
     assert "testers" in text
     # It must steer the model OFF the local account identity.
@@ -72,7 +72,7 @@ def test_stream_prepends_identity_to_the_user_turn(monkeypatch):
     # hub_dir=None keeps stream() on the plain-string path (no vision wrapping),
     # so the prompt reaching query() is the raw prepended string.
     runtime = ClaudeRuntime(name="t", options=_FakeOptions(), hub_dir=None)
-    ident = Identity.make(user="jane@sadhguru.org", groups=["testers"], surface="owui")
+    ident = Identity.make(user="jane@example.org", groups=["testers"], surface="owui")
 
     async def _run():
         with identity_scope(ident):
@@ -82,7 +82,7 @@ def test_stream_prepends_identity_to_the_user_turn(monkeypatch):
     anyio.run(_run)
 
     # The user turn carries the identity AND the original question, in order.
-    assert "jane@sadhguru.org" in seen["prompt"]
+    assert "jane@example.org" in seen["prompt"]
     assert seen["prompt"].rstrip().endswith("Who am I?")
     # The cached system prompt is untouched — identity never leaks into it.
-    assert "jane@sadhguru.org" not in seen["system_prompt"]
+    assert "jane@example.org" not in seen["system_prompt"]

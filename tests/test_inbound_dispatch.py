@@ -35,11 +35,11 @@ def test_dispatch_collects_reply_and_forwards_identity_headers():
     out = dispatch(
         bridge_url="http://x/v1", api_key="k", model="m",
         messages=[{"role": "user", "content": "hi"}], surface="whatsapp",
-        user_email="ravi@isha.org", groups=["coordinator"], chat_id="wa-42",
+        user_email="ravi@example.org", groups=["coordinator"], chat_id="wa-42",
         http_client=client,
     )
     assert out == "Hello Ravi"
-    assert captured["headers"]["x-openwebui-user-email"] == "ravi@isha.org"
+    assert captured["headers"]["x-openwebui-user-email"] == "ravi@example.org"
     assert captured["headers"]["x-hubzoid-surface"] == "whatsapp"
     assert captured["headers"]["x-hubzoid-groups"] == "coordinator"
     assert captured["headers"]["authorization"] == "Bearer k"

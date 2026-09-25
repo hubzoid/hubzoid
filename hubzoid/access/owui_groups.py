@@ -6,7 +6,7 @@ Open WebUI forwards the logged-in user's email to the bridge as
 hubzoid sets when it launches OWUI), but it does not forward group membership.
 So the bridge reads the email and looks up that user's groups in OWUI's SQLite
 DB, where the admin manages them on the Groups screen. This is what makes
-"add a person to the `ornate` group in Open WebUI" actually grant the `ornate`
+"add a person to the `erp` group in Open WebUI" actually grant the `erp`
 permission, with no separate proxy and no logout: the next request re-reads.
 
 Read-only and fail-closed: any error (no DB, schema drift, a locked file)

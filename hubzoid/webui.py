@@ -222,8 +222,7 @@ def _patch_owui_suffix(strip: bool) -> None:
 
     Open WebUI's license permits removing built-in branding for deployments
     under 50 unique end users in any rolling 30-day window, or with an
-    enterprise license. Hubzoid's target deployments (Samarth, early Isha)
-    are well under that threshold; the patch is enabled by default.
+    enterprise license.
 
     Operators with deployments that exceed 50 users in a 30-day window
     must set ``HUBZOID_KEEP_OWUI_SUFFIX=True`` in ``.env`` to restore the
