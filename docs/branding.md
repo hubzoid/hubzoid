@@ -1,8 +1,24 @@
 # Branding and UI configuration
 
-Hubzoid wraps Open WebUI but configures it so the customer sees a single
-product, not "Open WebUI hosting a model". This page documents what
-hubzoid sets and how to override anything.
+Hubzoid runs Open WebUI as its chat app. Open WebUI's own branding stays
+by default. Add your own files to `<hub>/branding/` and they replace it.
+This page documents what hubzoid sets and how to override anything.
+
+## Open WebUI branding
+
+With no assets in `<hub>/branding/`, the chat app shows Open WebUI's stock
+logo and the name reads `<your name> (Open WebUI)`. As soon as the folder
+holds at least one asset (a logo, favicon or splash; a README doesn't
+count), the hub is branded: each file replaces its Open WebUI counterpart,
+the `(Open WebUI)` suffix is removed, and the static surfaces below use your
+name. Remove the assets to go back to Open WebUI's branding.
+
+Open WebUI's license allows removing its branding only for deployments with
+50 or fewer end users in any rolling 30 days, or with an Open WebUI
+enterprise license. Above that, set `HUBZOID_KEEP_OWUI_SUFFIX=true`, which
+keeps Open WebUI's branding even when your files are present. In gateway
+mode the decision follows the branding source the gateway uses (its own
+`branding/` folder, `HUBZOID_GATEWAY_BRANDING`, or the first hub's).
 
 ## Per-hub identity
 
@@ -29,8 +45,9 @@ WebUI's defaults render for any slot you leave empty.
 If both `logo.*` and `favicon.*` exist, favicon wins. Open WebUI uses one
 mark in both top-bar and tab positions.
 
-The demo-hub template ships sample Hubzoid SVGs. Replace them with your
-own, or delete them to fall back to Open WebUI's defaults.
+The demo-hub template ships sample Hubzoid SVGs, so it starts branded.
+Replace them with your own, or delete them to fall back to Open WebUI's
+branding.
 
 ### Static surfaces (tab title, link previews, PWA name)
 
@@ -43,13 +60,19 @@ runtime. Three surfaces are served as **static files** that ship as
   someone pastes the hub URL into Slack/iMessage/etc.,
 - the PWA `site.webmanifest` name.
 
-Hubzoid rewrites all three on every `hubzoid run`, using the same
-resolved name as the cascade above (so the default is `"Hubzoid"`, never
-bare "Open WebUI"). This is the same license-gated debrand as the
-`(Open WebUI)` suffix: operators above Open WebUI's 50-user threshold set
-`HUBZOID_KEEP_OWUI_SUFFIX=True`, which keeps the OWUI title/meta/manifest
-intact too. The patch is idempotent and reverts cleanly on a
-`pip install --upgrade open-webui`.
+For a branded hub, Hubzoid rewrites all three on every `hubzoid run`, using
+the same resolved name as the cascade above. An unbranded hub (or
+`HUBZOID_KEEP_OWUI_SUFFIX=true`) keeps Open WebUI's originals, restoring
+them if an earlier run had rewritten them. The patch is idempotent and
+reverts cleanly on a `pip install --upgrade open-webui`.
+
+## Admins and other people's chats
+
+By default an Open WebUI admin can't open, list or export another user's
+chats. To allow it, set `ENABLE_ADMIN_CHAT_ACCESS=true` (viewing) and/or
+`ENABLE_ADMIN_EXPORT=true` (export) in the hub's `.env` (in gateway mode,
+the gateway's environment) and restart. These are environment-only
+settings, so nobody can switch them on from the admin panel.
 
 ## Quick-start prompt suggestions
 

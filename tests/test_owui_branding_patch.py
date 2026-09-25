@@ -135,3 +135,55 @@ def captured_env_owui(tmp_path, monkeypatch):
         suggestions=[],
     )
     return brands
+
+
+@pytest.fixture
+def start_strip(tmp_path, monkeypatch):
+    """Run webui.start for a hub; return the strip decision it made."""
+    monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
+    monkeypatch.delenv("HUBZOID_KEEP_OWUI_SUFFIX", raising=False)
+    decisions: list[bool] = []
+    monkeypatch.setattr(webui, "_patch_owui_suffix", lambda strip: decisions.append(strip))
+    monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, *, strip: None)
+
+    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+        from unittest.mock import MagicMock
+
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        return proc
+
+    monkeypatch.setattr(webui.subprocess, "Popen", fake_popen)
+    hub = tmp_path / "hub"
+    hub.mkdir()
+
+    def run():
+        decisions.clear()
+        webui.start(hub_dir=hub, bridge_port=8000, ui_port=3080, api_key="k",
+                    model_label="hub", webui_name="Acme Help", suggestions=[])
+        return decisions[-1]
+
+    return hub, run
+
+
+def test_open_webui_branding_kept_without_hub_branding(start_strip):
+    hub, run = start_strip
+    assert run() is False
+    (hub / "branding").mkdir()
+    (hub / "branding" / "README.md").write_text("not an asset")
+    assert run() is False
+
+
+def test_hub_branding_files_replace_open_webui_branding(start_strip):
+    hub, run = start_strip
+    (hub / "branding").mkdir()
+    (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
+    assert run() is True
+
+
+def test_keep_suffix_overrides_hub_branding(start_strip, monkeypatch):
+    hub, run = start_strip
+    (hub / "branding").mkdir()
+    (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
+    monkeypatch.setenv("HUBZOID_KEEP_OWUI_SUFFIX", "true")
+    assert run() is False

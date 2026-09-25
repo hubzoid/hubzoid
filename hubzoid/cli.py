@@ -642,6 +642,7 @@ def gateway(
             # Any MCP-enabled hub needs users to mint per-user api keys in
             # the shared OWUI (keys stay deny-all inside OWUI itself).
             enable_api_keys=gp.any_mcp,
+            brand_dir=brand_src,
         )
     except FileNotFoundError as exc:
         console.print(f"[yellow]{exc}[/yellow]")
@@ -1807,9 +1808,11 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
 # RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
 # DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
-# HUBZOID_KEEP_OWUI_SUFFIX=True # set if your deployment exceeds 50 users in 30 days
-                                # (Open WebUI license requires the "(Open WebUI)" suffix
-                                # to remain visible above that threshold)
+# HUBZOID_KEEP_OWUI_SUFFIX=True # keep Open WebUI branding even with files in ./branding/
+                                # (required above 50 users in 30 days without an
+                                # Open WebUI enterprise license)
+# ENABLE_ADMIN_CHAT_ACCESS=true # let admins open other users' chats (default: off)
+# ENABLE_ADMIN_EXPORT=true      # let admins export chats (default: off)
 
 # --- Bridge / UI knobs (all optional) --------------------------------------
 # BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees

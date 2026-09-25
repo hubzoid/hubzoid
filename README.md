@@ -208,7 +208,7 @@ Same agent, same skills, same knowledge. Pick the surfaces you want.
 
 | Surface | How it connects | Docs |
 |---|---|---|
-| Open WebUI | Web chat, white-label. Bundled with `hubzoid run`. | — |
+| Open WebUI | Web chat, rebranded with files in `branding/`. Bundled with `hubzoid run`. | — |
 | Slack | Socket Mode. No public URL. | [slack.md](docs/slack.md) |
 | WhatsApp | Inbound webhook. | [inbound-surfaces.md](docs/inbound-surfaces.md) |
 | Telegram | Inbound webhook, with streaming. | [inbound-surfaces.md](docs/inbound-surfaces.md) |

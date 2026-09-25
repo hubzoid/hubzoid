@@ -112,10 +112,25 @@ def test_owui_native_mcp_default_off_leaves_persistence_stripped(captured_env, t
 @pytest.mark.parametrize("flag", [
     "ENABLE_MESSAGE_RATING",
     "ENABLE_TITLE_GENERATION",
-    "ENABLE_ADMIN_EXPORT",
 ])
 def test_ux_flags_default_on(captured_env, tmp_path, flag, monkeypatch):
     monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env[flag] == "True"
+
+
+@pytest.mark.parametrize("flag", ["ENABLE_ADMIN_CHAT_ACCESS", "ENABLE_ADMIN_EXPORT"])
+def test_admins_cannot_read_or_export_other_chats_by_default(
+    captured_env, tmp_path, flag, monkeypatch
+):
+    monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path)
+    assert env[flag] == "False"
+
+
+@pytest.mark.parametrize("flag", ["ENABLE_ADMIN_CHAT_ACCESS", "ENABLE_ADMIN_EXPORT"])
+def test_admin_chat_access_can_be_enabled(captured_env, tmp_path, flag, monkeypatch):
+    monkeypatch.setenv(flag, "True")
     env = _start(captured_env, tmp_path)
     assert env[flag] == "True"
 
