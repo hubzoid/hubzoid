@@ -26,12 +26,6 @@ def test_deploying_has_claude_local_prod_section():
     assert "CLAUDE_CODE_OAUTH_TOKEN" in _DEPLOYING
 
 
-def test_deploying_dropped_the_outdated_no_prod_claim():
-    # The old line claimed claude-local "does not work in non-interactive prod".
-    assert "does not work in\n  non-interactive prod" not in _DEPLOYING
-    assert "it does not work in" not in _DEPLOYING
-
-
 def test_systemd_unit_is_claude_local_ready():
     # Restart hardened to always; ProtectHome must not hide ~/.claude.
     assert "Restart=always" in _DEPLOYING

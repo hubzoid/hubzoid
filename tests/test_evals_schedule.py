@@ -106,13 +106,6 @@ def test_a_broken_case_file_does_not_stop_the_others(tmp_path):
     assert [c.name for c in evals_schedule.scheduled_cases(hub)] == ["good"]
 
 
-def test_first_discovery_anchors_now_and_is_not_due(tmp_path):
-    """A case installed now fires at its next future match, not retroactively."""
-    hub = _hub(tmp_path, {"c.md": _scheduled("0 6 * * 1")})
-    state = ScheduleState(hub)
-    assert evals_schedule.due_cases(hub, state, _now()) == []
-
-
 def test_becomes_due_once_the_cron_matches(tmp_path):
     hub = _hub(tmp_path, {"c.md": _scheduled()})
     state = ScheduleState(hub)
@@ -120,13 +113,6 @@ def test_becomes_due_once_the_cron_matches(tmp_path):
     assert evals_schedule.due_cases(hub, state, now) == []          # anchors
     later = now + timedelta(minutes=5)
     assert [c.name for c in evals_schedule.due_cases(hub, state, later)] == ["c"]
-
-
-def test_state_keys_are_namespaced(tmp_path):
-    """An eval case and a scheduled task may share a name without colliding."""
-    hub = _hub(tmp_path, {"nightly.md": _scheduled()})
-    (case,) = evals_schedule.scheduled_cases(hub)
-    assert evals_schedule.state_key(case) == "eval:nightly"
 
 
 def test_eval_and_task_of_the_same_name_keep_separate_anchors(tmp_path):

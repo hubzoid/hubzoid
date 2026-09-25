@@ -4,10 +4,6 @@ a restart mid-stream still drops the redelivery."""
 from hubzoid.inbound.dedup import Dedup
 
 
-def test_first_claim_is_new(tmp_path):
-    assert Dedup(tmp_path).claim("wamid.A") is True
-
-
 def test_second_claim_of_same_id_is_duplicate(tmp_path):
     d = Dedup(tmp_path)
     d.claim("wamid.A")

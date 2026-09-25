@@ -140,20 +140,6 @@ def test_load_subagent_mixed_flat_and_folder_layouts(tmp_path):
     assert names == ["alpha", "beta"]
 
 
-def test_flat_agent_promoted_to_skill(tmp_path):
-    """A flat agents/<name>.md should also be promoted to the skill registry."""
-    hub = tmp_path / "hub"
-    (hub / "agents").mkdir(parents=True)
-    (hub / "AGENTS.md").write_text("main")
-    (hub / "agents" / "summary.md").write_text(
-        "---\nname: summary\ndescription: summarizer\n---\nSummarize."
-    )
-    skills = agents_loader.promote_to_skills(hub)
-    assert len(skills) == 1
-    assert skills[0].spec.name == "summary"
-    assert "Summarize" in skills[0].body
-
-
 def test_split_subagents_no_model_is_skill():
     # minimal_hub's `echo` sub-agent has no model -> skill bucket, empty delegates.
     skills, delegates = agents_loader.split_subagents(MINIMAL, "claude-local")

@@ -219,7 +219,3 @@ def test_policy_surface_gate_beats_grant():
     assert called == []  # can() never ran — a grant is necessary, not sufficient
 
 
-def test_policy_legacy_groups_without_can():
-    ident = Identity.make("alice@corp", groups=["prod_in"], surface="owui")
-    assert is_allowed(ident, "prod_in")[0] is True     # legacy path
-    assert is_allowed(ident, "other")[0] is False

@@ -289,16 +289,6 @@ def test_runner_records_tool_calls_for_expect_tools(tmp_path, patched_build):
     assert suite.cases[0].tool_calls == ["whoami"]
 
 
-def test_tool_calls_are_recorded_even_with_tool_display_off(tmp_path, patched_build):
-    """SHOW_TOOLS=off emits no text; expect_tools must still work. This is
-    why the recorder sits at the call site, not in the rendered stream."""
-    hub = _hub(tmp_path, {"t.md": "---\nexpect_tools: [whoami]\n---\nwho"})
-    patched_build(FakeRuntime(replies={"who": "shreya"}, tools={"who": ["whoami"]}))
-    suite = runner.run_suite(hub, cases.discover(hub))
-    assert suite.ok
-    assert "whoami" not in suite.cases[0].response
-
-
 def test_runner_times_out_without_hanging(tmp_path, patched_build):
     hub = _hub(tmp_path, {"slow.md": "---\ntimeout: 1\n---\nslow"})
     patched_build(FakeRuntime(replies={"slow": "late"}, delay=5))

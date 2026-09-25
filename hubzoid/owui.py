@@ -23,9 +23,7 @@ from the SAME directory as Slack/base64 uploads. Nothing downstream of
 the bridge needs to know Open WebUI exists.
 
 Public entry: `owui_attachments(prompt, owui_uploads_dir)` -> (resolved,
-unresolved, user_query) or None. `parse_owui_attachment_prompt` is a
-thin resolved-only wrapper kept for callers that only want files that
-exist on disk.
+unresolved, user_query) or None.
 """
 from __future__ import annotations
 
@@ -98,19 +96,3 @@ def owui_attachments(
 
     user_query = prompt.rsplit("</context>", 1)[-1].strip()
     return resolved, unresolved, user_query
-
-
-def parse_owui_attachment_prompt(
-    prompt: str,
-    owui_uploads_dir: Path,
-) -> tuple[list[tuple[str, Path]], str] | None:
-    """Resolved-only view of `owui_attachments`: `([(name, path), ...], user_query)`,
-    or None when the prompt is not an OWUI wrap or none of its referenced files
-    exist on disk. Kept for callers that only care about readable files."""
-    result = owui_attachments(prompt, owui_uploads_dir)
-    if result is None:
-        return None
-    resolved, _unresolved, user_query = result
-    if not resolved:
-        return None
-    return resolved, user_query

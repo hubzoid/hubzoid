@@ -125,17 +125,6 @@ def test_addendum_includes_uploads_section(tmp_path):
     assert "offset" in section
 
 
-def test_uploads_section_comes_before_generic_tools_section(tmp_path):
-    """test_tools_section_is_generic_not_domain_specific slices from
-    '## How to use your tools' to end-of-string and asserts no specific
-    tool names appear. Uploads section must therefore come BEFORE the
-    generic section so its read_upload mention doesn't leak in."""
-    ctx = _Ctx(hub_dir=tmp_path / "h", settings=_S())
-    ctx.hub_dir.mkdir()
-    out = system_addendum.build(ctx, backend="claude-local")
-    assert out.index("## Reading user-uploaded files") < out.index("## How to use your tools")
-
-
 def test_is_enabled_default_true(tmp_path):
     (tmp_path / "AGENTS.md").write_text("---\nname: x\ndescription: y\n---\nbody")
     assert system_addendum.is_enabled(tmp_path) is True

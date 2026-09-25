@@ -1,7 +1,7 @@
 """Parse a Telegram Update and classify it: normal text (dispatch to the agent),
 /start (send the verify prompt), or a shared contact (enrollment). Only text
 updates become an InboundMessage; the harness routes the rest."""
-from hubzoid.telegram.parse import parse_update, to_inbound
+from hubzoid.telegram.parse import parse_update
 
 
 def test_text_update_fields():
@@ -44,12 +44,3 @@ def test_malformed_update_is_none():
     assert parse_update({}) is None
 
 
-def test_to_inbound_from_text_update():
-    p = parse_update({"update_id": 10, "message": {
-        "from": {"id": 42, "first_name": "Ravi"}, "text": "hello"}})
-    m = to_inbound(p)
-    assert m.id == "10"
-    assert m.surface == "telegram"
-    assert m.handle == "42"
-    assert m.text == "hello"
-    assert m.name == "Ravi"

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..inbound.message import InboundMessage, MediaRef, ext_for
+from ..inbound.message import MediaRef, ext_for
 
 SURFACE = "telegram"
 
@@ -104,11 +104,3 @@ def _extract_media(message: dict) -> "list[MediaRef]":
             name = f"{key}-{uid}{ext_for(mime)}"
         refs.append(MediaRef(key=obj["file_id"], name=name, mime=mime))
     return refs
-
-
-def to_inbound(p: TgUpdate) -> InboundMessage:
-    """A `text` update -> the shared InboundMessage the harness dispatches."""
-    return InboundMessage(
-        id=p.update_id, surface=SURFACE, handle=p.handle, text=p.text, name=p.name,
-        media=p.media,
-    )

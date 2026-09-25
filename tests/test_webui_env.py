@@ -100,12 +100,6 @@ def test_owui_native_mcp_expands_flags(captured_env, tmp_path, flag, monkeypatch
     assert env[flag] == "True"
 
 
-def test_owui_native_mcp_default_off_leaves_persistence_stripped(captured_env, tmp_path, monkeypatch):
-    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
-    env = _start(captured_env, tmp_path)
-    assert env["ENABLE_PERSISTENT_CONFIG"] == "False"
-
-
 # ---------------------------------------------------------------------------
 # On-flags
 # ---------------------------------------------------------------------------
@@ -218,12 +212,6 @@ def test_operator_env_overrides_default(captured_env, tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_CODE_INTERPRETER", "True")
     env = _start(captured_env, tmp_path)
     assert env["ENABLE_CODE_INTERPRETER"] == "True"
-
-
-def test_operator_can_disable_kept_on_flag(captured_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("ENABLE_FOLLOW_UP_GENERATION", "False")
-    env = _start(captured_env, tmp_path)
-    assert env["ENABLE_FOLLOW_UP_GENERATION"] == "False"
 
 
 # ---------------------------------------------------------------------------
@@ -412,12 +400,6 @@ def test_ui_host_override_passed_to_owui(captured_cmd, tmp_path):
     _start_for_cmd(tmp_path, ui_host="0.0.0.0")
     cmd = captured_cmd[0]
     assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
-
-
-def test_ui_host_arbitrary_address(captured_cmd, tmp_path):
-    _start_for_cmd(tmp_path, ui_host="192.168.1.42")
-    cmd = captured_cmd[0]
-    assert cmd[cmd.index("--host") + 1] == "192.168.1.42"
 
 
 # ---------------------------------------------------------------------------

@@ -5,10 +5,10 @@ Agent with pre-shipped tools, hub-local tools, skills + knowledge tools,
 and MCP servers.
 
 Sub-agents under `<hub>/agents/<name>/` are NOT wired as handoffs anymore.
-They are promoted to skills at load time and loaded inline by the main
-agent via `load_skill(<name>)`. See `loaders.agents.promote_to_skills`
-for the rationale (handoff state didn't survive Hubzoid's stateless HTTP
-bridge across turns).
+They are promoted to skills at load time (`loaders.agents.split_subagents`
+and `to_skill`) and loaded inline by the main agent via `load_skill(<name>)`,
+because handoff state didn't survive Hubzoid's stateless HTTP bridge across
+turns.
 """
 from __future__ import annotations
 

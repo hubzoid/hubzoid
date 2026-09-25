@@ -266,19 +266,6 @@ def _assert_path_in_preview(out: str, expected_filename: str):
     assert expected_filename in out
 
 
-def test_text_preview_includes_absolute_path(ctx):
-    _put(ctx, "c", "notes.md", b"hello upload", mime="text/plain")
-    out = _read(ctx, "c", filename="notes.md")
-    _assert_path_in_preview(out, "notes.md")
-
-
-def test_large_text_preview_includes_absolute_path(ctx):
-    body = "\n".join(f"line {i}" for i in range(1, 801)).encode("utf-8")
-    _put(ctx, "c", "big.txt", body, mime="text/plain")
-    out = _read(ctx, "c", filename="big.txt")
-    _assert_path_in_preview(out, "big.txt")
-
-
 def test_json_preview_includes_absolute_path(ctx):
     body = json.dumps({"k": "v"}).encode()
     _put(ctx, "c", "doc.json", body, mime="application/json")

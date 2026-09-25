@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 from hubzoid.loaders import skills as skills_loader
 
@@ -49,12 +48,6 @@ def test_dashboard_skill_is_well_formed():
     assert "write_artifact" in body            # tells the agent how to deliver
     assert "chart.js" in body.lower()          # names the library
     assert "prefers-color-scheme" in body      # light/dark guidance
-
-
-def test_core_skills_dir_is_packaged():
-    # the packaged dir exists on disk relative to the installed package
-    d = Path(skills_loader._CORE_SKILLS_DIR)
-    assert (d / "dashboard" / "SKILL.md").is_file()
 
 
 def test_mcp_surface_excludes_core_skills(tmp_path):

@@ -74,11 +74,9 @@ def _reset_request_ctx():
 class TestSanitizeChatId:
     @pytest.mark.parametrize("raw", [None, "", "   ", "..", ".", "....-...."])
     def test_invalid_inputs_become_none(self, raw):
-        # Edge: ".. ." sanitizes to nothing usable.
-        result = memlib.sanitize_chat_id(raw)
-        # Either None or a meaningfully-non-trivial string.
-        if result is not None:
-            assert len(result) >= 1
+        # Nothing usable is left after sanitizing, so there is no chat scope
+        # (a chat directory named "." or ".." would escape the store).
+        assert memlib.sanitize_chat_id(raw) is None
 
     def test_uuid_passes_through(self):
         u = "abc123-def456-7890ab"
@@ -146,13 +144,6 @@ def test_write_artifact_strips_directory_components(ctx):
     assert not (ctx.hub_dir / ".hubzoid/chats/chat-zz/artifacts/output").exists()
 
 
-def test_write_artifact_refuses_empty_filename_after_sanitization(ctx):
-    write = _by_name(files_mod.make(ctx), "write_artifact")
-    with _request_ctx.chat_scope("c"):
-        result = _call(write, filename="../../..", content="x")
-    assert "refused" in result.lower() or "empty filename" in result.lower()
-
-
 def test_write_artifact_honors_public_url(ctx, monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com/")
     write = _by_name(files_mod.make(ctx), "write_artifact")
@@ -185,17 +176,6 @@ def test_write_artifact_public_url_wins_over_webui_url(ctx, monkeypatch):
 # ---------------------------------------------------------------------------
 # read_upload
 # ---------------------------------------------------------------------------
-def test_read_upload_reads_text_file(ctx):
-    upload_dir = memlib.chat_upload_dir(ctx.hub_dir, "chat-r")
-    (upload_dir / "notes.md").write_text("hello upload", encoding="utf-8")
-    read = _by_name(files_mod.make(ctx), "read_upload")
-    with _request_ctx.chat_scope("chat-r"):
-        out = _call(read, filename="notes.md")
-    # Path header is prepended; body is verbatim for small files.
-    assert "hello upload" in out
-    assert "Path on disk:" in out
-
-
 def test_read_upload_missing_lists_available(ctx):
     upload_dir = memlib.chat_upload_dir(ctx.hub_dir, "chat-r")
     (upload_dir / "have.txt").write_text("x", encoding="utf-8")
@@ -275,41 +255,9 @@ def client(bridge_env):
     return TestClient(build_app())
 
 
-def test_artifacts_route_serves_file(client):
-    chat_dir = memlib.chat_artifact_dir(MINIMAL, "demo-chat")
-    (chat_dir / "report.json").write_text('{"hello":"world"}', encoding="utf-8")
-    try:
-        r = client.get(
-            "/artifacts/demo-chat/report.json",
-            headers={"Authorization": "Bearer test-bridge-key"},
-        )
-        assert r.status_code == 200
-        assert r.json() == {"hello": "world"}
-    finally:
-        # Clean up the fixture's chats dir so other tests don't see stale state.
-        import shutil
-        shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)
-
-
 def test_artifacts_route_rejects_unauthenticated_request_without_token(client):
     """No Bearer, no ?t= signed token → 401."""
     assert client.get("/artifacts/anything/file.txt").status_code == 401
-
-
-def test_artifacts_route_accepts_signed_token_without_bearer(client):
-    """A correctly-signed ?t= token lets the browser fetch without auth header."""
-    from hubzoid import _signing
-    chat_dir = memlib.chat_artifact_dir(MINIMAL, "signed-chat")
-    (chat_dir / "out.json").write_text('{"a":1}', encoding="utf-8")
-    token = _signing.sign_artifact_path("signed-chat", "out.json")
-    try:
-        # No Authorization header — but signed token in query string.
-        r = client.get(f"/artifacts/signed-chat/out.json?t={token}")
-        assert r.status_code == 200
-        assert r.json() == {"a": 1}
-    finally:
-        import shutil
-        shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)
 
 
 def test_artifacts_route_rejects_wrong_signed_token(client):

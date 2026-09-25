@@ -108,7 +108,8 @@ def test_promoted_agent_tools_whitelist_ignored_with_warning(tmp_path, caplog):
     from hubzoid.loaders import agents as agents_loader
 
     with caplog.at_level(logging.WARNING, logger="hubzoid.loaders.agents"):
-        skills = agents_loader.promote_to_skills(tmp_path)
+        skill_agents, _ = agents_loader.split_subagents(tmp_path, None)
+        skills = [agents_loader.to_skill(a) for a in skill_agents]
     assert len(skills) == 1
     assert skills[0].spec.name == "bad"
     # And we logged the discarded whitelist so an operator can notice.

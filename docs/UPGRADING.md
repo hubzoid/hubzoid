@@ -1,4 +1,4 @@
-# Upgrading from 0.9.x
+# Upgrading to 1.0.1 from 0.9.x
 
 This release changes security defaults, moves markdown schedules onto the
 workflow engine and versions Hubzoid's own database tables. Hub files

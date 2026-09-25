@@ -3,7 +3,7 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [Unreleased]
+## [1.0.1] - unreleased
 
 Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 

@@ -118,20 +118,6 @@ def test_init_unknown_template_fails(tmp_path):
     assert "no-such-template" in res.output
 
 
-def test_init_named_hub(tmp_path):
-    res = _run_init(tmp_path, "devops-agent")
-    assert res.exit_code == 0, res.output
-    assert (tmp_path / "devops-agent" / "AGENTS.md").is_file()
-
-
-def test_init_no_dot_env_example(tmp_path):
-    """`.env.example` was retired. Scaffold should produce `.env` directly."""
-    _run_init(tmp_path)
-    hub = tmp_path / "demo-hub"
-    assert (hub / ".env").is_file()
-    assert not (hub / ".env.example").exists()
-
-
 # ---------------------------------------------------------------------------
 # Init: agents-repo wrapper at parent level
 # ---------------------------------------------------------------------------

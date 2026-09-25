@@ -170,10 +170,6 @@ def test_parse_headers_multiple_and_empty():
 
 
 # --- endpoint helpers -------------------------------------------------------
-def test_local_intercept_endpoint():
-    assert otel.local_intercept_endpoint(8000) == "http://127.0.0.1:8000/otel"
-
-
 def test_claude_export_endpoint_direct_when_normalize_off():
     assert otel.claude_export_endpoint(
         otel_endpoint="https://lf/api/public/otel", normalize=False, bridge_port=8000

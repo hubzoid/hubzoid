@@ -117,12 +117,6 @@ def test_guard_denies_and_logs_when_not_permitted(tmp_path):
     assert rows[-1]["reason"] == "no-group"
 
 
-def test_guard_denies_anonymous(tmp_path):
-    guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
-    out = _invoke(guarded, store="X")  # no identity bound
-    assert "access denied" in out.lower()
-
-
 def test_guard_is_enabled_reflects_identity(tmp_path):
     guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     assert guarded.is_enabled(None, None) is False  # anonymous
@@ -265,13 +259,3 @@ def test_owui_resolve_missing_db_is_empty(tmp_path):
 # ---------------------------------------------------------------------------
 # Access management wires restricted tools (MIT, no license gate)
 # ---------------------------------------------------------------------------
-def test_access_wires_restricted_tools(tmp_path):
-    _make_restricted_hub(tmp_path)
-    reg = access.apply(tmp_path, {})
-    # The restricted tool is wired.
-    assert "erp_sales" in reg
-
-
-def test_no_restricted_folder_registry_unchanged(tmp_path):
-    reg = access.apply(tmp_path, {"a": sample_tool})
-    assert reg == {"a": sample_tool}

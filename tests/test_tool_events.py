@@ -59,12 +59,6 @@ def test_format_call_full_mode_is_inline_blockquote():
     assert "**read_knowledge**" in out
 
 
-def test_format_call_default_mode_is_full_blockquote():
-    """Back-compat: callers that don't pass a mode get the legacy blockquote."""
-    out = tool_events.format_call("list_skills")
-    assert out.startswith("\n\n> ✓ ")
-
-
 def test_format_call_compact_mode_is_collapsible_details():
     out = tool_events.format_call("read_knowledge", {"name": "jexl"}, mode="compact")
     assert "<details>" in out and "</details>" in out
@@ -110,10 +104,3 @@ def test_short_name_strips_mcp_hubzoid_prefix():
     assert tool_events.short_name("read_file") == "read_file"
     assert tool_events.short_name("mcp__other__tool") == "mcp__other__tool"
 
-
-# ---------------------------------------------------------------------------
-# Regression: ensure format_result no longer exists as a public symbol
-# (was removed in favor of the one-line UX).
-# ---------------------------------------------------------------------------
-def test_format_result_removed():
-    assert not hasattr(tool_events, "format_result")

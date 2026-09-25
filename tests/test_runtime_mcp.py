@@ -28,11 +28,13 @@ class _FakeServer:
         self.fail = fail
         self.entered = False
         self.exited = False
+        self.enters = 0
 
     async def __aenter__(self):
         if self.fail:
             raise RuntimeError("boom")
         self.entered = True
+        self.enters += 1
         return self
 
     async def __aexit__(self, *exc):
@@ -66,8 +68,10 @@ def test_aopen_is_idempotent():
     async def go():
         await rt.aopen()
         await rt.aopen()          # second call is a no-op, doesn't re-enter
+        await rt.aclose()
 
     asyncio.run(go())
+    assert s.enters == 1
     assert s.entered
 
 

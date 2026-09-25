@@ -618,18 +618,6 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     return access.Identity.make(user=user, groups=groups, surface=surface)
 
 
-def merge_group_sources(owui_groups, header_groups_raw) -> list:
-    """Union Open WebUI groups with comma-separated header groups.
-
-    Retained for the header + OWUI merge and its direct tests; the full
-    three-source union (adding the roster) lives in ``access.effective_groups``.
-    """
-    groups = set(owui_groups or ())
-    if header_groups_raw is not None:
-        groups |= {g.strip() for g in header_groups_raw.split(",") if g.strip()}
-    return list(groups)
-
-
 # ---------------------------------------------------------------------------
 # Chat-id derivation
 # ---------------------------------------------------------------------------

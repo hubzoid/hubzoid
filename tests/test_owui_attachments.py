@@ -51,124 +51,29 @@ def _make_owui_prompt(file_refs: list[tuple[str, str, str]], user_query: str) ->
 
 
 # ---------------------------------------------------------------------------
-# parse_owui_attachment_prompt
-# ---------------------------------------------------------------------------
-class TestParseOwuiPrompt:
-    def test_returns_none_for_non_owui_prompt(self, owui_uploads):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        # Plain prompt — no <context>, no <source>
-        assert parse_owui_attachment_prompt("hello, how are you?", owui_uploads) is None
-
-    def test_returns_none_when_no_source_tags(self, owui_uploads):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        prompt = "### Task:\nDo something.\n<context>\n</context>\n\nthe query"
-        assert parse_owui_attachment_prompt(prompt, owui_uploads) is None
-
-    def test_extracts_single_file_path_and_user_query(self, owui_uploads):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        # Stage the file on disk at the path OWUI uses.
-        file_id = "1e861a57-7a17-4f65-a539-140d7c03a836"
-        name = "program-test.json"
-        (owui_uploads / f"{file_id}_{name}").write_text("{}")
-        prompt = _make_owui_prompt(
-            [(file_id, name, '{"key":"chunk content"}')],
-            user_query="Review this template. program.",
-        )
-        result = parse_owui_attachment_prompt(prompt, owui_uploads)
-        assert result is not None
-        paths, user_query = result
-        assert len(paths) == 1
-        fname, fpath = paths[0]
-        assert fname == name
-        assert fpath == owui_uploads / f"{file_id}_{name}"
-        assert user_query == "Review this template. program."
-
-    def test_deduplicates_multiple_source_tags_for_same_file(self, owui_uploads):
-        """OWUI emits a <source> tag per retrieved chunk — for one file
-        across many chunks we should still get one path."""
-        from hubzoid.owui import parse_owui_attachment_prompt
-        file_id = "abc-123"
-        name = "doc.json"
-        (owui_uploads / f"{file_id}_{name}").write_text("{}")
-        # Three <source> tags, same file
-        prompt = _make_owui_prompt(
-            [
-                (file_id, name, "chunk a"),
-                (file_id, name, "chunk b"),
-                (file_id, name, "chunk c"),
-            ],
-            user_query="summarise",
-        )
-        result = parse_owui_attachment_prompt(prompt, owui_uploads)
-        assert result is not None
-        paths, _ = result
-        assert len(paths) == 1
-
-    def test_multiple_distinct_files(self, owui_uploads):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        f1, f2 = ("id-a", "a.json"), ("id-b", "b.csv")
-        for fid, name in (f1, f2):
-            (owui_uploads / f"{fid}_{name}").write_text("x")
-        prompt = _make_owui_prompt(
-            [(f1[0], f1[1], "chunk a"), (f2[0], f2[1], "chunk b")],
-            user_query="compare these",
-        )
-        result = parse_owui_attachment_prompt(prompt, owui_uploads)
-        assert result is not None
-        paths, query = result
-        names = sorted(n for n, _ in paths)
-        assert names == ["a.json", "b.csv"]
-        assert query == "compare these"
-
-    def test_skips_files_not_on_disk(self, owui_uploads):
-        """If OWUI references a file we can't find (e.g. cleaned up),
-        we still parse but drop the missing ones."""
-        from hubzoid.owui import parse_owui_attachment_prompt
-        # Reference a file that doesn't exist on disk.
-        prompt = _make_owui_prompt(
-            [("missing-id", "ghost.json", "phantom")],
-            user_query="hi",
-        )
-        result = parse_owui_attachment_prompt(prompt, owui_uploads)
-        # All referenced files missing -> None (no attachments to surface).
-        assert result is None
-
-    def test_ignores_non_file_resource_types(self, owui_uploads):
-        """OWUI also uses <source> tags for knowledge collections; those
-        are not files we can read directly."""
-        from hubzoid.owui import parse_owui_attachment_prompt
-        prompt = (
-            "<context>\n"
-            '<source id="1" name="my-kb" resource-type="collection" '
-            'resource-id="coll-1">vector chunk</source>\n'
-            "</context>\n\nask me anything"
-        )
-        assert parse_owui_attachment_prompt(prompt, owui_uploads) is None
-
-    def test_user_query_is_verbatim_with_no_post_processing(self, owui_uploads):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        fid, name = "u1", "x.txt"
-        (owui_uploads / f"{fid}_{name}").write_text("x")
-        # Query has punctuation, multi-line, leading/trailing whitespace.
-        prompt = _make_owui_prompt(
-            [(fid, name, "c")],
-            user_query="Line one.\nLine two.\nLine three.",
-        )
-        _, query = parse_owui_attachment_prompt(prompt, owui_uploads)
-        assert query == "Line one.\nLine two.\nLine three."
-
-    def test_returns_none_when_owui_uploads_dir_missing(self, tmp_path):
-        from hubzoid.owui import parse_owui_attachment_prompt
-        missing = tmp_path / "nonexistent" / "uploads"
-        prompt = _make_owui_prompt([("x", "y.json", "z")], user_query="q")
-        # No dir -> can't resolve paths -> None
-        assert parse_owui_attachment_prompt(prompt, missing) is None
-
-
-# ---------------------------------------------------------------------------
 # owui_attachments — resolved / unresolved / query split
 # ---------------------------------------------------------------------------
 class TestOwuiAttachments:
+    def test_one_file_across_many_chunks_resolves_once(self, owui_uploads):
+        """OWUI emits a <source> tag per retrieved chunk; one file across
+        several chunks is still one attachment."""
+        from hubzoid.owui import owui_attachments
+        (owui_uploads / "abc-123_doc.json").write_text("{}")
+        prompt = _make_owui_prompt(
+            [("abc-123", "doc.json", c) for c in ("chunk a", "chunk b", "chunk c")],
+            user_query="summarise",
+        )
+        resolved, unresolved, _ = owui_attachments(prompt, owui_uploads)
+        assert [n for n, _ in resolved] == ["doc.json"] and unresolved == []
+
+    def test_user_query_is_kept_verbatim(self, owui_uploads):
+        from hubzoid.owui import owui_attachments
+        (owui_uploads / "u1_x.txt").write_text("x")
+        prompt = _make_owui_prompt([("u1", "x.txt", "c")],
+                                   user_query="Line one.\nLine two.\nLine three.")
+        _, _, query = owui_attachments(prompt, owui_uploads)
+        assert query == "Line one.\nLine two.\nLine three."
+
     def test_none_for_non_owui_prompt(self, owui_uploads):
         from hubzoid.owui import owui_attachments
         assert owui_attachments("just a question", owui_uploads) is None

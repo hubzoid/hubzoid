@@ -130,16 +130,6 @@ def to_skill(loaded: "LoadedAgent"):
                        source_path=loaded.source_path)
 
 
-def promote_to_skills(hub_dir: Path):
-    """Load every <hub>/agents/<name>/AGENTS.md as a LoadedSkill (all sub-agents).
-
-    Kept for callers that want the flat all-skills view. Delegate-aware
-    loading (a differing `model:` becomes a within-turn subagent instead of a
-    skill) goes through `split_subagents`.
-    """
-    return [to_skill(loaded) for loaded in load_subagents(hub_dir)]
-
-
 def split_subagents(hub_dir: Path, hub_model: str | None):
     """Partition sub-agents into (skill_agents, delegate_agents) LoadedAgents.
 

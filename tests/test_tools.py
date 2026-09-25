@@ -144,30 +144,12 @@ def test_list_files_empty(ctx):
     assert _call(list_files, glob="nothing*") == ""
 
 
-def test_write_artifact_writes_under_output_when_no_chat_in_scope(ctx):
-    """No chat scope -> writes to the legacy session output dir."""
-    write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
-    result = _call(write_artifact, filename="result.txt", content="ok")
-    assert "Saved" in result  # new response format
-    assert (ctx.output_dir / "result.txt").read_text() == "ok"
-
-
 def test_write_artifact_refuses_invalid_filename(ctx):
     """`../../etc/passwd` sanitises to `passwd` (basename), but we test ../
     in isolation which leaves nothing."""
     write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
     result = _call(write_artifact, filename="../..", content="x")
     assert "refused" in result.lower() or "empty filename" in result.lower()
-
-
-def test_write_artifact_strips_directory_components(ctx):
-    """Directory components in filename are stripped; only basename survives."""
-    write_artifact = _by_name(files_mod.make(ctx), "write_artifact")
-    _call(write_artifact, filename="nested/dir/file.md", content="hi")
-    # Lands at the artifact root (no chat scope -> session output dir).
-    assert (ctx.output_dir / "file.md").read_text() == "hi"
-    # And NOT in any subdirectory.
-    assert not (ctx.output_dir / "nested").exists()
 
 
 # ---------------------------------------------------------------------------

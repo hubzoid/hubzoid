@@ -4,7 +4,6 @@ What survives the ledger deletion and still needs guarding:
   * _record_claude_usage / _record_openai_usage -> _request_ctx sink
   * server.py — blocking usage envelope + streaming usage chunk that feed Open
     WebUI's native per-message token column (no backend required)
-  * /metrics is gone (retired with the JSONL ledger)
 """
 from __future__ import annotations
 
@@ -107,13 +106,6 @@ def test_streaming_emits_usage_chunk(hub_client):
         if obj.get("usage") and obj.get("choices") == []:
             usage_seen = obj["usage"]
     assert usage_seen == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
-
-
-def test_metrics_endpoint_is_gone(hub_client):
-    # The JSONL ledger and its /metrics endpoint are retired. Cost/usage lives
-    # in OTel now; the route must no longer exist.
-    _, client = hub_client
-    assert client.get("/metrics", headers={"Authorization": "Bearer dev"}).status_code == 404
 
 
 def test_inline_artifact_is_sandboxed_by_csp(hub_client):

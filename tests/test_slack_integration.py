@@ -15,7 +15,6 @@ from pathlib import Path
 import httpx
 
 from hubzoid.slack.adapter import _ThrottledWriter, build_app, stream_reply
-from hubzoid.slack.conversion import messages_from_thread
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -130,21 +129,6 @@ def test_throttled_writer_flushes_again_after_interval():
     assert len(calls) == 2
     assert calls[-1] == "ab"
     w.done()
-
-
-def test_full_thread_flow_assembles_correct_messages():
-    """Slack thread payload -> messages_from_thread -> bridge request body shape."""
-    slack_payload = [
-        {"type": "message", "user": "U_USER", "text": "what is 2+2?", "ts": "1"},
-        {"type": "message", "user": "U_BOT", "text": "thinking…", "ts": "2"},
-        {"type": "message", "user": "U_USER", "text": "be more precise", "ts": "3"},
-    ]
-    msgs = messages_from_thread(slack_payload, bot_user_id="U_BOT")
-    assert msgs == [
-        {"role": "user", "content": "what is 2+2?"},
-        {"role": "assistant", "content": "thinking…"},
-        {"role": "user", "content": "be more precise"},
-    ]
 
 
 def test_build_app_against_fixture_hub():

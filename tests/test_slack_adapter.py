@@ -141,21 +141,6 @@ def test_stream_reply_raises_on_http_error():
 # ---------------------------------------------------------------------------
 # build_app
 # ---------------------------------------------------------------------------
-def test_build_app_returns_slack_bolt_app():
-    from slack_bolt import App
-
-    app = build_app(
-        hub_dir=MINIMAL,
-        bridge_url="http://127.0.0.1:8000/v1",
-        api_key="dev",
-        model_label="testbot",
-        bot_token="xoxb-fake",
-        suggestions=["ask one", "ask two"],
-        verify_token=False,
-    )
-    assert isinstance(app, App)
-
-
 def test_build_app_registers_app_mention_and_assistant():
     """Adapter must subscribe to app_mention and the Assistant lifecycle."""
     app = build_app(

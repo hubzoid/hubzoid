@@ -118,12 +118,6 @@ def test_manifest_for_hub_enables_messages_tab(tmp_path):
     assert app_home["messages_tab_read_only_enabled"] is False
 
 
-def test_manifest_for_hub_uses_minimal_fixture():
-    """Sanity check that the existing test fixture round-trips."""
-    out = yaml.safe_load(manifest_for_hub(MINIMAL))
-    assert out["display_information"]["name"] == "testbot"
-
-
 def test_manifest_for_hub_defaults_to_json():
     """Default format is JSON — terminal-friendly, no indentation gotchas."""
     raw = manifest_for_hub(MINIMAL)

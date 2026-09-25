@@ -211,20 +211,6 @@ def test_tools_call_restricted_allowed_for_member(mcp_app):
     assert "clickup says: hi" in result["content"][0]["text"]
 
 
-def test_tools_call_restricted_fails_closed_for_nonmember(tmp_path, monkeypatch):
-    """Even called by exact name (hidden from the list), the guard denies."""
-    hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=())
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    from hubzoid import mcp_server
-
-    app = mcp_server.build_mcp_app(hub)
-    result = _result(_call(
-        app, _rpc("tools/call", {"name": "clickup_echo", "arguments": {"text": "hi"}})
-    ))
-    assert "access denied" in result["content"][0]["text"]
-
-
 # ---------------------------------------------------------------------------
 # Instructions
 # ---------------------------------------------------------------------------

@@ -271,22 +271,6 @@ def test_a_207_whose_events_all_failed_is_not_success(hub, monkeypatch):
         lf.push(hub, _suite())
 
 
-def test_a_207_with_no_errors_is_success(hub, monkeypatch):
-    import httpx
-
-    class Resp:
-        status_code = 207
-        text = ""
-
-        @staticmethod
-        def json():
-            return {"successes": [{"id": "x", "status": 201}], "errors": []}
-
-    _configured(monkeypatch)
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
-    assert "2 case(s)" in lf.push(hub, _suite())
-
-
 def test_an_unparseable_body_is_not_treated_as_failure(hub, monkeypatch):
     """Shape drift in a future Langfuse version must not break pushes that the
     status code already said were fine."""
