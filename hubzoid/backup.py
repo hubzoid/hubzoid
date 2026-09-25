@@ -12,8 +12,9 @@ Not in the archive:
     git repository.
   - PostgreSQL databases. The backup names them; docs/BACKUP.md has the
     pg_dump route.
-  - secrets (`.env`, `.hubzoid/artifact_secret`, `.webui_secret_key`), unless
-    asked for with `include_secrets`.
+  - secrets (`.env`, `.hubzoid/artifact_secret`, `.webui_secret_key`) and the
+    database passwords in the gateway's `deployment.json` (saved as `***`),
+    unless asked for with `include_secrets`.
 
 A backup holds new scheduled runs and waits for running ones to finish. Chat
 keeps working throughout. Due runs fire when the hold ends.
@@ -50,6 +51,10 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 # Enough to cover a long copy. The hold is cleared when the backup ends, and
 # expires on its own if the backup process dies.
 _HOLD_MARGIN = 3 * 3600
+# Seconds between setting the hold and the first look for running work, so a
+# scheduler that passed its hold check just before is seen queuing its run.
+_SETTLE = 5.0
+_ROOT_ID = re.compile(r"r\d+")
 
 
 class BackupError(RuntimeError):
@@ -81,7 +86,8 @@ class Plan:
 
 
 def _redact(url: str) -> str:
-    return re.sub(r"//([^:/@]+):[^@]*@", r"//\1:***@", url)
+    url = re.sub(r"//([^:/@]+):[^@]*@", r"//\1:***@", url)
+    return re.sub(r"([?&]password=)[^&]*", r"\1***", url)
 
 
 def _sqlite_path(url: str) -> Path | None:
@@ -170,6 +176,29 @@ def _skip(rel: Path, root: Root, include_secrets: bool) -> bool:
         return True
     # Open WebUI's model cache is large and rebuilt on demand.
     return root.kind == "ui" and parts[:1] == ("cache",)
+
+
+def _without_passwords(path: Path) -> bytes | None:
+    """The gateway manifest with each database URL's password replaced by
+    `***`, or None when it holds no password."""
+    text = path.read_text()
+
+    def clean(value):
+        if isinstance(value, str):
+            return _redact(value)
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()}
+        return value
+
+    try:
+        data = json.loads(text)
+        new = clean(data)
+        return None if new == data else (json.dumps(new, indent=2) + "\n").encode()
+    except ValueError:  # not JSON: redact line by line
+        new = "".join(_redact(line) for line in text.splitlines(keepends=True))
+        return None if new == text else new.encode()
 
 
 def _files(root: Root, include_secrets: bool, exclude: set[Path]):
@@ -274,7 +303,7 @@ HOLD_KEY = "maintenance:hold"  # read by GrantStore.schedule_hold
 
 
 def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: float = 600,
-           actor: str = "cli", poll: float = 2.0, say=log.info) -> dict:
+           actor: str = "cli", poll: float = 2.0, settle: float = _SETTLE, say=log.info) -> dict:
     """Write one archive of the deployment containing `hub_dir` to `out`.
     Reads the databases, never migrates them."""
     p = plan(hub_dir, include_secrets=include_secrets)
@@ -288,6 +317,11 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
         say("New scheduled runs are held. Chat keeps working.")
         unknown: list[str] = []
         deadline = time.monotonic() + wait
+        # A scheduler that checked the hold just before it was set may still be
+        # queuing a run. Give it time, so the look below sees that run and waits
+        # for it. --wait 0 takes the backup at once.
+        if wait > 0 and settle > 0:
+            time.sleep(min(settle, wait))
         busy = running_runs(p, unknown)
         while busy and time.monotonic() < deadline:
             say(f"Waiting for {len(busy)} scheduled run(s) to finish")
@@ -328,6 +362,7 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
         "sqlite": [],
         "not_included": p.external,
         "secrets": include_secrets,
+        "redacted": [],  # files saved with their database passwords as ***
     }
     part = out.with_name(out.name + ".part")
     # Chat UI databases hold password hashes and connection keys: owner-only.
@@ -344,6 +379,12 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
                         tar.add(copy, arcname=arc)
                         copy.unlink()
                         index["sqlite"].append(arc)
+                    elif path.name == "deployment.json" and not include_secrets \
+                            and (clean := _without_passwords(path)) is not None:
+                        info = tar.gettarinfo(path, arcname=arc)
+                        info.size = len(clean)
+                        tar.addfile(info, io.BytesIO(clean))
+                        index["redacted"].append(arc)
                     else:
                         tar.add(path, arcname=arc, recursive=False)
             data = json.dumps(index, indent=2).encode()
@@ -383,17 +424,84 @@ def read_index(archive: Path) -> dict:
             member = tar.getmember(INDEX)
         except KeyError:
             raise BackupError(f"{archive} is not a Hubzoid backup") from None
-        index = json.loads(tar.extractfile(member).read())
-    if index.get("format") != FORMAT:
-        raise BackupError(f"Unsupported backup format: {index.get('format')}")
+        try:
+            index = json.loads(tar.extractfile(member).read())
+        except ValueError:
+            raise BackupError(f"{archive} has an unreadable index") from None
+        found = index.get("format") if isinstance(index, dict) else None
+        if found != FORMAT:
+            raise BackupError(f"Unsupported backup format: {found}")
+        _check_index(index, tar)
     return index
+
+
+def _check_index(index: dict, tar: tarfile.TarFile) -> None:
+    """Restore replaces whatever is at each saved path. Refuse an index naming
+    a location `plan()` never saves, before anything is touched."""
+    def refuse(why: str):
+        raise BackupError(f"Refusing this archive: {why}")
+
+    members = {m.name: m for m in tar.getmembers()}
+    for name, m in members.items():
+        if Path(name).is_absolute() or ".." in Path(name).parts or not (m.isfile() or m.isdir()):
+            refuse(f"unsafe entry {name}")
+    roots, sqlite, redacted = index.get("roots"), index.get("sqlite"), index.get("redacted", [])
+    if not (isinstance(roots, list) and roots and isinstance(sqlite, list)
+            and isinstance(redacted, list)):
+        refuse("its index is malformed")
+    ids: set[str] = set()
+    for r in roots:
+        if not (isinstance(r, dict) and all(isinstance(r.get(k), str) for k in ("id", "path", "kind"))):
+            refuse("a saved location is malformed")
+        rid, path, kind = r["id"], Path(r["path"]), r["kind"]
+        if not _ROOT_ID.fullmatch(rid) or rid in ids:
+            refuse(f"the location id {rid!r} is invalid or repeated")
+        ids.add(rid)
+        if not path.is_absolute() or ".." in path.parts:
+            refuse(f"{r['path']} is not an absolute path")
+        saved = {n.split("/", 1)[1] for n in members if n.startswith(rid + "/")}
+        if kind == "state":
+            ok = path.name in STATE_DIRS
+        elif kind == "ui":  # a hub's chat UI data, or a gateway's data directory
+            ok = path.name == UI_DIR or bool(saved & {"deployment.json", "webui.db"})
+        elif kind == "file":
+            own = members.get(f"{rid}/{path.name}")
+            ok = path.name == ".env" or (
+                f"{rid}/{path.name}" in sqlite and own is not None and own.isfile()
+                and tar.extractfile(own).read(16) == _SQLITE_MAGIC)
+        else:
+            ok = False
+        if not ok:
+            refuse(f"{path} is not a location hubzoid backup saves")
+    for name in members:
+        if name != INDEX and name.split("/", 1)[0] not in ids:
+            refuse(f"the entry {name} belongs to no saved location")
+    for arc in sqlite + redacted:
+        if not isinstance(arc, str) or arc not in members:
+            refuse(f"the index names {arc!r}, which the archive does not hold")
+
+
+def _targets(index: dict, moves: list[tuple[str, str]]) -> dict[str, Path]:
+    """Where each saved root goes. None may be the filesystem root or the home
+    directory, and none may be inside another."""
+    move_path, _ = _mover(moves)
+    targets = {r["id"]: Path(move_path(r["path"])) for r in index["roots"]}
+    real = {rid: Path(os.path.realpath(t)) for rid, t in targets.items()}
+    home = Path(os.path.realpath(Path.home()))
+    for rid, t in real.items():
+        if t == Path(t.anchor) or t == home:
+            raise BackupError(f"Refusing to restore over {targets[rid]}")
+        for other, o in real.items():
+            if other != rid and (o == t or o in t.parents):
+                raise BackupError(f"Refusing to restore {targets[rid]}: it overlaps {targets[other]}")
+    return targets
 
 
 def restore_plan(archive: Path, moves: list[tuple[str, str]] = ()) -> list[tuple[dict, Path]]:
     """Each saved root and where it would be restored."""
     index = read_index(archive)
-    move_path, _ = _mover(list(moves))
-    return [(r, Path(move_path(r["path"]))) for r in index["roots"]]
+    targets = _targets(index, list(moves))
+    return [(r, targets[r["id"]]) for r in index["roots"]]
 
 
 def _in_use(db_file: Path) -> bool:
@@ -425,8 +533,8 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
     archive = Path(archive).resolve()
     index = read_index(archive)
     moves = list(moves)
-    move_path, move_text = _mover(moves)
-    targets = {r["id"]: Path(move_path(r["path"])) for r in index["roots"]}
+    _, move_text = _mover(moves)
+    targets = _targets(index, moves)
 
     for arc in index["sqlite"]:
         rid, rel = arc.split("/", 1)
@@ -463,8 +571,11 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
 
     if any(a != b for a, b in moves):
         _rewrite_paths(index, targets, move_text)
+    redacted = [targets[arc.split("/", 1)[0]] / arc.split("/", 1)[1]
+                for arc in index.get("redacted", [])]
     return {"restored": [str(t) for t in targets.values()], "kept": kept,
-            "not_included": index.get("not_included", [])}
+            "not_included": index.get("not_included", []),
+            "redacted": [str(p) for p in redacted if p.is_file()]}
 
 
 def _rewrite_paths(index: dict, targets: dict[str, Path], move_text) -> None:

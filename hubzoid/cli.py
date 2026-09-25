@@ -797,9 +797,11 @@ def backup_cmd(
         raise typer.Exit(1)
     console.print(f"[green]Backup written:[/green] {out.resolve()} "
                   f"({len(index['roots'])} locations, {len(index['sqlite'])} databases)")
-    console.print("The archive holds user accounts and chats. Store it like a secret.")
+    console.print("The archive holds user accounts, chats and the chat UI's connection settings. "
+                  "Store it like a secret.")
     if not include_secrets:
-        console.print("Secrets were left out. Keep a copy of each .env elsewhere.")
+        console.print("Left out: .env files, signing keys and database passwords. "
+                      "Keep a copy of each .env elsewhere.")
     for url in index["not_included"]:
         console.print(f"[yellow]Not included (PostgreSQL):[/yellow] {url}. Back it up with pg_dump.")
 
@@ -837,6 +839,10 @@ def restore_cmd(
         console.print(f"Previous state kept at {aside}")
     for url in result["not_included"]:
         console.print(f"[yellow]Not in this archive (PostgreSQL):[/yellow] {url}. Restore it with pg_restore.")
+    for path in result.get("redacted", []):
+        console.print(f"[yellow]Database passwords in {path} were saved as ***.[/yellow] "
+                      "`hubzoid gateway` rewrites this file from its environment when it starts, "
+                      "so start the gateway before any bridge, or put the passwords back by hand.")
     console.print("[green]Restore complete.[/green] Start the hub or gateway, then run `hubzoid doctor`.")
 
 
