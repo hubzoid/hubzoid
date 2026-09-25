@@ -509,6 +509,9 @@ class ClaudeRuntime:
         self._otel_endpoint = otel_endpoint
         self._hub_dir = hub_dir
         self._vision = vision
+        # Set when the last run failed. Chat still shows the error text; a
+        # one-shot caller (runtime.run_once) raises instead.
+        self.last_error: BaseException | None = None
 
     def _options_for_turn(self):
         """Per-turn options, cloned from the shared base for THIS caller.
@@ -579,6 +582,7 @@ class ClaudeRuntime:
         from claude_agent_sdk import AssistantMessage, ResultMessage, UserMessage, query
         from claude_agent_sdk.types import StreamEvent, TextBlock, ToolResultBlock, ToolUseBlock
 
+        self.last_error = None
         streamed_any = False
         final_result: str | None = None
         shown: list[str] = []
@@ -665,8 +669,13 @@ class ClaudeRuntime:
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
                     _record_claude_usage(message)
+                    if getattr(message, "is_error", False):
+                        self.last_error = RuntimeError(
+                            f"claude run ended with {getattr(message, 'subtype', 'error')}"
+                        )
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
+            self.last_error = exc
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
             return
 

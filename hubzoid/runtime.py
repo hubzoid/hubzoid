@@ -130,6 +130,10 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
 
     from . import otel as otellib
     otellib.openai_otel_setup(endpoint=settings.otel_endpoint, hub=hub_dir.name)
+    # The Agents SDK exports every run to OpenAI's trace dashboard whenever an
+    # OpenAI key is present. Keep that off unless the hub opts in.
+    from agents import set_tracing_disabled
+    set_tracing_disabled(not settings.openai_tracing)
     from .factory import build_agent
     return OpenAIAgentsRuntime(
         build_agent(hub_dir, extra_tools=extra_tools, model_override=override),
@@ -166,6 +170,9 @@ class OpenAIAgentsRuntime:
         self._mcp_servers = list(getattr(agent, "mcp_servers", []) or [])
         self._stack = None
         self._opened = False
+        # Set when the last run failed. Chat still shows the error text; a
+        # one-shot caller (run_once) raises instead.
+        self.last_error: BaseException | None = None
 
     async def aopen(self) -> None:
         """Connect MCP servers within the calling task. A server that fails to
@@ -212,6 +219,7 @@ class OpenAIAgentsRuntime:
 
         from . import _request_ctx, tool_events
 
+        self.last_error = None
         text_accumulated = False
         shown: list[str] = []
         # Native image vision: expand any [Image: name] reference into an input
@@ -271,6 +279,7 @@ class OpenAIAgentsRuntime:
                 yield footer
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
+            self.last_error = exc
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
 
     async def run(self, prompt: str) -> str:
@@ -314,6 +323,11 @@ def describe(hub_dir: Path) -> str:
     return json.dumps({"backend": backend, "model": model})
 
 
+class AgentRunError(RuntimeError):
+    """A one-shot agent run failed. Raised by `run_once` so a workflow run is
+    marked failed instead of treating the error text as a successful reply."""
+
+
 def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     """One-shot: build the hub's runtime, run a single prompt, return the text.
 
@@ -325,6 +339,9 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     Binds the workflow's **service identity** (`subject`, surface `workflow`) for
     the whole run, so a restricted tool the workflow was granted is reachable and
     audited under that identity.
+
+    Raises `AgentRunError` when the run fails, rather than returning the error
+    text the chat surface shows.
     """
     import asyncio
 
@@ -336,9 +353,13 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         rt = build(Path(hub_dir))
         await rt.aopen()
         try:
-            return await rt.run(prompt)
+            text = await rt.run(prompt)
         finally:
             await rt.aclose()
+        err = getattr(rt, "last_error", None)
+        if err is not None:
+            raise AgentRunError(f"agent run failed: {type(err).__name__}: {err}") from err
+        return text
 
     def _run() -> str:
         if ident is not None:

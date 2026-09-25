@@ -336,6 +336,27 @@ not execute a slot twice. Delayed ticks skip older slots and record the skipped
 count. Downtime is not backfilled. Steps are at-least-once; external side effects
 still need idempotency. Durability does not make external writes exactly-once.
 
+**Failures and retries.** `hub.call_agent` and `hub.call_llm` run the hub's full
+agent, tools included, so a failed call is **not retried**: a retry could repeat a
+message or write the first attempt already made. The step raises, the run is
+marked failed, and `on_failure` fires. A hub whose agent calls are safe to repeat
+opts in with `agent_max_attempts: 3` in `workflows/settings.yaml`. Your own
+`@step(max_attempts=N)` retries apply only to that step, so use them for steps
+you have made idempotent.
+
+**Restarts and code changes.** A run interrupted by a stop or crash resumes on the
+next start: completed steps are not repeated, and the interrupted step runs again.
+Runs are tied to the hub's workflow code (a hash of `workflows/**/*.py`). After
+you edit a workflow, older interrupted runs are **not** resumed on the new code;
+they stay pending in the run list. To change workflow code or upgrade Hubzoid
+safely:
+
+1. Drain: wait until `hubzoid schedule status` lists no run as `PENDING` or
+   `ENQUEUED`, ideally between scheduled slots.
+2. Deploy the change and restart.
+3. Check the run list. A run left pending from the old code will not continue by
+   itself; start a fresh run with `hubzoid schedule run` if it is still needed.
+
 ## Troubleshooting
 
 | Symptom | Check |

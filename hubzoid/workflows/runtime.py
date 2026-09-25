@@ -68,6 +68,29 @@ def _app_name(hub_name: str) -> str:
     return slug
 
 
+def _workflow_code_version(hub_dir: Path) -> str:
+    """Identify the hub's workflow code for DBOS recovery.
+
+    DBOS resumes an interrupted run only under the same application version. Its
+    default version hashes the registered functions, which here is Hubzoid's own
+    wrapper, identical for every hub and every edit. So the version is a hash of
+    the hub's workflows/**/*.py instead: editing a workflow never replays an old
+    run on new code. Knowledge or config edits don't change it."""
+    import hashlib
+
+    from .._fs import resolve_bucket
+
+    digest = hashlib.sha256()
+    root = resolve_bucket(Path(hub_dir), "workflows")
+    if root is not None and root.is_dir():
+        for py in sorted(root.rglob("*.py")):
+            if "__pycache__" in py.parts:
+                continue
+            digest.update(py.relative_to(root).as_posix().encode() + b"\0")
+            digest.update(py.read_bytes() + b"\0")
+    return "wf-" + digest.hexdigest()[:16]
+
+
 def init(hub_dir, hub_name: str | None = None) -> None:
     """Construct the DBOS singleton over this hub's database. Idempotent. Must
     run before any workflow module is imported (the decorator needs DBOS)."""
@@ -77,7 +100,7 @@ def init(hub_dir, hub_name: str | None = None) -> None:
             if _HUB_DIR.resolve() != Path(hub_dir).resolve():
                 raise RuntimeError("Each hub needs its own workflow bridge process")
             return
-        from dbos import DBOS, Queue
+        from dbos import DBOS
 
         _DBOS = DBOS
         _HUB_DIR = Path(hub_dir)
@@ -90,11 +113,9 @@ def init(hub_dir, hub_name: str | None = None) -> None:
             config={
                 "name": _app_name(_HUB_NAME),
                 "system_database_url": db.dbos_url(_HUB_DIR),
+                "application_version": _workflow_code_version(_HUB_DIR),
             }
         )
-        # One durable queue per hub, global concurrency 1: two due workflows (or a
-        # manual + scheduled run) in the same hub never overlap.
-        _QUEUE = Queue(f"{_app_name(_HUB_NAME)}-wf", concurrency=1)
         _INITED = True
         log.info("workflows: DBOS initialised for hub %r", _HUB_NAME)
 
@@ -134,7 +155,8 @@ def workflow(
 ):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
-    per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob."""
+    per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob;
+    agent calls retry only with `agent_max_attempts` in workflows/settings.yaml."""
     _require_init()
 
     def deco(fn: Callable):
@@ -194,21 +216,44 @@ def step(fn: Callable | None = None, *, max_attempts: int = 1):
     return wrap(fn) if fn is not None else wrap
 
 
+def _agent_max_attempts() -> int:
+    """How many times a failed `hub.call_llm` / `hub.call_agent` step is tried.
+
+    Both run the hub's full agent, tools included, so a retry can repeat a
+    message or write the first attempt already made. Default 1 (no retry). A
+    hub whose agent calls are safe to repeat opts in with
+    `agent_max_attempts: N` in workflows/settings.yaml."""
+    try:
+        raw = _load_settings().get("agent_max_attempts", 1)
+        return max(1, int(raw))
+    except Exception:  # noqa: BLE001 — a bad value falls back to the safe default
+        log.warning("workflows: invalid agent_max_attempts; using 1 (no retry)")
+        return 1
+
+
+def _seam_step():
+    attempts = _agent_max_attempts()
+    if attempts > 1:
+        return _DBOS.step(retries_allowed=True, max_attempts=attempts)
+    return _DBOS.step()
+
+
 def _wrap_seams_as_steps() -> None:
     """Wrap the configured call_llm/call_agent seams in DBOS steps so a completed
-    model/agent call is checkpointed and NOT re-invoked on recovery. Retries are
-    on (max 3) since these are external calls."""
+    model/agent call is checkpointed and NOT re-invoked on recovery. A failed
+    call is not retried unless the hub opts in (see `_agent_max_attempts`); an
+    interrupted one can still re-run on recovery (at-least-once)."""
     raw_llm, raw_agent = context._LLM, context._AGENT
     if raw_llm is not None and context._LLM_STEP is None:
 
-        @_DBOS.step(retries_allowed=True, max_attempts=3)
+        @_seam_step()
         def _llm_step(prompt: str, hub_dir_str: str, subject: str):
             return raw_llm(prompt, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._LLM_STEP = _llm_step
     if raw_agent is not None and context._AGENT_STEP is None:
 
-        @_DBOS.step(retries_allowed=True, max_attempts=3)
+        @_seam_step()
         def _agent_step(task: str, hub_dir_str: str, subject: str):
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
@@ -236,8 +281,15 @@ def launch() -> None:
     global _LAUNCHED
     if _LAUNCHED:
         return
+    global _QUEUE
     _wrap_seams_as_steps()
     _DBOS.launch()
+    # One durable queue per hub, global concurrency 1: two due workflows (or a
+    # manual + scheduled run) in the same hub never overlap. DBOS 3 persists queue
+    # config in the system database, so it is registered once that exists.
+    _QUEUE = _DBOS.register_queue(
+        f"{_app_name(_HUB_NAME)}-wf", global_concurrency=1, on_conflict="always_update"
+    )
     _LAUNCHED = True
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
     # Publish this hub's workflow catalog to the shared store so the org portal

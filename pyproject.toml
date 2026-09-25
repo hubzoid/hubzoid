@@ -40,35 +40,41 @@ classifiers = [
 # Everything needed to run `hubzoid run <hub>` is a required dep.
 # No optional extras for the runtime — `pip install hubzoid` is enough.
 dependencies = [
-  "openai-agents[litellm]>=0.14.7",
-  "claude-agent-sdk>=0.1.0",
-  "open-webui==0.11.0",   # PINNED 2026-08-16: verified against tests + E2E; per-user MCP OAuth plan couples to OWUI internals, so upgrades are deliberate. Re-run tests/ + HubzoidTests before bumping.
-  "fastapi>=0.115",
-  "fastmcp>=3.4,<4",        # mcp_server.py hosted MCP endpoint (Streamable HTTP)
-  "starlette>=0.37",        # edge.py reverse-proxy app
-  "uvicorn[standard]>=0.30",
-  "httpx>=0.27",
-  "websockets>=12",         # edge.py websocket passthrough to Open WebUI
-  "pydantic>=2.0",
-  "PyYAML>=6.0",
-  "python-dotenv>=1.0",
-  "cryptography>=41",       # access/owui_oauth_tokens.py: Fernet-decrypt OWUI's per-user tool tokens (same scheme OWUI uses)
-  "composio==1.0.0rc2",     # connections.py broker; pinned — the client surface (connected_accounts.list/get) changed across the rc series
-  "opentelemetry-proto>=1.20",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
-  "typer>=0.12",
-  "rich>=13",
-  "jinja2>=3.1",
-  "slack-bolt>=1.21",
-  "pypdf>=4.0",
-  "Pillow>=10.0",           # vision_inject.py resizes uploaded images before sending them to the model
-  "SQLAlchemy>=2.0",        # db.py: hub-owned tables (inbound history). SQLite default; Postgres via DATABASE_URL
-  "casbin>=1.43",           # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
-  "dbos>=2.31",             # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
-  "croniter>=2.0",          # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
+  # Bounds: lower = the version this release was tested with; upper = the next
+  # release line that may break us (next minor for 0.x packages, next major
+  # otherwise). Shared deps that open-webui pins exactly (fastapi, pydantic,
+  # SQLAlchemy, uvicorn, cryptography, Pillow, pypdf) follow its pins, and its
+  # exact openai/mcp/aiohttp pins cap openai-agents, litellm, fastmcp and composio.
+  "openai-agents[litellm]>=0.17.3,<0.18",  # 0.18+ needs openai>=2.36; open-webui pins openai==2.29.0
+  "litellm>=1.95.0,<1.96",  # model routing, reviewed per bump. 1.96+ needs aiohttp>=3.14.2; open-webui pins 3.13.5
+  "claude-agent-sdk>=0.2.159,<0.3",
+  "open-webui==0.11.4",     # PINNED: per-user MCP OAuth + branding patches couple to OWUI internals, so upgrades are deliberate. Re-run tests/ + HubzoidTests before bumping.
+  "fastapi>=0.136.3,<1",
+  "fastmcp>=3.4.7,<4",    # mcp_server.py hosted MCP endpoint (Streamable HTTP)
+  "starlette>=0.47,<2",     # edge.py reverse-proxy app
+  "uvicorn[standard]>=0.51,<1",
+  "httpx>=0.28.1,<1",
+  "websockets>=15,<18",     # edge.py websocket passthrough to Open WebUI
+  "pydantic>=2.13,<3",
+  "PyYAML>=6.0.3,<7",
+  "python-dotenv>=1.2,<2",
+  "cryptography>=48,<51",   # access/owui_oauth_tokens.py: Fernet-decrypt OWUI's per-user tool tokens (same scheme OWUI uses)
+  "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42; open-webui pins 2.29.0 (connected_accounts / auth_configs / link)
+  "opentelemetry-proto>=1.44,<2",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
+  "typer>=0.27,<1",
+  "rich>=13.9,<14",           # httpx[cli] (via open-webui) caps rich below 14
+  "jinja2>=3.1.6,<4",
+  "slack-bolt>=1.30,<2",
+  "pypdf>=6.7,<7",
+  "Pillow>=12.2,<13",       # vision_inject.py resizes uploaded images before sending them to the model
+  "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL. open-webui pins 2.0.x
+  "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
+  "dbos>=3.1,<4",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
+  "croniter>=6.2,<7",       # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
 ]
 
 [project.optional-dependencies]
-postgres = ["psycopg[binary]>=3.1"]  # only when DATABASE_URL points at Postgres
+postgres = ["psycopg[binary]>=3.3,<4"]  # only when DATABASE_URL points at Postgres
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",

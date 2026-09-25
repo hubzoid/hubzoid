@@ -1,0 +1,1004 @@
+# Reviewed runtime dependency set for the Docker image and deployments.
+# Regenerate after changing pyproject.toml:
+#   uv pip compile pyproject.toml --extra postgres --python-version 3.12 --no-header -o requirements.lock
+
+accelerate==1.13.0
+    # via open-webui
+aiocache==0.12.3
+    # via open-webui
+aiodns==3.6.1
+    # via open-webui
+aiofile==3.12.3
+    # via py-key-value-aio
+aiofiles==25.1.0
+    # via open-webui
+aiohappyeyeballs==2.7.1
+    # via aiohttp
+aiohttp==3.13.5
+    # via
+    #   kubernetes
+    #   litellm
+    #   open-webui
+aiosignal==1.4.0
+    # via aiohttp
+aiosqlite==0.22.1
+    # via open-webui
+alembic==1.18.4
+    # via open-webui
+annotated-doc==0.0.5
+    # via
+    #   fastapi
+    #   typer
+annotated-types==0.8.0
+    # via pydantic
+anthropic==0.86.0
+    # via open-webui
+antlr4-python3-runtime==4.9.3
+    # via omegaconf
+anyio==4.15.1
+    # via
+    #   anthropic
+    #   claude-agent-sdk
+    #   composio-client
+    #   httpx
+    #   httpx2
+    #   langsmith
+    #   mcp
+    #   openai
+    #   py-key-value-aio
+    #   pycrdt
+    #   sse-starlette
+    #   starlette
+    #   watchfiles
+argon2-cffi==25.1.0
+    # via open-webui
+argon2-cffi-bindings==26.1.0
+    # via argon2-cffi
+asgiref==3.11.1
+    # via open-webui
+attrs==26.1.0
+    # via
+    #   aiohttp
+    #   cyclopts
+    #   jsonschema
+    #   jsonschema-path
+    #   referencing
+authlib==1.7.2
+    # via
+    #   fastmcp-slim
+    #   open-webui
+av==18.1.0
+    # via faster-whisper
+azure-ai-documentintelligence==1.0.2
+    # via open-webui
+azure-core==1.41.0
+    # via
+    #   azure-ai-documentintelligence
+    #   azure-identity
+    #   azure-storage-blob
+azure-identity==1.25.3
+    # via open-webui
+azure-storage-blob==12.29.0
+    # via open-webui
+bcrypt==5.0.0
+    # via
+    #   chromadb
+    #   open-webui
+beartype==0.22.9
+    # via py-key-value-aio
+beautifulsoup4==4.14.3
+    # via open-webui
+bidict==0.24.1
+    # via python-socketio
+black==26.5.1
+    # via open-webui
+boto3==1.42.62
+    # via open-webui
+botocore==1.42.97
+    # via
+    #   boto3
+    #   s3transfer
+brotli==1.2.0
+    # via
+    #   httpx
+    #   open-webui
+    #   starlette-compress
+brotlicffi==1.2.0.1
+    # via open-webui
+build==1.6.1
+    # via chromadb
+cachetools==7.2.0
+    # via py-key-value-aio
+caio==0.12.4
+    # via aiofile
+casbin==1.43.0
+    # via hubzoid (pyproject.toml)
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+    #   kubernetes
+    #   opensearch-py
+    #   requests
+cffi==2.1.1
+    # via
+    #   argon2-cffi-bindings
+    #   brotlicffi
+    #   cryptography
+    #   pycares
+    #   soundfile
+chardet==7.4.3
+    # via open-webui
+charset-normalizer==3.5.1
+    # via requests
+chromadb==1.5.9
+    # via open-webui
+claude-agent-sdk==0.2.159
+    # via hubzoid (pyproject.toml)
+click==8.5.0
+    # via
+    #   black
+    #   dbos
+    #   ddgs
+    #   httpx
+    #   huggingface-hub
+    #   litellm
+    #   uvicorn
+cloudpickle==3.1.2
+    # via joblib
+colorlog==6.12.0
+    # via rapidocr
+composio==0.15.0
+    # via hubzoid (pyproject.toml)
+composio-client==1.39.0
+    # via composio
+croniter==6.2.4
+    # via hubzoid (pyproject.toml)
+cryptography==48.0.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   authlib
+    #   azure-identity
+    #   azure-storage-blob
+    #   google-auth
+    #   joserfc
+    #   msal
+    #   msoffcrypto-tool
+    #   open-webui
+    #   pyjwt
+ctranslate2==4.8.2
+    # via faster-whisper
+cyclopts==5.0.0
+    # via fastmcp-slim
+dbos==3.1.0
+    # via hubzoid (pyproject.toml)
+ddgs==9.14.4
+    # via open-webui
+defusedxml==0.7.1
+    # via youtube-transcript-api
+distro==1.9.0
+    # via
+    #   anthropic
+    #   composio-client
+    #   langsmith
+    #   openai
+dnspython==2.8.0
+    # via email-validator
+docstring-parser==0.18.0
+    # via
+    #   anthropic
+    #   cyclopts
+docx2txt==0.9
+    # via open-webui
+durationpy==0.11
+    # via kubernetes
+einops==0.8.2
+    # via open-webui
+email-validator==2.3.0
+    # via pydantic
+et-xmlfile==2.0.0
+    # via openpyxl
+events==0.5
+    # via opensearch-py
+exceptiongroup==1.3.1
+    # via fastmcp-slim
+fake-useragent==2.2.0
+    # via
+    #   ddgs
+    #   open-webui
+fastapi==0.136.3
+    # via
+    #   hubzoid (pyproject.toml)
+    #   open-webui
+faster-whisper==1.2.1
+    # via open-webui
+fastmcp==3.4.7
+    # via hubzoid (pyproject.toml)
+fastmcp-slim==3.4.7
+    # via fastmcp
+fastuuid==0.14.0
+    # via litellm
+filelock==4.0.3
+    # via
+    #   huggingface-hub
+    #   torch
+flatbuffers==25.12.19
+    # via onnxruntime
+frozenlist==1.8.0
+    # via
+    #   aiohttp
+    #   aiosignal
+fsspec==2026.9.0
+    # via
+    #   huggingface-hub
+    #   torch
+ftfy==6.3.1
+    # via open-webui
+google-api-core==2.39.0
+    # via
+    #   google-cloud-core
+    #   google-cloud-storage
+google-auth==2.58.1
+    # via
+    #   google-api-core
+    #   google-cloud-core
+    #   google-cloud-storage
+google-cloud-core==2.7.0
+    # via google-cloud-storage
+google-cloud-storage==3.9.0
+    # via open-webui
+google-crc32c==1.9.0
+    # via
+    #   google-cloud-storage
+    #   google-resumable-media
+google-re2==1.1.20251105
+    # via open-webui
+google-resumable-media==2.10.2
+    # via google-cloud-storage
+googleapis-common-protos==1.75.0
+    # via
+    #   google-api-core
+    #   open-webui
+    #   opentelemetry-exporter-otlp-proto-grpc
+greenlet==3.5.6
+    # via sqlalchemy
+griffelib==2.3.0
+    # via
+    #   fastmcp-slim
+    #   openai-agents
+grpcio==1.84.0
+    # via
+    #   chromadb
+    #   opensearch-protobufs
+    #   opentelemetry-exporter-otlp-proto-grpc
+h11==0.16.0
+    # via
+    #   httpcore
+    #   httpcore2
+    #   uvicorn
+    #   wsproto
+h2==4.4.1
+    # via httpx
+hf-xet==1.6.0
+    # via huggingface-hub
+hiredis==3.4.0
+    # via open-webui
+hpack==4.2.0
+    # via h2
+httpcore==1.0.9
+    # via httpx
+httpcore2==2.13.1
+    # via httpx2
+httptools==0.8.0
+    # via uvicorn
+httpx==0.28.1
+    # via
+    #   hubzoid (pyproject.toml)
+    #   anthropic
+    #   chromadb
+    #   composio-client
+    #   ddgs
+    #   fastmcp-slim
+    #   huggingface-hub
+    #   litellm
+    #   mcp
+    #   open-webui
+    #   openai
+httpx-sse==0.4.3
+    # via mcp
+httpx2==2.13.1
+    # via langsmith
+huggingface-hub==1.33.0
+    # via
+    #   accelerate
+    #   faster-whisper
+    #   sentence-transformers
+    #   tokenizers
+    #   transformers
+hyperframe==6.1.0
+    # via h2
+idna==3.20
+    # via
+    #   anyio
+    #   email-validator
+    #   httpx
+    #   httpx2
+    #   requests
+    #   yarl
+importlib-metadata==8.9.0
+    # via litellm
+importlib-resources==7.1.0
+    # via chromadb
+isodate==0.7.2
+    # via
+    #   azure-ai-documentintelligence
+    #   azure-storage-blob
+itsdangerous==2.2.0
+    # via
+    #   open-webui
+    #   starsessions
+jaraco-classes==3.4.0
+    # via keyring
+jaraco-context==6.1.2
+    # via keyring
+jaraco-functools==4.6.0
+    # via keyring
+jinja2==3.1.6
+    # via
+    #   hubzoid (pyproject.toml)
+    #   litellm
+    #   torch
+jiter==0.17.0
+    # via
+    #   anthropic
+    #   openai
+jmespath==1.1.0
+    # via
+    #   boto3
+    #   botocore
+joblib==1.6.0
+    # via scikit-learn
+joserfc==1.7.4
+    # via
+    #   authlib
+    #   fastmcp-slim
+    #   open-webui
+json-schema-to-pydantic==0.4.11
+    # via composio
+jsonpatch==1.33
+    # via langchain-core
+jsonpointer==3.1.1
+    # via jsonpatch
+jsonref==1.1.0
+    # via fastmcp-slim
+jsonschema==4.26.0
+    # via
+    #   chromadb
+    #   claude-agent-sdk
+    #   litellm
+    #   mcp
+jsonschema-path==0.5.0
+    # via fastmcp-slim
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+keyring==25.7.0
+    # via py-key-value-aio
+kubernetes==36.0.3
+    # via chromadb
+langchain-classic==1.0.7
+    # via open-webui
+langchain-core==1.4.8
+    # via
+    #   langchain-classic
+    #   langchain-text-splitters
+    #   open-webui
+langchain-protocol==0.0.19
+    # via langchain-core
+langchain-text-splitters==1.1.2
+    # via
+    #   langchain-classic
+    #   open-webui
+langsmith==0.14.0
+    # via
+    #   langchain-classic
+    #   langchain-core
+ldap3==2.9.1
+    # via open-webui
+litellm==1.95.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   openai-agents
+loguru==0.7.3
+    # via open-webui
+lxml==6.1.1
+    # via
+    #   ddgs
+    #   open-webui
+    #   python-docx
+    #   python-pptx
+mako==1.4.3
+    # via alembic
+markdown==3.10.2
+    # via open-webui
+markdown-it-py==4.2.0
+    # via rich
+markupsafe==3.0.3
+    # via
+    #   jinja2
+    #   mako
+mcp==1.27.2
+    # via
+    #   claude-agent-sdk
+    #   fastmcp-slim
+    #   open-webui
+    #   openai-agents
+mdurl==0.1.2
+    # via markdown-it-py
+mmh3==5.3.0
+    # via chromadb
+more-itertools==11.1.0
+    # via
+    #   jaraco-classes
+    #   jaraco-functools
+mpmath==1.3.0
+    # via sympy
+msal==1.39.0
+    # via
+    #   azure-identity
+    #   msal-extensions
+msal-extensions==1.3.1
+    # via azure-identity
+msoffcrypto-tool==6.0.0
+    # via open-webui
+multidict==6.9.1
+    # via
+    #   aiohttp
+    #   yarl
+mypy-extensions==1.1.0
+    # via black
+narwhals==2.26.0
+    # via scikit-learn
+networkx==3.7
+    # via torch
+numpy==2.5.3
+    # via
+    #   accelerate
+    #   chromadb
+    #   ctranslate2
+    #   onnxruntime
+    #   opencv-python
+    #   opencv-python-headless
+    #   pandas
+    #   rank-bm25
+    #   rapidocr
+    #   scikit-learn
+    #   scipy
+    #   sentence-transformers
+    #   shapely
+    #   soundfile
+    #   transformers
+oauthlib==3.3.1
+    # via requests-oauthlib
+olefile==0.47
+    # via msoffcrypto-tool
+omegaconf==2.3.1
+    # via rapidocr
+onnxruntime==1.26.0
+    # via
+    #   chromadb
+    #   faster-whisper
+    #   open-webui
+open-webui==0.11.4
+    # via hubzoid (pyproject.toml)
+openai==2.29.0
+    # via
+    #   composio
+    #   litellm
+    #   open-webui
+    #   openai-agents
+openai-agents==0.17.3
+    # via hubzoid (pyproject.toml)
+openapi-pydantic==0.5.1
+    # via fastmcp-slim
+opencv-python==5.0.0.93
+    # via rapidocr
+opencv-python-headless==4.13.0.92
+    # via open-webui
+openpyxl==3.1.5
+    # via open-webui
+opensearch-protobufs==1.2.0
+    # via opensearch-py
+opensearch-py==3.2.0
+    # via open-webui
+opentelemetry-api==1.44.0
+    # via
+    #   chromadb
+    #   fastmcp-slim
+    #   google-api-core
+    #   opentelemetry-exporter-otlp-proto-grpc
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-otlp-proto-common==1.44.0
+    # via opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-exporter-otlp-proto-grpc==1.44.0
+    # via chromadb
+opentelemetry-proto==1.44.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-sdk==1.44.0
+    # via
+    #   chromadb
+    #   opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-semantic-conventions==0.65b0
+    # via opentelemetry-sdk
+orjson==3.11.9
+    # via
+    #   chromadb
+    #   langsmith
+    #   open-webui
+overrides==7.7.0
+    # via chromadb
+packaging==26.3
+    # via
+    #   accelerate
+    #   black
+    #   build
+    #   fastmcp-slim
+    #   huggingface-hub
+    #   langchain-core
+    #   langsmith
+    #   onnxruntime
+    #   transformers
+pandas==3.0.3
+    # via open-webui
+pathable==0.6.0
+    # via jsonschema-path
+pathspec==1.1.1
+    # via black
+pillow==12.2.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   open-webui
+    #   python-pptx
+    #   rapidocr
+platformdirs==4.11.12
+    # via
+    #   black
+    #   fastmcp-slim
+primp==2.0.1
+    # via ddgs
+propcache==0.5.4
+    # via
+    #   aiohttp
+    #   yarl
+proto-plus==1.28.4
+    # via google-api-core
+protobuf==7.36.2
+    # via
+    #   google-api-core
+    #   googleapis-common-protos
+    #   onnxruntime
+    #   opensearch-protobufs
+    #   opentelemetry-proto
+    #   proto-plus
+psutil==7.2.2
+    # via
+    #   accelerate
+    #   open-webui
+psycopg==3.3.4
+    # via
+    #   hubzoid (pyproject.toml)
+    #   dbos
+    #   open-webui
+psycopg-binary==3.3.4
+    # via psycopg
+py-key-value-aio==0.4.6
+    # via fastmcp-slim
+pyarrow==20.0.0
+    # via open-webui
+pyasn1==0.6.4
+    # via
+    #   ldap3
+    #   pyasn1-modules
+pyasn1-modules==0.4.2
+    # via google-auth
+pybase64==1.5.0
+    # via chromadb
+pycares==4.11.0
+    # via aiodns
+pyclipper==1.4.0
+    # via rapidocr
+pycparser==3.0
+    # via cffi
+pycrdt==0.13.1
+    # via open-webui
+pydantic==2.13.4
+    # via
+    #   hubzoid (pyproject.toml)
+    #   anthropic
+    #   chromadb
+    #   composio
+    #   composio-client
+    #   fastapi
+    #   fastmcp-slim
+    #   json-schema-to-pydantic
+    #   langchain-classic
+    #   langchain-core
+    #   langsmith
+    #   litellm
+    #   mcp
+    #   open-webui
+    #   openai
+    #   openai-agents
+    #   openapi-pydantic
+    #   pydantic-settings
+pydantic-core==2.46.4
+    # via pydantic
+pydantic-settings==2.15.0
+    # via
+    #   chromadb
+    #   fastmcp-slim
+    #   mcp
+pydub==0.25.1
+    # via open-webui
+pygments==2.21.0
+    # via
+    #   httpx
+    #   rich
+    #   rich-rst
+pyjwt==2.13.0
+    # via
+    #   mcp
+    #   msal
+    #   open-webui
+pymysql==1.2.0
+    # via open-webui
+pypandoc==1.17
+    # via open-webui
+pypdf==6.7.5
+    # via
+    #   hubzoid (pyproject.toml)
+    #   open-webui
+pyperclip==1.11.0
+    # via fastmcp-slim
+pypika==0.51.1
+    # via chromadb
+pyproject-hooks==1.3.3
+    # via build
+pysher==1.0.8
+    # via composio
+python-dateutil==2.9.0.post0
+    # via
+    #   botocore
+    #   croniter
+    #   dbos
+    #   kubernetes
+    #   opensearch-py
+    #   pandas
+python-docx==1.2.0
+    # via open-webui
+python-dotenv==1.2.3
+    # via
+    #   hubzoid (pyproject.toml)
+    #   fastmcp-slim
+    #   litellm
+    #   pydantic-settings
+    #   uvicorn
+python-engineio==4.14.0
+    # via python-socketio
+python-mimeparse==2.0.0
+    # via open-webui
+python-multipart==0.0.32
+    # via
+    #   fastmcp-slim
+    #   mcp
+    #   open-webui
+python-pptx==1.0.2
+    # via open-webui
+python-socketio==5.16.2
+    # via open-webui
+pytokens==0.4.1
+    # via black
+pytz==2026.2
+    # via open-webui
+pyxlsb==1.0.10
+    # via open-webui
+pyyaml==6.0.3
+    # via
+    #   hubzoid (pyproject.toml)
+    #   accelerate
+    #   chromadb
+    #   ctranslate2
+    #   dbos
+    #   fastmcp-slim
+    #   huggingface-hub
+    #   jsonschema-path
+    #   kubernetes
+    #   langchain-classic
+    #   langchain-core
+    #   omegaconf
+    #   rapidocr
+    #   transformers
+    #   uvicorn
+rank-bm25==0.2.2
+    # via open-webui
+rapidocr==3.9.2
+    # via open-webui
+redis==8.0.1
+    # via
+    #   open-webui
+    #   starsessions
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-path
+    #   jsonschema-specifications
+regex==2026.5.9
+    # via
+    #   open-webui
+    #   tiktoken
+    #   transformers
+requests==2.34.2
+    # via
+    #   azure-core
+    #   google-api-core
+    #   google-cloud-storage
+    #   kubernetes
+    #   langchain-classic
+    #   langsmith
+    #   msal
+    #   open-webui
+    #   openai-agents
+    #   opensearch-py
+    #   pysher
+    #   rapidocr
+    #   requests-oauthlib
+    #   requests-toolbelt
+    #   tiktoken
+    #   youtube-transcript-api
+requests-oauthlib==2.0.0
+    # via kubernetes
+requests-toolbelt==1.0.0
+    # via langsmith
+rich==13.9.4
+    # via
+    #   hubzoid (pyproject.toml)
+    #   chromadb
+    #   cyclopts
+    #   fastmcp-slim
+    #   httpx
+    #   rich-rst
+    #   typer
+rich-rst==2.1.0
+    # via cyclopts
+rpds-py==2026.6.3
+    # via
+    #   jsonschema
+    #   referencing
+s3transfer==0.16.1
+    # via boto3
+safetensors==0.8.0
+    # via
+    #   accelerate
+    #   transformers
+scikit-learn==1.9.1
+    # via sentence-transformers
+scipy==1.18.1
+    # via
+    #   scikit-learn
+    #   sentence-transformers
+sentence-transformers==5.5.1
+    # via open-webui
+sentencepiece==0.2.1
+    # via open-webui
+setuptools==84.0.0
+    # via torch
+shapely==2.1.2
+    # via rapidocr
+shellingham==1.5.4
+    # via typer
+simple-websocket==1.1.0
+    # via python-engineio
+simpleeval==1.0.8
+    # via casbin
+six==1.17.0
+    # via
+    #   kubernetes
+    #   python-dateutil
+    #   rapidocr
+slack-bolt==1.30.0
+    # via hubzoid (pyproject.toml)
+slack-sdk==3.44.1
+    # via slack-bolt
+sniffio==1.3.1
+    # via
+    #   anthropic
+    #   claude-agent-sdk
+    #   composio-client
+    #   langsmith
+    #   openai
+socksio==1.0.0
+    # via httpx
+soundfile==0.13.1
+    # via open-webui
+soupsieve==2.10
+    # via beautifulsoup4
+sqlalchemy==2.0.50
+    # via
+    #   hubzoid (pyproject.toml)
+    #   alembic
+    #   dbos
+    #   langchain-classic
+    #   open-webui
+sse-starlette==3.4.11
+    # via mcp
+starlette==1.7.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   fastapi
+    #   fastmcp-slim
+    #   mcp
+    #   sse-starlette
+    #   starlette-compress
+    #   starsessions
+starlette-compress==1.7.1
+    # via open-webui
+starsessions==2.2.1
+    # via open-webui
+sympy==1.14.0
+    # via torch
+tenacity==9.1.4
+    # via
+    #   chromadb
+    #   langchain-core
+threadpoolctl==3.7.0
+    # via scikit-learn
+tiktoken==0.13.0
+    # via
+    #   litellm
+    #   open-webui
+tokenizers==0.22.2
+    # via
+    #   chromadb
+    #   faster-whisper
+    #   litellm
+    #   transformers
+torch==2.14.0
+    # via
+    #   accelerate
+    #   sentence-transformers
+tqdm==4.70.1
+    # via
+    #   chromadb
+    #   faster-whisper
+    #   huggingface-hub
+    #   openai
+    #   rapidocr
+    #   sentence-transformers
+    #   transformers
+transformers==5.5.4
+    # via
+    #   open-webui
+    #   sentence-transformers
+truststore==0.10.4
+    # via
+    #   httpcore2
+    #   httpx2
+typer==0.27.2
+    # via
+    #   hubzoid (pyproject.toml)
+    #   chromadb
+    #   transformers
+types-requests==2.33.0.20260906
+    # via openai-agents
+typing-extensions==4.16.0
+    # via
+    #   aiosignal
+    #   alembic
+    #   anthropic
+    #   anyio
+    #   azure-ai-documentintelligence
+    #   azure-core
+    #   azure-identity
+    #   azure-storage-blob
+    #   beautifulsoup4
+    #   chromadb
+    #   composio
+    #   composio-client
+    #   exceptiongroup
+    #   fastapi
+    #   fastmcp-slim
+    #   grpcio
+    #   httpx2
+    #   huggingface-hub
+    #   langchain-core
+    #   langchain-protocol
+    #   langsmith
+    #   mcp
+    #   openai
+    #   openai-agents
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-grpc
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   psycopg
+    #   py-key-value-aio
+    #   pydantic
+    #   pydantic-core
+    #   python-docx
+    #   python-pptx
+    #   referencing
+    #   sentence-transformers
+    #   sqlalchemy
+    #   starlette
+    #   torch
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   mcp
+    #   pydantic
+    #   pydantic-settings
+uncalled-for==0.4.0
+    # via fastmcp-slim
+urllib3==2.8.0
+    # via
+    #   botocore
+    #   kubernetes
+    #   opensearch-py
+    #   requests
+    #   types-requests
+uuid-utils==0.17.1
+    # via
+    #   langchain-core
+    #   langsmith
+uvicorn==0.51.0
+    # via
+    #   hubzoid (pyproject.toml)
+    #   chromadb
+    #   fastmcp-slim
+    #   mcp
+    #   open-webui
+uvloop==0.22.1
+    # via uvicorn
+validators==0.35.0
+    # via open-webui
+watchfiles==1.3.0
+    # via
+    #   fastmcp-slim
+    #   uvicorn
+wcwidth==0.9.1
+    # via ftfy
+websocket-client==1.9.2
+    # via
+    #   kubernetes
+    #   pysher
+websockets==16.1.1
+    # via
+    #   hubzoid (pyproject.toml)
+    #   dbos
+    #   fastmcp-slim
+    #   langsmith
+    #   openai-agents
+    #   uvicorn
+wsproto==1.3.2
+    # via simple-websocket
+xlrd==2.0.2
+    # via open-webui
+xlsxwriter==3.2.9
+    # via python-pptx
+xxhash==4.0.1
+    # via langsmith
+yarl==1.25.1
+    # via aiohttp
+youtube-transcript-api==1.2.4
+    # via open-webui
+zipp==4.1.0
+    # via importlib-metadata
+zstandard==0.25.0
+    # via
+    #   httpx
+    #   langsmith
+    #   starlette-compress

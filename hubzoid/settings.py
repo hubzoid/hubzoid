@@ -119,6 +119,12 @@ Environment variables explicitly supported:
                          shows cost + the real user WITHOUT running a separate
                          collector. No-op on the OpenAI/LiteLLM path (already
                          standard). See docs/OBSERVABILITY.md.
+  HUBZOID_OPENAI_TRACING true | false (default). OpenAI Agents backend only.
+                         When true, the OpenAI Agents SDK's own tracing exports
+                         runs (including prompts and tool data) to OpenAI's
+                         trace dashboard. Off by default so an OPENAI_API_KEY
+                         never sends run content anywhere undeclared.
+                         HUBZOID_OTEL_ENDPOINT is separate and unaffected.
   HUBZOID_BROWSER        true | false (default). Give every agent in this hub a
                          shared, resource-limited web browser as the full
                          Playwright MCP toolset (browser_navigate, browser_click,
@@ -204,6 +210,7 @@ class Settings:
     slack_identity_mapping: bool = False
     otel_endpoint: str | None = None
     otel_normalize: bool = False
+    openai_tracing: bool = False
     composio_api_key: str | None = None
     connections: tuple[str, ...] = ()
     # Native image vision: pass uploaded images to the model as content blocks.
@@ -286,6 +293,7 @@ def load(hub_dir: Path) -> Settings:
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
         otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
         otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),
+        openai_tracing=truthy(os.environ.get("HUBZOID_OPENAI_TRACING")),
         composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None,
         connections=_conn_slugs(os.environ.get("CONNECTIONS")),
         vision_enabled=truthy(os.environ.get("HUBZOID_VISION", "true")),
