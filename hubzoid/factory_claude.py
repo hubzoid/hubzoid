@@ -670,13 +670,21 @@ class ClaudeRuntime:
                     final_result = getattr(message, "result", None)
                     _record_claude_usage(message)
                     if getattr(message, "is_error", False):
+                        detail = (getattr(message, "errors", None) or [final_result or ""])[0]
                         self.last_error = RuntimeError(
                             f"claude run ended with {getattr(message, 'subtype', 'error')}"
+                            + (f": {detail}" if detail else "")
                         )
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
             self.last_error = exc
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
+            return
+
+        # The SDK reported a failed run (ResultMessage.is_error): surface it the
+        # same way as an exception, as the OpenAI backend does.
+        if self.last_error is not None:
+            yield tw.close() + f"\n\n[agent error: {self.last_error}]"
             return
 
         # Close any thinking block left open (e.g. reasoning with no final text).

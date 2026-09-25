@@ -54,9 +54,11 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
     BRIDGE_PORT=8000 \
     HUBZOID_HOST=0.0.0.0
 
-# Reviewed dependencies first (cached layer), then the package itself.
+# Reviewed dependencies first (cached layer), then the package itself. The
+# lock pins the CPU build of PyTorch, so no CUDA libraries are installed.
 COPY --chown=hubzoid requirements.lock /tmp/hubzoid-src/requirements.lock
-RUN pip install --user -r /tmp/hubzoid-src/requirements.lock
+RUN pip install --user --extra-index-url https://download.pytorch.org/whl/cpu \
+      -r /tmp/hubzoid-src/requirements.lock
 COPY --chown=hubzoid pyproject.toml README.md LICENSE /tmp/hubzoid-src/
 COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
 RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src

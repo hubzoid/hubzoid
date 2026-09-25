@@ -54,17 +54,35 @@ def _secret(hub_dir=None) -> bytes:
         cached = _cache.get(key)
         if cached is not None and path.is_file():
             return cached
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            pass  # another process created it first; read theirs
-        else:
-            with os.fdopen(fd, "w") as f:
-                f.write(secrets.token_hex(32))
+        if not path.is_file():
+            _create_secret(path)
         value = path.read_text().strip().encode("utf-8")
+        if len(value) < 32:
+            raise RuntimeError(
+                f"{path} is empty or too short; delete it to generate a new one"
+            )
         _cache[key] = value
         return value
+
+
+def _create_secret(path: Path) -> None:
+    """Publish a new secret atomically. It is written in full to a private temp
+    file first and then hard-linked into place, so no process ever sees a
+    partial or empty secret. If another process wins the race, keep theirs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{_SECRET_FILE}.{os.getpid()}.{secrets.token_hex(4)}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(secrets.token_hex(32))
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass  # another process published first; theirs wins
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _ttl() -> int:

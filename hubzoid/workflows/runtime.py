@@ -40,6 +40,7 @@ _HUB_DIR: Path | None = None
 _HUB_NAME: str = ""
 _ENGINE: Any = None
 _QUEUE = None  # one durable queue per hub, global concurrency 1
+_APP_VERSION: str | None = None  # this process's workflow-code version
 _lock = threading.Lock()
 
 
@@ -68,19 +69,28 @@ def _app_name(hub_name: str) -> str:
     return slug
 
 
-def _workflow_code_version(hub_dir: Path) -> str:
+def _workflow_code_version(hub_dir: Path, app_name: str) -> str:
     """Identify the hub's workflow code for DBOS recovery.
 
     DBOS resumes an interrupted run only under the same application version. Its
     default version hashes the registered functions, which here is Hubzoid's own
     wrapper, identical for every hub and every edit. So the version is a hash of
-    the hub's workflows/**/*.py instead: editing a workflow never replays an old
-    run on new code. Knowledge or config edits don't change it."""
+    the installed Hubzoid version plus the hub's workflows/**/*.py: editing a
+    workflow or upgrading Hubzoid never replays an old run on different code.
+    Knowledge, settings.yaml and config edits don't change it; code a workflow
+    imports from outside workflows/ isn't covered. The DBOS app name is mixed in
+    because DBOS 3 requires version names to be unique across the apps sharing
+    one system database (hubs can share a Postgres one)."""
     import hashlib
+    from importlib.metadata import PackageNotFoundError, version
 
     from .._fs import resolve_bucket
 
-    digest = hashlib.sha256()
+    digest = hashlib.sha256(app_name.encode() + b"\0")
+    try:
+        digest.update(b"hubzoid " + version("hubzoid").encode() + b"\0")
+    except PackageNotFoundError:
+        pass
     root = resolve_bucket(Path(hub_dir), "workflows")
     if root is not None and root.is_dir():
         for py in sorted(root.rglob("*.py")):
@@ -94,7 +104,7 @@ def _workflow_code_version(hub_dir: Path) -> str:
 def init(hub_dir, hub_name: str | None = None) -> None:
     """Construct the DBOS singleton over this hub's database. Idempotent. Must
     run before any workflow module is imported (the decorator needs DBOS)."""
-    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE
+    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE, _APP_VERSION
     with _lock:
         if _INITED:
             if _HUB_DIR.resolve() != Path(hub_dir).resolve():
@@ -109,11 +119,12 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         # collision-safe); DBOS system tables stay PER-BRIDGE so a gateway's N
         # bridges never share one SQLite DBOS system database.
         _ENGINE = db.operational_engine(_HUB_DIR)
+        _APP_VERSION = _workflow_code_version(_HUB_DIR, _app_name(_HUB_NAME))
         DBOS(
             config={
                 "name": _app_name(_HUB_NAME),
                 "system_database_url": db.dbos_url(_HUB_DIR),
-                "application_version": _workflow_code_version(_HUB_DIR),
+                "application_version": _APP_VERSION,
             }
         )
         _INITED = True
@@ -290,6 +301,7 @@ def launch() -> None:
     _QUEUE = _DBOS.register_queue(
         f"{_app_name(_HUB_NAME)}-wf", global_concurrency=1, on_conflict="always_update"
     )
+    _cancel_runs_from_other_code()
     _LAUNCHED = True
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
     # Publish this hub's workflow catalog to the shared store so the org portal
@@ -305,6 +317,35 @@ def launch() -> None:
         log.exception("workflows: could not publish catalog")
 
 
+def _cancel_runs_from_other_code() -> None:
+    """Cancel queued or interrupted runs started by different workflow code.
+
+    DBOS never resumes them under a new application version, but a pending run
+    still holds the queue's single slot, so one run interrupted before a code
+    change or upgrade would block every later run. Cancelled runs stay in the
+    run list with status CANCELLED."""
+    try:
+        stale = [
+            w
+            for w in _DBOS.list_workflows(
+                status=["PENDING", "ENQUEUED"], queue_name=_QUEUE.name
+            )
+            if w.app_version != _APP_VERSION
+        ]
+    except Exception:  # noqa: BLE001 — never block startup on the sweep
+        log.exception("workflows: could not list runs from previous code")
+        return
+    for w in stale:
+        try:
+            _DBOS.cancel_workflow(w.workflow_id)
+            log.warning(
+                "workflows: cancelled run %s of %r (%s under previous workflow code)",
+                w.workflow_id, w.name, w.status,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("workflows: could not cancel stale run %s", w.workflow_id)
+
+
 def registry() -> list[WorkflowDef]:
     return list(_REGISTRY.values())
 
@@ -317,6 +358,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     must never hang or crash the shutdown path. Resets module state so the
     process could re-init a hub afterwards."""
     global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE
+    global _APP_VERSION
     with _lock:
         if not _INITED:
             return
@@ -334,6 +376,10 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             _HUB_DIR = None
             _HUB_NAME = None
             _ENGINE = None
+            _APP_VERSION = None
+            # Rebuilt on the next launch, with that hub's retry setting.
+            context._LLM_STEP = None
+            context._AGENT_STEP = None
             log.info("workflows: DBOS shut down")
 
 

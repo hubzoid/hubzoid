@@ -346,16 +346,18 @@ you have made idempotent.
 
 **Restarts and code changes.** A run interrupted by a stop or crash resumes on the
 next start: completed steps are not repeated, and the interrupted step runs again.
-Runs are tied to the hub's workflow code (a hash of `workflows/**/*.py`). After
-you edit a workflow, older interrupted runs are **not** resumed on the new code;
-they stay pending in the run list. To change workflow code or upgrade Hubzoid
-safely:
+Runs are tied to the hub's workflow code (a hash of the Hubzoid version and
+`workflows/**/*.py`; code a workflow imports from outside `workflows/` is not
+covered). After you edit a workflow or upgrade Hubzoid, older interrupted or
+queued runs are **not** resumed on the new code: they are cancelled at the next
+start (status `CANCELLED` in the run list), so they can't block the hub's queue.
+To change workflow code or upgrade Hubzoid safely:
 
 1. Drain: wait until `hubzoid schedule status` lists no run as `PENDING` or
    `ENQUEUED`, ideally between scheduled slots.
 2. Deploy the change and restart.
-3. Check the run list. A run left pending from the old code will not continue by
-   itself; start a fresh run with `hubzoid schedule run` if it is still needed.
+3. Check the run list. A run cancelled because of the change will not continue;
+   start a fresh run with `hubzoid schedule run` if it is still needed.
 
 ## Troubleshooting
 

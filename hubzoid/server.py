@@ -68,12 +68,10 @@ def build_app() -> FastAPI:
     # (which itself defaults to the main agent's name).
     model_label = settings.model_label or _slugify(rt.name)
     api_keys = set(settings.bridge_api_keys)
-    default_key_only = api_keys <= {"dev"}
-    if default_key_only:
+    if "dev" in api_keys:
         log.warning(
-            "BRIDGE_API_KEYS is not set, so the bridge uses the public default "
-            "key 'dev'. Set a random key in the hub's .env for any shared or "
-            "deployed install."
+            "BRIDGE_API_KEYS includes the public default key 'dev'. Set a random "
+            "key in the hub's .env for any shared or deployed install."
         )
     max_upload_bytes = settings.max_upload_bytes
 
@@ -305,7 +303,8 @@ def build_app() -> FastAPI:
         if not _signing.verify_artifact_token(
             safe_chat, safe_name, token, expires, hub_dir=hub_dir
         ):
-            if default_key_only:
+            auth = request.headers.get("authorization", "")
+            if auth[7:].strip() == "dev" and auth.lower().startswith("bearer "):
                 raise HTTPException(status_code=401, detail="invalid or expired link")
             _auth(request)
         return _serve_chat_file(

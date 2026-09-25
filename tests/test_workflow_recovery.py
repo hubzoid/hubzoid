@@ -1,7 +1,8 @@
 """A workflow interrupted by a crash resumes on the next start: completed steps
 are not repeated and the run finishes once. If the workflow code changed in
-between, DBOS does not resume the old run on the new code (a different
-application version), so an incompatible change can't silently replay it.
+between, the old run is not resumed on the new code (a different application
+version); it is cancelled so it can't hold the hub's single queue slot, and new
+runs still go through.
 
 Each phase is its own process because DBOS is a process-global singleton, and a
 crash is simulated with SIGKILL.
@@ -78,6 +79,15 @@ _RESUME = textwrap.dedent('''
             break
         time.sleep(0.5)
     print("STATUS", status, flush=True)
+    if len(sys.argv) > 3:  # then prove the queue is not blocked
+        new = runtime.start("nightly", scheduled_at="after-change")
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            s = DBOS.get_workflow_status(new.get_workflow_id()).status
+            if s in ("SUCCESS", "ERROR"):
+                break
+            time.sleep(0.5)
+        print("NEW", s, flush=True)
     runtime.shutdown()
 ''')
 
@@ -116,14 +126,20 @@ def _crash_mid_run(hub_dir, env, log) -> str:
     return wid
 
 
-def _resume(hub_dir, env, wid) -> str:
-    proc = subprocess.run(
-        [sys.executable, "-c", _RESUME, str(hub_dir), wid],
-        capture_output=True, text=True, timeout=180, env=env,
-    )
-    out = [ln for ln in proc.stdout.splitlines() if ln.startswith("STATUS")]
+def _resume(hub_dir, env, wid, *, then_new_run=False):
+    args = [sys.executable, "-c", _RESUME, str(hub_dir), wid]
+    if then_new_run:
+        args.append("new")
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=240, env=env)
+    lines = proc.stdout.splitlines()
+    out = [ln for ln in lines if ln.startswith("STATUS")]
     assert out, proc.stderr[-2000:]
-    return out[-1].split()[1]
+    status = out[-1].split()[1]
+    if not then_new_run:
+        return status
+    new = [ln for ln in lines if ln.startswith("NEW")]
+    assert new, proc.stderr[-2000:]
+    return status, new[-1].split()[1]
 
 
 def test_crashed_run_resumes_and_finishes_once(hub):
@@ -140,5 +156,8 @@ def test_changed_code_does_not_resume_old_run(hub):
     wid = _crash_mid_run(hub_dir, env, log)
     main = hub_dir / "workflows" / "nightly" / "main.py"
     main.write_text(main.read_text().replace('return "finished"', 'return "finished v2"'))
-    assert _resume(hub_dir, env, wid) == "PENDING"
-    assert log.read_text().splitlines() == ["first"]
+    old_status, new_status = _resume(hub_dir, env, wid, then_new_run=True)
+    assert old_status == "CANCELLED"  # not replayed on the new code
+    assert new_status == "SUCCESS"  # and it doesn't block the queue
+    lines = log.read_text().splitlines()
+    assert lines[0] == "first" and lines.count("first") == 2  # only the new run ran

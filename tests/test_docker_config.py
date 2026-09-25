@@ -40,3 +40,11 @@ def test_host_option_reads_env_for_run_and_gateway():
 def test_bridge_always_binds_loopback():
     source = inspect.getsource(cli)
     assert '"--host", "127.0.0.1", "--port", str(br_port)' in source
+
+
+def test_image_uses_cpu_pytorch_without_cuda():
+    lock = (ROOT / "requirements.lock").read_text().lower()
+    assert "download.pytorch.org/whl/cpu" in (ROOT / "Dockerfile").read_text()
+    assert "+cpu" in lock
+    for pkg in ("nvidia-", "cuda-toolkit", "triton=="):
+        assert f"\n{pkg}" not in lock, pkg

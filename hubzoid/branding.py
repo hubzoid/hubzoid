@@ -214,11 +214,16 @@ def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -
     """
     branding_dir = hub_dir / "branding"
     index = _build_source_index(branding_dir)
+    # Put back Open WebUI's own file for every slot this hub doesn't brand, so
+    # an unbranded hub (or a brand with fewer files) never shows a previous
+    # hub's images from the shared install.
+    _restore_originals(static_dir, keep=set(index))
 
     applied: dict[str, Path | str] = {}
     for canonical, src in index.items():
         for dst in (static_dir / canonical, static_dir / "static" / canonical):
             dst.parent.mkdir(parents=True, exist_ok=True)
+            _keep_original(static_dir, dst)
             shutil.copyfile(src, dst)
         applied[canonical] = src
         log.info("branding: %s -> %s", src.name, canonical)
@@ -235,6 +240,40 @@ def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -
         log.info("branding: baseline custom.css -> custom.css")
 
     return applied
+
+
+_ORIGINALS = ".hubzoid-originals"
+
+
+def _keep_original(static_dir: Path, dst: Path) -> None:
+    """Before the first overwrite of an Open WebUI asset, keep its original
+    (or note that there was none) under static_dir/.hubzoid-originals/."""
+    backup = static_dir / _ORIGINALS / dst.relative_to(static_dir)
+    absent = backup.with_name(backup.name + ".absent")
+    if backup.exists() or absent.exists():
+        return
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if dst.is_file():
+        shutil.copyfile(dst, backup)
+    else:
+        absent.touch()
+
+
+def _restore_originals(static_dir: Path, *, keep: set[str]) -> None:
+    """Restore every kept original whose slot is not in ``keep``."""
+    root = static_dir / _ORIGINALS
+    if not root.is_dir():
+        return
+    for backup in root.rglob("*"):
+        if not backup.is_file():
+            continue
+        rel = backup.relative_to(root)
+        if rel.name.endswith(".absent"):
+            rel = rel.with_name(rel.name[: -len(".absent")])
+            if rel.name not in keep:
+                (static_dir / rel).unlink(missing_ok=True)
+        elif rel.name not in keep:
+            shutil.copyfile(backup, static_dir / rel)
 
 
 def static_dirs() -> list[Path]:

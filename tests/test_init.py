@@ -226,6 +226,7 @@ def test_new_hub_gets_a_random_bridge_key(tmp_path):
 
     assert key("one") and key("one") != "dev"
     assert key("one") != key("two")
+    assert ((tmp_path / "one" / ".env").stat().st_mode & 0o777) == 0o600
 
 
 def test_init_never_copies_template_runtime_state(tmp_path, monkeypatch):

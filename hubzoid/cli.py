@@ -155,6 +155,7 @@ def init(
                 f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated, first one is what Open WebUI sees",
             )
         )
+        env_dst.chmod(0o600)  # it holds a live bridge key
         written.append(env_dst)
 
     # 3. If the parent looks fresh and we are scaffolding a sub-folder, drop

@@ -284,3 +284,34 @@ def test_has_assets(tmp_path):
     good = tmp_path / "b2"
     _write(good / "favicon.png", "x")
     assert branding.has_assets(good) is True
+
+
+def test_unbranded_hub_gets_open_webui_images_back(tmp_path):
+    """A hub without branding files shows Open WebUI's own images, even when a
+    branded hub stamped the same install before it."""
+    static = tmp_path / "static"
+    _write(static / "favicon.png", "owui-favicon")
+    branded = tmp_path / "branded"
+    _write(branded / "branding" / "logo.png", "acme-logo")
+    branding.apply(branded, static)
+    assert (static / "favicon.png").read_text() == "acme-logo"
+
+    unbranded = tmp_path / "plain"
+    unbranded.mkdir()
+    branding.apply(unbranded, static)
+    assert (static / "favicon.png").read_text() == "owui-favicon"
+    # a file Open WebUI never had is removed again
+    assert not (static / "static" / "favicon.png").exists()
+
+
+def test_switching_brands_restores_slots_the_new_brand_lacks(tmp_path):
+    static = tmp_path / "static"
+    _write(static / "splash.png", "owui-splash")
+    first = tmp_path / "first"
+    _write(first / "branding" / "splash.png", "first-splash")
+    branding.apply(first, static)
+    second = tmp_path / "second"
+    _write(second / "branding" / "favicon.svg", "<svg>second</svg>")
+    branding.apply(second, static)
+    assert (static / "splash.png").read_text() == "owui-splash"
+    assert (static / "favicon.svg").read_text() == "<svg>second</svg>"

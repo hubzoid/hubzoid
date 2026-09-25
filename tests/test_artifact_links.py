@@ -83,6 +83,14 @@ def test_default_key_is_not_accepted_on_public_route(hub, monkeypatch):
     assert r.status_code == 401
 
 
+def test_default_key_rejected_even_alongside_a_real_key(hub, monkeypatch):
+    client = _client(monkeypatch, keys="dev,k-7f3a9c")
+    r = client.get("/artifacts/c1/report.txt", headers={"Authorization": "Bearer dev"})
+    assert r.status_code == 401
+    r = client.get("/artifacts/c1/report.txt", headers={"Authorization": "Bearer k-7f3a9c"})
+    assert r.status_code == 200
+
+
 def test_real_bridge_key_still_works_for_api_callers(hub, monkeypatch):
     client = _client(monkeypatch, keys="k-7f3a9c")
     r = client.get("/artifacts/c1/report.txt", headers={"Authorization": "Bearer k-7f3a9c"})
@@ -123,3 +131,33 @@ def test_deleting_the_secret_revokes_old_links(hub, monkeypatch):
     old = _signing.artifact_query("c1", "report.txt", hub_dir=hub)
     os.remove(hub / ".hubzoid" / "artifact_secret")
     assert client.get(_query(old)).status_code == 401
+
+
+def test_concurrent_first_use_agrees_on_one_full_secret(hub):
+    """Many processes creating the secret at once all end up with the same
+    complete value; none can read a partial or empty file."""
+    import subprocess
+    import sys
+
+    script = (
+        "import sys; from hubzoid import _signing; "
+        "print(_signing._secret(sys.argv[1]).decode())"
+    )
+    procs = [
+        subprocess.Popen([sys.executable, "-c", script, str(hub)],
+                         stdout=subprocess.PIPE, text=True)
+        for _ in range(8)
+    ]
+    values = {p.communicate(timeout=60)[0].strip() for p in procs}
+    assert len(values) == 1
+    (value,) = values
+    assert len(value) == 64
+    assert not list((hub / ".hubzoid").glob(".artifact_secret.*"))  # no temp files left
+
+
+def test_empty_secret_file_is_refused(hub):
+    secret = hub / ".hubzoid" / "artifact_secret"
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_text("")
+    with pytest.raises(RuntimeError, match="too short"):
+        _signing.sign_artifact_path("c1", "report.txt", hub_dir=hub)
