@@ -365,9 +365,9 @@ def test_explicit_migration_on_postgres_operational_store(postgres_url, tmp_path
     # Virgin operational store: other tests share this one Postgres DB.
     eng = create_engine(postgres_url)
     with eng.begin() as conn:
-        for t in ("hz_grants", "hz_meta", "hz_policy_revision", "hz_identities",
-                  "hz_identity_attrs", "hz_access_audit", "hz_workflows", "hz_workflow_kv",
-                  "hz_usage", "hz_alembic_operational"):
+        tables = conn.execute(text(
+            "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'hz\\_%'")).scalars().all()
+        for t in tables:  # every Hubzoid table, including ones added by later migrations
             conn.execute(text(f"DROP TABLE IF EXISTS {t} CASCADE"))
     eng.dispose()
     access._stores.clear()

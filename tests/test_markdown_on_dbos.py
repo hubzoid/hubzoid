@@ -244,3 +244,14 @@ def test_bridge_start_runs_a_due_markdown_task(tmp_path, monkeypatch):
             time.sleep(0.5)
     assert (hub / "ping.txt").read_text().strip() == "pong"
     assert sch.ScheduleState(hub).get("ping")["last_result"] == "done"
+
+
+def test_list_form_run_task(repo):
+    """`run: ["python", "jobs/x.py"]` (an argv list, as deployed hubs use)."""
+    hub, _, env = repo
+    (hub / "jobs").mkdir()
+    (hub / "jobs" / "digest.py").write_text("open('digest.txt', 'w').write('sent')\n")
+    _task(hub, "digest", f'schedule: "0 6 * * *"\nrun: ["{sys.executable}", "jobs/digest.py"]\ntimeout: 600')
+    out, _ = _run(hub, env, "digest", "20260926T0600")
+    assert out["result"] == "done"
+    assert (hub / "digest.txt").read_text() == "sent"
