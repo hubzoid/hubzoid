@@ -68,6 +68,13 @@ def build_app() -> FastAPI:
     # (which itself defaults to the main agent's name).
     model_label = settings.model_label or _slugify(rt.name)
     api_keys = set(settings.bridge_api_keys)
+    default_key_only = api_keys <= {"dev"}
+    if default_key_only:
+        log.warning(
+            "BRIDGE_API_KEYS is not set, so the bridge uses the public default "
+            "key 'dev'. Set a random key in the hub's .env for any shared or "
+            "deployed install."
+        )
     max_upload_bytes = settings.max_upload_bytes
 
     # In-flight chat counter: the scheduler's idle gate. Scheduled tasks only
@@ -287,13 +294,19 @@ def build_app() -> FastAPI:
     @app.get("/artifacts/{chat_id}/{filename:path}")
     async def get_artifact(chat_id: str, filename: str, request: Request):
         # Browsers click links without a Bearer header. We accept either:
-        #   * the standard Bearer api key (for curl / SDK callers), OR
         #   * a signed token in `?t=<hex>` (the link Hubzoid writes into
-        #     chat by default — see hubzoid._signing).
+        #     chat by default — see hubzoid._signing), OR
+        #   * a real Bearer api key (for curl / SDK callers). This route is
+        #     public behind the edge, so the default "dev" key is not accepted.
         safe_chat = _require_safe_chat_id(chat_id)
         safe_name = _safe_path_component(filename)
         token = request.query_params.get("t")
-        if not _signing.verify_artifact_token(safe_chat, safe_name, token):
+        expires = request.query_params.get("e")
+        if not _signing.verify_artifact_token(
+            safe_chat, safe_name, token, expires, hub_dir=hub_dir
+        ):
+            if default_key_only:
+                raise HTTPException(status_code=401, detail="invalid or expired link")
             _auth(request)
         return _serve_chat_file(
             base=memlib.chat_artifact_dir(hub_dir, safe_chat),

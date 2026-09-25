@@ -127,6 +127,7 @@ def test_write_artifact_without_chat_records_nothing(ctx):
 # (e.g. a validator emitting an encoded sidecar into the same artifacts dir)
 # ---------------------------------------------------------------------------
 def test_surface_artifact_records_link_in_chat(ctx, monkeypatch):
+    monkeypatch.setenv("HUBZOID_HUB_DIR", str(ctx.hub_dir))
     monkeypatch.setenv("BRIDGE_PORT", "8001")
     monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
     with _request_ctx.chat_scope("chat-s"):
@@ -189,6 +190,7 @@ def test_repeated_write_then_footer_yields_one_link_per_file(ctx, monkeypatch):
     # the form, the first validate fails, it rewrites the same file, then a
     # successful validate surfaces the encoded sidecar. The footer must show
     # exactly one link per distinct file (the bug from a live production chat).
+    monkeypatch.setenv("HUBZOID_HUB_DIR", str(ctx.hub_dir))
     monkeypatch.setenv("BRIDGE_PORT", "9000")
     monkeypatch.delenv("HUBZOID_PUBLIC_URL", raising=False)
     write = _by_name(files_mod.make(ctx), "write_artifact")

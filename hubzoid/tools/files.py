@@ -19,6 +19,7 @@ agent never has to think about paths — the framework owns them.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -32,6 +33,8 @@ from .. import memory as memlib
 from .. import upload_previews
 from .. import uploads as uploads_lib
 from ._caps import truncate_with_overflow as _truncate
+
+log = logging.getLogger(__name__)
 
 
 _READ_FILE_CAP = 25_000
@@ -131,7 +134,7 @@ def make(ctx) -> list:
         target.write_text(content, encoding="utf-8")
         size = target.stat().st_size
 
-        url = _artifact_url(safe_name)
+        url = _artifact_url(safe_name, hub_dir)
         size_label = _format_size(size)
         if url:
             # Record the link so the runtime surfaces it to the user even if
@@ -317,7 +320,7 @@ def _artifact_dir(hub_dir: Path, fallback: Path) -> Path:
     return fallback
 
 
-def _artifact_url(filename: str) -> str | None:
+def _artifact_url(filename: str, hub_dir: Path | None = None) -> str | None:
     """Build a download URL for an artifact in the current chat.
 
     The URL embeds a short HMAC-signed token (``?t=<hex>``) so the browser
@@ -344,10 +347,14 @@ def _artifact_url(filename: str) -> str | None:
     if not base:
         port = os.environ.get("BRIDGE_PORT", "8000")
         base = f"http://127.0.0.1:{port}"
-    token = _signing.sign_artifact_path(chat_id, filename)
+    try:
+        query = _signing.artifact_query(chat_id, filename, hub_dir=hub_dir)
+    except RuntimeError as exc:
+        log.warning("no download link for %s: %s", filename, exc)
+        return None
     return (
         f"{base}/artifacts/{quote(chat_id, safe='')}/{quote(filename, safe='')}"
-        f"?t={token}"
+        f"?{query}"
     )
 
 

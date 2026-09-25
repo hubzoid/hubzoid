@@ -17,7 +17,17 @@ Environment variables explicitly supported:
   AZURE_API_VERSION      Azure REST API version, e.g. 2024-10-21. Optional;
                          LiteLLM falls back to a default if unset.
   BRIDGE_API_KEYS        Comma-separated list of API keys the FastAPI bridge
-                         will accept. Default: "dev".
+                         will accept. Default: "dev", which is public: set a
+                         random key for any shared or deployed install. The
+                         default key is not accepted on the public /artifacts
+                         route.
+  HUBZOID_ARTIFACT_SECRET  Secret that signs artifact download links. Default:
+                         generated per hub in .hubzoid/artifact_secret (0600).
+                         Set it only to share one secret across hosts serving
+                         the same hub. Changing or deleting it revokes every
+                         issued link.
+  HUBZOID_ARTIFACT_LINK_TTL  Seconds a newly issued download link stays valid.
+                         Default: 0 (links never expire).
   MODEL_LABEL            Optional name shown to OpenAI-compatible clients in
                          /v1/models. If blank, derived from AGENTS.md `name`.
   WEBUI_NAME             Optional Open WebUI display name. If blank, Open

@@ -211,3 +211,33 @@ def test_init_dot_skips_parent_wrapper(tmp_path):
     assert (tmp_path / "AGENTS.md").is_file()
     # parent of tmp_path is the pytest tmp root; we must not write there.
     assert not (tmp_path.parent / "requirements.txt").exists()
+
+
+def test_new_hub_gets_a_random_bridge_key(tmp_path):
+    r1 = _run_init(tmp_path, "one")
+    r2 = _run_init(tmp_path, "two")
+    assert r1.exit_code == 0 and r2.exit_code == 0
+
+    def key(name):
+        for line in (tmp_path / name / ".env").read_text().splitlines():
+            if line.startswith("BRIDGE_API_KEYS="):
+                return line.split("=", 1)[1].split()[0]
+        return None
+
+    assert key("one") and key("one") != "dev"
+    assert key("one") != key("two")
+
+
+def test_init_never_copies_template_runtime_state(tmp_path, monkeypatch):
+    import hubzoid.cli as cli
+
+    template = tmp_path / "tpl"
+    (template / ".hubzoid").mkdir(parents=True)
+    (template / ".hubzoid" / "artifact_secret").write_text("leaked")
+    (template / "AGENTS.md").write_text("---\nname: t\ndescription: d\n---\n")
+    monkeypatch.setattr(cli, "_template_root", lambda name: template)
+    (tmp_path / "work").mkdir()
+    result = _run_init(tmp_path / "work", "hub", "--template", "tpl")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "work" / "hub" / "AGENTS.md").is_file()
+    assert not (tmp_path / "work" / "hub" / ".hubzoid").exists()

@@ -122,7 +122,7 @@ def test_write_artifact_signed_url_matches_signing_module(ctx, monkeypatch):
     write = _by_name(files_mod.make(ctx), "write_artifact")
     with _request_ctx.chat_scope("chat-X"):
         result = _call(write, filename="data.txt", content="hi")
-    expected = _signing.sign_artifact_path("chat-X", "data.txt")
+    expected = _signing.sign_artifact_path("chat-X", "data.txt", hub_dir=ctx.hub_dir)
     assert f"?t={expected}" in result
 
 
@@ -264,7 +264,7 @@ def bridge_env(monkeypatch):
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(MINIMAL))
     monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    monkeypatch.setenv("BRIDGE_API_KEYS", "test-bridge-key")
     monkeypatch.setenv("MODEL_LABEL", "testbot-label")
     yield
 
@@ -281,7 +281,7 @@ def test_artifacts_route_serves_file(client):
     try:
         r = client.get(
             "/artifacts/demo-chat/report.json",
-            headers={"Authorization": "Bearer dev"},
+            headers={"Authorization": "Bearer test-bridge-key"},
         )
         assert r.status_code == 200
         assert r.json() == {"hello": "world"}
@@ -326,7 +326,7 @@ def test_artifacts_route_rejects_wrong_signed_token(client):
 def test_artifacts_route_rejects_path_traversal(client):
     r = client.get(
         "/artifacts/c/..%2F..%2Fetc%2Fpasswd",
-        headers={"Authorization": "Bearer dev"},
+        headers={"Authorization": "Bearer test-bridge-key"},
     )
     assert r.status_code in (400, 404)
 
@@ -336,7 +336,7 @@ def test_uploads_route_writes_to_chat_dir(client):
     try:
         r = client.post(
             "/uploads/chat-up/notes.md",
-            headers={"Authorization": "Bearer dev"},
+            headers={"Authorization": "Bearer test-bridge-key"},
             content=payload,
         )
         assert r.status_code == 200
@@ -363,7 +363,7 @@ def test_chat_completion_derives_chat_id_from_body(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         r = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer dev"},
+            headers={"Authorization": "Bearer test-bridge-key"},
             json={
                 "model": "testbot-label",
                 "chat_id": "from-body",
@@ -384,7 +384,7 @@ def test_chat_completion_falls_back_to_hash_of_first_message(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         r = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer dev"},
+            headers={"Authorization": "Bearer test-bridge-key"},
             json={
                 "model": "testbot-label",
                 "messages": [{"role": "user", "content": "stable input"}],
@@ -398,7 +398,7 @@ def test_chat_completion_falls_back_to_hash_of_first_message(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer dev"},
+            headers={"Authorization": "Bearer test-bridge-key"},
             json={
                 "model": "testbot-label",
                 "messages": [
@@ -426,7 +426,7 @@ def test_chat_completion_persists_data_url_attachment(client):
         with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
             r = client.post(
                 "/v1/chat/completions",
-                headers={"Authorization": "Bearer dev"},
+                headers={"Authorization": "Bearer test-bridge-key"},
                 json={
                     "model": "testbot-label",
                     "chat_id": "with-upload",

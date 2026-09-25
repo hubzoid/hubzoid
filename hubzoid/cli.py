@@ -129,6 +129,10 @@ def init(
         if src.is_dir():
             continue
         rel = src.relative_to(template_root)
+        # Never copy runtime state (a template used for a local run or test can
+        # hold .hubzoid/, including the artifact link secret).
+        if rel.parts[0] in (".hubzoid", ".openwebui-data") or "__pycache__" in rel.parts:
+            continue
         dst = hub_dir / rel
         if dst.exists() and not force:
             skipped.append(dst)
@@ -143,7 +147,14 @@ def init(
     if env_dst.exists() and not force:
         skipped.append(env_dst)
     else:
-        env_dst.write_text(_STARTER_ENV)
+        import secrets as _secrets
+
+        env_dst.write_text(
+            _STARTER_ENV.replace(
+                "# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees",
+                f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated, first one is what Open WebUI sees",
+            )
+        )
         written.append(env_dst)
 
     # 3. If the parent looks fresh and we are scaffolding a sub-folder, drop
