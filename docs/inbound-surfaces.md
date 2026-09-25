@@ -242,6 +242,12 @@ full contract. (A plain hub tool or a cron task that polls the inbox works too;
 A non-JSON body is kept as text, never rejected. A sink failure returns `500` so
 the provider retries; everything else acks `200 ok` fast.
 
+A repeated delivery (the same delivery id header, or an identical body within
+about 10 minutes) acks `200 duplicate` without storing it again. A delivery is
+marked as seen only after it is stored, so a crash while storing never swallows
+the provider's retry. A second copy that arrives while the first is still being
+stored gets `503`, which asks the provider to retry it.
+
 ## Running
 
 ```
