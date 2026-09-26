@@ -84,6 +84,11 @@ access behave as before.
   No message content.
 
 ### Security
+- The edge no longer keeps cookies across visitors. Its shared upstream client
+  stored Open WebUI's sign-in cookie and sent it with later requests that had no
+  cookie of their own, so an anonymous visitor could receive the last signed-in
+  user's session. Earlier releases with the edge are affected. After upgrading,
+  rotate `WEBUI_SECRET_KEY` to end any session that may have leaked.
 - A user's personal Open WebUI MCP connection is used only on surfaces allowed
   to reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`). A shared Slack
   channel mention no longer carries the mentioner's token.
