@@ -14,10 +14,11 @@ All notable changes to Hubzoid. Versions follow the package version in
 - `hub.state` is per account (plus `hub.shared_state`) and `hub.run_dir` is a
   private per-run folder. `hub.call_agent` acts as the run's account, so it uses
   that person's Open WebUI connections, never another's.
-- `hub.publish_artifact(...)` publishes a generated file as a private report
-  with a viewer at `/portal/artifacts/<id>`: share with people, groups or the
-  hub, or (with the new `share_public_links` permission) by an expiring public
-  link. HTML reports run sandboxed with no network access.
+- `hub.publish_artifact(...)` publishes a generated file (HTML, PDF, CSV,
+  images and other formats) as a private artifact with a viewer at
+  `/portal/artifacts/<id>`: share with people, groups or the hub, or (with the
+  new **Share artifacts publicly** permission, `share_public_links`) by an
+  expiring public link. HTML artifacts run sandboxed with no network access.
 - `hub.send_email(...)` emails the run's own account over SMTP (`HUBZOID_SMTP_*`)
   or to a preview outbox, with delivery records that never resend an ambiguous
   send. Markdown tasks opt in with `publish_artifacts: true` / `send_email: true`.
@@ -34,6 +35,18 @@ All notable changes to Hubzoid. Versions follow the package version in
   (recorded in `deployment.json`; `HUBZOID_HIDE_OWUI_USERS` overrides; existing
   deployments unchanged). Its Users section opens on Groups; Evaluations and
   Functions stay. The quickstart covers sharing with a team.
+- With the user list hidden, Open WebUI's Admin Panel entry opens Settings >
+  Integrations over Groups, and its Users tab opens Groups, without first
+  showing the user list. Only Open WebUI administrators see the Admin Panel.
+- The Console home's **Users** card counts the sign-in accounts in the viewer's
+  scope (the deployment for an organization admin, accounts with access to
+  their agents for a delegate), across however many hubs, whatever the period.
+  Blocked accounts count; service identities and email-only grants do not. An
+  unreadable account directory shows as unavailable, never 0.
+  `/portal/api/summary` adds `user_accounts`; `totals.active_users` is
+  unchanged.
+- The chat sidebar's Admin Console link has a shield-and-cog icon at Open
+  WebUI's sidebar size, and keeps its name when the sidebar is collapsed.
 - The service account reuses its Open WebUI token instead of signing in for
   every sync and account action, which could exhaust Open WebUI's sign-in limit
   for the owner's email.
@@ -42,7 +55,12 @@ All notable changes to Hubzoid. Versions follow the package version in
   Management tools are hidden from people who manage nothing on every runtime.
   A held but non-delegable capability reads "Admins only".
 
-### Reports, email and connections
+### Artifacts, email and connections
+- The public-sharing capability reads **Share artifacts publicly**: anyone with
+  the link can open the artifact without signing in. Its id
+  (`share_public_links`) and enforcement are unchanged, and publishing never
+  grants it. The viewer, its errors and the docs call published files
+  artifacts; reports are one kind.
 - Removing `share_public_links` (or blocking the owner) ends that owner's
   public links for good; granting it again does not revive them (`op_0007`).
   "Anyone with the link" and link creation are one step; a dead link shows a
