@@ -183,7 +183,7 @@ Hub administrators see only their agents.
 | Number | Meaning |
 |---|---|
 | Messages | Human messages across chat surfaces, with conversation count below. Background title/suggestion calls are excluded. |
-| Users | People who sent a message in the selected period, not everyone granted access. |
+| Users | Sign-in accounts in your scope (the deployment for an organization administrator, accounts with access to your agents for a delegate), whatever the period. Blocked accounts count; legacy service identities and email-only grants do not. Shows unavailable, never 0, if accounts can't be read. |
 | Tokens used | Input and output tokens, including background and workflow model calls. |
 | Workflow runs | Runs in the selected period, with failed count below when applicable. |
 | Approx. cost | USD estimate from reported model cost or token prices; unpriced calls are excluded and marked with `*`. The help icon explains subscription billing and estimates. |
@@ -422,8 +422,8 @@ Procedure:
    hubzoid access sync ./finance   # run again: it should report state "ok" and change nothing
    ```
 6. **Restart** the gateway and bridges (which resumes the normal visibility loop).
-7. **Smoke-test:** an admin opens the dashboard (the "Manage agent access" link in Open
-   WebUI) and sees the migrated agent as editable; a permitted user can enter the agent
+7. **Smoke-test:** an admin opens the Admin Console (the "Admin Console" link in the chat
+   sidebar) and sees the migrated agent as editable; a permitted user can enter the agent
    and use its tools in chat; a denied user cannot; an ordinary user still uses chat
    normally; visibility sync shows `ok`.
 
@@ -491,7 +491,7 @@ idempotency and code changes. For operators:
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
 | No execution history | Correct hub's DBOS database, workflow enabled, run actually submitted |
 | User still has access after revocation | "Everyone signed in" or inherited access; use Block access for offboarding |
-| `hubzoid grant '*' ...` is refused | New access for everyone signed in can't be created. Grant named people or workflow identities |
+| `hubzoid grant '*' ...` is refused | New access for everyone signed in can't be created. Grant named people |
 
 For local UI development only, `HUBZOID_PORTAL_DEV=1` plus
 `HUBZOID_PORTAL_DEV_USER=<bootstrapped-admin>` bypasses OWUI session validation.

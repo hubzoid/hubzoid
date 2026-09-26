@@ -6,6 +6,12 @@ authenticated Claude or Codex CLIs and saves your choice. Without a selection,
 Codex prerequisites or an API provider, see [providers.md](providers.md).
 Open WebUI and the Python runtime adapters are installed with Hubzoid.
 
+**Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
+schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
+Check with the same Python the hub uses:
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
@@ -101,7 +107,9 @@ hubzoid gateway ./my-hub --data-dir ./gateway-data
 Sign in with that email and password, open the **Admin Console** from the chat
 sidebar, and add teammates with **Add user** on an agent's Access tab (or on
 People): choose an existing account, or create a new one with its access in one
-step, then share the sign-in details yourself. Public sign-up stays closed. On a gateway set up this way, Open WebUI's
+step, then share the sign-in details yourself. With Google sign-in and
+`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only** creates
+an account with no password to share ([auth.md](auth.md)). Public sign-up stays closed. On a gateway set up this way, Open WebUI's
 own user list is hidden, so accounts are managed in one place: its Users section
 opens on Groups, and Evaluations and Functions stay in the Admin Panel. Set
 `HUBZOID_HIDE_OWUI_USERS=false` to keep Open WebUI's user list.

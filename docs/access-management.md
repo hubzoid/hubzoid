@@ -253,7 +253,7 @@ chat account. Reactivation does not recreate grants removed by an explicit block
 
 ## Everyone signed in (no longer granted)
 
-New agents need named grants: people by email, or workflow identities. Nobody
+New agents need named grants to sign-in accounts (Add user). Nobody
 can create access for "everyone signed in" (the `*` subject), organization
 administrators included. The Console has no control for it, and the service,
 the management API, change proposals, `hubzoid grant` and the grant store all
@@ -384,7 +384,7 @@ ordinary account for it. Grants to the older `workflow:<function>` and
 account lacks a permission the old subject held logs which one.
 
 The built-in **Save shared knowledge** capability (`curator`) controls
-`remember`. Grant it in Console to people or workflow identities that should
+`remember`. Grant it in Console to the accounts (people, or the account a workflow runs as) that should
 create or replace documents under `knowledge/_learned/`. These documents are
 shared agent knowledge, not private conversation memory. No `restricted/curator.py`
 file is required to make this capability appear.
@@ -449,10 +449,9 @@ that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
 ## Planned, not built yet
 
-- Connections started from chat (`connector_<app>` capabilities and the
-  `hz_connect` journey) are a separate work package. The edge hook they need is
-  in place and inert without its cookie.
-- The Console does not yet list a person's connections.
+- The Console does not yet list a person's connections. Connections started
+  from chat (`connector_<app>` capabilities and the connection journey) are
+  built and off unless `HUBZOID_CONNECT_JOURNEY` is set; see [mcp.md](mcp.md).
 
 ## Administration boundary
 

@@ -304,7 +304,8 @@ agent.
 - **`WEBUI_SECRET_KEY` unset.** OWUI uses a public fallback. Hubzoid refuses
   to boot when `WEBUI_AUTH=true` and the key is missing.
 - **Users land in "pending" and don't see the chat.** Expected when
-  `DEFAULT_USER_ROLE=pending`. Admin Panel -> Users -> set role to `user`.
+  `DEFAULT_USER_ROLE=pending`. Approve them in the Admin Console (People,
+  then Approve). Accounts created with Add user are never pending.
 - **Signed up first by accident; now you're not admin.** Stop the hub,
   delete `<hub>/.openwebui-data/webui.db`, set `WEBUI_ADMIN_*` env vars,
   restart. Fresh DB, you become admin.
