@@ -91,9 +91,14 @@ hubzoid run <agent-name>
 ## What you do not do
 
 - Do not write code in `tools_local/`. The user does that later.
-- Do not fabricate a model name. `claude-local` is the default and works
-  with no API key. Note that setting `model:` to a *different* model than the
-  hub turns a sub-agent into a delegate that runs on that model; leave it off
-  (or equal to the hub model) for a plain inline skill.
+- Do not fabricate a model name. Use one of the three runtimes:
+  `claude-local` (Claude Agent SDK, a signed-in Claude Code), `codex-local`
+  (local Codex, a signed-in pinned Codex CLI), or a provider-prefixed
+  LiteLLM name such as `openrouter/anthropic/claude-haiku-4.5` (OpenAI
+  Agents SDK, needs that provider's key). `claude-local` is the default
+  when nothing is chosen. `MODEL` in `.env` wins over the main agent's
+  `model:`. A sub-agent whose `model:` differs from the hub's, on the same
+  runtime, runs as a delegate on that model. Leave it off for a plain
+  sub-agent.
 - Do not promise features the framework does not have.
 - Do not return a multi-thousand-token system prompt. Minimal is right.

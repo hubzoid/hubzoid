@@ -39,4 +39,5 @@ not from open-web search.
 
 - Replace `demo-hub` with a real hub. `hubzoid init my-real-agent`.
 - Read the README at `https://github.com/hubzoid/hubzoid`.
-- For enterprise deployments, see `https://hubzoid.com`.
+- For help building or operating a team deployment, see
+  `https://hubzoid.com/enterprise`. It uses the same open-source product.

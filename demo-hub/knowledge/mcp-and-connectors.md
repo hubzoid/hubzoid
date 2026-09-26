@@ -9,8 +9,8 @@ keywords: [mcp, connectors, composio, integration, tools, oauth]
 A hub talks to the outside world through three layers, from least to
 most powerful.
 
-1. **Pre-shipped tools.** `http_get`, `web_search`, file ops, memory.
-   Generic. Available in every hub.
+1. **Pre-shipped tools.** `http_get`, `web_search`, file reads,
+   knowledge and skill loads. Generic. Available in every hub.
 2. **Custom `tools_local/`.** Your own Python functions decorated with
    `@function_tool`. Auto-discovered at boot. Run in the same process.
 3. **MCP servers.** External tool catalogs exposed over the Model Context
@@ -56,16 +56,28 @@ For anything that requires user OAuth (Gmail, Slack, Salesforce, HubSpot,
 Your hub now has access to every app you authorized, no OAuth code
 required, no token refresh code required.
 
-## What both runtimes share
+## What all three runtimes share
 
-The same `connectors/.mcp.json` is read by both the OpenAI Agents SDK
-runtime and the Claude Agent SDK runtime. Switch `MODEL=` and your
-integrations keep working.
+The same `connectors/.mcp.json` is read by all three runtimes: the OpenAI
+Agents SDK with LiteLLM models, the Claude Agent SDK (`claude-local`), and
+local Codex (`codex-local`). Switch `MODEL=` and your integrations keep
+working.
 
-## What is NOT supported
+## Connectors versus serving MCP
 
-- Per-user OAuth scoping inside a single hub. MCP servers are
-  hub-scoped, not user-scoped. If you need per-user data isolation,
-  run one hub per user.
-- Hubzoid does not store OAuth tokens. They live wherever the MCP
-  server holds them (Composio, an external service, a local file).
+`connectors/.mcp.json` is the hub consuming MCP servers. The reverse also
+exists: a hub can serve its own tools and knowledge to a personal
+assistant such as Claude Code or Codex. Opt in with `MCP_SERVER=true` in
+`.env`. Each user connects with their own credential, and the hub's
+access rules apply.
+
+## Hub-wide versus per-user
+
+- Servers in `connectors/.mcp.json` are hub-wide. Every user of the hub
+  reaches them with the same credential.
+- For tools where each user must act as themselves, an operator can opt
+  in to per-user MCP servers registered in Open WebUI
+  (`OWUI_NATIVE_MCP=true`). Each user connects their own account there.
+  See `docs/mcp.md` in the repository before enabling it.
+- Hubzoid does not store `.mcp.json` OAuth tokens. They live wherever the
+  MCP server holds them (Composio, an external service, a local file).

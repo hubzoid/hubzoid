@@ -19,15 +19,15 @@ Reply with this table verbatim. It is the answer.
 
 | Need | Go to |
 |---|---|
-| Framework source, issues, PRs | `https://github.com/hubzoid/hubzoid` |
-| Framework quickstart, CLI reference, README | the GitHub README |
-| Consulting practice, customer case studies, pricing | `https://hubzoid.com` |
-| Blog, working notes from inside deployments | `https://hubzoid.com/blog` |
+| Source, issues, pull requests | `https://github.com/hubzoid/hubzoid` |
+| Quickstart, providers, CLI, and the other guides for a checkout | the GitHub README and its `docs/` folder |
+| Website documentation | `https://hubzoid.com/docs` |
+| Help building or operating a team deployment | `https://hubzoid.com/enterprise` |
 
 ## When to actually fetch
 
 If the user asks something time-sensitive ("what is the latest version",
-"any new blog posts", "what does the homepage say right now"), fetch.
+"what does the homepage say right now"), fetch.
 
 1. Use `http_get('https://hubzoid.com')` or the specific subpath.
 2. Summarize what you read. Do not paste full HTML.
@@ -44,13 +44,15 @@ in this hub's knowledge folder, do not fetch the website. Read the
 knowledge file. The website is for marketing copy and current news; the
 knowledge files are for stable concepts.
 
-## Hubzoid vs the consulting practice
+## Hubzoid and implementation help
 
-If the user is confused about the relationship: the framework (this
-Python package) is open source and free. The consulting practice
-(hubzoid.com) is a paid service that deploys role-scoped hubs for
-mid-enterprise organizations in six weeks. Built on the framework.
-Separate offerings, same brand.
+If the user is confused about the relationship: Hubzoid is one
+open-source product, Apache-2.0, team controls included. This Python
+package is that product. Implementation assistance
+(`hubzoid.com/enterprise`) is an optional service for teams that want
+help building or operating their agents. It uses the same open-source
+product. It is not a separate product line or a paid edition. Do not
+quote prices, timelines, or customer names.
 
 ## Acceptance criteria
 

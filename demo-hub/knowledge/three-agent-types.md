@@ -6,9 +6,10 @@ keywords: [agent types, tool, qa, q&a, background, automated, scheduled]
 
 # The three agent types
 
-Every agent that ships in a Hubzoid hub is one of three types. The
-taxonomy is load-bearing. Customer-facing language, customer-facing folder
-structure, and product design all use it.
+A useful way to think about the agents in a Hubzoid hub is three types.
+Each maps to one of the three ways a team uses a hub: personal assistants
+through MCP, chat, and workflows. One hub can serve all three from the
+same context.
 
 ## 1. Tool / Action
 
@@ -18,7 +19,9 @@ Generates a deck, drafts an email, builds a report, runs a query.
 Designed to feel like a button you press, not a conversation. The output
 is a file, a row in a system, or a posted message.
 
-Lives in Claude Code, in-app buttons, IDE extensions, scripts.
+Lives in the personal assistants your team already uses, such as Claude
+Code or Codex, connected to the hub through MCP. Also in scripts that call
+the hub's API.
 
 ## 2. Q & A
 
@@ -28,8 +31,8 @@ Answers questions in plain language using the hub's structured knowledge.
 Talks the way the team talks. Stateless across questions unless the
 operator wires persistent memory.
 
-Lives in Telegram, Slack, WhatsApp, web chat. The agent you are talking
-to right now is a Q&A agent.
+Lives in web chat, Slack, and other chat channels, each with its own
+setup. The agent you are talking to right now is a Q&A agent.
 
 ## 3. Automated / Background
 
@@ -40,18 +43,19 @@ digests. The work happens whether you log in or not. Background agents
 typically chain multiple steps, fetch from external systems, and deliver
 output by email or chat.
 
-Lives in email, Telegram digests, and dashboards. In Hubzoid, background
-agents run through the built-in scheduler.
+In Hubzoid, background work runs as workflows: Markdown tasks in
+`schedule/` or Python workflows in `workflows/`, with recorded runs. A run
+can publish a private report and email the person it runs as a link.
 
-## How a real deployment uses all three
+## How a team uses all three
 
-A single role-scope (`/marketing`, `/finance`, `/ops`) typically gets one
-of each.
+A hub scoped to one team, product, or company can offer all three from
+the same knowledge, skills, and tools.
 
-- A **Q&A** agent on Telegram or Slack for the team.
-- A **Tool** agent in Claude Code for the role owner who wants on-demand
-  outputs.
-- A **Background** agent in email that sends a weekly digest.
+- A **Q&A** agent in chat for the team.
+- A **Tool** agent in a personal assistant for the person who wants
+  on-demand outputs.
+- A **Background** workflow that produces a weekly report.
 
 This is why Hubzoid is not "an agent". It is a **hub** with as many
 agents as the team needs.

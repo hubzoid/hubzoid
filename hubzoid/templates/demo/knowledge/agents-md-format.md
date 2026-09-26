@@ -30,7 +30,7 @@ Anything written here governs behavior.
 |---|---|---|
 | `name` | yes | The agent's identifier. Use kebab-case. |
 | `description` | yes | One-line summary. Surfaces in handoff routing. |
-| `model` | no | Override `MODEL` from `.env` for this agent only. |
+| `model` | no | Main agent: used when `.env` sets no `MODEL`. Sub-agent: a different model on the same runtime runs it as a delegate. Values: `claude-local`, `codex-local`, or a provider-prefixed LiteLLM name. |
 | `tools` | no | Whitelist. Empty list means no tools. Omit to inherit the parent's full tool registry. |
 
 ## Body conventions
