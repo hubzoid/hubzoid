@@ -155,6 +155,28 @@ def test_delegate_cannot_create_beyond_ceiling_or_without_access(dep):
     assert dep.owui.by_email("ann@x.org") is None
 
 
+def test_delegate_cannot_create_an_account_that_inherits_wider_access(dep):
+    """Whoever sets the password can use every grant already waiting for the
+    email, so a delegate may not create one that holds more than they do."""
+    for subject, hub, perm in (("pre@x.org", "finance", "payroll"),
+                               ("ops@x.org", "ops", "inventory"),
+                               ("boss@x.org", "*", "manage_access")):
+        dep.gs.grant(subject, hub, perm, actor=ROOT)
+        with pytest.raises(Denied) as e:
+            dep.svc.create_account(actor(DELEGATE), email=subject, name="X", password=PASSWORD,
+                                   grants=[("finance", "use_hub")])
+        assert e.value.code == "outside_ceiling"
+        assert dep.owui.by_email(subject) is None
+    # Pre-granted access within the delegate's ceiling is fine.
+    dep.gs.grant("ok@x.org", "finance", "ledger", actor=ROOT)
+    dep.svc.create_account(actor(DELEGATE), email="ok@x.org", name="Ok", password=PASSWORD,
+                           grants=[("finance", "use_hub")])
+    assert dep.gs.can("ok@x.org", "finance", "ledger")
+    # An organization administrator may create any of them.
+    dep.svc.create_account(actor(ROOT), email="boss@x.org", name="Boss", password=PASSWORD,
+                           grants=[])
+
+
 def test_org_admin_may_create_without_access(dep):
     dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD, grants=[])
     assert dep.owui.by_email("ann@x.org")

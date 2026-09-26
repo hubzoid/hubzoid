@@ -596,6 +596,22 @@ class AccessService:
                              "This email belonged to an earlier chat account. Ask an "
                              "organization administrator to re-create it.")
             replace = True
+        if not scope.org_admin:
+            # Whoever sets the password can use every grant already waiting for
+            # this email, so a delegate may create it only when all of those are
+            # within their own ceiling.
+            ceilings: dict[str, frozenset[str]] = {}
+            for _s, hub, perm in (g for g in gs.list_grants() if g[0] == email):
+                if hub == ORG or hub not in scope.hubs:
+                    beyond = True
+                else:
+                    if hub not in ceilings:
+                        ceilings[hub] = self._ceiling(actor, scope, hub)
+                    beyond = perm not in ceilings[hub]
+                if beyond:
+                    raise Denied(403, "outside_ceiling",
+                                 "This email already holds access you don't manage. Ask an "
+                                 "organization administrator to create the account.")
         for hub, perms in by_hub.items():
             self._check_ops(actor, scope, email, hub, [("grant", p) for p in sorted(perms)],
                             new_account=True)
