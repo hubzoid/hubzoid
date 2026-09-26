@@ -17,7 +17,7 @@ role alone does not grant Console access.
 Every endpoint also accepts `Authorization: Bearer sk-...`, an Open WebUI API
 key verified server-side against Open WebUI's key table (the same check as the
 hosted MCP surface). A key caller has no ambient cookie, so the same-origin
-rule applies only to session callers.
+rule applies only to session callers. Any other Authorization value is ignored.
 
 Authority is decided by `access.service.AccessService`, never in a handler:
 every mutation builds an `Actor` from the verified identity and calls it.
@@ -217,18 +217,32 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     return resolve
 
 
-def api_key_admin(request: Request, hub_dir: Path) -> "PortalAdmin | None":
-    """Resolve `Authorization: Bearer sk-...` to its Open WebUI owner. Only an
-    Open WebUI API key is accepted; any other Authorization value is refused."""
+def api_key(request: Request) -> str | None:
+    """The Open WebUI API key in `Authorization: Bearer sk-...`, else None.
+
+    Only that form selects the API-key path. Any other Authorization value (for
+    example HTTP Basic added by a reverse proxy, or a chat-app session token) is
+    ignored and the request is treated as a cookie session, as before."""
     scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
     token = token.strip()
-    if scheme.lower() != "bearer" or not token.startswith("sk-"):
-        raise HTTPException(401, "Use an Open WebUI API key (Bearer sk-...).")
+    if scheme.lower() == "bearer" and token.startswith("sk-"):
+        return token
+    return None
+
+
+def _key_email(request: Request, hub_dir: Path) -> str:
     from .access import owui_api_keys
 
-    email = owui_api_keys.resolve_email(hub_dir, token)
+    email = owui_api_keys.resolve_email(hub_dir, api_key(request))
     if not email:
         raise HTTPException(401, "This API key is not valid.")
+    return normalize(email)
+
+
+def api_key_admin(request: Request, hub_dir: Path) -> "PortalAdmin | None":
+    """Resolve `Authorization: Bearer sk-...` to its Open WebUI owner, with the
+    same management scope checks as a session."""
+    email = _key_email(request, hub_dir)
     try:
         scope = AccessService(hub_dir).scope(Actor(normalize(email), "api", "api-key"))
     except Denied as exc:
@@ -320,7 +334,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     service = AccessService(hub_dir)
 
     def require_admin(request: Request) -> PortalAdmin:
-        if request.headers.get("authorization"):
+        if api_key(request):
             admin = api_key_admin(request, hub_dir)
         else:
             admin = resolver(request)
@@ -333,15 +347,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def require_person(request: Request) -> Actor:
         """Any verified caller, manager or not: for change requests, whose own
         check is "only the proposer may see or decide it"."""
-        if request.headers.get("authorization"):
-            scheme, _, token = request.headers["authorization"].partition(" ")
-            from .access import owui_api_keys
-
-            email = (owui_api_keys.resolve_email(hub_dir, token.strip())
-                     if scheme.lower() == "bearer" and token.strip().startswith("sk-") else None)
-            if not email:
-                raise HTTPException(401, "This API key is not valid.")
-            return Actor(normalize(email), "api", "api-key")
+        if api_key(request):
+            return Actor(_key_email(request, hub_dir), "api", "api-key")
         if admin_resolver is not None:
             admin = admin_resolver(request)
             if admin is None:

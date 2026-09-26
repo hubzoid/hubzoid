@@ -132,10 +132,14 @@ def test_api_key_callers(api):
     r = api.key("sk-dele").post("/portal/api/access/grant", json=dict(
         subject="ann@x.org", hub="finance", permission="payroll"))
     assert r.status_code == 403
-    for token in ("sk-unknown", "not-an-sk-key"):
-        assert api.key(token).get("/portal/api/me").status_code == 401
-    api.client.headers["authorization"] = "Basic cm9vdDpwdw=="
-    assert api.client.get("/portal/api/me").status_code == 401
+    assert api.key("sk-unknown").get("/portal/api/me").status_code == 401
+    # Any other Authorization value (HTTP Basic from a proxy, a chat-app token)
+    # is ignored: the request is a cookie session as before, here with no user.
+    for value in ("Bearer not-an-sk-key", "Basic cm9vdDpwdw=="):
+        api.client.headers["authorization"] = value
+        assert api.client.get("/portal/api/me").status_code == 401
+    api.as_(DELEGATE).headers["authorization"] = "Basic cm9vdDpwdw=="
+    assert api.client.get("/portal/api/me").json()["via"] == "session"
     # A valid key for someone who manages nothing opens nothing.
     assert api.key("sk-ann").get("/portal/api/me").status_code == 403
 

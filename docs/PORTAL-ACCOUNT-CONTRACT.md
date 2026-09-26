@@ -13,7 +13,8 @@ Every endpoint accepts either:
   must come from the same origin (`Origin` or `Referer` host equals `Host`).
 - `Authorization: Bearer sk-...`, an Open WebUI API key, verified against Open
   WebUI's key table. The caller acts as the key's owner. No `Origin` is needed.
-  Any other `Authorization` value gets 401.
+  An unknown key gets 401. Any other `Authorization` value (for example HTTP
+  Basic added by a reverse proxy) is ignored and the cookie decides.
 
 Authority is decided by `hubzoid/access/service.py` from the access store on
 every write. A refusal from it has this body:
