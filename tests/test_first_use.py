@@ -103,3 +103,28 @@ def test_chat_access_accepts_the_chat_apps_bearer_credential(tmp_path, monkeypat
     assert seen['auth'] == header.decode()
     # Without any credential it is still a sign-in refusal.
     assert TestClient(app).get('/portal/api/chat-access').status_code == 401
+
+
+def test_bridges_without_the_gateway_environment_find_owner_and_public_url(tmp_path, monkeypatch):
+    """Under `gateway --no-bridges`, bridges and CLI commands do not inherit the
+    gateway's environment. The manifest carries the owner (so the Console works
+    after an upgrade) and the public address (so report links from a CLI-run
+    job point at the site the gateway serves)."""
+    from hubzoid import artifacts
+    from hubzoid.access import session
+
+    hub = tmp_path / "sales"
+    hub.mkdir()
+    deployment.save(tmp_path / "deployment.json",
+                    hubs=[dict(key="sales", name="Sales", path=str(hub), model_id="sales")],
+                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="http://127.0.0.1:43080",
+                    owui_db=str(tmp_path / "webui.db"), owner="Owner@Example.org ",
+                    public_url="https://hub.example.org/")
+    for key in ("HUBZOID_GATEWAY_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL",
+                "WEBUI_URL", "HUBZOID_DEPLOYMENT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("WEBUI_AUTH", "true")
+    assert session.configured_owner(hub) == "owner@example.org"
+    assert artifacts.viewer_url("a1", hub) == "https://hub.example.org/portal/artifacts/a1"
+    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "env@example.org")   # the environment wins
+    assert session.configured_owner(hub) == "env@example.org"

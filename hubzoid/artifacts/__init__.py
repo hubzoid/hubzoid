@@ -142,19 +142,27 @@ def max_bytes() -> int:
         return DEFAULT_MAX_BYTES
 
 
-def public_base_url() -> str:
+def public_base_url(hub_dir=None) -> str:
     """Where people open Hubzoid in a browser (the edge, fronting /portal).
 
     A gateway bridge's HUBZOID_PUBLIC_URL ends in its download prefix
     (`/b/<hub>`), which the edge routes only for `/artifacts` and `/mcp`. The
-    report viewer and public links live at the site root, so drop it."""
+    report viewer and public links live at the site root, so drop it. A process
+    without either setting (a CLI command running a job) uses the address the
+    gateway recorded in the deployment manifest."""
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     base = re.sub(r"/b/[^/]+$", "", base) or (os.environ.get("WEBUI_URL") or "").rstrip("/")
+    if not base and hub_dir is not None:
+        from .. import deployment
+        try:
+            base = (deployment.read(Path(hub_dir)).get("public_url") or "").rstrip("/")
+        except (OSError, ValueError):
+            base = ""
     return base or f"http://127.0.0.1:{os.environ.get('PORT') or '3080'}"
 
 
-def viewer_url(artifact_id: str) -> str:
-    return f"{public_base_url()}/portal/artifacts/{artifact_id}"
+def viewer_url(artifact_id: str, hub_dir=None) -> str:
+    return f"{public_base_url(hub_dir)}/portal/artifacts/{artifact_id}"
 
 
 def _safe_filename(name: str) -> str:
@@ -226,7 +234,7 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
             r = c.execute(text(f"SELECT {_COLS} FROM hz_artifacts WHERE idem_key=:k"),
                           {"k": idem_key}).fetchone()
         if r is not None:
-            return _summary(_row(r))
+            return _summary(_row(r), hub_dir)
     source = Path(source)
     if not source.is_file():
         raise ArtifactError(400, f"Nothing to publish: {source} is not a file.")
@@ -269,11 +277,11 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
         art = get(hub_dir, artifact_id)
     log.info("artifacts: published %s (%s, %d bytes) for %s in %s", artifact_id,
              filename, size, owner, hub)
-    return _summary(art)
+    return _summary(art, hub_dir)
 
 
-def _summary(art: Artifact) -> dict:
-    return dict(id=art.id, url=viewer_url(art.id), title=art.title, filename=art.filename,
+def _summary(art: Artifact, hub_dir=None) -> dict:
+    return dict(id=art.id, url=viewer_url(art.id, hub_dir), title=art.title, filename=art.filename,
                 content_type=art.content_type, size=art.size, audience=art.audience)
 
 
@@ -463,7 +471,7 @@ def create_link(hub_dir, art: Artifact | None, actor: str, *, days=None) -> dict
         c.execute(text("UPDATE hz_artifacts SET audience='link', updated=:t WHERE id=:a"),
                   {"t": now, "a": art.id})
     _audit(hub_dir, art.hub, "artifact_public_link", art.id, actor)
-    return {"url": f"{public_base_url()}/portal/p/#{token}", "expires": expires}
+    return {"url": f"{public_base_url(hub_dir)}/portal/p/#{token}", "expires": expires}
 
 
 def revoke_links(hub_dir, art: Artifact | None, actor: str) -> None:

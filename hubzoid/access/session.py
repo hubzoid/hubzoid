@@ -51,6 +51,13 @@ def configured_owner(hub_dir: Path) -> str:
     off, no deployment) has exactly one account, `admin@localhost`."""
     owner = (os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
              or os.environ.get("WEBUI_ADMIN_EMAIL") or "").strip().lower()
+    if not owner:
+        # A bridge run as its own service (gateway --no-bridges) does not see
+        # the gateway's environment; the gateway records the owner here.
+        try:
+            owner = (deployment.read(hub_dir).get("owner") or "").strip().lower()
+        except (OSError, ValueError, KeyError):
+            owner = ""
     if not _truthy_env("WEBUI_AUTH") and not deployment.read(hub_dir):
         owner = LOCAL_OWNER
     return owner

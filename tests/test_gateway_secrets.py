@@ -140,7 +140,11 @@ def test_gateway_scopes_the_deployment_secret_and_never_reads_hub_secrets(tmp_pa
     # The manifest names the secret for external bridges, and holds no value.
     manifest = (tmp_path / "gw" / "deployment.json").read_text()
     assert json.loads(manifest)["deployment_secret"] == {"name": "dep", "region": "eu-west-1"}
-    assert not any(v in manifest for v in DEPLOYMENT_SECRET.values() if v != "true")
+    # Credentials never land in the manifest. The public address is not one: it
+    # is recorded so bridges and CLI jobs build report links for the right site.
+    assert not any(v in manifest for k, v in DEPLOYMENT_SECRET.items()
+                   if v != "true" and k != "HUBZOID_PUBLIC_URL")
+    assert json.loads(manifest)["public_url"] == "https://hub.example.com"
     assert json.loads(manifest)["hubs"][0]["slug"] == "alpha"
 
     # The gateway process itself never held a hub's secrets.

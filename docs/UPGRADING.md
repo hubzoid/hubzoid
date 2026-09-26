@@ -117,11 +117,9 @@ owner email before rollout, back up all stores, and verify owner and ordinary-us
 access after restart. Subsequent sign-in preserves revocations.
 
 The bridges serve the Console, so they must know the owner. With `--no-bridges`,
-a `HUBZOID_GATEWAY_ADMIN_EMAIL` in the gateway's own environment does not reach
-them: set `HUBZOID_GATEWAY_ADMIN_EMAIL` or `WEBUI_ADMIN_EMAIL` (email only) in
-every bridge's environment (each hub `.env` or a shared drop-in), or run
-`hubzoid access bootstrap --admin <email> <hub>`. Until then the Console refuses
-every account.
+the gateway records its `HUBZOID_GATEWAY_ADMIN_EMAIL` and public address in the
+deployment manifest at its first start, and the bridges read them after the
+one restart in step 6. Until that restart the Console refuses every account.
 
 New workflow scaffolds are manual and model-free. Existing schedules are unchanged.
 Chat usage now uses the forwarded chat ID; local Open WebUI background task types

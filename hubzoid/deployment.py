@@ -50,9 +50,14 @@ def _write(path: Path, data: dict) -> None:
 def save(
     path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str,
     owui_database_url: str | None = None, owui_database_schema: str | None = None,
-    deployment_secret: dict | None = None,
+    deployment_secret: dict | None = None, owner: str | None = None,
+    public_url: str | None = None,
 ) -> None:
     """Write the manifest and each hub's pointer to it.
+
+    `owner` (the configured initial owner's email) and `public_url` (the site
+    root people open) let bridges and CLI commands that did not inherit the
+    gateway's environment act the same as the gateway. Omitted when unset.
 
     `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
     external bridges can fetch it. Only the name and region are stored, never a
@@ -68,6 +73,10 @@ def save(
         owui_database_url=owui_database_url,
         owui_database_schema=owui_database_schema,
     )
+    if owner:
+        data["owner"] = owner.strip().lower()
+    if public_url:
+        data["public_url"] = public_url.rstrip("/")
     if deployment_secret and deployment_secret.get("name"):
         data["deployment_secret"] = {"name": str(deployment_secret["name"]),
                                      "region": deployment_secret.get("region") or None}

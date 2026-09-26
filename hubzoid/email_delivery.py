@@ -195,7 +195,7 @@ def _artifact_links(hub_dir, owner: str, artifact_ids) -> list[tuple[str, str]]:
         if art is None or art.owner != owner:
             raise ValueError(f"Artifact {aid!r} is not a report owned by {owner}, so it cannot "
                              "be linked in their email.")
-        out.append((art.title, artifacts.viewer_url(art.id)))
+        out.append((art.title, artifacts.viewer_url(art.id, hub_dir)))
     return out
 
 

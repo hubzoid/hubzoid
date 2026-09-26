@@ -668,7 +668,9 @@ def gateway(
         owui_db=str(gw_data / "webui.db"),
         owui_database_url=deployment_env.get("DATABASE_URL") or f"sqlite:///{gw_data / 'webui.db'}",
         owui_database_schema=deployment_env.get("DATABASE_SCHEMA"),
-        deployment_secret=dep_secret)
+        deployment_secret=dep_secret,
+        owner=os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL"),
+        public_url=pub or os.environ.get("WEBUI_URL"))
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
