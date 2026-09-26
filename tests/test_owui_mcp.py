@@ -159,3 +159,14 @@ def test_disabled_by_default(owui, monkeypatch):
     # fully connected user.
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     assert owui_mcp.per_user_specs(".", _ident(owui["email"])) == ({}, [])
+
+
+def test_personal_tokens_follow_the_restricted_surface_rule(owui, monkeypatch):
+    """A shared Slack channel (or any surface not allowed restricted tools) must
+    never carry the mentioner's personal connection token."""
+    email = owui["email"]
+    assert owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="slack-channel")) == ({}, [])
+    assert owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="whatsapp")) == ({}, [])
+    monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,whatsapp")
+    specs, _ = owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="whatsapp"))
+    assert len(specs) == 1

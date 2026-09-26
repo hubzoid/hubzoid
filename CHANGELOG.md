@@ -33,6 +33,9 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
   No message content.
 
 ### Security
+- A user's personal Open WebUI MCP connection is used only on surfaces allowed
+  to reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`). A shared Slack
+  channel mention no longer carries the mentioner's token.
 - Open WebUI API-key, group and connected MCP OAuth lookups honor PostgreSQL
   `DATABASE_URL` and `DATABASE_SCHEMA`, including shared gateways. Database
   failures deny access without falling back to stale SQLite credentials.

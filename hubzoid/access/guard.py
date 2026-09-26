@@ -35,11 +35,15 @@ from .policy import DEFAULT_RESTRICTED_SURFACES, is_allowed
 log = logging.getLogger("hubzoid.access")
 
 
-def _allowed_surfaces() -> frozenset[str]:
+def allowed_surfaces() -> frozenset[str]:
+    """Surfaces that may reach restricted tools and personal connections."""
     raw = os.environ.get("HUBZOID_RESTRICTED_SURFACES", "").strip()
     if not raw:
         return DEFAULT_RESTRICTED_SURFACES
     return frozenset(s.strip().lower() for s in raw.split(",") if s.strip())
+
+
+_allowed_surfaces = allowed_surfaces
 
 
 def decide(hub_dir: Path, ident, permission: str,

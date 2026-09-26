@@ -67,6 +67,11 @@ def per_user_specs(hub_dir, identity) -> tuple[dict, list[str]]:
     """
     if not enabled() or identity is None or getattr(identity, "is_anonymous", True):
         return {}, []
+    # A personal token follows the same surface rule as restricted tools: a
+    # shared Slack channel or bot-token surface must never carry it.
+    from .access.guard import allowed_surfaces
+    if getattr(identity, "surface", "") not in allowed_surfaces():
+        return {}, []
 
     user_id = tokens.resolve_user_id(hub_dir, identity.user)
     if not user_id:

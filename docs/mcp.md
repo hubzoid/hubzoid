@@ -78,8 +78,10 @@ WebUI**, where each user connects their own account. **No Hubzoid UI, no
    (an OAuth redirect). OWUI vaults that user's token, encrypted.
 3. On the user's next turn the bridge **reads and decrypts their token** from
    OWUI's database and calls the MCP server as them. Two users reach the same
-   server as themselves; the connection follows their identity across surfaces
-   (Slack, Telegram) once it maps to the same OWUI account.
+   server as themselves. The connection follows their identity to other
+   surfaces that map to the same OWUI account, but only surfaces allowed to
+   reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`). A shared Slack
+   channel never carries it. It is used by the Claude backend today.
 
 ### Enable it (operator - one line)
 
