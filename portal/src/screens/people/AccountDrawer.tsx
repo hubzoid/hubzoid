@@ -6,22 +6,30 @@ import {
   Checkbox,
   Drawer,
   Input,
+  Radio,
   Space,
   Tag,
   Typography,
 } from "antd";
 import { Copy, KeyRound } from "lucide-react";
-import { ApiError, request, type AccountCreated, type Hub, type Me } from "../../api";
-import { errorText } from "../../hooks/useData";
+import {
+  type ApiError,
+  request,
+  type AccountCreated,
+  type AccountGranted,
+  type Hub,
+  type Me,
+  type SignIn,
+  type SignInOptions,
+} from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
-import { hrefWith, personHref, useNavigationGuard } from "../../hooks/useRoute";
+import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { MANAGE_ACCESS, USE_HUB, capabilityLabel, isGrantable } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
 import { generatePassword, passwordProblem } from "./password";
+import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "./accountRules";
 
 const { Text, Title, Paragraph } = Typography;
-
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function PasswordField({
   id,
@@ -88,8 +96,94 @@ export function OneTimePassword({ password }: { password: string }) {
   );
 }
 
-type Step = "edit" | "review" | "saving" | "done" | "failed";
+/**
+ * How a new account signs in. Rendered only when the deployment offers more
+ * than a password: Google appears only when the chat app attaches a Google
+ * sign-in to an existing account by email.
+ */
+export function SignInChoice({
+  value,
+  onChange,
+  options,
+}: {
+  value: SignIn;
+  onChange: (v: SignIn) => void;
+  options?: SignInOptions;
+}) {
+  if (!options?.google) return null;
+  const domains = options.google_domains?.filter(Boolean) ?? [];
+  return (
+    <div className="field">
+      <span className="field-label" id="sign-in-choice">
+        How they sign in
+      </span>
+      <Radio.Group
+        aria-labelledby="sign-in-choice"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        options={[
+          { value: "password", label: "Password" },
+          { value: "google", label: "Google sign-in only" },
+        ]}
+      />
+      <Text type="secondary" className="field-help">
+        {value === "google"
+          ? `They sign in with Google using this email${domains.length ? ` (${domains.join(", ")} only)` : ""}. No password is set that anyone knows.`
+          : "You set a password and share it with them yourself."}
+      </Text>
+    </div>
+  );
+}
 
+/**
+ * The sign-in details to share once an account exists: the chat address, the
+ * email and, for a password account, the password with Copy. Nothing here is
+ * stored; the caller drops the password when the drawer closes.
+ */
+export function SignInDetails({
+  email,
+  password,
+  signIn,
+}: {
+  email: string;
+  password: string;
+  signIn: SignIn;
+}) {
+  const { message } = App.useApp();
+  const chat = `${window.location.origin}/`;
+  if (signIn === "google")
+    return (
+      <Paragraph style={{ margin: 0 }}>
+        They sign in at <Text className="identity">{chat}</Text> with Google as{" "}
+        <Text className="identity">{email}</Text>. There is no password to share.
+      </Paragraph>
+    );
+  async function copyAll() {
+    try {
+      await navigator.clipboard.writeText(`Sign in at ${chat}\nEmail: ${email}\nPassword: ${password}`);
+      message.success("Sign-in details copied.");
+    } catch {
+      message.warning("Couldn’t copy. Copy the email and password yourself.");
+    }
+  }
+  return (
+    <>
+      <Paragraph style={{ margin: 0 }}>
+        They sign in at <Text className="identity">{chat}</Text> as <Text className="identity">{email}</Text>.
+      </Paragraph>
+      <OneTimePassword password={password} />
+      <div>
+        <Button icon={<Copy size={16} />} onClick={() => void copyAll()}>
+          Copy sign-in details
+        </Button>
+      </div>
+    </>
+  );
+}
+
+type Step = "edit" | "review" | "done" | "exists" | "partial" | "uncertain" | "failed" | "granted";
+
+/** Add user from People: a new account with initial access in agents the viewer manages. */
 export function AccountDrawer({
   open,
   me,
@@ -105,22 +199,31 @@ export function AccountDrawer({
 }) {
   const { modal } = App.useApp();
   const [step, setStep] = useState<Step>("edit");
+  const [busy, setBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [signIn, setSignIn] = useState<SignIn>("password");
   const [password, setPassword] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [touched, setTouched] = useState(false);
   const [failure, setFailure] = useState<ApiError | null>(null);
+  // A retry of "grant access" that failed, shown under the outcome it retried.
+  const [retryError, setRetryError] = useState<ApiError | null>(null);
   const [created, setCreated] = useState<AccountCreated | null>(null);
+  const [granted, setGranted] = useState<AccountGranted | null>(null);
+  // The previous attempt's outcome was unknown: a duplicate now may be that attempt.
+  const [afterUncertain, setAfterUncertain] = useState(false);
 
   const grantable = me.grantable ?? {};
+  const options = me.sign_in;
+  const google = signIn === "google" && !!options?.google;
   // Agents this viewer manages, in the Console's order. Legacy agents are
   // listed but take no grants here: their access is still in the chat app.
   const managed = hubs.filter((h) => h.key in grantable);
   const catalogs = useCatalogs(managed.map((h) => h.key));
 
   const subject = email.trim().toLowerCase();
-  const emailProblem = !subject ? "Enter an email address." : EMAIL.test(subject) ? null : "Enter a valid email address.";
+  const emailIssue = emailProblem(email) ?? (google ? googleDomainProblem(subject, options) : null);
   const nameProblem = name.trim() ? null : "Enter their name.";
   const grants = useMemo(
     () =>
@@ -130,21 +233,25 @@ export function AccountDrawer({
     [selected],
   );
   const needsGrant = !me.org_admin && grants.length === 0;
-  const invalid = !!(emailProblem || nameProblem || passwordProblem(password) || needsGrant);
+  const invalid = !!(emailIssue || nameProblem || (!google && passwordProblem(password)) || needsGrant);
   // Unsaved input exists only before saving; after a result there is nothing to lose.
   const dirty =
     (step === "edit" || step === "review") && (!!email || !!name || !!password || grants.length > 0);
-  const busy = step === "saving";
 
   const reset = useCallback(() => {
     setStep("edit");
+    setBusy(false);
     setEmail("");
     setName("");
+    setSignIn("password");
     setPassword("");
     setSelected({});
     setTouched(false);
     setFailure(null);
+    setRetryError(null);
     setCreated(null);
+    setGranted(null);
+    setAfterUncertain(false);
   }, []);
   const guard = useMemo(
     () => (open ? { dirty, busy, discard: reset } : null),
@@ -152,63 +259,100 @@ export function AccountDrawer({
   );
   useNavigationGuard(guard);
 
-  function close() {
-    if (busy) return;
-    if (!dirty) {
-      reset();
-      onClose();
-      return;
-    }
-    modal.confirm({
-      title: "Discard this account?",
-      content: "Nothing has been created yet. What you entered will be lost.",
-      okText: "Discard",
-      okButtonProps: { danger: true },
-      cancelText: "Keep editing",
-      onOk: () => {
-        reset();
-        onClose();
-      },
-    });
-  }
-
   function finish() {
     reset(); // drops the password from memory
     onClose();
   }
 
+  function close() {
+    if (busy) return;
+    if (!dirty) {
+      finish();
+      return;
+    }
+    modal.confirm({
+      title: "Discard this user?",
+      content: "Nothing has been created yet. What you entered will be lost.",
+      okText: "Discard",
+      okButtonProps: { danger: true },
+      cancelText: "Keep editing",
+      onOk: finish,
+    });
+  }
+
   async function save() {
-    setStep("saving");
-    setFailure(null);
+    setBusy(true);
+    setRetryError(null);
     try {
       const result = await request<AccountCreated>("/accounts", {
         email: subject,
         name: name.trim(),
-        password,
+        sign_in: google ? "google" : "password",
+        ...(google ? {} : { password }),
         grants,
       });
       setCreated(result);
+      setFailure(null);
       setStep("done");
-      onCreated();
     } catch (e) {
-      setFailure(e instanceof ApiError ? e : new ApiError(errorText(e), 0));
-      setStep("failed");
-      onCreated(); // refresh People: a partial failure may have changed something
+      const err = asApiError(e);
+      setFailure(err);
+      if (err.code === "account_exists") setStep("exists");
+      else if (err.code === "partial") setStep("partial");
+      else if (!err.certain) {
+        setAfterUncertain(true);
+        setStep("uncertain");
+      } else setStep("failed");
+    } finally {
+      setBusy(false);
+      onCreated(); // refresh People: something may have changed
+    }
+  }
+
+  /** Grant the chosen access to the account that exists: a duplicate, or the
+   *  account a partial create made. Never creates a second account. */
+  async function grantExisting() {
+    setBusy(true);
+    setRetryError(null);
+    try {
+      const result = await request<AccountGranted>("/accounts/grant", { email: subject, grants });
+      if (step === "partial") {
+        // The account was made here, with the password still on screen.
+        setCreated({ ok: true, subject, name: name.trim(), grants: result.grants, sign_in: google ? "google" : "password" });
+        setStep("done");
+      } else {
+        setGranted(result);
+        setStep("granted");
+      }
+    } catch (e) {
+      const err = asApiError(e);
+      // Agents granted before a later one failed need no retry.
+      const done = (err.data.granted ?? {}) as Record<string, string[]>;
+      if (Object.keys(done).length)
+        setSelected((all) => Object.fromEntries(Object.entries(all).filter(([h]) => !(h in done))));
+      setRetryError(err);
+    } finally {
+      setBusy(false);
+      onCreated();
     }
   }
 
   const hubName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
+  const accessLine = (g: Record<string, string[]>) =>
+    Object.keys(g).length ? `Access granted in ${Object.keys(g).map(hubName).join(", ")}.` : "No agent access was granted yet.";
 
-  const title =
-    step === "done"
-      ? "Account created"
-      : step === "review"
-        ? "Review the new account"
-        : step === "saving"
-          ? "Creating…"
-          : step === "failed"
-            ? "Account not created"
-            : "Add account";
+  const title = busy
+    ? "Saving…"
+    : {
+        edit: "Add user",
+        review: "Review the new user",
+        done: "User added",
+        exists: "This person already has an account",
+        partial: "Account created, access not granted",
+        uncertain: "Not confirmed",
+        failed: "Nothing was created",
+        granted: "Access granted",
+      }[step];
 
   const footer =
     step === "edit" ? (
@@ -227,22 +371,43 @@ export function AccountDrawer({
       </Space>
     ) : step === "review" ? (
       <Space className="drawer-actions">
-        <Button onClick={() => setStep("edit")}>Back</Button>
-        <Button type="primary" onClick={() => void save()}>
+        <Button disabled={busy} onClick={() => setStep("edit")}>Back</Button>
+        <Button type="primary" loading={busy} onClick={() => void save()}>
           Create account
         </Button>
       </Space>
-    ) : step === "saving" ? (
-      <Space className="drawer-actions">
-        <Button type="primary" loading>
-          Creating…
+    ) : step === "exists" ? (
+      <Space className="drawer-actions" wrap>
+        <Button disabled={busy} onClick={finish}>Cancel</Button>
+        {grants.length > 0 ? (
+          <Button type="primary" loading={busy} onClick={() => void grantExisting()}>
+            Grant access instead
+          </Button>
+        ) : (
+          <Button type="primary" href={personHref(subject)} onClick={finish}>
+            Open their details
+          </Button>
+        )}
+      </Space>
+    ) : step === "partial" ? (
+      <Space className="drawer-actions" wrap>
+        <Button disabled={busy} onClick={finish}>Done</Button>
+        {grants.length > 0 && (
+          <Button type="primary" loading={busy} onClick={() => void grantExisting()}>
+            Try again
+          </Button>
+        )}
+      </Space>
+    ) : step === "uncertain" ? (
+      <Space className="drawer-actions" wrap>
+        <Button disabled={busy} onClick={finish}>Done</Button>
+        <Button type="primary" loading={busy} onClick={() => void save()}>
+          Try again
         </Button>
       </Space>
     ) : step === "failed" ? (
       <Space className="drawer-actions">
-        {failure?.certain && failure.code !== "partial" && (
-          <Button onClick={() => setStep("edit")}>Back to the form</Button>
-        )}
+        <Button onClick={() => setStep("edit")}>Back to the form</Button>
         <Button type="primary" onClick={finish}>
           Done
         </Button>
@@ -260,7 +425,7 @@ export function AccountDrawer({
       title={title}
       aria-label={title}
       open={open}
-      onClose={step === "done" ? finish : close}
+      onClose={step === "edit" || step === "review" ? close : finish}
       size={520}
       closable={!busy}
       mask={{ closable: !busy }}
@@ -281,31 +446,15 @@ export function AccountDrawer({
         {step === "edit" && (
           <>
             <Paragraph type="secondary" style={{ margin: 0 }}>
-              Creates a chat sign-in with the normal user role. No invitation is sent: you share the password yourself.
+              Creates their sign-in with the normal user role. No invitation is sent: you share the sign-in yourself.
             </Paragraph>
-            <div className="field">
-              <label className="field-label" htmlFor="account-email">
-                Email address
-              </label>
-              <Input
-                id="account-email"
-                autoFocus
-                autoComplete="off"
-                placeholder="name@example.com"
-                value={email}
-                status={touched && emailProblem ? "error" : undefined}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-              <Text type={touched && emailProblem ? "danger" : "secondary"} className="field-help">
-                {touched && emailProblem ? emailProblem : "They sign in with this email. Access is granted to it."}
-              </Text>
-            </div>
             <div className="field">
               <label className="field-label" htmlFor="account-name">
                 Name
               </label>
               <Input
                 id="account-name"
+                autoFocus
                 autoComplete="off"
                 value={name}
                 status={touched && nameProblem ? "error" : undefined}
@@ -315,7 +464,26 @@ export function AccountDrawer({
                 {touched && nameProblem ? nameProblem : "Shown in the chat app and here."}
               </Text>
             </div>
-            <PasswordField id="account-password" value={password} onChange={setPassword} touched={touched} />
+            <div className="field">
+              <label className="field-label" htmlFor="account-email">
+                Email address
+              </label>
+              <Input
+                id="account-email"
+                autoComplete="off"
+                placeholder="name@example.com"
+                value={email}
+                status={touched && emailIssue ? "error" : undefined}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Text type={touched && emailIssue ? "danger" : "secondary"} className="field-help">
+                {touched && emailIssue ? emailIssue : "They sign in with this email. Access is granted to it."}
+              </Text>
+            </div>
+            <SignInChoice value={signIn} onChange={setSignIn} options={options} />
+            {!google && (
+              <PasswordField id="account-password" value={password} onChange={setPassword} touched={touched} />
+            )}
 
             <div className="section">
               <Title level={2} style={{ fontSize: 16 }}>Initial access</Title>
@@ -406,15 +574,19 @@ export function AccountDrawer({
           </>
         )}
 
-        {(step === "review" || step === "saving") && (
+        {step === "review" && (
           <div className="review">
             <Paragraph style={{ margin: 0 }}>
               <Text strong>{name.trim()}</Text> <Text type="secondary" className="identity">{subject}</Text>
             </Paragraph>
             <div className="section">
-              <Text strong>Chat account</Text>
+              <Text strong>New account</Text>
               <ul className="review-list">
-                <li>Normal user role, signs in with this email and the password you set</li>
+                <li>
+                  {google
+                    ? "Normal user role, signs in with Google using this email"
+                    : "Normal user role, signs in with this email and the password you set"}
+                </li>
               </ul>
             </div>
             <div className="section">
@@ -436,12 +608,14 @@ export function AccountDrawer({
                 </ul>
               )}
             </div>
-            <Alert
-              type="info"
-              showIcon
-              title="The password is shown once after the account is created"
-              description="Copy it then and share it with them directly."
-            />
+            {!google && (
+              <Alert
+                type="info"
+                showIcon
+                title="The password is shown once after the account is created"
+                description="Copy it then and share it with them directly."
+              />
+            )}
           </div>
         )}
 
@@ -451,74 +625,64 @@ export function AccountDrawer({
               type="success"
               showIcon
               title={`${created.name} can now sign in as ${created.subject}`}
-              description={
-                Object.keys(created.grants).length
-                  ? `Access granted in ${Object.keys(created.grants).map(hubName).join(", ")}.`
-                  : "No agent access was granted yet."
-              }
+              description={accessLine(created.grants)}
             />
-            <OneTimePassword password={password} />
+            <SignInDetails email={created.subject} password={password} signIn={created.sign_in ?? signIn} />
             <a href={personHref(created.subject)} onClick={finish}>
               Open their details
             </a>
           </>
         )}
 
-        {step === "failed" && failure && <CreateFailure failure={failure} subject={subject} grants={selected} hubName={hubName} />}
+        {step === "granted" && granted && (
+          <Alert
+            type="success"
+            showIcon
+            title={`Access granted to ${granted.name || granted.subject}`}
+            description={`${accessLine(granted.grants)} They sign in with their existing account.`}
+          />
+        )}
+
+        {step === "exists" && (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              title="An account with this email already exists"
+              description={
+                grants.length
+                  ? "No second account was created. Give that account the access you chose instead."
+                  : "No second account was created. Change their access from their details."
+              }
+            />
+            {afterUncertain && !google && (
+              <>
+                <Paragraph style={{ margin: 0 }}>
+                  It may be the account your earlier attempt created. If so, it signs in with the password you set:
+                </Paragraph>
+                <OneTimePassword password={password} />
+              </>
+            )}
+          </>
+        )}
+
+        {step === "partial" && failure && (
+          <>
+            <Alert type="warning" showIcon title="The account was created, but access wasn’t granted" description={partialDetail(failure)} />
+            <SignInDetails email={subject} password={password} signIn={google ? "google" : "password"} />
+          </>
+        )}
+
+        {step === "uncertain" && failure && (
+          <Alert type="warning" showIcon title="Couldn’t confirm whether the account was created" description={failure.message} />
+        )}
+
+        {retryError && (step === "exists" || step === "partial") && (
+          <Alert type="error" showIcon title="Access wasn’t granted" description={retryError.message} />
+        )}
+
+        {step === "failed" && failure && <Alert type="error" showIcon title="Nothing was created" description={failure.message} />}
       </div>
     </Drawer>
   );
-}
-
-function CreateFailure({
-  failure,
-  subject,
-  grants,
-  hubName,
-}: {
-  failure: ApiError;
-  subject: string;
-  grants: Record<string, string[]>;
-  hubName: (key: string) => string;
-}) {
-  if (failure.code === "account_exists") {
-    const hubsWithAccess = Object.entries(grants).filter(([, p]) => p.length).map(([h]) => h);
-    return (
-      <Alert
-        type="info"
-        showIcon
-        title="This person already has an account"
-        description={
-          <>
-            {failure.message} Nothing was created.
-            <div style={{ marginTop: 8 }}>
-              {hubsWithAccess.length ? (
-                <Space wrap>
-                  {hubsWithAccess.map((h) => (
-                    <Button key={h} href={hrefWith(`/agents/${encodeURIComponent(h)}/access`, { edit: subject })}>
-                      Grant access in {hubName(h)}
-                    </Button>
-                  ))}
-                </Space>
-              ) : (
-                <Button href={personHref(subject)}>Open their details</Button>
-              )}
-            </div>
-          </>
-        }
-      />
-    );
-  }
-  if (failure.code === "partial")
-    return <Alert type="warning" showIcon title="The account needs attention" description={failure.message} />;
-  if (!failure.certain)
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        title="Couldn’t confirm whether the account was created"
-        description={`${failure.message} Refresh accounts under People and check before trying again.`}
-      />
-    );
-  return <Alert type="error" showIcon title="Nothing was created" description={failure.message} />;
 }

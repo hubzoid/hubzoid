@@ -235,7 +235,8 @@ def test_failed_grant_keeps_the_account_and_a_retry_grants_to_it(dep, monkeypatc
     assert e.value.code == "partial" and "was created, but access was not granted" in e.value.message
     assert "removed" not in e.value.message and PASSWORD not in e.value.message
     assert e.value.extra == {"account": {"subject": "ann@x.org", "name": "Ann", "sign_in": "password"},
-                             "access_granted": False, "recorded": True}
+                             "access_granted": False, "recorded": True,
+                             "reason": "Access could not be saved."}
     user = dep.owui.by_email("ann@x.org")
     assert user and not any(m == "DELETE" for m, _, _ in dep.owui.requests)
     assert dep.gs.identity("ann@x.org")["owui_id"] == user["id"]

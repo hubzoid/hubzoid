@@ -9,8 +9,18 @@ export type Me = {
   account_admin?: boolean;
   can_create_accounts?: boolean;
   accounts_configured?: boolean;
+  /** How a new account can sign in. Google appears only when the chat app
+   *  attaches a Google sign-in to an existing account by email. */
+  sign_in?: SignInOptions;
   via?: "session" | "api-key";
 };
+export type SignInOptions = {
+  password: boolean;
+  google: boolean;
+  /** Only these email domains may sign in with Google (absent: any). */
+  google_domains?: string[];
+};
+export type SignIn = "password" | "google";
 export type Hub = { key: string; name: string; model_id?: string; can_chat?: boolean; authoritative: boolean };
 export type Permission = {
   permission: string;
@@ -216,12 +226,16 @@ export class ApiError extends Error {
   certain: boolean;
   /** Stable reason from the access service, e.g. "account_exists". */
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  /** Structured detail sent with the refusal, e.g. the account a partial
+   *  create made ({ account: { subject, name } }). Never a secret. */
+  data: Record<string, unknown>;
+  constructor(message: string, status: number, code?: string, data?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.certain = status >= 400 && status < 500;
     this.code = code;
+    this.data = data ?? {};
   }
 }
 
@@ -252,6 +266,26 @@ export type AccountCreated = {
   subject: string;
   name: string;
   grants: Record<string, string[]>;
+  sign_in?: SignIn;
+};
+
+/** A chat account offered by Add user's account picker (GET /accounts). */
+export type AccountOption = {
+  subject: string;
+  display: string | null;
+  status: string;
+  suspended: boolean;
+  account_unavailable: boolean;
+  blocked: boolean;
+  organization_admin: boolean;
+};
+
+/** Access given to an existing account (POST /accounts/grant). */
+export type AccountGranted = {
+  ok: boolean;
+  subject: string;
+  name: string | null;
+  grants: Record<string, string[]>;
 };
 
 export async function request<T>(
@@ -280,14 +314,15 @@ export async function request<T>(
   if (!response.ok) {
     let message = `${response.status} — Request failed`;
     let code: string | undefined;
+    let data: Record<string, unknown> | undefined;
     try {
-      const data = await response.json();
-      message = typeof data.detail === "string" ? data.detail : message;
-      code = typeof data.code === "string" ? data.code : undefined;
+      data = await response.json();
+      message = typeof data?.detail === "string" ? data.detail : message;
+      code = typeof data?.code === "string" ? data.code : undefined;
     } catch {
       /* use status */
     }
-    throw new ApiError(message, response.status, code);
+    throw new ApiError(message, response.status, code, data && typeof data === "object" ? data : undefined);
   }
   return response.json();
 }

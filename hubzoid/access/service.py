@@ -645,7 +645,7 @@ class AccessService:
                 502, "partial",
                 f"The account for {email} was created, but access was not granted. {reason} "
                 "Try again to grant access; the account won't be created twice.",
-                extra=dict(account=account, access_granted=False, recorded=bound),
+                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason),
             )
         self._project_visibility()
         return dict(
