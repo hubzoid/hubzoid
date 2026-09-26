@@ -386,7 +386,7 @@ class AccessService:
         if any(a == "grant" for a, _ in ops):
             flags = _account_flags(gs, subject)
             if flags["suspended"]:
-                raise Denied(409, "blocked", "Reactivate this user before granting access")
+                raise Denied(409, "blocked", "This person is blocked, so they can't be given access.")
             if flags["account_unavailable"] and not new_account:
                 raise Denied(409, "unavailable", UNAVAILABLE_MSG)
         return ops
@@ -746,7 +746,7 @@ class AccessService:
         flags = _account_flags(gs, email)
         if flags["suspended"]:
             raise Denied(409, "blocked",
-                         "This person is blocked. Reactivate them under People first.")
+                         "This person is blocked, so they can't be given access.")
         identity = gs.identity(email) or {}
         replace = False
         if identity.get("owui_id"):

@@ -393,7 +393,7 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
     case "account_replaced":
       return {
         tone: "negative",
-        parts: [text("A new chat account reused "), person(subjectName), text("’s email")],
+        parts: [text("A new account reused "), person(subjectName), text("’s email")],
         detail: "Previous access was removed and the identity blocked until an administrator reviews it.",
       };
     // Run controls come from `hubzoid schedule pause | resume | cancel` on the
@@ -407,20 +407,20 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
     case "account_unavailable":
       return {
         tone: "negative",
-        parts: [person(subjectName), text("’s chat account is no longer available")],
+        parts: [person(subjectName), text("’s account is no longer available")],
         detail: "Access is paused until the account reappears in the chat app.",
       };
     // Account actions (the Console's account directory). The subject is the email.
     case "account_create":
-      return { tone: "positive", parts: [actor(who), text(" created a chat account for "), person(subjectName)] };
+      return { tone: "positive", parts: [actor(who), text(" added "), person(subjectName)] };
     case "account_create_failed":
       return {
         tone: "negative",
-        parts: [actor(who), text(" couldn’t create a chat account for "), person(subjectName)],
+        parts: [actor(who), text(" couldn’t add "), person(subjectName)],
         detail: "No access was granted.",
       };
     case "account_approve":
-      return { tone: "positive", parts: [actor(who), text(" approved "), person(subjectName), text("’s chat account")] };
+      return { tone: "positive", parts: [actor(who), text(" approved "), person(subjectName), text("’s account")] };
     case "account_password_reset":
       return {
         tone: "neutral",
@@ -431,12 +431,12 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
       // The new chat-app role is kept in the permission column.
       return {
         tone: "neutral",
-        parts: [actor(who), text(" changed "), person(subjectName), text(`’s chat-app role to ${row.permission === "admin" ? "admin" : "user"}`)],
+        parts: [actor(who), text(" changed "), person(subjectName), text(` to ${row.permission === "admin" ? "Administrator" : "User"}`)],
       };
     case "account_delete":
       return {
         tone: "negative",
-        parts: [actor(who), text(" deleted "), person(subjectName), text("’s chat account")],
+        parts: [actor(who), text(" deleted "), person(subjectName), text("’s account")],
         detail: "Their access was removed first.",
       };
     // Changes proposed from chat, WhatsApp or MCP and confirmed in the Console.

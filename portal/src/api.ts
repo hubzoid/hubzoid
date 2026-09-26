@@ -272,16 +272,6 @@ export type AccountCreated = {
   sign_in?: SignIn;
 };
 
-/** A chat account offered by Add user's account picker (GET /accounts). */
-export type AccountOption = {
-  subject: string;
-  display: string | null;
-  status: string;
-  suspended: boolean;
-  account_unavailable: boolean;
-  blocked: boolean;
-  organization_admin: boolean;
-};
 
 /** Access given to an existing account (POST /accounts/grant). */
 export type AccountGranted = {

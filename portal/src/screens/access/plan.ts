@@ -88,8 +88,8 @@ export function lockFor(
   if ((row.suspended || row.account_unavailable) && !row.perms.includes(permission))
     return {
       reason: row.suspended
-        ? "Blocked by an administrator — reactivate them under People to grant new access. Existing access can still be removed."
-        : "Their chat account is unavailable, so new access can't be added — but existing access can be removed.",
+        ? "Blocked by an administrator, so they can't be given new access. Existing access can still be removed."
+        : "Their account is unavailable, so new access can't be added — but existing access can be removed.",
     };
   if (meta?.obsolete && !row.perms.includes(permission))
     return { label: "No longer available", reason: "This capability no longer exists, so it can’t be granted." };

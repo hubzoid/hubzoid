@@ -1047,7 +1047,7 @@ class GrantStore:
                 )
             if self._meta_get(conn, "suspended:" + subject) == "1":
                 raise ValueError(
-                    "This person is blocked. Reactivate them under People first."
+                    "This person is blocked, so they can't be given access."
                 )
             row = conn.execute(
                 text("SELECT owui_id FROM hz_identities WHERE subject=:s"),

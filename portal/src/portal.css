@@ -791,3 +791,6 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .review-agent { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .access-review .review-list { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .capability-group-chevron { transition: none; } }
+
+/* A field label with a control beside it (Password · Google sign-in only). */
+.field-label-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }

@@ -165,7 +165,7 @@ export function ConfirmScreen({ id, hubs }: { id: string; hubs: Hub[] }) {
               ),
             },
             ...(plan.kind === "account"
-              ? [{ key: "account", label: "Chat account", children: "New sign-in with the normal user role" }]
+              ? [{ key: "account", label: "Account", children: "New sign-in with the normal user role" }]
               : [
                   {
                     key: "current",

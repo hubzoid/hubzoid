@@ -15,7 +15,7 @@ const PERIODS = [
 ];
 const count = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
 const acrossHubs = (n: number) => `Across ${n.toLocaleString()} ${n === 1 ? "hub" : "hubs"}`;
-const USERS_HINT = "Chat accounts you manage, blocked ones included. Service identities and people "
+const USERS_HINT = "Users you manage, blocked ones included. Service identities and people "
   + "invited by email who have not signed up are not counted. The period does not change this total.";
 
 function Stat({ label, value, hint, sub }: {

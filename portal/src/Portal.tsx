@@ -79,8 +79,8 @@ function Router({
               <>
                 {status === 401
                   ? confirming
-                    ? "Sign in with your chat account to review this change. If you land in the chat app afterwards, open the confirmation link again."
-                    : "Use your chat account to sign in, then return here."
+                    ? "Sign in to review this change. If you land in the chat app afterwards, open the confirmation link again."
+                    : "Sign in, then return here."
                   : status === 403 ? "Ask your hub owner for Manage access. You can still open chat to use the agents available to you." : "Check your connection and try again. Your access has not changed."}
                 <div style={{ marginTop: 12 }}>
                   <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}

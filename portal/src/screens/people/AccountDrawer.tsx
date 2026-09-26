@@ -6,9 +6,9 @@ import {
   Checkbox,
   Drawer,
   Input,
-  Radio,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { Copy, KeyRound } from "lucide-react";
@@ -24,8 +24,9 @@ import {
 } from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { MANAGE_ACCESS, USE_HUB, capabilityLabel, isGrantable } from "../../lib/format";
+import { MANAGE_ACCESS, USE_HUB, capabilityLabel, groupCapabilities, isGrantable } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
+import { CapabilityGroup } from "../access/AccessParts";
 import { generatePassword, passwordProblem } from "./password";
 import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "./accountRules";
 
@@ -97,40 +98,79 @@ export function OneTimePassword({ password }: { password: string }) {
 }
 
 /**
- * How a new account signs in. Rendered only when the deployment offers more
- * than a password: Google appears only when the chat app attaches a Google
- * sign-in to an existing account by email.
+ * How a new user signs in: a password (typed or generated), or "Google
+ * sign-in only" beside it. Google is offered only when the chat app attaches a
+ * Google sign-in to an existing account by email; otherwise the choice is
+ * shown disabled with a short hint. Choosing Google hides the password.
  */
-export function SignInChoice({
-  value,
-  onChange,
+export function NewUserSignIn({
+  signIn,
+  onSignIn,
   options,
+  password,
+  onPassword,
+  touched,
+  id,
 }: {
-  value: SignIn;
-  onChange: (v: SignIn) => void;
+  signIn: SignIn;
+  onSignIn: (v: SignIn) => void;
   options?: SignInOptions;
+  password: string;
+  onPassword: (v: string) => void;
+  touched?: boolean;
+  id: string;
 }) {
-  if (!options?.google) return null;
-  const domains = options.google_domains?.filter(Boolean) ?? [];
+  const available = !!options?.google;
+  const google = available && signIn === "google";
+  const domains = options?.google_domains?.filter(Boolean) ?? [];
+  const problem = touched && !google ? passwordProblem(password) : null;
+  const choice = (
+    <Checkbox
+      checked={google}
+      disabled={!available}
+      onChange={(e) => onSignIn(e.target.checked ? "google" : "password")}
+    >
+      Google sign-in only
+    </Checkbox>
+  );
   return (
     <div className="field">
-      <span className="field-label" id="sign-in-choice">
-        How they sign in
-      </span>
-      <Radio.Group
-        aria-labelledby="sign-in-choice"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        options={[
-          { value: "password", label: "Password" },
-          { value: "google", label: "Google sign-in only" },
-        ]}
-      />
-      <Text type="secondary" className="field-help">
-        {value === "google"
-          ? `They sign in with Google using this email${domains.length ? ` (${domains.join(", ")} only)` : ""}. No password is set that anyone knows.`
-          : "You set a password and share it with them yourself."}
-      </Text>
+      <div className="field-label-row">
+        <label className="field-label" htmlFor={id}>
+          Password
+        </label>
+        {available ? (
+          choice
+        ) : (
+          <Tooltip title="Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true.">
+            <span>{choice}</span>
+          </Tooltip>
+        )}
+      </div>
+      {google ? (
+        <Text type="secondary" className="field-help">
+          They sign in with Google using this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No
+          password is set that anyone knows.
+        </Text>
+      ) : (
+        <>
+          <Space.Compact style={{ width: "100%" }}>
+            <Input.Password
+              id={id}
+              autoComplete="new-password"
+              value={password}
+              status={problem ? "error" : undefined}
+              onChange={(e) => onPassword(e.target.value)}
+            />
+            <Button icon={<KeyRound size={16} />} onClick={() => onPassword(generatePassword())}>
+              Generate
+            </Button>
+          </Space.Compact>
+          <Text type={problem ? "danger" : "secondary"} className="field-help">
+            {problem ?? "Shown once after saving so you can share it. It is not stored in the Console."}
+          </Text>
+        </>
+      )}
     </div>
   );
 }
@@ -181,7 +221,7 @@ export function SignInDetails({
   );
 }
 
-type Step = "edit" | "review" | "done" | "exists" | "partial" | "uncertain" | "failed" | "granted";
+type Step = "edit" | "review" | "done" | "exists" | "partial" | "uncertain" | "failed";
 
 /** Add user from People: a new account with initial access in agents the viewer manages. */
 export function AccountDrawer({
@@ -205,12 +245,15 @@ export function AccountDrawer({
   const [signIn, setSignIn] = useState<SignIn>("password");
   const [password, setPassword] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  // Agent sections and their optional capability groups start collapsed.
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const flip = (key: string) =>
+    setOpenKeys((keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]));
   const [touched, setTouched] = useState(false);
   const [failure, setFailure] = useState<ApiError | null>(null);
   // A retry of "grant access" that failed, shown under the outcome it retried.
   const [retryError, setRetryError] = useState<ApiError | null>(null);
   const [created, setCreated] = useState<AccountCreated | null>(null);
-  const [granted, setGranted] = useState<AccountGranted | null>(null);
   // The previous attempt's outcome was unknown: a duplicate now may be that attempt.
   const [afterUncertain, setAfterUncertain] = useState(false);
 
@@ -246,11 +289,11 @@ export function AccountDrawer({
     setSignIn("password");
     setPassword("");
     setSelected({});
+    setOpenKeys([]);
     setTouched(false);
     setFailure(null);
     setRetryError(null);
     setCreated(null);
-    setGranted(null);
     setAfterUncertain(false);
   }, []);
   const guard = useMemo(
@@ -309,21 +352,16 @@ export function AccountDrawer({
     }
   }
 
-  /** Grant the chosen access to the account that exists: a duplicate, or the
-   *  account a partial create made. Never creates a second account. */
+  /** Grant the chosen access to the account a partial create made. Never
+   *  creates a second account, and never touches an account made elsewhere. */
   async function grantExisting() {
     setBusy(true);
     setRetryError(null);
     try {
       const result = await request<AccountGranted>("/accounts/grant", { email: subject, grants });
-      if (step === "partial") {
-        // The account was made here, with the password still on screen.
-        setCreated({ ok: true, subject, name: name.trim(), grants: result.grants, sign_in: google ? "google" : "password" });
-        setStep("done");
-      } else {
-        setGranted(result);
-        setStep("granted");
-      }
+      // The account was made here, with the password still on screen.
+      setCreated({ ok: true, subject, name: name.trim(), grants: result.grants, sign_in: google ? "google" : "password" });
+      setStep("done");
     } catch (e) {
       const err = asApiError(e);
       // Agents granted before a later one failed need no retry.
@@ -347,11 +385,10 @@ export function AccountDrawer({
         edit: "Add user",
         review: "Review the new user",
         done: "User added",
-        exists: "This person already has an account",
+        exists: "This user already exists",
         partial: "Account created, access not granted",
         uncertain: "Not confirmed",
         failed: "Nothing was created",
-        granted: "Access granted",
       }[step];
 
   const footer =
@@ -379,15 +416,9 @@ export function AccountDrawer({
     ) : step === "exists" ? (
       <Space className="drawer-actions" wrap>
         <Button disabled={busy} onClick={finish}>Cancel</Button>
-        {grants.length > 0 ? (
-          <Button type="primary" loading={busy} onClick={() => void grantExisting()}>
-            Grant access instead
-          </Button>
-        ) : (
-          <Button type="primary" href={personHref(subject)} onClick={finish}>
-            Open their details
-          </Button>
-        )}
+        <Button type="primary" href={personHref(subject)} onClick={finish}>
+          Edit this user
+        </Button>
       </Space>
     ) : step === "partial" ? (
       <Space className="drawer-actions" wrap>
@@ -445,9 +476,6 @@ export function AccountDrawer({
 
         {step === "edit" && (
           <>
-            <Paragraph type="secondary" style={{ margin: 0 }}>
-              Creates their sign-in with the normal user role. No invitation is sent: you share the sign-in yourself.
-            </Paragraph>
             <div className="field">
               <label className="field-label" htmlFor="account-name">
                 Name
@@ -480,18 +508,18 @@ export function AccountDrawer({
                 {touched && emailIssue ? emailIssue : "They sign in with this email. Access is granted to it."}
               </Text>
             </div>
-            <SignInChoice value={signIn} onChange={setSignIn} options={options} />
-            {!google && (
-              <PasswordField id="account-password" value={password} onChange={setPassword} touched={touched} />
-            )}
+            <NewUserSignIn
+              id="account-password"
+              signIn={signIn}
+              onSignIn={setSignIn}
+              options={options}
+              password={password}
+              onPassword={setPassword}
+              touched={touched}
+            />
 
             <div className="section">
               <Title level={2} style={{ fontSize: 16 }}>Initial access</Title>
-              <Paragraph type="secondary" style={{ margin: "0 0 8px" }}>
-                {me.org_admin
-                  ? "Optional. You can grant access later from any agent’s Access tab."
-                  : "Choose access in at least one agent you manage. You can only give capabilities you hold yourself."}
-              </Paragraph>
               {touched && needsGrant && (
                 <Alert type="error" showIcon title="Choose access in at least one agent you manage." />
               )}
@@ -499,75 +527,109 @@ export function AccountDrawer({
               {managed.map((hub) => {
                 const allowed = new Set(grantable[hub.key] ?? []);
                 const catalog = catalogs[hub.key] ?? {};
-                // Included and obsolete capabilities have nothing to grant.
-                const perms = orderCapabilities(
-                  Object.keys(catalog).filter((p) => isGrantable(catalog[p])),
-                  Object.keys(catalog),
-                );
                 const chosen = selected[hub.key] ?? [];
+                const agentKey = `agent:${hub.key}`;
+                // Included and obsolete capabilities have nothing to grant.
+                const groups = groupCapabilities(
+                  Object.values(catalog).filter((p) => isGrantable(p)),
+                  [],
+                );
                 return (
-                  <div key={hub.key} className="agent-access" style={{ marginBottom: 12 }}>
-                    <div className="agent-access-heading">
-                      <Text strong>{hub.name}</Text>
-                    </div>
+                  <CapabilityGroup
+                    key={hub.key}
+                    id={`new-user-${hub.key}`}
+                    title={hub.name}
+                    collapsible
+                    open={openKeys.includes(agentKey)}
+                    onToggle={() => flip(agentKey)}
+                    selected={chosen.length}
+                    unconfigured={0}
+                    problems={0}
+                  >
                     {!hub.authoritative ? (
-                      <Text type="secondary">
-                        Access to this agent is still managed in the chat app, so it can’t be granted here.
-                      </Text>
+                      <Text type="secondary">Access to this agent is managed in the chat app.</Text>
                     ) : (
                       <div className="capabilities" role="group" aria-label={`Access to ${hub.name}`}>
-                        {perms.map((p) => {
-                          const outside = !allowed.has(p);
-                          // Held, but only organization administrators may give it.
-                          const adminOnly =
-                            outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
-                          const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
+                        {groups.map((g) => {
+                          const groupKey = `${hub.key}:${g.key}`;
+                          const perms = orderCapabilities(
+                            g.items.map((i) => i.permission),
+                            Object.keys(catalog),
+                          );
                           return (
-                            <div className="capability-row" key={p}>
-                              <Checkbox
-                                checked={chosen.includes(p)}
-                                disabled={outside || required}
-                                onChange={(e) =>
-                                  setSelected({
-                                    ...selected,
-                                    [hub.key]: toggle(chosen, p, e.target.checked),
-                                  })
-                                }
-                              >
-                                <span className="capability-title">
-                                  <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
-                                  {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
-                                  {catalog[p]?.available === false && (
-                                    <Text type="warning" className="capability-status">
-                                      {catalog[p].status || "Not configured"}
-                                    </Text>
-                                  )}
-                                </span>
-                              </Checkbox>
-                              {outside && (
-                                <Text
-                                  type="secondary"
-                                  className="capability-state"
-                                  title={
-                                    adminOnly
-                                      ? "Only organization administrators can grant this."
-                                      : "You can only give capabilities you hold in this agent yourself."
-                                  }
-                                >
-                                  {adminOnly ? "Admins only" : "Outside your access"}
-                                </Text>
-                              )}
-                              {required && (
-                                <Text type="warning" className="capability-state">
-                                  Required
-                                </Text>
-                              )}
-                            </div>
+                            <CapabilityGroup
+                              key={g.key}
+                              id={`new-user-${hub.key}-${g.key}`}
+                              title={g.title}
+                              collapsible={g.key !== "hub"}
+                              open={openKeys.includes(groupKey)}
+                              onToggle={() => flip(groupKey)}
+                              selected={perms.filter((p) => chosen.includes(p)).length}
+                              unconfigured={perms.filter((p) => chosen.includes(p) && catalog[p]?.available === false).length}
+                              problems={0}
+                            >
+                              {perms.map((p) => {
+                                const outside = !allowed.has(p);
+                                // Held, but only organization administrators may give it.
+                                const adminOnly =
+                                  outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
+                                const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
+                                return (
+                                  <div className="capability-row" key={p}>
+                                    <Checkbox
+                                      checked={chosen.includes(p)}
+                                      disabled={outside || required}
+                                      onChange={(e) =>
+                                        setSelected({
+                                          ...selected,
+                                          [hub.key]: toggle(chosen, p, e.target.checked),
+                                        })
+                                      }
+                                    >
+                                      <span className="capability-title">
+                                        <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
+                                        {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
+                                        {catalog[p]?.available === false && (
+                                          <Text type="warning" className="capability-status">
+                                            {catalog[p].status || "Not configured"}
+                                          </Text>
+                                        )}
+                                      </span>
+                                    </Checkbox>
+                                    {catalog[p]?.description && (
+                                      <Tooltip title={catalog[p].description}>
+                                        <Text type="secondary" className="capability-state" aria-label={catalog[p].description}>
+                                          ⓘ
+                                        </Text>
+                                      </Tooltip>
+                                    )}
+                                    {outside && (
+                                      <Tooltip
+                                        title={
+                                          adminOnly
+                                            ? "Only organization administrators can grant this."
+                                            : "You can only give capabilities you hold in this agent yourself."
+                                        }
+                                      >
+                                        <Text type="secondary" className="capability-state">
+                                          {adminOnly ? "Admins only" : "Outside your access"}
+                                        </Text>
+                                      </Tooltip>
+                                    )}
+                                    {required && (
+                                      <Text type="warning" className="capability-state">
+                                        Required
+                                      </Text>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </CapabilityGroup>
                           );
                         })}
                       </div>
                     )}
-                  </div>
+                  </CapabilityGroup>
                 );
               })}
             </div>
@@ -634,26 +696,13 @@ export function AccountDrawer({
           </>
         )}
 
-        {step === "granted" && granted && (
-          <Alert
-            type="success"
-            showIcon
-            title={`Access granted to ${granted.name || granted.subject}`}
-            description={`${accessLine(granted.grants)} They sign in with their existing account.`}
-          />
-        )}
-
         {step === "exists" && (
           <>
             <Alert
               type="info"
               showIcon
-              title="An account with this email already exists"
-              description={
-                grants.length
-                  ? "No second account was created. Give that account the access you chose instead."
-                  : "No second account was created. Change their access from their details."
-              }
+              title="This user already exists"
+              description="Nothing was changed. Edit their access from their details."
             />
             {afterUncertain && !google && (
               <>
@@ -677,7 +726,7 @@ export function AccountDrawer({
           <Alert type="warning" showIcon title="Couldn’t confirm whether the account was created" description={failure.message} />
         )}
 
-        {retryError && (step === "exists" || step === "partial") && (
+        {retryError && step === "partial" && (
           <Alert type="error" showIcon title="Access wasn’t granted" description={retryError.message} />
         )}
 

@@ -11,7 +11,7 @@ import {
   Typography,
 } from "antd";
 import { Plus, Search } from "lucide-react";
-import { request, query, type Access, type AccessRow, type Hub, type Me } from "../../api";
+import { request, query, type Access, type AccessRow, type Hub, type Me, type Person } from "../../api";
 import { errorText, useData } from "../../hooks/useData";
 import {
   AccountTag,
@@ -21,7 +21,7 @@ import {
 } from "../../components/common";
 import { useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
-import { draftFor, orderCapabilities, type Draft } from "./plan";
+import { draftFor, emptyRow, orderCapabilities, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
 import { LegacyServiceTag } from "./AccessParts";
 
@@ -52,6 +52,26 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const announce = (text: string) => setNotice((prev) => ({ text, n: prev.n + 1 }));
   const [removingEveryone, setRemovingEveryone] = useState(false);
 
+  /** The access row of a user with no access to this agent yet: who they are
+   *  and their account state (a blocked user shows as blocked before saving). */
+  async function personRow(subject: string): Promise<AccessRow> {
+    try {
+      const res = await request<{ people: Person[] }>("/people" + query({ q: subject, limit: 20 }));
+      const p = res.people.find((x) => x.subject === subject);
+      if (p)
+        return {
+          ...emptyRow(subject),
+          display: p.display ?? "",
+          status: p.status,
+          suspended: p.suspended,
+          account_unavailable: p.account_unavailable,
+        };
+    } catch {
+      // Unknown here: the server re-checks the account when saving.
+    }
+    return emptyRow(subject);
+  }
+
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
   // open that person's editor directly instead of the whole access list.
   const [q] = useHashQuery();
@@ -69,9 +89,15 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         );
         if (cancelled) return;
         const row = res.rows.find((r) => r.subject === edit);
-        setDraft(row ? draftFor(row) : { ...draftFor(), subject: edit });
+        if (row) {
+          setDraft(draftFor(row));
+          return;
+        }
+        // A user with no access here yet: edit them, starting with entry.
+        const person = await personRow(edit);
+        if (!cancelled) setDraft({ ...draftFor(person), selected: [USE_HUB] });
       } catch {
-        if (!cancelled) setDraft({ ...draftFor(), subject: edit });
+        if (!cancelled) setDraft({ ...draftFor(emptyRow(edit)), selected: [USE_HUB] });
       }
     })();
     return () => {
@@ -95,7 +121,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     const n = access.public_reliant ?? 0;
     modal.confirm({
       title: `Remove access for everyone signed in to ${hub.name}?`,
-      content: `${n === 1 ? "1 chat account opens" : `${n} chat accounts open`} ${hub.name} only through this and will lose entry, as will anyone who signs up later. Add the people who need it by name first. Named grants are not affected.`,
+      content: `${n === 1 ? "1 user opens" : `${n} users open`} ${hub.name} only through this and will lose entry, as will anyone who signs up later. Add the people who need it by name first. Named grants are not affected.`,
       okText: "Remove access for everyone",
       okButtonProps: { danger: true },
       cancelText: "Cancel",

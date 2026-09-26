@@ -18,17 +18,15 @@ import {
   type AccessRow,
   type AccountCreated,
   type AccountGranted,
-  type AccountOption,
   type Hub,
   type Me,
   type Permission,
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { personHref, useNavigationGuard } from "../../hooks/useRoute";
+import { useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
-  EVERYONE,
   USE_HUB,
   capabilityLabel,
   capabilityNotes,
@@ -38,7 +36,6 @@ import {
   normalizeSubject,
   personName,
   toCatalog,
-  validateSubject,
   type Catalog,
 } from "../../lib/format";
 import {
@@ -53,16 +50,13 @@ import {
   type Lock,
 } from "./plan";
 import {
-  AccountPicker,
-  AddChoice,
   CapabilityGroup,
-  ChosenAccount,
   HelpText,
   HelpToggle,
   LegacyServiceTag,
   type AddKind,
 } from "./AccessParts";
-import { OneTimePassword, PasswordField, SignInChoice, SignInDetails } from "../people/AccountDrawer";
+import { NewUserSignIn, OneTimePassword, SignInDetails } from "../people/AccountDrawer";
 import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "../people/accountRules";
 import { passwordProblem } from "../people/password";
 
@@ -70,10 +64,7 @@ const { Text, Title, Paragraph } = Typography;
 
 /** Groups that are always open: entry ("Use this agent") and removable leftovers. */
 const ALWAYS_OPEN = new Set(["hub", "obsolete"]);
-/** Shorter drawer titles where the shared catalogue title reads as jargon. */
 
-const NO_NEW_SERVICES =
-  "New service identities can’t be added. Workflows run as an ordinary account: enter that account’s email address.";
 
 /** What happened to a new account. The account system and the access store
  *  can't commit together, so a created account without its access is shown
@@ -82,17 +73,6 @@ type Outcome =
   | { type: "created"; created: AccountCreated }
   | { type: "exists" | "partial" | "uncertain" | "failed"; error: ApiError };
 
-/** The email field for a new grantee. Workflows run as ordinary accounts, so a
- *  `workflow:` identity is accepted only when it already exists here (checked
- *  after the lookup), and the hint never suggests creating one. */
-function validateNewSubject(raw: string): string | null {
-  const value = normalizeSubject(raw);
-  if (!value) return "Enter an email address.";
-  const problem = validateSubject(value);
-  if (isService(value)) return problem ? NO_NEW_SERVICES : null;
-  if (!problem) return null;
-  return value === EVERYONE ? problem : "Enter a valid email address.";
-}
 
 /**
  * Selected capabilities that can't be granted, checked before review. The
@@ -221,11 +201,9 @@ export function AccessDrawer({
   // survive Back from review, and reset when the drawer closes.
   const [expanded, setExpanded] = useState<string[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
-  const [subjectProblem, setSubjectProblem] = useState<string | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
-  // Add user: an existing account, a new one, or (explicitly) an email with no account yet.
-  const [kind, setKind] = useState<AddKind>("existing");
-  const [chosen, setChosen] = useState<AccountOption | null>(null);
+  // Add user always creates a new user; existing users are edited instead.
+  const kind: AddKind = "new";
   const [newName, setNewName] = useState("");
   const [signIn, setSignIn] = useState<SignIn>("password");
   // Held only while this drawer is open; never stored anywhere else.
@@ -260,19 +238,21 @@ export function AccessDrawer({
     email: emailProblem(draft?.subject ?? "") ?? (google ? googleDomainProblem(subject, me?.sign_in) : null),
     password: google ? null : passwordProblem(password),
   };
-  const subjectError =
-    adding && kind === "email"
-      ? validateNewSubject(draft?.subject ?? "") ?? subjectProblem
-      : adding && isNew
-        ? newProblems.email
-        : null;
+  const subjectError = adding ? newProblems.email : null;
   const changes = draft ? diff(draft.row.perms, draft.selected) : { added: [], removed: [] };
   const hasChanges = changes.added.length > 0 || changes.removed.length > 0;
   const dirty =
     !!draft &&
     !outcome &&
     draft.step !== "failed" &&
-    (hasChanges || (adding && (draft.subject.trim() !== "" || !!newName || !!password)));
+    (adding
+      ? draft.subject.trim() !== "" ||
+        !!newName ||
+        !!password ||
+        // Use this agent is chosen for a new user by default; anything else is a choice.
+        draft.selected.length !== 1 ||
+        draft.selected[0] !== USE_HUB
+      : hasChanges);
   const busy = draft?.step === "saving" || checking;
 
   /** Close the drawer and forget this session's view state, password included. */
@@ -280,10 +260,7 @@ export function AccessDrawer({
     setTouched(false);
     setExpanded([]);
     setProblems({});
-    setSubjectProblem(null);
     setAboutOpen(false);
-    setKind("existing");
-    setChosen(null);
     setNewName("");
     setSignIn("password");
     setPassword("");
@@ -293,15 +270,30 @@ export function AccessDrawer({
     setDraft(null);
   }, [setDraft]);
 
-  /** Switch between an existing account, a new one, or a bare email. */
-  function changeKind(next: AddKind, email = "") {
+  /** The email belongs to an existing user: edit their access in this agent
+   *  instead, starting from what they hold here plus what was chosen. Nothing
+   *  is saved until reviewed. */
+  async function editExisting() {
     if (!draft) return;
-    setKind(next);
-    setChosen(null);
+    const chosenPerms = draft.selected;
+    let row = emptyRow(subject);
+    try {
+      const current = await request<Access>("/access" + query({ hub: access.hub, q: subject, limit: 200 }));
+      row = current.rows.find((r) => r.subject === subject) ?? row;
+    } catch {
+      /* start from no access; the save re-checks everything */
+    }
+    const base = draftFor(row);
+    setOutcome(null);
+    setNewName("");
+    setPassword("");
     setTouched(false);
-    setSubjectProblem(null);
-    if (next !== "new") setPassword("");
-    setDraft({ ...draft, subject: email, failure: undefined, notice: undefined });
+    setDraft({
+      ...base,
+      mode: "edit",
+      selected: [...new Set([...base.selected, ...chosenPerms])],
+      notice: `${personName(subject, row.display)} already exists. Their current access is shown with your choices added; review before saving.`,
+    });
   }
 
   const open = !!draft;
@@ -348,15 +340,7 @@ export function AccessDrawer({
     let target = subject;
     if (draft.mode === "add") {
       setTouched(true);
-      if (kind === "existing") {
-        if (!chosen) {
-          setSubjectProblem("Choose an account first.");
-          return;
-        }
-        target = chosen.subject;
-      } else if (kind === "new") {
-        if (newProblems.name || newProblems.email || newProblems.password) return;
-      } else if (subjectError) return;
+      if (newProblems.name || newProblems.email || newProblems.password) return;
       // Look the identity up before promising a change set, so an existing
       // grantee is edited instead of blindly re-granted.
       setChecking(true);
@@ -364,34 +348,9 @@ export function AccessDrawer({
         const current = await request<Access>(
           "/access" + query({ hub: access.hub, q: target, limit: 200 }),
         );
-        const existing = current.rows.find((r) => r.subject === target);
-        // A new account is created whatever this email already holds here;
-        // the server refuses a duplicate account and offers its own choice.
-        if (existing && kind !== "new") {
-          setKind("existing");
-          setChosen(null);
-          setProblems({});
-          setDraft({
-            ...draftFor(existing),
-            notice: `${personName(existing.subject, existing.display)} already has access to ${hub.name}. Their current access is shown; adjust it and review again.`,
-          });
-          return;
-        }
-        // Workflows run as ordinary accounts; only an existing legacy record stays editable.
-        if (kind === "email" && isService(target)) {
-          setSubjectProblem(NO_NEW_SERVICES);
-          return;
-        }
-        row = emptyRow(target);
-        if (kind === "existing" && chosen)
-          row = {
-            ...row,
-            display: chosen.display ?? "",
-            status: chosen.status,
-            suspended: chosen.suspended,
-            account_unavailable: chosen.account_unavailable,
-          };
-        if (kind === "new") row = { ...row, display: newName.trim() };
+        // A new user is created whatever this email already holds here; the
+        // server refuses a duplicate and the result points to editing them.
+        row = { ...emptyRow(target), display: newName.trim() };
         found = selectionProblems(row, draft.selected, current, toCatalog(current.permissions));
       } catch (e) {
         setDraft({ ...draft, failure: `Couldn’t check current access: ${errorText(e)}` });
@@ -496,21 +455,15 @@ export function AccessDrawer({
     }
     setDraft({ ...draft, step: "saving", progress: 0 });
     try {
-      if (adding && kind === "existing") {
-        // An existing chat account: the server checks it is one, never
-        // creating an account or an email-only grant.
-        await request("/accounts/grant", { email: subject, grants: accountGrants(draft) });
-      } else {
-        // One atomic request: the whole change set applies on the revision we
-        // loaded, or none of it does (a concurrent edit returns 409). No partial
-        // saves, so there is nothing to reconcile by hand.
-        await request("/access/apply", {
-          subject,
-          hub: target,
-          expected_revision: access.revision,
-          operations: operations.map((o) => ({ action: o.action, permission: o.permission })),
-        });
-      }
+      // One atomic request: the whole change set applies on the revision we
+      // loaded, or none of it does (a concurrent edit returns 409). No partial
+      // saves, so there is nothing to reconcile by hand.
+      await request("/access/apply", {
+        subject,
+        hub: target,
+        expected_revision: access.revision,
+        operations: operations.map((o) => ({ action: o.action, permission: o.permission })),
+      });
       finish();
       onSaved();
     } catch (e) {
@@ -526,7 +479,7 @@ export function AccessDrawer({
   const name = draft ? personName(subject || draft.subject, draft.row.display) : "";
   const outcomeTitle: Record<Outcome["type"], string> = {
     created: "User added",
-    exists: "This person already has an account",
+    exists: "This user already exists",
     partial: "Account created, access not granted",
     uncertain: "Not confirmed",
     failed: "Nothing was created",
@@ -585,9 +538,15 @@ export function AccessDrawer({
           <Button
             type="primary"
             loading={saving}
-            onClick={() => void (outcome.type === "uncertain" ? createAccount(draft) : grantToAccount())}
+            onClick={() =>
+              void (outcome.type === "exists"
+                ? editExisting()
+                : outcome.type === "uncertain"
+                  ? createAccount(draft)
+                  : grantToAccount())
+            }
           >
-            {outcome.type === "exists" ? "Grant access instead" : "Try again"}
+            {outcome.type === "exists" ? "Edit their access" : "Try again"}
           </Button>
         </Space>
       );
@@ -704,118 +663,51 @@ export function AccessDrawer({
             <>
               {draft.mode === "add" ? (
                 <>
-                  {kind !== "email" && (
-                    <AddChoice
-                      value={kind}
-                      onChange={(k) => changeKind(k)}
-                      canCreate={canCreate}
-                      createBlocked={createBlocked}
+                  {!canCreate && createBlocked && <Alert type="warning" showIcon title={createBlocked} />}
+                  <div className="field">
+                    <label className="field-label" htmlFor="new-account-name">
+                      Name
+                    </label>
+                    <Input
+                      id="new-account-name"
+                      autoFocus
+                      autoComplete="off"
+                      value={newName}
+                      status={touched && newProblems.name ? "error" : undefined}
+                      onChange={(e) => setNewName(e.target.value)}
                     />
-                  )}
-                  {kind === "existing" &&
-                    (chosen ? (
-                      <ChosenAccount
-                        account={chosen}
-                        onChange={() => {
-                          setChosen(null);
-                          setDraft({ ...draft, subject: "" });
-                        }}
-                      />
-                    ) : (
-                      <>
-                        <AccountPicker
-                          orgAdmin={me?.org_admin ?? access.can_manage_admins}
-                          canCreate={canCreate}
-                          onChoose={(a) => {
-                            setChosen(a);
-                            setSubjectProblem(null);
-                            setDraft({ ...draft, subject: a.subject });
-                          }}
-                          onCreate={(email) => changeKind("new", email)}
-                          onPreApprove={(email) => changeKind("email", email)}
-                          onType={() => setSubjectProblem(null)}
-                        />
-                        {touched && subjectProblem && (
-                          <Text type="danger" className="field-help">
-                            {subjectProblem}
-                          </Text>
-                        )}
-                      </>
-                    ))}
-                  {kind === "new" && (
-                    <>
-                      <div className="field">
-                        <label className="field-label" htmlFor="new-account-name">
-                          Name
-                        </label>
-                        <Input
-                          id="new-account-name"
-                          autoFocus
-                          autoComplete="off"
-                          value={newName}
-                          status={touched && newProblems.name ? "error" : undefined}
-                          onChange={(e) => setNewName(e.target.value)}
-                        />
-                        <Text type={touched && newProblems.name ? "danger" : "secondary"} className="field-help">
-                          {touched && newProblems.name ? newProblems.name : "Shown in the chat app and here."}
-                        </Text>
-                      </div>
-                      <div className="field">
-                        <label className="field-label" htmlFor="access-subject">
-                          Email address
-                        </label>
-                        <Input
-                          id="access-subject"
-                          autoComplete="off"
-                          placeholder="name@example.com"
-                          value={draft.subject}
-                          status={touched && newProblems.email ? "error" : undefined}
-                          onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
-                        />
-                        <Text type={touched && newProblems.email ? "danger" : "secondary"} className="field-help">
-                          {touched && newProblems.email
-                            ? newProblems.email
-                            : "They sign in with this email. No invitation is sent: you share the sign-in yourself."}
-                        </Text>
-                      </div>
-                      <SignInChoice value={signIn} onChange={setSignIn} options={me?.sign_in} />
-                      {!google && (
-                        <PasswordField
-                          id="new-account-password"
-                          value={password}
-                          onChange={setPassword}
-                          touched={touched}
-                        />
-                      )}
-                    </>
-                  )}
-                  {kind === "email" && (
-                    <div className="field">
-                      <label className="field-label" htmlFor="access-subject">
-                        Pre-approve an email
-                      </label>
-                      <Input
-                        id="access-subject"
-                        autoFocus
-                        placeholder="name@example.com"
-                        value={draft.subject}
-                        status={touched && subjectError ? "error" : undefined}
-                        onChange={(e) => {
-                          setSubjectProblem(null);
-                          setDraft({ ...draft, subject: e.target.value });
-                        }}
-                        onPressEnter={() => void review()}
-                      />
-                      <Text type={touched && subjectError ? "danger" : "secondary"} className="field-help">
-                        {touched && subjectError
-                          ? subjectError
-                          : "No account is created. The access starts when someone signs in with this exact email, for example through single sign-on."}
+                    {touched && newProblems.name && (
+                      <Text type="danger" className="field-help">
+                        {newProblems.name}
                       </Text>
-                      <Button type="link" onClick={() => changeKind("existing")} style={{ paddingInline: 0, alignSelf: "flex-start" }}>
-                        Choose an account instead
-                      </Button>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                  <div className="field">
+                    <label className="field-label" htmlFor="access-subject">
+                      Email address
+                    </label>
+                    <Input
+                      id="access-subject"
+                      autoComplete="off"
+                      inputMode="email"
+                      placeholder="name@example.com"
+                      value={draft.subject}
+                      status={touched && newProblems.email ? "error" : undefined}
+                      onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
+                    />
+                    <Text type={touched && newProblems.email ? "danger" : "secondary"} className="field-help">
+                      {touched && newProblems.email ? newProblems.email : "They sign in with this email."}
+                    </Text>
+                  </div>
+                  <NewUserSignIn
+                    id="new-account-password"
+                    signIn={signIn}
+                    onSignIn={setSignIn}
+                    options={me?.sign_in}
+                    password={password}
+                    onPassword={setPassword}
+                    touched={touched}
+                  />
                 </>
               ) : (
                 <Identity row={draft.row} name={name} />
@@ -826,19 +718,14 @@ export function AccessDrawer({
                   type="warning"
                   showIcon
                   title="This person is blocked by an administrator"
-                  description={
-                    <>
-                      They cannot be granted access until they are reactivated.{" "}
-                      <a href={personHref(draft.row.subject)}>Open their details under People.</a>
-                    </>
-                  }
+                  description="They can’t be given new access. Existing access can still be removed."
                 />
               )}
               {draft.row.account_unavailable && !draft.row.suspended && (
                 <Alert
                   type="warning"
                   showIcon
-                  title="Their chat account is unavailable"
+                  title="Their account is unavailable"
                   description="It was removed or not found. Access resumes automatically if the account reappears; it can’t be changed here."
                 />
               )}
@@ -936,14 +823,6 @@ export function AccessDrawer({
                   ? `They sign in with Google as ${subject}. No password is set that anyone knows.`
                   : "The password is shown once after the account is created, to copy and share with them directly."
               }
-            />
-          )}
-          {!isNew && adding && kind === "email" && (draft.step === "review" || draft.step === "saving") && (
-            <Alert
-              type="warning"
-              showIcon
-              title="No account is created"
-              description={`${subject} gets this access when they first sign in with this email.`}
             />
           )}
           {(draft.step === "review" || draft.step === "saving" || draft.step === "failed") && (
@@ -1180,8 +1059,8 @@ function NewAccountOutcome({
         <Alert
           type="info"
           showIcon
-          title={`An account with ${email} already exists`}
-          description={`No second account was created. Give that account the access you chose in ${hubName} instead.`}
+          title={`${email} already has an account`}
+          description={`Nothing was changed. Edit their access to ${hubName} instead.`}
         />
         {afterUncertain && signIn === "password" && (
           <>

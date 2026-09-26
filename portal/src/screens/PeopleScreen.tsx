@@ -5,6 +5,7 @@ import {
   Button,
   Descriptions,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   Select,
@@ -14,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { HelpCircle, RefreshCw, Search, UserPlus } from "lucide-react";
+import { MoreHorizontal, RefreshCw, Search, UserPlus } from "lucide-react";
 import { ApiError, request, query, type Hub, type Me, type Overview, type Person } from "../api";
 import { errorText, useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
@@ -28,8 +29,6 @@ import {
   RoleBadge,
 } from "../components/common";
 import {
-  MANAGE_ACCESS,
-  ORG,
   isService,
   personName,
   relativeTime,
@@ -40,23 +39,6 @@ import { passwordProblem } from "./people/password";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
-
-/** A field label with a hover "?" carrying the explanation, so the detail lives
- *  in a tooltip instead of crowding the row. */
-function HelpLabel({ text, help }: { text: string; help: string }) {
-  return (
-    <Space size={4}>
-      {text}
-      {/* Focusable + tap/click triggers so the explanation is reachable by
-          keyboard and touch, not hover only. */}
-      <Tooltip title={help} trigger={["hover", "focus", "click"]}>
-        <span className="help-icon" role="button" tabIndex={0} aria-label={help}>
-          <HelpCircle size={13} />
-        </span>
-      </Tooltip>
-    </Space>
-  );
-}
 
 type PeoplePage = { people: Person[]; total: number };
 
@@ -388,6 +370,25 @@ function SyncStatus({
   );
 }
 
+type AccountInfo = {
+  subject: string;
+  name: string | null;
+  role: string | null;
+  sign_in?: "password" | "google" | null;
+  /** "admin" | "user" when both halves agree; "console_only" | "chat_only" when not. */
+  administrator?: string;
+};
+
+const MISMATCH: Record<string, string> = {
+  console_only: "Administrator in the Console, but a user in the chat app. Choose a role to fix it.",
+  chat_only: "Administrator in the chat app, but not in the Console. Choose a role to fix it.",
+};
+
+/**
+ * A user's details: who they are, their role, their access by agent, and (for
+ * administrators) a password reset and Delete in the "…" menu. Every action is
+ * re-checked by the server and recorded in Activity.
+ */
 function PersonDrawer({
   subject,
   me,
@@ -406,77 +407,136 @@ function PersonDrawer({
   );
   const person = data.data?.people.find((p) => p.subject === subject);
   const catalogs = useCatalogs(hubs.map((h) => h.key));
+  const manageAccount =
+    !!me.account_admin && !!person?.owui_id && !isService(person.subject) && person.subject !== me.subject;
+  const info = useData<AccountInfo>(
+    manageAccount && person ? `/accounts/${encodeURIComponent(person.subject)}` : null,
+  );
+  const [panel, setPanel] = useState<"" | "password" | "delete">("");
+  const [password, setPassword] = useState("");
+  const [shown, setShown] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [roleRetry, setRoleRetry] = useState<"" | "user" | "admin">("");
   const name = person ? personName(person.subject, person.display) : (subject ?? "");
   const access = useMemo(
     () => (person ? Object.entries(person.access).filter(([, perms]) => perms.length) : []),
     [person],
   );
+  const addable = hubs.filter(
+    (h) => h.authoritative && h.key in (me.grantable ?? {}) && !access.some(([k]) => k === h.key),
+  );
+  const path = person ? `/accounts/${encodeURIComponent(person.subject)}` : "";
+  const role = info.data?.administrator;
 
   function close() {
     if (busy) return;
+    setPanel("");
+    setPassword("");
+    setShown("");
+    setTyped("");
     navigate("/people");
   }
 
-  async function act(path: string, body: unknown, done: string) {
+  async function call(sub: string, body: unknown, done: string, method?: "POST" | "DELETE") {
     setBusy(true);
     setError("");
     try {
-      // Prefer the backend's own explanation (e.g. reactivation that leaves
-      // access paused because the chat account is gone) over a blanket message.
-      const res = await request<{ message?: string | null }>(path, body);
-      message.success(res?.message || done);
+      await request(path + sub, body, undefined, method);
+      message.success(done);
+      info.reload();
       data.reload();
       onChanged();
+      return true;
     } catch (e) {
-      setError(errorText(e));
+      setError(e instanceof ApiError ? e.message : errorText(e));
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
-  const confirmBlock = () =>
-    person &&
+  async function setRole(next: "user" | "admin") {
+    setBusy(true);
+    setError("");
+    setRoleRetry("");
+    try {
+      await request(path + "/role", { role: next });
+      message.success(next === "admin" ? `${name} is an Administrator.` : `${name} is a User.`);
+    } catch (e) {
+      const err = e instanceof ApiError ? e : null;
+      setError(err ? err.message : errorText(e));
+      // One side is set and the other isn't: the same request finishes it.
+      if (err?.code === "role_partial") setRoleRetry(next);
+    } finally {
+      setBusy(false);
+      info.reload();
+      data.reload();
+      onChanged();
+    }
+  }
+
+  const confirmRole = (next: "user" | "admin") =>
     modal.confirm({
-      title: `Block ${name}?`,
+      title: next === "admin" ? `Make ${name} an Administrator?` : `Make ${name} a User?`,
       content:
-        "They immediately lose access to every agent, including agents open to everyone. Their chat account and history stay in the chat app. Reactivating later does not restore the access removed now.",
-      okText: "Block access",
-      okButtonProps: { danger: true },
-      onOk: () =>
-        act("/people/block", { subject: person.subject, suspended: true }, `${name} is blocked.`),
+        next === "admin"
+          ? "They can manage users and access for every agent, and the chat app’s settings."
+          : "They keep their access to agents but can no longer manage users, access or the chat app’s settings.",
+      okText: next === "admin" ? "Make Administrator" : "Make User",
+      okButtonProps: { danger: next === "admin" },
+      onOk: () => setRole(next),
     });
 
-  const confirmReactivate = () =>
-    person &&
-    modal.confirm({
-      title: `Reactivate ${name}?`,
-      content:
-        "They can sign in and use agents that are open to everyone again. Access removed when they were blocked is not restored — grant it again per agent.",
-      okText: "Reactivate",
-      onOk: () =>
-        act("/people/block", { subject: person.subject, suspended: false }, `${name} is active again.`),
-    });
+  async function resetPassword() {
+    setTouched(true);
+    if (passwordProblem(password)) return;
+    if (await call("/password", { password }, `New password set for ${name}. Their other sessions were signed out.`)) {
+      setShown(password);
+      setPassword("");
+      setTouched(false);
+    }
+  }
 
-  const confirmOrgAdmin = (grant: boolean) =>
-    person &&
-    modal.confirm({
-      title: grant
-        ? `Make ${name} an organization administrator?`
-        : `Remove organization administrator rights from ${name}?`,
-      content: grant
-        ? "They will be able to manage access for every agent, including other administrators."
-        : "Their direct access to individual agents stays. The last organization administrator cannot be removed.",
-      okText: grant ? "Make administrator" : "Remove rights",
-      okButtonProps: { danger: !grant },
-      onOk: () =>
-        act(
-          "/access/" + (grant ? "grant" : "revoke"),
-          { subject: person.subject, hub: ORG, permission: MANAGE_ACCESS },
-          grant ? `${name} is now an organization administrator.` : `${name} is no longer an organization administrator.`,
-        ),
-    });
+  const roleControl = () => {
+    if (!manageAccount)
+      return person?.organization_admin ? <RoleBadge>Administrator</RoleBadge> : <Text>User</Text>;
+    if (!info.data)
+      return info.error ? <Text type="warning">Couldn’t read their role</Text> : <Text type="secondary">Loading…</Text>;
+    if (role === "pending")
+      return (
+        <Space wrap>
+          <Tag color="gold">Awaiting approval</Tag>
+          <Button size="small" loading={busy} onClick={() => void call("/approve", {}, `${name} is approved.`)}>
+            Approve
+          </Button>
+        </Space>
+      );
+    const value = role === "admin" ? "admin" : role === "user" ? "user" : undefined;
+    return (
+      <Space wrap size={[8, 4]}>
+        <Select
+          aria-label="Role"
+          style={{ minWidth: 160 }}
+          value={value}
+          placeholder="Choose a role"
+          disabled={busy}
+          options={[
+            { value: "user", label: "User" },
+            { value: "admin", label: "Administrator" },
+          ]}
+          onChange={(v) => confirmRole(v as "user" | "admin")}
+        />
+        {role && MISMATCH[role] && (
+          <Tooltip title={MISMATCH[role]}>
+            <Tag color="orange">Needs attention</Tag>
+          </Tooltip>
+        )}
+      </Space>
+    );
+  };
 
   return (
     <Drawer
@@ -494,344 +554,179 @@ function PersonDrawer({
             <span>{name}</span>
           </Space>
         ) : (
-          "Person"
+          "User"
+        )
+      }
+      extra={
+        manageAccount && (
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [{ key: "delete", danger: true, label: "Delete user" }],
+              onClick: () => setPanel("delete"),
+            }}
+          >
+            <Button type="text" aria-label="More actions" icon={<MoreHorizontal size={18} />} />
+          </Dropdown>
         )
       }
     >
       {!data.data ? (
         <LoadState error={data.error} retry={data.reload} />
       ) : !person ? (
-        <Empty
-          description={
-            <>
-              <div>No one with the identity {subject} has access to an agent you manage.</div>
-              <Text type="secondary">They appear here once they hold any access.</Text>
-            </>
-          }
-        >
+        <Empty description="No user with this email has access to an agent you manage.">
           <Button href={href("/people")}>Back to people</Button>
         </Empty>
       ) : (
         <div className="drawer-body">
-          {error && <Alert type="error" showIcon title={error} />}
+          {error && (
+            <Alert
+              type="error"
+              showIcon
+              title={error}
+              action={
+                roleRetry && (
+                  <Button size="small" loading={busy} onClick={() => void setRole(roleRetry)}>
+                    Try again
+                  </Button>
+                )
+              }
+            />
+          )}
+          {person.account_unavailable && !person.suspended && (
+            <Alert type="warning" showIcon title="Their account is unavailable (removed or not found)." />
+          )}
           <Descriptions
             size="small"
             column={1}
             items={[
-              {
-                key: "identity",
-                label: (
-                  <HelpLabel
-                    text="Identity"
-                    help={
-                      isService(person.subject)
-                        ? "A legacy service identity; it runs without a chat account."
-                        : "Access is granted to this identity. Whoever signs in with it holds the access."
-                    }
-                  />
-                ),
-                children: <span className="identity">{person.subject}</span>,
-              },
-              {
-                key: "account",
-                label: (
-                  <HelpLabel
-                    text="Chat account"
-                    help={
-                      person.blocked
-                        ? "Blocked here; every agent denies them regardless of grants."
-                        : isService(person.subject)
-                          ? "Not applicable to a service identity."
-                          : !person.owui_id
-                            ? "No chat account yet. Access applies as soon as they sign up with this email."
-                            : person.pending
-                              ? "Signed up; waiting for an administrator to approve the account."
-                              : "Signed up and approved."
-                    }
-                  />
-                ),
-                children: <AccountTag status={person.status} />,
-              },
-              {
-                key: "role",
-                label: (
-                  <HelpLabel
-                    text="Role"
-                    help={
-                      person.organization_admin
-                        ? "Can manage access for every agent, including this portal."
-                        : "Standard access. Can only use the agents they are granted."
-                    }
-                  />
-                ),
-                children: person.organization_admin ? (
-                  <RoleBadge>Organization administrator</RoleBadge>
-                ) : (
-                  <Text type="secondary">Regular access</Text>
-                ),
-              },
+              { key: "email", label: "Email", children: <span className="identity">{person.subject}</span> },
+              { key: "status", label: "Status", children: <AccountTag status={person.status} /> },
+              { key: "role", label: "Role", children: roleControl() },
+              ...(manageAccount
+                ? [
+                    {
+                      key: "password",
+                      label: "Password",
+                      children:
+                        info.data?.sign_in === "google" ? (
+                          <Text type="secondary">Signs in with Google. Their password is managed through Google.</Text>
+                        ) : (
+                          <Button
+                            size="small"
+                            disabled={busy}
+                            onClick={() => {
+                              setPanel(panel === "password" ? "" : "password");
+                              setShown("");
+                            }}
+                          >
+                            Reset password
+                          </Button>
+                        ),
+                    },
+                  ]
+                : []),
             ]}
           />
 
-          <div className="section">
-            <Title level={2} style={{ fontSize: 16 }}>Access by agent</Title>
-            {access.length === 0 ? (
-              <Text type="secondary">
-                {person.blocked ? "All access was removed when they were blocked." : "No direct access to any agent you manage."}
-              </Text>
-            ) : (
-              <div className="access-by-agent">
-                {access.map(([h, perms]) => (
-                  <div key={h} className="agent-access">
-                    <div className="agent-access-heading">
-                      <Text strong>{hubs.find((x) => x.key === h)?.name ?? h}</Text>
-                      <a
-                        href={hrefWith(`/agents/${encodeURIComponent(h)}/access`, {
-                          edit: person.subject,
-                        })}
-                      >
-                        Edit access
-                      </a>
-                    </div>
-                    <Space wrap size={[6, 6]}>
-                      {orderCapabilities(perms, Object.keys(catalogs[h] ?? {})).map((p) => (
-                        <CapabilityTag key={p} permission={p} catalog={catalogs[h]} />
-                      ))}
-                    </Space>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {me.org_admin && (
-            <div className="section">
-              <Title level={2} style={{ fontSize: 16 }}>Administrative actions</Title>
-              <Paragraph type="secondary">
-                These apply across every agent and are recorded in Activity. Each asks for confirmation.
-              </Paragraph>
-              <Space wrap>
-                {person.suspended ? (
-                  <Button loading={busy} onClick={confirmReactivate}>
-                    Reactivate
-                  </Button>
-                ) : (
-                  // Shown even when the chat account is unavailable: blocking is the
-                  // explicit offboard — it suspends them and removes every retained
-                  // grant, which an unavailable account still needs.
-                  <Button danger loading={busy} onClick={confirmBlock}>
-                    Block access
-                  </Button>
-                )}
-                {!person.blocked && !isService(person.subject) && (
-                  <Button loading={busy} onClick={() => confirmOrgAdmin(!person.organization_admin)}>
-                    {person.organization_admin ? "Remove administrator rights" : "Make organization administrator"}
-                  </Button>
-                )}
-              </Space>
-              {person.account_unavailable && !person.suspended && (
-                <Alert
-                  className="notice"
-                  type="warning"
-                  showIcon
-                  banner
-                  message="This person’s chat account is unavailable — removed or not found. Access resumes automatically if the account reappears; to offboard fully, remove it in the chat app."
-                />
-              )}
-              {!me.account_admin && (
-                <Paragraph type="secondary" style={{ marginTop: 12 }}>
-                  To suspend or delete the chat account itself, use the <a href="/admin">chat app’s account settings</a>.
-                </Paragraph>
+          {panel === "password" && (
+            <div className="agent-access">
+              {shown ? (
+                <OneTimePassword password={shown} />
+              ) : (
+                <>
+                  <PasswordField id="reset-password" value={password} onChange={setPassword} touched={touched} />
+                  <Space wrap>
+                    <Button type="primary" loading={busy} onClick={() => void resetPassword()}>
+                      Set password
+                    </Button>
+                    <Button disabled={busy} onClick={() => { setPanel(""); setPassword(""); }}>
+                      Cancel
+                    </Button>
+                  </Space>
+                </>
               )}
             </div>
           )}
-          {me.account_admin && person.owui_id && !isService(person.subject) && person.subject !== me.subject && (
-            <ChatAccount person={person} name={name} onChanged={() => { data.reload(); onChanged(); }} />
-          )}
-        </div>
-      )}
-    </Drawer>
-  );
-}
 
-type AccountInfo = { subject: string; name: string | null; role: string | null };
-
-/**
- * The person's chat sign-in, for organization administrators: approve a
- * pending signup, reset the password (shown once), switch the chat-app admin
- * role, or delete the account. The server re-checks every action.
- */
-function ChatAccount({
-  person,
-  name,
-  onChanged,
-}: {
-  person: Person;
-  name: string;
-  onChanged: () => void;
-}) {
-  const { modal, message } = App.useApp();
-  const info = useData<AccountInfo>(`/accounts/${encodeURIComponent(person.subject)}`);
-  const [panel, setPanel] = useState<"" | "password" | "delete">("");
-  const [password, setPassword] = useState("");
-  const [shown, setShown] = useState("");
-  const [touched, setTouched] = useState(false);
-  const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const path = `/accounts/${encodeURIComponent(person.subject)}`;
-  const role = info.data?.role;
-
-  async function call(sub: string, body: unknown, done: string, method?: "POST" | "DELETE") {
-    setBusy(true);
-    setError("");
-    try {
-      await request(path + sub, body, undefined, method);
-      message.success(done);
-      info.reload();
-      onChanged();
-      return true;
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : errorText(e));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resetPassword() {
-    setTouched(true);
-    if (passwordProblem(password)) return;
-    if (await call("/password", { password }, `New password set for ${name}. Their other sessions were signed out.`)) {
-      setShown(password);
-      setPassword("");
-      setTouched(false);
-    }
-  }
-
-  const confirmApprove = () =>
-    modal.confirm({
-      title: `Approve ${name}’s account?`,
-      content: "They can sign in and use agents they have access to, including agents open to everyone.",
-      okText: "Approve",
-      onOk: () => call("/approve", {}, `${name} is approved.`),
-    });
-
-  const confirmRole = (next: "user" | "admin") =>
-    modal.confirm({
-      title: next === "admin" ? `Make ${name} a chat-app administrator?` : `Make ${name} a regular chat-app user?`,
-      content:
-        next === "admin"
-          ? "They get the chat app’s administrator settings (models, connections, settings). This does not give them Console access or agent access."
-          : "They lose the chat app’s administrator settings. Console and agent access are unchanged.",
-      okText: next === "admin" ? "Make administrator" : "Make regular user",
-      okButtonProps: { danger: next === "admin" },
-      onOk: () => call("/role", { role: next }, "Chat-app role updated."),
-    });
-
-  return (
-    <div className="section">
-      <Title level={2} style={{ fontSize: 16 }}>Chat account</Title>
-      <Paragraph type="secondary">
-        Their sign-in for the chat app. Changes apply immediately and are recorded in Activity.
-      </Paragraph>
-      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} />}
-      {!info.data ? (
-        info.error ? (
-          <Alert type="warning" showIcon title="Couldn’t read the chat account" description={info.error} />
-        ) : (
-          <LoadState retry={info.reload} rows={1} />
-        )
-      ) : (
-        <>
-          <Descriptions
-            size="small"
-            column={1}
-            items={[
-              {
-                key: "role",
-                label: "Chat-app role",
-                children:
-                  role === "pending" ? (
-                    <Tag color="gold">Awaiting approval</Tag>
-                  ) : role === "admin" ? (
-                    <RoleBadge>Administrator</RoleBadge>
-                  ) : (
-                    <Text>User</Text>
-                  ),
-              },
-            ]}
-          />
-          <Space wrap style={{ marginTop: 8 }}>
-            {role === "pending" && (
-              <Button type="primary" loading={busy} onClick={confirmApprove}>
-                Approve account
-              </Button>
-            )}
-            <Button disabled={busy} onClick={() => { setPanel(panel === "password" ? "" : "password"); setShown(""); }}>
-              Reset password
-            </Button>
-            {role && role !== "pending" && (
-              <Button disabled={busy} onClick={() => confirmRole(role === "admin" ? "user" : "admin")}>
-                {role === "admin" ? "Make regular chat-app user" : "Make chat-app administrator"}
-              </Button>
-            )}
-            <Button danger disabled={busy} onClick={() => setPanel(panel === "delete" ? "" : "delete")}>
-              Delete account
-            </Button>
-          </Space>
-        </>
-      )}
-      {panel === "password" && (
-        <div className="agent-access" style={{ marginTop: 12 }}>
-          {shown ? (
-            <OneTimePassword password={shown} />
-          ) : (
-            <>
-              <PasswordField id="reset-password" value={password} onChange={setPassword} touched={touched} />
-              <Space>
-                <Button type="primary" loading={busy} onClick={() => void resetPassword()}>
-                  Set password
+          {panel === "delete" && (
+            <div className="agent-access">
+              <Text strong>Delete {name}?</Text>
+              <Paragraph style={{ margin: 0 }}>
+                Their sign-in account and their chats are deleted, and all their access is removed. Activity history,
+                usage records and artifacts they published are kept; their public links stop working. This can’t be
+                undone.
+              </Paragraph>
+              <div className="field">
+                <label className="field-label" htmlFor="delete-confirm">
+                  Type {person.subject} to confirm
+                </label>
+                <Input
+                  id="delete-confirm"
+                  autoComplete="off"
+                  inputMode="email"
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                />
+              </div>
+              <Space wrap>
+                <Button
+                  danger
+                  type="primary"
+                  loading={busy}
+                  disabled={typed.trim().toLowerCase() !== person.subject}
+                  onClick={() =>
+                    void call("", { confirm_email: typed.trim() }, `${name} was deleted.`, "DELETE").then((ok) => {
+                      if (ok) navigate("/people");
+                    })
+                  }
+                >
+                  Delete user
                 </Button>
-                <Button disabled={busy} onClick={() => { setPanel(""); setPassword(""); }}>
+                <Button disabled={busy} onClick={() => { setPanel(""); setTyped(""); }}>
                   Cancel
                 </Button>
               </Space>
-            </>
+            </div>
           )}
-        </div>
-      )}
-      {panel === "delete" && (
-        <div className="agent-access" style={{ marginTop: 12 }}>
-          <Paragraph>
-            Deleting removes all of {name}’s access and their chat account, including their chat history. It can’t be undone.
-          </Paragraph>
-          <div className="field">
-            <label className="field-label" htmlFor="delete-confirm">
-              Type {person.subject} to confirm
-            </label>
-            <Input id="delete-confirm" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+
+          <div className="section">
+            <Title level={2} style={{ fontSize: 16 }}>Access by agent</Title>
+            {access.length === 0 && <Text type="secondary">No access to any agent you manage.</Text>}
+            <div className="access-by-agent">
+              {access.map(([h, perms]) => (
+                <div key={h} className="agent-access">
+                  <div className="agent-access-heading">
+                    <Text strong>{hubs.find((x) => x.key === h)?.name ?? h}</Text>
+                    <a href={hrefWith(`/agents/${encodeURIComponent(h)}/access`, { edit: person.subject })}>
+                      Edit access
+                    </a>
+                  </div>
+                  <Space wrap size={[6, 6]}>
+                    {orderCapabilities(perms, Object.keys(catalogs[h] ?? {})).map((p) => (
+                      <CapabilityTag key={p} permission={p} catalog={catalogs[h]} />
+                    ))}
+                  </Space>
+                </div>
+              ))}
+            </div>
+            {!person.blocked && addable.length > 0 && (
+              <Select
+                aria-label="Add an agent"
+                placeholder="Add an agent"
+                style={{ width: "100%", marginTop: 8 }}
+                value={null}
+                options={addable.map((h) => ({ value: h.key, label: h.name }))}
+                onChange={(k) => {
+                  location.hash = hrefWith(`/agents/${encodeURIComponent(String(k))}/access`, {
+                    edit: person.subject,
+                  }).replace(/^#/, "");
+                }}
+              />
+            )}
           </div>
-          <Space style={{ marginTop: 8 }}>
-            <Button
-              danger
-              type="primary"
-              loading={busy}
-              disabled={typed.trim().toLowerCase() !== person.subject}
-              onClick={() =>
-                void call("", { confirm_email: typed.trim() }, `${name}’s account was deleted.`, "DELETE").then((ok) => {
-                  if (ok) navigate("/people");
-                })
-              }
-            >
-              Delete account
-            </Button>
-            <Button disabled={busy} onClick={() => { setPanel(""); setTyped(""); }}>
-              Cancel
-            </Button>
-          </Space>
         </div>
       )}
-    </div>
+    </Drawer>
   );
 }

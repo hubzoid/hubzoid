@@ -96,6 +96,8 @@ function createFixture() {
     unavailable: new Set(),
     // How new accounts can sign in (GET /me sign_in).
     signIn: { password: true, google: false },
+    // Chat-app roles set through the Console (GET/POST /accounts/<email>).
+    chatRoles: {},
     // Accounts that exist in the chat app but are not recorded here yet
     // (email -> name), e.g. created by an answer that was lost.
     chatOnly: new Map(),
@@ -306,12 +308,58 @@ function createFixture() {
       state.failNextGet = null;
       throw error(status, detail);
     }
+    if (method === "DELETE") state.mutations.push({ endpoint, method, ...body });
     if (method === "POST") {
       state.mutations.push({ endpoint, ...body });
       if (state.failNext && state.failNext.match(endpoint, body)) {
         const { status, detail } = state.failNext;
         state.failNext = null;
         throw error(status, detail);
+      }
+    }
+    // One account (organization administrators): read, role, password, approve, delete.
+    const acct = endpoint.match(/^\/accounts\/([^/]+)(?:\/(role|password|approve))?$/);
+    if (acct && acct[1] !== "grant") {
+      const email = decodeURIComponent(acct[1]);
+      const id = state.identities[email];
+      if (!a.org) throw error(403, "Only administrators can change a user's account or role.", "forbidden");
+      if (!id || !id.owui_id) throw error(404, "No account uses this email.", "no_account");
+      const consoleAdmin = () => state.grants.some(([s, h, p]) => s === email && h === ORG && p === MANAGE_ACCESS);
+      const chatRole = () => (id.pending ? "pending" : state.chatRoles[email] ?? (consoleAdmin() ? "admin" : "user"));
+      const view = () => {
+        const c = consoleAdmin(), chat = chatRole();
+        const administrator = chat === "pending" ? "pending" : c && chat === "admin" ? "admin" : c ? "console_only" : chat === "admin" ? "chat_only" : "user";
+        return { subject: email, name: id.display, role: chat, sign_in: id.sign_in ?? "password", console_admin: c, chat_admin: chat === "admin", administrator };
+      };
+      if (method === "GET" && !acct[2]) return view();
+      const lastAdmin = () => {
+        const admins = state.grants.filter(([, h, p]) => h === ORG && p === MANAGE_ACCESS).map(([s]) => s);
+        if (admins.length === 1 && admins[0] === email)
+          throw error(409, "This is the last administrator. Make someone else an Administrator first.", "last_admin");
+      };
+      if (method === "POST" && acct[2] === "role") {
+        const want = body.role === "admin";
+        if (email === a.subject) throw error(409, "You can't change your own role.", "self");
+        if (!want) lastAdmin();
+        state.chatRoles[email] = want ? "admin" : "user";
+        if (want && !consoleAdmin()) gs.grant(email, ORG, MANAGE_ACCESS, a.subject);
+        if (!want && consoleAdmin()) gs.revoke(email, ORG, MANAGE_ACCESS, a.subject);
+        return { ok: true, changed: true, ...view() };
+      }
+      if (method === "POST" && acct[2] === "password") {
+        if (id.sign_in === "google") throw error(409, "This user signs in with Google, so their password is managed through Google.", "google_managed");
+        return { ok: true };
+      }
+      if (method === "POST" && acct[2] === "approve") {
+        id.pending = 0;
+        return { ok: true };
+      }
+      if (method === "DELETE" && !acct[2]) {
+        if (String(body?.confirm_email || "").toLowerCase() !== email) throw error(422, "Type their email to confirm.", "confirm_email");
+        lastAdmin();
+        state.grants = state.grants.filter(([s]) => s !== email);
+        delete state.identities[email];
+        return { ok: true };
       }
     }
     switch (endpoint) {
@@ -356,14 +404,14 @@ function createFixture() {
         }
         const grants = body.grants || [];
         if (!a.org && !grants.length) throw error(422, "Choose access in at least one agent you manage.", "grant_required");
-        if (state.suspended.has(email)) throw error(409, "This person is blocked. Reactivate them under People first.", "blocked");
+        if (state.suspended.has(email)) throw error(409, "This person is blocked, so they can't be given access.", "blocked");
         const known = state.identities[email];
         if (known && known.owui_id && !state.unavailable.has(email))
-          throw error(409, "An account with this email already exists. Grant access to it instead.", "account_exists");
+          throw error(409, "A user with this email already exists. Nothing was changed: edit that user's access instead.", "account_exists", { subject: email });
         checkGrants(a, email, grants);
         // The chat app refuses a duplicate it holds but this deployment hasn't recorded.
         if (state.chatOnly.has(email))
-          throw error(409, "An account with this email already exists. Grant access to it instead.", "account_exists");
+          throw error(409, "A user with this email already exists. Nothing was changed: edit that user's access instead.", "account_exists", { subject: email });
         state.accountsCreated.push(email);
         const fault = state.accountFault;
         state.accountFault = null;
@@ -371,7 +419,7 @@ function createFixture() {
           state.chatOnly.set(email, name);
           throw error(503, "The chat app didn't confirm whether the account was created. Try again: if it was created, you'll be offered to grant access to it instead, and it won't be created twice.", "uncertain");
         }
-        state.identities[email] = { display: name, owui_id: `u_${state.accountsCreated.length}`, pending: 0 };
+        state.identities[email] = { display: name, owui_id: `u_${state.accountsCreated.length}`, pending: 0, sign_in: signIn };
         gs.audit(a.subject, "account_create", email, ORG, null);
         state.revision += 1;
         if (fault === "partial")
@@ -396,7 +444,7 @@ function createFixture() {
           id = state.identities[email] = { display: state.chatOnly.get(email), owui_id: `u_bound_${email}`, pending: 0 };
           state.chatOnly.delete(email);
         }
-        if (state.suspended.has(email)) throw error(409, "Reactivate this user before granting access", "blocked");
+        if (state.suspended.has(email)) throw error(409, "This person is blocked, so they can't be given access.", "blocked");
         if (state.unavailable.has(email)) throw error(409, "This account is unavailable in the chat app.", "unavailable");
         const out = {};
         for (const g of grants) {
@@ -476,7 +524,7 @@ function createFixture() {
           throw error(403, "Only organization admins may change administrator access");
         if (revoke) gs.revoke(subject, hub, perm, a.subject);
         else {
-          if (state.suspended.has(subject)) throw error(409, "Reactivate this user before granting access");
+          if (state.suspended.has(subject)) throw error(409, "This person is blocked, so they can't be given access.");
           if (state.unavailable.has(subject))
             throw error(409, "This account is no longer in the chat app. Access resumes if it reappears.");
           gs.grant(subject, hub, perm, a.subject);
@@ -502,7 +550,7 @@ function createFixture() {
           grants = grants || op.action === "grant";
         }
         if (grants) {
-          if (state.suspended.has(subject)) throw error(409, "Reactivate this user before granting access");
+          if (state.suspended.has(subject)) throw error(409, "This person is blocked, so they can't be given access.");
           if (state.unavailable.has(subject)) throw error(409, "This account is no longer in the chat app. Access resumes if it reappears.");
         }
         if (body.expected_revision != null && body.expected_revision !== state.revision)

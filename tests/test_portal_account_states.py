@@ -186,7 +186,7 @@ def test_grant_409_messages_name_the_real_cause(client):
     client.gs.upsert_identity(email="bob@x.org", owui_id="u-bob")
     client.post("/portal/api/people/block", json={"subject": "bob@x.org"})
     r = _grant(client, "bob@x.org")
-    assert r.status_code == 409 and "Reactivate" in r.json()["detail"]
+    assert r.status_code == 409 and "blocked" in r.json()["detail"]
 
     _grant(client, "pend@x.org")
     client.gs.upsert_identity(email="pend@x.org", owui_id="u-pend", pending=True)
