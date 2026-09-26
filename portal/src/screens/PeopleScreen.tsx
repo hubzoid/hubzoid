@@ -116,7 +116,7 @@ export function PeopleScreen({
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <Title level={1} style={{ fontSize: 28 }}>People and services</Title>
+            <Title level={1} style={{ fontSize: 28 }}>People</Title>
             <Paragraph type="secondary">
               {me.can_create_accounts
                 ? "Everyone with access to an agent you manage. Create chat sign-ins with Add account; access is decided here."
@@ -173,7 +173,7 @@ export function PeopleScreen({
               { value: "awaiting-signup", label: "Not signed up yet" },
               { value: "pending-approval", label: "Awaiting approval" },
               { value: "blocked", label: "Blocked" },
-              { value: "service", label: "Service" },
+              { value: "service", label: "Legacy service identity" },
             ]}
           />
           <Select
@@ -186,7 +186,7 @@ export function PeopleScreen({
             options={[
               { value: "admin", label: "Administrator" },
               { value: "regular", label: "Regular" },
-              { value: "service", label: "Service" },
+              { value: "service", label: "Legacy service identity" },
             ]}
           />
           <Select
@@ -525,7 +525,7 @@ function PersonDrawer({
                     text="Identity"
                     help={
                       isService(person.subject)
-                        ? "A workflow service identity; it runs without a chat account."
+                        ? "A legacy service identity; it runs without a chat account."
                         : "Access is granted to this identity. Whoever signs in with it holds the access."
                     }
                   />

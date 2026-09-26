@@ -612,7 +612,7 @@ function step(name) {
     // ---- navigation guards --------------------------------------------------------------
     step("Leaving with a dirty draft (back button, typed URL) asks first; keeping editing restores the URL");
     await go("/people");
-    await page.getByRole("heading", { name: "People and services" }).waitFor();
+    await page.getByRole("heading", { name: "People", exact: true }).waitFor();
     await go("/agents/finance/access");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     await expand("Restricted tools");
@@ -627,7 +627,7 @@ function step(name) {
       location.hash = "/people";
     });
     await answer("Discard and leave");
-    await page.getByRole("heading", { name: "People and services" }).waitFor();
+    await page.getByRole("heading", { name: "People", exact: true }).waitFor();
     assert.equal(await hash(), "#/people");
     assert.equal(state.mutations.length, 0);
 

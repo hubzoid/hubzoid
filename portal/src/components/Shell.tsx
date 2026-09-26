@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Bot, History, Menu as MenuIcon, Monitor, Moon, Sun, Users } from "lucide-react";
+import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
 import type { Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -52,7 +52,7 @@ function SignOutButton() {
 }
 
 const items = [
-  { key: "agents", icon: <Bot size={18} />, label: <a href={href("/agents")}>Agents</a> },
+  { key: "agents", icon: <Sparkle size={18} />, label: <a href={href("/agents")}>Agents</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
