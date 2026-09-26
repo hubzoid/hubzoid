@@ -50,25 +50,38 @@ def _write(path: Path, data: dict) -> None:
 def save(
     path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str,
     owui_database_url: str | None = None, owui_database_schema: str | None = None,
+    deployment_secret: dict | None = None,
 ) -> None:
+    """Write the manifest and each hub's pointer to it.
+
+    `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
+    external bridges can fetch it. Only the name and region are stored, never a
+    value. The key is omitted when there is no deployment secret."""
     _validate_hub_keys(hubs)
     path = path.resolve()
-    _write(
-        path,
-        dict(
-            version=1,
-            hubs=hubs,
-            operational_url=operational_url,
-            owui_url=owui_url,
-            owui_db=owui_db,
-            owui_database_url=owui_database_url,
-            owui_database_schema=owui_database_schema,
-        ),
+    data = dict(
+        version=1,
+        hubs=hubs,
+        operational_url=operational_url,
+        owui_url=owui_url,
+        owui_db=owui_db,
+        owui_database_url=owui_database_url,
+        owui_database_schema=owui_database_schema,
     )
+    if deployment_secret and deployment_secret.get("name"):
+        data["deployment_secret"] = {"name": str(deployment_secret["name"]),
+                                     "region": deployment_secret.get("region") or None}
+    _write(path, data)
     for hub in hubs:
         _write(
             Path(hub["path"]) / ".hubzoid" / "deployment.json", {"manifest": str(path)}
         )
+
+
+def deployment_secret(hub_dir: Path, env=None) -> dict | None:
+    """The manifest's {"name", "region"} for the deployment secret, if any."""
+    pointer = read(hub_dir, env).get("deployment_secret")
+    return pointer if isinstance(pointer, dict) and pointer.get("name") else None
 
 
 def hubs(hub_dir: Path) -> list[dict]:

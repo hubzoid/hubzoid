@@ -1,5 +1,37 @@
 """Hub-level settings derived from <hub>/.env and OS env.
 
+Configuration layers, lowest precedence first. A later layer overrides an
+earlier one for the processes it reaches (see docs/DEPLOYING.md and
+hubzoid.config_secrets).
+
+  1  built-in          the defaults below                        all processes
+  2a deployment compat Open WebUI and sign-in keys from hub .env  gateway and Open WebUI
+                       files, only when 2b and 2c lack them
+                       (0.9.x compatibility)
+  2b deployment        the gateway's (or a standalone hub's)      see below
+                       process environment. Standalone: also
+                       the hub .env
+  2c deployment secret JSON secret named by AWS_SECRET_NAME       see below
+  3a hub               <hub>/.env                                that hub's bridge, inbound,
+                                                                 Slack and agent runtime
+  3b hub secret        JSON secret named by                      same as 3a
+                       HUBZOID_HUB_SECRET_NAME in <hub>/.env
+  4a restricted        <hub>/restricted/.env                     that hub's restricted tools,
+                                                                 in the bridge process only
+  4b restricted secret JSON secret named by                      same as 4a
+                       HUBZOID_RESTRICTED_SECRET_NAME in
+                       restricted/.env
+
+Within a layer the AWS secret wins over the file. A standalone hub applies its
+deployment secret after <hub>/.env, so the secret wins there too. A hub in a
+gateway takes only BRIDGE_DEPLOYMENT_KEYS from the deployment secret, before
+its own .env. Open WebUI gets the deployment layer without HUBZOID_* keys and
+never a hub or restricted layer. Agent child processes (the claude CLI and its
+stdio MCP servers) get service secrets, AWS credentials and restricted-layer
+keys blanked (config_secrets.child_env_overrides). With no secret named, the
+files load exactly as before: <hub>/.env then restricted/.env, both overriding
+the process environment.
+
 Environment variables explicitly supported:
   MODEL                  Default LiteLLM model id used when an agent's
                          frontmatter does not specify one.
@@ -190,6 +222,59 @@ Environment variables explicitly supported:
                          Direct-mode safety net only (no browserless): restart
                          the spawned browser if its process-tree RSS exceeds this
                          many MB. 0 (default) = watchdog off.
+  AWS_SECRET_NAME        Deployment layer. Name or ARN of an AWS Secrets Manager
+                         secret holding a flat JSON object of settings, read at
+                         start with boto3's default credential chain (instance
+                         or task role, AWS_PROFILE, or AWS_ACCESS_KEY_ID and
+                         AWS_SECRET_ACCESS_KEY plus AWS_SESSION_TOKEN). Set it in
+                         the gateway's environment, or for a standalone hub in
+                         its .env or environment. The gateway records it in
+                         deployment.json so external bridges find it. A hub
+                         .env naming it inside a gateway is ignored. Unset = no
+                         boto3 import and no network call.
+  AWS_REGION             Region for every secret fetch (AWS_DEFAULT_REGION is the
+                         fallback, and a secret ARN carries its own region).
+  HUBZOID_HUB_SECRET_NAME
+                         Hub layer. A secret whose keys override <hub>/.env for
+                         this hub only. Read from <hub>/.env and nowhere else.
+  HUBZOID_RESTRICTED_SECRET_NAME
+                         Restricted layer. A secret whose keys override
+                         restricted/.env for this hub's restricted tools. Read
+                         from restricted/.env and nowhere else.
+                         A secret may not set AWS_* keys, secret names or
+                         process-control keys (PATH, LD_*, PYTHONPATH). Values
+                         are strings, numbers or booleans. A secret that cannot
+                         be read stops the process at start with the secret
+                         name, the layer and the AWS error class, never a value.
+                         Values are read once. Restart after a rotation: the
+                         gateway and every bridge for the deployment secret,
+                         the hub's bridge, inbound and Slack processes for a hub
+                         secret, the hub's bridge for a restricted secret.
+  HUBZOID_DEPLOYMENT_SECRET_INHERITED
+                         Internal. Set by `hubzoid gateway` on the bridges it
+                         launches, which then use the deployment values the
+                         gateway passed instead of fetching the secret again.
+  HUBZOID_MANAGEMENT_TOOLS
+                         Hub. true | false (default). Registers the agent tools
+                         that propose access changes and new accounts
+                         (my_management_scope, propose_access_change,
+                         propose_new_account). Effective only on managed hubs. A
+                         proposal applies only after the same manager confirms
+                         it in the Console.
+  HUBZOID_CHANGE_REQUEST_TTL
+                         Seconds a proposed access change waits for
+                         confirmation in the Console. Default 900.
+  HUBZOID_HIDE_OWUI_USERS
+                         Deployment and edge. true | false (default). Sends the
+                         Open WebUI Users page to Console People and blocks
+                         browser writes to Open WebUI's account endpoints. Turn
+                         it on only after Console account management works on
+                         the deployment.
+  HUBZOID_CONNECT_JOURNEY
+                         Hub. true | false (default). Enables the
+                         connect_account tool and its bound link journey for
+                         connecting a personal app account from chat.
+  HUBZOID_CONNECT_TTL    Seconds a connection link stays valid. Default 600.
 """
 from __future__ import annotations
 
@@ -197,8 +282,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
-
+from . import config_secrets
 from . import reasoning as reasoninglib
 
 
@@ -267,24 +351,27 @@ class Settings:
         return self.bridge_api_keys[0] if self.bridge_api_keys else "dev"
 
 
-def load(hub_dir: Path) -> Settings:
-    """Load .env from the hub directory (if present) and bind a Settings object.
+def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
+    """Apply the hub's configuration layers to the process env and bind a
+    Settings object.
 
     `.env` is the operator's authoritative config and wins over shell env.
     Deployments that want shell-env precedence (systemd EnvironmentFile, k8s)
     simply don't ship a `.env` file.
-    """
-    env_path = hub_dir / ".env"
-    if env_path.is_file():
-        load_dotenv(env_path, override=True)
 
-    # Secrets for access-controlled tools live in <hub>/restricted/.env — the
-    # restricted/ folder the file-reading tools refuse, so the model cannot read
-    # them. Load it (after the main .env) into the process env, where only the
-    # restricted tools' own code reads them. See hubzoid.access.
-    restricted_env = hub_dir / "restricted" / ".env"
-    if restricted_env.is_file():
-        load_dotenv(restricted_env, override=True)
+    Secrets for access-controlled tools live in <hub>/restricted/.env, the
+    restricted/ folder the file-reading tools refuse, so the model cannot read
+    them. It loads after the main .env, into the process env, where only the
+    restricted tools' own code reads them. See hubzoid.access.
+
+    AWS secrets named by AWS_SECRET_NAME, HUBZOID_HUB_SECRET_NAME and
+    HUBZOID_RESTRICTED_SECRET_NAME are fetched when `secrets` is true (see the
+    precedence table above). Raises config_secrets.SecretFetchError when one
+    cannot be read. `secrets=False` loads the files only, as the gateway does
+    while planning, so it never holds a hub's secrets.
+    """
+    hub_dir = Path(hub_dir)
+    config_secrets.apply_layers(hub_dir, secrets=secrets)
 
     keys_raw = os.environ.get("BRIDGE_API_KEYS", "dev")
     keys = tuple(k.strip() for k in keys_raw.split(",") if k.strip()) or ("dev",)
@@ -325,6 +412,12 @@ def load(hub_dir: Path) -> Settings:
         browser_memory=(os.environ.get("HUBZOID_BROWSER_MEMORY") or "2g").strip() or "2g",
         browser_max_rss_mb=_int_env_zero_ok("HUBZOID_BROWSER_MAX_RSS_MB", 0),
     )
+
+
+def layer_report(hub_dir: Path, *, fetch_secrets: bool = True) -> list[dict]:
+    """[{"key", "layer", "source", "shadows"}] for every key a file or secret
+    sets for this hub. Names and sources only, never values."""
+    return config_secrets.layer_report(Path(hub_dir), fetch_secrets=fetch_secrets)
 
 
 def _conn_slugs(raw: str | None) -> tuple[str, ...]:

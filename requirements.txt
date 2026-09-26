@@ -34,3 +34,4 @@ casbin>=1.43,<2
 dbos>=3.1,<4
 croniter>=6.2,<7
 alembic>=1.18,<2
+boto3>=1.42,<2

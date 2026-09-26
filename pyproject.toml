@@ -72,6 +72,7 @@ dependencies = [
   "dbos>=3.1,<4",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
   "croniter>=6.2,<7",       # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
   "alembic>=1.18,<2",       # migrations/: versioned schema for Hubzoid's own tables (open-webui pins 1.18.x)
+  "boto3>=1.42,<2",         # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named (open-webui pins 1.42.x)
 ]
 
 [project.optional-dependencies]
