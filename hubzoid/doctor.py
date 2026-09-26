@@ -8,13 +8,16 @@ Statuses: `ok`, `info` (worth knowing), `warn` (works, but needs attention) and
 fails.
 
 Doctor reads only. It does not create databases, run migrations or start the
-engine, so it is safe against a running deployment.
+engine, so it is safe against a running deployment. It reads each named AWS
+secret once to prove it is reachable (skip with `fetch_secrets=False`, the
+`--skip-secret-fetch` flag). It reports key names and sources, never values.
 """
 from __future__ import annotations
 
 import os
 import shutil
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -96,6 +99,84 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))
     return out
+
+
+_SECRET_CHECK_IDS = {"deployment": "secrets.deployment", "hub": "secrets.hub", "restricted": "secrets.restricted"}
+
+
+def _config_checks(hub: Path, *, fetch_secrets: bool) -> tuple[list[Check], dict[str, str], bool]:
+    """Configuration layers and AWS secrets, before anything loads the hub.
+
+    Returns (checks, the unfiltered deployment secret, whether a named secret
+    could not be read). Names, sources and AWS error classes only."""
+    from . import config_secrets as cs
+
+    out: list[Check] = []
+    deployment_values: dict[str, str] = {}
+    unreadable = False
+    for p in cs.pointers(hub):
+        check_id = _SECRET_CHECK_IDS[p.layer]
+        where = p.name + (f" ({p.region})" if p.region else "")
+        detail = {"name": p.name, "region": p.region, "source": p.source}
+        if not fetch_secrets:
+            out.append(Check(check_id, "info", f"The {p.layer} secret {where} was not read (--skip-secret-fetch)",
+                             detail))
+            continue
+        try:
+            values = cs.load_secret(p.name, region=p.region, layer=p.layer)
+        except cs.SecretFetchError as exc:
+            unreadable = True
+            out.append(Check(check_id, "fail", str(exc), detail))
+            continue
+        detail["keys"] = len(values)
+        if p.layer == cs.DEPLOYMENT:
+            deployment_values = values
+            if p.filtered:
+                detail["gateway_only"] = sorted(k for k in values if not cs.bridge_deployment_key(k))
+        out.append(Check(check_id, "ok", f"The {p.layer} secret {where} is readable: {len(values)} key(s)", detail))
+
+    from dotenv import dotenv_values
+
+    hub_file = dotenv_values(hub / ".env") if (hub / ".env").is_file() else {}
+    restricted_file = (dotenv_values(hub / "restricted" / ".env")
+                       if (hub / "restricted" / ".env").is_file() else {})
+    ignored = []
+    if hub_file.get("AWS_SECRET_NAME") and cs.registered(hub, os.environ, hub_file):
+        ignored.append("AWS_SECRET_NAME in the hub .env is ignored for a gateway hub. The gateway's "
+                       "environment names the deployment secret. Use HUBZOID_HUB_SECRET_NAME for a hub secret.")
+    if not hub_file.get("HUBZOID_HUB_SECRET_NAME") and (
+            os.environ.get("HUBZOID_HUB_SECRET_NAME") or restricted_file.get("HUBZOID_HUB_SECRET_NAME")):
+        ignored.append("HUBZOID_HUB_SECRET_NAME is read from the hub .env only. It is set elsewhere and ignored.")
+    if not restricted_file.get("HUBZOID_RESTRICTED_SECRET_NAME") and (
+            os.environ.get("HUBZOID_RESTRICTED_SECRET_NAME") or hub_file.get("HUBZOID_RESTRICTED_SECRET_NAME")):
+        ignored.append("HUBZOID_RESTRICTED_SECRET_NAME is read from restricted/.env only. It is set elsewhere "
+                       "and ignored.")
+    if ignored:
+        out.append(Check("secrets.names", "warn", f"{len(ignored)} secret name(s) are set where they are ignored",
+                         ignored))
+
+    rows = cs.layer_report(hub, fetch_secrets=fetch_secrets and not unreadable)
+    if rows:
+        by_layer: dict[str, int] = {}
+        for row in rows:
+            by_layer[row["layer"]] = by_layer.get(row["layer"], 0) + 1
+        summary = ", ".join(f"{n} from the {layer}" for layer, n in by_layer.items())
+        out.append(Check("config.layers", "info", f"{len(rows)} configured key(s): {summary}", rows))
+    return out, deployment_values, unreadable
+
+
+def _google_merge(deployment_values: dict[str, str]) -> Check | None:
+    """Google sign-in onto a Console-created account needs merge by email."""
+    def value(key: str) -> str:
+        return (os.environ.get(key) or deployment_values.get(key) or "").strip()
+
+    if not value("GOOGLE_CLIENT_ID"):
+        return None
+    if value("OAUTH_MERGE_ACCOUNTS_BY_EMAIL").lower() == "true":
+        return Check("auth.google_merge", "ok", "Google sign-in merges onto existing accounts by email")
+    return Check("auth.google_merge", "warn",
+                 "GOOGLE_CLIENT_ID is set without OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true, so people with a "
+                 "Console-created account cannot sign in with Google (see docs/auth.md)")
 
 
 def _versions() -> Check:
@@ -304,27 +385,38 @@ def _scheduler(hub: Path, engine) -> Check | None:
     return Check("scheduler.health", "ok", "Scheduled work is not held or paused", detail)
 
 
-def run(hub: Path) -> list[Check]:
-    hub = Path(hub).resolve()
-    checks = _hub_checks(hub)  # loads the hub's .env through runtime.build
+def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
+    """All checks. `fetch_secrets=False` never calls AWS: named secrets are
+    listed, not read, and the hub loads from its files alone."""
+    from . import config_secrets
     from . import settings as settingslib
 
-    settingslib.load(hub)
-    checks.append(_versions())
-    sqlite_check = _sqlite(hub)
-    if sqlite_check:
-        checks.append(sqlite_check)
-    checks += _schema(hub)
-    checks += _auth()
-    checks.append(_exposure())
-    try:
-        checks.append(_model(hub))
-    except Exception as exc:  # noqa: BLE001
-        checks.append(Check("model.credentials", "warn", f"Could not check the model: {exc}"))
-    try:
-        checks += _store_checks(hub)
-    except Exception as exc:  # noqa: BLE001
-        checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
+    hub = Path(hub).resolve()
+    config, deployment_values, unreadable = _config_checks(hub, fetch_secrets=fetch_secrets)
+    # Past an unreadable secret, check the rest from the files alone.
+    files_only = config_secrets.fetching_disabled() if (unreadable or not fetch_secrets) else nullcontext()
+    with files_only:
+        checks = _hub_checks(hub)  # loads the hub's .env through runtime.build
+        checks[2:2] = config
+        settingslib.load(hub)
+        checks.append(_versions())
+        sqlite_check = _sqlite(hub)
+        if sqlite_check:
+            checks.append(sqlite_check)
+        checks += _schema(hub)
+        checks += _auth()
+        google = _google_merge(deployment_values)
+        if google:
+            checks.append(google)
+        checks.append(_exposure())
+        try:
+            checks.append(_model(hub))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(Check("model.credentials", "warn", f"Could not check the model: {exc}"))
+        try:
+            checks += _store_checks(hub)
+        except Exception as exc:  # noqa: BLE001
+            checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
     return checks
 
 

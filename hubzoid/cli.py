@@ -985,10 +985,13 @@ def restore_cmd(
 def doctor(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
     as_json: bool = typer.Option(False, "--json", help="Print the checks as JSON (stable check ids)."),
+    skip_secret_fetch: bool = typer.Option(
+        False, "--skip-secret-fetch",
+        help="Do not call AWS Secrets Manager. Named secrets are listed but not read."),
 ) -> None:
-    """Check a hub and its deployment: files, agent build, schedules, schema,
-    auth, exposure, model credentials, backups and scheduled work. Read only.
-    Exits 1 when any check fails."""
+    """Check a hub and its deployment: files, configuration layers and secrets,
+    agent build, schedules, schema, auth, exposure, model credentials, backups
+    and scheduled work. Read only. Exits 1 when any check fails."""
     import json as _json
 
     from . import doctor as doctor_lib
@@ -1001,7 +1004,7 @@ def doctor(
         else:
             console.print(f"[red]Hub directory not found:[/red] {hub}")
         raise typer.Exit(2)
-    checks = doctor_lib.run(hub)
+    checks = doctor_lib.run(hub, fetch_secrets=not skip_secret_fetch)
     result = doctor_lib.report(hub, checks)
     if as_json:
         print(_json.dumps(result, indent=2, default=str))
@@ -1010,7 +1013,11 @@ def doctor(
                  "fail": "[red]✗[/red]"}
         for c in checks:
             console.print(f"{marks[c.status]} {c.summary} [dim]({c.id})[/dim]")
-            if c.status in ("warn", "fail") and isinstance(c.detail, list):
+            if c.id == "config.layers" and isinstance(c.detail, list):
+                # Names and sources only. The report never holds a value.
+                for row in c.detail:
+                    console.print(f"    [dim]{row['key']}: {row['layer']} ({row['source']})[/dim]")
+            elif c.status in ("warn", "fail") and isinstance(c.detail, list):
                 for line in c.detail:
                     console.print(f"    [dim]{line}[/dim]")
     if not result["ok"]:
