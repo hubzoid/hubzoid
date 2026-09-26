@@ -15,7 +15,6 @@ resolved from the active run's context:
     hub.publish_artifact(path, title=...)  publish a generated file as a
                                  private report owned by the run's account
     hub.send_email(subject, body, artifacts=[...])  email the run's account
-    hub.connection("gmail", ref=None)  the run account's own credential
     hub.call_llm(prompt, ...)    one tool-free model call (text, JSON or a
                                  Pydantic model), checkpointed as a step
     hub.call_agent(task, ...)    the full agent loop with tools, checkpointed
@@ -28,8 +27,10 @@ arguments, so DBOS never checkpoints them.
 
 Every run acts as an ordinary account (`workflows.identity`): its permissions,
 connections, state, reports and email are that person's. The account is
-re-checked before each model or agent call, publish, email and connection, so a
-blocked account stops at the next one.
+re-checked before each model or agent call, publish and email, so a blocked
+account stops at the next one. Personal connections (Open WebUI native MCP) are
+used through `hub.call_agent`, whose agent acts as the run's account: it gets
+that person's connections, never the author's or an administrator's.
 """
 from __future__ import annotations
 
@@ -272,19 +273,6 @@ class Hub:
         if raise_on_failure and result["status"] not in ("accepted", "previewed"):
             raise EmailError(result)
         return result
-
-    def connection(self, app: str, *, ref: str | None = None):
-        """The run account's own credential for `app` (a mapping). Use it inside
-        the step that needs it; it cannot be returned from a step. With several
-        connected accounts, pass `ref`. Never another person's connection."""
-        from .connection import credential
-        from .identity import require_person
-
-        ctx = _ctx()
-        ident = _identity(ctx)
-        require_person(ident, "A personal connection")
-        _recheck(ctx, "Using a connection")
-        return credential(app, subject=ident.subject, ref=ref)
 
     def call_llm(self, prompt: str, *, response_format: str = "text",
                  response_model=None, model: str | None = None,

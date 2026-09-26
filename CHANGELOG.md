@@ -11,9 +11,9 @@ All notable changes to Hubzoid. Versions follow the package version in
   else the owner recorded at setup (locally `admin@localhost`). The account is
   captured once per run, rechecked before every protected call, and never
   swapped for another. `hubzoid schedule list` shows it.
-- `hub.state` is per account (plus `hub.shared_state`), `hub.run_dir` is a
-  private per-run folder, and `hub.connection(app, ref=None)` returns the run
-  account's own credential.
+- `hub.state` is per account (plus `hub.shared_state`) and `hub.run_dir` is a
+  private per-run folder. `hub.call_agent` acts as the run's account, so it uses
+  that person's Open WebUI connections, never another's.
 - `hub.publish_artifact(...)` publishes a generated file as a private report
   with a viewer at `/portal/artifacts/<id>`: share with people, groups or the
   hub, or (with the new `share_public_links` permission) by an expiring public

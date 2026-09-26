@@ -6,8 +6,9 @@ account the run acts as, renders the template, publishes the page as a private
 report and emails that person a link.
 
 The sample data is synthetic: `raw_data/orders.csv` with columns
-owner,week,region,orders,revenue. Replace `load_rows` with your own source, for
-example `hub.connection("odoo")` inside a step.
+owner,week,region,orders,revenue. Replace `load_rows` with your own source (for
+data behind a person's own connection, ask the agent with `hub.call_agent`,
+which acts as the run's account).
 
 Try it locally without an SMTP server:
 

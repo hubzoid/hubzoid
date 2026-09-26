@@ -1,25 +1,19 @@
 """Markdown tasks that opt in to publish/email, driven through both tool
-adapters (OpenAI Agents FunctionTool and the Claude SDK wrapper), and
-`hub.connection` for Python workflows. Model-free: a scripted runtime calls the
-tools the way an agent would.
+adapters (OpenAI Agents FunctionTool and the Claude SDK wrapper). Model-free: a
+scripted runtime calls the tools the way an agent would.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import pickle
 import re
-from types import SimpleNamespace
 
 import pytest
 
 from hubzoid import artifacts as arts
-from hubzoid import connections as conns
 from hubzoid import schedule_runner as runner
 from hubzoid import scheduling as sch
 from hubzoid.access import store_for
-from hubzoid.workflows import connection as wconn
-from hubzoid.workflows.context import hub, run_scope
 from hubzoid.workflows.identity import RunIdentity
 
 ALICE = "alice@company.com"
@@ -139,99 +133,3 @@ def test_the_tools_have_the_same_schema_for_every_runtime(team):
     for ft in schedule_tools.make(team, task, lambda **_: None):
         wrapped = _to_claude_tool(ft)
         assert wrapped.name == ft.name and wrapped.input_schema == ft.params_json_schema
-
-
-# --- hub.connection -------------------------------------------------------------------
-
-class _Accounts:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def get(self, ref):
-        return self.rows[ref]
-
-
-class _Broker:
-    """Composio-shaped fake: alice has one gmail account (or two)."""
-
-    def __init__(self, accounts):
-        self.accounts = accounts            # ref -> (user, status, token)
-        rows = {ref: SimpleNamespace(user_id=u, status=s, toolkit=SimpleNamespace(slug="gmail"),
-                                     state=SimpleNamespace(val={"token": t}))
-                for ref, (u, s, t) in accounts.items()}
-        self._client = SimpleNamespace(connected_accounts=_Accounts(rows))
-
-    def active_account_ids(self, *, user, app):
-        return [r for r, (u, s, _) in self.accounts.items() if u == user and s == "ACTIVE"]
-
-    def get_credential(self, *, user, app):
-        ids = self.active_account_ids(user=user, app=app)
-        return {"token": self.accounts[ids[0]][2]} if ids else None
-
-    def connect_link(self, *, user, app):
-        return "https://connect.example/SECRET-LINK"
-
-    def is_connected(self, *, user, app):
-        return bool(self.active_account_ids(user=user, app=app))
-
-    def execute(self, **kw):
-        return {}
-
-
-@pytest.fixture
-def gate():
-    yield lambda accounts: conns.set_gate(conns.Connections(client=_Broker(accounts),
-                                                            allowed=["gmail"]))
-    conns.set_gate(conns._INACTIVE)
-
-
-def _as(team, who):
-    ident = RunIdentity(who, "id-" + who, "run_as", who).to_dict()
-    from sqlalchemy import create_engine
-
-    return run_scope(hub="team", workflow="w", hub_dir=team, identity=ident,
-                     engine=create_engine("sqlite://"))
-
-
-def test_connection_is_the_run_persons_own(team, gate):
-    gate({"ca_1": (ALICE, "ACTIVE", "alice-token"), "ca_2": ("bob@company.com", "ACTIVE", "bob-token")})
-    with _as(team, ALICE):
-        cred = hub.connection("gmail")
-        assert cred["token"] == "alice-token"
-        assert "alice-token" not in repr(cred) and "alice-token" not in str(cred)
-        with pytest.raises(TypeError):
-            pickle.dumps(cred)                                   # never checkpointed
-        with pytest.raises(wconn.ConnectionFailed):
-            hub.connection("gmail", ref="ca_2")                  # bob's account
-        assert hub.connection("gmail", ref="ca_1")["token"] == "alice-token"
-
-
-def test_several_connections_need_an_explicit_ref(team, gate):
-    gate({"ca_1": (ALICE, "ACTIVE", "work"), "ca_3": (ALICE, "ACTIVE", "personal")})
-    with _as(team, ALICE):
-        with pytest.raises(wconn.ConnectionFailed, match="ref="):
-            hub.connection("gmail")
-        assert hub.connection("gmail", ref="ca_3")["token"] == "personal"
-
-
-def test_missing_or_revoked_connection_fails_without_leaking_a_link(team, gate):
-    gate({"ca_1": (ALICE, "EXPIRED", "old")})
-    with _as(team, ALICE):
-        with pytest.raises(wconn.ConnectionFailed) as err:
-            hub.connection("gmail")
-        assert "connect gmail" in str(err.value) and "SECRET-LINK" not in str(err.value)
-        with pytest.raises(wconn.ConnectionFailed):
-            hub.connection("gmail", ref="ca_1")
-        with pytest.raises(wconn.ConnectionFailed):
-            hub.connection("slack")                              # not offered by the hub
-
-
-def test_a_legacy_service_run_has_no_personal_connection(team, gate):
-    from sqlalchemy import create_engine
-
-    from hubzoid.workflows.identity import IdentityError
-
-    gate({"ca_1": (ALICE, "ACTIVE", "t")})
-    with run_scope(hub="team", workflow="w", hub_dir=team, engine=create_engine("sqlite://")):
-        with pytest.raises(IdentityError):
-            hub.connection("gmail")

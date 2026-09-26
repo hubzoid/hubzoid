@@ -169,14 +169,17 @@ Concurrent work this plan must not compete with:
 13. **Connections.** The run binds the execution identity (surface
     `workflow`) for its whole duration, so Agent X's per-turn connection
     resolution selects that person's connections, never an administrator's.
-    `hub.connection(app, ref=None)` returns the execution person's credential
-    for Python steps:
-    - it refuses when the person has several active connections and no `ref`;
-    - it verifies that a `ref` belongs to that person;
-    - an expired or revoked connection fails with a clear reconnect message.
-
-    The credential object redacts itself in `repr` and refuses to be pickled,
-    so returning it from a step fails loudly instead of checkpointing a secret.
+    Personal connections are used through `hub.call_agent`.
+    - **Founder decision (26 September 2026):** Composio is being sunset, and
+      this release neither introduces nor requires it. Personal connections
+      are Open WebUI native MCP only.
+    - **What was dropped:** the earlier plan for a Python-level
+      `hub.connection(app, ref=)` was built on the Composio gate.
+    - **Explicit references:** native MCP holds one session per person per
+      server, so an explicit reference is the server itself, chosen by which
+      tool the agent uses.
+    - **If a later release adds a direct helper:** it should come from
+      `connect_journey`.
 14. **Markdown tasks can opt in to two schedule-only tools**, `publish_artifact`
     and `send_email`, with the same owner and recipient rules.
     - The task enables them itself with `publish_artifacts: true` and
@@ -255,11 +258,11 @@ The plan uses what exists today and names what X's packages must provide:
    `child_env_overrides` must blank `HUBZOID_SMTP_PASSWORD` and
    `HUBZOID_SMTP_USERNAME`. Until P3 lands, bridges inherit the gateway
    environment, and these keys already reach them.
-4. **Connections.** P2's `connector_<app>` gate and personal-token injection key
-   on `current_identity()`. The run binds the execution identity on the
-   `workflow` surface, which is in the default restricted surfaces. For `ref`,
-   this plan uses the broker's `active_account_ids(user, app)` when present (P2)
-   and otherwise a Composio lookup that checks the account's `user_id`.
+4. **Connections.** P2's `connector_<app>` gate and personal-token injection
+   key on `current_identity()`. The run binds the execution identity on the
+   `workflow` surface, which is in the default restricted surfaces. Nothing in
+   this plan calls Composio or depends on its broker (founder decision,
+   26 September 2026).
 5. **Delegation.** X's `AccessService.scope` already gives `workflow:*` subjects
    no management scope. With real accounts, the management tools still refuse
    the `workflow` surface (`TOOL_SURFACES`).

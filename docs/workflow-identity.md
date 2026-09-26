@@ -100,21 +100,17 @@ asking, unless an explicit, authorized delegation exists.
 | A markdown task's scratch folder | The first account that runs the task after the upgrade keeps `.hubzoid/schedule/<task>/`. A different account gets `.hubzoid/schedule/<task>@<person>/`. |
 | `hub.publish_artifact(...)` | The run's account. See [reports-and-email.md](reports-and-email.md). |
 | `hub.send_email(...)` | Goes only to the run's account. |
-| `hub.connection(app, ref=None)` | That account's own connected account. |
+| Personal connections (Open WebUI native MCP) | That account's own, used through `hub.call_agent`. |
 
 State written before this release is adopted by the first account that runs the
 workflow afterwards, and by no one else.
 
-`hub.connection("gmail")` returns the run's own credential for a step to use:
-
-- **One connected account:** returned directly.
-- **Several connected accounts:** the call is refused until you pass `ref=`
-  naming one of that person's accounts.
-- **No connection, or an expired one:** the run fails and asks the person to
-  connect again from chat. No connect link appears in the run's output.
-
-The credential cannot be printed or returned from a step, so it never lands in
-the run history.
+A personal connection (for example Gmail through the chat app's native MCP
+support) is used by the agent: `hub.call_agent(...)` acts as the run's account,
+so its tools use that person's connection, never the workflow author's or an
+administrator's. If the person has not connected, or their connection expired
+or was revoked, the agent has no such tool and the call says so; the person
+reconnects from chat.
 
 Step return values are kept in the run history, which the hub's managers can
 see. Keep personal data inside steps, and in the report you publish.
