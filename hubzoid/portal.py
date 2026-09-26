@@ -395,7 +395,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         This is not the Console admin gate. Ordinary signed-in members need
         their own effective entry decision too. The bridge still enforces entry.
         """
-        subject = _verify_owui_session(request, hub_dir)
+        # Scripts and chat clients call the chat app's API with a bearer token
+        # and no cookie. They got the model list before the edge filtered it.
+        subject = _verify_owui_session(request, hub_dir, bearer=True)
         if not subject:
             raise HTTPException(401, "Sign in to see your agents.")
         gs = store_for(hub_dir)

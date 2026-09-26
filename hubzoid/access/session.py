@@ -56,10 +56,20 @@ def configured_owner(hub_dir: Path) -> str:
     return owner
 
 
-def verified_email(request: Request, hub_dir: Path | None = None) -> str:
+def verified_email(request: Request, hub_dir: Path | None = None, *,
+                   bearer: bool = False) -> str:
     """Validate the viewer's OWUI session cookie server-side and return the
-    verified email, or '' — never trusting a client-sent identity header."""
+    verified email, or '' — never trusting a client-sent identity header.
+
+    With ``bearer``, a request without the cookie may instead carry the chat
+    app's own credential as ``Authorization: Bearer <token>`` (a session token
+    or an API key), validated by Open WebUI the same way. Only read-only checks
+    pass it, because a bearer credential is not ambient like a cookie."""
     token = request.cookies.get("token") or ""
+    if not token and bearer:
+        scheme, _, value = (request.headers.get("authorization") or "").partition(" ")
+        if scheme.lower() == "bearer":
+            token = value.strip()
     if not token:
         return ""
     base = (

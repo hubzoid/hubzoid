@@ -74,3 +74,32 @@ def test_edge_picker_filters_admins_and_fails_closed(access_status, expected_sta
         finally:
             client.portal.call(app.state.client.aclose)
             app.state.client = original
+
+
+@pytest.mark.parametrize('header', [b'Bearer sk-client-key', b'Bearer session-jwt'])
+def test_chat_access_accepts_the_chat_apps_bearer_credential(tmp_path, monkeypatch, header):
+    """API clients send the chat app's token or API key as a bearer and no
+    cookie. The picker's access check validates it with Open WebUI instead of
+    refusing it, as the model list did before the edge filtered it."""
+    from fastapi import FastAPI
+    from hubzoid.access import session
+
+    monkeypatch.setattr(session, 'store_for', lambda _: __import__('unittest.mock').mock.Mock())
+    monkeypatch.setattr(deployment, 'owui_url', lambda _: 'http://127.0.0.1:43080')
+    seen = {}
+
+    def fake_get(url, headers=None, **kw):
+        seen['auth'] = (headers or {}).get('Authorization')
+        return httpx.Response(200, json={'role': 'user', 'email': 'ana@example.org', 'id': 'u'})
+
+    monkeypatch.setattr(httpx, 'get', fake_get)
+    monkeypatch.setattr(portal, 'store_for', lambda _: __import__('unittest.mock').mock.Mock(
+        is_suspended=lambda s: False, is_authoritative=lambda h: False))
+    monkeypatch.setattr(deployment, 'hubs', lambda _: [])
+    app = FastAPI()
+    app.include_router(portal.build_router(tmp_path))
+    r = TestClient(app).get('/portal/api/chat-access', headers={'authorization': header.decode()})
+    assert r.status_code == 200 and r.json() == {'denied': []}
+    assert seen['auth'] == header.decode()
+    # Without any credential it is still a sign-in refusal.
+    assert TestClient(app).get('/portal/api/chat-access').status_code == 401
