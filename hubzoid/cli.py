@@ -2196,9 +2196,11 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # WEBUI_ADMIN_EMAIL=you@you.com   # one-shot: seeds first admin on a fresh DB
 # WEBUI_ADMIN_PASSWORD=           # one-shot: delete both ADMIN lines after first boot
 
-# Mode C: Google SSO (use alongside Mode B's lines above).
-# ENABLE_OAUTH_SIGNUP=true
-# DEFAULT_USER_ROLE=pending       # new Google users wait for admin approval
+# Mode C: Google SSO (use alongside Mode B's lines above). Sign-up stays closed:
+# create accounts in the Admin Console (Add user), and Google sign-in attaches to
+# them by email.
+# OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+# OAUTH_ALLOWED_DOMAINS=your-company.com
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
 # Authorized redirect URI in Google Console: <WEBUI_URL>/oauth/google/callback

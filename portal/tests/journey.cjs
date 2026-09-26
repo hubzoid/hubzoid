@@ -112,6 +112,12 @@ function step(name) {
     await totals.getByText("Across 252 conversations").waitFor();
     assert.equal(await totals.getByRole("listitem").count(), 5);
     await totals.getByText("Workflow runs").waitFor();
+    const usersCard = totals.getByRole("listitem").filter({ hasText: "Users" });
+    await usersCard.getByText("42", { exact: true }).waitFor();
+    await usersCard.getByText("Across 3 hubs", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "About Users" }).focus();
+    await page.getByRole("tooltip").filter({ hasText: "The period does not change this total" }).waitFor();
+    await page.getByRole("heading", { name: "Agents", level: 1 }).click();
     assert.equal(await page.getByRole("link", { name: "Overview", exact: true }).count(), 0);
     assert.equal(await page.getByRole("link", { name: "Runs", exact: true }).count(), 0);
     assert.equal(await page.getByRole("link", { name: /Manage accounts/ }).count(), 0);
@@ -132,6 +138,7 @@ function step(name) {
     await page.getByLabel("IT Ops Assistant usage", { exact: true }).getByText("—", { exact: true }).waitFor();
     await page.getByText("30 days", { exact: true }).click();
     await totals.getByText("Across 924 conversations").waitFor();
+    await usersCard.getByText("42", { exact: true }).waitFor();   // accounts do not depend on the period
     assert.ok((await hash()).includes("period=30d"), await hash());
     await financeUsage.getByText("$40.48", { exact: true }).waitFor();
     await financeUsage.getByText("4.5M", { exact: true }).waitFor();

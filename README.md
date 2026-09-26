@@ -111,9 +111,9 @@ checked for the caller.
 - **Operate one or several hubs.** Run one hub or use `hubzoid gateway` for a shared chat app and deployment. Back up before upgrades and verify access with ordinary user accounts.
 
 Open WebUI supplies chat and account authentication. Hubzoid's Admin Console supplies access management and execution inspection at `/portal/`. Administrators see an **Admin Console** link above their profile in the chat sidebar (an icon when collapsed). There is one account system. With public sign-up closed by default, an
-administrator creates login accounts in Open WebUI and grants agent access in the
-Admin Console. **Add person** grants permissions; it does not create a login or
-send an invitation.
+administrator uses **Add user** in the Admin Console to create a login account (or pick
+an existing one) and give it access in one step. Nothing is sent: the administrator
+shares the sign-in details.
 
 The dashboard brings agent cards together with messages, users, token usage,
 workflow runs and approximate cost. Open an agent to manage access, inspect its

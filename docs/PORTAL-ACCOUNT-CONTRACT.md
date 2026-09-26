@@ -166,8 +166,14 @@ Rules:
 
 ```json
 {"email": "ann@example.org", "name": "Ann", "password": "...",
+ "sign_in": "password",
  "grants": [{"hub": "finance", "permission": "ledger"}]}
 ```
+
+`sign_in` is `password` (the default) or `google`. `google` is accepted only when
+`/me` reports Google sign-in as available (Google configured and
+`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`). The server then sets a random password that
+is never returned, stored or logged, and `password` is not sent.
 
 Creates an Open WebUI account with role `user` and applies the grants in one
 store transaction. Returns `{ok, subject, owui_id, name, role, grants, revision}`
@@ -184,10 +190,17 @@ echo a value.
 | 422 `rejected`, `invalid_password` | Open WebUI or the minimum rule (8 characters, at most 72 bytes) refused the password. |
 | 503 `accounts_unavailable` | No internal URL or service account. |
 | 503 `uncertain` | Open WebUI did not answer. The account may exist. Refresh accounts first. |
-| 502 `partial` | The account was created, granting failed and the automatic removal failed. The message names the account. |
+| 502 `partial` | The account was created but granting failed. The account is kept without access; the body names it. Retry with `POST /accounts/grant`. |
 
-If granting fails and the new account was removed, the original status and
-code are returned with "The new chat account was removed, so nothing changed."
+A retry never creates a second account: after `uncertain` or `partial`, the
+account is found by email.
+
+### `GET /portal/api/accounts?q=…` and `POST /portal/api/accounts/grant`
+
+`GET` lists existing sign-in accounts the caller may manage, for "Add user,
+Existing account". `POST /accounts/grant` `{email, grants}` gives access to an
+existing account. It returns 404 `no_account` when the email has no account,
+and never creates an email-only grant silently.
 
 ### Account actions (organization administrators)
 
