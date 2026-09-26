@@ -26,7 +26,17 @@ Console's People screen (edge).
 
 For every signed-in person it also explains an empty chat: a blocked account,
 or an account with no agent yet, sees a notice instead of an unexplained
-"Select a model"."""
+"Select a model".
+
+It also clears the bridge's "Working on it…" status line from a finished
+message. The bridge hides that line itself before the first words, the finish
+or an error, but a turn stopped before its first word, or cut off because the
+bridge died, never gets that hide event, and Open WebUI keeps the line
+animated, even after a reload (status history is stored with the message).
+Once Open WebUI shows that message as finished (its Copy action renders only
+then), the line is hidden as the event would have hidden it. Other status
+lines and message content are never touched; without that signal the line
+stays."""
 SCRIPT = r'''
 (() => {
   const HIDE_USERS = false;
@@ -54,6 +64,7 @@ SCRIPT = r'''
       left:calc(100% + 8px); top:50%; transform:translateY(-50%); white-space:nowrap;
       padding:4px 8px; border-radius:6px; background:#171717; color:#fff; font-size:12px;
       line-height:16px; pointer-events:none; z-index:50; }
+    [data-hz-stale-status] { display:none !important; }
   `;
   document.head.appendChild(style);
   if (HIDE_USERS) {
@@ -190,15 +201,40 @@ SCRIPT = r'''
     place();
     access();
   }
+  // The bridge's waiting line, left behind when a turn is stopped before its
+  // first word or the bridge dies (see the module docstring). Hide the status
+  // block only while its current line reads exactly WAITING and its message
+  // shows Open WebUI's Copy action, which renders only once the message is done.
+  // Re-checked on every change, so a continued message shows its line again.
+  const WAITING = 'Working on it\u2026';
+  let statusQueued = false;
+  function staleStatus() {
+    statusQueued = false;
+    const stale = new Set();
+    for (const line of document.querySelectorAll('.status-description')) {
+      const current = line.closest('button');  // the history list has no button
+      const message = current?.closest('[id^="message-"]');
+      if (current?.parentElement && line.textContent.trim() === WAITING &&
+          message?.querySelector('.copy-response-button')) stale.add(current.parentElement);
+    }
+    for (const block of document.querySelectorAll('[data-hz-stale-status]'))
+      if (!stale.has(block)) block.removeAttribute('data-hz-stale-status');
+    for (const block of stale)
+      if (!block.hasAttribute('data-hz-stale-status')) block.setAttribute('data-hz-stale-status', '');
+  }
+  function scheduleStatus() {
+    if (!statusQueued) { statusQueued = true; setTimeout(staleStatus, 100); }
+  }
   // OWUI replaces the sidebar when expanding/collapsing and after SPA login.
   // Observe layout changes without issuing extra authentication requests,
   // except on an in-app route change (sign-in lands on the chat that way).
   let lastPath = location.pathname;
   new MutationObserver(() => {
-    schedulePlace(); usersPage();
+    schedulePlace(); usersPage(); scheduleStatus();
     if (location.pathname !== lastPath) { lastPath = location.pathname; sync(); }
   }).observe(document.body, {childList:true, subtree:true});
   usersPage();
+  scheduleStatus();
   sync();
   addEventListener('popstate', () => { usersPage(); sync(); });
   addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });

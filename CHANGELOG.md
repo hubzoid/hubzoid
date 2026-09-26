@@ -63,8 +63,8 @@ All notable changes to Hubzoid. Versions follow the package version in
 - Agents show a spark icon, and role badges are muted and readable in both
   themes.
 - Chat shows a "Working on it…" status from send until the first words, on
-  every runtime. Stopping before the first word leaves that line on the
-  stopped message.
+  every runtime. A turn stopped before the first word, or cut off because the
+  hub's bridge stopped, no longer keeps that line, also after a reload.
 - The bundled demo hub describes the three runtimes and current positioning.
 - The chat sidebar's Admin Console link has a shield-and-cog icon at Open
   WebUI's sidebar size, and keeps its name when the sidebar is collapsed.

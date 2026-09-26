@@ -86,3 +86,22 @@ def test_the_script_parses(tmp_path, hide):
     path.write_text(script(hide))
     result = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_a_left_behind_waiting_line_is_hidden_only_on_a_finished_message():
+    # The bridge's own line (server._waiting_status), matched exactly.
+    import json
+    from hubzoid.server import _waiting_status
+    event = json.loads(_waiting_status("m", done=False).decode().removeprefix("data: "))
+    assert event["event"]["data"]["description"] == "Working on it…"
+    assert "const WAITING = 'Working on it\\u2026';" in SCRIPT
+    assert "line.textContent.trim() === WAITING" in SCRIPT
+    # Only while its message shows Open WebUI's Copy action (rendered once done).
+    assert "message?.querySelector('.copy-response-button')" in SCRIPT
+    # Only the current line's block; re-checked both ways on every change.
+    assert "line.closest('button')" in SCRIPT
+    assert "block.removeAttribute('data-hz-stale-status')" in SCRIPT
+    assert "[data-hz-stale-status] { display:none !important; }" in SCRIPT
+    assert "scheduleStatus();\n    if (location.pathname" in SCRIPT
+    # It never rewrites message content.
+    assert "innerHTML" not in SCRIPT.split("function staleStatus")[1].split("function scheduleStatus")[0]
