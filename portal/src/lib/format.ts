@@ -108,7 +108,7 @@ export function initials(subject: string, display?: string | null) {
 export function validateSubject(raw: string): string | null {
   const value = raw.trim().toLowerCase();
   if (!value) return "Enter an email address.";
-  if (value === EVERYONE) return "Use the public access control instead.";
+  if (value === EVERYONE) return "Access for everyone signed in can’t be granted. Add people by name.";
   if (/^workflow:(?:md:)?[a-z0-9_.-]+$/.test(value)) return null;
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return null;
   return "Enter a valid email address (or workflow:<name> for a service).";

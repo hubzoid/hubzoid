@@ -13,6 +13,7 @@ fs.mkdirSync(shots, { recursive: true });
 const ORIGIN = "http://hubzoid.test";
 const PRIYA = "priya.natarajan@example.org";
 const USE_HUB_PERM = "use_hub";
+const EVERYONE_SUBJECT = "*";
 
 const steps = [];
 function step(name) {
@@ -153,7 +154,7 @@ function step(name) {
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
     await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
     await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Service").waitFor();
-    assert.equal(await page.getByRole("switch", { name: "Public access" }).isChecked(), false);
+    assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-access.png"), fullPage: true });
 
@@ -215,7 +216,7 @@ function step(name) {
     await page.getByRole("row").filter({ hasText: "Mei Lin Chen" }).getByText("Work tickets").waitFor();
     await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Mei Lin Chen" }).getByText("Awaiting approval").waitFor();
-    assert.equal(await page.getByRole("switch", { name: "Public access" }).isChecked(), true);
+    await page.getByText("Everyone signed in can use this agent").waitFor();
     delete state.delays["/access"];
 
     // ---- staged edit: cancel writes nothing ------------------------------------
@@ -536,17 +537,33 @@ function step(name) {
     delete state.delays["/access/apply"];
     state.mutations.length = 0;
 
-    // ---- public access -------------------------------------------------------------------
-    step("Public access is a reviewed switch: confirm first, one request, then reflected");
-    await page.getByRole("switch", { name: "Public access" }).click();
-    await modalTitle("Open Finance Assistant to everyone who signs in?").waitFor();
-    assert.equal(state.mutations.length, 0);
-    await answer("Open to everyone");
-    await page.getByText("Finance Assistant is now open to everyone signed in.").waitFor();
-    assert.deepEqual(lastMutation(), { endpoint: "/access/grant", subject: "*", hub: "finance", permission: "use_hub" });
-    assert.equal(await page.getByRole("switch", { name: "Public access" }).isChecked(), true);
-    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).waitFor();
+    // ---- everyone signed in: shown, never created, removal confirmed ----------------------
+    step("Everyone signed in is shown with a confirmed Remove, and can never be granted");
+    await go("/agents/support/access");
+    const everyoneRow = page.getByRole("row").filter({ hasText: "Everyone signed in" });
+    await everyoneRow.getByText("Use this agent", { exact: true }).waitFor();
+    assert.equal(await everyoneRow.getByRole("button", { name: /^Edit access/ }).count(), 0, "not editable");
+    await everyoneRow.getByRole("button", { name: "Remove access for everyone signed in" }).click();
+    await modalTitle("Remove access for everyone signed in to Support Assistant?").waitFor();
+    await modal().getByText(/\d+ chat accounts? opens? Support Assistant only through this/).waitFor();
+    await answer("Cancel");
+    assert.equal(state.mutations.length, 0, "cancel writes nothing");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await everyoneRow.getByRole("button", { name: "Remove access for everyone signed in" }).click();
+    await modalTitle("Remove access for everyone signed in to Support Assistant?").waitFor();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-remove-everyone-narrow.png") });
+    await answer("Remove access for everyone");
+    await page.getByText("Support Assistant is no longer open to everyone signed in.").waitFor();
+    assert.deepEqual(lastMutation(), { endpoint: "/access/revoke", subject: "*", hub: "support", permission: "use_hub" });
+    assert.equal(await page.getByRole("row").filter({ hasText: "Everyone signed in" }).count(), 0);
+    await page.setViewportSize({ width: 1440, height: 950 });
+    // The server refuses to create it again, for an organization administrator too.
+    await assert.rejects(fixture.handle("POST", "/access/grant", {}, { subject: "*", hub: "support", permission: "use_hub" }),
+      (e) => e.status === 403);
+    state.grants.push([EVERYONE_SUBJECT, "support", USE_HUB_PERM]); // restore the carried-over grant
     state.mutations.length = 0;
+    await go("/agents/finance/access");
 
     // ---- legacy (un-migrated) hub is read-only in the dashboard -------------------------
     step("A legacy agent shows access read-only (managed in the chat app), with edits disabled");
@@ -554,8 +571,7 @@ function step(name) {
     await page.getByText("access is managed in the chat app", { exact: false }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Add person" }).isDisabled(), true,
       "legacy hub must not offer Add person");
-    // The public toggle is also locked on a legacy hub.
-    assert.equal(await page.getByRole("switch", { name: "Public access" }).isDisabled(), true);
+    assert.equal(await page.getByRole("switch").count(), 0);
     assert.equal(state.mutations.length, 0);
 
     // ---- runs & schedules ---------------------------------------------------------------
@@ -945,7 +961,15 @@ function step(name) {
     await page.getByText("Agent administrator").waitFor();
     await go("/agents/finance/access");
     await page.getByRole("heading", { name: "Access to Finance Assistant" }).waitFor();
-    assert.equal(await page.getByRole("switch", { name: "Public access" }).isDisabled(), true);
+    // An agent administrator sees an existing Everyone grant read-only.
+    state.grants.push([EVERYONE_SUBJECT, "finance", USE_HUB_PERM]);
+    await page.reload();
+    const readOnly = page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Read-only");
+    await readOnly.hover();
+    await page.getByRole("tooltip").filter({ hasText: "Only organization administrators can remove this." }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Remove access for everyone signed in" }).count(), 0);
+    state.grants = state.grants.filter(([s, h]) => !(s === EVERYONE_SUBJECT && h === "finance"));
+    await page.reload();
     await page.getByRole("button", { name: "Edit access for Aisha Rahman" }).click();
     assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true);
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);

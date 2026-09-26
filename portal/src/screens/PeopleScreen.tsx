@@ -465,7 +465,7 @@ function PersonDrawer({
         ? `Make ${name} an organization administrator?`
         : `Remove organization administrator rights from ${name}?`,
       content: grant
-        ? "They will be able to manage access for every agent, including other administrators and public access."
+        ? "They will be able to manage access for every agent, including other administrators."
         : "Their direct access to individual agents stays. The last organization administrator cannot be removed.",
       okText: grant ? "Make administrator" : "Remove rights",
       okButtonProps: { danger: !grant },

@@ -380,7 +380,7 @@ export function AccessDrawer({
                           p.description,
                           ...capabilityNotes(p),
                           lock?.reason,
-                          !lock && publicOnly ? "Available to everyone signed in. A direct grant keeps access if public access is turned off." : undefined,
+                          !lock && publicOnly ? "Held through “Everyone signed in”. A direct grant keeps access if that is removed." : undefined,
                         ].filter(Boolean).join(" ");
                         return (
                           <div className="capability capability-row" key={p.permission}>
@@ -534,8 +534,8 @@ function ReviewList({
           }
           description={
             cascade
-              ? "One request removes them all. Inherited or public access, if any, still applies."
-              : "Inherited or public access, if any, still applies."
+              ? "One request removes them all. Inherited access or “Everyone signed in”, if any, still applies."
+              : "Inherited access or “Everyone signed in”, if any, still applies."
           }
         />
       )}

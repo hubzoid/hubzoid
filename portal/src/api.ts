@@ -57,7 +57,10 @@ export type Access = {
   permissions: Permission[];
   rows: AccessRow[];
   total: number;
+  // An existing "everyone signed in" grant (carried over; can't be created).
   public: boolean;
+  /** Chat accounts that enter only through it (shown before removal). */
+  public_reliant?: number;
   // Policy revision at load time — sent back with the first save so the backend
   // can reject an edit built on access another admin has since changed.
   revision: number;

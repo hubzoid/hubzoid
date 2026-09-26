@@ -531,20 +531,6 @@ body .ant-alert .ant-alert-icon {
   margin-bottom: 8px;
 }
 
-.public-access {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 14px 16px;
-  background: var(--subtle);
-  border: 1px solid var(--subtle-border);
-  border-radius: 8px;
-}
-
-.public-access .ant-switch {
-  margin-top: 2px;
-}
-
 .sync-note {
   font-size: 13px;
 }

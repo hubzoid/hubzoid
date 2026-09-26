@@ -310,6 +310,9 @@ function createFixture() {
           permissions: catalogFor(hub),
           total: list.length,
           public: gs.can("__signed_in_preview__", hub, USE_HUB),
+          public_reliant: Object.entries(state.identities).filter(([subject, id]) =>
+            id.owui_id && !id.pending && !subject.startsWith("workflow:") && !state.suspended.has(subject) &&
+            !state.grants.some(([s, h, p]) => s === subject && h === hub && p === USE_HUB)).length,
           revision: state.revision,
           rows: list.slice(offset, offset + limit),
         };
@@ -332,7 +335,11 @@ function createFixture() {
           const held = state.grants.some(([s, h, p]) => s === subject && h === hub && p === perm);
           if (!grantable(entry) && !(revoke && held)) throw error(422, "Unknown permission for this hub");
         }
-        if (subject === EVERYONE && !(a.org && perm === USE_HUB)) throw error(403, "Only organization admins may change public hub access");
+        // Mirrors AccessService: nobody creates new access for everyone signed in;
+        // an organization administrator may remove an existing one.
+        if (subject === EVERYONE && !revoke)
+          throw error(403, "New access for everyone signed in can't be created. Grant named people or workflow identities instead.");
+        if (subject === EVERYONE && !(a.org && perm === USE_HUB)) throw error(403, "Only organization admins may remove access for everyone signed in");
         if (!a.org && (perm === MANAGE_ACCESS || (revoke && perm === USE_HUB && gs.can(subject, hub, MANAGE_ACCESS))))
           throw error(403, "Only organization admins may change administrator access");
         if (revoke) gs.revoke(subject, hub, perm, a.subject);

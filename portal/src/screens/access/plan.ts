@@ -94,7 +94,7 @@ export function lockFor(
   if (meta?.obsolete && !row.perms.includes(permission))
     return { label: "No longer available", reason: "This capability no longer exists, so it can’t be granted." };
   if (row.subject === EVERYONE)
-    return { reason: "Public access is managed with the switch above." };
+    return { reason: "“Everyone signed in” can only be removed, from the access list." };
   if (row.inherited.includes(permission))
     return {
       label: "Inherited",
