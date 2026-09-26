@@ -217,6 +217,29 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
 MAX_EMAILS = 5  # per scheduled run
 
 
+def _publishable(hub: Path, task, target: Path) -> bool:
+    """May the model publish `target`? Judged on the resolved path, so a symlink
+    or a look-alike folder name (`<task>@someone`) cannot cross a boundary.
+
+    The run's own scratch folder is private hub state, but it is this run's
+    output area: a file there is judged by the content rules alone (no .env,
+    database or credential file). Anywhere else (the task's other writable
+    paths) the normal agent read guard applies in full, which keeps `.hubzoid/`
+    (other runs' and people's folders, chats, databases, secrets) out of reach."""
+    from .._fs import agent_read_refusal
+
+    try:
+        real = Path(target).resolve(strict=True)
+        scratch = (hub / task.scratch_rel).resolve()
+    except (OSError, RuntimeError):
+        return False
+    if not real.is_file():
+        return False
+    if real.is_relative_to(scratch):
+        return agent_read_refusal(scratch, real) is None
+    return agent_read_refusal(hub, real) is None
+
+
 def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable) -> list:
     """publish_artifact / send_email for a task that opted in. Both act for the
     account the run acts as (`task.run_identity`), fixed before the run."""
@@ -245,11 +268,7 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
                 target = resolve_writable(path)
             except PermissionError as exc:
                 return f"[publish_artifact refused: {exc}]"
-            from .._fs import agent_read_refusal
-
-            reason = agent_read_refusal(hub, target) if not str(target).startswith(
-                str(hub / ".hubzoid")) else None
-            if reason or not target.is_file():
+            if not _publishable(hub, task, target):
                 return f"[publish_artifact refused: {path!r} is not a file this task can publish]"
             try:
                 out = wctx.publish_now(str(hub), hub.name.lower(), ident, f"md:{task.name}",

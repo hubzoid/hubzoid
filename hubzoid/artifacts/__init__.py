@@ -318,10 +318,48 @@ def _active(hub_dir, subject: str) -> bool:
 
 def shares(hub_dir, artifact_id: str) -> list[dict]:
     with _engine(hub_dir).connect() as c:
-        rows = c.execute(text("SELECT kind, principal FROM hz_artifact_shares "
+        rows = c.execute(text("SELECT kind, principal, account FROM hz_artifact_shares "
                               "WHERE artifact_id=:a ORDER BY kind, principal"),
                          {"a": artifact_id}).fetchall()
-    return [dict(kind=k, principal=p) for k, p in rows]
+    return [dict(kind=k, principal=p, account=a) for k, p, a in rows]
+
+
+def _account_of(hub_dir, subject: str) -> str | None:
+    """The chat-app account id currently bound to `subject`, or None."""
+    try:
+        return (_store(hub_dir).identity(subject) or {}).get("owui_id") or None
+    except Exception:  # noqa: BLE001 — unknown binds nothing
+        log.exception("artifacts: identity lookup failed")
+        return None
+
+
+def _local_owner(hub_dir, subject: str) -> bool:
+    """The single local quickstart account (authentication off, no deployment),
+    which may publish before the chat app has created its account row."""
+    from ..access.session import LOCAL_OWNER
+    from ..workflows.identity import local_quickstart
+
+    return subject == LOCAL_OWNER and local_quickstart(Path(hub_dir))
+
+
+def _owner_current(hub_dir, art: Artifact) -> bool:
+    """Is the report's recorded owner still that owner, now? The same chat-app
+    account it was published under (an email reused by a replacement account
+    inherits nothing), not blocked, and on a Console-managed hub still able to
+    use the hub. A report recorded without an account id is honoured only for
+    the local quickstart account. Legacy hubs keep their membership in the chat
+    app, so only the account checks apply there."""
+    owner = art.owner
+    if not _active(hub_dir, owner):
+        return False
+    if art.owner_account:
+        if _account_of(hub_dir, owner) != art.owner_account:
+            return False
+    elif not _local_owner(hub_dir, owner):
+        return False
+    if hub_managed(hub_dir, art.hub) and not hub_member(hub_dir, art.hub, owner):
+        return False
+    return True
 
 
 def _groups_of(hub_dir, hub: str, subject: str) -> set[str]:
@@ -346,14 +384,17 @@ def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
     if art is None or art.deleted or not _active(hub_dir, subject):
         return None
     if subject == art.owner:
-        return "owner"
+        return "owner" if _owner_current(hub_dir, art) else None
     if art.audience == "hub":
         return "viewer" if hub_member(hub_dir, art.hub, subject) else None
     if art.audience == "people":
         if not hub_member(hub_dir, art.hub, subject):
             return None
         listed = shares(hub_dir, art.id)
-        if any(s["kind"] == "user" and s["principal"] == subject for s in listed):
+        mine = [s for s in listed if s["kind"] == "user" and s["principal"] == subject]
+        # A share names the account it was made for: a replacement account under
+        # the same email is not that person.
+        if any(not s["account"] or s["account"] == _account_of(hub_dir, subject) for s in mine):
             return "viewer"
         wanted = {s["principal"] for s in listed if s["kind"] == "group"}
         if wanted and wanted & _groups_of(hub_dir, art.hub, subject):
@@ -414,9 +455,11 @@ def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
     with _engine(hub_dir).begin() as c:
         c.execute(text("DELETE FROM hz_artifact_shares WHERE artifact_id=:a"), {"a": art.id})
         for kind, principal in entries:
+            account = _account_of(hub_dir, principal) if kind == "user" else None
             c.execute(text("INSERT INTO hz_artifact_shares (artifact_id, kind, principal, "
-                           "added_by, added) VALUES (:a, :k, :p, :b, :t)"),
-                      {"a": art.id, "k": kind, "p": principal, "b": actor, "t": now})
+                           "account, added_by, added) VALUES (:a, :k, :p, :acc, :b, :t)"),
+                      {"a": art.id, "k": kind, "p": principal, "acc": account, "b": actor,
+                       "t": now})
         # Leaving "anyone with the link" ends every link at once.
         c.execute(text("UPDATE hz_artifact_links SET revoked=:t "
                        "WHERE artifact_id=:a AND revoked IS NULL"), {"a": art.id, "t": now})
@@ -505,7 +548,8 @@ def open_link(hub_dir, token: str) -> tuple[Artifact, str] | None:
     if r is None or r[3] is not None or r[2] <= _now():
         return None
     art = get(hub_dir, r[1])
-    if art is None or art.audience != "link" or not can_create_link(hub_dir, art, art.owner):
+    if (art is None or art.audience != "link" or not _owner_current(hub_dir, art)
+            or not can_create_link(hub_dir, art, art.owner)):
         return None
     return art, r[0]
 
@@ -518,7 +562,8 @@ def link_live(hub_dir, artifact_id: str, link_id: str) -> Artifact | None:
     if r is None or r[0] != artifact_id or r[2] is not None or r[1] <= _now():
         return None
     art = get(hub_dir, artifact_id)
-    if art is None or art.audience != "link" or not can_create_link(hub_dir, art, art.owner):
+    if (art is None or art.audience != "link" or not _owner_current(hub_dir, art)
+            or not can_create_link(hub_dir, art, art.owner)):
         return None
     return art
 

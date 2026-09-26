@@ -138,7 +138,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
             outcome = {"result": "error", "rounds": 0, "summary": "", "error": str(exc),
                        "run_log": None}
             finish(task_name, outcome, claimed, started)
-            raise RuntimeError(str(exc)) from None
+            raise   # the IdentityError itself: its fix is shown to the hub's managers
         outcome = work(task_name, overrides, run, claimed, identity)
         if outcome["result"] == "done":
             task = _task(task_name, overrides)

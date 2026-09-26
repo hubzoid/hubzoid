@@ -1,13 +1,70 @@
-"""Definition inspection without execution; execution history through DBOS API."""
+"""Definition inspection without execution; execution history through DBOS API.
+
+Run history is operational metadata for the hub's managers: workflow, status,
+timing and a sanitized failure summary. What a run produced (its return value,
+step outputs, and error text that may carry data) belongs to the account the run
+acted as, and is shown only to that account (`viewer`). The account comes from
+the run's recorded identity step; a run whose account cannot be established is
+treated as private. A legacy service run acts for no person, so its detail stays
+visible to the hub's managers as before. Hub management or organization
+administration alone never reveals a person's run results.
+"""
 
 from __future__ import annotations
 
 import ast
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .schedule_grammar import next_after
 from .. import db
+
+log = logging.getLogger("hubzoid.workflows")
+
+# Steps whose output records who the run acted as (operational metadata).
+_IDENTITY_STEPS = frozenset({"hz_run_identity", "hz_md_identity"})
+# Hubzoid's own configuration errors: they name settings, never run data.
+_SAFE_ERRORS = frozenset({"IdentityError", "ScheduleError"})
+
+
+def _error_summary(err) -> str | None:
+    """A failure summary safe for managers: the error type, plus the message
+    only for Hubzoid's own configuration errors."""
+    if not err:
+        return None
+    if isinstance(err, BaseException):
+        kind = type(err).__name__
+        if kind in _SAFE_ERRORS:
+            return str(err)[:2000]
+        return f"{kind} (details are visible to the account the run acted as)"
+    return "The run failed (details are visible to the account the run acted as)"
+
+
+def _identity_of(steps) -> dict | None:
+    for x in steps or ():
+        if x.get("function_name") in _IDENTITY_STEPS and isinstance(x.get("output"), dict):
+            return x["output"]
+    return None
+
+
+def _run_owner(client, workflow_id: str) -> dict | None:
+    """Who the run acted as, from its recorded identity step, or None."""
+    try:
+        return _identity_of(client.list_workflow_steps(workflow_id))
+    except Exception:  # noqa: BLE001 — unknown owner: treated as private
+        log.exception("workflows: could not read the identity of run %s", workflow_id)
+        return None
+
+
+def may_see_results(owner: dict | None, viewer: str | None) -> bool:
+    """Whether `viewer` may see what a run produced. Fails closed."""
+    if not owner:
+        return False
+    if owner.get("source") == "legacy-service":
+        return True          # a hub service run: no person's data or connections
+    subject = (owner.get("subject") or "").strip().lower()
+    return bool(viewer) and subject == viewer.strip().lower()
 
 # A live dispatcher writes a heartbeat every ~60s. If the newest heartbeat is
 # older than this while the deployment still marks schedules enabled, the
@@ -237,7 +294,7 @@ def resolve_statuses(values) -> list[str] | None:
     return [s for s in out if not (s in seen or seen.add(s))]
 
 
-def _run_row(hub_name: str, w) -> dict:
+def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = None) -> dict:
     # `created` is the ordering/pagination key: it is what DBOS's own `sort_desc`
     # orders by (created_at), so merging and paginating cross-agent results by the
     # same field keeps the over-fetch window valid. `started` (dequeued-or-created)
@@ -262,8 +319,10 @@ def _run_row(hub_name: str, w) -> dict:
         started=started,
         completed=completed,
         duration_ms=completed - started if completed and started else None,
-        output=str(w.output)[:8000] if w.output is not None else None,
-        error=str(w.error)[:8000] if w.error else None,
+        output=(str(w.output)[:8000] if w.output is not None else None) if visible else None,
+        error=(str(w.error)[:8000] if w.error else None) if visible else _error_summary(w.error),
+        redacted=(not visible) and w.output is not None,
+        run_as=(owner or {}).get("subject"),
     )
 
 
@@ -295,9 +354,15 @@ def runs(
     end=None,
     limit=50,
     offset=0,
+    viewer: str | None = None,
+    trusted: bool = False,
 ) -> list[dict]:
     """Single-agent run history. Includes per-step detail when ``run_id`` is set.
-    Filters (name/status/date/run-id) are applied by DBOS before pagination."""
+    Filters (name/status/date/run-id) are applied by DBOS before pagination.
+
+    Results are redacted unless ``viewer`` is the account the run acted as (see
+    the module docstring). ``trusted`` is only for the server's own operator
+    (the CLI on the box), who can read the database directly anyway."""
     from dbos import DBOSClient
     from .runtime import _app_name
 
@@ -332,26 +397,31 @@ def runs(
         )
         rows = []
         for w in result:
-            row = _run_row(hub_name, w)
+            steps = client.list_workflow_steps(w.workflow_id) if run_id else None
+            owner = _identity_of(steps) if run_id else _run_owner(client, w.workflow_id)
+            visible = trusted or may_see_results(owner, viewer)
+            row = _run_row(hub_name, w, visible=visible, owner=owner)
             if run_id:
-                row["steps"] = [
-                    dict(
-                        name=x["function_name"],
-                        started=x.get("started_at_epoch_ms"),
-                        completed=x.get("completed_at_epoch_ms"),
-                        error=str(x["error"])[:4000] if x.get("error") else None,
-                        output=(
-                            str(x["output"])[:4000]
-                            if x.get("output") is not None
-                            else None
-                        ),
-                    )
-                    for x in client.list_workflow_steps(w.workflow_id)
-                ]
+                row["steps"] = [_step_row(x, visible) for x in steps]
             rows.append(row)
         return rows
     finally:
         client.destroy()
+
+
+def _step_row(x: dict, visible: bool) -> dict:
+    # The identity step says who the run acted as: metadata, always shown.
+    shown = visible or x.get("function_name") in _IDENTITY_STEPS
+    return dict(
+        name=x["function_name"],
+        started=x.get("started_at_epoch_ms"),
+        completed=x.get("completed_at_epoch_ms"),
+        error=(str(x["error"])[:4000] if x.get("error") else None) if shown
+        else _error_summary(x.get("error")),
+        output=(str(x["output"])[:4000] if x.get("output") is not None else None)
+        if shown else None,
+        redacted=(not shown) and x.get("output") is not None,
+    )
 
 
 def _source_groups(hubs):
@@ -371,7 +441,8 @@ def _source_groups(hubs):
     return groups
 
 
-def _query_source(url, members, *, name, run_id, statuses, start, end, limit) -> list[dict]:
+def _query_source(url, members, *, name, run_id, statuses, start, end, limit,
+                  viewer=None) -> list[dict]:
     """Run one ``list_workflows`` against a single DBOS system DB (which may host
     several agents, on shared Postgres), mapping each row back to its hub key."""
     from dbos import DBOSClient
@@ -396,14 +467,16 @@ def _query_source(url, members, *, name, run_id, statuses, start, end, limit) ->
             load_input=False,
             load_output=True,
         )
+        rows = []
+        for w in result:
+            hub_name = app_to_hub.get(w.application_name) or single
+            if hub_name is not None:
+                owner = _run_owner(client, w.workflow_id)
+                rows.append(_run_row(hub_name, w, visible=may_see_results(owner, viewer),
+                                     owner=owner))
+        return rows
     finally:
         client.destroy()
-    rows = []
-    for w in result:
-        hub_name = app_to_hub.get(w.application_name) or single
-        if hub_name is not None:
-            rows.append(_run_row(hub_name, w))
-    return rows
 
 
 def runs_across(
@@ -416,6 +489,7 @@ def runs_across(
     end=None,
     limit=50,
     offset=0,
+    viewer: str | None = None,
 ) -> dict:
     """Cross-agent run history over the authorized ``hubs`` (each a mapping with
     ``path`` — the caller has already scoped this to manageable agents).
@@ -439,7 +513,7 @@ def runs_across(
         for url, members in groups.items():
             merged += _query_source(
                 url, members, name=name, run_id=run_id, statuses=resolved,
-                start=start, end=end, limit=None,
+                start=start, end=end, limit=None, viewer=viewer,
             )
         merged.sort(key=_order_key, reverse=True)
         return {"runs": merged, "has_more": False}
@@ -450,7 +524,7 @@ def runs_across(
     for url, members in groups.items():
         rows = _query_source(
             url, members, name=name, run_id=None, statuses=resolved,
-            start=start, end=end, limit=want,
+            start=start, end=end, limit=want, viewer=viewer,
         )
         phase1[url] = rows
         capped[url] = len(rows) >= want
@@ -480,7 +554,7 @@ def runs_across(
         if capped[url]:
             group = _query_source(
                 url, members, name=name, run_id=None, statuses=resolved,
-                start=b_iso, end=b_iso, limit=None,
+                start=b_iso, end=b_iso, limit=None, viewer=viewer,
             )
         else:
             group = [r for r in phase1[url] if (r["created"] or 0) == boundary]

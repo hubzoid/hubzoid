@@ -186,13 +186,17 @@ _MESSAGES = {
 }
 
 
-def _artifact_links(hub_dir, owner: str, artifact_ids) -> list[tuple[str, str]]:
+def _artifact_links(hub_dir, owner: str, artifact_ids,
+                    account: str | None = None) -> list[tuple[str, str]]:
     from . import artifacts
 
     out = []
     for aid in artifact_ids or ():
         art = artifacts.get(hub_dir, aid)
-        if art is None or art.owner != owner:
+        # Owned by this run's account: the same email and, when both are known,
+        # the same chat-app account (a replacement account links nothing).
+        if (art is None or art.owner != owner
+                or (art.owner_account and account and art.owner_account != account)):
             raise ValueError(f"Artifact {aid!r} is not a report owned by {owner}, so it cannot "
                              "be linked in their email.")
         out.append((art.title, artifacts.viewer_url(art.id, hub_dir)))
@@ -321,7 +325,7 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
         return dict(status="refused", sent=False, delivery_id=None, recipient=recipient,
                     message="The email body is too long; publish the content as a report and link it.")
     try:
-        links = _artifact_links(hub_dir, owner, artifact_ids)
+        links = _artifact_links(hub_dir, owner, artifact_ids, identity.account_id)
     except ValueError as exc:
         return dict(status="refused", sent=False, delivery_id=None, recipient=recipient,
                     message=str(exc))

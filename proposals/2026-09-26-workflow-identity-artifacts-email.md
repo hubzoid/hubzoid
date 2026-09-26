@@ -340,3 +340,30 @@ are **not** exercised. They are reported as unverified.
 - The full suite passes.
 - No existing hub changes behaviour unless it uses the new APIs. The one
   exception is the documented identity switch from `workflow:*` subjects.
+
+## Release review fixes (26 September 2026)
+
+Three issues were reproduced independently on the combined candidate and fixed.
+The regression tests are in `tests/test_release_review_security.py`.
+
+1. **The publish tool could publish private hub state.** A markdown task with a
+   broad writable path could publish `.hubzoid/private.db`.
+   - The task's own scratch folder is now the only exemption from the agent
+     read guard, and it is judged on the resolved path, so no string prefix or
+     symlink crosses it.
+   - Content rules still apply inside that folder: no `.env`, database or
+     credential files.
+2. **Report ownership was checked by email alone.**
+   - The owner must be the chat-app account the report was published under, be
+     active, and (on a Console-managed hub) hold `use_hub`.
+   - Report shares record the recipient's account (`op_0006`).
+   - Public links and email links use the same rules.
+   - A report with no recorded account is honoured only for the local
+     quickstart account.
+3. **Run history exposed personal results to managers.**
+   - Managers get metadata and a sanitized failure summary.
+   - Results, step outputs and data-bearing errors go only to the account the
+     run acted as, read from its identity step.
+   - A run whose account cannot be established is private.
+   - A legacy service run stays visible, because it acts for no person.
+   - The server's operator CLI keeps full detail.

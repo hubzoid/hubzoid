@@ -705,6 +705,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     end=until,
                     limit=limit,
                     offset=offset,
+                    viewer=admin.subject,  # results only for the run's own account
                 )
                 return {"runs": rows, "has_more": len(rows) >= limit and not run_id}
             return runs_across(
@@ -716,6 +717,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 end=until,
                 limit=limit,
                 offset=offset,
+                viewer=admin.subject,
             )
         except HTTPException:
             raise

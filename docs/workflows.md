@@ -247,5 +247,10 @@ then releases them.
 
 - `hubzoid schedule status <hub>`: definitions, recent runs and errors.
 - The Console's **Runs** page: every run across agents, its steps and errors.
+  A hub's managers see each run's workflow, status, timing and a failure
+  summary. What a run produced (its result, step outputs and data-bearing
+  errors) is shown only to the account the run acted as. The exception is a
+  legacy service run, which acts for no person. `hubzoid schedule status` on
+  the server shows everything.
 - `hubzoid doctor <hub>`: `scheduler.health` reports holds, pauses, and a
   dispatcher that stopped.

@@ -86,6 +86,16 @@ toolbar with the title, creation time, **Share** (owner only) and
 
 ## Sharing
 
+The owner is the chat-app account the report was published under. It is not
+just the email address.
+- **A replacement account inherits nothing.** A new account that reuses the
+  email gets none of the old account's reports or the shares made to it.
+- **The owner must be active.** A blocked owner loses access to their reports
+  until they are reactivated.
+- **On a Console-managed hub, the owner also needs Use this agent.** This
+  applies to their reports, public links, sharing and deletion, and access
+  returns when the permission does.
+
 The owner chooses one audience per report in **Share**:
 
 | Audience | Who can open it |
