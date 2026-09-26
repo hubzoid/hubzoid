@@ -1,5 +1,5 @@
 # Hubzoid published artifacts. Apache-2.0 licensed like the rest of the repository.
-"""The report viewer and its API, served under `/portal` by any bridge.
+"""The artifact viewer and its API, served under `/portal` by any bridge.
 
   GET    /portal/artifacts/<id>                 viewer page (sign-in redirect)
   GET    /portal/artifacts/<id>/content         the file, inline, isolated
@@ -15,10 +15,10 @@
 Identity comes only from the Open WebUI session, verified server-side
 (`access.session.verified_email`). Every request re-decides access through
 `artifacts.role`/`open_link`, so a revoked share or link stops at once. No
-Console privilege is involved: owners manage their own reports here.
+Console privilege is involved: owners manage their own artifacts here.
 
 Isolation. The viewer page and the Open WebUI app share an origin behind the
-edge. Report HTML is served with CSP `sandbox` (no `allow-same-origin`) and
+edge. Artifact HTML is served with CSP `sandbox` (no `allow-same-origin`) and
 framed with the `sandbox` attribute, so it runs in an opaque origin: it cannot
 read the session cookie, call the app's APIs with it, or reach the toolbar. By
 default it cannot make network requests either (`HUBZOID_ARTIFACT_ALLOW_ORIGINS`
@@ -43,7 +43,7 @@ from . import pages
 
 log = logging.getLogger("hubzoid.artifacts")
 
-_UNAVAILABLE = "This report is not available, or you do not have access to it."
+_UNAVAILABLE = "This artifact is not available, or you do not have access to it."
 _LINK_BAD = "This link does not work. It may have expired or been turned off."
 _ORIGIN = re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$")
 
@@ -163,7 +163,7 @@ def build_router(hub_dir) -> APIRouter:
     def api_subject(request: Request) -> str:
         subject = signed_in(request)
         if not subject:
-            raise HTTPException(401, "Sign in to view this report.")
+            raise HTTPException(401, "Sign in to view this artifact.")
         return subject
 
     def meta(art: arts.Artifact, who: str, *, public: bool) -> dict:
@@ -242,7 +242,7 @@ def build_router(hub_dir) -> APIRouter:
     @router.get("/portal/artifacts/{artifact_id}")
     def viewer(artifact_id: str, request: Request):
         if not arts.ID_RE.match(artifact_id):
-            return _message("Report not found", _UNAVAILABLE, 404)
+            return _message("Artifact not found", _UNAVAILABLE, 404)
         subject = signed_in(request)
         if not subject:
             # Built only from the validated id: never an open redirect.
@@ -250,7 +250,7 @@ def build_router(hub_dir) -> APIRouter:
             return RedirectResponse(f"/auth?redirect={quote(back, safe='/')}", status_code=302)
         art = arts.get(hub_dir, artifact_id)
         if art is None or arts.role(hub_dir, art, subject) is None:
-            return _message("Report not available",
+            return _message("Artifact not available",
                             f"{_UNAVAILABLE} You are signed in as {subject}. If you should "
                             "see it, ask its owner to share it with you.", 404)
         nonce = secrets.token_urlsafe(16)

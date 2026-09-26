@@ -1,7 +1,7 @@
 # Hubzoid published artifacts. Apache-2.0 licensed like the rest of the repository.
-"""The report viewer page: a thin toolbar (title, time, Share, Download) with the
+"""The artifact viewer page: a thin toolbar (title, time, Share, Download) with the
 content below. One self-contained page, no external assets, rendered with DOM
-text nodes only (never innerHTML with report data). A strict CSP with a
+text nodes only (never innerHTML with artifact data). A strict CSP with a
 per-response nonce covers its one script and one stylesheet."""
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ let meta = null;
 
 // A terminal state: a heading instead of "Loading…", the reason, and a way on.
 function fail(msg, heading){
-  const h = heading || (cfg.mode === 'public' ? 'Link not available' : 'Report not available');
+  const h = heading || (cfg.mode === 'public' ? 'Link not available' : 'Artifact not available');
   document.title = h; $('title').textContent = h; $('meta').textContent = '';
   const c = el('div', {class:'center'}); c.append(el('p', {}, msg));
   c.append(el('a', {class:'btn', href:'/'}, cfg.mode === 'public' ? 'Go to the sign-in page' : 'Back to the chat'));
@@ -86,7 +86,7 @@ async function load(){
     }
   } catch (e) { return fail('Could not reach the server. Try again.'); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) return fail(data.detail || 'This report is not available.');
+  if (!r.ok) return fail(data.detail || 'This artifact is not available.');
   meta = data; render();
 }
 
@@ -134,7 +134,7 @@ async function post(url, body, method){
 
 function openShare(){
   const s = meta.sharing; const p = $('share'); p.replaceChildren();
-  p.append(el('h2', {}, 'Who can view this report'));
+  p.append(el('h2', {}, 'Who can view this artifact'));
   const opt = (value, label, help, enabled) => {
     const l = el('label', enabled ? {} : {class:'off'});
     const i = el('input', {type:'radio', name:'aud', value}); if (!enabled) i.disabled = true;
@@ -161,7 +161,7 @@ function openShare(){
     create.hidden = !(meta.sharing && meta.sharing.link); };
   p.querySelectorAll('input[name=aud]').forEach(i => i.addEventListener('change', sync));
   // Public link controls.
-  linkArea.append(el('div', {class:'warn'}, 'Anyone who has this link can open the report without signing in, until it expires or you turn it off. Share it only with people who should see this report.'));
+  linkArea.append(el('div', {class:'warn'}, 'Anyone who has this link can open the artifact without signing in, until it expires or you turn it off. Share it only with people who should see it.'));
   if (s.link) linkArea.append(el('p', {class:'note'}, 'A link is active until ' + new Date(s.link.expires * 1000).toLocaleString() + '. Links are shown once. Creating a new link turns the old one off.'));
   const days = el('select'); for (const d of [1, 7, 30, 90]) { const o = el('option', {value: d}, d + (d === 1 ? ' day' : ' days')); if (d === s.default_days) o.selected = true; days.append(o); }
   const lrow = el('div', {class:'row'});
@@ -180,7 +180,7 @@ function openShare(){
       meta = await (await fetch(cfg.api, {credentials:'same-origin'})).json(); openShare(); } catch (e) { status(e.message); } });
   const row = el('div', {class:'row'});
   const close = el('button', {}, 'Close');
-  const del = el('button', {class:'danger'}, 'Delete report');
+  const del = el('button', {class:'danger'}, 'Delete artifact');
   row.append(save, close, del); p.append(row, el('div', {id:'status', role:'status'}));
   save.addEventListener('click', async () => {
     const v = (p.querySelector('input[name=aud]:checked') || {}).value;
@@ -194,8 +194,8 @@ function openShare(){
     catch (e) { status(e.message); } });
   close.addEventListener('click', () => p.classList.remove('open'));
   del.addEventListener('click', async () => {
-    if (!window.confirm('Delete this report for everyone? This cannot be undone.')) return;
-    try { await post(cfg.api, undefined, 'DELETE'); p.classList.remove('open'); fail('The report was deleted.'); $('download').hidden = true; $('sharebtn').hidden = true; }
+    if (!window.confirm('Delete this artifact for everyone? This cannot be undone.')) return;
+    try { await post(cfg.api, undefined, 'DELETE'); p.classList.remove('open'); fail('The artifact was deleted.'); $('download').hidden = true; $('sharebtn').hidden = true; }
     catch (e) { status(e.message); } });
   sync(); p.classList.add('open');
 }
@@ -212,7 +212,7 @@ def shell(*, mode: str, api: str | None, nonce: str) -> str:
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Report</title>
+<title>Artifact</title>
 <style nonce="{nonce}">{_CSS}</style></head>
 <body>
 <header><div class="t"><h1 id="title">Loading…</h1><div class="m" id="meta"></div></div>

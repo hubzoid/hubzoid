@@ -555,6 +555,8 @@ function createFixture() {
             missed: withWork ? sum("missed") : null,
           },
           hubs,
+          // Sign-in accounts in the viewer's scope; the same for every period.
+          user_accounts: { accounts: a.org ? 42 : 9, hubs: hubs.length },
         };
       }
       case "/overview": {

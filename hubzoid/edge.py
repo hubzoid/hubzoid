@@ -31,10 +31,12 @@ Two optional behaviours sit on the same front door:
   * Hiding Open WebUI's user management (`HUBZOID_HIDE_OWUI_USERS`, or the
     deployment's recorded default: on for a gateway set up with Console
     accounts) sends browser navigation to Open WebUI's user list to the
-    Console's People screen, lands its Users section on Groups (which stays,
-    with Evaluations and Functions), and refuses browser writes to Open WebUI's
-    account-admin API (create, update, delete a user). Hubzoid's own service
-    calls go to Open WebUI's internal URL and never pass this edge.
+    Console's People screen, opens the Admin Panel (`/admin`) on Settings >
+    Integrations over Groups, lands its Users section on Groups (which stays,
+    with Evaluations, Functions and Settings), and refuses browser writes to
+    Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
+    own service calls go to Open WebUI's internal URL and never pass this edge.
+    In-app navigation is handled the same way by `portal_navigation`.
   * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
     before sending the browser through Open WebUI's OAuth client flow. When the
     client callback redirects, the edge sends the browser to the journey's done
@@ -104,6 +106,12 @@ _USERS_PAGES = frozenset({"/admin/users/overview"})
 _USERS_SECTION = "/admin/users"
 GROUPS_URL = "/admin/users/groups"
 PEOPLE_URL = "/portal/#/people"
+# The Admin Panel itself (the user menu's entry) opens on the user list too. Open
+# it on Settings > Integrations, over Groups, instead. Open WebUI 0.11 shows its
+# admin settings in a dialog opened by `?settings=admin:<tab>` on any page, and
+# only for administrators. `portal_navigation.SCRIPT` uses the same address.
+_ADMIN_PANEL = "/admin"
+ADMIN_LANDING = "/admin/users/groups?settings=admin%3Aintegrations"
 # Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
 # user's own settings, never blocked.
 _ACCOUNT_WRITES = (
@@ -326,6 +334,8 @@ def build_edge_app(
                 return Response(status_code=302, headers={"location": PEOPLE_URL})
             if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _USERS_SECTION:
                 return Response(status_code=302, headers={"location": GROUPS_URL})
+            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _ADMIN_PANEL:
+                return Response(status_code=302, headers={"location": ADMIN_LANDING})
             if _is_account_write(request.method, request.url.path):
                 return Response("Manage accounts in the Console (People).", status_code=403)
         # Only model ACLs for migrated hubs are locked. Shared groups still serve

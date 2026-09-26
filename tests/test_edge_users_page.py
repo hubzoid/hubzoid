@@ -109,12 +109,35 @@ def test_the_users_section_opens_on_groups_when_hidden(edge, path):
     assert upstream.seen == []
 
 
-@pytest.mark.parametrize("path", ["/admin/users/groups", "/admin/settings", "/admin",
-                                  "/admin/evaluations", "/admin/functions", "/"])
+@pytest.mark.parametrize("path", ["/admin", "/admin/", "//admin"])
+def test_the_admin_panel_opens_on_integrations_over_groups_when_hidden(edge, path):
+    """UX review: the Admin Panel entry opened on the user list and then jumped
+    away. It now opens where an administrator can work: Settings > Integrations
+    (Open WebUI 0.11's admin settings dialog) over the Groups page."""
+    from hubzoid.edge import ADMIN_LANDING
+
+    client, upstream = edge(hide=True)
+    r = client.get("http://testserver" + path)
+    assert r.status_code == 302 and r.headers["location"] == ADMIN_LANDING
+    assert ADMIN_LANDING == "/admin/users/groups?settings=admin%3Aintegrations"
+    assert client.head("http://testserver" + path).status_code == 302
+    assert upstream.seen == []
+
+
+@pytest.mark.parametrize("path", ["/admin/users/groups", "/admin/settings",
+                                  "/admin/settings/integrations", "/admin/evaluations",
+                                  "/admin/functions", "/admin/analytics", "/"])
 def test_other_admin_pages_stay(edge, path):
     client, upstream = edge(hide=True)
     assert client.get(path).status_code == 200
     assert upstream.seen == [("GET", path)]
+
+
+def test_the_admin_panel_is_untouched_when_not_hidden(edge):
+    client, upstream = edge(hide=False)
+    for path in ("/admin", "/admin/users/overview"):
+        assert client.get(path).status_code == 200
+    assert upstream.seen == [("GET", "/admin"), ("GET", "/admin/users/overview")]
 
 
 def test_nothing_changes_when_not_hidden(edge):
@@ -170,10 +193,15 @@ def test_service_calls_do_not_use_the_edge(monkeypatch):
 
 
 def test_navigation_script_carries_the_flag(edge):
+    from hubzoid.edge import ADMIN_LANDING, GROUPS_URL
+
     client, _ = edge(hide=True)
     body = client.get("/hubzoid-portal-navigation.js").text
-    assert "const HIDE_USERS = true;" in body and "/portal/#/people" in body
-    assert "/admin/users/groups" in body
+    assert "const HIDE_USERS = true;" in body
+    # In-app links to the Admin Panel land where the edge sends a full page load.
+    assert f"const ADMIN_LANDING = '{ADMIN_LANDING}';" in body
+    assert f"const GROUPS = '{GROUPS_URL}';" in body
+    assert "['/admin', '/admin/users', '/admin/users/overview']" in body
     assert "/portal/api/me?brief=1" in body
     # An empty chat is explained: blocked, or no agent yet.
     assert "/portal/api/chat-access" in body and "blocked by an administrator" in body

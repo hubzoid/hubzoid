@@ -1,9 +1,10 @@
-# Reports and email from workflows
+# Artifacts and email from workflows
 
-A workflow generates a file, **publishes** it as a report that belongs to the
-person the run acts as, and **emails** that person a link. Generating the file
-is your code's job, whether that is HTML, PDF, CSV, an image or anything else.
-Hubzoid stores it, shows it, controls who can open it and sends the email.
+A workflow generates a file, **publishes** it as an **artifact** that belongs to
+the person the run acts as, and **emails** that person a link. An artifact is
+any file a run publishes: an HTML report, a PDF, a CSV, an image or anything
+else. Generating the file is your code's job. Hubzoid stores it, shows it,
+controls who can open it and sends the email.
 
 ```python
 from hubzoid import hub, workflow
@@ -18,7 +19,7 @@ def daily_report():
 
 A complete example, with a reusable report template (typography, tables, a
 chart, print styling), is in [examples/report](examples/report/). Nothing about
-the template is required: publish any HTML you like.
+the template is required: publish any HTML you like, or any other file.
 
 ## Publishing
 
@@ -28,20 +29,20 @@ returns `{"id", "url", "title", "filename", "content_type", "size"}`.
 - **Owner.** The owner is the account the run acts as
   ([workflow-identity.md](workflow-identity.md)). No caller can choose it.
 - **Private by default.**
-  - `audience="hub"` shares the report with everyone who can use the agent.
+  - `audience="hub"` shares the artifact with everyone who can use the agent.
   - `audience="people", share_with=["sam@company.com", {"kind": "group",
     "principal": "finance"}]` shares it with those people or groups.
   - Both need a Console-managed hub.
   - A workflow can never create a public link.
-- **Every call stores a new report.** Earlier reports are never overwritten,
-  even when the file name is the same.
+- **Every call stores a new artifact.** Earlier artifacts are never
+  overwritten, even when the file name is the same.
 - **Recorded server-side:** owner, hub, workflow, run, content type, size,
   SHA-256, storage location, creation time and sharing.
 - **Stored privately** under `<hub>/.hubzoid/artifacts/`. Agent file tools
   cannot read that folder, the older chat download links (`/artifacts/...`)
   cannot reach it, and `hubzoid backup` includes it.
 - **Recovery-safe.** Publishing is a recorded step, so a run that resumes after
-  a crash returns the report it already published.
+  a crash returns the artifact it already published.
 - **Size limit.** The largest file is `HUBZOID_ARTIFACT_MAX_BYTES` (default
   50 MiB).
 
@@ -52,7 +53,7 @@ Markdown tasks can publish too, when the task opts in (see
 
 `url` is `https://<your host>/portal/artifacts/<id>`. The page has a thin
 toolbar with the title, creation time, **Share** (owner only) and
-**Download**, and the report below it.
+**Download**, and the artifact below it.
 
 | File | Shown as |
 |---|---|
@@ -65,38 +66,38 @@ toolbar with the title, creation time, **Share** (owner only) and
 
 **Signing in.**
 
-- A signed-in person with access sees the report at once.
+- A signed-in person with access sees the artifact at once.
 - A signed-out person is sent to the normal sign-in, with password or Google,
-  and comes back to the same report. The return address is built by Hubzoid
-  from the report id and is never taken from the link.
-- Nobody needs Admin Console rights to view or share their own reports.
+  and comes back to the same artifact. The return address is built by Hubzoid
+  from the artifact id and is never taken from the link.
+- Nobody needs Admin Console rights to view or share their own artifacts.
 - A link in WhatsApp or email is not a sign-in: the person still signs in in
   the browser.
 
 **Isolation.**
 
-- **HTML reports run apart from the app.** They load with a sandbox that gives
-  them their own opaque origin. Report scripts cannot read the session, call
-  the app with it, or touch the toolbar.
-- **HTML reports make no network requests by default.** They cannot load or
-  send anything elsewhere. To let reports load a chart library from a CDN, set
+- **HTML artifacts run apart from the app.** They load with a sandbox that
+  gives them their own opaque origin. Their scripts cannot read the session,
+  call the app with it, or touch the toolbar.
+- **HTML artifacts make no network requests by default.** They cannot load or
+  send anything elsewhere. To let them load a chart library from a CDN, set
   `HUBZOID_ARTIFACT_ALLOW_ORIGINS=https://cdn.jsdelivr.net`.
 - **Other types.** SVG files are shown as images, so their scripts do not run.
   Types without a preview only download.
 
 ## Sharing
 
-The owner is the chat-app account the report was published under. It is not
+The owner is the chat-app account the artifact was published under. It is not
 just the email address.
 - **A replacement account inherits nothing.** A new account that reuses the
-  email gets none of the old account's reports or the shares made to it.
-- **The owner must be active.** A blocked owner loses access to their reports
+  email gets none of the old account's artifacts or the shares made to it.
+- **The owner must be active.** A blocked owner loses access to their artifacts
   until they are reactivated.
 - **On a Console-managed hub, the owner also needs Use this agent.** This
-  applies to their reports, public links, sharing and deletion, and access
+  applies to their artifacts, public links, sharing and deletion, and access
   returns when the permission does.
 
-The owner chooses one audience per report in **Share**:
+The owner chooses one audience per artifact in **Share**:
 
 | Audience | Who can open it |
 |---|---|
@@ -108,18 +109,20 @@ The owner chooses one audience per report in **Share**:
 - **Access is decided on every request.** Removing someone from the list, from
   the group or from the agent takes effect on their next click. So does
   blocking their account.
-- **Changing one report never changes future reports.**
+- **Changing one artifact never changes future artifacts.**
 - **Sharing with people or with the agent needs a Console-managed hub.** A
   legacy hub's membership lives in the chat app, and Hubzoid cannot check it.
 - **Owner and viewers.** The owner can view, download, share, turn off links
   and delete. Viewers can view and download. There is no editor role.
 - **No administrator override.** Organization admins and agent managers see
-  nobody's private reports.
+  nobody's private artifacts.
 
 ### Public links
 
-**Anyone with the link** needs its own permission in the agent: **Share reports
-by public link** (`share_public_links`). Publishing never grants it.
+**Anyone with the link** needs its own permission in the agent: **Share
+artifacts publicly** (`share_public_links`). Anyone with such a link can open
+the artifact without signing in. Publishing an artifact, or sharing it with
+people or with the agent, never grants it.
 
 - **When it is checked.** It is checked when the owner creates the link, and
   again every time the link is opened. Revoking the permission (or blocking
@@ -135,9 +138,9 @@ by public link** (`share_public_links`). Publishing never grants it.
 - **The secret stays out of logs.** It travels after `#` in the address
   (`/portal/p/#…`), so browsers never send it in a request, and it never appears
   in server logs or referrers. The page exchanges it for a 15-minute cookie
-  scoped to the report pages.
-- **Clear warning in the dialog.** Anyone who has the link can open the report
-  without signing in.
+  scoped to the artifact pages.
+- **Clear warning in the dialog.** Anyone who has the link can open the
+  artifact without signing in.
 
 ## Email
 
@@ -145,8 +148,8 @@ by public link** (`share_public_links`). Publishing never grants it.
 
 - **The recipient is fixed.** It is always the run's own account email. There is
   no `to`, `cc` or `bcc`, so neither code nor a model can address anyone else.
-- **Report links.** `artifacts` takes reports the same account owns. The email
-  links to them, and opening a link needs a sign-in. The email has no
+- **Artifact links.** `artifacts` takes artifacts the same account owns. The
+  email links to them, and opening a link needs a sign-in. The email has no
   attachments.
 - **Return value.** It returns the delivery result. Unless the result is
   `accepted` or `previewed`, it raises `hubzoid.email_delivery.EmailError`. With
