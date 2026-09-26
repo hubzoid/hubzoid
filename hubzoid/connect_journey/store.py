@@ -7,8 +7,7 @@ inbound process can send the chat confirmation.
 Every state change is a compare-and-set on the current status, so two pages,
 a poller and a tool racing on one journey can never both win a transition.
 Rows hold no secrets. ``provider_ref`` names the provider-side object (an Open
-WebUI tool-server id, or a Composio connected-account id and its hosted link)
-and is never shown to the model or sent to a chat.
+WebUI tool-server id) and is never shown to the model or sent to a chat.
 """
 from __future__ import annotations
 

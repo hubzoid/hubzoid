@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient as FastClient
 from starlette.testclient import TestClient
 
-from hubzoid import _request_ctx, connect_journey, connections
+from hubzoid import _request_ctx, connect_journey
 from hubzoid.access import Identity, identity_scope
 from hubzoid.connect_journey import notify, store
 from hubzoid.inbound.harness import WhatsAppConfig, build_app
@@ -48,7 +48,6 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
-    connections.set_gate(connections.Connections(client=None, allowed=()))
     hub.db = db
     hub.roster = {PHONE: {"email": ALICE, "groups": ["connector_gmail"]},
                   PHONE_B: {"email": BOB, "groups": ["connector_gmail"]}}

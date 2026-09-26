@@ -195,6 +195,11 @@ example "connect my Gmail") in web chat or WhatsApp. The agent sends a
 personal link. The person approves access in the browser, a Hubzoid page shows
 the verified result, and WhatsApp gets a confirmation.
 
+The journey uses Open WebUI native MCP only: an app is connectable when an
+OAuth 2.1 MCP server is registered for it in OWUI. The optional Composio
+integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is unchanged and is not part of
+the journey.
+
 ### Turn it on
 
 In the hub's `.env`:
@@ -207,9 +212,9 @@ HUBZOID_CONNECT_JOURNEY=true
 The agent then has a `connect_account(app, reconnect=false)` tool on every
 backend. It also needs:
 
-- an app to connect. Either an OAuth 2.1 MCP server registered in OWUI with
-  `OWUI_NATIVE_MCP=true` (the default path), or the app listed in
-  `CONNECTIONS` with a `COMPOSIO_API_KEY` (the Composio path).
+- an app to connect: an OAuth 2.1 MCP server registered in OWUI, with
+  `OWUI_NATIVE_MCP=true`. For any other app the tool says it is not available
+  to connect on this hub.
 - the `connector_<app>` capability for the person (Console grant on a managed
   hub, OWUI group of that name on a legacy hub).
 - the surface in `HUBZOID_RESTRICTED_SURFACES`. Add `whatsapp` for WhatsApp.
@@ -218,23 +223,20 @@ backend. It also needs:
 
 ### What happens
 
-1. `connect_account` checks the capability (surface first), finds the one
-   provider for the app and asks it whether the person is connected already.
-   If they are, the agent says so. Otherwise it gets a link to
+1. `connect_account` finds the one OWUI server for the app, checks the
+   capability (surface first) and asks OWUI whether the person is connected
+   already. If they are, the agent says so. Otherwise it gets a link to
    `/portal/connect/<id>`, never a provider URL.
 2. The link page needs a signed-in OWUI session. The email of that session
    must be the person who asked. Anyone else gets "This link is for another
    account" (and the attempt is recorded in the access log).
 3. **Continue** (a same-origin POST) re-checks a block or a revoked grant and
-   sends the browser to the provider. For OWUI native MCP that is OWUI's own
-   authorize route, with a short-lived `hz_connect` cookie.
+   sends the browser to OWUI's own authorize route, with a short-lived
+   `hz_connect` cookie.
 4. After consent the browser comes back to `/portal/connect/<id>/done`. The
-   page asks the provider whether this journey connected. It never reads the
-   parameters on the return URL.
-   - OWUI: a new `oauth_session` row for that person and server, created after
-     the journey started, whose token is usable now.
-   - Composio: the connected account this journey's link created is ACTIVE for
-     that person and app.
+   page asks OWUI whether this journey connected: a new `oauth_session` row
+   for that person and server, created after the journey started, whose token
+   is usable now. It never reads the parameters on the return URL.
 5. The page shows **connected**, **not connected** or **finishing** (it checks
    `/status` for up to 30 seconds). WhatsApp gets its confirmation from the
    hub's inbound process (see [inbound surfaces](inbound-surfaces.md)).
@@ -242,17 +244,10 @@ backend. It also needs:
 Other outcomes: **Cancel** on the page, an **expired** link (the TTL), and a
 **newer link** for the same app (the older one stops working). Asking with
 `reconnect=true` replaces the existing connection. OWUI deletes the old session
-itself. For Composio the older ACTIVE account is deleted after the new one is
-verified.
+itself.
 
-**One provider per app.** If an app could be connected through both an OWUI
-server and Composio (or through two OWUI servers), the tool refuses and names
-both, so no one ends up with two connections. Remove one.
-
-With the journey on, Composio's own links are never shown. A tool that raises
-`NeedsConnection` hands out the bound journey link instead, and a Composio
-credential also needs `connector_<app>` on a managed hub and an allowed
-surface.
+**One server per app.** If two OWUI servers map to the same app, the tool
+refuses and names both, so no one ends up with two connections. Remove one.
 
 The connector capabilities a hub offers are listed by
 `connect_journey.permissions(hub)` for the Console.
@@ -268,10 +263,6 @@ agent again reports "already connected".
 
 ### Limits
 
-- A Composio journey can be verified only where that hub's `COMPOSIO_API_KEY`
-  is loaded: the hub's own bridge or its inbound process. Behind a gateway the
-  `/portal` pages may be served by another hub's bridge. There the done page
-  keeps saying "finishing" until the hub's own process confirms it.
 - The WhatsApp confirmation and the YES continuation are WhatsApp only.
   Telegram and web chat get the link and the done page.
 - OWUI's `/auth?redirect=` is offered on the sign-in page but is not yet

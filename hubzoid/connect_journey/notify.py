@@ -50,7 +50,7 @@ def message_for(j: dict) -> str | None:
 
 
 def tick(hub_dir, *, hub: str, send: Callable[..., object], resolver, surface: str = "whatsapp",
-         gate=None, providers_for=None, now: float | None = None) -> int:
+         providers_for=None, now: float | None = None) -> int:
     """One pass of the outbox. Returns how many messages were sent.
 
     ``send(to=handle, text=...)`` delivers one chat message. ``resolver`` is
@@ -64,7 +64,7 @@ def tick(hub_dir, *, hub: str, send: Callable[..., object], resolver, surface: s
     for j in store.outbox(hub_dir, hub=hub, surface=surface, since=now - _LOOKBACK_SECONDS):
         try:
             provider = providers_for(j) if providers_for is not None else None
-            j = finalize(hub_dir, j, provider=provider, gate=gate, now=now)
+            j = finalize(hub_dir, j, provider=provider, now=now)
             if j["status"] in store.OPEN:
                 continue
             text = message_for(j)
@@ -102,14 +102,13 @@ class Poller:
     """Runs :func:`tick` every few seconds on a daemon thread."""
 
     def __init__(self, hub_dir, *, send, resolver, surface: str = "whatsapp",
-                 interval: float = INTERVAL_SECONDS, gate=None):
+                 interval: float = INTERVAL_SECONDS):
         self.hub_dir = Path(hub_dir)
         self.hub = normalize(self.hub_dir.resolve().name)
         self._send = send
         self._resolver = resolver
         self._surface = surface
         self._interval = interval
-        self._gate = gate
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -131,6 +130,6 @@ class Poller:
         while not self._stop.wait(self._interval):
             try:
                 tick(self.hub_dir, hub=self.hub, send=self._send, resolver=self._resolver,
-                     surface=self._surface, gate=self._gate)
+                     surface=self._surface)
             except Exception:  # noqa: BLE001
                 log.exception("connect: outbox pass failed")

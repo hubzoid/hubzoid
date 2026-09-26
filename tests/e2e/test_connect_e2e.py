@@ -10,8 +10,7 @@ needs its own credentials, or it skips:
 
 The personal MCP server is an in-process HTTP server that answers only the
 caller's bearer, stored the way Open WebUI stores a connected token. Real
-Google consent, a real Composio link and real WhatsApp delivery are manual
-checks (see docs/mcp.md).
+Google consent and real WhatsApp delivery are manual checks (see docs/mcp.md).
 """
 from __future__ import annotations
 

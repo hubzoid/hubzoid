@@ -1,9 +1,9 @@
 """The connection journey without a browser: start checks, state machine,
-provider verification (Open WebUI and Composio), duplicate-provider refusal,
-the continuation store and the connect_account tool.
+Open WebUI verification, duplicate-server refusal, the continuation store and
+the connect_account tool.
 
 Open WebUI verification runs against a seeded, Open WebUI-shaped SQLite
-database. Composio runs against a fake client with the SDK's shapes.
+database.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from hubzoid import _request_ctx, connect_journey, connections
+from hubzoid import _request_ctx, connect_journey
 from hubzoid.access import Identity, identity_scope
 from hubzoid.connect_journey import providers, store
 from tests import connect_helpers as h
@@ -43,7 +43,6 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     monkeypatch.delenv("HUBZOID_CONNECT_TTL", raising=False)
-    connections.set_gate(connections.Connections(client=None, allowed=()))
     hub.db = db  # type: ignore[attr-defined]
     return hub
 
@@ -136,13 +135,30 @@ def test_anonymous_and_unknown_apps(hub):
     with pytest.raises(connect_journey.JourneyError) as err:
         connect_journey.start(hub, app="gmail")
     assert err.value.code == "anonymous"
+    for groups in (("connector_notion",), ()):  # with or without the capability
+        with _as(ALICE, groups=groups):
+            with pytest.raises(connect_journey.JourneyError) as err:
+                connect_journey.start(hub, app="notion")
+        assert err.value.code == "unavailable"
+        assert err.value.message == "Notion is not available to connect on this hub."
+    with _as(ALICE, groups=("connector_wiki",)):  # not an OAuth server: nothing to connect
+        with pytest.raises(connect_journey.JourneyError):
+            connect_journey.start(hub, app="wiki")
+
+
+def test_the_journey_uses_open_webui_only(hub, monkeypatch):
+    """An app sanctioned only in CONNECTIONS is neither offered nor connected
+    by the journey. Only Open WebUI OAuth MCP servers are."""
+    monkeypatch.setenv("CONNECTIONS", "notion,gmail")
+    (hub / ".env").write_text("HUBZOID_CONNECT_JOURNEY=true\nCONNECTIONS=notion\n")
     with _as(ALICE, groups=("connector_notion",)):
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="notion")
     assert err.value.code == "unavailable"
-    with _as(ALICE, groups=("connector_wiki",)):  # not an OAuth server: nothing to connect
-        with pytest.raises(connect_journey.JourneyError):
-            connect_journey.start(hub, app="wiki")
+    with _as(ALICE):
+        r = connect_journey.start(hub, app="gmail")
+    assert store.get(hub, r["id"])["provider"] == "owui_mcp"
+    assert [p["permission"] for p in connect_journey.permissions(hub)] == ["connector_gmail"]
 
 
 def test_already_connected_says_so_and_reconnect_makes_a_new_link(hub):
@@ -233,28 +249,8 @@ def test_state_changes_have_exactly_one_winner(hub):
 
 
 # ---------------------------------------------------------------------------
-# Exactly one provider per app
+# Exactly one Open WebUI server per app
 # ---------------------------------------------------------------------------
-def test_an_app_served_by_both_providers_is_refused_naming_both(hub):
-    gate = connections.Connections(client=_broker(_FakeComposio()), allowed=["gmail"])
-    connections.set_gate(gate, hub=hub.name)
-    with _as(ALICE):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="gmail")
-    assert err.value.code == "conflict"
-    assert "'gmail'" in err.value.message and "Composio" in err.value.message
-    assert store.open_for(hub, subject=ALICE, app="gmail") == []
-
-
-def test_another_hubs_gate_is_never_used(hub):
-    gate = connections.Connections(client=_broker(_FakeComposio()), allowed=["github"])
-    connections.set_gate(gate, hub="some-other-hub")
-    with _as(ALICE, groups=("connector_github",)):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="github")
-    assert err.value.code == "unavailable"
-
-
 def test_two_open_webui_servers_for_one_app_are_a_conflict(hub, tmp_path, monkeypatch):
     db = tmp_path / "webui2.db"
     h.seed_owui(db, users=[("ua", ALICE)], secret=SECRET, servers=[
@@ -264,6 +260,8 @@ def test_two_open_webui_servers_for_one_app_are_a_conflict(hub, tmp_path, monkey
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")
     assert err.value.code == "conflict"
+    assert "'gmail'" in err.value.message and "'Gmail'" in err.value.message
+    assert store.open_for(hub, subject=ALICE, app="gmail") == []
 
 
 def test_a_switched_off_server_is_not_offered(hub, tmp_path, monkeypatch):
@@ -278,189 +276,12 @@ def test_a_switched_off_server_is_not_offered(hub, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Composio adapter (its link is routed through the same bound journey)
-# ---------------------------------------------------------------------------
-class _FakeComposio:
-    def __init__(self):
-        self.calls = []
-        self.accounts = {}  # id -> dict(status, user_id, toolkit)
-        me = self
-
-        class Accounts:
-            def list(self, *, user_ids, toolkit_slugs, statuses):
-                items = [{"id": i, **a} for i, a in me.accounts.items()
-                         if a["user_id"] in user_ids and a["toolkit"] in toolkit_slugs
-                         and a["status"] in statuses]
-                return {"items": items}
-
-            def get(self, nanoid):
-                a = me.accounts.get(nanoid)
-                return None if a is None else {"id": nanoid, "status": a["status"],
-                                               "user_id": a["user_id"],
-                                               "toolkit": {"slug": a["toolkit"]}}
-
-            def delete(self, nanoid):
-                me.calls.append(("delete", nanoid))
-                me.accounts.pop(nanoid, None)
-
-        class Link:
-            def create(self, *, auth_config_id, user_id, callback_url=None, **kw):
-                n = f"ca_{len(me.accounts) + 1}"
-                me.accounts[n] = {"status": "INITIATED", "user_id": user_id, "toolkit": "gmail"}
-                me.calls.append(("link.create", user_id, callback_url))
-                return types.SimpleNamespace(connected_account_id=n,
-                                             redirect_url=f"https://connect.composio.dev/{n}")
-
-        class AuthConfigs:
-            def list(self, *, toolkit_slug):
-                return {"items": [{"id": "ac_1", "created_at": "2026-01-01"}]}
-
-        self.connected_accounts = Accounts()
-        self.auth_configs = AuthConfigs()
-        self.client = types.SimpleNamespace(link=Link())
-
-
-def _broker(fake):
-    return connections.ComposioBroker(fake)
-
-
-@pytest.fixture
-def composio_hub(hub, monkeypatch):
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "false")  # Composio is the one provider
-    fake = _FakeComposio()
-    gate = connections.Connections(client=_broker(fake), allowed=["gmail"])
-    connections.set_gate(gate, hub=hub.name)
-    hub.fake = fake  # type: ignore[attr-defined]
-    hub.gate = gate  # type: ignore[attr-defined]
-    return hub
-
-
-def test_composio_link_is_created_with_our_done_page_and_kept_server_side(composio_hub):
-    hub = composio_hub
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail")
-    assert r["url"].startswith("https://hub.example.org/portal/connect/")
-    assert ("link.create", ALICE, r["url"] + "/done") in hub.fake.calls
-    j = store.get(hub, r["id"])
-    ref = json.loads(j["provider_ref"])
-    assert ref["account"] == "ca_1" and ref["redirect"].startswith("https://connect.composio.dev/")
-    assert "composio" not in r["url"]
-    assert providers.begin_url(hub, j) == ref["redirect"]
-
-
-def test_composio_verify_and_reconnect_leaves_exactly_one_account(composio_hub):
-    hub = composio_hub
-    hub.fake.accounts["ca_old"] = {"status": "ACTIVE", "user_id": ALICE, "toolkit": "gmail"}
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail", reconnect=True)
-    store.mark_started(hub, r["id"], ttl=600)
-    j = store.get(hub, r["id"])
-    assert connect_journey.finalize(hub, j)["status"] == "started"  # INITIATED: still pending
-    new_id = json.loads(j["provider_ref"])["account"]
-    hub.fake.accounts[new_id]["status"] = "ACTIVE"
-    assert connect_journey.finalize(hub, j)["status"] == "connected"
-    active = [i for i, a in hub.fake.accounts.items() if a["status"] == "ACTIVE"]
-    assert active == [new_id]  # the older account was removed
-
-
-def test_composio_failed_account_fails_the_journey(composio_hub):
-    hub = composio_hub
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail")
-    store.mark_started(hub, r["id"], ttl=600)
-    j = store.get(hub, r["id"])
-    hub.fake.accounts[json.loads(j["provider_ref"])["account"]]["status"] = "FAILED"
-    assert connect_journey.finalize(hub, j)["status"] == "failed"
-
-
-def test_composio_account_of_someone_else_never_counts(composio_hub):
-    hub = composio_hub
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail")
-    store.mark_started(hub, r["id"], ttl=600)
-    j = store.get(hub, r["id"])
-    acct = hub.fake.accounts[json.loads(j["provider_ref"])["account"]]
-    acct.update(status="ACTIVE", user_id=BOB)
-    assert connect_journey.finalize(hub, j)["status"] == "failed"
-
-
-def test_a_superseded_composio_link_is_invalidated(composio_hub):
-    hub = composio_hub
-    with _as(ALICE):
-        first = connect_journey.start(hub, app="gmail")
-        connect_journey.start(hub, app="gmail")
-    old = json.loads(store.get(hub, first["id"])["provider_ref"])["account"]
-    assert ("delete", old) in hub.fake.calls
-
-
-def test_composio_journey_cannot_be_verified_by_another_hubs_bridge(composio_hub):
-    hub = composio_hub
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail")
-    store.mark_started(hub, r["id"], ttl=600)
-    connections.set_gate(connections.Connections(client=None, allowed=()), hub="other")
-    j = store.get(hub, r["id"])
-    hub.fake.accounts[json.loads(j["provider_ref"])["account"]]["status"] = "ACTIVE"
-    assert connect_journey.finalize(hub, j)["status"] == "started"  # left for the origin
-    assert connect_journey.finalize(hub, j, gate=hub.gate)["status"] == "connected"
-
-
-def test_connections_require_sends_the_bound_link_when_the_journey_is_on(composio_hub):
-    hub = composio_hub
-    ctx = types.SimpleNamespace(settings=types.SimpleNamespace(connections=("gmail",),
-                                                               composio_api_key=None),
-                                hub_dir=hub, connections=None)
-    conns = connections.attach(ctx, broker=_broker(hub.fake))
-    assert conns.journey is not None
-    with _as(ALICE):
-        with pytest.raises(connections.NeedsConnection) as err:
-            conns.require("gmail")
-    assert err.value.link.startswith("https://hub.example.org/portal/connect/")
-    assert "composio" not in err.value.tool_message
-
-
-def test_connections_require_is_gated_when_the_journey_is_on(composio_hub):
-    import hubzoid.access as access
-    hub = composio_hub
-    hub.fake.accounts["ca_1"] = {"status": "ACTIVE", "user_id": ALICE, "toolkit": "gmail"}
-    ctx = types.SimpleNamespace(settings=types.SimpleNamespace(connections=("gmail",),
-                                                               composio_api_key=None),
-                                hub_dir=hub, connections=None)
-    conns = connections.attach(ctx, broker=_broker(hub.fake))
-    with _as(ALICE, surface="slack-channel"):
-        with pytest.raises(connections.ConnectionUnavailable) as err:
-            conns.execute("gmail", "GMAIL_FETCH")
-    assert err.value.reason.startswith("surface:")
-    access.store_for(hub).set_authoritative(True, hub=hub.name)
-    with _as(ALICE):
-        with pytest.raises(connections.ConnectionUnavailable) as err:
-            conns.execute("gmail", "GMAIL_FETCH")
-    assert err.value.reason == "not-permitted"
-
-
-def test_connections_are_unchanged_when_the_journey_is_off(composio_hub, monkeypatch):
-    monkeypatch.delenv("HUBZOID_CONNECT_JOURNEY")
-    ctx = types.SimpleNamespace(settings=types.SimpleNamespace(connections=("gmail",),
-                                                               composio_api_key=None),
-                                hub_dir=composio_hub, connections=None)
-    conns = connections.attach(ctx, broker=_broker(composio_hub.fake))
-    assert conns.journey is None
-    with _as(ALICE, surface="slack-channel"):
-        with pytest.raises(connections.NeedsConnection) as err:
-            conns.require("gmail")
-    assert err.value.link.startswith("https://connect.composio.dev/")
-
-
-# ---------------------------------------------------------------------------
 # Capability catalog and the tool
 # ---------------------------------------------------------------------------
 def test_permissions_lists_connectors_the_hub_offers(hub):
     perms = connect_journey.permissions(hub)
     assert [p["permission"] for p in perms] == ["connector_gmail"]
     assert perms[0]["sensitive"] is True and perms[0]["label"] == "Connect Gmail"
-    (hub / ".env").write_text("HUBZOID_CONNECT_JOURNEY=true\nCONNECTIONS=github\n")
-    assert [p["permission"] for p in connect_journey.permissions(hub)] == [
-        "connector_github", "connector_gmail"]
 
 
 def test_permissions_empty_for_a_hub_without_connectors(tmp_path, monkeypatch):

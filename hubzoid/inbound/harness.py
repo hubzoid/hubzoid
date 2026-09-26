@@ -217,7 +217,6 @@ def build_app(
     max_upload_bytes: int = settingslib.DEFAULT_MAX_UPLOAD_BYTES,
     ingest_media_fn: "Callable | None" = None,
     connect_journeys: "bool | None" = None,
-    connect_gate=None,
 ) -> Starlette:
     # Every public route is namespaced under the hub slug so one front door can
     # serve many inbound hubs. `slug` is the hub's own slug; the gateway edge
@@ -245,11 +244,9 @@ def build_app(
         )
         if connect_journeys:
             from ..connect_journey.notify import Poller
-            if connect_gate is None:
-                connect_gate = _composio_gate(hub_dir)
             wa = whatsapp
             poller = Poller(
-                hub_dir, resolver=resolver, gate=connect_gate,
+                hub_dir, resolver=resolver,
                 send=lambda *, to, text: wa.send_text(
                     phone_number_id=wa.phone_number_id, token=wa.token, to=to, text=text))
     if telegram is not None:
@@ -281,25 +278,6 @@ def build_app(
 # Connection journeys (see hubzoid.connect_journey)
 # ---------------------------------------------------------------------------
 _YES = {"yes", "y", "yes please", "ok yes"}
-
-
-def _composio_gate(hub_dir):  # noqa: ARG001
-    """This hub's Composio gate, so the outbox can verify a Composio journey
-    with the hub's own key. Built from the environment the inbound process
-    already loaded from the hub. None when the hub declares no connections."""
-    import os
-    from types import SimpleNamespace
-    try:
-        from .. import connections
-        raw = os.environ.get("CONNECTIONS") or ""
-        cfg = SimpleNamespace(
-            connections=tuple(s.strip().lower() for s in raw.split(",") if s.strip()),
-            composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None)
-        gate = connections.build(cfg)
-        return gate if gate.active else None
-    except Exception:  # noqa: BLE001
-        log.warning("inbound: Composio gate unavailable for connection checks", exc_info=True)
-        return None
 
 
 def _is_yes(text: str) -> bool:

@@ -246,13 +246,12 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                     decision="started", reason=j["provider"] or "")
         resp = RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
                                                                   "Referrer-Policy": "no-referrer"})
-        if j["provider"] == providers.OwuiMcpProvider.name:
-            # The edge sends Open WebUI's post-authorization redirect back to
-            # our done page while this cookie is present (see edge.py).
-            secure = (request.url.scheme == "https"
-                      or request.headers.get("x-forwarded-proto", "").lower() == "https")
-            resp.set_cookie(COOKIE, jid, max_age=ttl(), path="/", httponly=True,
-                            samesite="lax", secure=secure)
+        # The edge sends Open WebUI's post-authorization redirect back to our
+        # done page while this cookie is present (see edge.py).
+        secure = (request.url.scheme == "https"
+                  or request.headers.get("x-forwarded-proto", "").lower() == "https")
+        resp.set_cookie(COOKIE, jid, max_age=ttl(), path="/", httponly=True,
+                        samesite="lax", secure=secure)
         return resp
 
     @router.post("/{jid}/cancel")

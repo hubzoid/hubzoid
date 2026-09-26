@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hubzoid import _request_ctx, connect_journey, connections
+from hubzoid import _request_ctx, connect_journey
 from hubzoid.access import Identity, identity_scope
 from hubzoid.connect_journey import store
 from tests import connect_helpers as h
@@ -41,7 +41,6 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
-    connections.set_gate(connections.Connections(client=None, allowed=()))
     hub.db = db
     return hub
 
@@ -307,25 +306,3 @@ def test_owui_outage_is_a_retry_not_a_pass(hub, monkeypatch):
     assert r.status_code == 503
     assert json.loads(c.get(f"/portal/connect/{jid}/status").text)["state"] == "unavailable"
 
-
-# ---------------------------------------------------------------------------
-# Composio journeys started from another hub's bridge
-# ---------------------------------------------------------------------------
-def test_composio_link_starts_anywhere_but_is_verified_only_where_its_key_is(client, hub, monkeypatch):
-    from tests.test_connect_journey import _FakeComposio, _broker
-
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "false")
-    fake = _FakeComposio()
-    gate = connections.Connections(client=_broker(fake), allowed=["gmail"])
-    connections.set_gate(gate, hub=hub.name)
-    jid = _link(hub)
-    connections.set_gate(connections.Connections(client=None, allowed=()), hub="other-hub")
-    r = _start(client, jid)
-    assert r.status_code == 303 and r.headers["location"].startswith("https://connect.composio.dev/")
-    assert "set-cookie" not in r.headers  # the edge cookie is only for Open WebUI
-    account = json.loads(store.get(hub, jid)["provider_ref"])["account"]
-    fake.accounts[account]["status"] = "ACTIVE"
-    # This bridge holds no key for that hub, so it cannot claim success.
-    assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "started"
-    connections.set_gate(gate, hub=hub.name)
-    assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "connected"

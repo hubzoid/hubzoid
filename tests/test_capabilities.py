@@ -263,13 +263,17 @@ def test_obsolete_grants_stay_visible_and_removable_but_never_grantable(api):
 
 
 def test_connector_apps_appear_as_sensitive_hubzoid_tools(tmp_path, monkeypatch):
-    """P2's connection journey offers connector_<app>; the catalogue shows it in
-    Hubzoid tools, sensitive, without a bespoke UI row."""
+    """An Open WebUI OAuth MCP server offers connector_<app>; the catalogue
+    shows it in Hubzoid tools, sensitive, without a bespoke UI row."""
+    from tests import connect_helpers as h
+
     hub = tmp_path / "sales"
     hub.mkdir()
     (hub / "AGENTS.md").write_text("---\nname: sales\n---\nbody")
-    (hub / ".env").write_text("HUBZOID_CONNECT_JOURNEY=true\nCONNECTIONS=gmail\n")
-    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
+    db = tmp_path / "webui.db"
+    h.seed_owui(db, users=[], secret="cap-secret", servers=[
+        {"id": "gmail", "name": "Gmail", "url": "https://gmail-mcp.example.org/mcp"}])
+    h.owui_env(monkeypatch, db, "cap-secret")  # OWUI_NATIVE_MCP on
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
     gmail = rows["connector_gmail"]
     assert gmail["group"] == "tools" and gmail["sensitive"] is True

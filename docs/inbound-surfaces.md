@@ -118,6 +118,9 @@ What the WhatsApp side adds:
 
 It needs:
 
+- an OAuth 2.1 MCP server for the app registered in Open WebUI, with
+  `OWUI_NATIVE_MCP=true`. The journey uses Open WebUI native MCP only. The
+  optional Composio integration is unchanged and not part of it.
 - `whatsapp` in `HUBZOID_RESTRICTED_SURFACES`, because a connection is a
   restricted-class capability.
 - the `connector_<app>` capability for the person (a Console grant on a
