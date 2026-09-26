@@ -561,3 +561,31 @@ def test_public_base_prefers_the_public_root(monkeypatch):
     assert connect_journey.public_base() == "https://hub.example.org"
     monkeypatch.setenv("WEBUI_URL", "https://chat.example.org/")
     assert connect_journey.public_base() == "https://chat.example.org"
+
+
+def test_asking_again_after_connecting_finishes_the_journey_by_the_provider_check(hub):
+    j = _started(hub)  # a WhatsApp journey in CHAT
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+    # Asked again from web chat: that reply says "connected", WhatsApp still
+    # gets its own confirmation from the outbox.
+    with _as(ALICE, surface="owui", chat="web-chat-1"):
+        assert connect_journey.start(hub, app="gmail")["state"] == "connected"
+    row = store.get(hub, j["id"])
+    assert row["status"] == "connected" and row["notified"] is None
+    # Asked again in the same WhatsApp chat: the reply is the confirmation.
+    j2 = _started(hub, reconnect=True)
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-b",
+              created_at=time.time() + 1)
+    with _as(ALICE):
+        assert connect_journey.start(hub, app="gmail")["state"] == "connected"
+    row = store.get(hub, j2["id"])
+    assert row["status"] == "connected" and row["notified"] is not None
+
+
+def test_an_unopened_link_is_not_marked_connected_by_asking_again(hub):
+    with _as(ALICE):
+        r = connect_journey.start(hub, app="gmail")
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+    with _as(ALICE):
+        assert connect_journey.start(hub, app="gmail")["state"] == "connected"
+    assert store.get(hub, r["id"])["status"] == "pending"  # never started: ends silently

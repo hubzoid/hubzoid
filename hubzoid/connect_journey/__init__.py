@@ -244,15 +244,18 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False, gate=None,
         log.warning("connect: %s status check failed for %s", key, subject, exc_info=True)
         raise JourneyError("unavailable", f"{label(key)} could not be checked right now. "
                                           "Try again shortly.")
+    chat_id = _request_ctx.get_chat_id()
+    surface = ident.surface
     if status == "connected" and not reconnect:
-        # The reply tells the person; any open journey for this app is done.
+        # Finish any journey that led here, through the same provider check.
+        # This reply already tells this chat, so its confirmation is not sent
+        # again. Other chats still get theirs from the outbox.
         for j in store.open_for(hub_dir, subject=subject, app=key):
-            if store.transition(hub_dir, j["id"], frm=store.OPEN, to="connected", now=now):
+            j = finalize(hub_dir, j, provider=provider, gate=gate, now=now)
+            if j["status"] == "connected" and (j["surface"], j["chat_id"]) == (surface, chat_id):
                 store.claim_notify(hub_dir, j["id"], now=now)
         return {"state": "connected", "app": key, "label": label(key)}
 
-    chat_id = _request_ctx.get_chat_id()
-    surface = ident.surface
     handle = None
     if chat_id and surface in ("whatsapp", "telegram") and chat_id.startswith(f"{surface}-"):
         handle = chat_id[len(surface) + 1:]
