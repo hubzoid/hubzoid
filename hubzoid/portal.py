@@ -29,6 +29,7 @@ from . import deployment
 from .access.identity import normalize
 
 from .access import store_for
+from .access.session import require_same_origin, verified_email
 from .access.store import (
     MANAGE_ACCESS,
     ORG,
@@ -133,75 +134,8 @@ def _is_loopback(request: Request) -> bool:
     return host in ("127.0.0.1", "::1", "localhost")
 
 
-def _check_same_origin(request: Request) -> None:
-    """Reject a cross-site mutation. The session cookie is ambient, so a POST
-    must come from our own origin (Origin or Referer host == request host)."""
-    from urllib.parse import urlparse
-
-    origin = request.headers.get("origin") or request.headers.get("referer") or ""
-    parsed = urlparse(origin)
-    # Require a real http/https origin with an authority — 'null', an opaque
-    # origin, or a missing header is rejected (it can't be proven same-origin).
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise HTTPException(
-            status_code=403, detail="missing or invalid Origin on a mutation"
-        )
-    req_host = request.headers.get("host", "")
-    if not req_host or parsed.netloc != req_host:
-        raise HTTPException(status_code=403, detail="cross-origin request refused")
-
-
-def _verify_owui_session(request: Request, hub_dir: Path | None = None) -> str:
-    """Validate the viewer's OWUI session cookie server-side and return the
-    verified email, or '' — never trusting a client-sent identity header."""
-    token = request.cookies.get("token") or ""
-    if not token:
-        return ""
-    base = (
-        deployment.owui_url(hub_dir)
-        if hub_dir
-        else (os.environ.get("OWUI_INTERNAL_URL") or os.environ.get("WEBUI_URL"))
-    )
-    if not base:
-        return ""
-    try:
-        import httpx
-
-        r = httpx.get(
-            f"{base.rstrip('/')}/api/v1/auths/",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5.0,
-        )
-        if r.status_code >= 500:
-            raise HTTPException(503, "The account service is unavailable. Try again shortly.")
-        if r.status_code == 200:
-            user = r.json()
-            if user.get("role") == "pending":
-                return ""
-            email = normalize(user.get("email", ""))
-            if hub_dir and email:
-                store_for(hub_dir).upsert_identity(
-                    email=email, owui_id=user.get("id"), display=user.get("name")
-                )
-                # Authentication remains in OWUI. Only the configured owner is
-                # provisioned, once; an arbitrary admin/member cannot self-promote.
-                owner = (os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
-                         or os.environ.get("WEBUI_ADMIN_EMAIL") or "").strip().lower()
-                if not _truthy_env("WEBUI_AUTH") and not deployment.read(hub_dir):
-                    owner = "admin@localhost"
-                if user.get("role") == "admin" and email == owner:
-                    for h in deployment.hubs(hub_dir):
-                        path = Path(h["path"])
-                        store_for(path).provision_owner(
-                            email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()
-                        )
-            return email
-    except HTTPException:
-        raise
-    except Exception:  # noqa: BLE001
-        log.warning("portal: OWUI session verification failed")
-        raise HTTPException(503, "Could not verify the account service. Try again shortly.")
-    return ""
+_check_same_origin = require_same_origin
+_verify_owui_session = verified_email
 
 
 def _known_hubs(hub_dir: Path, gs) -> list[str]:
@@ -922,6 +856,8 @@ def mount_portal(app, hub_dir) -> None:
     """Mount the portal API + the built static SPA (if present) on the bridge."""
     hub_dir = Path(hub_dir)
     app.include_router(build_router(hub_dir))
+    from . import connect_journey
+    app.include_router(connect_journey.build_router(hub_dir))
     dist = Path(__file__).parent / "portal_dist"
     if dist.is_dir():
         from fastapi.staticfiles import StaticFiles

@@ -17,7 +17,7 @@ from hubzoid.migrations import SchemaError
 
 OPERATIONAL = {"hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
                "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
-               "hz_access_decisions"}
+               "hz_access_decisions", "hz_change_requests", "hz_connect_states"}
 
 
 @pytest.fixture(autouse=True)
@@ -157,3 +157,13 @@ def test_postgres_many_bridges_starting_at_once(postgres_url):
     eng = create_engine(postgres_url)
     assert migrations.current(eng, "operational") == migrations.head("operational")
     eng.dispose()
+
+
+def test_access_audit_gains_surface_and_request_id(tmp_path):
+    """op_0004 adds nullable audit columns without touching existing rows."""
+    from sqlalchemy import create_engine, inspect
+
+    eng = create_engine(f"sqlite:///{tmp_path / 'op.db'}")
+    migrations.upgrade(eng, "operational")
+    cols = {c["name"] for c in inspect(eng).get_columns("hz_access_audit")}
+    assert {"surface", "request_id"} <= cols

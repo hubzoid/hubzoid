@@ -9,13 +9,14 @@ the combined registry of pre-shipped + hub-local tools.
 """
 from __future__ import annotations
 
-from . import current_time, files, grep_data, knowledge, render, skills_tool, web_http
+from . import access_admin, connect_tools, current_time, files, grep_data, knowledge, render, skills_tool, web_http
 
 
 def make_all(ctx) -> dict[str, object]:
     """Return {tool_name: FunctionTool} for every pre-shipped tool, scoped to ctx."""
     out: dict[str, object] = {}
-    for module in (files, knowledge, skills_tool, render, web_http, current_time, grep_data):
+    for module in (files, knowledge, skills_tool, render, web_http, current_time, grep_data,
+                   access_admin, connect_tools):
         for tool in module.make(ctx):
             out[tool.name] = tool
     return out

@@ -42,7 +42,8 @@ def test_account_failure_preserves_signin_vs_service_error(tmp_path, monkeypatch
 def test_only_verified_configured_owner_is_provisioned(tmp_path, monkeypatch, role, email, expected):
     from unittest.mock import Mock
     store = Mock()
-    monkeypatch.setattr(portal, 'store_for', lambda _: store)
+    from hubzoid.access import session
+    monkeypatch.setattr(session, 'store_for', lambda _: store)
     monkeypatch.setattr(deployment, 'owui_url', lambda _: 'http://127.0.0.1:43080')
     monkeypatch.delenv('WEBUI_AUTH', raising=False)
     monkeypatch.delenv('HUBZOID_DEPLOYMENT', raising=False)
