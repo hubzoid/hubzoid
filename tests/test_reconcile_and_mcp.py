@@ -22,7 +22,7 @@ def test_visibility_plan(store):
     store.grant("alice", "finance", "prod_in")   # implies use_hub
     store.grant("alice", "ops", USE_HUB)
     store.grant("bob", "finance", USE_HUB)
-    store.grant(EVERYONE, "public", USE_HUB)
+    store.grant(EVERYONE, "public", USE_HUB, carry_over_public=True)
     store.grant("root", "*", "manage_access")     # org domain — excluded
     plan = visibility_plan(store)
     assert plan["alice"] == {"finance", "ops"}

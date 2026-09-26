@@ -119,6 +119,23 @@ class RevisionConflict(Exception):
     caller loaded it (another admin edited access first)."""
 
 
+NO_NEW_EVERYONE = (
+    "New access for everyone signed in can't be created. Grant named people or "
+    "workflow identities instead."
+)
+
+
+class BroadAccessRefused(ValueError):
+    """A write would create a new 'everyone signed in' (`*`) grant. Existing ones
+    keep working and can be revoked; only migration carrying over demonstrably
+    public legacy access may write one (`carry_over_public=True`)."""
+
+
+def _refuse_new_everyone(subject: str, carry_over_public: bool = False) -> None:
+    if subject == EVERYONE and not carry_over_public:
+        raise BroadAccessRefused(NO_NEW_EVERYONE)
+
+
 class GrantStore:
     """The access store for one deployment's database (one hub, or the shared
     gateway DB). Cheap to construct; holds a Casbin enforcer kept fresh against
@@ -208,7 +225,8 @@ class GrantStore:
         return rev or last_rev, [(s, h, p) for (s, h, p) in rows]
 
     def _grant_in_txn(self, conn, subject, hub, permission, actor,
-                      surface=None, request_id=None) -> None:
+                      surface=None, request_id=None, *, carry_over_public=False) -> None:
+        _refuse_new_everyone(subject, carry_over_public)
         rows = [(subject, hub, permission)]
         if hub != ORG and permission != USE_HUB:
             rows.append((subject, hub, USE_HUB))
@@ -271,8 +289,10 @@ class GrantStore:
         subject = normalize(subject)
         hub = normalize(hub)
         ops = [(a, normalize(p)) for a, p in operations]
-        for _action, p in ops:
+        for action, p in ops:
             _validate_grant(subject, hub, p)
+            if action != "revoke":
+                _refuse_new_everyone(subject)
         with self._engine.begin() as conn:
             current = self._read_revision_locked(conn)
             if expected_revision is not None and current != expected_revision:
@@ -649,17 +669,24 @@ class GrantStore:
     # ---- writes (the grant_service; every write is one transaction) ----------
 
     def grant(
-        self, subject: str, hub: str, permission: str, *, actor: str | None = None
+        self, subject: str, hub: str, permission: str, *, actor: str | None = None,
+        carry_over_public: bool = False,
     ) -> None:
         """Grant one permission. Granting any tool permission auto-grants
         `use_hub` in the same hub (the implication rule), so a grantee can always
-        open a hub they have any permission in. Idempotent."""
+        open a hub they have any permission in. Idempotent.
+
+        A grant to everyone signed in (`*`) is refused unless
+        `carry_over_public` says it preserves demonstrably public legacy access
+        (migration only)."""
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
         _validate_grant(subject, hub, permission)
+        _refuse_new_everyone(subject, carry_over_public)
         with self._engine.begin() as conn:
-            self._grant_in_txn(conn, subject, hub, permission, actor)
+            self._grant_in_txn(conn, subject, hub, permission, actor,
+                               carry_over_public=carry_over_public)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -707,12 +734,15 @@ class GrantStore:
         authoritative: bool = True,
         actor: str = "migration",
         identities: Iterable[dict] = (),
+        carry_over_public: bool = False,
     ) -> None:
         """The migration cutover, in ONE transaction: (optionally) replace the
         target hubs' grants, insert the plan (with use_hub implication), set
         attributes + identity rows, set the PER-HUB authority markers, and bump
         the revision. Atomic — a crash rolls the whole thing back, and replace
-        semantics mean no stale grant survives cutover."""
+        semantics mean no stale grant survives cutover. An everyone-signed-in
+        grant in the plan needs `carry_over_public` (legacy access that was
+        demonstrably public)."""
         import time
 
         hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
@@ -726,6 +756,7 @@ class GrantStore:
             hub = normalize(hub)
             permission = normalize(permission)
             _validate_grant(subject, hub, permission)
+            _refuse_new_everyone(subject, carry_over_public)
             expanded.append((subject, hub, permission))
             if hub != ORG and permission != USE_HUB:
                 expanded.append((subject, hub, USE_HUB))
@@ -794,16 +825,19 @@ class GrantStore:
         self._refresh_if_stale()
 
     def grant_many(
-        self, grants: Iterable[tuple[str, str, str]], *, actor: str = "bulk-import"
+        self, grants: Iterable[tuple[str, str, str]], *, actor: str = "bulk-import",
+        carry_over_public: bool = False,
     ) -> None:
         """Apply many (subject, hub, permission) grants in one transaction — the
-        CSV-import / migration path. Applies the same use_hub implication."""
+        CSV-import / migration path. Applies the same use_hub implication. An
+        everyone-signed-in grant needs `carry_over_public` (migration only)."""
         expanded: list[tuple[str, str, str]] = []
         for subject, hub, permission in grants:
             subject = normalize(subject)
             hub = normalize(hub)
             permission = normalize(permission)
             _validate_grant(subject, hub, permission)
+            _refuse_new_everyone(subject, carry_over_public)
             expanded.append((subject, hub, permission))
             if hub != ORG and permission != USE_HUB:
                 expanded.append((subject, hub, USE_HUB))

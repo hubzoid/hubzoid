@@ -21,6 +21,9 @@ Rules (checked on every write, from the store, never from the caller):
     organization administrator, or make account-wide changes. A capability
     registered with `delegate_grantable=False` is outside every delegate's
     ceiling.
+  * Nobody, organization administrators included, can create new access for
+    everyone signed in (`*`). An existing grant keeps working and only an
+    organization administrator can remove it.
   * Only catalogue capabilities with an explicit grant can be granted. An
     `included` capability comes with `use_hub` and has no grant of its own; an
     obsolete grant (its capability is gone) can be removed, never granted.
@@ -52,6 +55,7 @@ from .identity import normalize
 from .store import (
     EVERYONE,
     MANAGE_ACCESS,
+    NO_NEW_EVERYONE,
     ORG,
     USE_HUB,
     LastAdminError,
@@ -340,10 +344,12 @@ class AccessService:
                 raise Denied(422, "included",
                              f"{entry['label']} comes with Use this agent; it has no grant of its own.")
             raise Denied(422, "unknown_permission", "Unknown permission for this hub")
-        if subject == EVERYONE and not (
-            scope.org_admin and all(p == USE_HUB for _, p in ops)
-        ):
-            raise Denied(403, "forbidden", "Only organization admins may change public hub access")
+        if subject == EVERYONE:
+            if any(a == "grant" for a, _ in ops):
+                raise Denied(403, "no_new_everyone", NO_NEW_EVERYONE)
+            if not (scope.org_admin and all(p == USE_HUB for _, p in ops)):
+                raise Denied(403, "forbidden",
+                             "Only organization admins may remove access for everyone signed in")
         if not scope.org_admin:
             self._check_delegate(actor, scope, subject, hub, ops)
         if any(a == "grant" for a, _ in ops):

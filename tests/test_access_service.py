@@ -162,7 +162,7 @@ def test_ceiling_matrix(dep):
         svc.ceiling(actor(DELEGATE), "ops")
     assert e.value.status == 403
     # A public hub gives the delegate entry, never tools.
-    gs.grant("*", "finance", "use_hub", actor="test")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
     assert svc.ceiling(actor(DELEGATE), "finance") == {"use_hub", "ledger"}
     # A blocked delegate manages nothing.
     gs.suspend(DELEGATE, actor="test")
@@ -191,7 +191,7 @@ def test_delegate_grants_within_ceiling(dep):
     ("ann@x.org", "ops", [("grant", "use_hub")], 403, "forbidden"),
     (DELEGATE, "finance", [("grant", "use_hub")], 403, "self_change"),
     (ROOT, "finance", [("grant", "ledger")], 403, "forbidden"),
-    ("*", "finance", [("grant", "use_hub")], 403, "forbidden"),
+    ("*", "finance", [("grant", "use_hub")], 403, "no_new_everyone"),
     ("ann@x.org", "*", [("grant", "manage_access")], 403, "forbidden"),
     ("ann@x.org", "finance", [("grant", "no_such_tool")], 422, "unknown_permission"),
 ])
@@ -260,7 +260,9 @@ def test_ceiling_is_live(dep):
 def test_org_admin_keeps_scope(dep):
     svc, gs = dep.svc, dep.gs
     svc.apply_access_change(actor(ROOT), "ann@x.org", "ops", [("grant", "inventory")])
-    svc.apply_access_change(actor(ROOT), "*", "finance", [("grant", "use_hub")])
+    with pytest.raises(Denied) as e:  # nobody creates new access for everyone
+        svc.apply_access_change(actor(ROOT), "*", "finance", [("grant", "use_hub")])
+    assert (e.value.status, e.value.code) == (403, "no_new_everyone")
     svc.apply_access_change(actor(ROOT), "co@x.org", "*", [("grant", "manage_access")])
     assert gs.can("ann@x.org", "ops", "inventory") and gs.can("co@x.org", "*", "manage_access")
     svc.apply_access_change(actor(ROOT), "co@x.org", "*", [("revoke", "manage_access")])

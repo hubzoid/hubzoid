@@ -269,10 +269,10 @@ def test_reject_reserved_wildcard_grants(client):
     r = client.post("/portal/api/access/grant",
                     json={"subject": "*", "hub": hub, "permission": "prod_in"})
     assert r.status_code == 403
-    # but CAN grant public use_hub to the wildcard subject
+    # nor create new access for everyone signed in
     r = client.post("/portal/api/access/grant",
                     json={"subject": "*", "hub": hub, "permission": "use_hub"})
-    assert r.status_code == 200
+    assert r.status_code == 403
     # the org domain only carries manage_access
     r = client.post("/portal/api/access/grant",
                     json={"subject": "y", "hub": "*", "permission": "prod_in"})

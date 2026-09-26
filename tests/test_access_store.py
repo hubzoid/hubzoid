@@ -59,7 +59,7 @@ def test_revoke_use_hub_cascades(store):
 
 
 def test_wildcard_subject_public_use_hub(store):
-    store.grant(EVERYONE, "public", USE_HUB)
+    store.grant(EVERYONE, "public", USE_HUB, carry_over_public=True)
     assert store.can("anyone-at-all", "public", USE_HUB)
     assert store.can("someone-else", "public", USE_HUB)
     assert not store.can("anyone-at-all", "public", "prod_in")
@@ -102,7 +102,7 @@ def test_revoke_all_respects_last_admin(store):
 def test_permissions_for_and_hubs_for(store):
     store.grant("alice", "finance", "prod_in")
     store.grant("alice", "ops", "read_reports")
-    store.grant(EVERYONE, "public", USE_HUB)
+    store.grant(EVERYONE, "public", USE_HUB, carry_over_public=True)
     assert store.permissions_for("alice", "finance") == {"prod_in", USE_HUB}
     # alice's own hubs plus the public one (the wildcard use_hub applies to her too)
     assert store.hubs_for("alice") == {"finance", "ops", "public"}

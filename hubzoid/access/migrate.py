@@ -55,6 +55,12 @@ class MigrationPlan:
 
     def add_grant(self, subject: str, hub: str, perm: str) -> None:
         self.grants.append(((subject or "").strip(), normalize(hub), normalize(perm)))
+        if normalize(subject) == EVERYONE:
+            note = (f"Everyone signed in (carried over): {normalize(hub)} was open to everyone "
+                    "signed in, so that access is preserved. New hubs need named grants; "
+                    "replace it with named people, then remove it in the Console.")
+            if note not in self.warnings:
+                self.warnings.append(note)
 
 
 # --- preflight --------------------------------------------------------------
@@ -372,7 +378,8 @@ def verify_effective(plan: MigrationPlan) -> list[dict]:
     candidate_engine = create_engine("sqlite://")
     try:
         candidate = GrantStore(candidate_engine)
-        candidate.grant_many(plan.grants)
+        # A plan's everyone grant only ever preserves demonstrably public legacy access.
+        candidate.grant_many(plan.grants, carry_over_public=True)
         for identity in plan.identities:
             candidate.upsert_identity(**identity)
         return effective_diff(candidate, plan)
@@ -404,7 +411,7 @@ def apply(
     hubs = {normalize(h) for _s, h, _p in plan.grants if h and normalize(h) != "*"}
     if not authoritative:
         # a plain (non-cutover) apply: just add the grants, no marker
-        store.grant_many(plan.grants)
+        store.grant_many(plan.grants, carry_over_public=True)
         for hub, subject, k, v in plan.attrs:
             store.set_attr(hub, subject, k, v)
         return
@@ -418,6 +425,7 @@ def apply(
             replace=True,
             authoritative=True,
             identities=plan.identities,
+            carry_over_public=True,
         )
     except ValueError as exc:
         raise MigrationBlocked(str(exc)) from exc
