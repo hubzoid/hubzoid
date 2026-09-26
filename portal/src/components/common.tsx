@@ -10,7 +10,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { Bot, Workflow } from "lucide-react";
+import { ShieldCheck, Sparkle, Workflow } from "lucide-react";
 import type { Permission } from "../api";
 import {
   accountStatus,
@@ -240,8 +240,18 @@ export function AgentAvatar({ size = 36 }: { size?: number }) {
       size={size}
       shape="square"
       className="hz-avatar agent"
-      icon={<Bot size={Math.round(size * 0.55)} />}
+      icon={<Sparkle size={Math.round(size * 0.5)} aria-hidden />}
     />
+  );
+}
+
+/** A person's role (organization or chat-app administrator). Neutral, so it
+ * never reads as an account status; theme tokens keep it legible in both themes. */
+export function RoleBadge({ children }: { children: ReactNode }) {
+  return (
+    <Tag className="hz-role-badge" icon={<ShieldCheck size={12} aria-hidden />}>
+      {children}
+    </Tag>
   );
 }
 

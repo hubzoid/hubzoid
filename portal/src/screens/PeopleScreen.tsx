@@ -25,6 +25,7 @@ import {
   LoadState,
   PersonAvatar,
   PersonCell,
+  RoleBadge,
 } from "../components/common";
 import {
   MANAGE_ACCESS,
@@ -255,7 +256,7 @@ export function PeopleScreen({
                 render: (_, p) => (
                   <Space size={4} wrap>
                     <AccountTag status={p.status} />
-                    {p.organization_admin && <Tag color="geekblue">Org admin</Tag>}
+                    {p.organization_admin && <RoleBadge>Org admin</RoleBadge>}
                   </Space>
                 ),
               },
@@ -564,7 +565,7 @@ function PersonDrawer({
                   />
                 ),
                 children: person.organization_admin ? (
-                  <Tag color="geekblue">Organization administrator</Tag>
+                  <RoleBadge>Organization administrator</RoleBadge>
                 ) : (
                   <Text type="secondary">Regular access</Text>
                 ),
@@ -754,7 +755,7 @@ function ChatAccount({
                   role === "pending" ? (
                     <Tag color="gold">Awaiting approval</Tag>
                   ) : role === "admin" ? (
-                    <Tag color="geekblue">Administrator</Tag>
+                    <RoleBadge>Administrator</RoleBadge>
                   ) : (
                     <Text>User</Text>
                   ),
