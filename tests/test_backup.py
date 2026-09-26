@@ -409,6 +409,19 @@ def test_cli_backup_and_dry_run_restore(tmp_path, monkeypatch):
     assert os.path.exists("b.tar.gz")
 
 
+def test_cli_backup_without_chat_data_says_so(tmp_path, monkeypatch):
+    """A 0.9.x gateway hub has no pointer to its gateway before the first start,
+    so its pre-upgrade backup finds no chat data. Say so; never claim accounts."""
+    hub = _hub(tmp_path / "live")
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
+    assert r.exit_code == 0, r.output
+    out = " ".join(r.output.split())
+    assert "No chat app data was found" in out
+    assert "also archive the gateway's --data-dir" in out
+    assert "holds user accounts" not in out
+
+
 _SLOW = """
 import sys, time
 from hubzoid.workflows import markdown, runtime

@@ -929,8 +929,16 @@ def backup_cmd(
         raise typer.Exit(1)
     console.print(f"[green]Backup written:[/green] {out.resolve()} "
                   f"({len(index['roots'])} locations, {len(index['sqlite'])} databases)")
-    console.print("The archive holds user accounts, chats and the chat UI's connection settings. "
-                  "Store it like a secret.")
+    if any(r["kind"] == "ui" for r in index["roots"]):
+        console.print("The archive holds user accounts, chats and the chat UI's connection settings. "
+                      "Store it like a secret.")
+    else:
+        # A hub behind a gateway that has not started on this release yet has no
+        # pointer to the gateway, so only this hub's state was found.
+        console.print("[yellow]No chat app data was found, so this archive has no user accounts "
+                      "or chats.[/yellow] A hub behind a gateway is covered only after the gateway "
+                      "has started on this version. Before that, also archive the gateway's "
+                      "--data-dir (see docs/UPGRADING.md). Store the archive like a secret.")
     if not include_secrets:
         console.print("Left out: .env files, signing keys and database passwords. "
                       "Keep a copy of each .env elsewhere.")

@@ -57,6 +57,11 @@ files with the rollback materials. The default backup excludes secrets and `.env
    Backup only reads, so this is a copy of the deployment exactly as the old
    version left it. Nothing is upgraded until the first start. For PostgreSQL,
    also `pg_dump` ([BACKUP.md](BACKUP.md)).
+   With a gateway, 0.9.x hubs do not point at the gateway until its first start
+   on this version, so this backup holds only the named hub's state and no
+   accounts or chats. Run it for each hub, and with the gateway stopped also
+   archive its `--data-dir` yourself, for example
+   `tar czf pre-upgrade-gateway.tgz -C /srv gateway-data`.
 5. **Check**:
    ```bash
    hubzoid doctor <hub>
@@ -80,6 +85,9 @@ have no `restore` command), then reinstall the previous version and start:
 hubzoid restore pre-upgrade.tar.gz
 pip install "hubzoid==<previous version>"
 ```
+
+For a gateway, also put back the `--data-dir` archive from step 4 while
+everything is stopped: Open WebUI's database is upgraded at the first start too.
 
 Restore the matching pre-upgrade environment configuration too, especially if
 bridge keys or connection settings changed. Database state and credentials must
@@ -107,6 +115,13 @@ The configured, verified owner now receives initial administration and hub entry
 once. Existing hubs are not automatically migrated to managed access. Record the
 owner email before rollout, back up all stores, and verify owner and ordinary-user
 access after restart. Subsequent sign-in preserves revocations.
+
+The bridges serve the Console, so they must know the owner. With `--no-bridges`,
+a `HUBZOID_GATEWAY_ADMIN_EMAIL` in the gateway's own environment does not reach
+them: set `HUBZOID_GATEWAY_ADMIN_EMAIL` or `WEBUI_ADMIN_EMAIL` (email only) in
+every bridge's environment (each hub `.env` or a shared drop-in), or run
+`hubzoid access bootstrap --admin <email> <hub>`. Until then the Console refuses
+every account.
 
 New workflow scaffolds are manual and model-free. Existing schedules are unchanged.
 Chat usage now uses the forwarded chat ID; local Open WebUI background task types
