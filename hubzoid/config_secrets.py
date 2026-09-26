@@ -67,6 +67,18 @@ INHERITED_MARKER = "HUBZOID_DEPLOYMENT_SECRET_INHERITED"
 # the like). `bridge_deployment_key` also accepts every HUBZOID_GATEWAY_ADMIN_*,
 # OAUTH_*_ENCRYPTION_KEY and OTEL_* key.
 BRIDGE_DEPLOYMENT_KEYS = frozenset({
+    # Workflow identity, report links and email delivery (deployment-wide).
+    "HUBZOID_WORKFLOW_USER",
+    "HUBZOID_SMTP_HOST",
+    "HUBZOID_SMTP_PORT",
+    "HUBZOID_SMTP_USERNAME",
+    "HUBZOID_SMTP_PASSWORD",
+    "HUBZOID_SMTP_FROM",
+    "HUBZOID_SMTP_STARTTLS",
+    "HUBZOID_SMTP_SSL",
+    "HUBZOID_EMAIL_DELIVERY",
+    "HUBZOID_ARTIFACT_LINK_DAYS",
+    "HUBZOID_ARTIFACT_ALLOW_ORIGINS",
     "HUBZOID_GATEWAY_ADMIN_EMAIL",
     "HUBZOID_GATEWAY_ADMIN_PASSWORD",
     "WEBUI_SECRET_KEY",
@@ -108,6 +120,8 @@ SERVICE_SECRET_KEYS = frozenset({
     "DATABASE_URL",
     "HUBZOID_OPERATIONAL_DB",
     "HUBZOID_DBOS_DB",
+    "HUBZOID_SMTP_USERNAME",
+    "HUBZOID_SMTP_PASSWORD",
 })
 # Restricted-layer keys a child keeps: the claude CLI's own auth and settings,
 # and the basics every process needs.

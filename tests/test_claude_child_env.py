@@ -135,3 +135,14 @@ def test_claude_complete_passes_the_overrides(monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     asyncio.run(factory_claude.claude_complete("hi"))
     assert seen["env"] == {"WEBUI_SECRET_KEY": ""}
+
+
+def test_smtp_credentials_do_not_reach_agent_children():
+    from hubzoid import config_secrets
+
+    env = {"HUBZOID_SMTP_HOST": "smtp.example.com", "HUBZOID_SMTP_USERNAME": "mailer",
+           "HUBZOID_SMTP_PASSWORD": "fake-smtp-password"}
+    out = config_secrets.child_env_overrides(env)
+    assert out.get("HUBZOID_SMTP_PASSWORD") == "" and out.get("HUBZOID_SMTP_USERNAME") == ""
+    assert "HUBZOID_SMTP_HOST" not in out
+    assert config_secrets.bridge_deployment_key("HUBZOID_SMTP_HOST")
