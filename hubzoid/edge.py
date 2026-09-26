@@ -35,6 +35,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dataclasses import dataclass
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 
 import httpx
 import websockets
@@ -210,9 +211,15 @@ def build_edge_app(
     @asynccontextmanager
     async def lifespan(app: Starlette):
         # No read timeout: SSE / long LLM streams must not be cut off.
+        # One client serves every visitor, so it must never keep cookies: httpx
+        # would store an upstream Set-Cookie (a sign-in token) and send it with
+        # the next request that has no Cookie of its own. A raw CookieJar whose
+        # policy allows no domain stores nothing (httpx.Cookies would copy it
+        # into a default jar and lose the policy).
         app.state.client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
             follow_redirects=False,
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
         )
         try:
             yield

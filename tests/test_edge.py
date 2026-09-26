@@ -466,3 +466,30 @@ def test_factory_reads_route_fallbacks(monkeypatch):
     monkeypatch.setattr(edge, "build_edge_app", lambda **kw: seen.update(kw))
     edge._factory()
     assert seen["routes"][0].upstreams() == ("http://a", "http://b", "http://c")
+
+
+def test_edge_client_never_carries_one_visitors_cookie_to_another(monkeypatch):
+    """The edge shares one upstream client across visitors. A sign-in response's
+    Set-Cookie must reach that browser only, never a later request without a
+    cookie (which would hand an anonymous visitor the signed-in session)."""
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    seen = []
+
+    def upstream(request):
+        seen.append(request.headers.get("cookie"))
+        headers = [("set-cookie", "token=owner-jwt; Path=/; HttpOnly")] if request.url.path.endswith("/signin") else []
+        return httpx.Response(200, stream=httpx.ByteStream(b"{}"), headers=headers)
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://owui",
+                              routes=[edge.EdgeRoute("/portal", "http://bridge")])
+    with TestClient(app) as browser:   # one edge lifetime, as in production
+        signin = browser.post("/api/v1/auths/signin")
+        assert "owner-jwt" in signin.headers.get("set-cookie", "")   # the owner's browser gets it
+        browser.cookies.clear()                                      # now an anonymous visitor
+        browser.get("/api/v1/auths/")
+        browser.get("/api/models")
+    assert len(seen) >= 3 and all(cookie is None for cookie in seen[1:])
