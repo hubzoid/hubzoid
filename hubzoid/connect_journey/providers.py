@@ -106,23 +106,30 @@ def _owui_servers_for(hub_dir, app: str) -> list[dict]:
             and owui_mcp.app_key(c["id"]) == app]
 
 
+def require_available(hub_dir, app: str) -> None:
+    """Raise JourneyError ``unavailable`` when no Open WebUI OAuth MCP server
+    serves ``app`` on this hub."""
+    if not _owui_servers_for(hub_dir, app):
+        raise JourneyError("unavailable", f"{label(app)} is not available to connect on this hub.")
+
+
 def for_app(hub_dir, app: str) -> OwuiMcpProvider:
     """The one Open WebUI OAuth MCP server that serves ``app`` for this hub.
 
     Raises JourneyError ``unavailable`` when there is none, or ``conflict``
-    when more than one could (naming them, so an administrator can remove one).
+    when more than one could. The server ids go to the log for the
+    administrator, never to the person asking.
     """
     found = _owui_servers_for(hub_dir, app)
     if not found:
         raise JourneyError("unavailable", f"{label(app)} is not available to connect on this hub.")
     if len(found) > 1:
-        names = " and ".join(f"the Open WebUI tool server '{s['id']}'" for s in found)
-        log.warning("connect: %s has more than one server on %s: %s",
-                    app, Path(hub_dir).name, names)
+        log.warning("connect: %s has more than one Open WebUI tool server on %s: %s",
+                    app, Path(hub_dir).name, ", ".join(s["id"] for s in found))
         raise JourneyError(
             "conflict",
-            f"{label(app)} can be connected through {names}. An administrator must keep "
-            "exactly one, so no one ends up with two connections.")
+            f"{label(app)} is set up more than once on this hub. Ask an administrator to "
+            "keep exactly one, so no one ends up with two connections.")
     return OwuiMcpProvider(hub_dir, found[0]["id"])
 
 

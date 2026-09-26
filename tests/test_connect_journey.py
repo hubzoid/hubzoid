@@ -260,8 +260,13 @@ def test_two_open_webui_servers_for_one_app_are_a_conflict(hub, tmp_path, monkey
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")
     assert err.value.code == "conflict"
-    assert "'gmail'" in err.value.message and "'Gmail'" in err.value.message
+    assert "'gmail'" not in err.value.message and "'Gmail'" not in err.value.message  # ids go to the log
     assert store.open_for(hub, subject=ALICE, app="gmail") == []
+    # Someone without the capability learns nothing about the setup.
+    with _as(ALICE, groups=()):
+        with pytest.raises(connect_journey.JourneyError) as err:
+            connect_journey.start(hub, app="gmail")
+    assert err.value.code == "denied"
 
 
 def test_a_switched_off_server_is_not_offered(hub, tmp_path, monkeypatch):
