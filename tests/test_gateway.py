@@ -322,6 +322,11 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
     edge_env = next(c["env"] for c in popen_calls if "hubzoid.edge:_factory" in c["cmd"])
     assert "/b/sales/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
     assert "/b/support/artifacts" in edge_env["HUBZOID_EDGE_ROUTES"]
+    # Every bridge can serve the portal; the others take over when one is down.
+    import json
+    portal = next(r for r in json.loads(edge_env["HUBZOID_EDGE_ROUTES"]) if r["prefix"] == "/portal")
+    assert portal["upstream"] != portal["fallbacks"][0]
+    assert len(portal["fallbacks"]) == 1
 
 
 @pytest.mark.parametrize("database_url", [None, "postgresql+psycopg://test@localhost/shared"])
@@ -637,3 +642,51 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
     assert (static / "favicon.png").read_bytes() == b"GWLOGO"
     # Gateway CSS keeps Workspace visible (admins manage groups/ACLs there).
     assert 'a[href="/workspace"]' not in (static / "custom.css").read_text()
+
+
+def test_inherited_deployment_env_takes_only_missing_deployment_keys(tmp_path):
+    """Sign-in settings kept in hub .env files still reach the shared UI when the
+    gateway's own environment lacks them (0.9.x behaviour: last hub listed wins).
+    Model keys, WEBUI_NAME and anything the gateway already sets stay out."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    for h in (a, b):
+        h.mkdir()
+    (a / ".env").write_text("WEBUI_SECRET_KEY=one\nWEBUI_NAME=A\nANTHROPIC_API_KEY=model-key\n"
+                            "DEFAULT_USER_ROLE=user\n")
+    (b / ".env").write_text("WEBUI_SECRET_KEY=two\nWEBUI_URL=https://hub.example.com\n")
+
+    values, conflicts = gateway.inherited_deployment_env(
+        [a, b], {"WEBUI_AUTH": "true", "DEFAULT_USER_ROLE": "pending"})
+
+    assert values == {"WEBUI_SECRET_KEY": "two", "WEBUI_URL": "https://hub.example.com"}
+    assert conflicts == {"WEBUI_SECRET_KEY": ["a", "b"]}
+
+
+def test_gateway_ui_gets_sign_in_settings_from_hub_env(tmp_path, monkeypatch):
+    """A deployment whose WEBUI_SECRET_KEY lives only in a hub .env (with
+    WEBUI_AUTH=true on the gateway) must still boot the shared UI with that key.
+    The hub's model key must not reach the shared UI."""
+    from hubzoid import webui
+
+    sales = _gateway_harness(tmp_path, monkeypatch)
+    (sales / ".env").write_text("WEBUI_SECRET_KEY=hub-secret\nANTHROPIC_API_KEY=model-key\n")
+    monkeypatch.setenv("WEBUI_SECRET_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    seen = {}
+
+    def fake_start_gateway(**kwargs):
+        seen.update(secret=os.environ.get("WEBUI_SECRET_KEY"), model=os.environ.get("ANTHROPIC_API_KEY"))
+        proc = MagicMock()
+        proc._log_path = tmp_path / "log"
+        proc.wait.return_value = 0
+        proc.poll.return_value = 0
+        return proc
+    monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
+
+    result = CliRunner().invoke(
+        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"secret": "hub-secret", "model": ""}
+    assert "WEBUI_SECRET_KEY" in result.output
+    assert "hub-secret" not in result.output

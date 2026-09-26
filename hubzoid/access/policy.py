@@ -7,10 +7,12 @@ is allowed to run it only when both hold:
   1. the caller's surface may reach restricted tools at all, and
   2. the caller is in a group whose normalized name equals the permission.
 
-Surfaces that do not carry a per-person verified login (slack, telegram,
-scheduled) are not in the allowed set, so a restricted door is never reachable
-from them, regardless of groups. That is the "Slack cannot use restricted tools"
-rule, enforced rather than assumed.
+Surfaces that do not carry a per-person verified login (slack, telegram) are
+not in the allowed set, so a restricted door is never reachable from them,
+regardless of groups. That is the "Slack cannot use restricted tools" rule,
+enforced rather than assumed. Scheduled workflows run on the `workflow` surface
+as their own service identity and reach only the restricted tools they were
+granted (see DEFAULT_RESTRICTED_SURFACES).
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from .identity import Identity, normalize
 # surface; `web`/`api` are aliases for direct authenticated callers; `mcp` is
 # the hosted MCP server, where the caller authenticated with their own OWUI
 # API key (a per-person verified login, unlike Slack's shared bot token).
-# Slack, Telegram and scheduled runs are deliberately absent. Override per
+# Slack and Telegram are deliberately absent. Override per
 # deployment with HUBZOID_RESTRICTED_SURFACES (comma-separated COMPLETE list;
 # it replaces this default), read in guard.py.
 #

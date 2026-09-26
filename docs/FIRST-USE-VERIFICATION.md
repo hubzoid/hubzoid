@@ -110,7 +110,7 @@ with new checks for the five-card row, period totals, refresh failure/recovery,
 simplified navigation and mobile overflow. Reviewed the final light/desktop and
 dark/live layouts; the live test hub reports public sign-up disabled. Test
 browsers exited after completion. This follow-up does not change the earlier
-Isha rollout boundary.
+release boundary.
 
 ## File-read security follow-up
 
@@ -185,8 +185,10 @@ the upload fixture restores its environment instead of disabling later tests.
   with no obsolete cached bundles. Test browsers and PostgreSQL fixtures exited.
   The manual review hub remains available on port 3092 with schedules disabled.
 - Codex/Hermes transport support is documented from official client references;
-  individual native clients were not exercised end to end. A Codex execution
-  backend and automatic first-run choice remain proposals, not shipped behavior.
+  individual native clients were not exercised end to end. At this checkpoint a
+  Codex execution backend and automatic first-run runtime choice were still
+  proposals. Both ship in 1.0.1: see the Codex runtime section below and
+  [providers](providers.md).
 
 ## Per-agent usage and manual access demo
 
@@ -205,7 +207,7 @@ the upload fixture restores its environment instead of disabling later tests.
 
 The owner authorized implementation of the local Codex backend, the refined dark
 palette, and Apache-2.0 licensing. Website work remains with the separate website
-task; Isha migration planning follows the public release.
+task. Migration planning for existing deployments follows the public release.
 
 - Full model-free suite: **1,702 passed, 4 skipped, 27 deselected** in 425.16s.
 - Subsequent focused runtime/init/handover checks: **60 passed**, including the
@@ -222,10 +224,10 @@ task; Isha migration planning follows the public release.
 - Apache LICENSE and NOTICE are included in wheel and sdist. All Hubzoid-owned
   license declarations use Apache-2.0; dependency license identifiers and font
   notices remain unchanged. Previously distributed versions retain their rights.
-- An isolated wheel install (reusing waveAssistEnv dependency packages) scaffolded
-  a hub and served the packaged Console. This is not a fresh dependency-resolution
-  test; the release workflow performs that check and the multi-architecture image
-  build before publishing.
+- An isolated wheel install (reusing an existing development environment's
+  dependency packages) scaffolded a hub and served the packaged Console. This is
+  not a fresh dependency-resolution test; the release workflow performs that
+  check and the multi-architecture image build before publishing.
 
 ### Release boundary
 
@@ -234,7 +236,7 @@ publishing: commit the reviewed branch, run CI on that exact commit, and run the
 existing version-tag release pipeline (clean install, sdist/wheel and both image
 architectures). The website owner must align public licensing and provider docs
 with [LICENSING](../LICENSING.md) and [providers](providers.md). No website files
-were changed by this task. No production hub or Isha data was migrated.
+were changed by this task. No production deployment was migrated.
 
 The local Codex backend uses an experimental, pinned protocol and requires a
 file-backed service-account login. Hosted API providers remain the simplest
@@ -253,4 +255,4 @@ focused real-browser sidebar placement, replacement, keyboard and login/logout
 checks. The final naming change passed 13 administration tests. Browser fixtures
 now wait for cards before contrast measurement; Refresh has a stable accessible
 name while its loading icon animates. Test browsers were closed. The local test
-hub serves the updated UI; no release or Isha deployment has occurred.
+hub serves the updated UI. No release or production deployment has occurred.

@@ -304,6 +304,43 @@ def _own_env(hub_dir: Path) -> dict:
     return {k: (v or "") for k, v in (dotenv_values(env_path) or {}).items()}
 
 
+# Open WebUI and sign-in settings that belong to the whole deployment. Up to
+# 0.9.x the gateway picked them up from the hub .env files it read (the last
+# hub listed won), and existing deployments still keep them there. WEBUI_NAME is
+# left out: the gateway's --name sets it.
+_DEPLOYMENT_PREFIXES = ("WEBUI_", "OAUTH_", "OPENID_", "GOOGLE_CLIENT_", "MICROSOFT_CLIENT_", "GITHUB_CLIENT_")
+_DEPLOYMENT_KEYS = frozenset({"DEFAULT_USER_ROLE", "ENABLE_SIGNUP", "ENABLE_LOGIN_FORM",
+                              "ENABLE_OAUTH_SIGNUP", "HUBZOID_PUBLIC_URL"})
+_NOT_INHERITED = frozenset({"WEBUI_NAME"})
+
+
+def _deployment_key(key: str) -> bool:
+    if key in _NOT_INHERITED:
+        return False
+    return key in _DEPLOYMENT_KEYS or key.startswith(_DEPLOYMENT_PREFIXES)
+
+
+def inherited_deployment_env(hub_dirs: list[Path], env) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Deployment-wide settings the gateway's own environment lacks, taken from
+    the hubs' own `.env` files.
+
+    Returns `(values, conflicts)`. A key set by several hubs takes the last
+    listed hub's value, as before. `conflicts` names the hubs whose values differ,
+    by key, so the caller can warn without printing a value. Nothing else in a
+    hub's `.env` (model keys, restricted-tool secrets) reaches the gateway.
+    """
+    values: dict[str, str] = {}
+    seen: dict[str, dict[str, str]] = {}
+    for hub_dir in hub_dirs:
+        for key, value in _own_env(Path(hub_dir)).items():
+            if not value or not _deployment_key(key) or env.get(key):
+                continue
+            values[key] = value
+            seen.setdefault(key, {})[Path(hub_dir).name] = value
+    conflicts = {k: sorted(v) for k, v in seen.items() if len(set(v.values())) > 1}
+    return values, conflicts
+
+
 def _inbound_enabled(hub_dir: Path) -> bool:
     """Whether this hub's own `.env` configures any inbound surface (WhatsApp,
     Telegram, or a generic webhook), so the gateway edge should forward

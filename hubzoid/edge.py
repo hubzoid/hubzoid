@@ -47,6 +47,9 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 log = logging.getLogger("hubzoid.edge")
 
+# The model picker waits on this check; a bridge that hangs must not stall it.
+_ACCESS_CHECK_TIMEOUT = httpx.Timeout(5.0)
+
 # Hop-by-hop headers must not be forwarded across a proxy (RFC 7230 §6.1).
 # `content-length` is dropped on the response because we re-stream the body
 # and let the server frame it (chunked), avoiding a length mismatch.
@@ -94,10 +97,16 @@ class EdgeRoute:
 
     `strip_prefix` is removed from the path before forwarding — used by the
     gateway so `/b/<hub>/artifacts/...` reaches the bridge as `/artifacts/...`.
+    `fallbacks` are tried in order when `upstream` cannot be reached. The
+    gateway lists every bridge for `/portal`, since they share one database.
     """
     prefix: str
     upstream: str
     strip_prefix: str = ""
+    fallbacks: tuple[str, ...] = ()
+
+    def upstreams(self) -> tuple[str, ...]:
+        return (self.upstream, *self.fallbacks)
 
 
 def _match(path: str, routes: tuple[EdgeRoute, ...]) -> EdgeRoute | None:
@@ -192,7 +201,8 @@ def build_edge_app(
     """
     default_base = default_base.rstrip("/")
     norm_routes = tuple(
-        EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix) for r in routes
+        EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix,
+                  tuple(f.rstrip("/") for f in r.fallbacks)) for r in routes
     )
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
     locked_prefixes = _owui_lock_prefixes(os.environ)
@@ -251,21 +261,27 @@ def build_edge_app(
                 status_code=403,
             )
         upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
-        url = upstream + fwd_path
-        if request.url.query:
-            url += "?" + request.url.query
+        matched = _match(request.url.path, norm_routes)
+        bases = matched.upstreams() if matched is not None else (upstream,)
+        query = "?" + request.url.query if request.url.query else ""
 
         client: httpx.AsyncClient = request.app.state.client
-        upstream_req = client.build_request(
-            request.method,
-            url,
-            headers=_request_headers(request, public_scheme),
-            content=request.stream(),
-        )
-        try:
-            resp = await client.send(upstream_req, stream=True)
-        except httpx.ConnectError:
-            return Response("upstream unavailable", status_code=502)
+        # With fallbacks, buffer the (small) body so a refused connection can be
+        # retried on the next bridge. A refused connection delivered nothing.
+        content = await request.body() if len(bases) > 1 else request.stream()
+        for i, base in enumerate(bases):
+            upstream_req = client.build_request(
+                request.method,
+                base + fwd_path + query,
+                headers=_request_headers(request, public_scheme),
+                content=content,
+            )
+            try:
+                resp = await client.send(upstream_req, stream=True)
+                break
+            except httpx.ConnectError:
+                if i == len(bases) - 1:
+                    return Response("upstream unavailable", status_code=502)
 
         # OWUI administrators bypass its own model ACL. Apply Hubzoid's entry
         # decision to the picker for every verified viewer; execution is still
@@ -277,11 +293,22 @@ def build_edge_app(
             if route is None:
                 return Response("Agent access is unavailable. Try again.", status_code=503)
             try:
-                access = await client.get(route.upstream + "/portal/api/chat-access",
-                                          headers=_request_headers(request, public_scheme))
-                if access.status_code != 200:
-                    return Response("Sign in to see your agents." if access.status_code == 401 else "Agent access is unavailable. Try again.",
-                                    status_code=401 if access.status_code == 401 else 503)
+                # Every bridge reads the same access database, so ask the next
+                # one when a bridge is down or restarting.
+                access = None
+                for base in route.upstreams():
+                    try:
+                        access = await client.get(base + "/portal/api/chat-access",
+                                                  headers=_request_headers(request, public_scheme),
+                                                  timeout=_ACCESS_CHECK_TIMEOUT)
+                    except httpx.HTTPError:
+                        continue
+                    if access.status_code < 500:
+                        break
+                if access is None or access.status_code != 200:
+                    unauthorized = access is not None and access.status_code == 401
+                    return Response("Sign in to see your agents." if unauthorized else "Agent access is unavailable. Try again.",
+                                    status_code=401 if unauthorized else 503)
                 denied = set(access.json()["denied"])
                 payload = json.loads(body)
                 payload["data"] = [m for m in payload["data"] if m.get("id") not in denied]
@@ -357,7 +384,7 @@ def _factory() -> Starlette:
     launch it the same way they launch the bridge:
 
       HUBZOID_EDGE_DEFAULT        Open WebUI base URL (catch-all + websockets).
-      HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix"}, ...].
+      HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix","fallbacks"}, ...].
       HUBZOID_EDGE_PUBLIC_SCHEME  Public scheme ("https") asserted upstream as
                                   X-Forwarded-Proto when the request has none.
     """
@@ -374,6 +401,7 @@ def _factory() -> Starlette:
             prefix=r["prefix"],
             upstream=r["upstream"],
             strip_prefix=r.get("strip_prefix", ""),
+            fallbacks=tuple(r.get("fallbacks", ())),
         )
         for r in spec
     ]

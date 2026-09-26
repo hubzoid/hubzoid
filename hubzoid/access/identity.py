@@ -6,9 +6,10 @@ it per request from headers populated by the trusted front (Open WebUI, which
 sits in front of the localhost bridge and holds its API key). Tools and the
 access guard read it via `current_identity()`.
 
-When nothing is set (CLI, unit tests, scheduled background runs) the identity is
-anonymous: no user, no groups. Anonymous is denied every restricted tool, which
-is the fail-closed default the whole design rests on.
+When nothing is set (CLI, unit tests) the identity is anonymous: no user, no
+groups. Anonymous is denied every restricted tool, which is the fail-closed
+default the whole design rests on. Scheduled runs are not anonymous: they act as
+their workflow's service identity (`workflow:<name>`, `workflow:md:<task>`).
 
 `normalize` is the single rule for comparing names: a permission, a restricted
 file stem, and an Open WebUI group name all match through it, so `Sales`,

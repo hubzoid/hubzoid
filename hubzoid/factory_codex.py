@@ -18,7 +18,7 @@ import signal
 import subprocess
 import tempfile
 
-from . import _request_ctx, tool_events
+from . import __version__, _request_ctx, tool_events
 
 log = logging.getLogger(__name__)
 SUPPORTED_CODEX_VERSION = "0.147.0"
@@ -208,7 +208,7 @@ class CodexRuntime:
                 if "id" in msg and "method" in msg:
                     await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
 
-        await request(1, "initialize", {"clientInfo": {"name": "hubzoid", "version": "1.0.1"}, "capabilities": {"experimentalApi": True}})
+        await request(1, "initialize", {"clientInfo": {"name": "hubzoid", "version": __version__}, "capabilities": {"experimentalApi": True}})
         await send({"method": "initialized", "params": {}})
         params = {"cwd": cwd, "ephemeral": True, "environments": [],
                   "selectedCapabilityRoots": [], "runtimeWorkspaceRoots": [],

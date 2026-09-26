@@ -1,10 +1,11 @@
 # Auth + Schedules Upgrade
 
-Full design + rationale live in the sibling planning folder
-`../AuthSchedulesUpgrade/` (`FINAL-PLAN.html`, `ACCESS-SOURCE-OF-TRUTH.md`,
-`docs/implementation-plan.html`, `CONTEXT-AND-RATIONALE.md`). This proposal is
-the in-repo build contract; where wording conflicts, `ACCESS-SOURCE-OF-TRUTH.md`
-wins for access and `implementation-plan.html` for runtime + portal.
+Status: implemented in 1.0.1. The Admin Console has changed since this proposal.
+See [ADMINISTRATION.md](../docs/ADMINISTRATION.md) and
+[access-management.md](../docs/access-management.md) for current behavior.
+
+This proposal was the in-repo build contract. The supporting design notes were
+kept outside the repository and are not published.
 
 ## Problem
 Three gaps today, all observed on a production multi-hub deployment:

@@ -17,11 +17,20 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 ### Console
 - Named Admin Console, with a sidebar entry above the chat profile and an icon
   when collapsed. Only authorized administrators see the entry.
+- Opens on **Agents**, with five summary cards (messages/conversations, users,
+  tokens, workflow runs and approximate cost) above agent cards. Update time
+  sits beside Refresh; global Runs navigation and account-management shortcuts
+  are removed. Agent-level runs and existing direct links remain available.
+- Agent cards show tokens and approximate cost for the selected dashboard period.
 - Capability explanations move into accessible help; compact restriction labels
   stay visible. Login accounts are still created in Open WebUI.
 - Dark theme uses Studio charcoal, clear orange actions and deep semantic tag
   backgrounds with readable foregrounds.
-- Agent cards show tokens and approximate cost for the selected dashboard period.
+- Public email and SSO registration default to off. Administrators create
+  accounts in the chat app's admin panel; explicit operator overrides remain.
+- Every chat turn and workflow model call writes a usage row (`hz_usage`): time,
+  hub, surface, user, chat, model, tokens, estimated cost, status and duration.
+  No message content.
 
 ### Security
 - Open WebUI API-key, group and connected MCP OAuth lookups honor PostgreSQL
@@ -60,8 +69,11 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 - Markdown schedule tasks (`schedule/*.md`) run on the hub's DBOS engine, with
   the same files, timing and catch-up rules. Each run is split into work,
   commit, push and finish steps; a push is retried, interrupted work is
-  reported rather than repeated, and every run appears in the Console. The
-  legacy tick loop, file lock and in-process runner are removed.
+  reported rather than repeated, and every run appears in the Console. DBOS
+  replaces the per-hub run lock and in-process execution, running one markdown
+  task at a time per hub across processes. The 30-second tick now only decides
+  what is due and queues each slot once, as run `md:<task>:<slot>`. The round
+  harness is unchanged and runs inside the work step.
 - `hub.call_llm` is one model call with no tools: text, JSON, or a validated
   Pydantic object (`response_model`), on LiteLLM models, `claude-local` and `codex-local`.
   `hub.call_agent` keeps the full agent. `hub.decide` (experimental) asks
@@ -79,27 +91,30 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 - A scheduled task whose run changed nothing no longer pushes.
 - New sample: `hubzoid init <name> --template watchtower`.
 
-### Console
-- Opens on **Agents**, with five summary cards (messages/conversations, users,
-  tokens, workflow runs and approximate cost) above agent cards. Update time
-  sits beside Refresh; global Runs navigation and account-management shortcuts
-  are removed. Agent-level runs and existing direct links remain available.
-- Public email and SSO registration default to off. Administrators create
-  accounts in the chat app's admin panel; explicit operator overrides remain.
-- Every chat turn and workflow model call writes a usage row (`hz_usage`): time,
-  hub, surface, user, chat, model, tokens, estimated cost, status and duration.
-  No message content.
-
 ### Access
 - Tool decisions are stored in the database (`hz_access_decisions`) instead of
   monthly JSONL files, which are imported once. A restricted call whose
   decision cannot be recorded is refused.
 - Scheduled markdown runs act as `workflow:md:<task>`, grantable like a person.
+- A per-agent **Manage access** grant also lets that person open and chat with
+  that agent, because every direct agent capability includes **Use this
+  agent**. Restricted tools still need their own grant. Organization-wide
+  administrator rights alone do not grant chat.
 - The public port refuses `.` and `..` path segments (they could reach bridge
   paths outside the forwarded routes) and drops client-sent `X-Hubzoid-*` and
   `X-OpenWebUI-*` headers.
 
 ### Operations
+- Gateway: any bridge can serve the Console and the agent picker's access
+  check. When one bridge is down or restarting, the edge asks the next one, so
+  restarting a hub no longer empties the picker for everyone.
+- Gateway: a hub's `.env` stays with that hub. Sign-in and chat-app settings
+  (`WEBUI_*`, `DEFAULT_USER_ROLE`, `ENABLE_SIGNUP`, OAuth, `HUBZOID_PUBLIC_URL`)
+  are still taken from hub `.env` files when the gateway's own environment lacks
+  them, and listed at start. `WEBUI_NAME` in a hub `.env` no longer overrides
+  `--name`.
+- SQLite databases wait up to 30 seconds for another writer's lock, since a
+  gateway's bridges share one file.
 - Standalone and gateway supervisors wait for child services to shut down before
   exiting. This lets SQLite close cleanly during container stop and avoids
   interrupting database cleanup before a rollback.
@@ -139,6 +154,7 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 - Workflow agent calls are not retried unless `agent_max_attempts` is set; a
   failed agent run fails the workflow run.
 - DBOS 3.1. Runs are tied to the workflow code version; runs from other code
-  are cancelled at start instead of blocking the queue.
+  are cancelled at start instead of blocking the queue. A markdown run that had
+  not started yet is queued again under the new code first.
 - Dependencies bounded and locked (`requirements.lock`); Docker image built from
   source with CPU-only PyTorch, publishing only port 3080.

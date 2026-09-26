@@ -16,7 +16,7 @@ Model (RBAC-with-domains, but direct grants — no role bundles):
 Two permissions matter to every hub:
   * `use_hub`        — may open/use the hub at all (hub entry)
   * `manage_access`  — may grant/revoke within a scope (delegated admin)
-plus the restricted-function stems (`prod_in`, `nurturing_write`, ...).
+plus the restricted-function stems (`crm_read`, `billing_write`, ...).
 
 Writes go through `GrantStore` methods only (never straight SQL from callers),
 so every write is one transaction that also bumps `hz_policy_revision`. `can()`

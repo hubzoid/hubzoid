@@ -30,7 +30,9 @@ versioning and backup have to be right before, not after.
   Same files and fields (`schedule`, `on_webhook`, `run`, `commit`, `push`,
   `timeout`, `max_rounds`, `max_turns`, `enabled`).
 - `workflows/*.py` is the code path for exact, deterministic steps.
-- Both run on DBOS. The legacy tick loop, lock and fire-state are removed.
+- Both run on DBOS. (As built: the per-hub run lock and in-process execution
+  are replaced by DBOS. The tick now only queues due slots, and the fire-state
+  file still holds catch-up anchors.)
 - Markdown tasks keep today's semantics: machine-local time unless a zone is
   given, one catch-up run after downtime, one markdown task at a time per hub,
   deferred while the hub is serving chat, on whenever the folder has enabled

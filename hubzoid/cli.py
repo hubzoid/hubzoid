@@ -578,6 +578,17 @@ def gateway(
         else:
             os.environ.pop(key, None)
 
+    # Sign-in and Open WebUI settings kept in hub .env files still apply to the
+    # shared UI when the gateway's environment does not set them (0.9.x compat).
+    inherited, conflicts = gateway_lib.inherited_deployment_env(hub_dirs, deployment_env)
+    os.environ.update(inherited)
+    if inherited:
+        console.print(f"[yellow]→ settings[/yellow]  from hub .env files: {', '.join(sorted(inherited))}. "
+                      "Set these in the gateway's environment instead.")
+    for key, hub_names in sorted(conflicts.items()):
+        console.print(f"[yellow]→ settings[/yellow]  hubs disagree on {key} ({', '.join(hub_names)}); "
+                      "using the last hub listed.")
+
     ui_port = port or int(os.environ.get("PORT", "3080"))
     pub = (public_url or os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
     gw_data = (data_dir or (Path.cwd() / ".hubzoid-gateway")).resolve()
@@ -788,13 +799,11 @@ def gateway(
         edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
         edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env, pub)
         gw_routes = list(gp.edge_routes())
-        # One bridge serves the org-wide portal (the shared DB means any will do);
-        # route /portal there so the SPA + API are reachable through the edge.
+        # Any bridge can serve the org-wide portal (they share one database).
+        # The first answers; the others take over while it is down or restarting.
         if gp.backends:
-            first = gp.backends[0]
-            gw_routes.append(
-                {"prefix": "/portal", "upstream": f"http://127.0.0.1:{first.bridge_port}"}
-            )
+            bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
+            gw_routes.append({"prefix": "/portal", "upstream": bridges[0], "fallbacks": bridges[1:]})
         edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
         edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")
         # The edge locks only migrated model ACLs dynamically. Do not lock
@@ -1612,7 +1621,7 @@ def _access_domain(hub_dir: Path, hub: str | None, org: bool) -> str:
 @app.command()
 def grant(
     subject: str = typer.Argument(..., help="Who to grant (email or workflow:<name>)."),
-    permission: str = typer.Argument(..., help="Permission, e.g. prod_in, use_hub, manage_access."),
+    permission: str = typer.Argument(..., help="Permission, e.g. crm_read, use_hub, manage_access."),
     hub: str = typer.Option(None, "--hub", help="Hub (Casbin domain). Default: the hub dir's name."),
     org: bool = typer.Option(False, "--org", help="Grant org-wide (all hubs), for manage_access."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory (where the DB lives). Default: current dir."),

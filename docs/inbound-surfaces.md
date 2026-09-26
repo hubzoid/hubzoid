@@ -14,7 +14,7 @@ directly. Everything after the inbox reuses the hub's existing brain
 ## Public path — namespaced per hub
 
 Every inbound route lives under **`/webhooks/<hub-slug>/<surface>`**, e.g.
-`/webhooks/nurturing/whatsapp`, `/webhooks/sales/squadcast`. The `<hub-slug>` is the
+`/webhooks/support/whatsapp`, `/webhooks/sales/squadcast`. The `<hub-slug>` is the
 hub's folder name (URL-slugified), or `HUBZOID_HUB_SLUG` if you pin one.
 
 Namespacing by hub is what lets **one public front door serve many inbound hubs
@@ -214,7 +214,7 @@ WEBHOOK_INBOUND_NAME=squadcast   # optional; the path segment. Default: webhook
 WEBHOOK_INBOUND_HMAC=false       # optional; see auth below. Default: false
 ```
 The endpoint is then `https://<host>/webhooks/<hub>/<WEBHOOK_INBOUND_NAME>`, e.g.
-`https://hub.example.com/webhooks/nurturing/squadcast`.
+`https://hub.example.com/webhooks/sales/squadcast`.
 
 **Auth — two modes:**
 - **Shared secret (default).** Send the secret any one of three ways:

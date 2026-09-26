@@ -39,7 +39,7 @@ _LAUNCHED = False
 _HUB_DIR: Path | None = None
 _HUB_NAME: str = ""
 _ENGINE: Any = None
-_QUEUE = None  # one durable queue per hub, global concurrency 1
+_QUEUE = None  # code workflows: one run at a time per workflow, optional hub cap
 _MD_QUEUE = None  # markdown schedule tasks + scheduled evals: one at a time per hub
 _APP_VERSION: str | None = None  # this process's workflow-code version
 _lock = threading.Lock()
@@ -350,9 +350,8 @@ def launch() -> None:
     global _QUEUE, _MD_QUEUE
     _wrap_seams_as_steps()
     _DBOS.launch()
-    # One durable queue per hub, global concurrency 1: two due workflows (or a
-    # manual + scheduled run) in the same hub never overlap. DBOS 3 persists queue
-    # config in the system database, so it is registered once that exists.
+    # DBOS 3 persists queue config in the system database, so queues are
+    # registered once that exists.
     # Code workflows: one run at a time PER WORKFLOW (a partition per workflow
     # name), so a long workflow never starves an unrelated one. An optional
     # hub-wide cap comes from `max_concurrent_workflows` in workflows/settings.yaml.

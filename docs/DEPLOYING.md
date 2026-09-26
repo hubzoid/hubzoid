@@ -466,6 +466,23 @@ logged-in user's identity headers to bridges by default (access control
 needs them); set `ENABLE_FORWARD_USER_INFO_HEADERS=false` in the gateway's
 environment if your external bridges must not receive user emails.
 
+**Where deployment settings live.** Settings for the shared chat app and sign-in
+(`WEBUI_AUTH`, `WEBUI_SECRET_KEY`, `WEBUI_URL`, `DEFAULT_USER_ROLE`,
+`ENABLE_SIGNUP`, OAuth settings) belong in the gateway's own environment. Each
+hub's `.env` is read for that hub only. For deployments upgraded from 0.9.x, the
+gateway still takes those sign-in settings from the hub `.env` files when its own
+environment does not set them, and lists the keys at start (when hubs disagree,
+the last hub listed wins). Nothing else from a hub `.env` reaches the shared
+chat app. `WEBUI_NAME` comes from `--name`.
+
+**One shared access database.** The bridges share `hubzoid-operational.db` in
+the data directory (or your `HUBZOID_OPERATIONAL_DB` / PostgreSQL). The gateway
+records it in each hub's `.hubzoid/deployment.json` when it starts. With
+`--no-bridges`, restart the bridges once after the gateway's first start. Any
+bridge can then serve the Console at `/portal/`. The edge asks the next bridge
+when one is down or restarting, so restarting one hub does not empty the agent
+picker for everyone.
+
 **Auto-provisioning (recommended).** Give the gateway an admin login and it
 sets each hub up in Open WebUI by itself, on every boot:
 

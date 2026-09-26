@@ -82,6 +82,9 @@ def engine_for(hub_dir, env=None) -> Engine:
     return _engine_for_url(resolve_url(hub_dir, env))
 
 
+SQLITE_LOCK_WAIT_SECONDS = 30
+
+
 def operational_engine(hub_dir, env=None) -> Engine:
     """The (cached) engine for the shared operational store (see operational_url)."""
     return _engine_for_url(operational_url(hub_dir, env))
@@ -94,6 +97,9 @@ def _engine_for_url(url: str) -> Engine:
         if url.startswith("sqlite"):
             # Background tasks touch the engine from threadpool threads.
             connect_args["check_same_thread"] = False
+            # A gateway's bridges share one file. Wait for a writer's lock
+            # rather than failing a request after SQLite's default 5 s.
+            connect_args["timeout"] = SQLITE_LOCK_WAIT_SECONDS
         eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
         _engines[url] = eng
     return eng

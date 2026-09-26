@@ -380,3 +380,89 @@ def test_client_identity_headers_are_dropped(edge_url):
         "X-OpenWebUI-User-Email": "admin@example.org", "X-Hubzoid-Surface": "owui",
     })
     assert r.status_code == 200 and r.text == "IDENTITY:"
+
+
+def _failover_app(monkeypatch, bridge_answers):
+    """Edge over OWUI + two bridges; `bridge_answers[host]` returns a response or
+    raises. Records which hosts were asked, in order."""
+    import json as _json
+
+    real_client = httpx.AsyncClient
+    asked = []
+
+    def upstream(request):
+        host = request.url.host
+        if host == "owui":
+            return httpx.Response(200, stream=httpx.ByteStream(_json.dumps(
+                {"data": [{"id": "sales"}, {"id": "support"}]}).encode()),
+                headers={"content-type": "application/json"})
+        asked.append((host, request.method, request.url.path, request.content))
+        answer = bridge_answers[host]
+        if isinstance(answer, Exception):
+            raise answer
+        status, body = answer
+        return httpx.Response(status, stream=httpx.ByteStream(_json.dumps(body).encode()),
+                              headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    route = edge.EdgeRoute("/portal", "http://bridge1", fallbacks=("http://bridge2",))
+    return edge.build_edge_app(default_base="http://owui", routes=[route]), asked
+
+
+@pytest.mark.parametrize("first", [httpx.ConnectError("refused"), (503, {"detail": "starting"})])
+def test_model_list_asks_the_next_bridge_when_the_first_is_down(monkeypatch, first):
+    """Restarting the first hub must not empty everyone's model picker: every
+    bridge shares the access database, so the edge asks the next one."""
+    from starlette.testclient import TestClient
+
+    app, asked = _failover_app(monkeypatch, {"bridge1": first, "bridge2": (200, {"denied": ["support"]})})
+    with TestClient(app) as client:
+        r = client.get("/api/models")
+    assert r.status_code == 200
+    assert [m["id"] for m in r.json()["data"]] == ["sales"]
+    assert [h for h, *_ in asked] == ["bridge1", "bridge2"]
+
+
+def test_model_list_fails_closed_when_no_bridge_answers(monkeypatch):
+    from starlette.testclient import TestClient
+
+    app, _ = _failover_app(monkeypatch, {"bridge1": httpx.ConnectError("refused"),
+                                         "bridge2": httpx.ReadTimeout("slow")})
+    with TestClient(app) as client:
+        r = client.get("/api/models")
+    assert r.status_code == 503
+
+
+def test_model_list_sign_in_answer_is_final(monkeypatch):
+    """A 401 is an answer about the viewer, not a bridge failure."""
+    from starlette.testclient import TestClient
+
+    app, asked = _failover_app(monkeypatch, {"bridge1": (401, {}), "bridge2": (200, {"denied": []})})
+    with TestClient(app) as client:
+        r = client.get("/api/models")
+    assert r.status_code == 401
+    assert [h for h, *_ in asked] == ["bridge1"]
+
+
+def test_portal_request_moves_to_the_next_bridge_with_its_body(monkeypatch):
+    from starlette.testclient import TestClient
+
+    app, asked = _failover_app(monkeypatch, {"bridge1": httpx.ConnectError("refused"),
+                                             "bridge2": (200, {"ok": True})})
+    with TestClient(app) as client:
+        r = client.post("/portal/api/access/apply", content=b'{"changes": []}')
+    assert r.status_code == 200
+    assert asked[-1] == ("bridge2", "POST", "/portal/api/access/apply", b'{"changes": []}')
+
+
+def test_factory_reads_route_fallbacks(monkeypatch):
+    import json as _json
+
+    monkeypatch.setenv("HUBZOID_EDGE_DEFAULT", "http://owui")
+    monkeypatch.setenv("HUBZOID_EDGE_ROUTES", _json.dumps([
+        {"prefix": "/portal", "upstream": "http://a", "fallbacks": ["http://b", "http://c"]}]))
+    seen = {}
+    monkeypatch.setattr(edge, "build_edge_app", lambda **kw: seen.update(kw))
+    edge._factory()
+    assert seen["routes"][0].upstreams() == ("http://a", "http://b", "http://c")

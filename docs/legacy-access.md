@@ -96,7 +96,7 @@ reach no restricted tool: fail closed is the default.
 
 ## What is enforced, and where
 
-Two layers, both built from the same tool registry, so both backends are covered:
+Two layers, both built from the same tool registry, so every backend is covered:
 
 1. **Hidden.** The agent is offered only the tools the current user may use.
    An ungranted restricted tool is not shown at all (OpenAI Agents SDK, via
@@ -106,20 +106,26 @@ Two layers, both built from the same tool registry, so both backends are covered
    another way (a prompt injection naming it, the Claude backend, a test).
 
 The deny layer is the wall. The hidden layer is the clean experience. The Claude
-backend gets the deny layer (it does not consult `is_enabled`); the OpenAI
-backend, the default, gets both.
+and Codex backends get the deny layer (they do not consult `is_enabled`). The
+OpenAI Agents SDK backend gets both.
 
 ## Surfaces: Slack and scheduled runs
 
 A restricted door needs a verified person behind it. Open WebUI carries that.
-Slack, Telegram, and scheduled background runs do not, so they get the
-non-restricted tools only, and a restricted door is never reachable from them.
-The Slack adapter declares `X-Hubzoid-Surface: slack` so this is enforced, not
-assumed. Scheduled tasks run with no user, so they are anonymous and refused
-every restricted tool by the same fail-closed default.
+Slack and Telegram do not, so they get the non-restricted tools only, and a
+restricted door is never reachable from them. The Slack adapter declares
+`X-Hubzoid-Surface: slack` so this is enforced, not assumed.
+
+Scheduled runs act as a service identity on the `workflow` surface. A Markdown
+task runs as `workflow:md:<task>` and a Python workflow as `workflow:<function>`.
+That identity belongs to no Open WebUI group, so in legacy mode it is refused
+every restricted tool by the same fail-closed default. Only managed access can
+grant a workflow identity a restricted tool. See
+[access-management.md](access-management.md).
 
 To change which surfaces may reach restricted tools, set
-`HUBZOID_RESTRICTED_SURFACES` (comma-separated). Default: `owui,web,api`.
+`HUBZOID_RESTRICTED_SURFACES` (comma-separated). Default:
+`owui,web,api,mcp,workflow`.
 
 ## Secrets
 
