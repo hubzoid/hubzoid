@@ -238,7 +238,7 @@ export function PeopleScreen({
                 render: (_, p) => (
                   <Space size={4} wrap>
                     <AccountTag status={p.status} />
-                    {p.organization_admin && <RoleBadge>Org admin</RoleBadge>}
+                    {p.organization_admin && <RoleBadge>Administrator</RoleBadge>}
                   </Space>
                 ),
               },

@@ -1053,7 +1053,7 @@ function step(name) {
       ["workflow:monthly_close", "Legacy service identity"],
     ])
       await page.getByRole("row").filter({ hasText: who }).getByText(status, { exact: true }).waitFor();
-    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Org admin").waitFor();
+    await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Administrator", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Try again now" }).click();
     await page.getByText("Chat app visibility is in sync.").waitFor();
     assert.deepEqual(lastMutation(), { endpoint: "/sync" });

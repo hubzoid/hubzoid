@@ -110,7 +110,7 @@ function Sidebar({
             {me.subject}
           </Text>
           <Text type="secondary">
-            {me.org_admin ? "Organization administrator" : "Agent administrator"}
+            {me.org_admin ? "Administrator" : "Agent administrator"}
           </Text>
           <SignOutButton />
         </div>

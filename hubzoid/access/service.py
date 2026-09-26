@@ -996,7 +996,8 @@ class AccessService:
         Hubzoid administration (the store's LastAdminError guard still runs
         atomically on the write itself) and the chat app, whose administrators
         are checked when the directory can list them. The Console's service
-        account is not a person and doesn't count."""
+        account counts only when someone administers with it (it also holds
+        Hubzoid administration); otherwise it is not a person."""
         if console:
             others = {s for (s, _h, p) in self.store.list_grants(ORG)
                       if p == MANAGE_ACCESS and s not in (subject, EVERYONE)}
@@ -1012,8 +1013,9 @@ class AccessService:
                              "else an Administrator first.")
 
     def _other_chat_admins(self, directory, subject: str) -> set[str] | None:
-        """Chat-app administrators other than `subject` and the service
-        account, or None when the directory can't list them."""
+        """Chat-app administrators other than `subject` (and the service
+        account, unless it is also a Hubzoid administrator), or None when the
+        directory can't list them."""
         lister = getattr(directory, "admins", None)
         if not callable(lister):
             return None
@@ -1024,7 +1026,11 @@ class AccessService:
             return None
         from .accounts import service_account_email
 
-        return admins - {normalize(subject), service_account_email(self.hub_dir), ""}
+        service = service_account_email(self.hub_dir)
+        ignored = {normalize(subject), ""}
+        if service and not self.store.can(service, ORG, MANAGE_ACCESS):
+            ignored.add(service)
+        return admins - ignored
 
     def delete_account(self, actor: Actor, subject: str) -> None:
         """Delete a user: every grant (`revoke_all`), then their chat account
