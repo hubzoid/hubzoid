@@ -10,9 +10,11 @@ Open WebUI endpoints used (0.11.4):
   * `POST /api/v1/auths/signin`          service-account token
   * `POST /api/v1/auths/add`             create (always with role "user")
   * `GET  /api/v1/users/?query=`         find the account using an email
+  * `GET  /api/v1/users/?page=`          list administrators (last-administrator check)
   * `GET  /api/v1/users/{id}`            read one account before changing it
   * `POST /api/v1/users/{id}/update`     password, role or name
-  * `DELETE /api/v1/users/{id}`          delete
+  * `DELETE /api/v1/users/{id}`          delete (Open WebUI also removes the
+                                         account's chats and group memberships)
 
 Passwords travel only in request bodies to Open WebUI. They are never logged,
 stored, returned or put into an error message. The token Open WebUI returns
@@ -67,6 +69,9 @@ class AccountDirectory(Protocol):
     def delete(self, account_id: str) -> None: ...
     def get(self, account_id: str) -> dict | None: ...
     def find(self, email: str) -> dict | None: ...
+    # Optional: emails of every account with the chat-app role "admin". A
+    # directory without it skips the chat-app side of the last-admin check.
+    # def admins(self) -> list[str]: ...
 
 
 def unusable_password() -> str:
@@ -309,6 +314,36 @@ class OwuiAccounts:
                 if not batch or page * 30 >= total:
                     return None
             return None
+        finally:
+            client.close()
+
+    def admins(self) -> list[str]:
+        """Emails of every account whose chat-app role is "admin", read page by
+        page. Raises AccountError when the list can't be read completely."""
+        client = self._client()
+        try:
+            out: list[str] = []
+            seen = 0
+            for page in range(1, 1001):
+                r = self._send("GET", "/api/v1/users/", params={"page": page},
+                               what="list administrators", client=client)
+                if r.status_code != 200:
+                    raise AccountError(502, "chat_app_error",
+                                       f"The chat app returned HTTP {r.status_code}.")
+                try:
+                    data = r.json()
+                    batch = data["users"]
+                    total = int(data["total"])
+                except (ValueError, KeyError, TypeError):
+                    raise AccountError(502, "chat_app_error",
+                                       "The chat app returned an unexpected account list.")
+                for user in batch:
+                    if isinstance(user, dict) and user.get("role") == "admin" and user.get("email"):
+                        out.append(str(user["email"]).strip().lower())
+                seen += len(batch)
+                if not batch or seen >= total:
+                    return out
+            raise AccountError(502, "chat_app_error", "The chat app's account list did not end.")
         finally:
             client.close()
 

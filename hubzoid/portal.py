@@ -46,6 +46,7 @@ from .access.service import (
     AccessService,
     Actor,
     Denied,
+    deleted_by_console,
 )
 from .access.session import require_same_origin, verified_email
 from .access.store import (
@@ -616,12 +617,18 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         scopes = {h["key"] for h in allowed_hubs(admin)}
         if agent:
             require_hub(admin, agent)  # never let a filter widen scope
-        grants = [g for g in gs.list_grants() if admin.is_org_admin or g[1] in scopes]
+        all_grants = gs.list_grants()
+        grants = [g for g in all_grants if admin.is_org_admin or g[1] in scopes]
         visible = {g[0] for g in grants}
+        holding = {g[0] for g in all_grants}
         rows = []
         for person in gs.identities():
             sub = person["subject"]
             if not admin.is_org_admin and sub not in visible:
+                continue
+            # A user deleted here is gone: listed again only if access is
+            # given to their email later, or a new account takes it.
+            if sub not in holding and deleted_by_console(gs, sub, person.get("owui_id")):
                 continue
             if q.lower() not in (sub + " " + (person["display"] or "")).lower():
                 continue
@@ -810,36 +817,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     # ---- accounts (Open WebUI logins, created and changed as the service account)
 
-    @router.get("/accounts")
-    def find_accounts(q: str = "", limit: int = Query(20, ge=1, le=50),
-                      admin=Depends(require_admin)):
-        """Chat accounts to choose from in Add user. Scoped like People: an
-        organization administrator searches every account; an agent manager
-        sees accounts with access to an agent they manage, plus the one account
-        whose email they type in full (the disclosure a duplicate create already
-        makes). Legacy service identities and email-only grants are not accounts."""
-        gs = store_for(hub_dir)
-        text_q = normalize(q)
-        visible = None
-        if not admin.is_org_admin:
-            scopes = {h["key"] for h in allowed_hubs(admin)}
-            visible = {s for (s, h, _p) in gs.list_grants() if h in scopes}
-        rows = []
-        for person in gs.identities():
-            sub = person["subject"]
-            if not person.get("owui_id") or sub == EVERYONE or sub.startswith("workflow:"):
-                continue
-            if visible is not None and sub not in visible and sub != text_q:
-                continue
-            if text_q and text_q not in (sub + " " + (person.get("display") or "")).lower():
-                continue
-            state = _account_state(gs, sub, person)
-            rows.append(dict(subject=sub, display=person.get("display") or None,
-                             organization_admin=gs.can(sub, ORG, MANAGE_ACCESS), **state))
-            if len(rows) >= limit:
-                break
-        return {"accounts": rows}
-
     @router.post("/accounts")
     @_denied
     def create_account(request: Request, body: Any = Body(None), admin=Depends(require_admin)):
@@ -857,8 +834,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @_denied
     def grant_existing_account(request: Request, payload: ExistingAccountGrant,
                                admin=Depends(require_admin)):
-        """Give an existing account access (Add user's existing-account choice,
-        "Grant access instead", and the retry after a partial create)."""
+        """Give an existing account access: Add user's retry after a partial
+        create, and API callers. Never creates an account."""
         _check_mutation(request, admin)
         result = service.grant_existing_account(
             admin.actor(), email=payload.email,
@@ -889,11 +866,13 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     @router.post("/accounts/{subject}/role")
     @_denied
-    def chat_role(subject: str, request: Request, payload: RoleRequest,
-                  admin=Depends(require_admin)):
+    def set_role(subject: str, request: Request, payload: RoleRequest,
+                 admin=Depends(require_admin)):
+        """User or Administrator: sets Hubzoid administration and the chat
+        app's role together. A partial result is a 502 `role_partial` naming
+        the side that is set; repeating the request finishes it."""
         _check_mutation(request, admin)
-        service.set_chat_role(admin.actor(), subject, payload.role)
-        return dict(ok=True, subject=normalize(subject), role=payload.role)
+        return dict(ok=True, **service.set_role(admin.actor(), subject, payload.role))
 
     @router.delete("/accounts/{subject}")
     @_denied

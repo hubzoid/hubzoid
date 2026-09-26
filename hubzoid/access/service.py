@@ -31,12 +31,22 @@ Rules (checked on every write, from the store, never from the caller):
     stored, logged, audited, returned or placed in a change request. A Google
     sign-in-only account gets a random password generated here that nobody is
     told, and is offered only when the chat app links Google sign-in to an
-    existing account by email (`accounts.sign_in_options`).
+    existing account by email (`accounts.sign_in_options`). How an account was
+    created is recorded (`sign_in:<email>` metadata) so the Console shows a
+    Google-only account's password as managed through Google.
   * Creating an account and granting its initial access touch two systems
     that cannot commit together. The account is never deleted to fake a
     rollback: if access fails after the account exists, the result says so
     (`partial`) and a retry grants access to that account
-    (`grant_existing_account`), never creating a second one.
+    (`grant_existing_account`), never creating a second one. A duplicate email
+    changes nothing: the caller is told the user exists and edits them instead.
+  * One Administrator role (`set_role`, organization administrators only)
+    covers Hubzoid administration (org-wide `manage_access`) and the chat
+    app's settings (its `admin` role). Both sides are set through their own
+    services, chat app first; when one side fails the result names exactly
+    which side is set (`role_partial`) and a retry completes it. A person whose
+    two sides disagree is shown as such and never promoted implicitly. The last
+    administrator (either side) can't be demoted or deleted.
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
@@ -94,6 +104,17 @@ UNAVAILABLE_MSG = (
     "This account is unavailable in the chat app (awaiting approval or removed). "
     "Approve or restore it in Open WebUI, then refresh accounts."
 )
+EXISTS_MSG = (
+    "A user with this email already exists. Nothing was changed: edit that user's "
+    "access instead."
+)
+#: Metadata markers kept next to the store (`GrantStore.metadata`).
+#: `sign_in:<email>` is how the Console created the account ("password" or
+#: "google"); `account_deleted:<email>` is the chat-app id of an account the
+#: Console deleted, so People no longer lists that person.
+SIGN_IN_PREFIX = "sign_in:"
+DELETED_PREFIX = "account_deleted:"
+ROLES = ("user", "admin")
 
 
 @dataclass(frozen=True)
@@ -515,7 +536,7 @@ class AccessService:
     def _account_target(self, actor: Actor, subject: str) -> dict:
         """Common guard for account-wide actions (organization administrators)."""
         self.require_org_admin(
-            actor, "Only organization administrators can change chat accounts.")
+            actor, "Only administrators can change a user's account or role.")
         subject = normalize(subject)
         if not subject or subject == EVERYONE or subject.startswith("workflow:"):
             raise Denied(422, "invalid_subject", "Choose a person's account.")
@@ -612,13 +633,13 @@ class AccessService:
             created = directory.create(email=email, name=name, password=secret, role="user")
         except AccountError as exc:
             if exc.code == "account_exists":
-                raise Denied(409, "account_exists",
-                             "An account with this email already exists. Grant access to it instead.")
+                # Nothing is written: their account, password and access stay as they are.
+                raise Denied(409, "account_exists", EXISTS_MSG, extra=dict(subject=email))
             if not exc.certain:
                 raise Denied(503, "uncertain",
                              "The chat app didn't confirm whether the account was created. Try "
-                             "again: if it was created, you'll be offered to grant access to it "
-                             "instead, and it won't be created twice.")
+                             "again: if it was created, you'll be told the user exists, and it "
+                             "won't be created twice.")
             raise Denied(exc.status, exc.code, exc.message)
         finally:
             secret = None  # noqa: F841 — not kept past the chat-app call
@@ -630,6 +651,7 @@ class AccessService:
                          "The chat app created an unexpected account and it could not be removed. "
                          f"Check the account for {email} in the chat app.")
         account = dict(subject=email, name=name, sign_in=sign_in)
+        self._record_sign_in(email, sign_in)
         try:
             revision = self._bind_with_grants(actor, email, created, name, by_hub,
                                               replace=replace, request_id=request_id)
@@ -733,8 +755,7 @@ class AccessService:
                              "This person already signed up and is awaiting approval. "
                              "Approve the account instead.")
             if not flags["account_unavailable"]:
-                raise Denied(409, "account_exists",
-                             "An account with this email already exists. Grant access to it instead.")
+                raise Denied(409, "account_exists", EXISTS_MSG, extra=dict(subject=email))
             if not scope.org_admin:
                 raise Denied(409, "account_replaced",
                              "This email belonged to an earlier chat account. Ask an "
@@ -761,6 +782,16 @@ class AccessService:
                             new_account=True)
         return scope, replace
 
+    def _record_sign_in(self, email: str, sign_in: str) -> None:
+        """Remember how the Console created this account, so a Google-only
+        account's password is shown as managed through Google. Best effort: the
+        account exists either way, and a missing marker only means the Console
+        offers a password reset it would otherwise explain away."""
+        try:
+            self.store.set_metadata(SIGN_IN_PREFIX + normalize(email), sign_in)
+        except Exception:  # noqa: BLE001
+            log.warning("account create: how the account signs in could not be recorded")
+
     def _remove_new(self, directory, created: dict) -> bool:
         try:
             directory.delete(created["id"])
@@ -772,10 +803,10 @@ class AccessService:
     def grant_existing_account(self, actor: Actor, *, email: str,
                                grants: list[tuple[str, str]],
                                request_id: str | None = None) -> dict:
-        """Give an existing chat account access: Add user's "existing account"
-        choice, "Grant access instead" after a duplicate, and the retry after a
-        partial create. Never creates an account, and never grants to an email
-        that has no account (that is `apply_access_change`'s explicit path).
+        """Give an existing chat account access: the retry after a partial
+        create, and API callers. Never creates an account, and never grants to
+        an email that has no account (that is `apply_access_change`'s explicit
+        path).
 
         The account is found here, or in the chat app when this deployment has
         not recorded it yet (then it is recorded, as an account refresh would).
@@ -832,14 +863,36 @@ class AccessService:
         return gs.identity(email) or {}
 
     def account_info(self, actor: Actor, subject: str) -> dict:
-        """The chat account behind a person, read live (organization administrators)."""
+        """A person's account, read live (organization administrators): the
+        chat-app role, both halves of the Administrator role, and how they sign
+        in (`sign_in` is "google", "password", or None when not recorded).
+        `administrator` is "admin" or "user" when both halves agree,
+        "console_only" or "chat_only" when they don't (shown, never fixed
+        implicitly), and "pending" while the account awaits approval."""
         identity = self._account_target(actor, subject)
         account = self._live_account(self.accounts(), identity)
         return dict(subject=identity["subject"], name=account.get("name"),
-                    role=account.get("role"))
+                    role=account.get("role"), sign_in=self._sign_in_of(identity["subject"]),
+                    **_role_view(self._console_admin(identity["subject"]), account.get("role")))
+
+    def _console_admin(self, subject: str) -> bool:
+        """Hubzoid administration: a direct org-wide `manage_access` grant."""
+        subject = normalize(subject)
+        return any(s == subject and p == MANAGE_ACCESS for (s, _h, p) in self.store.list_grants(ORG))
+
+    def _sign_in_of(self, subject: str) -> str | None:
+        try:
+            value = self.store.metadata(SIGN_IN_PREFIX + normalize(subject))
+        except Exception:  # noqa: BLE001 — unknown, so a reset stays offered
+            return None
+        return value if value in ("password", "google") else None
 
     def set_password(self, actor: Actor, subject: str, password: str) -> None:
         identity = self._account_target(actor, subject)
+        if self._sign_in_of(identity["subject"]) == "google":
+            raise Denied(409, "google_managed",
+                         "This user signs in with Google, so their password is managed "
+                         "through Google.")
         check_password(password)
         directory = self.accounts()
         self._live_account(directory, identity)
@@ -857,29 +910,139 @@ class AccessService:
                                    pending=False)
         self._audit(actor, "account_approve", subject=identity["subject"], hub=ORG)
 
-    def set_chat_role(self, actor: Actor, subject: str, role: str) -> None:
+    def set_role(self, actor: Actor, subject: str, role: str) -> dict:
+        """Make a person an Administrator ("admin") or a User ("user"): one
+        call that sets both halves through their own services, the chat app's
+        role (`AccountDirectory.update`) first, then Hubzoid administration
+        (an org-wide `manage_access` grant through `apply_access_change`).
+
+        Organization administrators only, never their own role. Everything
+        checkable is checked before either side changes: a pending account, a
+        blocked one being promoted, and the last administrator on either side
+        being demoted. A side already at the requested role is left alone, so a
+        retry after a partial result finishes the job. When the second side
+        fails the refusal is `role_partial` and says exactly which side is set;
+        nothing is rolled back and success is never claimed."""
         role = normalize(role)
-        if role not in ("user", "admin"):
-            raise Denied(422, "invalid_role", "The chat-app role must be user or admin.")
+        if role not in ROLES:
+            raise Denied(422, "invalid_role", "Choose User or Administrator.")
+        identity = self._account_target(actor, subject)
+        subject = identity["subject"]
+        directory = self.accounts()
+        account = self._live_account(directory, identity)
+        chat_role = account.get("role")
+        if chat_role == "pending":
+            raise Denied(409, "pending", "Approve this account first.")
+        want = role == "admin"
+        console = self._console_admin(subject)
+        chat = chat_role == "admin"
+        if console == want and chat == want:
+            return dict(subject=subject, role=role, changed=False, **_role_view(console, chat_role))
+        name = account.get("name") or subject
+        if want and not console:
+            flags = _account_flags(self.store, subject)
+            if flags["suspended"]:
+                raise Denied(409, "blocked", "This user is blocked, so they can't be made an "
+                                             "administrator. Nothing was changed.")
+            if flags["account_unavailable"]:
+                raise Denied(409, "unavailable", UNAVAILABLE_MSG)
+        if not want:
+            self._check_last_admin(directory, subject, console=console, chat=chat)
+        if chat != want:
+            from .accounts import AccountError
+
+            try:
+                directory.update(identity["owui_id"], role=role)
+            except AccountError as exc:
+                if not exc.certain:
+                    raise Denied(
+                        503, "uncertain",
+                        "The chat app didn't confirm the role change, so Console "
+                        "administration was left as it was. Reload to see their current "
+                        "role, then try again.",
+                        extra=dict(role=role, console_admin=console, chat_admin=None,
+                                   administrator=None),
+                    )
+                raise Denied(
+                    exc.status, exc.code,
+                    f"The chat app refused the role change: {exc.message} Nothing was changed.",
+                    extra=dict(role=role, **_role_view(console, chat_role)),
+                )
+            chat, chat_role = want, role
+            try:
+                self._audit(actor, "account_role", subject=subject, hub=ORG, permission=role)
+            except Exception:  # noqa: BLE001 — the change happened; the next step reports the store
+                log.warning("role change: the chat-app role audit row could not be written")
+        if console != want:
+            try:
+                self.apply_access_change(actor, subject, ORG,
+                                         [("grant" if want else "revoke", MANAGE_ACCESS)])
+            except Denied as exc:
+                reason = exc.message.rstrip(".")
+                where = (f"{name} is an administrator in the chat app but not in the Console"
+                         if want else
+                         f"{name} is a user in the chat app but still an administrator in "
+                         "the Console")
+                raise Denied(
+                    502, "role_partial",
+                    f"{where}: {reason}. Try again to finish the change.",
+                    extra=dict(role=role, retry=True, **_role_view(console, chat_role)),
+                )
+            console = want
+        return dict(subject=subject, role=role, changed=True, **_role_view(console, chat_role))
+
+    def _check_last_admin(self, directory, subject: str, *, console: bool, chat: bool) -> None:
+        """Refuse to demote or delete the last administrator on either side:
+        Hubzoid administration (the store's LastAdminError guard still runs
+        atomically on the write itself) and the chat app, whose administrators
+        are checked when the directory can list them. The Console's service
+        account is not a person and doesn't count."""
+        if console:
+            others = {s for (s, _h, p) in self.store.list_grants(ORG)
+                      if p == MANAGE_ACCESS and s not in (subject, EVERYONE)}
+            if not others:
+                raise Denied(409, "last_admin",
+                             "This is the last administrator. Make someone else an "
+                             "Administrator first.")
+        if chat:
+            others = self._other_chat_admins(directory, subject)
+            if others is not None and not others:
+                raise Denied(409, "last_admin",
+                             "This is the last administrator in the chat app. Make someone "
+                             "else an Administrator first.")
+
+    def _other_chat_admins(self, directory, subject: str) -> set[str] | None:
+        """Chat-app administrators other than `subject` and the service
+        account, or None when the directory can't list them."""
+        lister = getattr(directory, "admins", None)
+        if not callable(lister):
+            return None
+        try:
+            admins = {normalize(e) for e in lister()}
+        except Exception:  # noqa: BLE001 — "where available": the store guard still applies
+            log.warning("accounts: chat-app administrators could not be listed")
+            return None
+        from .accounts import service_account_email
+
+        return admins - {normalize(subject), service_account_email(self.hub_dir), ""}
+
+    def delete_account(self, actor: Actor, subject: str) -> None:
+        """Delete a user: every grant (`revoke_all`), then their chat account
+        through the chat app's own delete, which also removes their chats,
+        shared chat links and group memberships. Kept: the identity row (marked
+        removed, so the email inherits nothing and only an organization
+        administrator can re-create it), Activity history, usage records and
+        artifacts they saved (their public links stop working with the owner's
+        access). The last administrator on either side can't be deleted."""
         identity = self._account_target(actor, subject)
         directory = self.accounts()
         account = self._live_account(directory, identity)
-        if account.get("role") == "pending":
-            raise Denied(409, "pending", "Approve this account first.")
-        if account.get("role") == role:
-            return
-        self._directory_call(directory.update, identity["owui_id"], role=role)
-        self._audit(actor, "account_role", subject=identity["subject"], hub=ORG, permission=role)
-
-    def delete_account(self, actor: Actor, subject: str) -> None:
-        """Remove every grant, then the chat account. The last organization
-        administrator cannot be deleted."""
-        identity = self._account_target(actor, subject)
-        directory = self.accounts()
-        self._live_account(directory, identity)
+        subject = identity["subject"]
+        self._check_last_admin(directory, subject, console=self._console_admin(subject),
+                               chat=account.get("role") == "admin")
         gs = self.store
         try:
-            gs.revoke_all(identity["subject"], actor=actor.subject, surface=actor.surface)
+            gs.revoke_all(subject, actor=actor.subject, surface=actor.surface)
         except (LastAdminError, ValueError) as exc:
             raise Denied(409, "last_admin", str(exc))
         try:
@@ -889,7 +1052,11 @@ class AccessService:
             raise Denied(502, "partial",
                          "Access was removed, but the chat account could not be deleted. "
                          f"{detail} Try again.".strip())
-        gs.mark_account_removed(identity["subject"], actor=actor.subject, surface=actor.surface)
+        gs.mark_account_removed(subject, actor=actor.subject, surface=actor.surface)
+        try:
+            gs.set_metadata(DELETED_PREFIX + subject, identity["owui_id"])
+        except Exception:  # noqa: BLE001 — People would only keep listing them as unavailable
+            log.warning("account delete: the deletion marker could not be recorded")
 
     # ---- change requests --------------------------------------------------------
 
@@ -1175,6 +1342,32 @@ class AccessService:
 def _grantable(entry: dict) -> bool:
     """A catalogue entry that can be granted: current and not included."""
     return not entry.get("obsolete") and entry.get("default", "grant") != "included"
+
+
+def _role_view(console: bool, chat_role: str | None) -> dict:
+    """Both halves of the Administrator role and what they add up to."""
+    chat = chat_role == "admin"
+    if chat_role == "pending":
+        administrator = "pending"
+    elif console and chat:
+        administrator = "admin"
+    elif console:
+        administrator = "console_only"
+    elif chat:
+        administrator = "chat_only"
+    else:
+        administrator = "user"
+    return dict(console_admin=console, chat_admin=chat, administrator=administrator)
+
+
+def deleted_by_console(gs, subject: str, owui_id: str | None) -> bool:
+    """Whether the Console deleted this person's (current) chat account."""
+    if not owui_id:
+        return False
+    try:
+        return gs.metadata(DELETED_PREFIX + normalize(subject)) == owui_id
+    except Exception:  # noqa: BLE001 — unknown: keep listing them
+        return False
 
 
 def _account_flags(gs, subject: str) -> dict:

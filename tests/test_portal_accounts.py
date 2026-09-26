@@ -158,13 +158,16 @@ def test_org_admin_account_actions(api):
     assert client.get("/portal/api/accounts/bob@x.org").json()["role"] == "user"
     r = client.post("/portal/api/accounts/bob@x.org/password", json={"password": PASSWORD})
     assert r.status_code == 200 and PASSWORD not in r.text
-    assert client.post("/portal/api/accounts/bob@x.org/role", json={"role": "admin"}).status_code == 200
-    assert api.owui.users[uid]["role"] == "admin"
+    api.owui.add_user(ROOT, "Root", role="admin")  # another chat-app administrator
+    r = client.post("/portal/api/accounts/bob@x.org/role", json={"role": "admin"})
+    assert r.status_code == 200 and r.json()["administrator"] == "admin"
+    assert api.owui.users[uid]["role"] == "admin" and api.gs.can("bob@x.org", "*", "manage_access")
     assert client.post("/portal/api/accounts/bob@x.org/role", json={"role": "owner"}).status_code == 422
     r = client.request("DELETE", "/portal/api/accounts/bob@x.org", json={"confirm_email": "b@x.org"})
     assert r.status_code == 422 and uid in api.owui.users
     r = client.request("DELETE", "/portal/api/accounts/bob@x.org", json={"confirm_email": "BOB@x.org"})
     assert r.status_code == 200 and uid not in api.owui.users
+    assert not api.gs.can("bob@x.org", "*", "manage_access")
 
 
 def test_change_request_endpoints(api):
@@ -229,23 +232,12 @@ def test_me_reports_sign_in_modes(api):
         "password": True, "google": True, "google_domains": ["x.org"]}
 
 
-def test_account_search_is_scoped_like_people(api):
-    for email, name in (("ann@x.org", "Ann Lee"), ("bob@x.org", "Bob Lee"), ("cy@x.org", "Cy")):
-        api.gs.upsert_identity(email=email, owui_id=api.owui.add_user(email, name), display=name)
-    api.gs.grant("bob@x.org", "finance", "use_hub", actor="test")
-    api.gs.grant("pre@x.org", "finance", "use_hub", actor="test")  # email only: not an account
-    api.gs.grant("workflow:close", "finance", "use_hub", actor="test")
-    found = lambda client, q: [r["subject"] for r in client.get(  # noqa: E731
-        "/portal/api/accounts", params={"q": q}).json()["accounts"]]
-    assert found(api.as_(ROOT), "lee") == ["ann@x.org", "bob@x.org"]
-    assert "pre@x.org" not in found(api.as_(ROOT), "") and "workflow:close" not in found(api.as_(ROOT), "")
-    # A delegate sees accounts in their agents, and one account by its full email.
-    assert found(api.as_(DELEGATE), "lee") == ["bob@x.org"]
-    assert found(api.as_(DELEGATE), "cy") == []
-    assert found(api.as_(DELEGATE), "CY@x.org") == ["cy@x.org"]
-    row = api.as_(ROOT).get("/portal/api/accounts", params={"q": "ann"}).json()["accounts"][0]
-    assert row["display"] == "Ann Lee" and row["status"] == "active" and row["organization_admin"] is False
-    assert api.as_("nobody@x.org").get("/portal/api/accounts").status_code == 403
+def test_account_search_is_gone(api):
+    """Add user only creates new users; the existing-account picker and its
+    search endpoint were removed. Existing users are edited from People."""
+    api.gs.upsert_identity(email="ann@x.org", owui_id=api.owui.add_user("ann@x.org", "Ann"))
+    r = api.as_(ROOT).get("/portal/api/accounts", params={"q": "ann"})
+    assert r.status_code == 405
 
 
 def test_grant_to_existing_account_endpoint(api):
@@ -266,15 +258,16 @@ def test_grant_to_existing_account_endpoint(api):
     assert r.status_code == 403
 
 
-def test_duplicate_then_grant_instead(api):
+def test_duplicate_create_names_the_user_and_changes_nothing(api):
     api.owui.add_user("ann@x.org", "Ann")  # in the chat app, not yet recorded here
+    before = api.gs.revision()
     r = _create(api.as_(DELEGATE), [("finance", "ledger")])
-    assert r.status_code == 409 and r.json()["code"] == "account_exists"
-    r = api.as_(DELEGATE).post("/portal/api/accounts/grant", json=dict(
-        email="ann@x.org", grants=[dict(hub="finance", permission="ledger")]))
-    assert r.status_code == 200, r.text
-    assert api.gs.can("ann@x.org", "finance", "ledger")
-    assert api.gs.identity("ann@x.org")["owui_id"] == api.owui.by_email("ann@x.org")["id"]
+    body = r.json()
+    assert r.status_code == 409 and body["code"] == "account_exists"
+    assert body["subject"] == "ann@x.org" and "edit that user" in body["detail"]
+    assert api.gs.revision() == before and not api.gs.can("ann@x.org", "finance", "ledger")
+    assert api.gs.identity("ann@x.org") is None
+    assert not any(p.endswith("/update") for _, p, _ in api.owui.requests)
 
 
 def test_partial_create_reports_the_account_and_retry_does_not_duplicate(api, monkeypatch):

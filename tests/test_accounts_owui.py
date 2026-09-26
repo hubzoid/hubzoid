@@ -188,20 +188,30 @@ def test_org_admin_may_create_without_access(dep):
     assert not dep.gs.permissions_for("ann@x.org", "finance")
 
 
-def test_existing_account_offers_grant_instead(dep):
-    # Known locally: refused before calling the chat app.
-    dep.gs.upsert_identity(email="ann@x.org", owui_id="u-ann", display="Ann")
-    with pytest.raises(Denied) as e:
-        dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
-                               grants=[("finance", "use_hub")])
-    assert (e.value.status, e.value.code) == (409, "account_exists")
-    # Unknown locally but taken in the chat app: no grant is applied.
-    dep.owui.add_user("bob@x.org", "Bob")
-    with pytest.raises(Denied) as e:
-        dep.svc.create_account(actor(ROOT), email="bob@x.org", name="Bob", password=PASSWORD,
-                               grants=[("finance", "ledger")])
-    assert e.value.code == "account_exists"
+def test_duplicate_email_is_refused_with_no_side_effects(dep):
+    """Add user only creates. A duplicate says the user exists and names them,
+    and nothing about their account, password or access changes."""
+    ann = dep.owui.add_user("ann@x.org", "Ann")
+    dep.gs.upsert_identity(email="ann@x.org", owui_id=ann, display="Ann")
+    dep.owui.add_user("bob@x.org", "Bob")  # in the chat app, not recorded here
+    before = (dep.gs.revision(), _everything_stored(dep), json.dumps(dep.owui.users, sort_keys=True))
+    for who, email in ((ROOT, "ann@x.org"), (ROOT, "bob@x.org"), (DELEGATE, "bob@x.org")):
+        dep.owui.requests.clear()
+        with pytest.raises(Denied) as e:
+            dep.svc.create_account(actor(who), email=email.upper(), name="X", password=PASSWORD,
+                                   grants=[("finance", "ledger")])
+        assert (e.value.status, e.value.code) == (409, "account_exists")
+        assert "already exists" in e.value.message and "Nothing was changed" in e.value.message
+        assert e.value.extra == {"subject": email}
+        # At most the refused create; never an update, a delete or a password change.
+        # (Signing in or checking the service token is a read, not a change.)
+        assert [(m, p) for m, p, _ in dep.owui.requests
+                if p not in ("/api/v1/auths/signin", "/api/v1/auths/")] in (
+            [], [("POST", "/api/v1/auths/add")])
+    assert (dep.gs.revision(), _everything_stored(dep),
+            json.dumps(dep.owui.users, sort_keys=True)) == before
     assert not dep.gs.can("bob@x.org", "finance", "ledger")
+    assert dep.gs.identity("bob@x.org") is None
 
 
 def _adds(dep, email):
@@ -538,20 +548,21 @@ def test_account_actions_refuse_self_service_account_and_stale_links(dep):
 
 def test_approve_and_role(dep):
     uid = _bound(dep, role="pending")
-    with pytest.raises(Denied):
-        dep.svc.set_chat_role(actor(ROOT), "ann@x.org", "admin")  # approve first
+    with pytest.raises(Denied) as e:
+        dep.svc.set_role(actor(ROOT), "ann@x.org", "admin")  # approve first
+    assert e.value.code == "pending" and dep.owui.users[uid]["role"] == "pending"
     dep.svc.approve_account(actor(ROOT), "ann@x.org")
     assert dep.owui.users[uid]["role"] == "user"
     assert not dep.gs.is_suspended("ann@x.org")
     with pytest.raises(Denied) as e:
         dep.svc.approve_account(actor(ROOT), "ann@x.org")
     assert e.value.code == "not_pending"
-    dep.svc.set_chat_role(actor(ROOT), "ann@x.org", "admin")
-    assert dep.owui.users[uid]["role"] == "admin"
+    dep.svc.set_role(actor(ROOT), "ann@x.org", "admin")
+    assert dep.owui.users[uid]["role"] == "admin" and dep.gs.can("ann@x.org", "*", "manage_access")
     with pytest.raises(Denied):
-        dep.svc.set_chat_role(actor(ROOT), "ann@x.org", "pending")
+        dep.svc.set_role(actor(ROOT), "ann@x.org", "pending")
     with pytest.raises(Denied):
-        dep.svc.set_chat_role(actor(DELEGATE), "ann@x.org", "user")
+        dep.svc.set_role(actor(DELEGATE), "ann@x.org", "user")
 
 
 def test_delete_revokes_then_deletes(dep):
