@@ -20,6 +20,11 @@ Security note: a connect link is personal — it is minted for the requesting
 user's identity, and whoever opens it vaults THEIR service account under that
 identity. Links surface in the requester's own chat, which is why that is safe;
 never re-post one into a shared channel.
+
+With ``HUBZOID_CONNECT_JOURNEY`` on, the raw broker link is never shown. The
+user gets a Hubzoid connection page bound to their signed-in session instead
+(``hubzoid.connect_journey``), and a credential also needs the connector
+capability (managed hubs) and a surface allowed to carry personal credentials.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ import functools
 import inspect
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
 from .access import current_identity, normalize
@@ -137,6 +143,9 @@ class Connections:
         self._client_factory = client_factory
         self._allowed = frozenset(a for a in (normalize(x) for x in allowed) if a)
         self._now = now or time.monotonic
+        # Set by `attach` when HUBZOID_CONNECT_JOURNEY is on: the connector
+        # capability gate plus a bound journey link instead of a raw broker link.
+        self.journey = None
         # (user, app) -> (credential, expiry) and -> (link, expiry). Reused for
         # a short TTL so one agent turn's repeated tool calls don't re-hit the
         # broker for a value that cannot have changed.
@@ -148,11 +157,30 @@ class Connections:
         """True when the hub sanctioned at least one app (the feature is on)."""
         return bool(self._allowed)
 
+    @property
+    def allowed(self) -> frozenset[str]:
+        """The sanctioned app slugs."""
+        return self._allowed
+
+    def broker(self) -> Broker | None:
+        """The broker (built on first use), or None when unconfigured."""
+        return self._broker()
+
     def _broker(self) -> Broker | None:
         """The broker, materialising a lazily-configured one on first use."""
         if self._client is None and self._client_factory is not None:
             self._client = self._client_factory()
         return self._client
+
+    def _journey_gate(self, key: str) -> None:
+        """With connection journeys on, a credential needs the connector
+        capability (managed hubs) and a surface allowed to carry personal
+        credentials (all hubs). Raises ConnectionUnavailable otherwise."""
+        if self.journey is None:
+            return
+        ok, reason = self.journey.permitted(key)
+        if not ok:
+            raise ConnectionUnavailable(key, reason)
 
     def require(self, app: str) -> dict:
         """Return the current user's credential for ``app``.
@@ -174,6 +202,7 @@ class Connections:
         ident = current_identity()
         if ident.is_anonymous:
             raise ConnectionUnavailable(key, "anonymous")
+        self._journey_gate(key)
         # One canonical user key across surfaces (OWUI 'alice@x', Slack
         # 'Alice@X') so a connection made on one surface is found on the others.
         user = normalize(ident.user)
@@ -213,6 +242,7 @@ class Connections:
         ident = current_identity()
         if ident.is_anonymous:
             raise ConnectionUnavailable(key, "anonymous")
+        self._journey_gate(key)
         user = normalize(ident.user)
         if not broker.is_connected(user=user, app=key):
             raise self._needs_connection(broker, user, key, self._now())
@@ -225,7 +255,12 @@ class Connections:
         pending = self._link_cache.get((user, key))
         if pending is not None and pending[1] > now:
             return NeedsConnection(key, pending[0])
-        link = broker.connect_link(user=user, app=key)
+        if self.journey is not None:
+            # A personal link bound to this person's signed-in session, never
+            # the raw broker link (see hubzoid.connect_journey).
+            link = self.journey.link(key)
+        else:
+            link = broker.connect_link(user=user, app=key)
         self._link_cache[(user, key)] = (link, now + _CACHE_TTL_SECONDS)
         return NeedsConnection(key, link)
 
@@ -464,6 +499,45 @@ class ComposioBroker:
         data = _field(resp, "data")
         return dict(data) if isinstance(data, dict) else (data if data is not None else {})
 
+    # ---- connection journey (hubzoid.connect_journey) -----------------------
+    def create_link(self, *, user: str, app: str, callback_url: str) -> dict:
+        """A hosted Connect Link that returns the browser to ``callback_url``.
+
+        Returns ``{"redirect_url", "account_id"}``: the account id is the
+        connected account this link creates, which the journey later verifies.
+        """
+        acid = self._auth_config_id(app)
+        req = self._client.client.link.create(
+            auth_config_id=acid, user_id=user, callback_url=callback_url)
+        link = _field(req, "redirect_url")
+        if not link:
+            raise ConnectionUnavailable(app, "no-connect-link")
+        return {"redirect_url": link, "account_id": _field(req, "connected_account_id")}
+
+    def account(self, account_id: str) -> dict | None:
+        """``{"id", "status", "user_id", "toolkit"}`` for one connected account
+        (never its credential), or None when Composio does not know it."""
+        if not account_id:
+            return None
+        detail = self._client.connected_accounts.get(account_id)
+        if detail is None:
+            return None
+        return {
+            "id": _field(detail, "id") or account_id,
+            "status": str(_field(detail, "status") or "").upper(),
+            "user_id": _field(detail, "user_id"),
+            "toolkit": normalize(_field(_field(detail, "toolkit"), "slug") or ""),
+        }
+
+    def active_account_ids(self, *, user: str, app: str) -> list[str]:
+        resp = self._client.connected_accounts.list(
+            user_ids=[user], toolkit_slugs=[app], statuses=["ACTIVE"],
+        )
+        return [i for i in (_field(it, "id") for it in (_field(resp, "items") or [])) if i]
+
+    def delete_account(self, account_id: str) -> None:
+        self._client.connected_accounts.delete(account_id)
+
 
 def build(settings, *, broker: Broker | None = None) -> Connections:
     """Assemble a :class:`Connections` from a hub's settings.
@@ -504,8 +578,14 @@ def attach(ctx, *, broker: Broker | None = None) -> Connections:
     so it is a no-op for hubs that don't use the feature.
     """
     conns = build(ctx.settings, broker=broker)
+    hub_dir = getattr(ctx, "hub_dir", None)
+    if hub_dir is not None:
+        from . import connect_journey
+
+        if connect_journey.enabled():
+            conns.journey = connect_journey.ConnectionsHook(hub_dir)
     ctx.connections = conns
-    set_gate(conns)
+    set_gate(conns, hub=Path(hub_dir).name if hub_dir is not None else None)
     return conns
 
 
@@ -519,12 +599,23 @@ def attach(ctx, *, broker: Broker | None = None) -> Connections:
 # ---------------------------------------------------------------------------
 _INACTIVE = Connections(client=None, allowed=())
 _GATE: Connections = _INACTIVE
+_GATE_HUB: str | None = None
 
 
-def set_gate(conns: Connections) -> None:
-    """Record the hub's gate so the module-level :func:`require` can reach it."""
-    global _GATE
+def set_gate(conns: Connections, *, hub: str | None = None) -> None:
+    """Record the hub's gate so the module-level :func:`require` can reach it.
+    ``hub`` names the hub it belongs to (see :func:`gate_for`)."""
+    global _GATE, _GATE_HUB
     _GATE = conns
+    _GATE_HUB = normalize(hub) if hub else None
+
+
+def gate_for(hub: str) -> Connections | None:
+    """This process's gate when it belongs to ``hub``, else None. A bridge
+    serving another hub's connection page must not use its own Composio key."""
+    if _GATE_HUB and _GATE_HUB == normalize(hub) and _GATE.active:
+        return _GATE
+    return None
 
 
 def require(app: str) -> dict:
