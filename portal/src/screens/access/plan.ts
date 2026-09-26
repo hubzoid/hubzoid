@@ -8,7 +8,7 @@ import { EVERYONE, MANAGE_ACCESS, USE_HUB } from "../../lib/format";
  * Backend rules this mirrors (hubzoid/access/store.py, hubzoid/portal.py):
  *  - granting any capability auto-grants `use_hub`;
  *  - revoking `use_hub` cascades and removes every direct grant in the agent;
- *  - one permission per request — a save with several changes is not atomic.
+ *  - the staged operations are saved together in one atomic request.
  */
 export type Operation = { action: "grant" | "revoke"; permission: string };
 

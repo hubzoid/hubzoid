@@ -74,10 +74,11 @@ the published version instead.
 
 - **No reply:** verify the CLI login or provider key and model in `.env`.
 - **No agent available:** sign in with the intended account. An administrator
-  grants **Use this agent**, or a tool capability which implies entry.
-  **Manage access** alone does not allow chat.
+  grants **Use this agent**, or an agent capability which implies entry.
+  Organization-wide admin rights alone do not grant chat.
 - **Console forbidden:** use the owner's account, or ask that owner for
-  **Manage access**. Console access and chat access are separate.
+  **Manage access**. A direct agent grant includes basic chat; organization-wide
+  admin rights alone do not grant chat or restricted tools.
 - **Connection unavailable:** verify the bridge process and logs. Restart after
   changing bridge credentials so the chat app receives current wiring.
 - **Configuration issue:** `hubzoid doctor my-hub` reports loader and setup errors.

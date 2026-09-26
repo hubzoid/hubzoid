@@ -1,16 +1,18 @@
 # Hubzoid admin portal. Apache-2.0 licensed like the rest of the repository.
 """The admin portal: a read-mostly JSON API + a static React SPA.
 
-Five screens (Overview, Workflows, Access, Permissions, Audit), **view-only
-except Access**, surfacing only what the access store, DBOS, and the audit log
-already hold. Served by the bridge's FastAPI at `/portal`; the JSON API is under
+Agents, per-agent access/runs/activity, and deployment people/activity views.
+Access and account-policy changes are authorized server-side; workflow views
+inspect the state already held by the access store, DBOS and the audit log.
+Served by the bridge's FastAPI at `/portal`; the JSON API is under
 `/portal/api`.
 
 Auth is the same OWUI/OIDC session as chat, resolved by an injected
 `admin_resolver(request) -> PortalAdmin | None`. The production resolver
 validates the OWUI session server-side and strips any inbound identity header
 (so a browser can't assert its own identity); a dev resolver keys off an env
-var. Either way, entry is gated by `can(subject, *, manage_access)`.
+var. Entry requires organization-wide or per-hub `manage_access`; a chat-app admin
+role alone does not grant Console access.
 """
 
 from __future__ import annotations

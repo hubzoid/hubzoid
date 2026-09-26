@@ -32,6 +32,15 @@ def test_grant_implies_use_hub(store):
     assert not store.can("alice", "ops", USE_HUB)
 
 
+def test_direct_agent_admin_includes_entry_but_not_restricted_tools(store):
+    store.grant("alice", "finance", MANAGE_ACCESS)
+    assert store.can("alice", "finance", MANAGE_ACCESS)
+    assert store.can("alice", "finance", USE_HUB)
+    assert not store.can("alice", "finance", "read_reports")
+    assert not store.can("alice", "ops", MANAGE_ACCESS)
+    assert not store.can("alice", "ops", USE_HUB)
+
+
 def test_revoke_tool_keeps_use_hub(store):
     store.grant("alice", "finance", "prod_in")
     store.revoke("alice", "finance", "prod_in")
@@ -61,7 +70,8 @@ def test_org_admin_spans_all_hubs(store):
     assert store.can("root", "finance", MANAGE_ACCESS)
     assert store.can("root", "ops", MANAGE_ACCESS)
     assert store.can("root", "any-new-hub", MANAGE_ACCESS)
-    # but only manage_access, not arbitrary tool perms
+    # Organization-wide administration does not imply hub entry or tools.
+    assert not store.can("root", "finance", USE_HUB)
     assert not store.can("root", "finance", "prod_in")
 
 

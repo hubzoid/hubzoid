@@ -428,10 +428,20 @@ def test_running_runs_sees_a_live_scheduled_run(tmp_path):
 
     hub = _hub(tmp_path)
     (hub / "schedule" / "slow.md").write_text('---\nschedule: "0 4 * * *"\nrun: "sleep 60"\n---\n\nx\n')
-    proc = subprocess.Popen([sys.executable, "-c", _SLOW, str(hub)], stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, env=dict(os.environ))
+    # Startup diagnostics can fill an unread stderr pipe before QUEUED is
+    # emitted. Use a file and a bounded readiness wait so failures cannot hang CI.
+    log_path = tmp_path / "worker.log"
+    worker_log = log_path.open("w")
+    proc = subprocess.Popen([sys.executable, "-c", _SLOW, str(hub)], stdout=worker_log,
+                            stderr=subprocess.STDOUT, text=True, env=dict(os.environ))
+    worker_log.close()
     try:
-        assert proc.stdout.readline().startswith("QUEUED")
+        deadline = time.monotonic() + 45
+        while "QUEUED" not in log_path.read_text() and time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        assert "QUEUED" in log_path.read_text(), log_path.read_text()
         p = bk.plan(hub)
         deadline = time.time() + 30
         busy = bk.running_runs(p)

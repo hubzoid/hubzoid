@@ -145,7 +145,7 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
                 label=m.get("label", labels.get(name, name.replace("_", " ").title())),
                 description=m.get("description", {
                     "use_hub": "Chat with this agent and use its unrestricted tools.",
-                    "manage_access": "Review and change permissions. Does not grant chat or restricted tools.",
+                    "manage_access": "Review and change permissions. A direct grant includes basic chat, but not restricted tools.",
                     "curator": "Use remember to create or replace learned knowledge shared by this agent.",
                 }.get(name, "Use the restricted tools assigned to this capability.")),
                 sensitive=bool(m.get("sensitive", False)),

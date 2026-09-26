@@ -15,18 +15,30 @@ The capability picker shows names and compact Inherited, Required or Locked
 labels. Question-mark buttons expose descriptions and restriction details on
 hover, keyboard focus or tap. Review and confirm before changes are saved.
 
-## Three independent permissions
+## Agent capabilities
 
 | Capability | What it allows |
 |---|---|
 | Use this agent (`use_hub`) | Enter the hub through supported authenticated surfaces and use unrestricted tools |
 | A restricted module, such as `erp` | Call that module's tools; agent entry is included |
-| Manage access (`manage_access`) | Review/change access; this alone does not grant chat or restricted tools |
+| Manage access (`manage_access`) | Review/change access; a direct agent grant includes basic chat, but not restricted tools. Organization-wide admin rights alone do not grant chat |
 
 An organization administrator manages access across the deployment. That is not
 a blanket grant to use every agent or every restricted tool. People with no entry
 permission do not see a managed hub in the chat picker, including chat-app admins.
 The bridge checks access again at execution.
+
+## Who can open the Admin Console
+
+| Account access | Console visibility |
+|---|---|
+| Organization-wide `manage_access` | All registered agents and organization administration |
+| `manage_access` on specific agents | Only those agents; cannot change administrator rights or public access |
+| Chat or restricted-tool access only | No Console access |
+| Open WebUI admin role only | No automatic Console access; the designated first owner is bootstrapped as described below |
+
+The chat sidebar link follows these permissions. Opening `/portal/` directly does
+not bypass them: its API verifies the signed-in account and administrator scope.
 
 ## First owner
 

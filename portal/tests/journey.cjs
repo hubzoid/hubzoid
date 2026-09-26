@@ -8,7 +8,8 @@ const path = require("node:path");
 const { createFixture } = require("./fixture.cjs");
 
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
-const shots = process.env.PORTAL_SHOTS || "/private/tmp";
+const shots = process.env.PORTAL_SHOTS || path.join(require("node:os").tmpdir(), "hubzoid-console-tests");
+fs.mkdirSync(shots, { recursive: true });
 const ORIGIN = "http://hubzoid.test";
 const PRIYA = "priya.natarajan@example.org";
 
