@@ -85,10 +85,16 @@ estimated cost appear on the Console's **Agents** dashboard.
 
 ## Who a workflow acts as
 
-A code workflow acts as `workflow:<name>` and a markdown task as
-`workflow:md:<task>`. Grant these identities the permissions their restricted
-tools need, in the Console, like a person. Without a grant, restricted tools
-are refused and the refusal is in the access log.
+Every run acts as an ordinary account: `@workflow(run_as="priya@company.com")`
+(or `run_as:` in a markdown task), else `HUBZOID_WORKFLOW_USER`, else the owner
+recorded at setup. That account's grants decide what the run may do, and its
+`hub.state`, reports, email and connections are that person's. A missing or
+unusable account fails the run with the fix; there is no fallback. See
+[workflow-identity.md](workflow-identity.md).
+
+To hand results to that person, publish a file and email a link:
+`hub.publish_artifact(path, title=...)` and `hub.send_email(subject, body,
+artifacts=[...])`. See [reports-and-email.md](reports-and-email.md).
 
 ## When runs happen
 

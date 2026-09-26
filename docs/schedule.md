@@ -48,6 +48,10 @@ push: true                    # pull --rebase + push after the commit (optional)
 # write: ["knowledge/"]       # writable but NOT auto-committed — use instead of
                               # commit: while testing, then review the diff by hand
 enabled: true                 # default true
+# run_as: priya@company.com   # the account the run acts as (default:
+                              # HUBZOID_WORKFLOW_USER, then the setup owner)
+# publish_artifacts: true     # offer publish_artifact (a private report for that account)
+# send_email: true            # offer send_email (to that account only)
 ---
 
 Keep the docs in knowledge/ in step with the source repos under raw_data/.
@@ -71,6 +75,13 @@ YAML; every task needs exactly one **trigger** — `schedule:` (a cron) or
 day-of-month, month, day-of-week with 0=Sunday), evaluated in the server's
 local time. Tip: pick an off-minute (`7 3` not `0 3`) — it makes log
 correlation easier and avoids colliding with other on-the-hour jobs.
+
+Each run acts as an ordinary account (`run_as:`, else `HUBZOID_WORKFLOW_USER`,
+else the owner recorded at setup) and uses that account's permissions and its
+own scratch folder: see [workflow-identity.md](workflow-identity.md). With
+`publish_artifacts: true` / `send_email: true` the agent can publish a report
+for that person and email them a link:
+see [reports-and-email.md](reports-and-email.md).
 
 ## Event-triggered tasks — `on_webhook:`
 
@@ -155,6 +166,8 @@ these):
 |---|---|
 | `run_git(repo, args)` | Read/sync git on checkouts inside the hub: `pull`, `fetch`, `log`, `diff`, `show`, `status`, `rev-parse`, `ls-files`, `branch`, `shortlog`, `describe`, read-only `remote`. Mutating verbs are refused. |
 | `write_hub_file(path, content)` | Create/overwrite a file, but only under the task's `write:` + `commit:` paths + its own scratch dir. `.env`, secrets, `raw_data/` clones, `AGENTS.md` are physically unreachable. |
+| `publish_artifact(path, title)` | Only with `publish_artifacts: true`. Publish a file under the writable paths as a private report owned by the account the run acts as. |
+| `send_email(subject, body, artifact_ids)` | Only with `send_email: true`. Email the account the run acts as (no other recipient), at most 5 per run. |
 | the usual read tools | `read_file`, `list_files`, `grep_data`, knowledge/skill tools — whatever the hub already has. |
 
 Need something deterministic or bespoke (call an API, run a build)? Add a

@@ -222,6 +222,12 @@ class ScheduledTask:
     run: list[str] | None = None                # plain-cron command; None = LLM task
     run_shell: bool = False                      # run[0] is a shell command line, not argv
     source_path: Path | None = None
+    run_as: str | None = None                   # account email the run acts as
+    publish_artifacts: bool = False              # offer the publish_artifact tool
+    send_email: bool = False                     # offer the send_email tool (to the run's account)
+    state_rel: str | None = None                 # per-person scratch, set per run
+    run_identity: dict | None = None             # RunIdentity.to_dict(), set per run
+    run_id: str | None = None                    # the DBOS run id, set per run
 
     @property
     def is_script(self) -> bool:
@@ -235,8 +241,10 @@ class ScheduledTask:
 
     @property
     def scratch_rel(self) -> str:
-        """Hub-relative scratch dir the task may always write (state, notes)."""
-        return f"{STATE_DIRNAME}/schedule/{self.name}"
+        """Hub-relative scratch dir the task may always write (state, notes).
+        Per person: a run acting as someone other than the folder's first user
+        gets its own (`workflows.identity.markdown_scratch`)."""
+        return self.state_rel or f"{STATE_DIRNAME}/schedule/{self.name}"
 
     def writable_paths(self) -> list[str]:
         """Hub-relative paths the run may modify.
@@ -322,6 +330,24 @@ def _parse_task(path: Path) -> ScheduledTask:
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError("`model:` must be a non-empty string (e.g. claude-local/opus)")
 
+    run_as = fm.get("run_as")
+    if run_as is not None:
+        from .workflows.identity import validate_run_as
+
+        run_as = validate_run_as(run_as)
+
+    def _flag(key: str) -> bool:
+        v = fm.get(key, False)
+        if not isinstance(v, bool):
+            raise ValueError(f"`{key}:` must be true or false")
+        return v
+
+    publish_artifacts = _flag("publish_artifacts")
+    send_email = _flag("send_email")
+    if (publish_artifacts or send_email) and run is not None:
+        raise ValueError("`publish_artifacts:`/`send_email:` offer tools to the agent; a `run:` "
+                         "script task has no agent (a script uses the Python workflow API)")
+
     return ScheduledTask(
         name=name,
         schedule=str(raw_schedule).strip(),
@@ -339,6 +365,9 @@ def _parse_task(path: Path) -> ScheduledTask:
         run=run,
         run_shell=run_shell,
         source_path=path,
+        run_as=run_as,
+        publish_artifacts=publish_artifacts,
+        send_email=send_email,
     )
 
 

@@ -17,7 +17,8 @@ from hubzoid.migrations import SchemaError
 
 OPERATIONAL = {"hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
                "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
-               "hz_access_decisions", "hz_change_requests", "hz_connect_states"}
+               "hz_access_decisions", "hz_change_requests", "hz_connect_states",
+               "hz_artifacts", "hz_artifact_shares", "hz_artifact_links", "hz_email_deliveries"}
 
 
 @pytest.fixture(autouse=True)
@@ -167,3 +168,31 @@ def test_access_audit_gains_surface_and_request_id(tmp_path):
     migrations.upgrade(eng, "operational")
     cols = {c["name"] for c in inspect(eng).get_columns("hz_access_audit")}
     assert {"surface", "request_id"} <= cols
+
+
+def test_workflow_state_keeps_its_rows_when_owner_joins_the_key(tmp_path):
+    """op_0005 rebuilds hz_workflow_kv with an owner column; rows written before
+    stay, with owner '' (adopted later by the first person to run the workflow)."""
+    from alembic.runtime.environment import EnvironmentContext
+
+    eng = _sqlite(tmp_path)
+    cfg, script = migrations._script("operational")
+
+    def to_0004(rev, context):
+        return script._upgrade_revs("op_0004", rev)
+
+    with EnvironmentContext(cfg, script, fn=to_0004, destination_rev="op_0004") as env:
+        with eng.connect() as conn:
+            env.configure(connection=conn, version_table=migrations.STORES["operational"])
+            with env.begin_transaction():
+                env.run_migrations()
+            conn.commit()
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO hz_workflow_kv (hub, workflow, k, v) "
+                       "VALUES ('sales', 'digest', 'cursor', '41')"))
+    migrations.upgrade(eng, "operational")
+    with eng.connect() as c:
+        rows = c.execute(text("SELECT hub, workflow, owner, k, v FROM hz_workflow_kv")).fetchall()
+    assert [tuple(r) for r in rows] == [("sales", "digest", "", "cursor", "41")]
+    pk = inspect(eng).get_pk_constraint("hz_workflow_kv")["constrained_columns"]
+    assert pk == ["hub", "workflow", "owner", "k"]

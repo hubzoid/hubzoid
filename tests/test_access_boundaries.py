@@ -187,16 +187,18 @@ class _Runtime:
 def test_a_grant_revoked_mid_run_stops_the_next_call(gateway, tmp_path):
     alpha, _ = gateway
     (alpha / "schedule").mkdir()
+    # Scheduled runs act as an ordinary account (workflows/identity.py).
     (alpha / "schedule" / "nightly.md").write_text(
-        '---\nschedule: "0 3 * * *"\nmax_rounds: 2\n---\n\nRead the ledger.\n')
+        '---\nschedule: "0 3 * * *"\nmax_rounds: 2\nrun_as: ops@example.org\n---\n\n'
+        'Read the ledger.\n')
     from hubzoid import schedule_runner
     from hubzoid import scheduling as sch
     from hubzoid.access.store import GrantStore
     from hubzoid.db import operational_url
     from sqlalchemy import create_engine
 
-    subject = schedule_runner.service_subject("nightly")
-    assert subject == "workflow:md:nightly"
+    subject = "ops@example.org"
+    access.store_for(alpha).upsert_identity(email=subject, owui_id="acct-ops")
     access.store_for(alpha).grant(subject, "alpha", "ledger", actor="test")
     # The Console revokes from another process: a separate engine on the same DB.
     console = GrantStore(create_engine(operational_url(alpha)))

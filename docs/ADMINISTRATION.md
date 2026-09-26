@@ -149,7 +149,9 @@ keys stop working with the account. Open WebUI keeps its stored connection token
 for a deleted account in its database. The final organization administrator
 cannot be removed, blocked or deleted.
 
-Workflow subjects are `workflow:<function_name>` and are granted in a named hub.
+Scheduled workflows run as ordinary accounts ([workflow-identity.md](workflow-identity.md)),
+granted like anyone else. Older `workflow:<function_name>` subjects are kept but
+no longer used by runs.
 Permission definitions come from `restricted/*.py`; optional display metadata
 lives in `identity/permissions.yaml`:
 
@@ -440,8 +442,10 @@ idempotency and code changes. For operators:
   (`HUBZOID_DISABLE_SCHEDULE=1` turns them off).
 - Manual dry runs do not import workflow code or start DBOS. Workflow runs
   reject the markdown-only `--timeout`, `--max-rounds` and `--model` options.
-- Each workflow and task acts as its own service identity (`workflow:<name>`,
-  `workflow:md:<task>`). Grant it the tool permissions it needs.
+- Each workflow and task acts as an ordinary account: `run_as`, else
+  `HUBZOID_WORKFLOW_USER`, else the setup owner. `hubzoid schedule list` shows
+  which. Grant that account the tool permissions it needs
+  ([workflow-identity.md](workflow-identity.md)).
 - An agent's **Runs & schedules** tab lists every
   run with its steps, result and error. They are read only. Run, pause, resume
   and cancel with `hubzoid schedule` on the server.

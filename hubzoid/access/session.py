@@ -42,6 +42,20 @@ def require_same_origin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="cross-origin request refused")
 
 
+LOCAL_OWNER = "admin@localhost"
+
+
+def configured_owner(hub_dir: Path) -> str:
+    """The deployment's configured initial owner: the one account Hubzoid
+    provisions on its first verified sign-in. Local quickstart (authentication
+    off, no deployment) has exactly one account, `admin@localhost`."""
+    owner = (os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
+             or os.environ.get("WEBUI_ADMIN_EMAIL") or "").strip().lower()
+    if not _truthy_env("WEBUI_AUTH") and not deployment.read(hub_dir):
+        owner = LOCAL_OWNER
+    return owner
+
+
 def verified_email(request: Request, hub_dir: Path | None = None) -> str:
     """Validate the viewer's OWUI session cookie server-side and return the
     verified email, or '' — never trusting a client-sent identity header."""
@@ -76,10 +90,7 @@ def verified_email(request: Request, hub_dir: Path | None = None) -> str:
                 )
                 # Authentication remains in OWUI. Only the configured owner is
                 # provisioned, once; an arbitrary admin/member cannot self-promote.
-                owner = (os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL")
-                         or os.environ.get("WEBUI_ADMIN_EMAIL") or "").strip().lower()
-                if not _truthy_env("WEBUI_AUTH") and not deployment.read(hub_dir):
-                    owner = "admin@localhost"
+                owner = configured_owner(hub_dir)
                 if user.get("role") == "admin" and email == owner:
                     for h in deployment.hubs(hub_dir):
                         path = Path(h["path"])

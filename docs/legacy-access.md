@@ -116,11 +116,13 @@ Slack and Telegram do not, so they get the non-restricted tools only, and a
 restricted door is never reachable from them. The Slack adapter declares
 `X-Hubzoid-Surface: slack` so this is enforced, not assumed.
 
-Scheduled runs act as a service identity on the `workflow` surface. A Markdown
-task runs as `workflow:md:<task>` and a Python workflow as `workflow:<function>`.
-That identity belongs to no Open WebUI group, so in legacy mode it is refused
-every restricted tool by the same fail-closed default. Only managed access can
-grant a workflow identity a restricted tool. See
+Scheduled runs act as an ordinary account on the `workflow` surface
+([workflow-identity.md](workflow-identity.md)). In legacy mode that account
+carries no Open WebUI groups in a scheduled run, so it is refused every
+restricted tool by the same fail-closed default, as before. A legacy hub with no
+account configured keeps its old service identity (`workflow:md:<task>`,
+`workflow:<function>`), with a warning. Only managed access can grant a
+scheduled run a restricted tool. See
 [access-management.md](access-management.md).
 
 To change which surfaces may reach restricted tools, set

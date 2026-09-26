@@ -53,9 +53,11 @@ class WorkflowDef:
     schedule: str | None
     timezone: str | None
     on_failure: str | None
+    run_as: str | None = None
 
 
 _REGISTRY: "dict[str, WorkflowDef]" = {}
+_IDENTITY_STEP = None  # the checkpointed "who does this run act as" step
 
 
 def _app_name(hub_name: str) -> str:
@@ -191,17 +193,46 @@ def _load_settings() -> dict:
         raise
 
 
+def _identity_step():
+    """The checkpointed step that decides who a run acts as. Its output is the
+    run's identity for good: recovery and retries replay it instead of reading
+    configuration again, so a run never switches person midway."""
+    global _IDENTITY_STEP
+    if _IDENTITY_STEP is None:
+
+        @_DBOS.step(name="hz_run_identity")
+        def resolve_identity(hub_dir_str: str, hub: str, run_as: str | None,
+                             legacy_subject: str, what: str) -> dict:
+            from .identity import resolve
+
+            ident = resolve(Path(hub_dir_str), hub=hub, run_as=run_as,
+                            legacy_subject=legacy_subject, what=what)
+            return ident.to_dict()
+
+        _IDENTITY_STEP = resolve_identity
+    return _IDENTITY_STEP
+
+
 def workflow(
     schedule: str | None = None,
     *,
     timezone: str | None = None,
     on_failure: str | None = None,
+    run_as: str | None = None,
 ):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
     per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob;
-    agent calls retry only with `agent_max_attempts` in workflows/settings.yaml."""
+    agent calls retry only with `agent_max_attempts` in workflows/settings.yaml.
+
+    `run_as` names the account the run acts as (see `workflows.identity`);
+    without it, the hub or deployment HUBZOID_WORKFLOW_USER, then the setup
+    default. It selects an identity and grants nothing."""
     _require_init()
+    if run_as is not None:
+        from .identity import validate_run_as
+
+        run_as = validate_run_as(run_as)
 
     def deco(fn: Callable):
         name = fn.__name__
@@ -211,17 +242,25 @@ def workflow(
             from .schedule_grammar import next_after
 
             next_after(schedule, timezone, datetime.now(utc_timezone.utc))
+        identity_step = _identity_step()
 
         @_DBOS.workflow(name=name)
         def wrapped(hub_name: str | None = None):
             hub_name = hub_name or _HUB_NAME
+            identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
+                                     f"workflow:{name}", f"Workflow {name!r}")
+            if identity.get("source") != "legacy-service":
+                from .state import adopt_legacy
+
+                adopt_legacy(_ENGINE, hub_name, name, identity["subject"])
             with context.run_scope(
                 hub=hub_name,
                 workflow=name,
                 hub_dir=_HUB_DIR,
                 engine=_ENGINE,
                 settings=_load_settings(),
-                subject=f"workflow:{name}",
+                identity=identity,
+                run_id=_DBOS.workflow_id or "",
             ):
                 try:
                     return fn()
@@ -239,6 +278,7 @@ def workflow(
             schedule=schedule,
             timezone=timezone,
             on_failure=on_failure,
+            run_as=run_as,
         )
         log.info("workflows: registered %r (schedule=%r)", name, schedule)
         return wrapped
@@ -343,12 +383,46 @@ def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
         log.exception("workflows: on_failure notify failed for %r", workflow_name)
 
 
+def _step_key() -> str | None:
+    """A key unique to the running step of the running workflow, stable across
+    recovery (DBOS re-runs an interrupted step with the same id)."""
+    wid, sid = _DBOS.workflow_id, _DBOS.step_id
+    return f"{wid}:{sid}" if wid and sid is not None else None
+
+
+def _wrap_delivery_steps() -> None:
+    """`hub.publish_artifact` and `hub.send_email` as checkpointed steps. A
+    completed step is replayed from its checkpoint; one interrupted mid-way is
+    re-run with the same key, which returns the artifact or delivery already
+    recorded (and never resends an ambiguous email). No DBOS-level retry: the
+    email sender retries only what cannot have been delivered."""
+    if context._PUBLISH_STEP is None:
+
+        @_DBOS.step(name="hz_publish_artifact")
+        def _publish_step(hub_dir: str, hub: str, identity: dict, workflow: str,
+                          run_id: str, request: dict) -> dict:
+            return context.publish_now(hub_dir, hub, identity, workflow, run_id, request,
+                                       idem_key=_step_key())
+
+        context._PUBLISH_STEP = _publish_step
+    if context._EMAIL_STEP is None:
+
+        @_DBOS.step(name="hz_send_email")
+        def _email_step(hub_dir: str, hub: str, identity: dict, workflow: str,
+                        run_id: str, request: dict) -> dict:
+            return context.email_now(hub_dir, hub, identity, workflow, run_id, request,
+                                     idem_key=_step_key())
+
+        context._EMAIL_STEP = _email_step
+
+
 def launch() -> None:
     global _LAUNCHED
     if _LAUNCHED:
         return
     global _QUEUE, _MD_QUEUE
     _wrap_seams_as_steps()
+    _wrap_delivery_steps()
     _DBOS.launch()
     # DBOS 3 persists queue config in the system database, so queues are
     # registered once that exists.
@@ -457,7 +531,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     must never hang or crash the shutdown path. Resets module state so the
     process could re-init a hub afterwards."""
     global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE
-    global _APP_VERSION, _MD_QUEUE
+    global _APP_VERSION, _MD_QUEUE, _IDENTITY_STEP
     with _lock:
         if not _INITED:
             return
@@ -477,6 +551,10 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             _HUB_NAME = None
             _ENGINE = None
             _APP_VERSION = None
+            _IDENTITY_STEP = None
+            context._PUBLISH_STEP = None
+            context._EMAIL_STEP = None
+
             # Rebuilt on the next launch, with that hub's retry setting.
             context._LLM_STEP = None
             context._AGENT_STEP = None

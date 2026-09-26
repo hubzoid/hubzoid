@@ -70,8 +70,20 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
                 setattr(task, key, overrides[key])
         return task
 
+    @DBOS.step(name="hz_md_identity")
+    def identify(task_name: str, overrides: dict) -> dict:
+        """Who this run acts as, decided once: recovery replays this output."""
+        from .identity import resolve
+
+        task = _task(task_name, overrides)
+        return resolve(hub_dir, hub=hub_name.lower(), run_as=task.run_as,
+                       legacy_subject=runner.service_subject(task_name),
+                       what=f"Scheduled task {task_name!r}").to_dict()
+
     @DBOS.step()
-    def work(task_name: str, overrides: dict, run: str, claimed: list[str]) -> dict:
+    def work(task_name: str, overrides: dict, run: str, claimed: list[str],
+             identity: dict) -> dict:
+        from .identity import RunIdentity
         from .state import WorkflowState
         from .. import db
 
@@ -82,6 +94,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
                     "error": "interrupted by a restart; not re-run (the next slot runs it)",
                     "run_log": marker[key]}
         task = _task(task_name, overrides)
+        task.run_id = run
         # The run is told exactly which webhook events it owns, so one that
         # lands after the claim is left for the next run.
         events = [p for p in claimed if Path(p).exists()]
@@ -89,10 +102,12 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
             return {"result": "done", "rounds": 0, "summary": "its events were already handled",
                     "error": "", "run_log": None}
         marker[key] = "starting"
-        result = asyncio.run(runner.run_task(hub_dir, task, capture=False, events=events))
-        marker[key] = str(result.run_log)
+        result = asyncio.run(runner.run_task(hub_dir, task, capture=False, events=events,
+                                             identity=RunIdentity.from_dict(identity)))
+        run_log = str(result.run_log) if result.run_log else None
+        marker[key] = run_log or "no log"
         return {"result": result.result, "rounds": result.rounds, "summary": result.summary,
-                "error": result.error, "run_log": str(result.run_log)}
+                "error": result.error, "run_log": run_log}
 
     @DBOS.step()
     def commit(task_name: str, overrides: dict, summary: str, started: str) -> str | None:
@@ -117,7 +132,14 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
     def md_task(task_name: str, claimed: list[str], overrides: dict) -> dict:
         run = DBOS.workflow_id
         started = datetime.now().isoformat(timespec="seconds")
-        outcome = work(task_name, overrides, run, claimed)
+        try:
+            identity = identify(task_name, overrides)
+        except Exception as exc:  # noqa: BLE001 — no account: record the failed slot
+            outcome = {"result": "error", "rounds": 0, "summary": "", "error": str(exc),
+                       "run_log": None}
+            finish(task_name, outcome, claimed, started)
+            raise RuntimeError(str(exc)) from None
+        outcome = work(task_name, overrides, run, claimed, identity)
         if outcome["result"] == "done":
             task = _task(task_name, overrides)
             if task.commit:

@@ -58,6 +58,8 @@ _MAX_CONSECUTIVE_ERRORS = 3
 
 # A `run:` script triggered by webhook events finds the files it owns here.
 EVENTS_ENV = "HUBZOID_WEBHOOK_EVENTS"
+# ...and the account the run acts as here.
+RUN_AS_ENV = "HUBZOID_RUN_AS"
 
 _STATUS_RE = re.compile(
     r"^\s*STATUS:\s*(DONE|CONTINUE)\b[\s—:\-]*(.*?)\s*$",
@@ -371,10 +373,15 @@ def _execute_script(hub_dir: Path, task: ScheduledTask, result: "RunResult",
     is operator-authored and git-committed (same trust boundary as the OS
     crontab it replaces), so a shell string is run through the shell.
     The webhook event files the run claimed are in HUBZOID_WEBHOOK_EVENTS,
-    one absolute path per line.
+    one absolute path per line. The account the run acts as is in
+    HUBZOID_RUN_AS (informational: a script is trusted operator code, not a
+    sandbox, and gains no permission from it).
     """
     cmd = task.run or []
-    env = {**os.environ, EVENTS_ENV: "\n".join(events)} if events else None
+    extra = {EVENTS_ENV: "\n".join(events)} if events else {}
+    if (task.run_identity or {}).get("subject"):
+        extra[RUN_AS_ENV] = task.run_identity["subject"]
+    env = {**os.environ, **extra} if extra else None
     display = cmd[0] if task.run_shell else " ".join(shlex.quote(c) for c in cmd)
     result.rounds = 1
     rlog.emit(event="script_start", command=display, shell=task.run_shell,
@@ -427,19 +434,22 @@ def _default_runtime_factory(hub_dir: Path, task: ScheduledTask,
 
 
 def service_subject(task_name: str) -> str:
-    """The identity a markdown task runs as, granted like a person in the
-    Console: `workflow:md:<task>`. A restricted tool is reachable only when
-    this subject holds its permission."""
+    """The legacy service identity of a markdown task, `workflow:md:<task>`.
+    Runs now act as an ordinary account (`workflows.identity`); this subject is
+    used only on a legacy hub with no account configured, and for reporting the
+    grants it held before."""
     return f"workflow:md:{task_name}"
 
 
 def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: float) -> None:
     from . import _request_ctx, usage as usage_lib
+    from .access import current_identity
 
     raw = _request_ctx.drain_usage()
     usage_lib.record(
         hub_dir, hub=hub_dir.name, surface="workflow", kind="agent",
-        subject=service_subject(task.name), model=raw.get("model") or task.model,
+        subject=current_identity().user or service_subject(task.name),
+        model=raw.get("model") or task.model,
         input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
         cost_usd=raw.get("cost_usd"), status=raw.get("status") or status,
         duration_ms=int((time.monotonic() - t0) * 1000),
@@ -450,20 +460,34 @@ async def run_task(hub_dir: Path, task: ScheduledTask, *,
                    runtime_factory: Callable = _default_runtime_factory,
                    capture: bool = True,
                    events: list[str] | None = None,
+                   identity=None,
                    ) -> RunResult:
     """Run one scheduled task to completion (or its caps). Never raises —
     every failure mode is a `RunResult(result="error")` with the log path.
 
-    The run acts as the task's service identity (`service_subject`), and each
-    agent round writes a usage row.
+    The run acts as `identity` (a `RunIdentity`, captured by the DBOS executor
+    before the run; resolved here when called directly): the task's `run_as`,
+    else HUBZOID_WORKFLOW_USER, else the setup default. Its scratch folder is
+    that person's, and each agent round writes a usage row for them.
 
     `capture=False` skips the commit/push, for callers (the DBOS executor in
     workflows/markdown.py) that run them as their own checkpointed steps.
     `events` are the webhook event files the run claimed: named in every
     round's prompt, or passed to a `run:` script in HUBZOID_WEBHOOK_EVENTS."""
     from .access import Identity, identity_scope
+    from .workflows import identity as idlib
 
-    with identity_scope(Identity.make(service_subject(task.name), surface="workflow")):
+    what = f"Scheduled task {task.name!r}"
+    if identity is None:
+        try:
+            identity = idlib.resolve(Path(hub_dir), run_as=task.run_as,
+                                     legacy_subject=service_subject(task.name), what=what)
+        except idlib.IdentityError as exc:
+            log.error("schedule[%s] %s", task.name, exc)
+            return RunResult(task=task.name, result="error", error=str(exc))
+    task.run_identity = identity.to_dict()
+    task.state_rel = idlib.markdown_scratch(Path(hub_dir), task.name, identity)
+    with identity_scope(Identity.make(identity.subject, surface="workflow")):
         return await _run_task(hub_dir, task, runtime_factory=runtime_factory, capture=capture,
                                events=events or [])
 
@@ -481,10 +505,13 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     rlog = RunLog(log_path)
     result = RunResult(task=task.name, run_log=log_path, result="error")
 
+    ident = task.run_identity or {}
     rlog.emit(event="run_start", task=task.name, schedule=task.schedule,
               timeout=task.timeout, max_rounds=task.max_rounds,
               max_turns=task.max_turns, writable=task.writable_paths(),
-              commit=task.commit, push=task.push, events=events)
+              commit=task.commit, push=task.push, events=events,
+              run_as=ident.get("subject"), identity_source=ident.get("source"),
+              legacy_permissions_not_held=ident.get("legacy_permissions") or [])
     log.info("schedule[%s] run start (timeout=%ss, max_rounds=%s) — log: %s",
              task.name, task.timeout, task.max_rounds, log_path)
     state.record_fired(task.name, started_dt, result="running",
@@ -543,6 +570,17 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
         if hasattr(rt, "aopen"):
             await rt.aopen()
         for round_no in range(1, task.max_rounds + 1):
+            if task.run_identity:
+                from .workflows.identity import IdentityError, RunIdentity, recheck
+
+                try:  # the account may have been blocked since the last round
+                    recheck(hub_dir, hub_dir.name.lower(),
+                            RunIdentity.from_dict(task.run_identity),
+                            what=f"Scheduled task {task.name!r}")
+                except IdentityError as exc:
+                    result.error = str(exc)
+                    rlog.emit(event="error", where="identity", error=result.error)
+                    break
             result.rounds = round_no
             prompt = build_prompt(task, hub_dir, round_no=round_no, carry=carry, events=events)
             rlog.emit(event="round_start", round=round_no, carry=carry)

@@ -12,7 +12,17 @@
                        scratch dir). Everything else — .env, secrets,
                        raw_data clones, AGENTS.md — is physically refused.
 
-Both are plain openai-agents FunctionTools, so the existing
+Two more, only when the task's frontmatter opts in (the file is the deliberate
+delivery configuration; the model cannot turn them on):
+
+  * `publish_artifact` (`publish_artifacts: true`) — publish a file the run
+                       wrote under its writable paths as a private report
+                       owned by the account the run acts as.
+  * `send_email`     (`send_email: true`) — email that same account (no other
+                       recipient exists), optionally linking its reports. At
+                       most MAX_EMAILS per run.
+
+All are plain openai-agents FunctionTools, so the existing
 `factory_claude._to_claude_tool` adapter makes them work identically on the
 Claude backend. Every invocation is appended to the run's JSONL log via
 `emit` and mirrored to the python logger.
@@ -200,4 +210,81 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
         log.info("schedule[%s] wrote %s (%d bytes)", task.name, path, len(data))
         return f"wrote {path} ({len(data)} bytes)"
 
-    return [run_git, write_hub_file]
+    tools = [run_git, write_hub_file]
+    return tools + _delivery_tools(hub, task, emit, _resolve_writable)
+
+
+MAX_EMAILS = 5  # per scheduled run
+
+
+def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable) -> list:
+    """publish_artifact / send_email for a task that opted in. Both act for the
+    account the run acts as (`task.run_identity`), fixed before the run."""
+    if not (getattr(task, "publish_artifacts", False) or getattr(task, "send_email", False)):
+        return []
+    from ..workflows import context as wctx
+
+    ident = task.run_identity or {}
+    sent = {"n": 0}
+    tools = []
+
+    if task.publish_artifacts:
+
+        @function_tool
+        def publish_artifact(path: str, title: str) -> str:
+            """Publish a file you wrote in this run as a report for the person
+            this task runs for. Only they can open it until they choose to share
+            it. Returns the report's id and link (they sign in to open it).
+
+            Args:
+                path: hub-relative path of a file under this task's writable
+                    paths (for example the scratch folder in your instructions).
+                title: a short human title for the report.
+            """
+            try:
+                target = resolve_writable(path)
+            except PermissionError as exc:
+                return f"[publish_artifact refused: {exc}]"
+            from .._fs import agent_read_refusal
+
+            reason = agent_read_refusal(hub, target) if not str(target).startswith(
+                str(hub / ".hubzoid")) else None
+            if reason or not target.is_file():
+                return f"[publish_artifact refused: {path!r} is not a file this task can publish]"
+            try:
+                out = wctx.publish_now(str(hub), hub.name.lower(), ident, f"md:{task.name}",
+                                       task.run_id or "", {"path": str(target), "title": title})
+            except Exception as exc:  # noqa: BLE001 — surface as the tool's result
+                emit(event="tool", tool="publish_artifact", path=str(path), error=str(exc))
+                return f"[publish_artifact failed: {exc}]"
+            emit(event="tool", tool="publish_artifact", path=str(path), artifact=out["id"])
+            log.info("schedule[%s] published %s as %s", task.name, path, out["id"])
+            return f"Published report {out['id']}: {out['url']}"
+
+        tools.append(publish_artifact)
+
+    if task.send_email:
+
+        @function_tool
+        def send_email(subject: str, body: str, artifact_ids: list[str] | None = None) -> str:
+            """Email the person this task runs for (the only possible recipient)
+            with a short message and optional links to reports published in this
+            run. Returns what happened; only "Accepted" means it was sent.
+
+            Args:
+                subject: one-line subject.
+                body: plain-text message.
+                artifact_ids: ids returned by publish_artifact, to link.
+            """
+            if sent["n"] >= MAX_EMAILS:
+                return f"[send_email refused: at most {MAX_EMAILS} emails per run]"
+            sent["n"] += 1
+            result = wctx.email_now(str(hub), hub.name.lower(), ident, f"md:{task.name}",
+                                    task.run_id or "", {"subject": subject, "body": body,
+                                                        "artifacts": list(artifact_ids or [])})
+            emit(event="tool", tool="send_email", status=result["status"],
+                 delivery=result.get("delivery_id"))
+            return f"[{result['status']}] {result['message']}"
+
+        tools.append(send_email)
+    return tools

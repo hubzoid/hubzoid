@@ -1352,9 +1352,14 @@ def schedule_list(
     state = sch.ScheduleState(hub)
     now = datetime.now()
     from .workflows.observe import catalog
+    from .workflows import identity as _wf_identity
     workflows = catalog(hub)
     for w in workflows:
-        console.print(f"workflow {w['name']} · {w['state']} · {w['timezone']} · next {w['next_run'] or '—'}")
+        # The legacy service subject is workflow:<name> / workflow:md:<task>.
+        runs_as = _wf_identity.describe(hub, run_as=w.get('run_as'),
+                                        legacy_subject=f"workflow:{w['name']}")
+        console.print(f"workflow {w['name']} · {w['state']} · {w['timezone']} · next {w['next_run'] or '—'}"
+                      f" · runs as {runs_as}")
         if w['error']:
             console.print(f"[red]{w['error']}[/red]")
     if not tasks and not problems and not workflows:
@@ -2158,6 +2163,21 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # top matches into the agent's system prompt on every chat. Off by default
 # because OWUI flags this feature as Beta and storage format may change.
 # ENABLE_MEMORY=true
+
+# --- Workflows: who they run as, reports and email ------------------------
+# Scheduled workflows and schedule/*.md tasks run as an ordinary account. A
+# declaration's run_as wins; otherwise this setting; otherwise the owner
+# recorded at setup (locally: admin@localhost). See docs/workflow-identity.md.
+# HUBZOID_WORKFLOW_USER=reports@company.com
+# Owner email from workflows (hub.send_email): usually set once for the whole
+# deployment. See docs/reports-and-email.md.
+# HUBZOID_SMTP_HOST=smtp.company.com
+# HUBZOID_SMTP_PORT=587
+# HUBZOID_SMTP_USERNAME=
+# HUBZOID_SMTP_PASSWORD=
+# HUBZOID_SMTP_FROM=hubzoid@company.com
+# HUBZOID_SMTP_STARTTLS=true
+# HUBZOID_EMAIL_DELIVERY=preview  # write emails to .hubzoid/outbox/ instead of sending
 
 # --- Slack chat surface (optional, opt-in per agent) ----------------------
 # Run `hubzoid slack manifest .` to generate an App Manifest you can paste

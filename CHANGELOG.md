@@ -3,6 +3,25 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## Unreleased
+
+### Workflows
+- Scheduled workflows and markdown tasks run as an ordinary account: `run_as`
+  (decorator or frontmatter), else `HUBZOID_WORKFLOW_USER` (hub, then deployment),
+  else the owner recorded at setup (locally `admin@localhost`). The account is
+  captured once per run, rechecked before every protected call, and never
+  swapped for another. `hubzoid schedule list` shows it.
+- `hub.state` is per account (plus `hub.shared_state`), `hub.run_dir` is a
+  private per-run folder, and `hub.connection(app, ref=None)` returns the run
+  account's own credential.
+- `hub.publish_artifact(...)` publishes a generated file as a private report
+  with a viewer at `/portal/artifacts/<id>`: share with people, groups or the
+  hub, or (with the new `share_public_links` permission) by an expiring public
+  link. HTML reports run sandboxed with no network access.
+- `hub.send_email(...)` emails the run's own account over SMTP (`HUBZOID_SMTP_*`)
+  or to a preview outbox, with delivery records that never resend an ambiguous
+  send. Markdown tasks opt in with `publish_artifacts: true` / `send_email: true`.
+
 ## [1.0.1] - unreleased
 
 Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.

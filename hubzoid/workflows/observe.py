@@ -63,13 +63,15 @@ def definitions(hub_dir) -> list[dict]:
                         schedule=None,
                         timezone="UTC",
                         error=None,
+                        run_as=None,
                     )
                     try:
                         args = {
                             k.arg: ast.literal_eval(k.value)
                             for k in dec.keywords
-                            if k.arg in ("schedule", "timezone")
+                            if k.arg in ("schedule", "timezone", "run_as")
                         }
+                        row["run_as"] = args.get("run_as")
                         row["schedule"] = (
                             ast.literal_eval(dec.args[0])
                             if dec.args
@@ -173,7 +175,7 @@ def markdown_catalog(hub_dir) -> list[dict]:
                    else "disabled" if disabled else "event" if t.is_webhook else "scheduled"),
             next_run=nxt.astimezone().isoformat() if nxt else None,
             last_dispatch=last.get("last_fired_iso"), missed=0,
-            heartbeat=None, downtime=None,
+            heartbeat=None, downtime=None, run_as=t.run_as,
         ))
     for problem in problems:
         rows.append(dict(hub=hub_dir.name.lower(), name="md:?", kind="markdown",

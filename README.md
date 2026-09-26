@@ -62,7 +62,7 @@ shared credentials or unrestricted access.
 | Experience | Use it for | Start here |
 |---|---|---|
 | **Chat** | Ask questions and take authorized actions using the hub's context | [Web and account setup](docs/auth.md), [Slack](docs/slack.md), [other channels](docs/inbound-surfaces.md) |
-| **Workflows** | Repeatable work with recorded runs, steps, schedules, and recovery | [Markdown tasks](docs/schedule.md), [Python workflows](docs/workflows.md) |
+| **Workflows** | Repeatable work with recorded runs, steps, schedules, and recovery. Each run acts as an ordinary account and can publish a private report and email that person a link. | [Markdown tasks](docs/schedule.md), [Python workflows](docs/workflows.md), [Who a workflow runs as](docs/workflow-identity.md), [Reports and email](docs/reports-and-email.md) |
 | **Your assistant through MCP** | Bring hub tools, knowledge, and skills into a supported personal assistant | [Connect an MCP client](docs/mcp-server.md) |
 
 These experiences share a foundation. Conversation history, workflow state, and permissions remain distinct. Each integration has its own setup and supported capabilities.

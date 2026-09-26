@@ -45,6 +45,8 @@ ORG = "*"  # the org domain: a grant here applies to every hub
 EVERYONE = "*"  # the wildcard subject: everyone who can log in
 USE_HUB = "use_hub"
 MANAGE_ACCESS = "manage_access"
+# hz_meta key holding the account scheduled workflows run as by default.
+WORKFLOW_DEFAULT_KEY = "workflow_default_user"
 
 # Direct-grants model: a request (sub, dom, act) is allowed if any policy row
 # matches, where subject/domain/permission each match exactly or via `*`.
@@ -514,11 +516,25 @@ class GrantStore:
             self._ensure_identity(conn, subject)
             self._meta_set(conn, marker, subject)
             self._meta_set(conn, "bootstrapped", "1")
+            # The account scheduled workflows run as when nothing else is
+            # configured: recorded once, at setup. Adding people never moves it.
+            if not self._meta_get(conn, WORKFLOW_DEFAULT_KEY):
+                self._meta_set(conn, WORKFLOW_DEFAULT_KEY, subject)
             if fresh:
                 self._meta_set(conn, f"casbin_authoritative:{hub}", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
         return True
+
+    def workflow_default(self, hub: str | None = None) -> str | None:
+        """The setup default for workflow runs (see provision_owner), or None.
+        A store provisioned before this key existed falls back to the hub's
+        recorded initial owner, which setup wrote the same way."""
+        with self._engine.connect() as conn:
+            value = self._meta_get(conn, WORKFLOW_DEFAULT_KEY)
+            if not value and hub:
+                value = self._meta_get(conn, f"initial_owner:{normalize(hub)}")
+            return value or None
 
     def _org_admins(self, conn) -> set[str]:
         rows = conn.execute(

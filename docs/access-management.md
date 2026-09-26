@@ -307,11 +307,13 @@ Publishing within an authorized workflow run and Email me need no grant. The
 artifact Share dialog decides one artifact's audience; the Console only grants
 capabilities such as creating public links.
 
-A Python workflow acts as `workflow:<function>`. A Markdown task acts as
-`workflow:md:<task>`. Grant the service identity only the tools the task needs.
-In Console, open **Add person**, select **Service**, and enter that exact
-identity (for example `workflow:md:daily-notes`). This grant does not create a
-credential or start the task.
+A scheduled workflow or Markdown task acts as an ordinary account: its
+`run_as`, else `HUBZOID_WORKFLOW_USER`, else the owner recorded at setup (see
+[workflow-identity.md](workflow-identity.md)). Grant that account the tools the
+work needs, like any person. Teams that want shared automation create an
+ordinary account for it. Grants to the older `workflow:<function>` and
+`workflow:md:<task>` subjects are kept but no longer used by runs; a run whose
+account lacks a permission the old subject held logs which one.
 
 The built-in **Save shared knowledge** capability (`curator`) controls
 `remember`. Grant it in Console to people or workflow identities that should

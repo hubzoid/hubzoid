@@ -132,3 +132,19 @@ If you ran a pre-release build of 1.0.1, also note:
   (`.hubzoid/dbos.db` by default) and rehearse the upgrade on a copy first. If a
   deployment needs that history and the new version cannot read it, treat the
   rollout as failed and go back. Deleting the old database is not a migration.
+
+## Workflows run as people; reports and email (next release)
+
+Scheduled work now acts as an ordinary account, and can publish private reports
+and email its owner ([workflow-identity.md](workflow-identity.md),
+[reports-and-email.md](reports-and-email.md)). The database gains the tables for
+this at the first start (`op_0005`, forward only: restore a backup to go back).
+
+| Change | What you do |
+|---|---|
+| Runs act as `run_as`, else `HUBZOID_WORKFLOW_USER` (hub, then deployment), else the owner recorded at setup, instead of `workflow:<name>` / `workflow:md:<task>`. | Run `hubzoid schedule list <hub>`: it shows who each workflow and task runs as. On a Console-managed hub, set `run_as` or `HUBZOID_WORKFLOW_USER` if the default is not the account you want. |
+| Grants to `workflow:*` subjects are kept but no longer used. They are never copied to anyone. | For each permission a run's log reports as "not held", grant it to the account the work runs as (or point `run_as` at an account that holds it), then remove the old grant. |
+| A legacy hub (access still in the chat app) with no account configured keeps running as before, with a warning. Its runs still reach no restricted tool. | Nothing. Configure an account when you want reports, email or personal connections there. |
+| `hub.state` belongs to the account a run acts as. Existing state is adopted by the first account that runs the workflow after the upgrade. A markdown task's scratch folder likewise belongs to the first account that runs it; another account gets its own. | If a workflow's state must survive a change of account, move it to `hub.shared_state` (keep personal data out of it). |
+| New permission **Share reports by public link** (`share_public_links`). | Grant it only to people who may create "anyone with the link" reports. |
+| Owner email needs `HUBZOID_SMTP_HOST` and `HUBZOID_SMTP_FROM` (plus credentials, over TLS). | Set them in the deployment configuration (or a deployment secret) when you want workflow email. Use `HUBZOID_EMAIL_DELIVERY=preview` to try it without sending. |

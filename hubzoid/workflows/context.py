@@ -8,16 +8,28 @@ resolved from the active run's context:
     hub.name                     the current hub
     hub.setting("repo")          admin-settable config value  (read)
     hub.secret("github_token")   a secret, from hub env, never logged
-    hub.state["k"]               durable memory, dict-like, (hub, workflow, key)
+    hub.state["k"]               durable memory, dict-like, per person:
+                                 (hub, workflow, run's account, key)
+    hub.shared_state["k"]        durable memory shared by everyone who runs it
+    hub.run_dir                  a private scratch folder for this run
+    hub.publish_artifact(path, title=...)  publish a generated file as a
+                                 private report owned by the run's account
+    hub.send_email(subject, body, artifacts=[...])  email the run's account
+    hub.connection("gmail", ref=None)  the run account's own credential
     hub.call_llm(prompt, ...)    one tool-free model call (text, JSON or a
                                  Pydantic model), checkpointed as a step
     hub.call_agent(task, ...)    the full agent loop with tools, checkpointed
     hub.decide(state, questions) a typed decision with probabilities (Jev via
                                  OpenRouter; experimental), checkpointed
-    hub.user.id / .attrs / .can("perm")   the caller (a workflow's service identity)
+    hub.user.id / .email / .attrs / .can("perm")   the account the run acts as
 
 Secrets are read INSIDE the run (from env) and never passed as workflow/step
 arguments, so DBOS never checkpoints them.
+
+Every run acts as an ordinary account (`workflows.identity`): its permissions,
+connections, state, reports and email are that person's. The account is
+re-checked before each model or agent call, publish, email and connection, so a
+blocked account stops at the next one.
 """
 from __future__ import annotations
 
@@ -64,10 +76,67 @@ class RunCtx:
     hub_dir: Path
     engine: Any                       # SQLAlchemy Engine for the one hub DB
     settings: dict = field(default_factory=dict)
-    subject: str = ""                 # the Casbin subject for this run (workflow:<name>)
+    subject: str = ""                 # the Casbin subject this run acts as
+    identity: dict | None = None      # RunIdentity.to_dict() captured at run start
+    run_id: str = ""                  # the DBOS workflow id, when there is one
 
+
+# Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
+# returns the recorded artifact or delivery instead of repeating it.
+_PUBLISH_STEP: Callable[..., Any] | None = None
+_EMAIL_STEP: Callable[..., Any] | None = None
 
 _run: ContextVar[RunCtx | None] = ContextVar("hubzoid_workflow_run", default=None)
+
+
+def _identity(ctx: RunCtx):
+    from .identity import RunIdentity
+
+    if ctx.identity:
+        return RunIdentity.from_dict(ctx.identity)
+    # A bare run_scope (tests, the legacy path): the old service subject.
+    return RunIdentity(ctx.subject or f"workflow:{ctx.workflow}", None, "legacy-service")
+
+
+def _recheck(ctx: RunCtx, what: str) -> None:
+    """Before a protected operation: the run's account must still be usable."""
+    from .identity import recheck
+
+    recheck(ctx.hub_dir, ctx.hub, _identity(ctx), what=what)
+
+
+def publish_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str,
+                request: dict, idem_key: str | None = None) -> dict:
+    """The publish itself: plain data in and out, so DBOS can checkpoint it."""
+    from .. import artifacts
+    from .identity import RunIdentity, recheck, require_person
+
+    ident = RunIdentity.from_dict(identity)
+    require_person(ident, "Publishing a report")
+    recheck(Path(hub_dir), hub, ident, what="Publishing")
+    return artifacts.publish(
+        Path(hub_dir), hub=hub, owner=ident.subject, owner_account=ident.account_id,
+        source=Path(request["path"]), title=request.get("title"), workflow=workflow,
+        run_id=run_id or None, idem_key=idem_key, audience=request.get("audience") or "owner",
+        share_with=request.get("share_with") or ())
+
+
+def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str,
+              request: dict, idem_key: str | None = None) -> dict:
+    """The send itself: plain data in and out, so DBOS can checkpoint it."""
+    from .. import email_delivery
+    from .identity import IdentityError, RunIdentity, recheck
+
+    ident = RunIdentity.from_dict(identity)
+    try:
+        recheck(Path(hub_dir), hub, ident, what="Sending email")
+    except IdentityError as exc:
+        return dict(status="refused", sent=False, delivery_id=None, recipient=None,
+                    message=str(exc))
+    return email_delivery.send_to_owner(
+        Path(hub_dir), hub=hub, identity=ident, subject=request["subject"],
+        body=request.get("body") or "", artifact_ids=request.get("artifacts") or (),
+        workflow=workflow, run_id=run_id or None, idem_key=idem_key)
 
 
 def _ctx() -> RunCtx:
@@ -80,23 +149,33 @@ def _ctx() -> RunCtx:
 
 
 class HubUser:
-    """The caller inside a workflow — its service identity `workflow:<name>`."""
+    """The account the run acts as (see `workflows.identity`)."""
 
     def __init__(self, ctx: RunCtx):
         self._ctx = ctx
 
     @property
     def id(self) -> str:
-        return self._ctx.subject or f"workflow:{self._ctx.workflow}"
+        return _identity(self._ctx).subject
+
+    @property
+    def email(self) -> str | None:
+        return _identity(self._ctx).email
 
     @property
     def attrs(self) -> dict:
-        # Per-(hub, subject) attributes; workflows carry none by default.
-        return {}
+        """Per-(hub, person) attributes from the access store (e.g. a center),
+        for scoping the data a run reads to its person."""
+        ident = _identity(self._ctx)
+        if not ident.is_person:
+            return {}
+        from ..access import store_for  # lazy: avoids import cycle
+
+        return store_for(self._ctx.hub_dir).attrs_for(self._ctx.hub, ident.subject)
 
     def can(self, permission: str, hub: str | None = None) -> bool:
-        """Whether this service identity holds `permission` in `hub` (default:
-        the current hub). Consults the one access store."""
+        """Whether this account holds `permission` in `hub` (default: the
+        current hub), now. Consults the one access store."""
         from ..access import store_for  # lazy: avoids import cycle
         gs = store_for(self._ctx.hub_dir)
         return gs.can(self.id, hub or self._ctx.hub, permission)
@@ -118,12 +197,94 @@ class Hub:
 
     @property
     def state(self) -> WorkflowState:
+        """Durable memory belonging to the run's account: the same workflow run
+        for another person never sees it."""
         ctx = _ctx()
-        return WorkflowState(ctx.engine, ctx.hub, ctx.workflow)
+        ident = _identity(ctx)
+        return WorkflowState(ctx.engine, ctx.hub, ctx.workflow,
+                             owner=ident.subject if ident.is_person else "")
+
+    @property
+    def shared_state(self) -> WorkflowState:
+        """Durable memory shared by every account that runs this workflow. Keep
+        personal data out of it."""
+        from .state import SHARED
+
+        ctx = _ctx()
+        return WorkflowState(ctx.engine, ctx.hub, ctx.workflow, owner=SHARED)
 
     @property
     def user(self) -> HubUser:
         return HubUser(_ctx())
+
+    @property
+    def run_dir(self) -> Path:
+        """A private scratch folder for this run (under `.hubzoid/`, which agent
+        file tools and the legacy artifact route cannot reach). Write generated
+        files here, then publish them."""
+        import re
+
+        ctx = _ctx()
+        run = re.sub(r"[^A-Za-z0-9._-]+", "-", ctx.run_id or "local").strip("-.") or "local"
+        path = Path(ctx.hub_dir) / ".hubzoid" / "runs" / ctx.workflow / run
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def publish_artifact(self, path, *, title: str | None = None,
+                         audience: str = "owner", share_with=()) -> dict:
+        """Publish an existing file as a report owned by the run's account and
+        return {"id", "url", "title", "filename", "content_type", "size"}.
+
+        Private to the owner by default. `audience="hub"` (everyone who can use
+        this agent) or `audience="people"` with `share_with=["a@x.com",
+        {"kind": "group", "principal": "finance"}]` shares it explicitly; both
+        need a Console-managed hub. Public links are never made here: the owner
+        creates them in the viewer, with permission. Each call stores a new
+        report; earlier ones are never overwritten. Checkpointed as a step."""
+        ctx = _ctx()
+        source = Path(path)
+        if not source.is_absolute():
+            source = Path(ctx.hub_dir) / source
+        request = {"path": str(source.resolve()), "title": title, "audience": audience,
+                   "share_with": [p if isinstance(p, str) else dict(p) for p in share_with]}
+        args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
+                ctx.run_id, request)
+        if _PUBLISH_STEP is not None:
+            return _PUBLISH_STEP(*args)
+        return publish_now(*args)
+
+    def send_email(self, subject: str, body: str = "", *, artifacts=(),
+                   raise_on_failure: bool = True) -> dict:
+        """Email the run's own account (there is no other recipient) with
+        optional links to reports it published. Returns the delivery result;
+        by default raises `EmailError` unless the SMTP server accepted it or it
+        was written to the preview outbox. Checkpointed as a step: a recovered
+        run never sends an accepted message twice, and an interrupted send is
+        reported as ambiguous rather than repeated."""
+        from ..email_delivery import EmailError
+
+        ctx = _ctx()
+        ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
+        request = {"subject": subject, "body": body, "artifacts": ids}
+        args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
+                ctx.run_id, request)
+        result = _EMAIL_STEP(*args) if _EMAIL_STEP is not None else email_now(*args)
+        if raise_on_failure and result["status"] not in ("accepted", "previewed"):
+            raise EmailError(result)
+        return result
+
+    def connection(self, app: str, *, ref: str | None = None):
+        """The run account's own credential for `app` (a mapping). Use it inside
+        the step that needs it; it cannot be returned from a step. With several
+        connected accounts, pass `ref`. Never another person's connection."""
+        from .connection import credential
+        from .identity import require_person
+
+        ctx = _ctx()
+        ident = _identity(ctx)
+        require_person(ident, "A personal connection")
+        _recheck(ctx, "Using a connection")
+        return credential(app, subject=ident.subject, ref=ref)
 
     def call_llm(self, prompt: str, *, response_format: str = "text",
                  response_model=None, model: str | None = None,
@@ -150,6 +311,7 @@ class Hub:
         spec = {"prompt": prompt, "system": system, "model": model,
                 "response_format": response_format, "schema": schema}
         ctx = _ctx()
+        _recheck(ctx, "A model call")
         if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
             result = _LLM_STEP(spec, str(ctx.hub_dir), ctx.subject)
         else:
@@ -174,6 +336,7 @@ class Hub:
             task = task + json_instruction(response_model.model_json_schema()).replace(
                 "Respond with only", "Finish your reply with")
         ctx = _ctx()
+        _recheck(ctx, "An agent call")
         if _AGENT_STEP is not None:
             text = _AGENT_STEP(task, str(ctx.hub_dir), ctx.subject)
         else:
@@ -229,14 +392,28 @@ hub = Hub()
 
 @contextmanager
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
-              settings: dict | None = None, subject: str = "") -> Iterator[None]:
-    """Bind the run context for the duration of a workflow run, then restore."""
+              settings: dict | None = None, subject: str = "",
+              identity: dict | None = None, run_id: str = "") -> Iterator[None]:
+    """Bind the run context for the duration of a workflow run, then restore.
+
+    With `identity` (a RunIdentity dict) the run acts as that account: it is
+    also bound as the request identity (surface `workflow`), so restricted tools,
+    personal connections and usage rows all see the same person."""
+    if identity:
+        subject = identity["subject"]
     ctx = RunCtx(
         hub=hub, workflow=workflow, hub_dir=Path(hub_dir), engine=engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
+        identity=identity, run_id=run_id or "",
     )
     token = _run.set(ctx)
     try:
-        yield
+        if identity:
+            from ..access import Identity, identity_scope
+
+            with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+                yield
+        else:
+            yield
     finally:
         _run.reset(token)

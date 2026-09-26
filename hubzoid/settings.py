@@ -60,6 +60,28 @@ Environment variables explicitly supported:
                          issued link.
   HUBZOID_ARTIFACT_LINK_TTL  Seconds a newly issued download link stays valid.
                          Default: 0 (links never expire).
+  HUBZOID_WORKFLOW_USER  Account email scheduled workflows and schedule/*.md
+                         tasks run as when their declaration has no run_as.
+                         Hub value wins over the deployment's. Unset: the
+                         owner recorded at setup (locally admin@localhost).
+                         See docs/workflow-identity.md.
+  HUBZOID_ARTIFACT_MAX_BYTES  Largest file hub.publish_artifact accepts.
+                         Default: 52428800 (50 MiB).
+  HUBZOID_ARTIFACT_LINK_DAYS  Default lifetime of a report's public link, in
+                         days (1-90). Default: 7.
+  HUBZOID_ARTIFACT_ALLOW_ORIGINS  Comma-separated https origins published HTML
+                         reports may load scripts, styles, fonts and images
+                         from (e.g. a chart CDN). Default: none (reports are
+                         self-contained and make no network requests).
+  HUBZOID_SMTP_HOST / _PORT / _USERNAME / _PASSWORD / _FROM  The SMTP sender
+                         for hub.send_email (owner-only email). Port default
+                         587. Credentials are only sent over TLS.
+  HUBZOID_SMTP_STARTTLS  Upgrade with STARTTLS. Default: true.
+  HUBZOID_SMTP_SSL       Implicit TLS (usually port 465). Default: false.
+  HUBZOID_SMTP_TIMEOUT   Seconds per SMTP operation. Default: 30.
+  HUBZOID_EMAIL_DELIVERY smtp | preview. preview writes each email to
+                         .hubzoid/outbox/ and reports that nothing was sent.
+                         Default: smtp. See docs/reports-and-email.md.
   MODEL_LABEL            Optional name shown to OpenAI-compatible clients in
                          /v1/models. If blank, derived from AGENTS.md `name`.
   ENABLE_SIGNUP          Open WebUI public email registration. Default: false;
