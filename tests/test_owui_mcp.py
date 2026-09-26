@@ -56,12 +56,27 @@ def _native_mcp_on(monkeypatch):
     monkeypatch.setenv("OWUI_NATIVE_MCP", "1")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_store(tmp_path, monkeypatch):
+    # The connector gate asks the hub's access store whether the hub is managed.
+    import hubzoid.access as access
+    import hubzoid.db as db
+    from sqlalchemy import create_engine
+
+    eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
+    monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    access._stores.clear()
+    yield
+    access._stores.clear()
+
+
 @pytest.fixture
 def owui(tmp_path, monkeypatch):
     secret = "shared-webui-secret"
     db = tmp_path / "webui.db"
     facts = dict(user_id="u1", email="bob@x.org", server_id="srv1",
-                 url="https://mcp.example.com/mcp", secret=secret, db=db,
+                 url="https://mcp.example.com/mcp", secret=secret, db=db, hub=tmp_path,
                  token={"access_token": "AT-live", "refresh_token": "RT",
                         "expires_at": int(time.time()) + 3600})
     _seed(db, user_id=facts["user_id"], email=facts["email"], server_id=facts["server_id"],
@@ -77,14 +92,14 @@ def _ident(email):
 
 
 def test_list_mcp_connections(owui):
-    conns = srv.list_mcp_connections(".")
+    conns = srv.list_mcp_connections(owui["hub"])
     assert len(conns) == 1
     assert conns[0]["id"] == "srv1"
     assert conns[0]["url"] == owui["url"]
 
 
 def test_per_user_specs_injects_bearer(owui):
-    specs, allowed = owui_mcp.per_user_specs(".", _ident(owui["email"]))
+    specs, allowed = owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"]))
     assert len(specs) == 1
     (key, spec), = specs.items()
     assert key.startswith("owui_")
@@ -103,20 +118,20 @@ def test_allow_list_is_honored(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     tok._fernet_cache.clear()
-    specs, allowed = owui_mcp.per_user_specs(".", _ident("c@x.org"))
+    specs, allowed = owui_mcp.per_user_specs(tmp_path, _ident("c@x.org"))
     (key, _), = specs.items()
     assert set(allowed) == {f"mcp__{key}__get_partner", f"mcp__{key}__list_invoices"}
 
 
 def test_anonymous_and_killswitch_and_unknown(owui, monkeypatch):
     # Anonymous caller -> nothing.
-    assert owui_mcp.per_user_specs(".", Identity.make(user=None)) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], Identity.make(user=None)) == ({}, [])
     # Kill-switch off.
     monkeypatch.setenv("OWUI_NATIVE_MCP", "0")
-    assert owui_mcp.per_user_specs(".", _ident(owui["email"])) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"])) == ({}, [])
     monkeypatch.setenv("OWUI_NATIVE_MCP", "1")
     # Unknown user -> nothing.
-    assert owui_mcp.per_user_specs(".", _ident("ghost@x.org")) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], _ident("ghost@x.org")) == ({}, [])
 
 
 def test_connected_but_server_unregistered_is_skipped(tmp_path, monkeypatch):
@@ -139,7 +154,7 @@ def test_connected_but_server_unregistered_is_skipped(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     tok._fernet_cache.clear()
-    assert owui_mcp.per_user_specs(".", _ident("d@x.org")) == ({}, [])
+    assert owui_mcp.per_user_specs(tmp_path, _ident("d@x.org")) == ({}, [])
 
 
 def test_expired_token_is_skipped(tmp_path, monkeypatch):
@@ -151,22 +166,81 @@ def test_expired_token_is_skipped(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     tok._fernet_cache.clear()
-    assert owui_mcp.per_user_specs(".", _ident("e@x.org")) == ({}, [])
+    assert owui_mcp.per_user_specs(tmp_path, _ident("e@x.org")) == ({}, [])
 
 
 def test_disabled_by_default(owui, monkeypatch):
     # Opt-in: with OWUI_NATIVE_MCP unset, the bridge injects nothing even for a
     # fully connected user.
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
-    assert owui_mcp.per_user_specs(".", _ident(owui["email"])) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"])) == ({}, [])
 
 
 def test_personal_tokens_follow_the_restricted_surface_rule(owui, monkeypatch):
     """A shared Slack channel (or any surface not allowed restricted tools) must
     never carry the mentioner's personal connection token."""
     email = owui["email"]
-    assert owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="slack-channel")) == ({}, [])
-    assert owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="whatsapp")) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], Identity.make(user=email, groups=[], surface="slack-channel")) == ({}, [])
+    assert owui_mcp.per_user_specs(owui["hub"], Identity.make(user=email, groups=[], surface="whatsapp")) == ({}, [])
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,whatsapp")
-    specs, _ = owui_mcp.per_user_specs(".", Identity.make(user=email, groups=[], surface="whatsapp"))
+    specs, _ = owui_mcp.per_user_specs(owui["hub"], Identity.make(user=email, groups=[], surface="whatsapp"))
     assert len(specs) == 1
+
+
+# --- connector capability gate (managed hubs) and hub-key reservation --------
+def test_managed_hub_needs_the_connector_capability(owui):
+    import hubzoid.access as access
+
+    gs = access.store_for(owui["hub"])
+    gs.set_authoritative(True, hub=owui["hub"].name)
+    ident = _ident(owui["email"])
+    # Managed and not granted: the personal server is not injected.
+    assert owui_mcp.per_user_specs(owui["hub"], ident) == ({}, [])
+    gs.grant(owui["email"], owui["hub"].name, owui_mcp.capability("srv1"))
+    specs, _ = owui_mcp.per_user_specs(owui["hub"], ident)
+    assert len(specs) == 1
+
+
+def test_legacy_hub_injection_is_unchanged_without_a_connector_group(owui):
+    # Legacy (not Console-managed) hub: no connector group needed, as before.
+    specs, _ = owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"]))
+    assert len(specs) == 1
+
+
+def test_store_error_fails_closed(owui, monkeypatch):
+    import hubzoid.access as access
+
+    def boom(_hub):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(access, "store_for", boom)
+    assert owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"])) == ({}, [])
+
+
+def test_a_personal_server_never_replaces_a_hub_server(owui):
+    # The hub already has an MCP server under the same key.
+    specs, _ = owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"]))
+    (key, _), = specs.items()
+    assert owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"]), reserved={key}) == ({}, [])
+    cdir = owui["hub"] / "connectors"
+    cdir.mkdir()
+    (cdir / ".mcp.json").write_text(json.dumps({"mcpServers": {key: {"url": "https://hub/mcp"}}}))
+    assert owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"])) == ({}, [])
+
+
+def test_neutral_view_carries_the_allow_list_and_hides_the_token_from_repr(tmp_path, monkeypatch):
+    secret = "s"
+    db = tmp_path / "webui.db"
+    _seed(db, user_id="u1", email="c@x.org", server_id="Gmail", url="https://m/mcp",
+          token={"access_token": "AT-secret"}, secret=secret, allow="search, read")
+    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
+    tok._fernet_cache.clear()
+    (srv_,) = owui_mcp.per_user_servers(tmp_path, _ident("c@x.org"))
+    assert srv_.app == "gmail" and srv_.allowed_tools == ("search", "read")
+    assert "AT-secret" not in repr(srv_)
+
+
+def test_app_key_and_capability():
+    assert owui_mcp.app_key(" Google-Workspace ") == "google_workspace"
+    assert owui_mcp.capability("Gmail") == "connector_gmail"

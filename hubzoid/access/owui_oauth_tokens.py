@@ -193,6 +193,41 @@ def read_session(hub_dir, user_id: str, server_id: str) -> dict | None:
     return {"id": row[0], "token": token} if isinstance(token, dict) else None
 
 
+def session_meta(hub_dir, user_id: str, server_id: str) -> dict | None:
+    """The newest MCP OAuth session row for ``(user_id, server_id)`` without
+    decrypting it: ``{"id", "created_at", "updated_at"}`` (epoch seconds), or
+    None when there is none or on any failure.
+
+    Open WebUI deletes a user's previous session for a server and inserts a new
+    row on every completed authorization, so ``created_at`` tells a connection
+    journey whether the user finished *after* it started. A background token
+    refresh only moves ``updated_at``.
+    """
+    if not user_id or not server_id:
+        return None
+    con = owui_db.connect_ro(hub_dir)
+    if con is None:
+        return None
+    try:
+        row = con.execute(
+            text("SELECT id, created_at, updated_at FROM oauth_session "
+                 "WHERE user_id = :user_id AND provider = :provider "
+                 "ORDER BY created_at DESC LIMIT 1"),
+            {"user_id": user_id, "provider": mcp_provider(server_id)},
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        log.warning("OWUI session metadata read failed (server %r)", server_id, exc_info=True)
+        return None
+    finally:
+        con.close()
+    if not row:
+        return None
+    try:
+        return {"id": row[0], "created_at": int(row[1] or 0), "updated_at": int(row[2] or 0)}
+    except (TypeError, ValueError):
+        return None
+
+
 def write_session(hub_dir, session_id: str, token: dict) -> bool:
     """Encrypt ``token`` and write it back to its ``oauth_session`` row, matching
     OWUI's own format so OWUI can still read it. Used only by the refresh path
