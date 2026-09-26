@@ -108,19 +108,46 @@ WEBUI_ADMIN_PASSWORD=<temp pass>
 2. Stop. Delete the `WEBUI_ADMIN_*` lines. Restart.
 3. Open `https://your.host/`. Click **Sign in with Google**. Authenticate
    with the email matching `WEBUI_ADMIN_EMAIL`. You land as admin.
-4. Admin Panel -> Users -> Add user. Pre-add each team member's Google email
-   with role `user`.
-5. Team members click **Sign in with Google**; their account matches the
-   pre-added record; they're in.
+4. Pre-add each team member in the Hubzoid Console: **People → Add account**,
+   with their Google email, a name and a generated password. The password
+   also lets them sign in without Google.
+5. Team members click **Sign in with Google**. With
+   `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` (below), Open WebUI links the Google
+   sign-in to the pre-added account with the same email. Without it, Google
+   sign-in does not find the account.
 
 ### Adding and removing users
 
-- New hire: admin opens the Users panel, clicks Add user, types their
-  Google email.
-- Departure: admin opens the same panel, clicks Suspend (keeps audit
-  history) or Delete.
+- New hire: open **People → Add account** in the Hubzoid Console. Enter their
+  email, name and a password, tick their initial access and share the password
+  once. Delegates can do this for the agents they manage.
+- Departure: an organization administrator opens the person's Details in the
+  Console and uses **Delete account**, or **Block access** to keep the account
+  and history. Open WebUI's Users panel also still works unless
+  `HUBZOID_HIDE_OWUI_USERS=true`.
 
-That's the whole loop. No CLI, no config file.
+See [access management](access-management.md) for who may do what.
+
+### Google sign-in onto a Console-created account
+
+A Console-created account can also sign in with Google when the deployment has:
+
+```bash
+GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true      # link Google to the existing account by email
+ENABLE_OAUTH_SIGNUP=false               # no new accounts from Google
+OAUTH_ALLOWED_DOMAINS=example.com       # your organization's domains
+```
+
+`OAUTH_MERGE_ACCOUNTS_BY_EMAIL` defaults to off in Open WebUI. It is only
+consulted when a Google sign-in matches no account already linked to Google.
+`ENABLE_OAUTH_SIGNUP` is only consulted when nothing matched, so keeping it off
+means Google never creates accounts. Merging trusts the provider's email, which
+is why `OAUTH_ALLOWED_DOMAINS` should list only domains you control.
+
+`hubzoid doctor` does not yet warn when Google is configured without the merge
+setting. That check is planned.
 
 ### Limiting sign-ins to a domain
 
@@ -281,6 +308,8 @@ provisioned Hubzoid permissions. The account must be an Open WebUI administrator
 Only that configured account receives the initial owner grants. Subsequent logins
 do not restore revoked permissions. Local single-user mode uses `admin@localhost`.
 
-Authentication and account approval remain here in Open WebUI. Agent entry and
-restricted tools for managed hubs are granted in the Hubzoid Console. OIDC group
-synchronization does not replace those grants. See [access management](access-management.md).
+Authentication remains in Open WebUI. Account creation, approval, password
+resets and deletion can be done in the Hubzoid Console, which calls Open WebUI's
+admin API as the deployment's service account. Agent entry and restricted tools
+for managed hubs are granted in the Hubzoid Console. OIDC group synchronization
+does not replace those grants. See [access management](access-management.md).
