@@ -215,7 +215,7 @@ hub=Path(sys.argv[1])
 runtime.init(hub); runtime.load_workflows(hub); runtime.launch()
 h=runtime.start('daily', scheduled_at='2026-01-01T00:00:00+00:00')
 assert h.get_result() == hub.name
-rows=observe.runs(hub,name='daily')
+rows=observe.runs(hub,name='daily',viewer='admin@localhost')
 assert len(rows) == 1, rows
 assert rows[0]['output'] == hub.name, rows
 runtime.shutdown()

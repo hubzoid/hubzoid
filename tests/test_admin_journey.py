@@ -337,11 +337,11 @@ a=runtime.start('daily',scheduled_at='2026-01-01T00:02:00+00:00')
 b=runtime.start('daily',scheduled_at='2026-01-01T00:02:00+00:00')
 assert a.get_workflow_id()==b.get_workflow_id()
 assert a.get_result()==1 and b.get_result()==1
-rows=runs(p,name='daily')
+rows=runs(p,name='daily',viewer='admin@localhost')
 assert len(rows)==1, rows
 assert rows[0]['status']=='SUCCESS', rows
 assert rows[0]['output']=='1', rows
-assert runs(p,run_id=rows[0]['id'])[0]['steps']
+assert runs(p,run_id=rows[0]['id'],viewer='admin@localhost')[0]['steps']
 print('HISTORY_AND_DEDUP_OK')
 """ % str(tmp_path)
     p = subprocess.run(
