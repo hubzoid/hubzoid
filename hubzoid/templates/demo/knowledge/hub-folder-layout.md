@@ -47,6 +47,17 @@ demo-hub/
 | `branding/` | Logo, favicon, splash. Used by `hubzoid run`. | Applied to Open WebUI. |
 | `output/` | Files the agent writes via `write_artifact`. | Per-session subfolders. |
 
+## Other optional folders
+
+This hub does not use them, but a team hub often does.
+
+| Folder | What lives there |
+|---|---|
+| `restricted/` | Tools that require an explicit permission grant. |
+| `schedule/` | Markdown workflow tasks, on demand or on a schedule. |
+| `workflows/` | Python workflows and their steps. |
+| `evals/` | Behavioural checks for the hub. |
+
 ## Naming flexibility
 
 Folder names are case- and plural-flexible. `skills/`, `Skills/`, and

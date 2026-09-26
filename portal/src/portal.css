@@ -365,6 +365,33 @@ body .ant-alert .ant-alert-icon {
   border-color: transparent;
 }
 
+/* ---- role badges ---------------------------------------------------------- */
+/* A role, not a status: neutral beside the coloured status tags. Contrast on
+   --avatar-bg: text (--ink) 17.3:1 light, 15.7:1 dark; icon (--mute) 4.7:1
+   light, 8.1:1 dark. */
+
+.ant-tag.hz-role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-end: 0;
+  color: var(--ink);
+  background: var(--avatar-bg);
+  border-color: var(--line);
+  font-weight: 500;
+}
+
+.ant-tag.hz-role-badge > svg {
+  flex-shrink: 0;
+  margin: 0;
+  color: var(--mute);
+}
+
+/* The flex gap spaces the icon; drop Ant Design's own icon margin. */
+.ant-tag.hz-role-badge > svg + span {
+  margin-inline-start: 0;
+}
+
 /* ---- agents grid ---------------------------------------------------------- */
 
 .agents-bar {
