@@ -87,6 +87,48 @@ in the table. Identity resolution is Apache-2.0 licensed like the rest of Hubzoi
   process, so this env change takes effect on a bridge restart (`hubzoid run`
   starts bridge + inbound together, so they never drift).
 
+## Connecting accounts from WhatsApp
+
+Implemented, off by default. With `HUBZOID_CONNECT_JOURNEY=true` in the hub's
+`.env`, a person can say "connect my Gmail" in WhatsApp. The agent's
+`connect_account` tool creates a personal link bound to that person's account
+(see [MCP connectors](mcp.md#connect-from-chat-connection-journey) for the
+checks, the link page and how success is verified).
+
+What the WhatsApp side adds:
+
+- **The link always arrives.** If the model's reply leaves the link out, the
+  harness adds it to the reply.
+- **One confirmation.** The hub's inbound process (the only process holding the
+  hub's WhatsApp credentials) runs a small outbox. Every few seconds it checks
+  each open WhatsApp journey with the provider and sends one message:
+  "Gmail is connected." on success, or a one-time "Gmail was not connected"
+  when a started connection failed or ran out of time. A link that was never
+  opened, was cancelled on the page, or was replaced by a newer link ends
+  silently. Each outcome is claimed before it is sent, so it is sent at most
+  once. A failed send is logged and not retried.
+- **Only to the right person.** The confirmation goes to the chat that asked,
+  and only while the roster still maps that number to the account that asked.
+- **Continue where you left off.** The request that asked for the connection
+  (the person's own words, never the model's) waits with the journey. The
+  confirmation then says "Reply YES within 10 minutes to continue: ...". A YES
+  from the same number and chat claims it once and sends it as a fresh turn,
+  so the bridge checks identity, hub entry and every capability again. Any
+  other reply clears the offer. A second YES is an ordinary message.
+
+It needs:
+
+- `whatsapp` in `HUBZOID_RESTRICTED_SURFACES`, because a connection is a
+  restricted-class capability.
+- the `connector_<app>` capability for the person (a Console grant on a
+  managed hub, or an Open WebUI or roster group of that name on a legacy hub).
+- an Open WebUI account for the roster email, since the link page needs that
+  person signed in.
+
+Not included: the confirmation and the YES continuation on Telegram, and a
+confirmation for web chat (the done page tells the person to return to the
+chat).
+
 ## Conversation history (memory)
 
 Slack/OWUI give the agent memory by sending the whole conversation array each turn
@@ -278,6 +320,8 @@ plan two inbound hubs on the same port.
 | `WEBHOOK_INBOUND_NAME` | `webhook` | generic webhook path segment (`/webhooks/<hub>/<name>`) |
 | `WEBHOOK_INBOUND_HMAC` | false | verify `X-Signature-256` HMAC instead of a shared secret |
 | `HUBZOID_RESTRICTED_SURFACES` | `owui,web,api,mcp` | add `whatsapp`/`telegram` to allow restricted tools |
+| `HUBZOID_CONNECT_JOURNEY` | off | "connect my <app>" links, WhatsApp confirmation and YES continuation |
+| `HUBZOID_CONNECT_TTL` | 600 | connection link lifetime in seconds (60 to 3600) |
 | `INBOUND_MSG_VERIFY_PROMPT` / `_VERIFIED` / `_NOT_REGISTERED` / `_NOT_OWN_CONTACT` / `_PLEASE_VERIFY` / `_NO_RESPONSE` | built-in English | override the fixed handshake/gate/fallback messages |
 | `HUBZOID_MAX_UPLOAD_BYTES` | 25 MiB | per-attachment ingress cap (shared with web/Slack uploads) |
 | `WHATSAPP_*` / `TELEGRAM_*` | — | surface credentials (above) |
@@ -301,6 +345,8 @@ script that loops over coordinators and calls `send_template` (WhatsApp) or
 
 - **Gmail** — another chat plugin on this harness; identity is trivial (the handle
   *is* the email). Needs Google OAuth + Pub/Sub-or-poll + email rendering.
+  (Connecting a person's Gmail account for tools is a different thing and is
+  available now, see above.)
 - **Phase-2 authz** — wire the same `resolve()` into `_derive_identity` for *all*
   surfaces, so an org can manage auth via its own API instead of Open WebUI.
   Non-breaking.
