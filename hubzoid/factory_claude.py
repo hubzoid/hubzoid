@@ -555,7 +555,8 @@ class ClaudeRuntime:
         extra_allowed: list[str] = []
         if self._hub_dir is not None:
             try:
-                extra_specs, extra_allowed = owui_mcp.per_user_specs(self._hub_dir, ident)
+                extra_specs, extra_allowed = owui_mcp.per_user_specs(
+                    self._hub_dir, ident, reserved=set(self._options.mcp_servers or {}))
             except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
                 log.warning("owui-mcp per-user injection skipped", exc_info=True)
 

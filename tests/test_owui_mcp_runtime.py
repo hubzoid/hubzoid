@@ -21,7 +21,7 @@ def test_injects_owui_servers_and_preserves_base(monkeypatch):
         mcp_servers={"hubzoid": "SENTINEL"},
         allowed_tools=["mcp__hubzoid__whoami"],
     )
-    monkeypatch.setattr(owui_mcp, "per_user_specs", lambda hub, ident: (
+    monkeypatch.setattr(owui_mcp, "per_user_specs", lambda hub, ident, **kw: (
         {"owui_odoo": {"type": "http", "url": "https://m/mcp",
                        "headers": {"Authorization": "Bearer X"}}},
         ["mcp__owui_odoo__*"],
@@ -37,7 +37,7 @@ def test_injects_owui_servers_and_preserves_base(monkeypatch):
 
 def test_noop_when_no_servers(monkeypatch):
     base, rt = _runtime(mcp_servers={"hubzoid": "S"}, allowed_tools=[])
-    monkeypatch.setattr(owui_mcp, "per_user_specs", lambda hub, ident: ({}, []))
+    monkeypatch.setattr(owui_mcp, "per_user_specs", lambda hub, ident, **kw: ({}, []))
     assert rt._options_for_turn() is base                # identical object: no clone
 
 
