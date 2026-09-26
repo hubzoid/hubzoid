@@ -55,6 +55,12 @@ class MigrationPlan:
 
     def add_grant(self, subject: str, hub: str, perm: str) -> None:
         self.grants.append(((subject or "").strip(), normalize(hub), normalize(perm)))
+        if normalize(subject) == EVERYONE:
+            note = (f"Everyone signed in (carried over): {normalize(hub)} was open to everyone "
+                    "signed in, so that access is preserved. New hubs need named grants; "
+                    "replace it with named people, then remove it in the Console.")
+            if note not in self.warnings:
+                self.warnings.append(note)
 
 
 # --- preflight --------------------------------------------------------------
@@ -155,10 +161,11 @@ def plan_standalone_public(hub_dir, plan: MigrationPlan) -> MigrationPlan:
     roster = load_resolver(hub_dir)
     hub = normalize(hub_dir.name)
     subjects = {normalize(s) for s, _, _ in plan.grants} | {"__future_signed_in__"}
-    permissions = {p["permission"] for p in permission_catalog(hub_dir)} - {
-        "use_hub",
-        "manage_access",
-    }
+    # Included capabilities come with entry and have no grant of their own.
+    permissions = {
+        p["permission"] for p in permission_catalog(hub_dir)
+        if p.get("default", "grant") != "included" and not p.get("obsolete")
+    } - {"use_hub", "manage_access"}
     permissions.update(p for _, _, p in plan.grants)
     plan.add_grant(EVERYONE, hub, USE_HUB)
     for subject in sorted(subjects):
@@ -317,7 +324,9 @@ def plan_from_owui(
                     for gid in block.get("group_ids", []) or []:
                         allowed.update(members.get(gid, set()))
                 plan.visibility_backup = dict(model_id=model_id, access_grants=original)
-    tool_perms = {normalize(p) for p in permissions} - {USE_HUB, "manage_access"}
+    from ..capabilities import included_ids
+
+    tool_perms = {normalize(p) for p in permissions} - {USE_HUB, "manage_access"} - included_ids()
     # CSV group permissions and OWUI groups previously formed a union.
     old_csv = {(normalize(s), p) for s, h, p in plan.grants if h == hub_name}
     all_emails = set(emails.values()) | {s for s, _ in old_csv}
@@ -369,7 +378,8 @@ def verify_effective(plan: MigrationPlan) -> list[dict]:
     candidate_engine = create_engine("sqlite://")
     try:
         candidate = GrantStore(candidate_engine)
-        candidate.grant_many(plan.grants)
+        # A plan's everyone grant only ever preserves demonstrably public legacy access.
+        candidate.grant_many(plan.grants, carry_over_public=True)
         for identity in plan.identities:
             candidate.upsert_identity(**identity)
         return effective_diff(candidate, plan)
@@ -401,7 +411,7 @@ def apply(
     hubs = {normalize(h) for _s, h, _p in plan.grants if h and normalize(h) != "*"}
     if not authoritative:
         # a plain (non-cutover) apply: just add the grants, no marker
-        store.grant_many(plan.grants)
+        store.grant_many(plan.grants, carry_over_public=True)
         for hub, subject, k, v in plan.attrs:
             store.set_attr(hub, subject, k, v)
         return
@@ -415,6 +425,7 @@ def apply(
             replace=True,
             authoritative=True,
             identities=plan.identities,
+            carry_over_public=True,
         )
     except ValueError as exc:
         raise MigrationBlocked(str(exc)) from exc

@@ -112,7 +112,8 @@ A delegate cannot:
 
 - grant `manage_access` (no sub-delegation)
 - change their own access
-- change public access or an organization administrator's access
+- remove access for everyone signed in (nobody can create it), or change an
+  organization administrator's access
 - remove all of someone's access in an agent when that person holds a
   capability the delegate does not
 - reset passwords, approve, change roles, delete or block accounts
@@ -183,16 +184,128 @@ again. A lost response can leave the save uncertain; refresh before retrying.
 Use **People** to distinguish an administrator block from a pending or unavailable
 chat account. Reactivation does not recreate grants removed by an explicit block.
 
+## Everyone signed in (no longer granted)
+
+New agents need named grants: people by email, or workflow identities. Nobody
+can create access for "everyone signed in" (the `*` subject), organization
+administrators included. The Console has no control for it, and the service,
+the management API, change proposals, `hubzoid grant` and the grant store all
+refuse it.
+
+An agent that already had one keeps it, and it keeps working:
+
+- It is carried over only by `hubzoid access migrate` when legacy access was
+  demonstrably public (an Open WebUI model open to all users, or
+  `--standalone-public`). The migration report says
+  `Everyone signed in (carried over)`.
+- The agent's Access list shows an **Everyone signed in** row with Use this
+  agent. It cannot be edited, only removed.
+- Only an organization administrator can remove it. Delegates see it read-only.
+
+To replace it with named grants:
+
+1. Open **Agents → the agent → Access**. The notice above the list says the
+   agent is open to everyone signed in.
+2. Add the people who need the agent by name (**Add person**, or **People → Add
+   account** for a new sign-in). Add workflow identities the same way.
+3. Select **Remove** on the **Everyone signed in** row. The confirmation says how
+   many chat accounts open the agent only through it. They, and anyone who signs
+   up later, lose entry. Named grants are not affected.
+
+From a shell: `hubzoid revoke '*' use_hub --hub <hub> <hub_dir>`.
+
+## Capabilities in the Console
+
+**Agents → the agent → Access → Edit access** lists what a person or service may
+do, in groups. Empty groups are hidden.
+
+| Group | What it holds |
+|---|---|
+| Hub access | Use this agent (`use_hub`) |
+| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities |
+| Custom restricted tools | `restricted/<capability>.py` modules |
+| Workflows | Workflow-only capabilities (none today) |
+| Administration | Manage access (`manage_access`): change access to this agent and create chat accounts for it, within your own access |
+| No longer available | A grant whose capability no longer exists. Remove it; it can't be granted again |
+
+Availability and permission are separate. A short status next to a capability
+says whether its settings are present: for example "Jev key missing", or
+"Not checked" when they may be in an AWS secret the Console does not read.
+The Console checks setting names only, never values, and "configured" means
+present, not verified. You can grant a capability before it is configured. It
+cannot run until an operator adds the setting. Adding a setting never grants
+anyone access.
+
+An **Included** capability comes with Use this agent and has nothing to grant.
+**Required**, **Inherited** and **Outside your access** mean what they say; the
+help button on each row explains why.
+
 ## Restrict a tool
 
 Put the tool factory in `restricted/<capability>.py`. All tools returned by that
 module share its capability name. Keep credentials in `restricted/.env` or your
 runtime's secret injection. Do not return secrets from a tool or workflow step.
 
-Optional `identity/permissions.yaml` gives capabilities useful labels,
+Optional `identity/permissions.yaml` gives these capabilities useful labels,
 descriptions and sensitivity indicators. Fields are optional; no new required
-hub file is introduced. The Console discovers capability names without executing
+hub file is introduced. It applies to restricted capabilities only: an entry
+naming a built-in (`use_hub`, `manage_access`, `curator` and so on) is ignored
+with a warning. The Console discovers capability names without executing
 the restricted Python modules.
+
+## Registering a capability (for Hubzoid contributors)
+
+A built-in tool appears in the Console by registering one `Capability` in the
+module that enforces it (`hubzoid/capabilities.py`). No Console code is needed.
+
+```python
+from hubzoid.capabilities import Capability, register
+
+JEV = register(Capability(
+    permission="jev",                  # stable id; grants refer to it; never rename
+    label="Ask Jev for decisions",
+    group="tools",                     # hub | tools | restricted | workflows | admin
+    description="Use call_jev in chat for typed decisions from Jev. "
+                "Each call is billed to the hub's JEV_OPENROUTER_API_KEY.",
+    surfaces=("chat",),                # implemented surfaces only: chat, mcp, workflow
+    requires=("JEV_OPENROUTER_API_KEY",),  # setting names, checked locally
+    missing="Jev key missing",         # short status when a setting is absent
+))
+
+# ...where the tool is added to the registry, gate it with the same id:
+registry[ft.name] = access.guard_tool(ft, JEV.permission, hub_dir)
+```
+
+Then add the module to `capabilities.REGISTRANTS`.
+
+- `default="grant"` (the default) means off until granted. `default="included"`
+  means it comes with Use this agent and has no grant; use it only for rows that
+  inform, such as an Email me setting status. A sensitive capability cannot be
+  included.
+- `sensitive=True` marks it for review when granted.
+  `delegate_grantable=False` lets only organization administrators grant it. The
+  service enforces both; the Console only explains them.
+- `enabled_by="SOME_SWITCH"`: when that setting is present and false, the status
+  is "Disabled for this hub".
+- Keep `guard_tool` as the only gate: it hides the tool from callers without the
+  grant and refuses a call that reaches it anyway, on every runtime.
+- Workflow APIs are not chat exposure. A workflow's `hub.call_jev` stays
+  available when the chat tool is not granted.
+
+A second example, a capability used outside chat:
+
+```python
+SHARE_PUBLIC = register(Capability(
+    permission="share_public_links", label="Share reports by public link", group="tools",
+    description="Create 'anyone with the link' links for reports you own. Anyone who "
+                "has such a link can open the report without signing in.",
+    surfaces=(), sensitive=True,
+))
+```
+
+Publishing within an authorized workflow run and Email me need no grant. The
+artifact Share dialog decides one artifact's audience; the Console only grants
+capabilities such as creating public links.
 
 A Python workflow acts as `workflow:<function>`. A Markdown task acts as
 `workflow:md:<task>`. Grant the service identity only the tools the task needs.

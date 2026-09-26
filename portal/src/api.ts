@@ -17,6 +17,21 @@ export type Permission = {
   label: string;
   description: string;
   sensitive: boolean;
+  // Presentation from hubzoid/capabilities.py. Optional so an older bridge's
+  // catalogue still renders (grouped by id instead).
+  /** hub | tools | restricted | workflows | admin | obsolete */
+  group?: string;
+  /** Where it acts, implemented surfaces only: chat, mcp, workflow. */
+  surfaces?: string[];
+  /** Short configuration status, e.g. "Jev key missing"; empty when ready. */
+  status?: string;
+  /** true: settings present · false: missing or disabled · null: not checked. */
+  available?: boolean | null;
+  /** "included" comes with Use this agent and has no grant of its own. */
+  default?: "grant" | "included";
+  delegate_grantable?: boolean;
+  /** A granted id that no longer exists: removable, never grantable. */
+  obsolete?: boolean;
 };
 export type AccessRow = {
   subject: string;
@@ -42,7 +57,10 @@ export type Access = {
   permissions: Permission[];
   rows: AccessRow[];
   total: number;
+  // An existing "everyone signed in" grant (carried over; can't be created).
   public: boolean;
+  /** Chat accounts that enter only through it (shown before removal). */
+  public_reliant?: number;
   // Policy revision at load time — sent back with the first save so the backend
   // can reject an edit built on access another admin has since changed.
   revision: number;

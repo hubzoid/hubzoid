@@ -15,7 +15,7 @@ import { ApiError, request, type AccountCreated, type Hub, type Me } from "../..
 import { errorText } from "../../hooks/useData";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { hrefWith, personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { USE_HUB, capabilityLabel } from "../../lib/format";
+import { USE_HUB, capabilityLabel, isGrantable } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
 import { generatePassword, passwordProblem } from "./password";
 
@@ -331,7 +331,11 @@ export function AccountDrawer({
               {managed.map((hub) => {
                 const allowed = new Set(grantable[hub.key] ?? []);
                 const catalog = catalogs[hub.key] ?? {};
-                const perms = orderCapabilities(Object.keys(catalog), Object.keys(catalog));
+                // Included and obsolete capabilities have nothing to grant.
+                const perms = orderCapabilities(
+                  Object.keys(catalog).filter((p) => isGrantable(catalog[p])),
+                  Object.keys(catalog),
+                );
                 const chosen = selected[hub.key] ?? [];
                 return (
                   <div key={hub.key} className="agent-access" style={{ marginBottom: 12 }}>
@@ -362,6 +366,11 @@ export function AccountDrawer({
                                 <span className="capability-title">
                                   <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
                                   {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
+                                  {catalog[p]?.available === false && (
+                                    <Text type="warning" className="capability-status">
+                                      {catalog[p].status || "Not configured"}
+                                    </Text>
+                                  )}
                                 </span>
                               </Checkbox>
                               {outside && (

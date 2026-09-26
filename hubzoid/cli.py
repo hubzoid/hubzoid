@@ -1697,16 +1697,27 @@ def grant(
     org: bool = typer.Option(False, "--org", help="Grant org-wide (all hubs), for manage_access."),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory (where the DB lives). Default: current dir."),
 ) -> None:
-    """Grant a permission. Granting any tool permission auto-grants use_hub."""
+    """Grant a permission. Granting any tool permission auto-grants use_hub.
+    New access for everyone signed in ('*') is refused: grant named people."""
     from .access import store_for
+    from .access.store import BroadAccessRefused
 
     import getpass
 
     from .db import operational_url
     from sqlalchemy.engine import make_url
+    if subject.strip() == "*":
+        console.print("[red]refused:[/red] new access for everyone signed in can't be created. "
+                      "Grant named people (their email) or workflow:<name> identities instead. "
+                      "An existing one can still be removed with: hubzoid revoke '*' use_hub --hub <hub>")
+        raise typer.Exit(code=1)
     console.print(f"Access store: {make_url(operational_url(hub_dir)).render_as_string(hide_password=True)}")
     domain = _access_domain(hub_dir, hub, org)
-    store_for(hub_dir).grant(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
+    try:
+        store_for(hub_dir).grant(subject, domain, permission, actor=f"cli:{getpass.getuser()}")
+    except (BroadAccessRefused, ValueError) as e:
+        console.print(f"[red]refused:[/red] {e}")
+        raise typer.Exit(code=1)
     console.print(f"[green]granted[/green] {subject} · {permission} in {domain}")
 
 

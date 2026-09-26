@@ -13,13 +13,15 @@ import {
   Tooltip,
 } from "antd";
 import { Circle, CircleHelp, XCircle } from "lucide-react";
-import { ApiError, request, query, type Access, type Hub } from "../../api";
+import { ApiError, request, query, type Access, type Hub, type Permission } from "../../api";
 import { errorText } from "../../hooks/useData";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
   USE_HUB,
   capabilityLabel,
+  capabilityNotes,
+  groupCapabilities,
   normalizeSubject,
   personName,
   toCatalog,
@@ -47,6 +49,16 @@ function CapabilityHelp({ label, text }: { label: string; text: string }) {
   </Tooltip>;
 }
 
+/** A short configuration status next to the label: missing or not checked. */
+function ConfigStatus({ p }: { p?: Permission }) {
+  if (!p || p.obsolete || p.available === true || p.available === undefined) return null;
+  return (
+    <Text type={p.available === false ? "warning" : "secondary"} className="capability-status">
+      {p.status || (p.available === false ? "Not configured" : "Not checked")}
+    </Text>
+  );
+}
+
 export function AccessDrawer({
   hub,
   access,
@@ -67,14 +79,14 @@ export function AccessDrawer({
   const [touched, setTouched] = useState(false);
   const [checking, setChecking] = useState(false);
   const catalog = useMemo(() => toCatalog(access.permissions), [access.permissions]);
-  const catalogPerms = useMemo(
-    () => new Set(access.permissions.map((p) => p.permission)),
-    [access.permissions],
+  // Grouped for reading only; every row is the same control. Grants for tools
+  // that no longer exist sit in their own group so they stay removable (never
+  // grantable) — otherwise a renamed or deleted tool leaves a permission the
+  // editor can never clear.
+  const sections = useMemo(
+    () => (draft ? groupCapabilities(access.permissions, draft.row.perms) : []),
+    [access.permissions, draft],
   );
-  // Grants for tools that no longer exist in the agent's catalogue. They can't
-  // be re-added, but must be individually removable — otherwise a renamed/
-  // deleted tool leaves a permission the editor can never clear.
-  const orphans = draft ? draft.row.perms.filter((p) => !catalogPerms.has(p)) : [];
   const subject = draft ? normalizeSubject(draft.subject) : "";
   const subjectError = draft?.mode === "add" ? validateSubject(draft.subject) : null;
   const changes = draft ? diff(draft.row.perms, draft.selected) : { added: [], removed: [] };
@@ -336,64 +348,68 @@ export function AccessDrawer({
                   <CapabilityHelp label="capabilities" text="Choose what this person can do. Changes are saved only after you review and confirm." />
                 </div>
                 <div className="capabilities" role="group" aria-label="Capabilities">
-                  {access.permissions.map((p) => {
-                    const lock = lockFor(p.permission, draft.row, access, draft.selected);
-                    const inherited = draft.row.inherited.includes(p.permission);
-                    const checked = draft.selected.includes(p.permission) || inherited;
-                    const publicOnly =
-                      p.permission === USE_HUB &&
-                      access.public &&
-                      !draft.selected.includes(USE_HUB) &&
-                      !inherited;
-                    return (
-                      <div className="capability capability-row" key={p.permission}>
-                        <Checkbox
-                          checked={checked}
-                          disabled={!!lock}
-                          onChange={(e) =>
-                            setDraft({
-                              ...draft,
-                              selected: toggle(draft.selected, p.permission, e.target.checked),
-                            })
-                          }
-                        >
-                          <span className="capability-title">
-                            <Text strong>{p.label}</Text>
-                            {p.sensitive && <Tag color="orange">Sensitive</Tag>}
-                          </span>
-                        </Checkbox>
-                        {lock && <Text type="warning" className="capability-state">{lock.label ?? "Locked"}</Text>}
-                        {!lock && publicOnly && <Text type="secondary" className="capability-state">Public</Text>}
-                        {(p.description || lock || publicOnly) && <CapabilityHelp label={p.label} text={[
+                  {sections.map((g) => (
+                    <div
+                      className="capability-group"
+                      role="group"
+                      aria-labelledby={`capability-group-${g.key}`}
+                      key={g.key}
+                    >
+                      <Text className="capability-group-title" id={`capability-group-${g.key}`}>
+                        {g.title}
+                      </Text>
+                      {g.items.map((p) => {
+                        const lock = lockFor(p.permission, draft.row, access, draft.selected, p);
+                        const inherited = draft.row.inherited.includes(p.permission);
+                        // An included capability follows Use this agent, however it is held.
+                        const entry =
+                          draft.selected.includes(USE_HUB) ||
+                          draft.row.inherited.includes(USE_HUB) ||
+                          access.public;
+                        const checked =
+                          p.default === "included"
+                            ? entry
+                            : draft.selected.includes(p.permission) || inherited;
+                        const publicOnly =
+                          p.permission === USE_HUB &&
+                          access.public &&
+                          !draft.selected.includes(USE_HUB) &&
+                          !inherited;
+                        const quiet = lock?.label === "Included" || lock?.label === "No longer available";
+                        const help = [
                           p.description,
+                          ...capabilityNotes(p),
                           lock?.reason,
-                          !lock && publicOnly ? "Available to everyone signed in. A direct grant keeps access if public access is turned off." : undefined,
-                        ].filter(Boolean).join(" ")} />}
-
-                      </div>
-                    );
-                  })}
-                  {orphans.map((p) => (
-                    <div className="capability" key={p}>
-                      <Checkbox
-                        checked={draft.selected.includes(p)}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            selected: toggle(draft.selected, p, e.target.checked),
-                          })
-                        }
-                      >
-                        <span className="capability-title">
-                          <Text strong>{p}</Text>
-                          <Tag>No longer available</Tag>
-                        </span>
-                      </Checkbox>
-                      <div className="capability-help">
-                        <Text type="secondary">
-                          This capability no longer exists in {hub.name}. You can remove it, but it can’t be granted again.
-                        </Text>
-                      </div>
+                          !lock && publicOnly ? "Held through “Everyone signed in”. A direct grant keeps access if that is removed." : undefined,
+                        ].filter(Boolean).join(" ");
+                        return (
+                          <div className="capability capability-row" key={p.permission}>
+                            <Checkbox
+                              checked={checked}
+                              disabled={!!lock}
+                              onChange={(e) =>
+                                setDraft({
+                                  ...draft,
+                                  selected: toggle(draft.selected, p.permission, e.target.checked),
+                                })
+                              }
+                            >
+                              <span className="capability-title">
+                                <Text strong>{p.label}</Text>
+                                {p.sensitive && <Tag color="orange">Sensitive</Tag>}
+                                <ConfigStatus p={p} />
+                              </span>
+                            </Checkbox>
+                            {lock && (
+                              <Text type={quiet ? "secondary" : "warning"} className="capability-state">
+                                {lock.label ?? "Locked"}
+                              </Text>
+                            )}
+                            {!lock && publicOnly && <Text type="secondary" className="capability-state">Public</Text>}
+                            {help && <CapabilityHelp label={p.label} text={help} />}
+                          </div>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -487,6 +503,11 @@ function ReviewList({
                   <Text type="secondary"> — included automatically with any capability</Text>
                 )}
                 {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
+                {catalog[p]?.available === false && (
+                  <Text type="warning" className="capability-status">
+                    {" "}— can’t run until configured ({catalog[p].status || "Not configured"})
+                  </Text>
+                )}
               </li>
             ))}
           </ul>
@@ -513,8 +534,8 @@ function ReviewList({
           }
           description={
             cascade
-              ? "One request removes them all. Inherited or public access, if any, still applies."
-              : "Inherited or public access, if any, still applies."
+              ? "One request removes them all. Inherited access or “Everyone signed in”, if any, still applies."
+              : "Inherited access or “Everyone signed in”, if any, still applies."
           }
         />
       )}

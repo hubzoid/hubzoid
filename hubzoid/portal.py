@@ -510,6 +510,18 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
             for (s, h, p) in all_grants
         )
+        # Chat accounts that enter only through "everyone signed in": signed
+        # up, approved, not blocked, and without a direct grant in this hub.
+        # Shown before an administrator removes that grant.
+        public_reliant = 0
+        if public:
+            direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
+            for ident in gs.identities():
+                subject = ident["subject"]
+                if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
+                        and not subject.startswith("workflow:") and subject not in direct
+                        and not gs.is_suspended(subject)):
+                    public_reliant += 1
         return dict(
             hub=hub,
             # Editable only once the hub is dashboard-managed. A legacy (un-migrated)
@@ -524,6 +536,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             viewer=normalize(admin.subject),
             total=len(result),
             public=public,
+            public_reliant=public_reliant,
             revision=revision,
             rows=result[offset : offset + limit],
         )
@@ -561,7 +574,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         if hub == ORG:
             raise HTTPException(400, "Organization admin rights are changed per person, not here")
         if subject == EVERYONE:
-            raise HTTPException(403, "Public access is changed with the public-access toggle")
+            raise HTTPException(
+                403, "Access for everyone signed in can't be granted. An organization "
+                "administrator can remove an existing one from the access list.")
         revision = service.apply_access_change(
             admin.actor(), subject, hub,
             [(op.action, op.permission) for op in payload.operations],

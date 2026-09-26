@@ -18,7 +18,15 @@ Rules (checked on every write, from the store, never from the caller):
     and revokes alike (a `use_hub` revoke removes everything, so it is refused
     when the person holds something outside the ceiling). Delegates cannot
     grant `manage_access`, change their own access, change public access or an
-    organization administrator, or make account-wide changes.
+    organization administrator, or make account-wide changes. A capability
+    registered with `delegate_grantable=False` is outside every delegate's
+    ceiling.
+  * Nobody, organization administrators included, can create new access for
+    everyone signed in (`*`). An existing grant keeps working and only an
+    organization administrator can remove it.
+  * Only catalogue capabilities with an explicit grant can be granted. An
+    `included` capability comes with `use_hub` and has no grant of its own; an
+    obsolete grant (its capability is gone) can be removed, never granted.
   * Accounts are created with the chat-app role `user`. The password is never
     stored, logged, audited, returned or placed in a change request.
   * Agent tools only propose (`propose`). A change request applies after the
@@ -42,11 +50,12 @@ from typing import Iterable
 
 from sqlalchemy import text
 
-from .. import deployment
+from .. import capabilities, deployment
 from .identity import normalize
 from .store import (
     EVERYONE,
     MANAGE_ACCESS,
+    NO_NEW_EVERYONE,
     ORG,
     USE_HUB,
     LastAdminError,
@@ -194,17 +203,17 @@ class AccessService:
         raise Denied(404, "unknown_hub", "Hub is not registered in this deployment")
 
     def catalog(self, hub: str) -> list[dict]:
-        """Every capability this hub offers: tools, built-ins and connectors."""
-        path = self._hub_path(normalize(hub))
-        out = list(deployment.permission_catalog(path))
+        """Every capability this hub offers (`capabilities.catalog`): built-ins,
+        connectors and restricted tools, plus granted ids that no longer exist,
+        marked obsolete so they stay visible and removable."""
+        hub = normalize(hub)
+        path = self._hub_path(hub)
         try:
-            from .. import connect_journey
-
-            known = {p["permission"] for p in out}
-            out += [p for p in connect_journey.permissions(path) if p["permission"] not in known]
-        except Exception:  # noqa: BLE001 — a broken connector list hides connectors only
-            log.exception("access service: connector catalog unavailable for %s", hub)
-        return out
+            granted = {p for (_s, _h, p) in self.store.list_grants(hub)}
+        except Exception:  # noqa: BLE001 — without the store nothing is obsolete-listed
+            log.warning("access service: grants unreadable while listing %s", hub)
+            granted = set()
+        return capabilities.catalog(path, granted=granted)
 
     def _audit(self, actor: Actor | str, action: str, **fields) -> None:
         who = actor.subject if isinstance(actor, Actor) else actor
@@ -257,15 +266,20 @@ class AccessService:
     def _ceiling(self, actor: Actor, scope: Scope, hub: str) -> frozenset[str]:
         if not scope.org_admin and hub not in scope.hubs:
             raise Denied(403, "forbidden", f"Cannot manage {hub}")
-        catalog = {p["permission"] for p in self.catalog(hub)}
+        entries = self.catalog(hub)
+        obsolete = {e["permission"] for e in entries if e.get("obsolete")}
+        grantable = {e["permission"] for e in entries if _grantable(e)}
         if scope.org_admin:
-            return frozenset(catalog)
+            return frozenset(grantable | obsolete)
+        delegable = {e["permission"] for e in entries
+                     if _grantable(e) and e.get("delegate_grantable", True)}
         try:
             held = self.store.permissions_for(actor.subject, hub)
         except Exception:  # noqa: BLE001
             raise Denied(503, "store_unavailable",
                          "Access data is unavailable. Try again shortly.")
-        return frozenset((held & catalog) - {MANAGE_ACCESS})
+        # An obsolete grant can only be removed, and only by someone who holds it.
+        return frozenset((held & (delegable | obsolete)) - {MANAGE_ACCESS})
 
     def grantable(self, actor: Actor) -> dict[str, list[str]]:
         """{hub: [permission]} this actor may grant, for every hub they manage.
@@ -315,20 +329,27 @@ class AccessService:
         self._hub_path(hub)
         if not gs.is_authoritative(hub):
             raise Denied(409, "legacy", LEGACY_MSG)
-        known = {p["permission"] for p in self.catalog(hub)}
+        entries = {e["permission"]: e for e in self.catalog(hub)}
         existing = None
         for action, p in ops:
-            if p in known:
+            entry = entries.get(p)
+            if entry is not None and _grantable(entry):
                 continue
             if existing is None:
                 existing = set(gs.list_grants(hub))
             # A removed or renamed tool can still be revoked, never granted.
-            if not (action == "revoke" and (subject, hub, p) in existing):
-                raise Denied(422, "unknown_permission", "Unknown permission for this hub")
-        if subject == EVERYONE and not (
-            scope.org_admin and all(p == USE_HUB for _, p in ops)
-        ):
-            raise Denied(403, "forbidden", "Only organization admins may change public hub access")
+            if action == "revoke" and (subject, hub, p) in existing:
+                continue
+            if entry is not None and entry.get("default") == "included":
+                raise Denied(422, "included",
+                             f"{entry['label']} comes with Use this agent; it has no grant of its own.")
+            raise Denied(422, "unknown_permission", "Unknown permission for this hub")
+        if subject == EVERYONE:
+            if any(a == "grant" for a, _ in ops):
+                raise Denied(403, "no_new_everyone", NO_NEW_EVERYONE)
+            if not (scope.org_admin and all(p == USE_HUB for _, p in ops)):
+                raise Denied(403, "forbidden",
+                             "Only organization admins may remove access for everyone signed in")
         if not scope.org_admin:
             self._check_delegate(actor, scope, subject, hub, ops)
         if any(a == "grant" for a, _ in ops):
@@ -964,6 +985,11 @@ class AccessService:
             gs.write_audit(conn, normalize(actor.subject), "change_rejected",
                            subject=row["target"], hub=row["hub"], surface=actor.surface,
                            request_id=row["id"])
+
+
+def _grantable(entry: dict) -> bool:
+    """A catalogue entry that can be granted: current and not included."""
+    return not entry.get("obsolete") and entry.get("default", "grant") != "included"
 
 
 def _account_flags(gs, subject: str) -> dict:

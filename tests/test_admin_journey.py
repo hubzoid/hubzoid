@@ -146,7 +146,7 @@ def test_cli_and_bridges_use_same_deployment(deployment_client):
 
 def test_offboarding_denies_public_and_keeps_admin(deployment_client):
     c, gs, role, dirs = deployment_client
-    gs.grant("*", "finance", "use_hub")
+    gs.grant("*", "finance", "use_hub", carry_over_public=True)
     assert (
         c.post("/portal/api/people/block", json={"subject": "root"}).status_code == 409
     )

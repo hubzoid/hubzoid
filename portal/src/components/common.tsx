@@ -163,6 +163,8 @@ export function CapabilityTag({
   const hint = [
     meta?.description,
     meta?.sensitive ? "Sensitive capability." : "",
+    meta?.obsolete ? "No longer available in this agent; remove it under Edit access." : "",
+    !meta?.obsolete && meta?.available === false ? `${meta.status || "Not configured"}: it can’t run until configured.` : "",
     via === "inherited"
       ? "Held through organization administrator rights; change it under People."
       : via === "public"
@@ -180,6 +182,7 @@ export function CapabilityTag({
       >
         {label}
         {via === "inherited" ? " · inherited" : via === "public" ? " · everyone" : ""}
+        {meta?.obsolete ? " · no longer available" : ""}
       </Tag>
     </Tooltip>
   );

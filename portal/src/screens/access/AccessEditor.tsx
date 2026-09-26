@@ -6,7 +6,6 @@ import {
   Empty,
   Input,
   Space,
-  Switch,
   Table,
   Tooltip,
   Typography,
@@ -46,7 +45,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   );
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
-  const [publicBusy, setPublicBusy] = useState(false);
+  const [removingEveryone, setRemovingEveryone] = useState(false);
 
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
   // open that person's editor directly instead of the whole access list.
@@ -82,37 +81,29 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     [access?.permissions],
   );
 
-  function askPublic(next: boolean) {
+  // "Everyone signed in" can no longer be granted. An existing grant (carried
+  // over from before named grants were required) stays visible and working
+  // until an organization administrator removes it here.
+  function askRemoveEveryone() {
     if (!access) return;
     const target = access.hub;
+    const n = access.public_reliant ?? 0;
     modal.confirm({
-      title: next
-        ? `Open ${hub.name} to everyone who signs in?`
-        : `Turn off public access to ${hub.name}?`,
-      content: next
-        ? "Anyone with a chat account will be able to use this agent. Restricted tools still require their own capabilities."
-        : "Any direct agent capability includes basic chat. Organization-wide admin rights alone do not grant chat.",
-      okText: next ? "Open to everyone" : "Turn off public access",
-      okButtonProps: { danger: !next },
+      title: `Remove access for everyone signed in to ${hub.name}?`,
+      content: `${n === 1 ? "1 chat account opens" : `${n} chat accounts open`} ${hub.name} only through this and will lose entry, as will anyone who signs up later. Add the people who need it by name first. Named grants are not affected.`,
+      okText: "Remove access for everyone",
+      okButtonProps: { danger: true },
       cancelText: "Cancel",
       onOk: async () => {
-        setPublicBusy(true);
+        setRemovingEveryone(true);
         try {
-          await request("/access/" + (next ? "grant" : "revoke"), {
-            subject: EVERYONE,
-            hub: target,
-            permission: USE_HUB,
-          });
-          setNotice(
-            next
-              ? `${hub.name} is now open to everyone signed in.`
-              : `${hub.name} is no longer open to everyone.`,
-          );
+          await request("/access/revoke", { subject: EVERYONE, hub: target, permission: USE_HUB });
+          setNotice(`${hub.name} is no longer open to everyone signed in.`);
           data.reload();
         } catch (e) {
           message.error(errorText(e));
         } finally {
-          setPublicBusy(false);
+          setRemovingEveryone(false);
         }
       },
     });
@@ -172,7 +163,21 @@ export function AccessEditor({ hub }: { hub: Hub }) {
       align: "right" as const,
       render: (_: unknown, r: AccessRow) =>
         r.subject === EVERYONE ? (
-          <Text type="secondary">Public access</Text>
+          access.can_manage_admins ? (
+            <Button
+              danger
+              onClick={askRemoveEveryone}
+              loading={removingEveryone}
+              disabled={locked}
+              aria-label="Remove access for everyone signed in"
+            >
+              Remove
+            </Button>
+          ) : (
+            <Tooltip title="Only organization administrators can remove this.">
+              <Text type="secondary" tabIndex={0}>Read-only</Text>
+            </Tooltip>
+          )
         ) : (
           <Button
             onClick={() => setDraft(draftFor(r))}
@@ -222,33 +227,14 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         />
       )}
 
-      <div className="public-access">
-        <Tooltip
-          title={
-            access.can_manage_admins
-              ? undefined
-              : "Only organization administrators can change public access."
-          }
-        >
-          <Switch
-            checked={access.public}
-            disabled={!access.can_manage_admins || publicBusy || locked}
-            loading={publicBusy}
-            aria-label="Public access"
-            onChange={askPublic}
-          />
-        </Tooltip>
-        <div>
-          <Text strong>Public access</Text>
-          <div>
-            <Text type="secondary">
-              {access.public
-                ? "Everyone who can sign in can use this agent. Direct grants below still control restricted tools."
-                : "Chat requires Use this agent or another direct agent capability."}
-            </Text>
-          </div>
-        </div>
-      </div>
+      {access.public && (
+        <Alert
+          type="info"
+          showIcon
+          title="Everyone signed in can use this agent"
+          description={`This was carried over from before named grants were required and can’t be granted again. To replace it, add the people who need ${hub.name} by name, then remove “Everyone signed in” below.`}
+        />
+      )}
 
       <div className="toolbar">
         <Input

@@ -576,6 +576,137 @@ for the components it reaches.
 `hubzoid doctor` gains a layer report. It lists key names with their layer and
 source, never values, plus a fetch check for each named secret.
 
+### 6. Capabilities in the Console (P4)
+
+An administrator manages what a person or group may do from **Agents → the
+agent → Access → Edit access**: the existing drawer, the existing store and the
+existing service. There is no second permission store and no page per tool
+family.
+
+**Two separate questions.**
+- **Availability (configuration).** Is the capability implemented, enabled for
+  this hub, and are its required settings present? Checked locally, by setting
+  name only. "Configured" means present, not verified with the provider.
+- **Authorization.** May this person or service use it? Only the grant store
+  answers this, through `guard.decide`.
+- Adding a credential never grants anyone access. A grant never creates a
+  credential or enables a disabled integration. A capability may be granted
+  before it is configured; the Console says it cannot run until configured.
+
+**Groups in the drawer** (presentation only; ids and grants do not change):
+
+| Group | Contents today |
+|---|---|
+| Hub access | Use this agent (`use_hub`) |
+| Hubzoid tools | Save shared knowledge (`curator`). Later: `jev` (agent Y), `share_public_links` (agent Z), `connector_<app>` (P2). Only registered, implemented capabilities appear. |
+| Custom restricted tools | `restricted/*.py` stems, with optional `identity/permissions.yaml` labels |
+| Workflows | Hidden: no workflow-only capability exists yet |
+| Administration | Manage access (`manage_access`), which includes delegated account creation |
+| No longer available | Granted ids missing from the catalogue, shown only to remove them |
+
+Empty groups are hidden. Rows stay compact: a label, a short status (Required,
+Inherited, Included, Outside your access, "Jev key missing", "Not checked") and a
+help tooltip for the longer text. Review, confirmation and unsaved-change
+handling are unchanged. There is no "Enable all".
+
+**Registration contract** (`hubzoid/capabilities.py`, no plugin framework):
+
+```python
+@dataclass(frozen=True)
+class Capability:
+    permission: str                 # stable id; grants refer to it; never rename
+    label: str
+    group: str                      # hub | tools | restricted | workflows | admin
+    description: str = ""          # help tooltip text
+    surfaces: tuple[str, ...] = ()  # implemented surfaces only: chat, mcp, workflow
+    requires: tuple[str, ...] = ()  # setting NAMES; checked locally, never values
+    missing: str = "Not configured" # short status when a required setting is absent
+    enabled_by: str = ""            # optional hub switch; present and false -> disabled
+    default: str = "grant"          # grant: explicit, off by default | included: comes with use_hub
+    sensitive: bool = False
+    delegate_grantable: bool = True # False: only organization admins may grant it
+def register(cap: Capability) -> Capability   # at import, by the module that enforces it
+def catalog(hub_dir: Path, *, granted=()) -> list[dict]
+```
+
+- The enforcing module registers and uses `cap.permission` in its existing
+  `guard_tool` call, so the Console row and the backend check share one id.
+  `guard_tool` stays the only place that wraps and marks gated tools.
+- `catalog` returns the built-ins, P2's `connect_journey.permissions`, the
+  restricted discovery (file names only, never imported) and obsolete granted
+  ids. `deployment.permission_catalog` becomes a thin wrapper that keeps the
+  old fields (`permission`, `label`, `description`, `sensitive`) and adds
+  `group`, `surfaces`, `status`, `available`, `default`, `delegate_grantable`
+  and `obsolete`.
+- Hub metadata in `identity/permissions.yaml` applies to custom restricted
+  capabilities only. An entry naming a built-in is ignored with a warning.
+- Registration validates: a known group, a lowercase id, and never
+  `sensitive` together with `default="included"`.
+
+**Configuration status.** Required names are looked up in
+`config_secrets.layer_report(hub_dir, fetch_secrets=False)` (a blank value
+counts as absent) and in the environment the process had before its first hub
+load. No provider call and no AWS fetch. If a key is absent locally but a named
+secret that could supply it was not read, the status is "Not checked", not
+missing. Values never leave the check.
+
+**Defaults and boundaries.**
+- Every tool capability, including Call Jev, Call LLM and Call agent exposed in
+  chat, needs an explicit grant and is off by default. Workflow APIs such as
+  `hub.call_jev` are not chat exposure and do not disappear when it is off.
+- `included` capabilities have no grant of their own. They are shown checked
+  and read-only when the person has Use this agent. The service refuses to
+  grant them. A sensitive capability can never be included.
+- Delegates grant only within P1's ceiling: what they hold in that hub, minus
+  `manage_access`, minus every `delegate_grantable=False` capability. Enabling
+  an administrative tool is not organization administration.
+- A capability grant never authorizes using another person's connection. The
+  artifact Share dialog (agent Z) decides one artifact's audience. The Console
+  only grants capabilities such as creating public links; no per-artifact ACLs
+  in the drawer.
+
+**Enforcement.** Unauthorized callers do not see a gated tool (`is_enabled`, and
+`guard.visible` for Claude and Codex once agent Y lands). A direct call is
+refused by the invoke wall. Revocation applies on the next call because the
+guard asks the store each time. Identity comes from the trusted request
+context, never from model arguments. Granting one capability implies only
+`use_hub`.
+
+**Obsolete grants.** A granted id that is no longer in the catalogue stays
+visible in its own group, marked "No longer available", and can be removed. It
+can never be granted again, and a delegate may remove it only if they hold it
+themselves.
+
+**Everyone signed in is no longer granted** (founder request, 26 September).
+New hubs need named grants. The Access page's "Public access" switch goes.
+- No path creates a new `*` (everyone signed in) `use_hub` grant, for any
+  actor, organization administrators included: `AccessService` (so the Console,
+  `/portal/api` and the account endpoints), change proposals and their
+  confirmation, `hubzoid grant`, and `GrantStore` itself (`grant`,
+  `apply_changes`, `grant_many`, `apply_migration`).
+- The store accepts one only with `carry_over_public=True`, which only
+  migration passes: carrying over demonstrably public legacy access (a public
+  Open WebUI model, `--standalone-public`, or a `*` roster row) preserves
+  existing access. The plan report says "Everyone signed in (carried over)".
+  `hubzoid access rollback` restores a backup's rows as they were.
+- An existing grant is never revoked or hidden by this change. It shows as an
+  **Everyone signed in** row with Use this agent, not editable, with a
+  **Remove** action for organization administrators. The confirmation states how
+  many signed-up accounts open the hub only through it. Delegates see it
+  read-only. `hubzoid revoke '*' use_hub` still works.
+- Other broad paths stay closed: the organization domain carries only
+  `manage_access` (organization administrators only, never through proposals);
+  the `*` permission is refused; there are no group subjects; a delegate's
+  ceiling contains only named capabilities they hold.
+
+**Compatibility.** Ids `use_hub`, `manage_access`, `curator` and every
+restricted stem are unchanged. Legacy hubs (group-based, no
+`permissions.yaml`) are read-only in the Console as before and behave exactly
+as before. Behaviour change for UPGRADING: `permissions.yaml` can no longer
+relabel a built-in; nobody can create new access for everyone signed in
+(existing grants keep working until an organization administrator removes
+them); `hubzoid grant '*'` exits with an error.
+
 ### Security model (cross-cutting)
 
 - **Identity sources.** Identity comes only from:
@@ -1027,6 +1158,31 @@ def layer_report(hub_dir: Path) -> list[dict]                  # [{"key","layer"
   (`restricted/.env`). Standard AWS chain variables are never read explicitly.
 - **Doctor:** also warns when `GOOGLE_CLIENT_ID` is set without
   `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
+
+### P4: capabilities in the Console (organization and registration contract)
+
+- **Creates:** `hubzoid/capabilities.py`, `tests/test_capabilities.py`,
+  `tests/test_everyone_access.py`.
+- **Owns (modifies):**
+  - `hubzoid/deployment.py` (`permission_catalog` becomes a wrapper)
+  - `hubzoid/access/service.py` (`catalog`, the ceiling, included and obsolete
+    handling)
+  - `hubzoid/tools/curator.py` (registers `curator`)
+  - `hubzoid/access/migrate.py` (skips included capabilities; carries over and
+    reports public legacy access)
+  - `hubzoid/access/store.py` (refuses new everyone grants without
+    `carry_over_public`), `hubzoid/portal.py` (`public_reliant`, refusal text),
+    `hubzoid/cli.py` (`hubzoid grant '*'` refused)
+  - `portal/src/screens/access/AccessEditor.tsx` (the switch removed; the
+    Everyone row and its Remove)
+  - `portal/src/screens/access/{AccessDrawer.tsx,plan.ts}`,
+    `portal/src/screens/people/AccountDrawer.tsx`, `portal/src/lib/format.ts`,
+    `portal/src/api.ts`, `portal/src/components/common.tsx`,
+    `portal/src/portal.css`, `portal/tests/*`, `hubzoid/portal_dist/**`
+  - `docs/access-management.md`, `docs/ADMINISTRATION.md`
+- **Contract for agents Y and Z:** section 6. The lead wires their
+  `register(...)` calls at integration and adds their modules to
+  `capabilities.REGISTRANTS`.
 
 ### Per-package definition of done
 

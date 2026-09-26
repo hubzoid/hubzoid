@@ -249,6 +249,12 @@ function createFixture() {
     blocked: state.suspended.has(subject) || state.unavailable.has(subject),
   });
 
+  function catalogFor(hub) {
+    const known = new Set(state.catalogs[hub].map((p) => p.permission));
+    const stale = [...new Set(state.grants.filter(([, h, p]) => h === hub && !known.has(p)).map(([, , p]) => p))].sort();
+    return [...state.catalogs[hub], ...stale.map(obsoletePerm)];
+  }
+
   async function handle(method, endpoint, params, body) {
     const a = admin();
     if (!a) throw error(403, "Sign in with an account allowed to manage agent access.");
@@ -273,7 +279,7 @@ function createFixture() {
         return { hubs: allowedHubs(a) };
       case "/permissions":
         requireHub(a, params.hub);
-        return { hub: params.hub, permissions: state.catalogs[params.hub] };
+        return { hub: params.hub, permissions: catalogFor(params.hub) };
       case "/access": {
         const hub = params.hub;
         requireHub(a, hub);
@@ -301,9 +307,12 @@ function createFixture() {
           editable: !!state.hubs.find((h) => h.key === hub).authoritative,
           authoritative: state.hubs.find((h) => h.key === hub).authoritative,
           can_manage_admins: a.org,
-          permissions: state.catalogs[hub],
+          permissions: catalogFor(hub),
           total: list.length,
           public: gs.can("__signed_in_preview__", hub, USE_HUB),
+          public_reliant: Object.entries(state.identities).filter(([subject, id]) =>
+            id.owui_id && !id.pending && !subject.startsWith("workflow:") && !state.suspended.has(subject) &&
+            !state.grants.some(([s, h, p]) => s === subject && h === hub && p === USE_HUB)).length,
           revision: state.revision,
           rows: list.slice(offset, offset + limit),
         };
@@ -322,9 +331,15 @@ function createFixture() {
         } else {
           requireHub(a, hub);
           if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
-          if (!state.catalogs[hub].some((p) => p.permission === perm)) throw error(422, "Unknown permission for this hub");
+          const entry = state.catalogs[hub].find((p) => p.permission === perm);
+          const held = state.grants.some(([s, h, p]) => s === subject && h === hub && p === perm);
+          if (!grantable(entry) && !(revoke && held)) throw error(422, "Unknown permission for this hub");
         }
-        if (subject === EVERYONE && !(a.org && perm === USE_HUB)) throw error(403, "Only organization admins may change public hub access");
+        // Mirrors AccessService: nobody creates new access for everyone signed in;
+        // an organization administrator may remove an existing one.
+        if (subject === EVERYONE && !revoke)
+          throw error(403, "New access for everyone signed in can't be created. Grant named people or workflow identities instead.");
+        if (subject === EVERYONE && !(a.org && perm === USE_HUB)) throw error(403, "Only organization admins may remove access for everyone signed in");
         if (!a.org && (perm === MANAGE_ACCESS || (revoke && perm === USE_HUB && gs.can(subject, hub, MANAGE_ACCESS))))
           throw error(403, "Only organization admins may change administrator access");
         if (revoke) gs.revoke(subject, hub, perm, a.subject);
@@ -349,8 +364,9 @@ function createFixture() {
           const perm = String(op.permission || "").trim().toLowerCase();
           if (!a.org && (perm === MANAGE_ACCESS || (op.action === "revoke" && perm === USE_HUB && gs.can(subject, hub, MANAGE_ACCESS))))
             throw error(403, "Only organization admins may change administrator access");
-          if (!state.catalogs[hub].some((p) => p.permission === perm) && !(op.action === "revoke" && existing.has(`${subject}|${perm}`)))
-            throw error(422, "Unknown permission for this hub");
+          const entry = state.catalogs[hub].find((p) => p.permission === perm);
+          if (!grantable(entry) && !(op.action === "revoke" && existing.has(`${subject}|${perm}`)))
+            throw error(422, entry?.default === "included" ? `${entry.label} comes with Use this agent; it has no grant of its own.` : "Unknown permission for this hub");
           grants = grants || op.action === "grant";
         }
         if (grants) {
@@ -564,9 +580,24 @@ function createFixture() {
   return { state, handle };
 }
 
-function perm(permission, label, description, sensitive = false) {
-  return { permission, label, description, sensitive };
+// Mirrors hubzoid/capabilities.py entries: the original four fields plus the
+// Console's presentation fields. `extra` overrides the defaults.
+function perm(permission, label, description, sensitive = false, extra = {}) {
+  const group =
+    permission === USE_HUB ? "hub" : permission === MANAGE_ACCESS ? "admin" : permission === "curator" ? "tools" : "restricted";
+  return {
+    permission, label, description, sensitive, group, surfaces: [], status: "", available: true,
+    default: "grant", delegate_grantable: permission !== MANAGE_ACCESS, obsolete: false, ...extra,
+  };
 }
+// A granted id that is no longer in the catalogue (capabilities._obsolete).
+function obsoletePerm(permission) {
+  return perm(permission, permission.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    "This capability no longer exists in this agent. You can remove it, but it can't be granted again.",
+    false, { group: "obsolete", status: "No longer available", available: false, obsolete: true });
+}
+// Grantable: current and not included with Use this agent (service._grantable).
+const grantable = (p) => !!p && !p.obsolete && p.default !== "included";
 function row(ts, actor, action, subject, hub, permission) {
   return { ts, actor, action, subject, hub, permission };
 }
@@ -629,4 +660,4 @@ function error(status, detail) {
 }
 const conflict = (detail) => error(409, detail);
 
-module.exports = { createFixture };
+module.exports = { createFixture, perm };

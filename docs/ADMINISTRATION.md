@@ -130,11 +130,18 @@ administrator's. The server checks this on every change. See
 [access management](access-management.md#delegated-management-and-its-ceiling-implemented).
 
 Revoking agent entry also removes that person's direct tool grants in that agent.
-Public access and organization-level admin rights are displayed as inherited
-access. Removing a direct grant does not remove those inherited rights.
+An existing "Everyone signed in" grant and organization-level admin rights are
+displayed as inherited access. Removing a direct grant does not remove them.
+
+New access for everyone signed in cannot be created, by anyone. An agent that
+already had it (carried over by migration) shows an **Everyone signed in** row.
+To replace it: add the people who need the agent by name, then an organization
+administrator selects **Remove** on that row. The confirmation says how many
+chat accounts rely on it alone. See
+[access management](access-management.md#everyone-signed-in-no-longer-granted).
 
 **Block access** removes a person's direct grants and blocks agent access,
-including public access. It leaves the OWUI account and chats intact. Reactivation
+including access through "Everyone signed in". It leaves the OWUI account and chats intact. Reactivation
 does not restore removed grants. For full account offboarding, use **Delete
 account** in the person's Details (organization administrators), which removes
 every grant and then the chat account and its chats. The person's Open WebUI API
@@ -154,7 +161,11 @@ ledger:
 ```
 
 Sensitivity is explicit metadata, not inferred from words such as `prod` in a name.
-Permission keys `use_hub` and `manage_access` are reserved by Hubzoid.
+Permission keys `use_hub` and `manage_access` are reserved by Hubzoid. This file
+labels restricted capabilities only; an entry for a built-in such as `curator`
+is ignored with a warning. The Console groups capabilities and shows whether
+each one's settings are present. See
+[capabilities in the Console](access-management.md#capabilities-in-the-console).
 
 ## The Agents page
 
@@ -278,7 +289,10 @@ before/after permission matrix containing both permitted and denied users before
 activation. Preview prints the number of legacy decisions checked and any
 differences. A CSV-only preview warns that model visibility has not been verified, and
 `--apply` refuses an unverified plan. For a legacy standalone hub where signed-in
-entry was public, pass `--standalone-public` explicitly. It checks tool permissions
+entry was public, pass `--standalone-public` explicitly. Public legacy entry
+is preserved as an "Everyone signed in" grant, and the report says
+`Everyone signed in (carried over)`. It is the only way such a grant is still
+written. It checks tool permissions
 against the existing CSV resolver and automatically includes the local OWUI group
 source when present; `--from-owui` can specify a different source copy. Registered
 gateways require model ACL evidence and reject standalone bypass. Disabled models are refused rather than implicitly enabled.
@@ -447,7 +461,8 @@ idempotency and code changes. For operators:
 | A confirmation link says the request isn't available | Only the person who proposed it can open it. It expires after `HUBZOID_CHANGE_REQUEST_TTL` seconds and works once |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
 | No execution history | Correct hub's DBOS database, workflow enabled, run actually submitted |
-| User still has access after revocation | Public/inherited access; use Block access for offboarding |
+| User still has access after revocation | "Everyone signed in" or inherited access; use Block access for offboarding |
+| `hubzoid grant '*' ...` is refused | New access for everyone signed in can't be created. Grant named people or workflow identities |
 
 For local UI development only, `HUBZOID_PORTAL_DEV=1` plus
 `HUBZOID_PORTAL_DEV_USER=<bootstrapped-admin>` bypasses OWUI session validation.
@@ -463,8 +478,8 @@ pending accounts unavailable; signup grants stay pending until the actual accoun
 exists. The verified OWUI account ID is bound on migration, login and API-key use.
 If a different account reuses an existing email, direct grants are removed and
 agent access is blocked, with an audit event. An organization administrator must
-review the account, reactivate it and grant access again. Public entry applies
-after reactivation. This also protects chat and MCP entry before the next sync.
+review the account, reactivate it and grant access again. An existing
+"Everyone signed in" grant applies after reactivation. This also protects chat and MCP entry before the next sync.
 If the replaced account was the only administrator, use the documented local
 `access bootstrap --admin <new-verified-email>` break-glass path, then verify the
 new account. Do not reactivate an account solely because its email matches.

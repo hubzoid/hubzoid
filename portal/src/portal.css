@@ -531,20 +531,6 @@ body .ant-alert .ant-alert-icon {
   margin-bottom: 8px;
 }
 
-.public-access {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 14px 16px;
-  background: var(--subtle);
-  border: 1px solid var(--subtle-border);
-  border-radius: 8px;
-}
-
-.public-access .ant-switch {
-  margin-top: 2px;
-}
-
 .sync-note {
   font-size: 13px;
 }
@@ -747,3 +733,8 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .capability-state { font-size: 12px; white-space: nowrap; }
 .capability-info { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: 4px; padding: 0; background: transparent; color: var(--mute); cursor: help; }
 .capability-info:hover { color: var(--ink); }
+/* Capability groups: presentation only. A short title, no per-row paragraphs. */
+.capability-group + .capability-group { margin-top: 8px; border-top: 1px solid var(--subtle-border); }
+.capability-group-title { display: block; padding-top: 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--mute); }
+.capability-group .capability:last-child { border-bottom: 0; }
+.capability-status { font-size: 12px; font-weight: 400; }
