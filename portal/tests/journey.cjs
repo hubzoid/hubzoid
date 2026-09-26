@@ -83,6 +83,21 @@ function step(name) {
       await page.waitForFunction(() => document.querySelectorAll(".ant-modal-confirm").length === 0);
     };
     const lastMutation = () => state.mutations[state.mutations.length - 1];
+    // Optional capability groups start collapsed; their header is a real button.
+    const group = (name) => drawer().getByRole("button", { name: new RegExp(`^${name}`) });
+    const expand = async (name) => {
+      const toggle = group(name);
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    };
+    const headerText = async (name) => (await group(name).textContent()).replace(/\s+/g, " ").trim();
+    // The element a disclosure button controls (aria-controls).
+    const controlled = async (button) => page.locator(`[id="${await button.getAttribute("aria-controls")}"]`);
+    // A successful save closes the drawer and shows one compact notice.
+    const saved = async () => {
+      await drawer().waitFor({ state: "hidden" });
+      await page.getByText("Access updated", { exact: true }).waitFor();
+      assert.equal(await page.getByText(/about 30 seconds/).count(), 0, "no implementation detail on success");
+    };
 
     // ---- landing -----------------------------------------------------------
     step("The landing page combines five totals and agent cards, with compact navigation");
@@ -153,7 +168,7 @@ function step(name) {
     await priyaRow.getByText("Active", { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
     await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
-    await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Service").waitFor();
+    await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-access.png"), fullPage: true });
@@ -223,6 +238,7 @@ function step(name) {
     step("Editing then cancelling writes nothing and asks before discarding");
     await go("/agents/finance/access");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Run payroll/ }).check();
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await modalTitle("Discard unsaved changes?").waitFor();
@@ -234,27 +250,35 @@ function step(name) {
     assert.equal(state.mutations.length, 0, "cancelling must not write");
 
     // ---- staged edit: review then save -------------------------------------------
-    step("Review lists every change and the exact requests; Save sends them in order");
+    step("Review shows who, where, and each added or removed capability once; Save sends one request");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
     const entry = drawer().getByRole("checkbox", { name: /Use this agent/ });
     assert.equal(await entry.isDisabled(), true, "entry is locked while other capabilities are selected");
     await drawer().getByText("Required", { exact: true }).waitFor();
-    await drawer().getByRole("button", { name: "About Use this agent", exact: true }).focus();
-    await page.getByRole("tooltip").filter({ hasText: "Required by the other selected capabilities" }).waitFor();
+    const entryHelp = drawer().getByRole("button", { name: "About Use this agent", exact: true });
+    assert.equal(await entryHelp.getAttribute("aria-expanded"), "false");
+    await entryHelp.click(); // a tap or click, not hover
+    assert.equal(await entryHelp.getAttribute("aria-expanded"), "true");
+    await (await controlled(entryHelp)).getByText("Required by the other selected capabilities", { exact: false }).waitFor();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).uncheck();
     await drawer().getByRole("checkbox", { name: /Run payroll/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("Review changes").first().waitFor();
+    const review = drawer().locator(".access-review");
+    await review.getByText("Priya Natarajan", { exact: true }).waitFor();
+    await review.getByText(PRIYA, { exact: true }).waitFor();
+    await review.getByText("Finance Assistant", { exact: true }).waitFor();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Run payroll").waitFor();
+    await drawer().getByRole("list", { name: "Removing" }).getByText("Manage invoices").waitFor();
+    assert.equal(await review.getByRole("listitem").count(), 2, "each change is listed once");
     await drawer().getByText("This grants a sensitive capability").waitFor();
-    await drawer().getByText("Applied together in one step").waitFor();
-    const ops = drawer().locator(".operation-list li");
-    assert.equal(await ops.count(), 2);
-    await ops.nth(0).getByText("Remove Manage invoices").waitFor();
-    await ops.nth(1).getByText("Allow Run payroll").waitFor();
+    assert.equal(await drawer().getByText(/Applied together|Allow Run payroll|Remove Manage invoices/).count(), 0, "no duplicate request list or implementation notes");
+    for (const name of ["Cancel", "Back", "Save 2 changes"]) await drawer().getByRole("button", { name, exact: true }).waitFor();
     assert.equal(state.mutations.length, 0, "review must not write");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-review.png"), fullPage: true });
     await drawer().getByRole("button", { name: "Save 2 changes" }).click();
-    await page.getByText(`Access updated for ${PRIYA}.`).waitFor();
+    await saved();
     // One atomic request carrying the whole change set + the concurrency guard.
     assert.equal(state.mutations.length, 1);
     assert.equal(state.mutations[0].endpoint, "/access/apply");
@@ -270,27 +294,37 @@ function step(name) {
     state.mutations.length = 0;
 
     // ---- remove all access: single cascading request ---------------------------------
-    step("Remove all access sends one cascading request and explains it");
+    step("Remove all access is confirmed as a consequential change and sends one cascading request");
     await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
     await drawer().getByRole("button", { name: "Remove all access" }).click();
-    await drawer().getByText("will no longer be able to open Finance Assistant").waitFor();
-    assert.equal(await drawer().locator(".operation-list li").count(), 1);
-    await drawer().getByRole("button", { name: "Save change" }).click();
-    await page.getByText("daniel.okafor@example.org no longer has direct access").waitFor();
+    await drawer().getByText("daniel.okafor@example.org will lose access to Finance Assistant").waitFor();
+    assert.equal(await drawer().locator(".access-review li").count(), 1);
+    await drawer().getByRole("button", { name: "Remove access", exact: true }).click();
+    await saved();
     assert.equal(state.mutations.length, 1);
     assert.equal(state.mutations[0].endpoint, "/access/apply");
     assert.deepEqual(state.mutations[0].operations, [
       { action: "revoke", permission: "use_hub" },
     ]);
-    assert.equal(await page.getByRole("row").filter({ hasText: "daniel.okafor" }).count(), 0);
+    await page.getByRole("row").filter({ hasText: "daniel.okafor" }).waitFor({ state: "detached" });
     state.mutations.length = 0;
+
+    step("A legacy service identity keeps its label, grants and management controls");
     await page.getByRole("button", { name: "Edit access for workflow:monthly_close" }).click();
+    await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
+    const legacyHelp = drawer().getByRole("button", { name: "About legacy service identities" });
+    await legacyHelp.click();
+    await (await controlled(legacyHelp)).getByText("Created before workflows ran as user accounts", { exact: false }).waitFor();
+    assert.equal(await headerText("Restricted tools"), "Restricted tools · 1 selected", "its grants are kept and counted");
     await drawer().getByRole("button", { name: "Remove all access" }).click();
-    await drawer().getByText("removes every capability in Finance Assistant").waitFor();
-    await drawer().locator(".review-list").getByText("Read ledger").waitFor();
-    await drawer().getByText("Remove Use this agent (and everything with it)").waitFor();
-    assert.equal(await drawer().locator(".operation-list li").count(), 1, "cascade is one request, not one per capability");
+    await drawer().getByText("will lose access to Finance Assistant").waitFor();
+    await drawer().locator(".access-review").getByText("Legacy service identity", { exact: true }).waitFor();
+    const removing = drawer().getByRole("list", { name: "Removing" });
+    await removing.getByText("Use this agent").waitFor();
+    await removing.getByText("Read ledger").waitFor();
+    assert.equal(await removing.getByRole("listitem").count(), 2, "each removed capability once");
     await drawer().getByRole("button", { name: "Back" }).click();
+    await expand("Restricted tools");
     assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), false);
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await answer("Discard");
@@ -298,45 +332,54 @@ function step(name) {
     assert.equal(state.mutations.length, 0);
 
     // ---- add a person: validation, implied entry, minimal requests ----------------------
-    step("Adding a person validates the identity and skips the implied entry grant");
+    step("Adding a person asks only for an email, validates it, and lists each change once");
     await page.getByRole("button", { name: "Add person" }).click();
+    assert.equal(await drawer().getByRole("radio").count(), 0, "no Person/Service switch");
+    assert.equal(await drawer().getByText(/workflow:|Service identity/).count(), 0, "nothing suggests creating a workflow identity");
     const subject = drawer().getByRole("textbox", { name: "Email address" });
     await subject.fill("not an email");
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("Enter a valid email address").waitFor();
+    await drawer().getByText("Enter a valid email address.", { exact: true }).waitFor();
     assert.equal(state.mutations.length, 0);
     await subject.fill("Ravi.Menon@example.org");
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("included automatically with any capability").waitFor();
-    assert.equal(await drawer().locator(".operation-list li").count(), 1, "use_hub is implied by the ledger grant");
-    await drawer().getByRole("button", { name: "Save change" }).click();
-    await page.getByText("Access updated for ravi.menon@example.org.").waitFor();
+    const adding = drawer().getByRole("list", { name: "Adding" });
+    await adding.getByText("Read ledger").waitFor();
+    assert.equal(await adding.getByText("Use this agent").count(), 1, "Use this agent is listed once");
+    assert.equal(await adding.getByRole("listitem").count(), 2);
+    await drawer().getByRole("button", { name: "Save 2 changes" }).click();
+    await saved();
     assert.equal(state.mutations.length, 1);
     assert.equal(state.mutations[0].endpoint, "/access/apply");
     assert.equal(state.mutations[0].subject, "ravi.menon@example.org");
     assert.deepEqual(state.mutations[0].operations, [
       { action: "grant", permission: "ledger" },
-    ]);
+    ], "use_hub is implied by the ledger grant: still one operation");
     await page.getByRole("row").filter({ hasText: "ravi.menon" }).getByText("Not signed up yet").waitFor();
     state.mutations.length = 0;
 
-    step("A Markdown workflow can receive the built-in remember capability from Console");
+    step("New service identities can't be created; an existing legacy one opens for editing");
     await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("radio", { name: "Service", exact: true }).check();
-    await drawer().getByRole("textbox", { name: "Service identity" }).fill("workflow:md:daily-notes");
-    await drawer().getByRole("checkbox", { name: /Save shared knowledge/ }).check();
+    const newSubject = drawer().getByRole("textbox", { name: "Email address" });
+    await newSubject.fill("workflow:md:daily-notes");
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByRole("button", { name: "Save change" }).click();
-    await page.getByText("Access updated for workflow:md:daily-notes.").waitFor();
-    assert.equal(lastMutation().subject, "workflow:md:daily-notes");
-    assert.deepEqual(lastMutation().operations, [{ action: "grant", permission: "curator" }]);
-    await page.getByRole("row").filter({ hasText: "workflow:md:daily-notes" }).getByText("Service", { exact: true }).waitFor();
-    state.grants = state.grants.filter(([subject]) => subject !== "workflow:md:daily-notes");
-    state.mutations.length = 0;
+    await drawer().getByText("New service identities can’t be added", { exact: false }).waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
+    assert.equal(state.mutations.length, 0, "nothing is created");
+    await newSubject.fill("workflow:monthly_close");
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("already has access to Finance Assistant").waitFor();
+    await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
+    await drawer().getByRole("button", { name: "Remove all access" }).waitFor();
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    assert.equal(state.mutations.length, 0);
+    assert.equal(state.grants.some(([s]) => s === "workflow:md:daily-notes"), false);
     await page.reload();
 
-    step("Capabilities are grouped; unconfigured, included and obsolete ones read clearly and stay safe");
+    step("Optional groups start collapsed with counts; configuration reads apart from permission; toggles and help work by keyboard");
     // Temporary synthetic capabilities: one missing its setting, one included
     // with entry, and a grant whose capability no longer exists.
     const financeCatalog = state.catalogs.finance;
@@ -355,25 +398,52 @@ function step(name) {
     await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
     assert.deepEqual(
       await drawer().locator(".capability-group-title").allTextContents(),
-      ["Hub access", "Hubzoid tools", "Custom restricted tools", "Administration", "No longer available"],
+      ["Hub access", "Hubzoid tools", "Restricted tools", "Administration", "No longer available"],
       "groups in order; the empty Workflows group is hidden",
     );
+    // Use this agent and removable leftovers stay in view; optional groups are closed.
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).waitFor();
+    const oldBox = drawer().getByRole("checkbox", { name: /Old Export/ });
+    assert.equal(await oldBox.isChecked(), true);
+    for (const name of ["Hubzoid tools", "Restricted tools", "Administration"]) {
+      const toggle = group(name);
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false", `${name} starts collapsed`);
+      const panel = await controlled(toggle);
+      assert.equal(await panel.count(), 1, `${name} names the panel it controls`);
+      assert.equal(await panel.isHidden(), true);
+    }
+    assert.equal(await group("Hub access").count(), 0, "Use this agent has no toggle");
+    // Configuration is separate from permission: the included Email me is held
+    // (with entry) but can't run, and the header says so while collapsed.
+    assert.equal(await headerText("Hubzoid tools"), "Hubzoid tools · 1 not configured");
+    // Real buttons: Enter and Space toggle a group.
+    const tools = group("Hubzoid tools");
+    await tools.focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await tools.getAttribute("aria-expanded"), "true");
     const jevBox = drawer().getByRole("checkbox", { name: /Ask Jev for decisions/ });
     assert.equal(await jevBox.isDisabled(), false, "an unconfigured capability can still be granted");
     await drawer().getByText("Jev key missing", { exact: true }).waitFor();
     const emailBox = drawer().getByRole("checkbox", { name: /Email me/ });
     assert.equal(await emailBox.isChecked(), true, "included follows Use this agent");
     assert.equal(await emailBox.isDisabled(), true, "included has nothing to grant");
-    const oldBox = drawer().getByRole("checkbox", { name: /Old Export/ });
-    assert.equal(await oldBox.isChecked(), true);
-    await drawer().getByRole("button", { name: "About Ask Jev for decisions" }).hover();
-    await page.getByRole("tooltip").filter({ hasText: "can’t run until an operator adds its settings" }).waitFor();
+    const jevHelp = drawer().getByRole("button", { name: "About Ask Jev for decisions" });
+    await jevHelp.focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await jevHelp.getAttribute("aria-expanded"), "true");
+    await (await controlled(jevHelp)).getByText("can’t run until an operator adds its settings", { exact: false }).waitFor();
     await jevBox.check();
+    await tools.focus();
+    await page.keyboard.press("Space");
+    assert.equal(await tools.getAttribute("aria-expanded"), "false");
+    assert.equal(await headerText("Hubzoid tools"), "Hubzoid tools · 1 selected · 2 not configured", "granted but unconfigured is shown as such");
+    await page.keyboard.press("Space");
+    assert.equal(await jevBox.isChecked(), true, "selections are kept across collapse and expand");
     await oldBox.uncheck();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("can’t run until configured (Jev key missing)", { exact: false }).waitFor();
     await drawer().getByRole("button", { name: "Save 2 changes" }).click();
-    await page.getByText(`Access updated for ${LENA}.`).waitFor();
+    await saved();
     assert.deepEqual(lastMutation().operations, [
       { action: "revoke", permission: "old_export" },
       { action: "grant", permission: "jev" },
@@ -385,9 +455,15 @@ function step(name) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
     await drawer().getByText("Hubzoid tools", { exact: true }).waitFor();
-    const overflow = await drawer().locator(".ant-drawer-body").evaluate((el) => el.scrollWidth - el.clientWidth);
+    let overflow = await drawer().locator(".ant-drawer-body").evaluate((el) => el.scrollWidth - el.clientWidth);
     assert.ok(overflow <= 0, `narrow drawer has no horizontal scroll (${overflow}px)`);
     await drawer().screenshot({ path: path.join(shots, "hubzoid-portal-capabilities-narrow.png") });
+    await group("Hubzoid tools").click();
+    await group("Restricted tools").click();
+    await drawer().getByRole("checkbox", { name: /Ask Jev for decisions/ }).waitFor();
+    overflow = await drawer().locator(".ant-drawer-body").evaluate((el) => el.scrollWidth - el.clientWidth);
+    assert.ok(overflow <= 0, `narrow expanded drawer has no horizontal scroll (${overflow}px)`);
+    await drawer().screenshot({ path: path.join(shots, "hubzoid-portal-capabilities-narrow-open.png") });
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -397,11 +473,41 @@ function step(name) {
     state.mutations.length = 0;
     await page.reload();
 
+    step("A group holding a problem found at review opens by itself");
+    await page.getByRole("button", { name: "Add person" }).click();
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("late.change@example.org");
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Run payroll/ }).check();
+    await group("Restricted tools").click(); // close it again; the choice stays
+    assert.equal(await headerText("Restricted tools"), "Restricted tools · 1 selected");
+    // The agent drops the capability while the drawer is open.
+    const catalogBefore = state.catalogs.finance;
+    state.catalogs.finance = catalogBefore.filter((p) => p.permission !== "payroll");
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("One selected capability can’t be granted", { exact: false }).waitFor();
+    assert.equal(await group("Restricted tools").getAttribute("aria-expanded"), "true", "the group with the problem opened");
+    assert.equal(await headerText("Restricted tools"), "Restricted tools · 1 selected · needs attention");
+    const payrollBox = drawer().getByRole("checkbox", { name: /Run payroll/ });
+    assert.equal(await payrollBox.getAttribute("aria-invalid"), "true");
+    await drawer().getByText("No longer available in this agent", { exact: false }).waitFor();
+    assert.equal(state.mutations.length, 0);
+    await payrollBox.uncheck();
+    assert.equal(await drawer().getByText("No longer available in this agent", { exact: false }).count(), 0);
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Use this agent").waitFor();
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    state.catalogs.finance = catalogBefore;
+    assert.equal(state.mutations.length, 0);
+
     step("Adding someone who already has access switches to editing their current access");
     await page.getByRole("button", { name: "Add person" }).click();
     await drawer().getByRole("textbox", { name: "Email address" }).fill(PRIYA);
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("already has access to Finance Assistant").waitFor();
+    assert.equal(await headerText("Restricted tools"), "Restricted tools · 2 selected");
+    await expand("Restricted tools");
     assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isChecked(), true);
     assert.equal(state.mutations.length, 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
@@ -420,6 +526,7 @@ function step(name) {
     // ---- uncertain save: server error can't be confirmed --------------------------
     step("An uncertain (5xx) save says so honestly and reloads the real state");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).uncheck();
     await drawer().getByRole("button", { name: "Review changes" }).click();
@@ -432,7 +539,7 @@ function step(name) {
     // 5xx is not a confirmed no-op — the UI must not claim nothing was saved.
     await drawer().getByText("Couldn’t confirm whether the changes were saved").waitFor();
     await drawer().getByText("Access store temporarily unavailable").waitFor();
-    await drawer().locator(".operation-list li[data-status=unknown]").first().waitFor();
+    await drawer().locator(".access-review li[data-status=unknown]").first().waitFor();
     assert.equal(await drawer().getByText("No changes were saved").count(), 0, "must not falsely claim nothing saved");
     assert.equal(state.mutations.length, 1, "one atomic request");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-uncertain-save.png"), fullPage: true });
@@ -446,6 +553,7 @@ function step(name) {
     // ---- definite (4xx) save failure: nothing saved -------------------------------
     step("A definite (4xx) save failure states nothing was saved");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     state.failNext = {
@@ -455,7 +563,7 @@ function step(name) {
     };
     await drawer().getByRole("button", { name: "Save change" }).click();
     await drawer().getByText("No changes were saved").waitFor();
-    await drawer().locator(".operation-list li[data-status=failed]").first().waitFor();
+    await drawer().locator(".access-review li[data-status=failed]").first().waitFor();
     await drawer().getByRole("button", { name: /Done/ }).click();
     await drawer().waitFor({ state: "hidden" });
     state.mutations.length = 0;
@@ -464,6 +572,7 @@ function step(name) {
     step("A failed post-save refresh keeps the access editor locked until a successful retry");
     const priyaRow2 = page.getByRole("row").filter({ hasText: "Priya Natarajan" });
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).uncheck();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     // The save itself succeeds; the recovery refresh (GET /access) then fails once.
@@ -488,10 +597,11 @@ function step(name) {
     step("An edit built on stale access is refused when another admin changed it first");
     await page.getByRole("button", { name: "Add person" }).click();
     await drawer().getByRole("textbox", { name: "Email address" }).fill("concurrent.user@example.org");
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     state.revision += 1; // another administrator changed access after this drawer loaded
-    await drawer().getByRole("button", { name: "Save change" }).click();
+    await drawer().getByRole("button", { name: "Save 2 changes" }).click();
     await drawer().getByText("Nothing was saved").waitFor();
     await drawer().getByText("Access changed since you loaded it", { exact: false }).waitFor();
     await drawer().getByRole("button", { name: /Done/ }).click();
@@ -505,6 +615,7 @@ function step(name) {
     await page.getByRole("heading", { name: "People and services" }).waitFor();
     await go("/agents/finance/access");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
     await page.goBack();
     await modalTitle("Leave without saving?").waitFor();
@@ -523,6 +634,7 @@ function step(name) {
     step("Navigation is refused while a save is in flight");
     await go("/agents/finance/access");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     state.delays["/access/apply"] = 900;
@@ -533,7 +645,7 @@ function step(name) {
     });
     await page.getByText("Wait for the current save to finish").waitFor();
     assert.equal(await hash(), "#/agents/finance/access");
-    await page.getByText(`Access updated for ${PRIYA}.`).waitFor();
+    await saved();
     delete state.delays["/access/apply"];
     state.mutations.length = 0;
 
@@ -971,16 +1083,21 @@ function step(name) {
     state.grants = state.grants.filter(([s, h]) => !(s === EVERYONE_SUBJECT && h === "finance"));
     await page.reload();
     await page.getByRole("button", { name: "Edit access for Aisha Rahman" }).click();
+    assert.equal(await headerText("Administration"), "Administration · 1 selected", "inherited rights are counted");
+    await expand("Administration");
     assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true);
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
     await drawer().getByText("Inherited", { exact: true }).first().waitFor();
-    await drawer().getByRole("button", { name: "About Manage access", exact: true }).click();
-    await page.getByRole("tooltip").filter({ hasText: "Held through organization administrator rights" }).waitFor();
+    const inheritedHelp = drawer().getByRole("button", { name: "About Manage access", exact: true });
+    await inheritedHelp.click();
+    await (await controlled(inheritedHelp)).getByText("Held through organization administrator rights", { exact: false }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Remove all access" }).count(), 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: "Edit access for Finance Admin" }).click();
-    await drawer().getByRole("button", { name: "About Manage access", exact: true }).hover();
-    await page.getByRole("tooltip").filter({ hasText: "Only organization administrators can change this." }).waitFor();
+    await expand("Administration");
+    const delegateHelp = drawer().getByRole("button", { name: "About Manage access", exact: true });
+    await delegateHelp.click();
+    await (await controlled(delegateHelp)).getByText("Only organization administrators can change this.", { exact: false }).waitFor();
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await go("/agents/support/access");
     await page.getByText("Agent not found").waitFor();
@@ -1109,9 +1226,26 @@ function step(name) {
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-mobile-nav.png") });
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).waitFor();
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-mobile-editor.png") });
     await drawer().getByRole("button", { name: "Cancel" }).click();
+
+    step("On a touch screen, groups and help open by tapping");
+    const touchCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const tpage = await touchCtx.newPage();
+    await touchCtx.route(`${ORIGIN}/**`, serve());
+    await tpage.goto(`${ORIGIN}/portal/#/agents/finance/access`);
+    await tpage.getByRole("button", { name: "Edit access for Priya Natarajan" }).tap();
+    const tdrawer = tpage.locator(".ant-drawer-section[role=dialog]");
+    const ttoggle = tdrawer.getByRole("button", { name: /^Restricted tools/ });
+    await ttoggle.tap();
+    assert.equal(await ttoggle.getAttribute("aria-expanded"), "true");
+    const thelp = tdrawer.getByRole("button", { name: "About Read ledger" });
+    await thelp.tap();
+    assert.equal(await thelp.getAttribute("aria-expanded"), "true");
+    await tpage.locator(`[id="${await thelp.getAttribute("aria-controls")}"]`).getByText("View accounting entries and balances.").waitFor();
+    await touchCtx.close();
     await page.setViewportSize({ width: 1440, height: 950 });
 
     // ---- ordinary user -----------------------------------------------------------------------

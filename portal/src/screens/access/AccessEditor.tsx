@@ -20,9 +20,10 @@ import {
   PersonCell,
 } from "../../components/common";
 import { useHashQuery } from "../../hooks/useRoute";
-import { EVERYONE, USE_HUB, normalizeSubject, personName, toCatalog } from "../../lib/format";
+import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
+import { LegacyServiceTag } from "./AccessParts";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
@@ -44,7 +45,9 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     "/access" + query({ hub: hub.key, q: search, offset: (page - 1) * PAGE, limit: PAGE }),
   );
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [notice, setNotice] = useState("");
+  // Each result is a new alert (keyed), so a repeated "Access updated" is announced again.
+  const [notice, setNotice] = useState({ text: "", n: 0 });
+  const announce = (text: string) => setNotice((prev) => ({ text, n: prev.n + 1 }));
   const [removingEveryone, setRemovingEveryone] = useState(false);
 
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
@@ -98,7 +101,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         setRemovingEveryone(true);
         try {
           await request("/access/revoke", { subject: EVERYONE, hub: target, permission: USE_HUB });
-          setNotice(`${hub.name} is no longer open to everyone signed in.`);
+          announce(`${hub.name} is no longer open to everyone signed in.`);
           data.reload();
         } catch (e) {
           message.error(errorText(e));
@@ -153,8 +156,17 @@ export function AccessEditor({ hub }: { hub: Hub }) {
       title: "Account",
       dataIndex: "status",
       key: "status",
-      width: 160,
-      render: (status: string) => <AccountTag status={status} />,
+      width: 180,
+      // A legacy `workflow:` identity keeps its grants and controls, labelled as such.
+      render: (status: string, r: AccessRow) =>
+        isService(r.subject) ? (
+          <Space wrap size={[4, 4]}>
+            <LegacyServiceTag />
+            {status !== "service" && <AccountTag status={status} />}
+          </Space>
+        ) : (
+          <AccountTag status={status} />
+        ),
     },
     {
       title: "",
@@ -196,7 +208,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         <div>
           <Title level={2}>Access to {hub.name}</Title>
           <Paragraph type="secondary">
-            People and services with direct access, and what each is allowed to do.
+            People with direct access, and what each is allowed to do.
           </Paragraph>
         </div>
         <Button
@@ -217,13 +229,13 @@ export function AccessEditor({ hub }: { hub: Hub }) {
           description="It hasn’t been moved to the dashboard yet, so access is read-only here and its existing access continues to apply. After migration (hubzoid access migrate) you can manage it here."
         />
       )}
-      {notice && (
+      {notice.text && (
         <Alert
+          key={notice.n}
           type="success"
           showIcon
-          title={notice}
-          description="The chat app’s agent list updates within about 30 seconds."
-          closable={{ onClose: () => setNotice("") }}
+          title={notice.text}
+          closable={{ onClose: () => setNotice((prev) => ({ ...prev, text: "" })) }}
         />
       )}
 
@@ -290,15 +302,8 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         draft={draft}
         setDraft={setDraft}
         onReload={data.reload}
-        onSaved={(subject, operations) => {
-          const removedAll = operations.some(
-            (op) => op.action === "revoke" && op.permission === USE_HUB,
-          );
-          setNotice(
-            removedAll
-              ? `${subject} no longer has direct access to ${hub.name}.`
-              : `Access updated for ${subject}.`,
-          );
+        onSaved={() => {
+          announce("Access updated");
           data.reload();
         }}
       />

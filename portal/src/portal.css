@@ -590,7 +590,6 @@ body .ant-alert .ant-alert-icon {
 }
 
 .capability {
-  padding: 14px 0;
   border-bottom: 1px solid var(--subtle-border);
 }
 
@@ -738,3 +737,30 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .capability-group-title { display: block; padding-top: 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--mute); }
 .capability-group .capability:last-child { border-bottom: 0; }
 .capability-status { font-size: 12px; font-weight: 400; }
+
+/* Access drawer: collapsible groups, inline help and a short review. Toggles are
+   real buttons (aria-expanded/aria-controls), sized for touch. */
+.capability-group + .capability-group { margin-top: 0; }
+.capability-group-heading { display: flex; align-items: center; min-height: 44px; margin: 0; font-size: 14px; font-weight: 600; }
+.capability-group-heading .capability-group-title { display: inline; padding: 0; font-size: 14px; letter-spacing: 0; color: var(--ink); }
+.capability-group-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; width: 100%; min-height: 44px; padding: 10px 0; border: 0; border-radius: 4px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.capability-group-toggle:hover .capability-group-title { color: var(--accent); }
+.capability-group-chevron { flex-shrink: 0; margin-left: auto; color: var(--mute); transition: transform 0.15s ease; }
+.capability-group-toggle[aria-expanded="true"] .capability-group-chevron { transform: rotate(180deg); }
+.capability-group-meta { font-size: 13px; font-weight: 400; }
+.capability > .capability-row { padding: 10px 0; }
+.capability-info[aria-expanded="true"] { color: var(--accent); }
+.help-text { margin: 0 0 12px 24px; padding: 6px 0 6px 12px; border-left: 2px solid var(--line); color: var(--mute); font-size: 13px; line-height: 1.5; }
+.capabilities-heading + .help-text { margin-left: 0; }
+.person-heading .help-text { margin: 8px 0 0; }
+.capability-problem { display: block; margin: -4px 0 10px 24px; font-size: 13px; }
+.identity-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.identity-tags .identity { overflow-wrap: anywhere; }
+.identity-tags .capability-info { width: 24px; height: 24px; }
+.access-review { display: flex; flex-direction: column; gap: 16px; }
+.review-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.review-who-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.review-who-text .identity { overflow-wrap: anywhere; }
+.review-agent { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.access-review .review-list { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .capability-group-chevron { transition: none; } }
