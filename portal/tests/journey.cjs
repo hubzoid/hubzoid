@@ -5,7 +5,7 @@ const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createFixture } = require("./fixture.cjs");
+const { createFixture, perm } = require("./fixture.cjs");
 
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
 const shots = process.env.PORTAL_SHOTS || path.join(require("node:os").tmpdir(), "hubzoid-console-tests");
@@ -332,6 +332,67 @@ function step(name) {
     assert.deepEqual(lastMutation().operations, [{ action: "grant", permission: "curator" }]);
     await page.getByRole("row").filter({ hasText: "workflow:md:daily-notes" }).getByText("Service", { exact: true }).waitFor();
     state.grants = state.grants.filter(([subject]) => subject !== "workflow:md:daily-notes");
+    state.mutations.length = 0;
+    await page.reload();
+
+    step("Capabilities are grouped; unconfigured, included and obsolete ones read clearly and stay safe");
+    // Temporary synthetic capabilities: one missing its setting, one included
+    // with entry, and a grant whose capability no longer exists.
+    const financeCatalog = state.catalogs.finance;
+    state.catalogs.finance = [
+      ...financeCatalog,
+      perm("jev", "Ask Jev for decisions", "Use call_jev in chat for typed decisions from Jev.", false,
+        { group: "tools", surfaces: ["chat"], status: "Jev key missing", available: false }),
+      perm("email_me", "Email me", "Email a run's result to your own approved address.", false,
+        { group: "tools", default: "included", status: "Email not configured", available: false }),
+    ];
+    const LENA = "lena.berg@example.org";
+    state.identities[LENA] = { display: "Lena Berg", owui_id: "u_lena", pending: 0 };
+    state.grants.push([LENA, "finance", USE_HUB_PERM], [LENA, "finance", "old_export"]);
+    await page.reload();
+    await page.getByRole("row").filter({ hasText: "Lena Berg" }).getByText("Old Export · no longer available").waitFor();
+    await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
+    assert.deepEqual(
+      await drawer().locator(".capability-group-title").allTextContents(),
+      ["Hub access", "Hubzoid tools", "Custom restricted tools", "Administration", "No longer available"],
+      "groups in order; the empty Workflows group is hidden",
+    );
+    const jevBox = drawer().getByRole("checkbox", { name: /Ask Jev for decisions/ });
+    assert.equal(await jevBox.isDisabled(), false, "an unconfigured capability can still be granted");
+    await drawer().getByText("Jev key missing", { exact: true }).waitFor();
+    const emailBox = drawer().getByRole("checkbox", { name: /Email me/ });
+    assert.equal(await emailBox.isChecked(), true, "included follows Use this agent");
+    assert.equal(await emailBox.isDisabled(), true, "included has nothing to grant");
+    const oldBox = drawer().getByRole("checkbox", { name: /Old Export/ });
+    assert.equal(await oldBox.isChecked(), true);
+    await drawer().getByRole("button", { name: "About Ask Jev for decisions" }).hover();
+    await page.getByRole("tooltip").filter({ hasText: "can’t run until an operator adds its settings" }).waitFor();
+    await jevBox.check();
+    await oldBox.uncheck();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("can’t run until configured (Jev key missing)", { exact: false }).waitFor();
+    await drawer().getByRole("button", { name: "Save 2 changes" }).click();
+    await page.getByText(`Access updated for ${LENA}.`).waitFor();
+    assert.deepEqual(lastMutation().operations, [
+      { action: "revoke", permission: "old_export" },
+      { action: "grant", permission: "jev" },
+    ]);
+    // The fixture refuses what the server refuses: an included capability has no grant.
+    await assert.rejects(fixture.handle("POST", "/access/apply", {}, {
+      subject: LENA, hub: "finance", operations: [{ action: "grant", permission: "email_me" }],
+    }), (e) => e.status === 422);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
+    await drawer().getByText("Hubzoid tools", { exact: true }).waitFor();
+    const overflow = await drawer().locator(".ant-drawer-body").evaluate((el) => el.scrollWidth - el.clientWidth);
+    assert.ok(overflow <= 0, `narrow drawer has no horizontal scroll (${overflow}px)`);
+    await drawer().screenshot({ path: path.join(shots, "hubzoid-portal-capabilities-narrow.png") });
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    state.catalogs.finance = financeCatalog;
+    state.grants = state.grants.filter(([subject]) => subject !== LENA);
+    delete state.identities[LENA];
     state.mutations.length = 0;
     await page.reload();
 

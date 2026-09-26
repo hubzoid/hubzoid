@@ -1,4 +1,4 @@
-import type { Access, AccessRow } from "../../api";
+import type { Access, AccessRow, Permission } from "../../api";
 import { EVERYONE, MANAGE_ACCESS, USE_HUB } from "../../lib/format";
 
 /**
@@ -11,7 +11,10 @@ import { EVERYONE, MANAGE_ACCESS, USE_HUB } from "../../lib/format";
  *  - the staged operations are saved together in one atomic request;
  *  - an agent administrator (not organization-wide) grants and removes only
  *    what they hold themselves (`grantable`), never their own access or an
- *    organization administrator's.
+ *    organization administrator's, and never an organization-admin-only
+ *    capability (`delegate_grantable: false`);
+ *  - an `included` capability comes with `use_hub` and is never granted; an
+ *    obsolete grant can be removed, never granted.
  */
 export type Operation = { action: "grant" | "revoke"; permission: string };
 
@@ -60,7 +63,7 @@ export function toggle(selected: string[], permission: string, on: boolean) {
 
 export type Lock = {
   reason: string;
-  label?: "Inherited" | "Required" | "Outside your access";
+  label?: "Inherited" | "Required" | "Outside your access" | "Included" | "No longer available";
 } | null;
 
 type Viewer = Pick<Access, "can_manage_admins" | "grantable" | "viewer">;
@@ -74,7 +77,10 @@ export function lockFor(
   row: AccessRow,
   access: Viewer,
   selected: string[],
+  meta?: Permission,
 ): Lock {
+  if (meta?.default === "included")
+    return { label: "Included", reason: "Comes with Use this agent; there is nothing to grant separately." };
   // A blocked (admin-suspended) or unavailable (chat account gone) person can have
   // EXISTING grants removed — offboarding — but must not receive NEW ones. So lock
   // only a permission they do not already hold; leave held ones unlockable so they
@@ -85,6 +91,8 @@ export function lockFor(
         ? "Blocked by an administrator — reactivate them under People to grant new access. Existing access can still be removed."
         : "Their chat account is unavailable, so new access can't be added — but existing access can be removed.",
     };
+  if (meta?.obsolete && !row.perms.includes(permission))
+    return { label: "No longer available", reason: "This capability no longer exists, so it can’t be granted." };
   if (row.subject === EVERYONE)
     return { reason: "Public access is managed with the switch above." };
   if (row.inherited.includes(permission))
@@ -103,6 +111,11 @@ export function lockFor(
     return { reason: "You can’t change your own access. Ask an organization administrator." };
   if (!access.can_manage_admins && row.inherited.includes(MANAGE_ACCESS))
     return { reason: "Only organization administrators can change an organization administrator’s access." };
+  if (!access.can_manage_admins && meta?.delegate_grantable === false)
+    return {
+      label: "Outside your access",
+      reason: "Only organization administrators can grant or remove this.",
+    };
   if (!access.can_manage_admins && access.grantable) {
     const ceiling = access.grantable;
     if (!ceiling.includes(permission))

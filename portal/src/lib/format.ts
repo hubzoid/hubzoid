@@ -134,6 +134,82 @@ export function capabilityLabel(
   return humanize(permission).replace(/^\w/, (c) => c.toUpperCase());
 }
 
+// ---- capability groups -------------------------------------------------------
+
+/** Drawer sections in display order. Presentation only: grants never change. */
+export const CAPABILITY_GROUPS = [
+  { key: "hub", title: "Hub access" },
+  { key: "tools", title: "Hubzoid tools" },
+  { key: "restricted", title: "Custom restricted tools" },
+  { key: "workflows", title: "Workflows" },
+  { key: "admin", title: "Administration" },
+  { key: "obsolete", title: "No longer available" },
+] as const;
+
+/** The group a capability belongs to. An older catalogue has no groups, so
+ *  the built-in ids are placed by name and everything else is restricted. */
+export function capabilityGroup(p: Pick<Permission, "permission" | "group" | "obsolete">): string {
+  if (p.obsolete) return "obsolete";
+  if (p.group && CAPABILITY_GROUPS.some((g) => g.key === p.group)) return p.group;
+  if (p.permission === USE_HUB) return "hub";
+  if (p.permission === MANAGE_ACCESS) return "admin";
+  if (p.permission === "curator") return "tools";
+  return p.group ? "tools" : "restricted";
+}
+
+/**
+ * The drawer's sections for one person: catalogue order within fixed groups,
+ * empty groups left out. Obsolete grants appear only for someone who holds
+ * them; a held id missing from the catalogue (an older bridge) counts too.
+ */
+export function groupCapabilities(permissions: Permission[], held: string[]) {
+  const known = new Set(permissions.map((p) => p.permission));
+  const rows: Permission[] = [
+    ...permissions.filter((p) => !p.obsolete || held.includes(p.permission)),
+    ...held
+      .filter((p) => !known.has(p))
+      .map((p) => ({
+        permission: p,
+        label: capabilityLabel(p),
+        description: "This capability no longer exists in this agent. You can remove it, but it can’t be granted again.",
+        sensitive: false,
+        obsolete: true,
+      })),
+  ];
+  return CAPABILITY_GROUPS.map((g) => ({
+    ...g,
+    items: rows.filter((p) => capabilityGroup(p) === g.key),
+  })).filter((g) => g.items.length > 0);
+}
+
+/** Can be granted: current, and not included with Use this agent. */
+export const isGrantable = (p?: Permission) => !!p && !p.obsolete && p.default !== "included";
+
+const SURFACE_NAMES: Record<string, string> = {
+  chat: "chat",
+  mcp: "assistants over MCP",
+  workflow: "workflows",
+};
+
+/** Help text for where a capability acts and whether it can run yet. */
+export function capabilityNotes(p: Permission): string[] {
+  const notes: string[] = [];
+  const where = (p.surfaces ?? []).map((s) => SURFACE_NAMES[s] ?? s);
+  if (where.length) notes.push(`Works in ${where.join(" and ")}.`);
+  if (p.obsolete) return notes;
+  if (p.available === false)
+    notes.push(
+      p.status === "Disabled for this hub"
+        ? "Disabled for this agent, so it has no effect until an operator enables it."
+        : p.default === "included"
+          ? `${p.status || "Not configured"}: it can’t run until an operator adds its settings.`
+          : `${p.status || "Not configured"}: it can be granted, but can’t run until an operator adds its settings.`,
+    );
+  else if (p.available === null)
+    notes.push("Its settings may be in a secret this Console doesn’t read, so they weren’t checked.");
+  return notes;
+}
+
 // ---- statuses --------------------------------------------------------------
 
 type Presentation = { label: string; color: string; hint: string };
@@ -242,6 +318,8 @@ export type ActivityContext = {
   people: (subject: string) => string;
 };
 
+const inAgent = (hubName: string) => (hubName ? [text(" in "), agent(hubName)] : []);
+
 /** `md:<task>` is a markdown schedule task; anything else is a code workflow. */
 function workflowLabel(name?: string | null) {
   if (!name) return "a workflow";
@@ -331,6 +409,58 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         tone: "negative",
         parts: [person(subjectName), text("’s chat account is no longer available")],
         detail: "Access is paused until the account reappears in the chat app.",
+      };
+    // Account actions (the Console's account directory). The subject is the email.
+    case "account_create":
+      return { tone: "positive", parts: [actor(who), text(" created a chat account for "), person(subjectName)] };
+    case "account_create_failed":
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" couldn’t create a chat account for "), person(subjectName)],
+        detail: "No access was granted.",
+      };
+    case "account_approve":
+      return { tone: "positive", parts: [actor(who), text(" approved "), person(subjectName), text("’s chat account")] };
+    case "account_password_reset":
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" reset the password for "), person(subjectName)],
+        detail: "Their existing chat sessions were signed out.",
+      };
+    case "account_role":
+      // The new chat-app role is kept in the permission column.
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" changed "), person(subjectName), text(`’s chat-app role to ${row.permission === "admin" ? "admin" : "user"}`)],
+      };
+    case "account_delete":
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" deleted "), person(subjectName), text("’s chat account")],
+        detail: "Their access was removed first.",
+      };
+    // Changes proposed from chat, WhatsApp or MCP and confirmed in the Console.
+    case "change_proposed":
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" proposed a change for "), person(subjectName), ...inAgent(hubName)],
+        detail: "Nothing changes until it is confirmed in the Console.",
+      };
+    case "change_confirmed":
+      return { tone: "positive", parts: [actor(who), text(" confirmed a change for "), person(subjectName), ...inAgent(hubName)] };
+    case "change_rejected":
+      return { tone: "neutral", parts: [actor(who), text(" rejected a proposed change for "), person(subjectName), ...inAgent(hubName)] };
+    case "change_expired":
+      return {
+        tone: "neutral",
+        parts: [text("A proposed change for "), person(subjectName), ...inAgent(hubName), text(" expired")],
+        detail: "It was not confirmed in time, so nothing changed.",
+      };
+    case "change_failed":
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" confirmed a change for "), person(subjectName), ...inAgent(hubName), text(", but it failed")],
+        detail: "Nothing was applied.",
       };
     default:
       return {
