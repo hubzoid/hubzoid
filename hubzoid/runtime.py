@@ -220,6 +220,55 @@ class OpenAIAgentsRuntime:
         self._opened = False
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
+        """Run one turn. When the caller connected personal MCP servers in Open
+        WebUI (see `owui_mcp`), the turn runs on a per-turn clone of the agent
+        that also carries those servers, each with the caller's own token. The
+        shared agent is never modified."""
+        personal = self._personal_servers()
+        if not personal:
+            async for chunk in self._stream(self._agent, prompt):
+                yield chunk
+            return
+        async for chunk in relay_in_task(lambda: self._stream_personal(prompt, personal)):
+            yield chunk
+
+    def _personal_servers(self) -> list:
+        if self._hub_dir is None:
+            return []
+        from . import owui_mcp
+        from .access.identity import current_identity
+        try:
+            return owui_mcp.per_user_servers(self._hub_dir, current_identity())
+        except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
+            log.warning("owui-mcp per-user injection skipped", exc_info=True)
+            return []
+
+    async def _hub_tool_names(self, agent) -> set[str]:
+        """Every tool name the shared agent already exposes (function tools and
+        the tools of its connected hub MCP servers)."""
+        names = {getattr(t, "name", "") for t in (getattr(agent, "tools", None) or [])}
+        for server in getattr(agent, "mcp_servers", None) or []:
+            try:
+                names |= {t.name for t in await server.list_tools()}
+            except Exception:  # noqa: BLE001 — the run itself will surface a dead server
+                log.debug("could not list tools of MCP server %r", getattr(server, "name", "?"))
+        return names
+
+    async def _stream_personal(self, prompt: str, personal: list):
+        """Connect the caller's servers, run the turn on a clone, then close
+        them. Runs inside one task (see `relay_in_task`)."""
+        from contextlib import AsyncExitStack
+
+        async with AsyncExitStack() as stack:
+            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent))
+            agent = self._agent
+            if live:
+                agent = self._agent.clone(
+                    mcp_servers=[*(self._agent.mcp_servers or []), *(s for s, _ in live)])
+            async for chunk in self._stream(agent, prompt):
+                yield chunk
+
+    async def _stream(self, agent, prompt: str) -> AsyncIterator[str]:
         from agents import ItemHelpers, Runner
         from openai.types.responses import ResponseTextDeltaEvent
 
@@ -239,7 +288,7 @@ class OpenAIAgentsRuntime:
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
         try:
-            result = Runner.run_streamed(self._agent, run_input, max_turns=self._max_turns)
+            result = Runner.run_streamed(agent, run_input, max_turns=self._max_turns)
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
@@ -294,6 +343,109 @@ class OpenAIAgentsRuntime:
         async for chunk in self.stream(prompt):
             pieces.append(chunk)
         return "".join(pieces)
+
+
+# ---------------------------------------------------------------------------
+# Personal (per-user) MCP servers for the OpenAI and Codex backends. The Claude
+# backend passes `owui_mcp.per_user_specs` to its SDK, which runs the client.
+# ---------------------------------------------------------------------------
+def personal_mcp_server(srv):
+    """An unconnected Agents-SDK Streamable HTTP client for one
+    `owui_mcp.PerUserServer`, named by its key and limited to the admin's tool
+    allow-list. The caller's Bearer rides in the transport headers only."""
+    from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
+
+    tool_filter = (create_static_tool_filter(allowed_tool_names=list(srv.allowed_tools))
+                   if srv.allowed_tools else None)
+    return MCPServerStreamableHttp(
+        params={"url": srv.url, "headers": dict(srv.headers)},
+        name=srv.key, tool_filter=tool_filter, cache_tools_list=True,
+    )
+
+
+async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None) -> list:
+    """Connect each personal server on `stack` and list its (allow-listed)
+    tools. Returns ``[(server, tools)]`` for the servers kept.
+
+    A server that fails to connect is dropped. A server with a tool whose name
+    is already in `taken` (a hub tool, or an earlier personal server) is
+    skipped for this turn and logged, so a personal tool never shadows a hub
+    tool. Must run in the task that later closes `stack`.
+    """
+    from agents import Agent, RunContextWrapper
+    from agents.mcp.util import MCPUtil
+
+    make = factory or personal_mcp_server
+    taken = set(taken)
+    kept: list = []
+    for srv in personal:
+        server = make(srv)
+        try:
+            await stack.enter_async_context(server)
+            tools = await MCPUtil.get_function_tools(
+                server, False, RunContextWrapper(context=None), Agent(name="personal-mcp"))
+        except Exception as exc:  # noqa: BLE001 — one broken server never sinks the turn
+            log.warning("personal MCP server %r unavailable this turn (%s)",
+                        srv.key, type(exc).__name__)
+            continue
+        names = {t.name for t in tools}
+        clash = names & taken
+        if clash:
+            log.warning("personal MCP server %r skipped this turn: tool name(s) %s "
+                        "already used by the hub", srv.key, sorted(clash))
+            continue
+        taken |= names
+        kept.append((server, tools))
+    return kept
+
+
+async def relay_in_task(make_agen):
+    """Iterate ``make_agen()`` in a dedicated task and yield its items.
+
+    An MCP HTTP client binds an anyio cancel scope to the task that opened it,
+    so it must be closed by that same task. A request's stream generator can
+    be finalized from another task (a client disconnect), so the per-turn
+    connect, run and close happen in one task of their own, and closing this
+    generator cancels that task. Context variables (identity, chat id) are
+    copied into the task as usual.
+    """
+    import asyncio
+
+    done = object()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def pump():
+        try:
+            async for item in make_agen():
+                await queue.put(item)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            await queue.put(_Failure(exc))
+        finally:
+            queue.put_nowait(done)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            item = await queue.get()
+            if item is done:
+                break
+            if isinstance(item, _Failure):
+                raise item.exc
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except BaseException:  # noqa: BLE001 — teardown is best-effort
+            pass
+
+
+class _Failure:
+    def __init__(self, exc: BaseException):
+        self.exc = exc
 
 
 def _agent_model_name(agent) -> str | None:
