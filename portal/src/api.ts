@@ -1,4 +1,16 @@
-export type Me = { subject: string; org_admin: boolean; manageable: string[] };
+export type Me = {
+  subject: string;
+  org_admin: boolean;
+  manageable: string[];
+  // What this viewer may grant in each agent they manage. A delegate's list is
+  // their own current access there, minus Manage access. The server checks
+  // every write again; this only shapes the UI.
+  grantable?: Record<string, string[]>;
+  account_admin?: boolean;
+  can_create_accounts?: boolean;
+  accounts_configured?: boolean;
+  via?: "session" | "api-key";
+};
 export type Hub = { key: string; name: string; model_id?: string; can_chat?: boolean; authoritative: boolean };
 export type Permission = {
   permission: string;
@@ -34,6 +46,9 @@ export type Access = {
   // Policy revision at load time — sent back with the first save so the backend
   // can reject an edit built on access another admin has since changed.
   revision: number;
+  // Capabilities this viewer may grant or remove here (display only).
+  grantable?: string[];
+  viewer?: string;
 };
 export type Workflow = {
   hub: string;
@@ -174,25 +189,58 @@ export type Summary = {
 export class ApiError extends Error {
   status: number;
   certain: boolean;
-  constructor(message: string, status: number) {
+  /** Stable reason from the access service, e.g. "account_exists". */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.certain = status >= 400 && status < 500;
+    this.code = code;
   }
 }
+
+export type ChangeRequest = {
+  id: string;
+  status: "pending" | "applying" | "confirmed" | "rejected" | "expired" | "failed";
+  kind: "access" | "account";
+  hub: string;
+  hub_name: string;
+  target: string;
+  surface: string | null;
+  created: number;
+  expires: number;
+  decided: number | null;
+  plan:
+    | { kind: "access"; hub: string; subject: string; grant: string[]; revoke: string[] }
+    | { kind: "account"; hub: string; email: string; name: string; grant: string[] };
+  plan_hash: string;
+  summary: string;
+  result: string | null;
+  labels: Record<string, Permission>;
+  current?: string[];
+  problem: string | null;
+};
+
+export type AccountCreated = {
+  ok: boolean;
+  subject: string;
+  name: string;
+  grants: Record<string, string[]>;
+};
 
 export async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  method?: "GET" | "POST" | "DELETE",
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch("/portal/api" + path, {
       credentials: "include",
       signal,
-      method: body === undefined ? "GET" : "POST",
+      method: method ?? (body === undefined ? "GET" : "POST"),
       headers:
         body === undefined ? undefined : { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -206,13 +254,15 @@ export async function request<T>(
   }
   if (!response.ok) {
     let message = `${response.status} — Request failed`;
+    let code: string | undefined;
     try {
       const data = await response.json();
       message = typeof data.detail === "string" ? data.detail : message;
+      code = typeof data.code === "string" ? data.code : undefined;
     } catch {
       /* use status */
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, code);
   }
   return response.json();
 }

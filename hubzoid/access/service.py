@@ -609,6 +609,13 @@ class AccessService:
             log.error("account create: could not remove a partially created account")
             return False
 
+    def account_info(self, actor: Actor, subject: str) -> dict:
+        """The chat account behind a person, read live (organization administrators)."""
+        identity = self._account_target(actor, subject)
+        account = self._live_account(self.accounts(), identity)
+        return dict(subject=identity["subject"], name=account.get("name"),
+                    role=account.get("role"))
+
     def set_password(self, actor: Actor, subject: str, password: str) -> None:
         identity = self._account_target(actor, subject)
         check_password(password)

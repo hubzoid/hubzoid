@@ -14,8 +14,8 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { HelpCircle, RefreshCw, Search } from "lucide-react";
-import { request, query, type Hub, type Me, type Overview, type Person } from "../api";
+import { HelpCircle, RefreshCw, Search, UserPlus } from "lucide-react";
+import { ApiError, request, query, type Hub, type Me, type Overview, type Person } from "../api";
 import { errorText, useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { href, hrefWith, navigate, personHref, useHashQuery } from "../hooks/useRoute";
@@ -34,6 +34,8 @@ import {
   relativeTime,
 } from "../lib/format";
 import { orderCapabilities } from "./access/plan";
+import { AccountDrawer, OneTimePassword, PasswordField } from "./people/AccountDrawer";
+import { passwordProblem } from "./people/password";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
@@ -88,6 +90,7 @@ export function PeopleScreen({
   );
   const overview = useData<Overview>("/overview");
   const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const agentName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
   const resetFilters = () => {
     setResetToken((t) => t + 1); // remount the search input so its defaultValue clears
@@ -114,16 +117,25 @@ export function PeopleScreen({
           <div>
             <Title level={1} style={{ fontSize: 28 }}>People and services</Title>
             <Paragraph type="secondary">
-              Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here.
+              {me.can_create_accounts
+                ? "Everyone with access to an agent you manage. Create chat sign-ins with Add account; access is decided here."
+                : "Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here."}
             </Paragraph>
           </div>
-          {me.org_admin && (
+          {(me.org_admin || me.can_create_accounts) && (
             <Space wrap>
-              <Tooltip title="Re-reads the chat app’s account directory to update account states. Does not create accounts.">
-                <Button icon={<RefreshCw size={16} />} loading={refreshing} onClick={() => void refreshAccounts()}>
-                  Refresh accounts
+              {me.org_admin && (
+                <Tooltip title="Re-reads the chat app’s account directory to update account states. Does not create accounts.">
+                  <Button icon={<RefreshCw size={16} />} loading={refreshing} onClick={() => void refreshAccounts()}>
+                    Refresh accounts
+                  </Button>
+                </Tooltip>
+              )}
+              {me.can_create_accounts && (
+                <Button type="primary" icon={<UserPlus size={16} />} onClick={() => setAdding(true)}>
+                  Add account
                 </Button>
-              </Tooltip>
+              )}
             </Space>
           )}
         </div>
@@ -287,6 +299,15 @@ export function PeopleScreen({
         hubs={hubs}
         onChanged={data.reload}
       />
+      {me.can_create_accounts && (
+        <AccountDrawer
+          open={adding}
+          me={me}
+          hubs={hubs}
+          onClose={() => setAdding(false)}
+          onCreated={data.reload}
+        />
+      )}
     </>
   );
 }
@@ -616,13 +637,200 @@ function PersonDrawer({
                   message="This person’s chat account is unavailable — removed or not found. Access resumes automatically if the account reappears; to offboard fully, remove it in the chat app."
                 />
               )}
-              <Paragraph type="secondary" style={{ marginTop: 12 }}>
-                To suspend or delete the chat account itself, use the <a href="/admin">chat app’s account settings</a>.
-              </Paragraph>
+              {!me.account_admin && (
+                <Paragraph type="secondary" style={{ marginTop: 12 }}>
+                  To suspend or delete the chat account itself, use the <a href="/admin">chat app’s account settings</a>.
+                </Paragraph>
+              )}
             </div>
+          )}
+          {me.account_admin && person.owui_id && !isService(person.subject) && person.subject !== me.subject && (
+            <ChatAccount person={person} name={name} onChanged={() => { data.reload(); onChanged(); }} />
           )}
         </div>
       )}
     </Drawer>
+  );
+}
+
+type AccountInfo = { subject: string; name: string | null; role: string | null };
+
+/**
+ * The person's chat sign-in, for organization administrators: approve a
+ * pending signup, reset the password (shown once), switch the chat-app admin
+ * role, or delete the account. The server re-checks every action.
+ */
+function ChatAccount({
+  person,
+  name,
+  onChanged,
+}: {
+  person: Person;
+  name: string;
+  onChanged: () => void;
+}) {
+  const { modal, message } = App.useApp();
+  const info = useData<AccountInfo>(`/accounts/${encodeURIComponent(person.subject)}`);
+  const [panel, setPanel] = useState<"" | "password" | "delete">("");
+  const [password, setPassword] = useState("");
+  const [shown, setShown] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const path = `/accounts/${encodeURIComponent(person.subject)}`;
+  const role = info.data?.role;
+
+  async function call(sub: string, body: unknown, done: string, method?: "POST" | "DELETE") {
+    setBusy(true);
+    setError("");
+    try {
+      await request(path + sub, body, undefined, method);
+      message.success(done);
+      info.reload();
+      onChanged();
+      return true;
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword() {
+    setTouched(true);
+    if (passwordProblem(password)) return;
+    if (await call("/password", { password }, `New password set for ${name}. Their other sessions were signed out.`)) {
+      setShown(password);
+      setPassword("");
+      setTouched(false);
+    }
+  }
+
+  const confirmApprove = () =>
+    modal.confirm({
+      title: `Approve ${name}’s account?`,
+      content: "They can sign in and use agents they have access to, including agents open to everyone.",
+      okText: "Approve",
+      onOk: () => call("/approve", {}, `${name} is approved.`),
+    });
+
+  const confirmRole = (next: "user" | "admin") =>
+    modal.confirm({
+      title: next === "admin" ? `Make ${name} a chat-app administrator?` : `Make ${name} a regular chat-app user?`,
+      content:
+        next === "admin"
+          ? "They get the chat app’s administrator settings (models, connections, settings). This does not give them Console access or agent access."
+          : "They lose the chat app’s administrator settings. Console and agent access are unchanged.",
+      okText: next === "admin" ? "Make administrator" : "Make regular user",
+      okButtonProps: { danger: next === "admin" },
+      onOk: () => call("/role", { role: next }, "Chat-app role updated."),
+    });
+
+  return (
+    <div className="section">
+      <Title level={2} style={{ fontSize: 16 }}>Chat account</Title>
+      <Paragraph type="secondary">
+        Their sign-in for the chat app. Changes apply immediately and are recorded in Activity.
+      </Paragraph>
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} />}
+      {!info.data ? (
+        info.error ? (
+          <Alert type="warning" showIcon title="Couldn’t read the chat account" description={info.error} />
+        ) : (
+          <LoadState retry={info.reload} rows={1} />
+        )
+      ) : (
+        <>
+          <Descriptions
+            size="small"
+            column={1}
+            items={[
+              {
+                key: "role",
+                label: "Chat-app role",
+                children:
+                  role === "pending" ? (
+                    <Tag color="gold">Awaiting approval</Tag>
+                  ) : role === "admin" ? (
+                    <Tag color="geekblue">Administrator</Tag>
+                  ) : (
+                    <Text>User</Text>
+                  ),
+              },
+            ]}
+          />
+          <Space wrap style={{ marginTop: 8 }}>
+            {role === "pending" && (
+              <Button type="primary" loading={busy} onClick={confirmApprove}>
+                Approve account
+              </Button>
+            )}
+            <Button disabled={busy} onClick={() => { setPanel(panel === "password" ? "" : "password"); setShown(""); }}>
+              Reset password
+            </Button>
+            {role && role !== "pending" && (
+              <Button disabled={busy} onClick={() => confirmRole(role === "admin" ? "user" : "admin")}>
+                {role === "admin" ? "Make regular chat-app user" : "Make chat-app administrator"}
+              </Button>
+            )}
+            <Button danger disabled={busy} onClick={() => setPanel(panel === "delete" ? "" : "delete")}>
+              Delete account
+            </Button>
+          </Space>
+        </>
+      )}
+      {panel === "password" && (
+        <div className="agent-access" style={{ marginTop: 12 }}>
+          {shown ? (
+            <OneTimePassword password={shown} />
+          ) : (
+            <>
+              <PasswordField id="reset-password" value={password} onChange={setPassword} touched={touched} />
+              <Space>
+                <Button type="primary" loading={busy} onClick={() => void resetPassword()}>
+                  Set password
+                </Button>
+                <Button disabled={busy} onClick={() => { setPanel(""); setPassword(""); }}>
+                  Cancel
+                </Button>
+              </Space>
+            </>
+          )}
+        </div>
+      )}
+      {panel === "delete" && (
+        <div className="agent-access" style={{ marginTop: 12 }}>
+          <Paragraph>
+            Deleting removes all of {name}’s access and their chat account, including their chat history. It can’t be undone.
+          </Paragraph>
+          <div className="field">
+            <label className="field-label" htmlFor="delete-confirm">
+              Type {person.subject} to confirm
+            </label>
+            <Input id="delete-confirm" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+          </div>
+          <Space style={{ marginTop: 8 }}>
+            <Button
+              danger
+              type="primary"
+              loading={busy}
+              disabled={typed.trim().toLowerCase() !== person.subject}
+              onClick={() =>
+                void call("", { confirm_email: typed.trim() }, `${name}’s account was deleted.`, "DELETE").then((ok) => {
+                  if (ok) navigate("/people");
+                })
+              }
+            >
+              Delete account
+            </Button>
+            <Button disabled={busy} onClick={() => { setPanel(""); setTyped(""); }}>
+              Cancel
+            </Button>
+          </Space>
+        </div>
+      )}
+    </div>
   );
 }

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
  *   #/agents/<key>/runs/<workflow>[/<run id>]
  *   #/people[/<subject>]
  *   #/activity
+ *   #/confirm/<change request id>   (the link an agent tool hands a manager)
  */
 export type Route = { path: string; parts: string[]; query: Record<string, string> };
 
@@ -49,6 +50,8 @@ export const agentHref = (key: string, tab = "access") =>
 
 export const personHref = (subject: string) =>
   href(`/people/${encodeURIComponent(subject)}`);
+
+export const confirmHref = (id: string) => href(`/confirm/${encodeURIComponent(id)}`);
 
 function parse(hash: string): Route {
   const raw = hash.replace(/^#/, "") || DEFAULT_ROUTE;

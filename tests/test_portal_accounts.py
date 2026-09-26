@@ -145,7 +145,11 @@ def test_org_admin_account_actions(api):
     api.gs.upsert_identity(email="bob@x.org", owui_id=uid, pending=True)
     assert api.as_(DELEGATE).post("/portal/api/accounts/bob@x.org/approve").status_code == 403
     client = api.as_(ROOT)
+    assert client.get("/portal/api/accounts/bob@x.org").json()["role"] == "pending"
+    assert api.as_(DELEGATE).get("/portal/api/accounts/bob@x.org").status_code == 403
+    client = api.as_(ROOT)
     assert client.post("/portal/api/accounts/bob@x.org/approve").status_code == 200
+    assert client.get("/portal/api/accounts/bob@x.org").json()["role"] == "user"
     r = client.post("/portal/api/accounts/bob@x.org/password", json={"password": PASSWORD})
     assert r.status_code == 200 and PASSWORD not in r.text
     assert client.post("/portal/api/accounts/bob@x.org/role", json={"role": "admin"}).status_code == 200

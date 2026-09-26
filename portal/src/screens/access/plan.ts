@@ -5,10 +5,13 @@ import { EVERYONE, MANAGE_ACCESS, USE_HUB } from "../../lib/format";
  * Pure staging logic for the Access editor. Nothing here talks to the server;
  * it only decides what a draft means and which requests a save would send.
  *
- * Backend rules this mirrors (hubzoid/access/store.py, hubzoid/portal.py):
+ * Backend rules this mirrors (hubzoid/access/store.py, hubzoid/access/service.py):
  *  - granting any capability auto-grants `use_hub`;
  *  - revoking `use_hub` cascades and removes every direct grant in the agent;
- *  - the staged operations are saved together in one atomic request.
+ *  - the staged operations are saved together in one atomic request;
+ *  - an agent administrator (not organization-wide) grants and removes only
+ *    what they hold themselves (`grantable`), never their own access or an
+ *    organization administrator's.
  */
 export type Operation = { action: "grant" | "revoke"; permission: string };
 
@@ -55,7 +58,12 @@ export function toggle(selected: string[], permission: string, on: boolean) {
   return selected.filter((p) => p !== permission);
 }
 
-export type Lock = { reason: string; label?: "Inherited" | "Required" } | null;
+export type Lock = {
+  reason: string;
+  label?: "Inherited" | "Required" | "Outside your access";
+} | null;
+
+type Viewer = Pick<Access, "can_manage_admins" | "grantable" | "viewer">;
 
 /**
  * Why a checkbox cannot be changed, or null when it can. The backend enforces
@@ -64,7 +72,7 @@ export type Lock = { reason: string; label?: "Inherited" | "Required" } | null;
 export function lockFor(
   permission: string,
   row: AccessRow,
-  access: Pick<Access, "can_manage_admins">,
+  access: Viewer,
   selected: string[],
 ): Lock {
   // A blocked (admin-suspended) or unavailable (chat account gone) person can have
@@ -91,6 +99,23 @@ export function lockFor(
       (permission === USE_HUB && row.effective.includes(MANAGE_ACCESS)))
   )
     return { reason: "Only organization administrators can change this." };
+  if (!access.can_manage_admins && access.viewer && row.subject === access.viewer)
+    return { reason: "You can’t change your own access. Ask an organization administrator." };
+  if (!access.can_manage_admins && row.inherited.includes(MANAGE_ACCESS))
+    return { reason: "Only organization administrators can change an organization administrator’s access." };
+  if (!access.can_manage_admins && access.grantable) {
+    const ceiling = access.grantable;
+    if (!ceiling.includes(permission))
+      return {
+        label: "Outside your access",
+        reason: "You can only grant or remove capabilities you hold in this agent yourself.",
+      };
+    if (permission === USE_HUB && row.perms.some((p) => p !== USE_HUB && !ceiling.includes(p)))
+      return {
+        label: "Outside your access",
+        reason: "They hold capabilities you don’t, so removing all their access here needs an organization administrator.",
+      };
+  }
   if (permission === USE_HUB && selected.some((p) => p !== USE_HUB))
     return {
       label: "Required",
@@ -103,7 +128,7 @@ export function lockFor(
 /** Whether "Remove all access" is available for this row. */
 export function canRemoveAll(
   row: AccessRow,
-  access: Pick<Access, "can_manage_admins">,
+  access: Viewer,
 ) {
   // Available whenever there are direct grants to remove — including for a blocked or
   // unavailable account, so retained access can be offboarded. `lockFor` returns null

@@ -780,6 +780,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         return dict(ok=True, **created)
 
+    @router.get("/accounts/{subject}")
+    @_denied
+    def account_info(subject: str, admin=Depends(require_admin)):
+        return service.account_info(admin.actor(), subject)
+
     @router.post("/accounts/{subject}/password")
     @_denied
     def reset_password(subject: str, request: Request, body: Any = Body(None),
