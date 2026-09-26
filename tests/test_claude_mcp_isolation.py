@@ -50,7 +50,7 @@ def hub(tmp_path, monkeypatch):
 
 def _per_user(monkeypatch):
     """Stand in for Open WebUI: each person has their own connected server and token."""
-    def specs(hub_dir, ident):
+    def specs(hub_dir, ident, **_kw):
         who = (ident.user or "").split("@")[0]
         if who not in ("ana", "ben"):
             return {}, []

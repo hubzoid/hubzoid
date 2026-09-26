@@ -154,7 +154,7 @@ def test_scope_from_store_only(dep):
 
 def test_ceiling_matrix(dep):
     svc, gs = dep.svc, dep.gs
-    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links"}
+    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev"}
     assert svc.ceiling(actor(ROOT), "finance") == full
     # A delegate: what they hold, never manage_access.
     assert svc.ceiling(actor(DELEGATE), "finance") == {"use_hub", "ledger"}

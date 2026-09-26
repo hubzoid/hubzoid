@@ -44,7 +44,7 @@ def rt(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
     store_for(d).set_authoritative(True, hub="support")
 
-    def specs(hub_dir, ident):
+    def specs(hub_dir, ident, **_kw):
         who = (ident.user or "").split("@")[0]
         if who not in TOKENS:
             return {}, []

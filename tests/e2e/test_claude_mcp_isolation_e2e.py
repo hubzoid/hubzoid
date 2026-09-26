@@ -121,7 +121,7 @@ def setup(tmp_path, monkeypatch):
     for url in urls.values():
         _wait_port(int(url.split(":")[2].split("/")[0]))
 
-    def specs(hub_dir, ident):   # stands in for the person's Open WebUI connection
+    def specs(hub_dir, ident, **_kw):   # stands in for the person's Open WebUI connection
         who = (ident.user or "").split("@")[0]
         if who not in urls:
             return {}, []
