@@ -284,23 +284,12 @@ def person_slug(subject: str) -> str:
 def markdown_scratch(hub_dir: Path, task_name: str, ident: RunIdentity) -> str:
     """The hub-relative scratch folder a markdown task run may use.
 
-    The task's historical folder (`.hubzoid/schedule/<task>`) belongs to the
-    first person who runs the task after upgrade (recorded in `.owner`). Any
-    other person gets a sibling folder, so neither run can read or write the
-    other's state. A legacy service run keeps the historical folder unclaimed."""
+    Each person gets their own folder, `.hubzoid/schedule/<task>@<person>`, a
+    sibling of the task's historical folder, so no run can read or write
+    another person's state. The historical folder (`.hubzoid/schedule/<task>`)
+    is left as it was: it belongs to no person, and only a legacy service run
+    (a legacy hub with no account configured) keeps using it."""
     base = f".hubzoid/schedule/{task_name}"
     if not ident.is_person:
         return base
-    folder = Path(hub_dir) / base
-    marker = folder / ".owner"
-    try:
-        owner = marker.read_text().strip() if marker.is_file() else ""
-    except OSError:
-        owner = ""
-    if not owner:
-        folder.mkdir(parents=True, exist_ok=True)
-        marker.write_text(ident.subject + "\n")
-        return base
-    if owner == ident.subject:
-        return base
-    return f".hubzoid/schedule/{task_name}@{person_slug(ident.subject)}"
+    return f"{base}@{person_slug(ident.subject)}"

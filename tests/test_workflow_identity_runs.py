@@ -231,5 +231,5 @@ def test_markdown_task_acts_as_its_run_as(team):
     assert "OUT {" in proc.stdout, proc.stdout + proc.stderr[-2000:]
     assert (hub / "who.txt").read_text() == "dana@company.com"
     assert "hz_md_identity" in proc.stdout
-    owner = (hub / ".hubzoid" / "schedule" / "who" / ".owner").read_text().strip()
-    assert owner == "dana@company.com"
+    folders = [p.name for p in (hub / ".hubzoid" / "schedule").iterdir()]
+    assert any(f.startswith("who@dana-company.com-") for f in folders), folders

@@ -249,10 +249,6 @@ def workflow(
             hub_name = hub_name or _HUB_NAME
             identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
                                      f"workflow:{name}", f"Workflow {name!r}")
-            if identity.get("source") != "legacy-service":
-                from .state import adopt_legacy
-
-                adopt_legacy(_ENGINE, hub_name, name, identity["subject"])
             with context.run_scope(
                 hub=hub_name,
                 workflow=name,

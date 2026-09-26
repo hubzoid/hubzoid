@@ -83,15 +83,17 @@ Concurrent work this plan must not compete with:
    workflow runs as. Migration is an explicit Console grant.
 6. **Personal state is partitioned by execution identity.**
    - `hub.state` is keyed `(hub, workflow, owner, key)`. Rows written before
-     this release (owner `''`) are adopted by the first identity that runs the
-     workflow afterwards. Nothing is copied to anyone else.
-   - `hub.shared_state` is the explicit, non-personal alternative for data that
-     must survive a change of identity.
+     this release (owner `''`) are kept and assigned to no one: each person's
+     state starts separately.
+   - Only a legacy service run keeps reading the old rows.
+   - Earlier drafts adopted old state on the first run. By founder decision on
+     26 September 2026 there is no adoption and no migration UI.
+   - `hub.shared_state` is the explicit, non-personal alternative.
    - `hub.run_dir` is a private per-run scratch folder (`.hubzoid/runs/...`).
-   - A markdown task's scratch folder (`.hubzoid/schedule/<task>/`) belongs to
-     the identity that first uses it after upgrade. Another identity gets a
-     sibling folder (`.hubzoid/schedule/<task>@<person>/`), so neither agent
-     can read or write the other's state.
+   - A markdown task running as a person uses
+     `.hubzoid/schedule/<task>@<person>/`. The historical
+     `.hubzoid/schedule/<task>/` is left untouched, and only a legacy service
+     run keeps using it.
    - Settings (`workflows/settings.yaml`) stay shared configuration.
 7. **Publishing is separate from generating.** `hub.publish_artifact(path,
    title=...)` copies an existing file into a private, per-artifact store

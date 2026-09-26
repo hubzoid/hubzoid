@@ -81,11 +81,11 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
     entries = dep.svc.catalog("finance")
     by = _by_id(entries)
     assert {p: e["group"] for p, e in by.items()} == {
-        "use_hub": "hub", "curator": "tools", "ledger": "restricted",
-        "payroll": "restricted", "manage_access": "admin"}
+        "use_hub": "hub", "curator": "tools", "share_public_links": "tools",
+        "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
     # Display order follows the drawer's groups; no empty Workflows group.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "curator", "ledger", "payroll", "manage_access"]
+        "use_hub", "curator", "share_public_links", "ledger", "payroll", "manage_access"]
     for e in entries:
         assert {"permission", "label", "description", "sensitive", "group", "surfaces", "status",
                 "available", "default", "delegate_grantable", "obsolete"} <= set(e)

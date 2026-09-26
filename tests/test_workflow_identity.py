@@ -12,7 +12,7 @@ from hubzoid.access import store_for
 from hubzoid.access.session import configured_owner
 from hubzoid.workflows import identity as idlib
 from hubzoid.workflows.identity import IdentityError, RunIdentity
-from hubzoid.workflows.state import SHARED, WorkflowState, adopt_legacy
+from hubzoid.workflows.state import SHARED, WorkflowState
 
 _ENV = ("WEBUI_AUTH", "HUBZOID_WORKFLOW_USER", "HUBZOID_GATEWAY_ADMIN_EMAIL",
         "WEBUI_ADMIN_EMAIL", "HUBZOID_DEPLOYMENT", "DATABASE_URL")
@@ -188,34 +188,34 @@ def test_legacy_grants_are_reported_not_granted(shared, caplog):
 
 # --- per-person state ----------------------------------------------------------------
 
-def test_state_is_partitioned_by_person_and_legacy_rows_adopted_once(tmp_path):
+def test_state_is_per_person_and_older_state_stays_unassigned(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 's.db'}")
     legacy = WorkflowState(eng, "sales", "digest")          # written before identities
     legacy["cursor"] = 41
-    assert adopt_legacy(eng, "sales", "digest", "alice@x.com") == 1
     alice = WorkflowState(eng, "sales", "digest", owner="alice@x.com")
     bob = WorkflowState(eng, "sales", "digest", owner="bob@x.com")
-    assert alice["cursor"] == 41
-    assert adopt_legacy(eng, "sales", "digest", "bob@x.com") == 0
-    assert bob.get("cursor") is None
+    assert alice.get("cursor") is None and bob.get("cursor") is None   # starts separately
+    alice["cursor"] = 1
     bob["cursor"] = 7
-    assert alice["cursor"] == 41 and bob["cursor"] == 7
+    assert (alice["cursor"], bob["cursor"], legacy["cursor"]) == (1, 7, 41)  # kept as it was
     shared = WorkflowState(eng, "sales", "digest", owner=SHARED)
     shared["etag"] = "v1"
-    assert "etag" not in alice and "etag" not in bob
+    assert "etag" not in alice and "etag" not in bob and "etag" not in legacy
 
 
-def test_markdown_scratch_belongs_to_one_person(hub):
+def test_markdown_scratch_is_per_person_and_leaves_the_old_folder_alone(hub):
     alice = RunIdentity("alice@x.com", "a", "run_as", "alice@x.com")
     bob = RunIdentity("bob@x.com", "b", "run_as", "bob@x.com")
     legacy = RunIdentity("workflow:md:sync", None, "legacy-service")
     # An upgraded hub: the task's folder already holds state from before.
     (hub / ".hubzoid/schedule/sync").mkdir(parents=True)
-    (hub / ".hubzoid/schedule/sync/state.json").write_text("{}")
+    (hub / ".hubzoid/schedule/sync/state.json").write_text('{"sha": "abc"}')
     assert idlib.markdown_scratch(hub, "sync", legacy) == ".hubzoid/schedule/sync"
-    assert idlib.markdown_scratch(hub, "sync", alice) == ".hubzoid/schedule/sync"
+    mine = idlib.markdown_scratch(hub, "sync", alice)
     other = idlib.markdown_scratch(hub, "sync", bob)
-    assert other.startswith(".hubzoid/schedule/sync@bob-x.com-")
-    assert idlib.markdown_scratch(hub, "sync", alice) == ".hubzoid/schedule/sync"
-    # Siblings, never nested: one person's writable root never covers another's.
-    assert not other.startswith(".hubzoid/schedule/sync/")
+    assert mine.startswith(".hubzoid/schedule/sync@alice-x.com-")
+    assert other.startswith(".hubzoid/schedule/sync@bob-x.com-") and other != mine
+    # Siblings, never nested: no person's writable root covers another's or the old one.
+    assert not mine.startswith(".hubzoid/schedule/sync/")
+    assert (hub / ".hubzoid/schedule/sync/state.json").read_text() == '{"sha": "abc"}'
+    assert not (hub / ".hubzoid/schedule/sync/.owner").exists()

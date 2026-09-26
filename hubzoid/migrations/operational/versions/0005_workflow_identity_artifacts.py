@@ -1,8 +1,8 @@
 """Workflow identity, published artifacts and owner email.
 
 - `hz_workflow_kv` gains `owner` in its key: a workflow's `hub.state` belongs to
-  the account the run acts as. Existing rows get owner '' and are adopted by the
-  first account that runs that workflow afterwards (workflows/state.py).
+  the account the run acts as. Existing rows get owner '' and are kept as they
+  are, assigned to no one (workflows/state.py).
 - `hz_artifacts`: one row per published file (owner, hub, run, storage, audience).
 - `hz_artifact_shares`: the people and groups a "specific people" artifact is
   shared with.

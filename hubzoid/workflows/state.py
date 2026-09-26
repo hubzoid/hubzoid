@@ -6,9 +6,10 @@ reviewed"). It is keyed **(hub, workflow, owner, key)**: `owner` is the account
 the run acts as, so the same workflow run for two people never shares state, and
 two workflows in the same hub never clash on a key. `hub.shared_state` is the
 explicit exception (owner `*`) for data that is not about any one person. Rows
-written before workflows ran as people have owner '' and are adopted by the
-first person who runs that workflow afterwards (`adopt_legacy`). Values are
-JSON. Same thin SQLAlchemy-Core path as `db.py`, across SQLite and Postgres.
+written before workflows ran as people keep owner '' and are left as they are:
+they belong to no person, only a legacy service run (a legacy hub with no
+account configured) still reads them, and a person's state starts empty. Values
+are JSON. Same thin SQLAlchemy-Core path as `db.py`, across SQLite and Postgres.
 
 Durability semantics (read this): a `hub.state[...] = v` write is its own DB
 commit — durable the instant it returns. It is NOT a DBOS-checkpointed step, so
@@ -92,25 +93,3 @@ class WorkflowState:
                 ),
                 self._key(key),
             )
-
-
-def adopt_legacy(engine: Engine, hub: str, workflow: str, owner: str) -> int:
-    """Give a workflow's pre-identity state (owner '') to `owner`, once.
-
-    Only the first person to run the workflow afterwards adopts it: if `owner`
-    already has any state for this workflow, nothing moves. Returns the number
-    of rows adopted."""
-    ensure_state_table(engine)
-    if not owner or owner == SHARED:
-        return 0
-    params = {"h": hub, "w": workflow, "o": owner}
-    with engine.begin() as conn:
-        has = conn.execute(
-            text("SELECT 1 FROM hz_workflow_kv WHERE hub=:h AND workflow=:w AND owner=:o "
-                 "LIMIT 1"), params).fetchone()
-        if has:
-            return 0
-        result = conn.execute(
-            text("UPDATE hz_workflow_kv SET owner=:o "
-                 "WHERE hub=:h AND workflow=:w AND owner=''"), params)
-        return result.rowcount or 0

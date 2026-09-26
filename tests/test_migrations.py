@@ -172,7 +172,7 @@ def test_access_audit_gains_surface_and_request_id(tmp_path):
 
 def test_workflow_state_keeps_its_rows_when_owner_joins_the_key(tmp_path):
     """op_0005 rebuilds hz_workflow_kv with an owner column; rows written before
-    stay, with owner '' (adopted later by the first person to run the workflow)."""
+    stay, with owner '' (kept, assigned to no person)."""
     from alembic.runtime.environment import EnvironmentContext
 
     eng = _sqlite(tmp_path)
