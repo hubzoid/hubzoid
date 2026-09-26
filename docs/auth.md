@@ -29,9 +29,11 @@ port is in. Fine for localhost dev. Not fine for anything else.
 
 ## Mode B: email + password
 
-Public registration is off by default. Administrators create teammate accounts
-in **Admin Panel → Users** (`/admin`) in the chat app, then grant their agent
-access in Console. Account creation does not send an invitation email.
+Public registration is off by default. Managers create teammate accounts in the
+Hubzoid Admin Console with **Add user** (on an agent's Access tab, or on
+People): name, email and a password they type or generate, plus initial access,
+in one step. The Console shows the sign-in details once to copy and share. No
+invitation email is sent.
 
 ```bash
 WEBUI_AUTH=true
@@ -46,7 +48,8 @@ WEBUI_ADMIN_PASSWORD=<temp pass>      # one-shot: delete both ADMIN_ lines after
 Boot once. OWUI sees `WEBUI_ADMIN_*` on a fresh DB and seeds you as admin
 without needing a public signup window. Restart hubzoid after deleting the
 two `WEBUI_ADMIN_*` lines. Then sign in at `/` with the email and password
-you set. From the admin panel, add the rest of your team.
+you set. Open the Admin Console from the chat sidebar and add the rest of your
+team with **Add user**.
 
 Both `ENABLE_SIGNUP` and `ENABLE_OAUTH_SIGNUP` default to false. Explicit
 operator settings can opt into registration. If persistent OWUI configuration
@@ -91,11 +94,12 @@ ENABLE_SIGNUP=false
 WEBUI_SECRET_KEY=<openssl rand -hex 32>
 WEBUI_URL=https://your.host
 
-# Google SSO
-ENABLE_OAUTH_SIGNUP=true
-DEFAULT_USER_ROLE=pending             # new Google users wait for admin approval
+# Google SSO onto accounts created in the Console
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
+OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true    # attach Google to the account with that email
+ENABLE_OAUTH_SIGNUP=false             # Google never creates accounts (the default)
+OAUTH_ALLOWED_DOMAINS=example.com     # your organization's domains
 
 # Bootstrap (one-shot - delete after first boot)
 WEBUI_ADMIN_EMAIL=you@example.com
@@ -108,19 +112,28 @@ WEBUI_ADMIN_PASSWORD=<temp pass>
 2. Stop. Delete the `WEBUI_ADMIN_*` lines. Restart.
 3. Open `https://your.host/`. Click **Sign in with Google**. Authenticate
    with the email matching `WEBUI_ADMIN_EMAIL`. You land as admin.
-4. Pre-add each team member in the Hubzoid Console: **People → Add account**,
-   with their Google email, a name and a generated password. The password
-   also lets them sign in without Google.
+4. Pre-add each team member in the Hubzoid Console with **Add user → New
+   account** and their Google email. Choose **Google sign-in only** (no
+   password anyone knows) or **Password** (they can then use either).
 5. Team members click **Sign in with Google**. With
    `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` (below), Open WebUI links the Google
    sign-in to the pre-added account with the same email. Without it, Google
-   sign-in does not find the account.
+   sign-in does not find the account, and the Console does not offer
+   **Google sign-in only**.
+
+To let people register themselves through Google instead, an operator can set
+`ENABLE_OAUTH_SIGNUP=true` with `DEFAULT_USER_ROLE=pending` and approve each
+signup under People. That opens registration to anyone in the allowed domains,
+so it is an explicit choice. Hubzoid never turns it on.
 
 ### Adding and removing users
 
-- New hire: open **People → Add account** in the Hubzoid Console. Enter their
-  email, name and a password, tick their initial access and share the password
-  once. Delegates can do this for the agents they manage.
+- New hire: select **Add user** on an agent's Access tab (or on People) in the
+  Hubzoid Console. Choose **New account**, enter their name and email and a
+  password (or **Google sign-in only** where available), tick their initial
+  access and share the sign-in details once. Someone who already has an account
+  is added with **Existing account**. Delegates can do this for the agents they
+  manage.
 - Departure: an organization administrator opens the person's Details in the
   Console and uses **Delete account**, or **Block access** to keep the account
   and history. A blocked person sees a notice in the chat saying so. Open WebUI's
@@ -131,7 +144,8 @@ See [access management](access-management.md) for who may do what.
 
 ### Google sign-in onto a Console-created account
 
-A Console-created account can also sign in with Google when the deployment has:
+A Console-created account, password or Google sign-in only, signs in with
+Google when the deployment has:
 
 ```bash
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
@@ -144,11 +158,19 @@ OAUTH_ALLOWED_DOMAINS=example.com       # your organization's domains
 `OAUTH_MERGE_ACCOUNTS_BY_EMAIL` defaults to off in Open WebUI. It is only
 consulted when a Google sign-in matches no account already linked to Google.
 `ENABLE_OAUTH_SIGNUP` is only consulted when nothing matched, so keeping it off
-means Google never creates accounts. Merging trusts the provider's email, which
-is why `OAUTH_ALLOWED_DOMAINS` should list only domains you control.
+means Google never creates accounts. Merging trusts the provider's email
+(Open WebUI 0.11.4 does not check `email_verified`), which is why only Google,
+whose account emails are verified, is offered for **Google sign-in only**, and
+why `OAUTH_ALLOWED_DOMAINS` should list only domains you control. Keep OAuth
+settings in the environment (`ENABLE_OAUTH_PERSISTENT_CONFIG` off, the Hubzoid
+default): the Console reads them from there and does not offer Google sign-in
+only when they may have been changed inside the chat app.
 
-`hubzoid doctor` does not yet warn when Google is configured without the merge
-setting. That check is planned.
+A gateway records whether Google and merging are on (flags only, never the
+client id or secret) in its deployment manifest when it starts, so bridges run
+as separate units see the same choice. Restart the gateway after changing these
+settings. `hubzoid doctor` warns when Google is configured without
+`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
 
 ### Limiting sign-ins to a domain
 

@@ -99,8 +99,9 @@ hubzoid gateway ./my-hub --data-dir ./gateway-data
 ```
 
 Sign in with that email and password, open the **Admin Console** from the chat
-sidebar, and add teammates under **People → Add account** with the agents they
-may use. Public sign-up stays closed. On a gateway set up this way, Open WebUI's
+sidebar, and add teammates with **Add user** on an agent's Access tab (or on
+People): choose an existing account, or create a new one with its access in one
+step, then share the sign-in details yourself. Public sign-up stays closed. On a gateway set up this way, Open WebUI's
 own user list is hidden, so accounts are managed in one place: its Users section
 opens on Groups, and Evaluations and Functions stay in the Admin Panel. Set
 `HUBZOID_HIDE_OWUI_USERS=false` to keep Open WebUI's user list.
