@@ -63,6 +63,7 @@ def test_setup_records_the_configured_owner_once(shared):
     _account(shared, "owner@company.com")
     assert gs.provision_owner("owner@company.com", "sales")
     assert gs.workflow_default() == "owner@company.com"
+    _manage(shared, "owner@company.com")
     # Adding people, admins or hubs later never moves the default.
     _account(shared, "admin2@company.com")
     gs.grant("admin2@company.com", "*", "manage_access", actor="test")
@@ -77,6 +78,7 @@ def test_older_stores_use_the_hubs_recorded_initial_owner(shared):
     with gs._engine.begin() as c:
         gs._meta_set(c, "initial_owner:sales", "owner@company.com")
     _account(shared, "owner@company.com")
+    _manage(shared, "owner@company.com")
     assert idlib.resolve(shared).subject == "owner@company.com"
 
 
@@ -104,6 +106,8 @@ def test_precedence_run_as_then_hub_then_deployment_then_setup(shared, monkeypat
               "priya@company.com"):
         _account(shared, e)
     store_for(shared).provision_owner("owner@company.com", "sales")
+    _manage(shared, *("owner@company.com", "deploy@company.com", "hubuser@company.com",
+                      "priya@company.com"))
     assert idlib.resolve(shared).source == "setup"
     monkeypatch.setenv("HUBZOID_WORKFLOW_USER", "deploy@company.com")
     assert (idlib.resolve(shared).subject, idlib.resolve(shared).source) == (
@@ -219,3 +223,19 @@ def test_markdown_scratch_is_per_person_and_leaves_the_old_folder_alone(hub):
     assert not mine.startswith(".hubzoid/schedule/sync/")
     assert (hub / ".hubzoid/schedule/sync/state.json").read_text() == '{"sha": "abc"}'
     assert not (hub / ".hubzoid/schedule/sync/.owner").exists()
+
+
+def test_a_legacy_hub_never_switches_on_the_setup_default(shared, caplog):
+    """Recording an owner (their first verified sign-in) must not change how a
+    legacy hub's tasks run: same service identity, same old scratch folder."""
+    _account(shared, "owner@company.com")
+    gs = store_for(shared)
+    assert gs.provision_owner("owner@company.com", "sales")        # not fresh: stays legacy
+    assert not gs.is_authoritative("sales")
+    assert gs.workflow_default() == "owner@company.com"
+    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
+    assert (ident.subject, ident.source) == ("workflow:md:sync", "legacy-service")
+    assert idlib.markdown_scratch(shared, "sync", ident) == ".hubzoid/schedule/sync"
+    # Explicit configuration still switches it.
+    (shared / ".env").write_text("HUBZOID_WORKFLOW_USER=owner@company.com\n")
+    assert idlib.resolve(shared, legacy_subject="workflow:md:sync").source == "hub"

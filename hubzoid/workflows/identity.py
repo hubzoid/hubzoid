@@ -8,8 +8,9 @@ Precedence, first match wins:
   2. HUBZOID_WORKFLOW_USER from the hub (`<hub>/.env`, or a hub secret);
   3. HUBZOID_WORKFLOW_USER from the deployment (gateway environment or secret);
   4. the setup default: the configured initial owner, recorded once when
-     Hubzoid provisions that owner (`GrantStore.provision_owner`). Local
-     quickstart (authentication off, no deployment) is `admin@localhost`.
+     Hubzoid provisions that owner (`GrantStore.provision_owner`), on
+     Console-managed hubs only. Local quickstart (authentication off, no
+     deployment) is `admin@localhost`.
 
 The email must resolve to a usable account: a bound identity row (an Open WebUI
 account id), not pending, not blocked or replaced, and on a Console-managed hub
@@ -19,8 +20,9 @@ no fallback to another person, ever.
 `run_as` selects an identity; it grants nothing. It is read only from files and
 operator configuration, never from an API, a tool or a model argument.
 
-Legacy hubs (access still managed in the chat app) keep working when nothing is
-configured: the run keeps its old service identity (`workflow:<name>`,
+Legacy hubs (access still managed in the chat app) switch only on explicit
+configuration (`run_as` or HUBZOID_WORKFLOW_USER), never on the setup default.
+With neither, the run keeps its old service identity (`workflow:<name>`,
 `workflow:md:<task>`), which holds no restricted access there, and features
 that need a person (publishing, email, personal connections) refuse.
 
@@ -126,8 +128,13 @@ def configured(hub_dir: Path, *, hub: str | None = None,
     env_value = (os.environ.get(WORKFLOW_USER_ENV) or "").strip()
     if env_value:
         return normalize(env_value), "deployment"
-    default = store_for(hub_dir).workflow_default(hub or hub_dir.name)
-    if default:
+    # The setup default applies only where Hubzoid manages access. A legacy hub
+    # (access still in the chat app) switches only on explicit configuration,
+    # so recording an owner never silently changes how its tasks run.
+    gs = store_for(hub_dir)
+    hub_key = hub or hub_dir.name
+    default = gs.workflow_default(hub_key)
+    if default and gs.is_authoritative(hub_key):
         return normalize(default), "setup"
     if local_quickstart(hub_dir):
         return LOCAL_OWNER, "local"
