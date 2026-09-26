@@ -425,11 +425,18 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
     if inflight:
         inflight.enter()
     started = time.monotonic()
+    waiting = False
     try:
         # Role chunk first (OpenAI convention).
         first = _chunk("", model=model)
         first["choices"][0]["delta"] = {"role": "assistant", "content": ""}
         yield f"data: {json.dumps(first)}\n\n".encode()
+        # The first words can take seconds (runtime start-up, first token), and
+        # the chat app's own cue for that is faint. Show its status line until
+        # the first content arrives, then hide it. Status is message metadata,
+        # never message content.
+        yield _waiting_status(model, done=False)
+        waiting = True
 
         # Set chat scope so tools resolve to this chat's dirs, and bind the
         # caller's identity so the access guard sees who is running each tool.
@@ -437,6 +444,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
                 if delta:
+                    if waiting:
+                        waiting = False
+                        yield _waiting_status(model, done=True)
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
             # Drain usage while still inside chat_scope (the runtime set it
             # there); build the OpenAI usage envelope for the final chunk.
@@ -444,6 +454,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             usage = _usage_envelope(raw_usage)
         await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
 
+        if waiting:
+            waiting = False
+            yield _waiting_status(model, done=True)
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
         # empty choices + top-level usage. Open WebUI reads this to populate its
@@ -458,9 +471,26 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         }
         yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
         yield b"data: [DONE]\n\n"
+    except Exception:
+        # A failed turn must not leave the waiting line behind its error.
+        if waiting:
+            yield _waiting_status(model, done=True)
+        raise
     finally:
         if inflight:
             inflight.leave()
+
+
+def _waiting_status(model: str, *, done: bool) -> bytes:
+    """Open WebUI status event (top-level `event` on a chunk with no choices).
+    Open WebUI shows it as a status line and stores it as message metadata;
+    other clients see an empty chunk, like the usage chunk."""
+    data = {"description": "Working on it…", "done": done}
+    if done:
+        data["hidden"] = True
+    chunk = {"object": "chat.completion.chunk", "created": int(time.time()), "model": model,
+             "choices": [], "event": {"type": "status", "data": data}}
+    return f"data: {json.dumps(chunk)}\n\n".encode()
 
 
 async def _record_turn(hub_dir, identity, chat_id, raw: dict, started: float) -> None:
