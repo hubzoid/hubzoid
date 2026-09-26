@@ -239,12 +239,21 @@ change and confirms it. Nothing applies before that. Links expire after
 
 ### Hiding the Open WebUI Users page
 
-After Console account management is verified on a deployment, set
-`HUBZOID_HIDE_OWUI_USERS=true` in the gateway (or `hubzoid run`) environment and
-restart it. Open WebUI's Users page then opens Console People, and browser
-writes to Open WebUI's account admin API (`POST /api/v1/auths/add`,
-`POST /api/v1/users/{id}/update`, `DELETE /api/v1/users/{id}`) are refused. The
-Groups tab stays for legacy agents. Default: off, so nothing changes on upgrade.
+A gateway set up fresh with Console accounts (no earlier `deployment.json` or
+chat-app database, `WEBUI_AUTH=true`, and the service account above) hides Open
+WebUI's user management. The gateway records `hide_owui_users: true` in
+`deployment.json` and says so when it starts. An existing deployment records
+nothing and keeps the Users page, so nothing changes on upgrade. An explicit
+`HUBZOID_HIDE_OWUI_USERS=true` or `false` in the gateway (or `hubzoid run`)
+environment overrides the recorded value; set `true` on an existing deployment
+once Console account management is verified there.
+
+When hidden, Open WebUI's user list (`/admin/users/overview`) opens Console
+People, and its Users section (`/admin/users`, where the Admin Panel opens)
+lands on Groups, which stays for legacy agents. Evaluations, Functions and
+Settings are unchanged. Browser writes to Open WebUI's account admin API
+(`POST /api/v1/auths/add`, `POST /api/v1/users/{id}/update`,
+`DELETE /api/v1/users/{id}`) are refused. Public sign-up stays closed either way.
 
 ### Open WebUI APIs Hubzoid relies on
 

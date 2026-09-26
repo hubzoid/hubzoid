@@ -646,16 +646,11 @@ def child_env_overrides(env: Mapping[str, str]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Reporting (names and sources, never values)
 # ---------------------------------------------------------------------------
-def layer_report(hub_dir: Path, *, env: Mapping[str, str] | None = None,
-                 fetch_secrets: bool = True) -> list[dict]:
-    """Which layer each configured key comes from, for `hubzoid doctor`.
-
-    One row per key a file or a secret sets: {"key", "layer", "source",
-    "shadows"}. `shadows` lists the lower layers that also set it. A secret
-    that cannot be read, or is not fetched, is left out (doctor reports it).
-    Never includes a value."""
-    hub_dir = Path(hub_dir)
-    env = _start_env() if env is None else dict(env)
+def _layers(hub_dir: Path, env: Mapping[str, str], *, fetch_secrets: bool,
+            strict: bool) -> list[tuple[str, str, Mapping[str, str]]]:
+    """The hub's layers, lowest first: (layer, source, values). The same order
+    `apply_layers` applies them in. `strict` raises SecretFetchError for a named
+    secret that cannot be read; otherwise that secret is left out."""
     hub_file = _read_file(hub_dir / ".env")
     restricted_file = _read_file(hub_dir / "restricted" / ".env")
     ptrs = {p.layer: p for p in pointers(hub_dir, env)}
@@ -668,6 +663,8 @@ def layer_report(hub_dir: Path, *, env: Mapping[str, str] | None = None,
         try:
             values = load_secret(p.name, region=p.region, layer=layer)
         except SecretFetchError:
+            if strict:
+                raise
             return None
         if p.filtered:
             values = {k: v for k, v in values.items() if bridge_deployment_key(k)}
@@ -687,6 +684,39 @@ def layer_report(hub_dir: Path, *, env: Mapping[str, str] | None = None,
     restricted_secret = secret(RESTRICTED)
     if restricted_secret:
         layers.append((L_RESTRICTED_SECRET, *restricted_secret))
+    return layers
+
+
+def resolve_key(hub_dir: Path, key: str, *, env: Mapping[str, str] | None = None) -> tuple[str | None, str | None]:
+    """(value, layer) for `key` from the hub's files and secrets, with the same
+    precedence `apply_layers` uses (a hub secret over the hub `.env`; for a
+    standalone hub the deployment secret over its `.env`). Restricted layers
+    are not consulted. (None, None) when no file or secret sets it: the caller
+    then looks at the deployment's own environment. Raises SecretFetchError
+    when a named secret cannot be read, never guessing around it."""
+    hub_dir = Path(hub_dir)
+    env = _start_env() if env is None else dict(env)
+    found: tuple[str | None, str | None] = (None, None)
+    for layer, _source, values in _layers(hub_dir, env, fetch_secrets=True, strict=True):
+        if layer in (L_RESTRICTED, L_RESTRICTED_SECRET):
+            continue
+        value = (values.get(key) or "").strip()
+        if value:
+            found = (value, layer)
+    return found
+
+
+def layer_report(hub_dir: Path, *, env: Mapping[str, str] | None = None,
+                 fetch_secrets: bool = True) -> list[dict]:
+    """Which layer each configured key comes from, for `hubzoid doctor`.
+
+    One row per key a file or a secret sets: {"key", "layer", "source",
+    "shadows"}. `shadows` lists the lower layers that also set it. A secret
+    that cannot be read, or is not fetched, is left out (doctor reports it).
+    Never includes a value."""
+    hub_dir = Path(hub_dir)
+    env = _start_env() if env is None else dict(env)
+    layers = _layers(hub_dir, env, fetch_secrets=fetch_secrets, strict=False)
 
     rows: dict[str, dict] = {}
     for layer, source, values in layers:

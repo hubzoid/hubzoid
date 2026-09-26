@@ -44,6 +44,7 @@ border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0
 #share label{display:flex;gap:8px;align-items:flex-start;margin:8px 0}
 #share label.off{color:var(--muted)}
 #share small{display:block;color:var(--muted)}
+#share label.field{display:block;margin:8px 0 4px;font-weight:600}
 #share textarea{width:100%;min-height:70px;font:inherit;border:1px solid var(--line);border-radius:6px;
 padding:6px;background:var(--bg);color:var(--ink)}
 #share select{font:inherit}
@@ -64,7 +65,13 @@ const el = (tag, attrs, text) => { const n = document.createElement(tag);
   if (text !== undefined) n.textContent = text; return n; };
 let meta = null;
 
-function fail(msg){ const m = $('content'); m.replaceChildren(el('div', {class:'center'}, msg)); }
+// A terminal state: a heading instead of "Loading…", the reason, and a way on.
+function fail(msg, heading){
+  const h = heading || (cfg.mode === 'public' ? 'Link not available' : 'Report not available');
+  document.title = h; $('title').textContent = h; $('meta').textContent = '';
+  const c = el('div', {class:'center'}); c.append(el('p', {}, msg));
+  c.append(el('a', {class:'btn', href:'/'}, cfg.mode === 'public' ? 'Go to the sign-in page' : 'Back to the chat'));
+  $('content').replaceChildren(c); }
 
 async function load(){
   let r;
@@ -137,39 +144,49 @@ function openShare(){
   opt('owner', 'Only you', '', true);
   opt('people', 'Specific people or groups', s.hub_managed ? 'People who can use this agent.' : s.unmanaged_note, s.hub_managed);
   opt('hub', 'Anyone with access to this agent', s.hub_managed ? 'Everyone who can currently use it.' : s.unmanaged_note, s.hub_managed);
-  opt('link', 'Anyone with the link', s.can_public_link ? 'No sign-in. Anyone who has the link can view it.' : 'You do not have permission to create public links here.', s.can_public_link);
-  const people = el('textarea', {placeholder:'One per line: name@company.com, or group:finance'});
+  opt('link', 'Anyone with the link', s.can_public_link ? 'No sign-in. Anyone who has the link can view it.' : (s.public_link_hint || 'You do not have permission to create public links here.'), s.can_public_link);
+  const peopleBox = el('div');
+  peopleBox.append(el('label', {for:'share-people', class:'field'}, 'People or groups who can view it'));
+  const people = el('textarea', {id:'share-people', 'aria-describedby':'share-people-hint', placeholder:'name@company.com'});
   people.value = s.people.map(x => x.kind === 'group' ? 'group:' + x.principal : x.principal).join('\n');
-  p.append(people);
+  peopleBox.append(people, el('small', {id:'share-people-hint'}, 'One per line: an email address, or group:name for a group. Each must be able to use this agent.'));
+  p.append(peopleBox);
   const linkArea = el('div'); p.append(linkArea);
+  const save = el('button', {class:'primary'}, 'Save');
+  // One flow for public links: choosing "Anyone with the link" and pressing the
+  // main button creates the link. An existing link can be replaced or turned off.
   const sync = () => { const v = (p.querySelector('input[name=aud]:checked') || {}).value;
-    people.hidden = v !== 'people'; linkArea.hidden = v !== 'link'; };
+    peopleBox.hidden = v !== 'people'; linkArea.hidden = v !== 'link';
+    save.textContent = (v === 'link' && !(meta.sharing && meta.sharing.link)) ? 'Create public link' : 'Save';
+    create.hidden = !(meta.sharing && meta.sharing.link); };
   p.querySelectorAll('input[name=aud]').forEach(i => i.addEventListener('change', sync));
   // Public link controls.
   linkArea.append(el('div', {class:'warn'}, 'Anyone who has this link can open the report without signing in, until it expires or you turn it off. Share it only with people who should see this report.'));
   if (s.link) linkArea.append(el('p', {class:'note'}, 'A link is active until ' + new Date(s.link.expires * 1000).toLocaleString() + '. Links are shown once. Creating a new link turns the old one off.'));
   const days = el('select'); for (const d of [1, 7, 30, 90]) { const o = el('option', {value: d}, d + (d === 1 ? ' day' : ' days')); if (d === s.default_days) o.selected = true; days.append(o); }
   const lrow = el('div', {class:'row'});
-  const create = el('button', {class:'primary'}, s.link ? 'Create new link' : 'Create public link');
+  const create = el('button', {}, 'Create new link');
   const off = el('button', {class:'danger'}, 'Turn off link'); off.hidden = !s.link;
   const out = el('input', {class:'linkbox', readonly:'readonly'}); out.hidden = true;
   lrow.append(el('span', {}, 'Expires after'), days, create, off); linkArea.append(lrow, out);
-  create.addEventListener('click', async () => {
+  const makeLink = async () => {
     try { const r = await post(cfg.api + '/link', {action:'create', days: Number(days.value)});
       out.value = r.url; out.hidden = false; out.select(); status('Link created. Copy it now; it is not shown again.');
-      meta = await (await fetch(cfg.api, {credentials:'same-origin'})).json(); off.hidden = false;
-    } catch (e) { status(e.message); } });
+      meta = await (await fetch(cfg.api, {credentials:'same-origin'})).json(); off.hidden = false; sync();
+    } catch (e) { status(e.message); } };
+  create.addEventListener('click', makeLink);
   off.addEventListener('click', async () => {
     try { await post(cfg.api + '/link', {action:'revoke'}); status('The link no longer works.');
       meta = await (await fetch(cfg.api, {credentials:'same-origin'})).json(); openShare(); } catch (e) { status(e.message); } });
   const row = el('div', {class:'row'});
-  const save = el('button', {class:'primary'}, 'Save');
   const close = el('button', {}, 'Close');
   const del = el('button', {class:'danger'}, 'Delete report');
-  row.append(save, close, del); p.append(row, el('div', {id:'status'}));
+  row.append(save, close, del); p.append(row, el('div', {id:'status', role:'status'}));
   save.addEventListener('click', async () => {
     const v = (p.querySelector('input[name=aud]:checked') || {}).value;
-    if (v === 'link') { status('Use "Create public link" above.'); return; }
+    if (v === 'link') {
+      if (meta.sharing && meta.sharing.link) { status('The public link is on. Use Create new link to replace it, or Turn off link.'); return; }
+      return makeLink(); }
     const list = people.value.split('\n').map(x => x.trim()).filter(Boolean).map(x =>
       x.toLowerCase().startsWith('group:') ? {kind:'group', principal: x.slice(6).trim()} : {kind:'user', principal: x});
     try { await post(cfg.api + '/audience', {audience: v, people: v === 'people' ? list : []});

@@ -109,7 +109,9 @@ export function ConfirmScreen({ id, hubs }: { id: string; hubs: Hub[] }) {
       <PageHeader
         eyebrow="Confirm a change"
         title={account ? "Create an account" : "Change access"}
-        description={`Proposed from ${SURFACES[cr.surface ?? ""] ?? humanize(cr.surface ?? "an agent")} ${relativeTime(cr.created)}. Nothing has changed yet.`}
+        description={`Proposed from ${SURFACES[cr.surface ?? ""] ?? humanize(cr.surface ?? "an agent")} ${relativeTime(cr.created)}.${
+          pending && !expired ? " Nothing has changed yet." : ""
+        }`}
       />
       <div className="panel">
         {status === "confirmed" && (

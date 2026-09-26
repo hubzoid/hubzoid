@@ -5,8 +5,10 @@ Precedence, first match wins:
 
   1. `run_as` on the declaration (`@workflow(run_as=...)`, or `run_as:` in a
      `schedule/*.md` frontmatter);
-  2. HUBZOID_WORKFLOW_USER from the hub (`<hub>/.env`, or a hub secret);
-  3. HUBZOID_WORKFLOW_USER from the deployment (gateway environment or secret);
+  2. HUBZOID_WORKFLOW_USER from the hub (a hub secret over `<hub>/.env`);
+  3. HUBZOID_WORKFLOW_USER from the deployment (the deployment secret, or the
+     gateway's environment, which the gateway also records in the deployment
+     manifest for CLI commands);
   4. the setup default: the configured initial owner, recorded once when
      Hubzoid provisions that owner (`GrantStore.provision_owner`), on
      Console-managed hubs only. Local quickstart (authentication off, no
@@ -114,20 +116,32 @@ def configured(hub_dir: Path, *, hub: str | None = None,
     if run_as:
         return normalize(run_as), "run_as"
     hub_dir = Path(hub_dir)
-    try:
-        from dotenv import dotenv_values
+    # One resolution for every caller (the bridge that executes, `schedule
+    # list`, the Console): the hub's files and secrets with the same precedence
+    # as settings.load, whether or not this process loaded them. A named secret
+    # that cannot be read is an error, never a silent fall back to the file.
+    from .. import config_secrets as cs
 
-        hub_value = (dotenv_values(hub_dir / ".env").get(WORKFLOW_USER_ENV) or "").strip()
-    except Exception:  # noqa: BLE001 — an unreadable .env is reported by settings
-        hub_value = ""
-    # The hub layer wins. A bridge has already loaded <hub>/.env (and any hub
-    # secret) over the deployment environment; a CLI command may not have, so
-    # the file is consulted directly as well.
-    if hub_value:
-        return normalize(hub_value), "hub"
+    try:
+        value, layer = cs.resolve_key(hub_dir, WORKFLOW_USER_ENV)
+    except cs.SecretFetchError as exc:
+        raise IdentityError(
+            f"{WORKFLOW_USER_ENV} could not be read: {exc}. Fix access to that secret; "
+            "Hubzoid does not guess which account to run as.") from exc
+    if value:
+        return normalize(value), {cs.L_HUB_SECRET: "hub-secret",
+                                  cs.L_DEPLOYMENT_SECRET: "deployment-secret"}.get(layer, "hub")
     env_value = (os.environ.get(WORKFLOW_USER_ENV) or "").strip()
     if env_value:
         return normalize(env_value), "deployment"
+    try:
+        from .. import deployment
+
+        recorded = (deployment.read(hub_dir).get("workflow_user") or "").strip()
+    except Exception:  # noqa: BLE001 — no readable manifest: nothing recorded
+        recorded = ""
+    if recorded:
+        return normalize(recorded), "deployment"
     # The setup default applies only where Hubzoid manages access. A legacy hub
     # (access still in the chat app) switches only on explicit configuration,
     # so recording an owner never silently changes how its tasks run.
@@ -163,10 +177,7 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
     if not _EMAIL.match(email):
         raise IdentityError(f"{what} is configured to run as {email!r}, which is not an account email.")
     gs = store_for(hub_dir)
-    where = {"run_as": "its run_as", "hub": f"the hub's {WORKFLOW_USER_ENV}",
-             "deployment": f"the deployment's {WORKFLOW_USER_ENV}",
-             "setup": "the setup default (the initial owner)",
-             "local": "the local quickstart account"}.get(source, source)
+    where = describe_source(source)
     ident = gs.identity(email) or {}
     with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
         suspended = gs._meta_get(conn, "suspended:" + email) == "1"
@@ -207,8 +218,10 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
 
 
 def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
-            legacy_subject: str | None = None, what: str = "This workflow") -> RunIdentity:
-    """Resolve the account a new run acts as (see module docstring)."""
+            legacy_subject: str | None = None, what: str = "This workflow",
+            quiet: bool = False) -> RunIdentity:
+    """Resolve the account a new run acts as (see module docstring). `quiet`
+    skips the operator warnings, for listings that resolve on every refresh."""
     from ..access import store_for
 
     hub_dir = Path(hub_dir)
@@ -220,14 +233,18 @@ def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
         except Exception as exc:  # noqa: BLE001
             raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
         if not managed and legacy_subject:
-            log.warning("%s: %s", legacy_subject,
-                        _missing_default_message(hub_dir, hub, what)
-                        + " Until then it keeps its legacy service identity, which cannot "
-                          "publish, email or use personal connections.")
+            if not quiet:
+                # A legacy hub never switches on the setup default, so the only
+                # fix is explicit configuration.
+                log.warning("%s: %s in hub %r has no account configured. Add run_as to its "
+                            "declaration or set %s=<account email> in the hub or deployment "
+                            "configuration. Until then it keeps its legacy service identity, "
+                            "which cannot publish, email or use personal connections.",
+                            legacy_subject, what, hub, WORKFLOW_USER_ENV)
             return RunIdentity(legacy_subject, None, LEGACY_SOURCE)
         raise IdentityError(_missing_default_message(hub_dir, hub, what))
     ident = check(hub_dir, hub, email, source, what=what)
-    if legacy_subject:
+    if legacy_subject and not quiet:
         missing = legacy_permissions_not_held(hub_dir, hub, legacy_subject, ident.subject)
         if missing:
             log.warning(
@@ -270,16 +287,46 @@ def legacy_permissions_not_held(hub_dir: Path, hub: str, legacy_subject: str,
         return []
 
 
+_SOURCES = {
+    "run_as": "its run_as",
+    "hub": f"{WORKFLOW_USER_ENV} in the hub's .env",
+    "hub-secret": f"{WORKFLOW_USER_ENV} in the hub secret",
+    "deployment": f"{WORKFLOW_USER_ENV} in the deployment environment",
+    "deployment-secret": f"{WORKFLOW_USER_ENV} in the deployment secret",
+    "setup": "the setup default (the initial owner)",
+    "local": "the local quickstart account",
+    LEGACY_SOURCE: "the legacy service identity",
+}
+
+
+def describe_source(source: str) -> str:
+    """Where a run's account came from, in words (CLI, Console, errors)."""
+    return _SOURCES.get(source, source)
+
+
+def summary(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
+            legacy_subject: str | None = None) -> dict:
+    """Who a workflow runs as, for listings: {"account", "source", "via", "error"}.
+    Uses exactly the resolution a run uses."""
+    try:
+        ident = resolve(hub_dir, hub=hub, run_as=run_as, legacy_subject=legacy_subject,
+                        quiet=True)
+    except IdentityError as exc:
+        return {"account": None, "source": None, "via": None, "error": str(exc)}
+    return {"account": ident.subject, "source": ident.source,
+            "via": describe_source(ident.source), "error": None}
+
+
 def describe(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
              legacy_subject: str | None = None) -> str:
     """One line for `hubzoid schedule list`: who a workflow runs as, or why not."""
-    try:
-        ident = resolve(hub_dir, hub=hub, run_as=run_as, legacy_subject=legacy_subject)
-    except IdentityError as exc:
-        return f"cannot run: {exc}"
-    if not ident.is_person:
-        return f"legacy service identity {ident.subject} (set run_as or {WORKFLOW_USER_ENV})"
-    return f"{ident.subject} ({ident.source})"
+    s = summary(hub_dir, hub=hub, run_as=run_as, legacy_subject=legacy_subject)
+    if s["error"]:
+        return f"cannot run: {s['error']}"
+    if s["source"] == LEGACY_SOURCE:
+        return (f"runs as the legacy service identity {s['account']} "
+                f"(set run_as or {WORKFLOW_USER_ENV})")
+    return f"runs as {s['account']} ({s['via']})"
 
 
 def person_slug(subject: str) -> str:

@@ -80,6 +80,8 @@ export type Workflow = {
   missed: number;
   heartbeat: string | null;
   downtime: { since: string; until: string; missed: number } | null;
+  // Who a run of this workflow acts as, resolved the way a run resolves it.
+  runs_as?: { account: string | null; source: string | null; via: string | null; error: string | null };
 };
 export type Run = {
   hub: string;
@@ -91,12 +93,17 @@ export type Run = {
   duration_ms: number | null;
   output: string | null;
   error: string | null;
+  // The account the run acted as (from its identity step), if recorded.
+  run_as?: string | null;
+  // True when the run has a result that only its own account may see.
+  redacted?: boolean;
   steps?: {
     name: string;
     started: number | null;
     completed: number | null;
     output: string | null;
     error: string | null;
+    redacted?: boolean;
   }[];
 };
 export type Person = {

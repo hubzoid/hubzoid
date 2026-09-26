@@ -75,6 +75,19 @@ def make(ctx) -> list:
     def is_enabled(*_args, **_kwargs) -> bool:
         return caller()[0] is not None
 
+    # Marked like the access guard's checks, so the Claude and Codex runtimes
+    # (which do not evaluate is_enabled) also leave these tools out for people
+    # who manage nothing (access.guard.visible). caller() still gates each call.
+    is_enabled.hubzoid_permission = "manage_access"
+
+    def labelled(hub: str, perms) -> str:
+        """Console labels with the id the tools take, e.g. 'Save shared knowledge (curator)'."""
+        try:
+            names = {e["permission"]: e["label"] for e in service.catalog(hub)}
+        except Denied:
+            names = {}
+        return ", ".join(f"{names[p]} ({p})" if names.get(p) and names[p] != p else p for p in perms)
+
     def proposed(result: dict, actor: Actor) -> str:
         minutes = max(1, round((result["expires"] - time.time()) / 60))
         link = confirm_url(result["confirm_path"])
@@ -107,8 +120,9 @@ def make(ctx) -> list:
                  else "You manage access to specific agents."]
         for hub in scope.hubs:
             perms = grantable.get(hub) or []
-            lines.append(f"- {hub}: " + (", ".join(perms) if perms else
+            lines.append(f"- {hub}: " + (labelled(hub, perms) if perms else
                                          "access is still managed in the chat app"))
+        lines.append("Use the id in parentheses when proposing a change.")
         lines.append("Changes you propose apply only after you confirm them in the Admin Console.")
         return "\n".join(lines)
 

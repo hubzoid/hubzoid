@@ -251,12 +251,14 @@ backend. It also needs:
    capability (surface first) and asks OWUI whether the person is connected
    already. If they are, the agent says so. Otherwise it gets a link to
    `/portal/connect/<id>`, never a provider URL.
-2. The link page needs a signed-in OWUI session. The email of that session
-   must be the person who asked. Anyone else gets "This link is for another
-   account" (and the attempt is recorded in the access log).
+2. The link page needs a signed-in OWUI session. A signed-out person is sent
+   to the chat app's sign-in page and comes straight back to the link. The
+   email of that session must be the person who asked. Anyone else gets "This
+   link is for another account" (and the attempt is recorded in the access log).
 3. **Continue** (a same-origin POST) re-checks a block or a revoked grant and
    sends the browser to OWUI's own authorize route, with a short-lived
-   `hz_connect` cookie.
+   `hz_connect` cookie. A POST from any other origin, or with `Origin: null`,
+   is refused.
 4. After consent the browser comes back to `/portal/connect/<id>/done`. The
    page asks OWUI whether this journey connected: a new `oauth_session` row
    for that person and server, created after the journey started, whose token
@@ -280,7 +282,7 @@ The connector capabilities a hub offers are listed by
 
 OWUI always sends the browser to its own home page after authorization. The
 edge turns that redirect into `/portal/connect/<id>/done` while the
-`hz_connect` cookie is present (the edge side lands separately). Without it the
+`hz_connect` cookie is present. Without the edge (`HUBZOID_DISABLE_EDGE`) the
 person lands on the chat home page. The connection still works, WhatsApp still
 gets its confirmation (the inbound process checks the provider), and asking the
 agent again reports "already connected".
@@ -289,9 +291,14 @@ agent again reports "already connected".
 
 - The WhatsApp confirmation and the YES continuation are WhatsApp only.
   Telegram and web chat get the link and the done page.
-- OWUI's `/auth?redirect=` is offered on the sign-in page but is not yet
-  verified against the pinned OWUI bundle. The page also says to open the link
-  again after signing in.
+- The person needs a chat-app account and signs in to it. OWUI's MCP OAuth
+  routes (`/oauth/clients/mcp:<id>/authorize` and its callback) require an OWUI
+  session and store the token against that OWUI user, so a provider link that
+  skips chat-app sign-in is not possible without a new token system. On a
+  deployment with Google sign-in the chat-app sign-in is one more Google click.
+- Verified end to end on OWUI 0.11.4 with a synthetic OAuth 2.1 MCP server
+  (dynamic client registration, consent, token): link, sign-in return,
+  Continue, consent, done page, and the person's tool in the next chat turn.
 
 ### Check it with real accounts (manual)
 

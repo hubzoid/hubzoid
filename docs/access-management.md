@@ -341,7 +341,7 @@ Where Jev is available today:
 |---|---|
 | Code workflows (`hub.call_jev`) | Yes. Workflow code needs the key, not a grant |
 | Chat in Open WebUI, and the bridge API behind it | With the `jev` grant |
-| Agent runs inside workflows (`hub.call_agent`, markdown tasks) | Only when the workflow identity (`workflow:<name>`) is granted `jev` |
+| Agent runs inside workflows (`hub.call_agent`, markdown tasks) | Only when the account the run acts as holds `jev` (see [workflow-identity.md](workflow-identity.md)) |
 | Slack, WhatsApp and Telegram | No. They cannot reach controlled tools until those channels verify each person's identity |
 | Hosted MCP (`/mcp`) | No. `call_jev` is not exposed to external assistants |
 
@@ -362,15 +362,16 @@ The older mechanics remain documented in [legacy-access.md](legacy-access.md)
 for migration and diagnosis only. Do not use that guide to configure a new
 managed hub.
 
-## Hiding the Open WebUI Users page (implemented, off by default)
+## Hiding the Open WebUI Users page (implemented)
 
-Set `HUBZOID_HIDE_OWUI_USERS=true` in the environment of the process that runs
-the edge (the gateway, or `hubzoid run`) once Console account management works
-on that deployment. Then:
+On by default for a gateway set up fresh with Console accounts (recorded as
+`hide_owui_users` in `deployment.json`); off for existing deployments. An
+explicit `HUBZOID_HIDE_OWUI_USERS=true|false` in the environment of the process
+that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
-- Opening Open WebUI's Users page (`/admin/users`, `/admin/users/overview`) lands
-  on Console **People**. Open WebUI's **Admin Panel** entry opens that page too.
-  Its settings stay at `/admin/settings`.
+- Opening Open WebUI's user list (`/admin/users/overview`) lands on Console
+  **People**. The Users section itself (`/admin/users`, where the Admin Panel
+  opens) lands on Groups. Settings, Evaluations and Functions are unchanged.
 - Browser writes to Open WebUI's account admin API get 403: `POST
   /api/v1/auths/add`, `POST /api/v1/users/{id}/update` and `DELETE
   /api/v1/users/{id}`. A person's own settings (`/api/v1/users/user/...`) are

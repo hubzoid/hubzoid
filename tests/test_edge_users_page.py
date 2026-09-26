@@ -88,8 +88,8 @@ def edge(monkeypatch):
 
 # ---- Users page ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("path", ["/admin/users", "/admin/users/", "/admin/users/overview",
-                                  "/admin/users/overview/", "//admin/users"])
+@pytest.mark.parametrize("path", ["/admin/users/overview", "/admin/users/overview/",
+                                  "//admin/users/overview"])
 def test_users_page_redirects_to_people_when_hidden(edge, path):
     client, upstream = edge(hide=True)
     path = "http://testserver" + path  # keep a leading "//" as a path, not a host
@@ -99,7 +99,18 @@ def test_users_page_redirects_to_people_when_hidden(edge, path):
     assert upstream.seen == []
 
 
-@pytest.mark.parametrize("path", ["/admin/users/groups", "/admin/settings", "/admin", "/"])
+@pytest.mark.parametrize("path", ["/admin/users", "/admin/users/", "//admin/users"])
+def test_the_users_section_opens_on_groups_when_hidden(edge, path):
+    """Release review: hiding the user list must keep Groups reachable from the
+    Admin Panel's Users tab."""
+    client, upstream = edge(hide=True)
+    r = client.get("http://testserver" + path)
+    assert r.status_code == 302 and r.headers["location"] == "/admin/users/groups"
+    assert upstream.seen == []
+
+
+@pytest.mark.parametrize("path", ["/admin/users/groups", "/admin/settings", "/admin",
+                                  "/admin/evaluations", "/admin/functions", "/"])
 def test_other_admin_pages_stay(edge, path):
     client, upstream = edge(hide=True)
     assert client.get(path).status_code == 200
@@ -162,7 +173,12 @@ def test_navigation_script_carries_the_flag(edge):
     client, _ = edge(hide=True)
     body = client.get("/hubzoid-portal-navigation.js").text
     assert "const HIDE_USERS = true;" in body and "/portal/#/people" in body
+    assert "/admin/users/groups" in body
     assert "/portal/api/me?brief=1" in body
+    # An empty chat is explained: blocked, or no agent yet.
+    assert "/portal/api/chat-access" in body and "blocked by an administrator" in body
+    # ...right after an in-app sign-in, not at the next 15-second check.
+    assert "location.pathname !== lastPath" in body
     client2, _ = edge(hide=False)
     assert "const HIDE_USERS = false;" in client2.get("/hubzoid-portal-navigation.js").text
 
@@ -208,3 +224,49 @@ def test_callback_untouched_for_other_flows(edge):
     upstream.callback_status = 307
     r = client.post("/oauth/clients/mcp:gmail/callback")
     assert r.headers["location"] == "/"
+
+
+
+# ---- the deployment's default (release review) ---------------------------------------
+
+def _manifest(tmp_path, **extra):
+    import json
+
+    path = tmp_path / "deployment.json"
+    path.write_text(json.dumps({"version": 1, "hubs": [], **extra}))
+    return str(path)
+
+
+@pytest.mark.parametrize("recorded,env,hidden", [
+    (True, None, True),        # a gateway set up fresh with Console accounts
+    (None, None, False),       # an existing deployment records nothing: unchanged
+    (True, "false", False),    # an explicit setting wins either way
+    (None, "true", True),
+])
+def test_hiding_follows_the_recorded_default_unless_set(tmp_path, monkeypatch, recorded, env, hidden):
+    from hubzoid.edge import _hide_owui_users
+
+    extra = {} if recorded is None else {"hide_owui_users": recorded}
+    envmap = {"HUBZOID_DEPLOYMENT": _manifest(tmp_path, **extra)}
+    if env is not None:
+        envmap["HUBZOID_HIDE_OWUI_USERS"] = env
+    assert _hide_owui_users(envmap) is hidden
+
+
+@pytest.mark.parametrize("prior,fresh,env,expected", [
+    ({}, True, {"WEBUI_AUTH": "true", "HUBZOID_GATEWAY_ADMIN_EMAIL": "o@x.org",
+                "HUBZOID_GATEWAY_ADMIN_PASSWORD": "pw"}, True),     # new, Console accounts
+    ({}, True, {"WEBUI_AUTH": "true"}, None),                      # no service account
+    ({}, True, {"HUBZOID_GATEWAY_ADMIN_EMAIL": "o@x.org",
+                "HUBZOID_GATEWAY_ADMIN_PASSWORD": "pw"}, None),     # sign-in off
+    ({}, False, {"WEBUI_AUTH": "true", "HUBZOID_GATEWAY_ADMIN_EMAIL": "o@x.org",
+                 "HUBZOID_GATEWAY_ADMIN_PASSWORD": "pw"}, None),    # existing chat data (upgrade)
+    ({"version": 1}, True, {"WEBUI_AUTH": "true", "HUBZOID_GATEWAY_ADMIN_EMAIL": "o@x.org",
+                            "HUBZOID_GATEWAY_ADMIN_PASSWORD": "pw"}, None),  # earlier manifest
+    ({"hide_owui_users": True}, False, {}, True),                  # kept once recorded
+    ({"hide_owui_users": False}, True, {"WEBUI_AUTH": "true"}, False),
+])
+def test_the_gateway_records_hiding_only_for_new_console_deployments(prior, fresh, env, expected):
+    from hubzoid.deployment import hide_owui_users_default
+
+    assert hide_owui_users_default(prior, fresh=fresh, env=env) == expected

@@ -63,7 +63,7 @@ export function toggle(selected: string[], permission: string, on: boolean) {
 
 export type Lock = {
   reason: string;
-  label?: "Inherited" | "Required" | "Outside your access" | "Included" | "No longer available";
+  label?: "Inherited" | "Required" | "Outside your access" | "Admins only" | "Included" | "No longer available";
 } | null;
 
 type Viewer = Pick<Access, "can_manage_admins" | "grantable" | "viewer">;
@@ -113,7 +113,7 @@ export function lockFor(
     return { reason: "Only organization administrators can change an organization administrator’s access." };
   if (!access.can_manage_admins && meta?.delegate_grantable === false)
     return {
-      label: "Outside your access",
+      label: "Admins only",
       reason: "Only organization administrators can grant or remove this.",
     };
   if (!access.can_manage_admins && access.grantable) {

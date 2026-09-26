@@ -239,3 +239,91 @@ def test_a_legacy_hub_never_switches_on_the_setup_default(shared, caplog):
     # Explicit configuration still switches it.
     (shared / ".env").write_text("HUBZOID_WORKFLOW_USER=owner@company.com\n")
     assert idlib.resolve(shared, legacy_subject="workflow:md:sync").source == "hub"
+
+
+# --- one resolution for execution, listing and display (release review) -------------
+
+def _secret_hub(shared, monkeypatch, env_line: str, secret: dict | None):
+    from hubzoid import config_secrets
+    from tests import _fake_secrets
+
+    config_secrets.clear_cache()
+    fake = _fake_secrets.install(monkeypatch, {"prod/sales": secret} if secret is not None else {})
+    (shared / ".env").write_text(env_line + "HUBZOID_HUB_SECRET_NAME=prod/sales\n")
+    wf = shared / "workflows" / "daily"
+    wf.mkdir(parents=True)
+    (wf / "main.py").write_text("from hubzoid import workflow\n\n@workflow()\ndef daily():\n    return 1\n")
+    return fake
+
+
+def _listed(hub):
+    from hubzoid.workflows.observe import catalog
+
+    return next(r for r in catalog(hub) if r["name"] == "daily")["runs_as"]
+
+
+def test_a_hub_secret_wins_over_the_hub_env_everywhere(shared, monkeypatch):
+    for e in ("hubuser@company.com", "secretuser@company.com"):
+        _account(shared, e)
+    _manage(shared, "hubuser@company.com", "secretuser@company.com")
+    _secret_hub(shared, monkeypatch, "HUBZOID_WORKFLOW_USER=hubuser@company.com\n",
+                {"HUBZOID_WORKFLOW_USER": "secretuser@company.com"})
+    ident = idlib.resolve(shared, legacy_subject="workflow:daily")
+    assert (ident.subject, ident.source) == ("secretuser@company.com", "hub-secret")
+    listed = _listed(shared)
+    assert (listed["account"], listed["source"]) == ("secretuser@company.com", "hub-secret")
+    assert listed["via"] == "HUBZOID_WORKFLOW_USER in the hub secret"
+    assert idlib.describe(shared, legacy_subject="workflow:daily") == (
+        "runs as secretuser@company.com (HUBZOID_WORKFLOW_USER in the hub secret)")
+
+
+def test_listing_matches_execution_when_only_a_secret_sets_it(shared, monkeypatch):
+    """The listing used to show the setup/local default while a run used the
+    secret's account, labelled as the deployment's."""
+    _account(shared, "secretuser@company.com")
+    _manage(shared, "secretuser@company.com")
+    _secret_hub(shared, monkeypatch, "", {"HUBZOID_WORKFLOW_USER": "secretuser@company.com"})
+    listed = _listed(shared)
+    ran = idlib.resolve(shared, legacy_subject="workflow:daily")
+    assert (listed["account"], listed["source"]) == (ran.subject, ran.source) == (
+        "secretuser@company.com", "hub-secret")
+
+
+def test_an_unreadable_hub_secret_is_an_error_not_a_fallback(shared, monkeypatch):
+    _account(shared, "hubuser@company.com")
+    _manage(shared, "hubuser@company.com")
+    _secret_hub(shared, monkeypatch, "HUBZOID_WORKFLOW_USER=hubuser@company.com\n", None)
+    with pytest.raises(IdentityError, match="HUBZOID_WORKFLOW_USER could not be read"):
+        idlib.resolve(shared, legacy_subject="workflow:daily")
+    listed = _listed(shared)
+    assert listed["account"] is None and "could not be read" in listed["error"]
+
+
+def test_the_gateway_records_its_workflow_user_for_cli_commands(shared, tmp_path):
+    """A CLI job does not inherit the gateway's environment; the manifest
+    carries the deployment's HUBZOID_WORKFLOW_USER so listing and runs agree."""
+    from hubzoid import deployment
+
+    _account(shared, "deploy@company.com")
+    _manage(shared, "deploy@company.com")
+    deployment.save(tmp_path / "gw" / "deployment.json",
+                    hubs=[dict(key="sales", name="sales", path=str(shared), model_id="sales")],
+                    operational_url=f"sqlite:///{tmp_path / 'ops.db'}",
+                    owui_url="http://127.0.0.1:9", owui_db=str(tmp_path / "gw" / "webui.db"),
+                    workflow_user="Deploy@Company.com")
+    ident = idlib.resolve(shared, legacy_subject="workflow:daily")
+    assert (ident.subject, ident.source) == ("deploy@company.com", "deployment")
+
+
+def test_a_legacy_hub_switches_only_on_explicit_configuration_including_a_secret(shared, monkeypatch):
+    _account(shared, "secretuser@company.com")
+    _secret_hub(shared, monkeypatch, "", {})             # a named secret without the key
+    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
+    assert (ident.subject, ident.source) == ("workflow:md:sync", "legacy-service")
+    from hubzoid import config_secrets
+
+    config_secrets.clear_cache()
+    _fake = __import__("tests._fake_secrets", fromlist=["install"])
+    _fake.install(monkeypatch, {"prod/sales": {"HUBZOID_WORKFLOW_USER": "secretuser@company.com"}})
+    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
+    assert (ident.subject, ident.source) == ("secretuser@company.com", "hub-secret")

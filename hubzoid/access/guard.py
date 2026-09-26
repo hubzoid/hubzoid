@@ -86,6 +86,19 @@ def decide(hub_dir: Path, ident, permission: str,
     return is_allowed(ident, permission, allowed_surfaces=surfaces)
 
 
+def _named(hub_dir: Path, permission: str) -> str:
+    """The capability as the Console names it, with the id: "Call Jev" (jev)."""
+    try:
+        from ..capabilities import catalog
+
+        for entry in catalog(hub_dir):
+            if entry["permission"] == permission and entry.get("label") not in (None, "", permission):
+                return f'"{entry["label"]}" ({permission})'
+    except Exception:  # noqa: BLE001 — wording only
+        log.debug("access: no label for %s", permission, exc_info=True)
+    return f"'{permission}'"
+
+
 def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
@@ -113,7 +126,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
         if not allowed:
             # Say "logged" only when the row exists. Either way the call is refused.
             return (
-                f"[access denied: '{ft.name}' requires the '{permission}' "
+                f"[access denied: '{ft.name}' requires the {_named(hub_dir, permission)} "
                 "permission, which the current user does not have. "
                 + ("This attempt was logged.]" if recorded else
                    "This attempt could not be logged.]")

@@ -202,7 +202,7 @@ def test_naming_the_hidden_tool_does_not_run_it(hub, jev_http, tmp_path):
         per_turn = asyncio.run(_claude_call(_claude_server(rt._options_for_turn()), TOOL, args))
         direct = asyncio.run(_claude_call(_claude_server(rt._options), TOOL, args))
     assert "0.93" not in per_turn
-    assert direct.startswith(f"[access denied: '{TOOL}' requires the 'jev' permission")
+    assert direct.startswith(f'[access denied: \'{TOOL}\' requires the "Call Jev" (jev) permission')
     assert jev_http == []
     with create_engine(f"sqlite:///{tmp_path / 'ops.db'}").connect() as c:
         rows = c.execute(text("SELECT subject, tool, decision FROM hz_access_decisions")).fetchall()

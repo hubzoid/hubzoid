@@ -335,6 +335,8 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
                   </Text>
                 ) : r.output ? (
                   <Text ellipsis>{r.output}</Text>
+                ) : r.redacted ? (
+                  <Text type="secondary">Private to {r.run_as || "the run's account"}</Text>
                 ) : (
                   <Text type="secondary">—</Text>
                 ),

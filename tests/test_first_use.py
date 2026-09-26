@@ -99,10 +99,32 @@ def test_chat_access_accepts_the_chat_apps_bearer_credential(tmp_path, monkeypat
     app = FastAPI()
     app.include_router(portal.build_router(tmp_path))
     r = TestClient(app).get('/portal/api/chat-access', headers={'authorization': header.decode()})
-    assert r.status_code == 200 and r.json() == {'denied': []}
+    assert r.status_code == 200 and r.json() == {'denied': [], 'blocked': False, 'allowed': 0}
     assert seen['auth'] == header.decode()
     # Without any credential it is still a sign-in refusal.
     assert TestClient(app).get('/portal/api/chat-access').status_code == 401
+
+
+@pytest.mark.parametrize('suspended,granted,expected', [
+    (False, {'a'}, {'denied': ['m-b'], 'blocked': False, 'allowed': 1}),
+    (False, set(), {'denied': ['m-a', 'm-b'], 'blocked': False, 'allowed': 0}),
+    (True, {'a', 'b'}, {'denied': ['m-a', 'm-b'], 'blocked': True, 'allowed': 0}),
+])
+def test_chat_access_says_why_the_agent_list_is_empty(tmp_path, monkeypatch, suspended, granted, expected):
+    """The chat's notice tells a blocked person, and a person with no agents
+    yet, why their list is empty, from the same answer that filters it."""
+    from unittest import mock
+    from fastapi import FastAPI
+
+    monkeypatch.setattr(portal, '_verify_owui_session', lambda *a, **k: 'ana@example.org')
+    monkeypatch.setattr(portal, 'store_for', lambda _: mock.Mock(
+        is_suspended=lambda s: suspended, is_authoritative=lambda h: True,
+        can=lambda s, h, p: h in granted))
+    monkeypatch.setattr(deployment, 'hubs', lambda _: [{'key': 'a', 'model_id': 'm-a'},
+                                                     {'key': 'b', 'model_id': 'm-b'}])
+    app = FastAPI()
+    app.include_router(portal.build_router(tmp_path))
+    assert TestClient(app).get('/portal/api/chat-access').json() == expected
 
 
 def test_bridges_without_the_gateway_environment_find_owner_and_public_url(tmp_path, monkeypatch):

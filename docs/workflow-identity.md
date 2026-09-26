@@ -16,13 +16,17 @@ The account a run acts as decides:
 The first match wins:
 
 1. `run_as` on the declaration.
-2. `HUBZOID_WORKFLOW_USER` in the hub's configuration (`<hub>/.env`, or a hub
-   secret).
+2. `HUBZOID_WORKFLOW_USER` in the hub's configuration: a hub secret, else
+   `<hub>/.env`.
 3. `HUBZOID_WORKFLOW_USER` in the deployment's configuration (the gateway's
    environment, or the deployment secret).
 4. The **setup default**: the owner account recorded when Hubzoid first set up
    the deployment. It applies only on Console-managed hubs. A legacy hub never
    switches on it.
+
+Runs, `hubzoid schedule list` and the Console's **Runs as** column all use this
+one resolution, and name where the account came from. A run's result is shown
+only to that account; managers see that a result exists and whose it is.
 
 ```python
 # workflows/daily_report/main.py

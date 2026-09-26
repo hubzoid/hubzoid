@@ -291,11 +291,12 @@ Environment variables explicitly supported:
                          Seconds a proposed access change waits for
                          confirmation in the Console. Default 900.
   HUBZOID_HIDE_OWUI_USERS
-                         Deployment and edge. true | false (default). Sends the
-                         Open WebUI Users page to Console People and blocks
-                         browser writes to Open WebUI's account endpoints. Turn
-                         it on only after Console account management works on
-                         the deployment.
+                         Deployment and edge. true | false. Sends the Open
+                         WebUI user list to Console People, lands its Users
+                         section on Groups and blocks browser writes to Open
+                         WebUI's account endpoints. Unset: on for a gateway set
+                         up fresh with Console accounts (recorded in
+                         deployment.json), off for existing deployments.
   HUBZOID_CONNECT_JOURNEY
                          Hub. true | false (default). Enables the
                          connect_account tool and its bound link journey for

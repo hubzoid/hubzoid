@@ -655,6 +655,16 @@ def gateway(
     shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
 
     from . import deployment
+    # Hiding Open WebUI's user management is the normal setup for a gateway set
+    # up fresh with Console accounts (sign-in on, a service account): recorded
+    # once in the manifest and kept. An existing deployment records nothing and
+    # keeps Open WebUI's Users page. HUBZOID_HIDE_OWUI_USERS overrides both.
+    try:
+        _prior = json.loads((gw_data / "deployment.json").read_text())
+    except (OSError, ValueError):
+        _prior = {}
+    _hide_default = deployment.hide_owui_users_default(
+        _prior, fresh=not (gw_data / "webui.db").exists(), env=os.environ)
     if len(hub_dirs) > 1 and deployment_env.get('HUBZOID_DBOS_DB','').startswith('sqlite'):
         console.print('[red]A multi-hub gateway requires separate SQLite DBOS files. Unset HUBZOID_DBOS_DB or use PostgreSQL.[/red]')
         raise typer.Exit(2)
@@ -670,7 +680,17 @@ def gateway(
         owui_database_schema=deployment_env.get("DATABASE_SCHEMA"),
         deployment_secret=dep_secret,
         owner=os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL"),
-        public_url=pub or os.environ.get("WEBUI_URL"))
+        public_url=pub or os.environ.get("WEBUI_URL"),
+        workflow_user=os.environ.get("HUBZOID_WORKFLOW_USER"),
+        hide_owui_users=_hide_default)
+    _explicit_hide = (os.environ.get("HUBZOID_HIDE_OWUI_USERS") or "").strip()
+    if _explicit_hide or _hide_default:
+        _hidden = (_explicit_hide.lower() in ("1", "true", "yes", "on")) if _explicit_hide else True
+        console.print(
+            "[cyan]→ accounts[/cyan]  Open WebUI's Users page is "
+            + ("hidden: manage accounts in the Admin Console (People)" if _hidden else "shown")
+            + (" (HUBZOID_HIDE_OWUI_USERS)" if _explicit_hide
+               else "; set HUBZOID_HIDE_OWUI_USERS=false to show it"))
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
@@ -1362,14 +1382,18 @@ def schedule_list(
     state = sch.ScheduleState(hub)
     now = datetime.now()
     from .workflows.observe import catalog
-    from .workflows import identity as _wf_identity
     workflows = catalog(hub)
     for w in workflows:
-        # The legacy service subject is workflow:<name> / workflow:md:<task>.
-        runs_as = _wf_identity.describe(hub, run_as=w.get('run_as'),
-                                        legacy_subject=f"workflow:{w['name']}")
+        ra = w["runs_as"]
+        if ra["error"]:
+            runs_as = f"[red]cannot run:[/red] {ra['error']}"
+        elif ra["source"] == "legacy-service":
+            runs_as = (f"runs as the legacy service identity {ra['account']} "
+                       "(set run_as or HUBZOID_WORKFLOW_USER)")
+        else:
+            runs_as = f"runs as {ra['account']} ({ra['via']})"
         console.print(f"workflow {w['name']} · {w['state']} · {w['timezone']} · next {w['next_run'] or '—'}"
-                      f" · runs as {runs_as}")
+                      f" · {runs_as}")
         if w['error']:
             console.print(f"[red]{w['error']}[/red]")
     if not tasks and not problems and not workflows:

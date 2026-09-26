@@ -51,13 +51,15 @@ def save(
     path: Path, *, hubs: list[dict], operational_url: str, owui_url: str, owui_db: str,
     owui_database_url: str | None = None, owui_database_schema: str | None = None,
     deployment_secret: dict | None = None, owner: str | None = None,
-    public_url: str | None = None,
+    public_url: str | None = None, workflow_user: str | None = None,
+    hide_owui_users: bool | None = None,
 ) -> None:
     """Write the manifest and each hub's pointer to it.
 
-    `owner` (the configured initial owner's email) and `public_url` (the site
-    root people open) let bridges and CLI commands that did not inherit the
-    gateway's environment act the same as the gateway. Omitted when unset.
+    `owner` (the configured initial owner's email), `public_url` (the site
+    root people open) and `workflow_user` (the gateway's HUBZOID_WORKFLOW_USER)
+    let bridges and CLI commands that did not inherit the gateway's environment
+    act the same as the gateway. Omitted when unset.
 
     `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
     external bridges can fetch it. Only the name and region are stored, never a
@@ -77,6 +79,12 @@ def save(
         data["owner"] = owner.strip().lower()
     if public_url:
         data["public_url"] = public_url.rstrip("/")
+    if workflow_user and workflow_user.strip():
+        data["workflow_user"] = workflow_user.strip().lower()
+    if hide_owui_users is not None:
+        # The deployment's default for hiding Open WebUI's user management
+        # (an explicit HUBZOID_HIDE_OWUI_USERS still wins at the edge).
+        data["hide_owui_users"] = bool(hide_owui_users)
     if deployment_secret and deployment_secret.get("name"):
         data["deployment_secret"] = {"name": str(deployment_secret["name"]),
                                      "region": deployment_secret.get("region") or None}
@@ -85,6 +93,22 @@ def save(
         _write(
             Path(hub["path"]) / ".hubzoid" / "deployment.json", {"manifest": str(path)}
         )
+
+
+def hide_owui_users_default(prior: dict, *, fresh: bool, env) -> bool | None:
+    """The deployment's recorded default for hiding Open WebUI's user
+    management. Kept once recorded. Recorded True only for a new deployment (no
+    earlier manifest, no chat-app database yet) set up with Console accounts:
+    sign-in on and the service account configured. None (nothing recorded, the
+    Users page stays) for every existing deployment."""
+    if prior.get("hide_owui_users") is not None:
+        return bool(prior["hide_owui_users"])
+    on = lambda k: (env.get(k) or "").strip().lower() in ("1", "true", "yes", "on")  # noqa: E731
+    if (fresh and not prior and on("WEBUI_AUTH")
+            and (env.get("HUBZOID_GATEWAY_ADMIN_EMAIL") or "").strip()
+            and (env.get("HUBZOID_GATEWAY_ADMIN_PASSWORD") or "").strip()):
+        return True
+    return None
 
 
 def deployment_secret(hub_dir: Path, env=None) -> dict | None:

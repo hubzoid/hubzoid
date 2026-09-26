@@ -178,6 +178,27 @@ function WorkflowList({ hub }: { hub: Hub }) {
             ),
           },
           {
+            title: "Runs as",
+            key: "runs_as",
+            render: (_, w) =>
+              !w.runs_as ? (
+                <Text type="secondary">—</Text>
+              ) : w.runs_as.error ? (
+                <Text type="danger" className="hint">
+                  Cannot run: {w.runs_as.error}
+                </Text>
+              ) : (
+                <>
+                  <Text className="identity">{w.runs_as.account}</Text>
+                  <div>
+                    <Text type="secondary" className="hint">
+                      {w.runs_as.via}
+                    </Text>
+                  </div>
+                </>
+              ),
+          },
+          {
             title: "Next run",
             key: "next",
             render: (_, w) =>
@@ -294,6 +315,12 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               render: (_, r) => formatDuration(r.duration_ms),
             },
             {
+              title: "Runs as",
+              key: "run_as",
+              render: (_, r) =>
+                r.run_as ? <Text className="identity">{r.run_as}</Text> : <Text type="secondary">—</Text>,
+            },
+            {
               title: "Result",
               key: "result",
               ellipsis: true,
@@ -304,6 +331,8 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
                   </Text>
                 ) : r.output ? (
                   <Text ellipsis>{r.output}</Text>
+                ) : r.redacted ? (
+                  <Text type="secondary">Private to {r.run_as || "the run's account"}</Text>
                 ) : (
                   <Text type="secondary">—</Text>
                 ),
@@ -376,6 +405,11 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
           { key: "started", label: "Started", children: formatTime(r.started) },
           { key: "completed", label: "Completed", children: formatTime(r.completed) },
           { key: "duration", label: "Duration", children: formatDuration(r.duration_ms) },
+          {
+            key: "run_as",
+            label: "Runs as",
+            children: r.run_as ? <Text className="identity">{r.run_as}</Text> : "—",
+          },
         ]}
       />
       <div className="section">
@@ -384,6 +418,11 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
           <Alert type="error" showIcon title="The run failed" description={<pre className="output">{r.error}</pre>} />
         ) : r.output ? (
           <pre className="output">{prettyOutput(r.output)}</pre>
+        ) : r.redacted ? (
+          <Text type="secondary">
+            This run produced a result, and it is private to {r.run_as || "the account the run acted as"}. Only
+            that account can see it.
+          </Text>
         ) : (
           <Text type="secondary">
             {/pending|enqueued/i.test(r.status) ? "Still running — no output yet." : "The run produced no output."}
@@ -413,7 +452,11 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
               ),
               children: (
                 <pre className="output">
-                  {step.error || prettyOutput(step.output) || "No output recorded."}
+                  {step.error ||
+                    prettyOutput(step.output) ||
+                    (step.redacted
+                      ? `Private to ${r.run_as || "the account the run acted as"}.`
+                      : "No output recorded.")}
                 </pre>
               ),
             }))}

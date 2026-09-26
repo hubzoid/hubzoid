@@ -2,8 +2,12 @@
 
 Every page is bound to the journey's subject: it needs a signed-in Open WebUI
 session (checked server-side by `access.session.verified_email`) whose email is
-the person who asked. Another account gets 403 and the attempt is audited.
-Mutations (`start`, `cancel`) also require the same Origin.
+the person who asked. A signed-out visitor is sent to sign in and brought back
+to the same page. Another account gets 403 and the attempt is audited.
+Mutations (`start`, `cancel`) also require the same Origin. The pages use
+`Referrer-Policy: same-origin` so the browser sends that Origin on its own form
+posts (with `no-referrer` it sends `Origin: null`, which is refused), while a
+navigation to another site still carries no referrer.
 
 The result shown on `done` and `status` comes only from the provider's own
 records (see `providers.py`). Query parameters on the return from the provider
@@ -35,7 +39,7 @@ def _headers(nonce: str | None = None) -> dict:
     script = f"'nonce-{nonce}'" if nonce else "'none'"
     return {
         "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
+        "Referrer-Policy": "same-origin",
         "X-Frame-Options": "DENY",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": (
@@ -105,12 +109,22 @@ def _gone(j: dict) -> HTMLResponse:
                   "Ask the agent again for a new link."], 410, tone="bad")
 
 
-def _sign_in(request: Request) -> HTMLResponse:
-    target = quote(request.url.path, safe="/")
+def _sign_in_url(jid: str, page: str = "") -> str:
+    """Open WebUI's sign-in, returning to this journey afterwards. Built only
+    from a journey id that exists, never from the request: no open redirect."""
+    return "/auth?redirect=" + quote(f"/portal/connect/{jid}{page}", safe="/")
+
+
+def _sign_in(jid: str) -> HTMLResponse:
     return _page("Sign in to continue",
                  ["This link is personal. Sign in with the account that asked for it.",
-                  "Then open the link again from the chat."], 401,
-                 actions=f'<a class="button" href="/auth?redirect={target}">Sign in</a>')
+                  "You will come back here after signing in."], 401,
+                 actions=f'<a class="button" href="{_sign_in_url(jid)}">Sign in</a>')
+
+
+def _redirect_to_sign_in(jid: str, page: str = "") -> RedirectResponse:
+    return RedirectResponse(_sign_in_url(jid, page), status_code=302,
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "same-origin"})
 
 
 def _outcome(j: dict, email: str) -> HTMLResponse:
@@ -152,7 +166,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return None, _page("Try again shortly",
                                ["Your sign-in could not be checked right now."], exc.status_code)
         if not email:
-            return None, _sign_in(request)
+            return None, _sign_in(j["id"])
         if email != j["subject"]:
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="deny", reason="wrong-account")
@@ -196,7 +210,8 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return _gone(j)
         email, refusal = bind(request, j)
         if refusal is not None:
-            return refusal
+            # Signed out: sign in, then come straight back to this page.
+            return _redirect_to_sign_in(j["id"]) if refusal.status_code == 401 else refusal
         if j["status"] not in store.OPEN:
             return _outcome(j, email)
         app = _e(label(j["app"]))
@@ -283,7 +298,8 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return _not_found()
         email, refusal = bind(request, j)
         if refusal is not None:
-            return refusal
+            return (_redirect_to_sign_in(j["id"], "/done") if refusal.status_code == 401
+                    else refusal)
         j = fresh(j)
         if j["status"] in store.OPEN:
             app = _e(label(j["app"]))

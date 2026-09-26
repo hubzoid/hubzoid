@@ -463,7 +463,25 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     )
 
 
-def _record_claude_usage(message) -> None:
+def _answering_model(message, answered_by: str | None = None) -> str | None:
+    """The model that answered. The CLI's `model_usage` also lists its own
+    background calls (a small Haiku request on every turn), often first, so its
+    first key is not the chat's model. Prefer the model on the turn's own
+    assistant messages; else the entry that cost the most."""
+    if answered_by:
+        return answered_by
+    model_usage = getattr(message, "model_usage", None) or {}
+    if not isinstance(model_usage, dict) or not model_usage:
+        return None
+
+    def weight(item):
+        v = item[1] if isinstance(item[1], dict) else {}
+        return (float(v.get("costUSD") or 0), int(v.get("outputTokens") or 0))
+
+    return max(model_usage.items(), key=weight)[0]
+
+
+def _record_claude_usage(message, answered_by: str | None = None) -> None:
     """Surface the Claude SDK's final usage/cost for the usage envelope + OTel.
 
     `ResultMessage.usage` is an Anthropic usage mapping (input_tokens,
@@ -481,10 +499,9 @@ def _record_claude_usage(message) -> None:
                + int(get("cache_read_input_tokens", 0) or 0)
                + int(get("cache_creation_input_tokens", 0) or 0))
         out = int(get("output_tokens", 0) or 0)
-        # The concrete model(s) that answered; used to estimate cost when the
+        # The concrete model that answered; used to estimate cost when the
         # SDK reports none (subscription mode).
-        model_usage = getattr(message, "model_usage", None) or {}
-        model = next(iter(model_usage), None) if isinstance(model_usage, dict) else None
+        model = _answering_model(message, answered_by)
         _request_ctx.record_usage({
             "input_tokens": inp,
             "output_tokens": out,
@@ -733,6 +750,7 @@ class ClaudeRuntime:
         # so we can surface them with a ⚠ marker. Successful results emit
         # nothing — the call line was already shown.
         tool_use_names: dict[str, str] = {}
+        answered_by: str | None = None
         # Native image vision: expand any [Image: name] reference in the prompt
         # into a multimodal message (text + Anthropic image blocks). Returns the
         # plain string unchanged when there is nothing to inject.
@@ -774,6 +792,8 @@ class ClaudeRuntime:
 
                 # --- Tool calls announced as full assistant message blocks ---
                 if isinstance(message, AssistantMessage):
+                    if getattr(message, "parent_tool_use_id", None) is None and getattr(message, "model", None):
+                        answered_by = message.model
                     for block in getattr(message, "content", []) or []:
                         if isinstance(block, ToolUseBlock):
                             tid = getattr(block, "id", None) or ""
@@ -809,7 +829,7 @@ class ClaudeRuntime:
                 # --- Final aggregate (fallback if partials are missing) ---
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
-                    _record_claude_usage(message)
+                    _record_claude_usage(message, answered_by)
                     if getattr(message, "is_error", False):
                         detail = (getattr(message, "errors", None) or [final_result or ""])[0]
                         self.last_error = RuntimeError(
@@ -873,21 +893,22 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     parts: list[str] = []
     final: str | None = None
     usage: dict = {}
+    answered_by: str | None = None
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
+            answered_by = getattr(message, "model", None) or answered_by
             parts += [b.text for b in message.content if isinstance(b, TextBlock)]
         elif isinstance(message, ResultMessage):
             final = getattr(message, "result", None)
             raw = getattr(message, "usage", None) or {}
             get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
-            model_usage = getattr(message, "model_usage", None) or {}
             usage = {
                 "input_tokens": int(get("input_tokens", 0) or 0)
                 + int(get("cache_read_input_tokens", 0) or 0)
                 + int(get("cache_creation_input_tokens", 0) or 0),
                 "output_tokens": int(get("output_tokens", 0) or 0),
                 "cost_usd": getattr(message, "total_cost_usd", None),
-                "model": next(iter(model_usage), None) if isinstance(model_usage, dict) else None,
+                "model": _answering_model(message, answered_by),
             }
             if getattr(message, "is_error", False):
                 raise RuntimeError(

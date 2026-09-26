@@ -122,8 +122,11 @@ The owner chooses one audience per report in **Share**:
 by public link** (`share_public_links`). Publishing never grants it.
 
 - **When it is checked.** It is checked when the owner creates the link, and
-  again every time the link is opened. Revoking the permission turns off the
-  owner's live links.
+  again every time the link is opened. Revoking the permission (or blocking
+  the owner) turns off the owner's live links for good: granting it again does
+  not bring them back. The owner creates a new link instead.
+- **A link that stops working** opens a "Link not available" page with a way
+  to sign in, never an endless "Loading…".
 - **Lifetime.** A link expires after 1, 7, 30 or 90 days. The default is
   `HUBZOID_ARTIFACT_LINK_DAYS`, which is 7.
 - **Rotating and turning off.** **Create new link** replaces the old one, which

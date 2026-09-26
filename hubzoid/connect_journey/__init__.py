@@ -158,13 +158,35 @@ def may_start(hub_dir, ident, app: str) -> tuple[bool, str]:
     return decide(Path(hub_dir), ident, capability(app))
 
 
-def _denied_message(app: str, reason: str) -> str:
+def _capability_label(hub_dir, app: str) -> str:
+    """The name the Console shows for `connector_<app>`, so a person can ask
+    for exactly what their administrator sees."""
+    try:
+        for row in permissions(Path(hub_dir)):
+            if row.get("permission") == capability(app) and row.get("label"):
+                return row["label"]
+    except Exception:  # noqa: BLE001 — wording only
+        log.debug("connect: no label for %s", app, exc_info=True)
+    return f"Connect {label(app)}"
+
+
+def _denied_message(hub_dir, app: str, reason: str) -> str:
     if reason in _SURFACE_REASONS:
         return _SURFACE_REASONS[reason]
     if reason.startswith("surface:"):
         return f"Connecting {label(app)} is not available on this channel."
-    return (f"You do not have permission to connect {label(app)} here. "
-            f"Ask your administrator for the {capability(app)} capability.")
+    try:
+        from ..access import store_for
+
+        managed = store_for(Path(hub_dir)).is_authoritative(Path(hub_dir).name.lower())
+    except Exception:  # noqa: BLE001 — wording only
+        managed = True
+    if not managed:
+        # Legacy hubs still grant through a chat-app group of the capability's name.
+        return (f"You do not have permission to connect {label(app)} here. Ask your administrator "
+                f"to add you to the chat-app group {capability(app)}.")
+    return (f"You do not have permission to connect {label(app)} here. Ask an administrator "
+            f"of this agent to grant you \"{_capability_label(hub_dir, app)}\" in the Admin Console.")
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +224,7 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
     if not allowed:
         store.audit(hub_dir, hub=hub, subject=subject, surface=ident.surface, app=key,
                     decision="deny", reason=reason)
-        raise JourneyError("denied", _denied_message(key, reason))
+        raise JourneyError("denied", _denied_message(hub_dir, key, reason))
     provider = providers.for_app(hub_dir, key)
 
     try:

@@ -231,7 +231,10 @@ def test_delegate_cannot_grant_admin_only_or_included_capabilities(api, register
     assert "zz_admin_only" not in api.svc.grantable(actor(DELEGATE))["finance"]
 
     r = _apply(api.as_(DELEGATE), "ann@x.org", ("grant", "zz_admin_only"))
-    assert (r.status_code, "Outside your access" in r.json()["detail"]) == (403, True)
+    # The delegate holds it, so the refusal says admins only, not "not yours".
+    assert r.status_code == 403 and r.json()["code"] == "outside_ceiling"
+    assert "Only organization administrators can grant or remove Admin only (zz_admin_only)" in r.json()["detail"]
+    assert "Outside your access" not in r.json()["detail"]
     assert not api.gs.can("ann@x.org", "finance", "zz_admin_only")
     assert _apply(api.as_(ROOT), "ann@x.org", ("grant", "zz_admin_only")).status_code == 200
 
