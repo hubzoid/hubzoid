@@ -9,6 +9,10 @@ Environment variables explicitly supported:
                            anthropic/claude-haiku-4-5
                            azure/<deployment-name>
   OPENROUTER_API_KEY     Key for OpenRouter (used when MODEL starts with openrouter/).
+  JEV_OPENROUTER_API_KEY Dedicated OpenRouter key for Jev decisions only
+                         (hub.call_jev in workflows, the jev-gated call_jev chat
+                         tool). The chat model never uses it, and Jev never
+                         falls back to OPENROUTER_API_KEY.
   OPENAI_API_KEY         Key for OpenAI direct.
   ANTHROPIC_API_KEY      Key for Anthropic direct.
   AZURE_API_KEY          Key for Azure OpenAI (when MODEL starts with azure/).

@@ -121,6 +121,7 @@ def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = 
     from . import access  # deferred to avoid circular import via __init__.py
     registry = access.apply(hub_dir, registry)
     _add_curator_tool(ctx, registry, access)
+    _add_jev_tool(ctx, registry, access)
 
     mcp_servers = mcp_loader.load_all(hub_dir)
 
@@ -189,6 +190,22 @@ def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
             continue
         registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
                                                ctx.hub_dir)
+
+
+def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
+    """Add the core-shipped `call_jev` chat tool, gated by the `jev` capability.
+
+    Disabled until an administrator grants `jev`: the same guard as `remember`
+    hides it from everyone else and refuses a call that reaches it anyway. A
+    hub tool of the same name keeps its own gate: hub wins, as for `remember`.
+    """
+    from .tools import call_jev as jev_tool
+
+    for ft in jev_tool.make(ctx):
+        if ft.name in registry:
+            log.info("hub tool %r overrides the core call_jev tool", ft.name)
+            continue
+        registry[ft.name] = access.guard_tool(ft, jev_tool.JEV_PERMISSION, ctx.hub_dir)
 
 
 def _load_skills_and_delegates(hub_dir: Path, hub_model: str | None):

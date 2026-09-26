@@ -17,9 +17,9 @@ def _reset_seams():
     # The call_llm/call_agent seams are module globals (set by server/cli boot or
     # runtime.launch); reset them around every façade test so a prior test that
     # launched DBOS can't leak a step-wrapped seam into these hermetic tests.
-    wctx._LLM = wctx._AGENT = wctx._DECIDE = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._DECIDE_STEP = None
+    wctx._LLM = wctx._AGENT = wctx._JEV = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._JEV_STEP = None
     yield
-    wctx._LLM = wctx._AGENT = wctx._DECIDE = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._DECIDE_STEP = None
+    wctx._LLM = wctx._AGENT = wctx._JEV = wctx._LLM_STEP = wctx._AGENT_STEP = wctx._JEV_STEP = None
 
 
 @pytest.fixture()

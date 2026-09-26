@@ -14,6 +14,9 @@ factories build from the same FunctionTool registry:
                    is reached another way (a prompt injection naming it, the
                    Claude path which does not consult is_enabled, or a test).
 
+The Claude and Codex runtimes do not evaluate `is_enabled` themselves, so they
+ask `visible()` per turn and leave hidden tools out of what the model is shown.
+
 `apply` is the one entry point the factories call. With no `restricted/` folder
 it returns the registry unchanged, so nothing about an existing hub moves.
 """
@@ -123,7 +126,19 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
         allowed, _ = decide(hub_dir, current_identity(), permission, surfaces)
         return allowed
 
+    _is_enabled.hubzoid_permission = permission
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
+
+
+def visible(ft) -> bool:
+    """Whether the current caller may see `ft`. False only for a tool this
+    guard wraps whose permission the caller lacks; any other tool is visible.
+    The same decision as the invoke wall, for runtimes that list tools
+    themselves (Claude, Codex)."""
+    check = getattr(ft, "is_enabled", True)
+    if getattr(check, "hubzoid_permission", None) is None:
+        return True
+    return bool(check())
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

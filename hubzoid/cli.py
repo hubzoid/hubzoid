@@ -1378,7 +1378,7 @@ def schedule_run(
             _wf_ctx.configure(
                 llm=lambda spec, hub_dir=None, subject=None: _agent_rt.complete_once(hub_dir, spec, subject=subject),
                 agent=lambda task, hub_dir=None, subject=None: _agent_rt.run_once(hub_dir, task, subject=subject),
-                decide=lambda spec, hub_dir=None, subject=None: _agent_rt.decide_once(hub_dir, spec, subject=subject),
+                jev=lambda spec, hub_dir=None, subject=None: _agent_rt.jev_once(hub_dir, spec, subject=subject),
             )
             _wf.init(hub)
             _wf.load_workflows(hub)
@@ -2012,6 +2012,12 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # Tip: at https://openrouter.ai/settings/preferences pin Anthropic first
 # (allow fallbacks). Otherwise OpenRouter splits calls across Anthropic /
 # Vertex / Bedrock and prompt cache hits get fragmented.
+
+# --- Jev decisions (hub.call_jev and the call_jev chat tool, experimental) --
+# A dedicated OpenRouter key used only for Jev. OPENROUTER_API_KEY above is
+# never used for Jev, and the chat model never uses this key. The chat tool
+# stays off until the jev capability is granted in the Console.
+# JEV_OPENROUTER_API_KEY=
 
 # --- OpenAI -----------------------------------------------------------------
 # OPENAI_API_KEY=

@@ -475,43 +475,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
         )
 
 
-DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+def jev_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
+    """The seam behind a workflow's `hub.call_jev`: one typed decision from
+    TypeSafe's Jev through OpenRouter. The adapter, its dedicated key and its
+    checks live in `jev.py`, shared with the `call_jev` chat tool."""
+    from . import jev
 
-
-def decide_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
-    """A typed decision from TypeSafe's Jev via OpenRouter's decisions endpoint:
-    the seam behind a workflow's `hub.decide` (experimental; the endpoint is
-    alpha). `spec` holds model, state and questions exactly as the API takes
-    them. Returns the API's JSON (answers, model, usage) and records a usage row.
-    """
-    import os
-    import time
-
-    import httpx
-
-    from . import usage as usage_lib
-
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("hub.decide needs OPENROUTER_API_KEY in the hub's .env")
-    body = {"model": spec["model"], "state": spec["state"], "questions": spec["questions"]}
-    started = time.monotonic()
-    data: dict = {}
-    status = "error"
-    try:
-        resp = httpx.post(DECISIONS_URL, json=body, timeout=60.0,
-                          headers={"Authorization": f"Bearer {key}"})
-        if resp.status_code >= 400:
-            raise RuntimeError(f"decisions API {resp.status_code}: {resp.text[:300]}")
-        data = resp.json()
-        status = "ok"
-        return data
-    finally:
-        u = data.get("usage") or {}
-        usage_lib.record(
-            hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="decide",
-            subject=subject, model=data.get("model") or spec["model"],
-            input_tokens=u.get("input_tokens"), output_tokens=u.get("output_tokens"),
-            cost_usd=u.get("cost"), status=status,
-            duration_ms=int((time.monotonic() - started) * 1000),
-        )
+    return jev.call(hub_dir, spec, subject=subject)

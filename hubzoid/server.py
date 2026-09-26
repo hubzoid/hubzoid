@@ -118,14 +118,14 @@ def build_app() -> FastAPI:
         # and code workflows (when the box is marked: HUBZOID_SCHEDULES /
         # gateway). The engine starts first; the markdown scheduler then decides
         # when each task is due and queues it there. hub.call_llm/call_agent/
-        # decide reach this hub's runtime through the seams below.
+        # call_jev reach this hub's runtime through the seams below.
         from . import runtime as _agent_rt
         from .workflows import boot as wf_boot
         from .workflows import context as wf_ctx
         wf_ctx.configure(
             llm=lambda spec, hub_dir=None, subject=None: _agent_rt.complete_once(hub_dir, spec, subject=subject),
             agent=lambda task, hub_dir=None, subject=None: _agent_rt.run_once(hub_dir, task, subject=subject),
-            decide=lambda spec, hub_dir=None, subject=None: _agent_rt.decide_once(hub_dir, spec, subject=subject),
+            jev=lambda spec, hub_dir=None, subject=None: _agent_rt.jev_once(hub_dir, spec, subject=subject),
         )
         wf_dispatcher = await wf_boot.start(hub_dir)
         app.state.workflows = wf_dispatcher

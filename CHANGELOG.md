@@ -79,8 +79,14 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
   harness is unchanged and runs inside the work step.
 - `hub.call_llm` is one model call with no tools: text, JSON, or a validated
   Pydantic object (`response_model`), on LiteLLM models, `claude-local` and `codex-local`.
-  `hub.call_agent` keeps the full agent. `hub.decide` (experimental) asks
-  TypeSafe's Jev through OpenRouter for a typed decision.
+  `hub.call_agent` keeps the full agent. `hub.call_jev` (experimental) asks
+  TypeSafe's Jev through OpenRouter for typed `noul`, `choice` and `score`
+  decisions, one type or mixed in one request. It uses a dedicated
+  `JEV_OPENROUTER_API_KEY` with no fallback to `OPENROUTER_API_KEY`, checks
+  every answer against its question, and fails the step on an empty or
+  malformed reply. Rate limits, server errors and timeouts are retried once.
+  The same adapter is a `call_jev` chat tool behind the new **Call Jev**
+  (`jev`) capability, granted to nobody by default.
 - Code workflows run one at a time per workflow, side by side across
   workflows. Optional hub-wide cap: `max_concurrent_workflows`.
 - `hubzoid schedule pause | resume | cancel`, recorded in the access log. The
@@ -103,6 +109,21 @@ Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
   that agent, because every direct agent capability includes **Use this
   agent**. Restricted tools still need their own grant. Organization-wide
   administrator rights alone do not grant chat.
+- On `claude-local` and `codex-local`, the agent is no longer shown controlled
+  tools (`restricted/` modules, `remember`, `call_jev`) that the person may not
+  use, as was already the case on LiteLLM models. Calls were already refused.
+- New **Call Jev** (`jev`) capability for the `call_jev` chat tool.
+  Nobody has it until it is granted.
+- `claude-local` no longer shows chat users the connectors of the Claude
+  account the box is signed in to (claude.ai Gmail, Drive, Slack, ...) or MCP
+  servers from that account's settings. Every Claude run (chat, `call_llm`, the
+  eval judge) uses only the servers Hubzoid passes. The eval judge also no
+  longer gets Claude Code's built-in tools.
+- MCP credentials (each person's connector token, a hub server's headers and
+  `env`) no longer appear in the `claude` process's command line, where other
+  accounts on the machine could read them. They go in a per-turn file readable
+  only by Hubzoid's account, removed when the turn ends. See docs/mcp.md for
+  what this does not cover.
 - The public port refuses `.` and `..` path segments (they could reach bridge
   paths outside the forwarded routes) and drops client-sent `X-Hubzoid-*` and
   `X-OpenWebUI-*` headers.

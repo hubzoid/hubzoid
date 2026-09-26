@@ -115,9 +115,9 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
     from ._fs import resolve_bucket
     import yaml
 
-    # remember ships with every hub; it has no restricted/<permission>.py file
-    # for the directory scan to discover.
-    names = {"use_hub", "manage_access", "curator"}
+    # remember (curator) and call_jev (jev) ship with every hub; they have no
+    # restricted/<permission>.py file for the directory scan to discover.
+    names = {"use_hub", "manage_access", "curator", "jev"}
     restricted = resolve_bucket(hub_dir, "restricted")
     if restricted:
         names.update(
@@ -133,7 +133,7 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
         else {}
     )
     labels = {"use_hub": "Use this agent", "manage_access": "Manage access",
-              "curator": "Save shared knowledge"}
+              "curator": "Save shared knowledge", "jev": "Call Jev"}
     out = []
     for name in sorted(names):
         m = metadata.get(name, {})
@@ -147,6 +147,7 @@ def permission_catalog(hub_dir: Path) -> list[dict]:
                     "use_hub": "Chat with this agent and use its unrestricted tools.",
                     "manage_access": "Review and change permissions. A direct grant includes basic chat, but not restricted tools.",
                     "curator": "Use remember to create or replace learned knowledge shared by this agent.",
+                    "jev": "Use call_jev in chat for typed decisions from Jev. Each call is billed to the hub's JEV_OPENROUTER_API_KEY.",
                 }.get(name, "Use the restricted tools assigned to this capability.")),
                 sensitive=bool(m.get("sensitive", False)),
             )
