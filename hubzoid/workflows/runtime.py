@@ -334,11 +334,13 @@ def _wrap_seams_as_steps() -> None:
     checkpointed and NOT re-invoked on recovery. Arguments and results are
     plain data (a spec dict in, a result dict out), so DBOS can store them.
 
-    `call_llm` and `decide` have no side effects, so a failed call is retried
-    once. `call_agent` runs tools, so it is retried only when the hub opts in
+    `call_llm` has no side effects, so a failed call is retried once.
+    `call_jev` retries rate limits, server errors and timeouts itself (jev.py)
+    and fails at once on a bad key or bad questions, so its step adds no retry.
+    `call_agent` runs tools, so it is retried only when the hub opts in
     (see `_agent_max_attempts`). An interrupted step can still re-run on
     recovery (at-least-once)."""
-    raw_llm, raw_agent, raw_decide = context._LLM, context._AGENT, context._DECIDE
+    raw_llm, raw_agent, raw_jev = context._LLM, context._AGENT, context._JEV
     if raw_llm is not None and context._LLM_STEP is None:
 
         @_DBOS.step(retries_allowed=True, max_attempts=2)
@@ -353,13 +355,13 @@ def _wrap_seams_as_steps() -> None:
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._AGENT_STEP = _agent_step
-    if raw_decide is not None and context._DECIDE_STEP is None:
+    if raw_jev is not None and context._JEV_STEP is None:
 
-        @_DBOS.step(retries_allowed=True, max_attempts=2)
-        def _decide_step(spec: dict, hub_dir_str: str, subject: str):
-            return raw_decide(spec, hub_dir=Path(hub_dir_str), subject=subject)
+        @_DBOS.step()
+        def _jev_step(spec: dict, hub_dir_str: str, subject: str):
+            return raw_jev(spec, hub_dir=Path(hub_dir_str), subject=subject)
 
-        context._DECIDE_STEP = _decide_step
+        context._JEV_STEP = _jev_step
 
 
 def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
@@ -554,7 +556,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             # Rebuilt on the next launch, with that hub's retry setting.
             context._LLM_STEP = None
             context._AGENT_STEP = None
-            context._DECIDE_STEP = None
+            context._JEV_STEP = None
             log.info("workflows: DBOS shut down")
 
 

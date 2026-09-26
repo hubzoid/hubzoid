@@ -1,5 +1,5 @@
 """Workflow model calls: `hub.call_llm` is one tool-free model call with text,
-JSON and Pydantic modes on both backends; `hub.decide` calls Jev through
+JSON and Pydantic modes on both backends; `hub.call_jev` calls Jev through
 OpenRouter's decisions endpoint; every call and chat turn writes a usage row.
 """
 from __future__ import annotations
@@ -121,15 +121,66 @@ def test_call_agent_structured_answer(tmp_path):
         wctx._AGENT = None
 
 
-def test_decide_validates_question_types(tmp_path):
+def _wire_real_jev():
+    """Wire the seam exactly as server.py / cli.py do."""
+    wctx.configure(jev=lambda spec, hub_dir=None, subject=None:
+                   runtime_lib.jev_once(hub_dir, spec, subject=subject))
+
+
+def test_call_jev_validates_question_types(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
-    wctx.configure(decide=lambda spec, **kw: {"answers": {}})
+    _wire_real_jev()
     try:
         with run_scope(hub="sales", workflow="w", hub_dir=tmp_path, engine=eng):
             with pytest.raises(ValueError, match="noul"):
-                hub.decide({"t": "x"}, {"q": {"type": "essay"}})
+                hub.call_jev({"t": "x"}, {"q": {"type": "essay", "instructions": "x"}})
     finally:
-        wctx._DECIDE = None
+        wctx._JEV = None
+
+
+def test_call_jev_is_the_only_name():
+    assert not hasattr(type(hub), "dec" + "ide")
+
+
+def test_call_jev_returns_the_checked_answers(hub_dir, tmp_path, monkeypatch):
+    import httpx
+
+    reply = {"model": "typesafe/jev-1.13-20260917",
+             "answers": {"is_bug": {"type": "noul", "noul": 0.96}},
+             "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.000019992}}
+    sent = []
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: sent.append(kw) or httpx.Response(200, json=reply))
+    monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
+    q = {"is_bug": {"type": "noul", "instructions": "Is this a defect?"}}
+    eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    _wire_real_jev()
+    try:
+        with run_scope(hub="sales", workflow="triage", hub_dir=hub_dir, engine=eng):
+            assert hub.call_jev("blank page", q) == {"is_bug": {"type": "noul", "noul": 0.96}}
+            assert hub.call_jev("blank page", q, model="~typesafe/jev-latest") == hub.call_jev("blank page", q)
+    finally:
+        wctx._JEV = None
+    assert [s["json"]["model"] for s in sent] == ["typesafe/jev-1.13", "~typesafe/jev-latest",
+                                                  "typesafe/jev-1.13"]
+    rows = _rows(tmp_path)
+    assert {(r["kind"], r["surface"], r["subject"]) for r in rows} == {("jev", "workflow", "workflow:triage")}
+
+
+def test_call_jev_never_returns_an_empty_answer(hub_dir, tmp_path, monkeypatch):
+    import httpx
+
+    from hubzoid.jev import JevResponseError
+
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Response(200, json={"answers": {}}))
+    monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
+    eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    _wire_real_jev()
+    try:
+        with run_scope(hub="sales", workflow="triage", hub_dir=hub_dir, engine=eng):
+            with pytest.raises(JevResponseError, match="no noul answer"):
+                hub.call_jev("x", {"is_bug": {"type": "noul", "instructions": "defect?"}})
+    finally:
+        wctx._JEV = None
 
 
 # --- the backends -----------------------------------------------------------
@@ -184,7 +235,7 @@ def test_claude_local_path_runs_one_turn_with_no_tools(hub_dir, tmp_path, monkey
     assert row["cost_usd"] is not None  # estimated from the price table
 
 
-def test_decide_once_posts_the_decisions_shape(hub_dir, tmp_path, monkeypatch):
+def test_jev_once_posts_the_decisions_shape(hub_dir, tmp_path, monkeypatch):
     import httpx
 
     sent = {}
@@ -197,26 +248,28 @@ def test_decide_once_posts_the_decisions_shape(hub_dir, tmp_path, monkeypatch):
             "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.000019992},
         })
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
     monkeypatch.setattr(httpx, "post", fake_post)
     questions = {"is_bug": {"type": "noul", "instructions": "Is this a defect?",
                             "criteria": {"true": "broken", "false": "question"}}}
-    data = runtime_lib.decide_once(hub_dir, {"model": "typesafe/jev-1.13",
-                                             "state": {"ticket": "blank page"},
-                                             "questions": questions})
-    assert sent["url"] == runtime_lib.DECISIONS_URL
+    data = runtime_lib.jev_once(hub_dir, {"model": "typesafe/jev-1.13",
+                                          "state": {"ticket": "blank page"},
+                                          "questions": questions})
+    assert sent["url"] == "https://openrouter.ai/api/alpha/decisions"
     assert sent["body"] == {"model": "typesafe/jev-1.13", "state": {"ticket": "blank page"},
                             "questions": questions}
-    assert sent["headers"]["Authorization"] == "Bearer sk-or-test"
+    assert sent["headers"]["Authorization"] == "Bearer sk-or-jev-test"
     assert data["answers"]["is_bug"]["noul"] == 0.96
     (row,) = _rows(tmp_path)
-    assert (row["kind"], row["cost_usd"], row["model"]) == ("decide", 0.000019992, "typesafe/jev-1.13-20260917")
+    assert (row["kind"], row["cost_usd"], row["model"]) == ("jev", 0.000019992, "typesafe/jev-1.13-20260917")
 
 
-def test_decide_needs_an_openrouter_key(hub_dir, monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        runtime_lib.decide_once(hub_dir, {"model": "typesafe/jev-1.13", "state": {}, "questions": {}})
+def test_jev_once_needs_the_dedicated_jev_key(hub_dir, monkeypatch):
+    monkeypatch.delenv("JEV_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-chat-key")   # never a fallback
+    with pytest.raises(RuntimeError, match="JEV_OPENROUTER_API_KEY"):
+        runtime_lib.jev_once(hub_dir, {"model": "typesafe/jev-1.13", "state": "x",
+                                       "questions": {"q": {"type": "noul", "instructions": "x"}}})
 
 
 # --- usage rows ----------------------------------------------------------------

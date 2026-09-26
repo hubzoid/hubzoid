@@ -59,6 +59,103 @@ _MCP_NAMESPACE = "hubzoid"
 SUBAGENT_SPAWN_TOOL = "Agent"
 
 
+def claude_options(**kwargs):
+    """ClaudeAgentOptions with strict MCP isolation, for EVERY claude-local run.
+
+    `strict_mcp_config` makes the `claude` subprocess use only the MCP servers
+    Hubzoid passes (the hub's in-process tools, its configured servers, the
+    shared browser, the caller's own Open WebUI connections). Without it the
+    subprocess also loads the host account's claude.ai connectors (Gmail, Drive,
+    Slack, ...) and any user or project MCP config, and shows them to every chat
+    user. An SDK that cannot isolate is refused rather than run without it."""
+    import dataclasses
+
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    if "strict_mcp_config" not in {f.name for f in dataclasses.fields(ClaudeAgentOptions)}:
+        raise RuntimeError(
+            "This claude-agent-sdk cannot isolate MCP servers (no strict_mcp_config), so "
+            "claude-local would expose the host account's connectors. Install the "
+            "supported version: pip install 'claude-agent-sdk>=0.2.159,<0.3'."
+        )
+    return ClaudeAgentOptions(**kwargs, strict_mcp_config=True)
+
+
+class PrivateMcpConfig:
+    """Keep secret-bearing MCP configuration off the `claude` command line.
+
+    The SDK passes `mcp_servers` to the CLI as a JSON argument, which any local
+    account can read in the process list, so each person's connector token and
+    each server's headers and env would be visible there. External servers
+    (the hub's `.mcp.json`, the shared browser, the caller's own Open WebUI
+    connections) are written instead to a new 0600 file for this one run and
+    passed with the SDK's supported `extra_args` as a second `--mcp-config`,
+    which the CLI merges with the first. Only the in-process Hubzoid server stays
+    in the argument; it carries no secrets. Strict isolation is unchanged. The
+    file is removed by `close()`, which callers run in `finally` so success,
+    failure and cancellation all clean up.
+
+    This protects against other OS accounts, not against root or other
+    processes running as the same account, which can read the file while it
+    exists and the connector's own traffic.
+    """
+
+    def __init__(self, options):
+        import dataclasses
+        import os
+        import tempfile
+
+        self.options, self.path = options, None
+        servers = getattr(options, "mcp_servers", None)
+        servers = servers if isinstance(servers, dict) else {}
+        external = {n: c for n, c in servers.items()
+                    if not (isinstance(c, dict) and c.get("type") == "sdk")}
+        if not external:
+            return
+        fd, self.path = tempfile.mkstemp(prefix="hubzoid-mcp-", suffix=".json")  # 0600
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump({"mcpServers": external}, f)
+        except BaseException:
+            self.close()
+            raise
+        self.options = dataclasses.replace(
+            options,
+            mcp_servers={n: c for n, c in servers.items() if n not in external},
+            extra_args={**(options.extra_args or {}), "mcp-config": self.path},
+        )
+
+    def close(self) -> None:
+        import contextlib
+        import os
+
+        if self.path:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(self.path)
+            self.path = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+
+def tool_free_options(system: str, model_pin: str | None = None):
+    """One plain model turn: no tools, no MCP servers, no settings, one turn.
+    Used by `hub.call_llm` on claude-local and the eval judge."""
+    opts: dict[str, Any] = dict(
+        system_prompt=system, tools=[], allowed_tools=[], mcp_servers={},
+        setting_sources=[], max_turns=1,
+    )
+    if model_pin is not None:
+        opts["model"] = model_pin
+    child_env = config_secrets.child_env_overrides(os.environ)
+    if child_env:
+        opts["env"] = child_env
+    return claude_options(**opts)
+
+
 # ---------------------------------------------------------------------------
 # Tool adapter: openai-agents FunctionTool -> claude-agent-sdk @tool
 # ---------------------------------------------------------------------------
@@ -238,8 +335,9 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     # adapter calls, so it holds here too. No-op when there is no restricted/.
     from . import access
     registry = access.apply(hub_dir, registry)
-    from .factory import _add_curator_tool
+    from .factory import _add_curator_tool, _add_jev_tool
     _add_curator_tool(ctx, registry, access)
+    _add_jev_tool(ctx, registry, access)
 
     # MCP: external servers from the hub's connectors/.mcp.json PLUS the
     # auto-injected shared browser (HUBZOID_BROWSER). load_all_claude translates
@@ -280,8 +378,6 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
     if agent_defs:
         base_tools = [SUBAGENT_SPAWN_TOOL]
         allowed = [*allowed, SUBAGENT_SPAWN_TOOL]
-
-    from claude_agent_sdk import ClaudeAgentOptions
 
     # We deliberately do NOT pass setting_sources — hubzoid is the source of
     # truth for what a hub means. Filesystem auto-discovery from .claude/
@@ -329,7 +425,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         if budget is not None:
             opts_kwargs["max_thinking_tokens"] = budget
     try:
-        options = ClaudeAgentOptions(**opts_kwargs)
+        options = claude_options(**opts_kwargs)
     except TypeError:
         # Older claude-agent-sdk without these fields — drop rather than die.
         opts_kwargs.pop("max_turns", None)
@@ -345,7 +441,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
                 t for t in opts_kwargs.get("allowed_tools", [])
                 if t != SUBAGENT_SPAWN_TOOL
             ]
-        options = ClaudeAgentOptions(**opts_kwargs)
+        options = claude_options(**opts_kwargs)
 
     # When HUBZOID_OTEL_NORMALIZE is on, point the subprocess at the bridge's
     # own loopback intercept (it renames token attrs -> gen_ai.usage.* so
@@ -363,6 +459,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         hub=hub_dir.name, otel_endpoint=otel_endpoint, hub_dir=hub_dir,
         vision=(settings.vision_enabled, settings.vision_max_edge,
                 settings.vision_max_images),
+        registry=registry,
     )
 
 
@@ -517,8 +614,12 @@ class ClaudeRuntime:
     def __init__(self, *, name: str, options, thinking_mode: str = "indicator",
                  tool_mode: str = "compact", hub: str = "",
                  otel_endpoint: str | None = None, hub_dir: Path | None = None,
-                 vision: tuple[bool, int, int] = (True, 1568, 4)):
+                 vision: tuple[bool, int, int] = (True, 1568, 4),
+                 registry: dict | None = None):
         self.name = name
+        # The tool registry behind the in-process hubzoid MCP server, so each
+        # turn can leave out the gated tools this caller may not see.
+        self._registry = registry or {}
         self._options = options
         self._thinking_mode = thinking_mode
         self._tool_mode = tool_mode
@@ -533,23 +634,29 @@ class ClaudeRuntime:
     def _options_for_turn(self):
         """Per-turn options, cloned from the shared base for THIS caller.
 
-        Two per-turn concerns fold in here, both keyed on `current_identity()`:
+        Three per-turn concerns fold in here, all keyed on `current_identity()`:
 
+          * Gated tools (restricted/, `remember`, `call_jev`): the model is shown
+            only those this caller may use, the same decision the access guard
+            makes at call time. Claude does not consult `is_enabled`, so the
+            in-process server is rebuilt without the hidden ones.
           * OTel env: carry the caller (hubzoid.user/hub/surface) into the
             `claude` subprocess so its telemetry is attributed.
           * OWUI-connected MCP servers: inject the servers this user connected
             in Open WebUI, each with their own Bearer, so the agent reaches
             them as the caller (see `owui_mcp`).
 
-        Returns the shared options untouched when neither applies (the common
-        no-op path), so hubs using neither pay nothing."""
+        Returns the shared options untouched when none applies (the common
+        no-op path), so hubs using none pay nothing."""
         import dataclasses
         import os
+        from .access.guard import visible
         from .access.identity import current_identity
         from . import otel as otellib
         from . import owui_mcp
 
         ident = current_identity()
+        hidden = {n for n, ft in self._registry.items() if not visible(ft)}
 
         extra_specs: dict = {}
         extra_allowed: list[str] = []
@@ -565,15 +672,29 @@ class ClaudeRuntime:
             user=ident.user, hub=self._hub, surface=ident.surface,
         )
 
-        if not env and not extra_specs:
+        if not env and not extra_specs and not hidden:
             return self._options
 
         changes: dict[str, Any] = {}
         if env:
             changes["env"] = {**os.environ, **(self._options.env or {}), **env}
+        mcp_servers = dict(self._options.mcp_servers or {})
+        allowed = list(self._options.allowed_tools or [])
+        if hidden:
+            gone = {f"mcp__{_MCP_NAMESPACE}__{n}" for n in hidden}
+            mcp_servers[_MCP_NAMESPACE] = _build_mcp_server(
+                {n: ft for n, ft in self._registry.items() if n not in hidden})
+            allowed = [t for t in allowed if t not in gone]
+            if self._options.agents:
+                changes["agents"] = {
+                    name: dataclasses.replace(a, tools=[t for t in (a.tools or []) if t not in gone])
+                    for name, a in self._options.agents.items()}
         if extra_specs:
-            changes["mcp_servers"] = {**(self._options.mcp_servers or {}), **extra_specs}
-            changes["allowed_tools"] = [*(self._options.allowed_tools or []), *extra_allowed]
+            mcp_servers.update(extra_specs)
+            allowed.extend(extra_allowed)
+        if hidden or extra_specs:
+            changes["mcp_servers"] = mcp_servers
+            changes["allowed_tools"] = allowed
         return dataclasses.replace(self._options, **changes)
 
     async def aopen(self) -> None:
@@ -629,8 +750,10 @@ class ClaudeRuntime:
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
+        mcp_config = None
         try:
-            async for message in query(prompt=qprompt, options=self._options_for_turn()):
+            mcp_config = PrivateMcpConfig(self._options_for_turn())
+            async for message in query(prompt=qprompt, options=mcp_config.options):
                 # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}
@@ -699,6 +822,9 @@ class ClaudeRuntime:
             _request_ctx.note_usage(status="error")
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
             return
+        finally:
+            if mcp_config is not None:
+                mcp_config.close()
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.
@@ -734,31 +860,20 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                           model_setting: str | None = None) -> tuple[str, dict]:
     """One tool-free, single-turn Claude call for `hub.call_llm` on claude-local.
 
-    No tools, no MCP servers, no skills and no hub instructions: a plain model
-    call through the Claude Agent SDK (claude-local has no API key, so this is
-    the direct route). Returns the text and a usage dict. Raises when the SDK
-    reports the run failed."""
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, query
+    No tools, no MCP servers (strictly: not even the host account's), no
+    skills and no hub instructions: a plain model call through the Claude Agent
+    SDK (claude-local has no API key, so this is the direct route). Returns the
+    text and a usage dict. Raises when the SDK reports the run failed."""
+    from claude_agent_sdk import AssistantMessage, ResultMessage, query
     from claude_agent_sdk.types import TextBlock
 
-    opts: dict[str, Any] = dict(
-        system_prompt=system or "You are a precise assistant. Answer the request directly.",
-        tools=[],
-        allowed_tools=[],
-        mcp_servers={},
-        setting_sources=[],
-        max_turns=1,
-    )
-    child_env = config_secrets.child_env_overrides(os.environ)
-    if child_env:
-        opts["env"] = child_env
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
-    if pin is not None:
-        opts["model"] = pin
+    options = tool_free_options(
+        system or "You are a precise assistant. Answer the request directly.", pin)
     parts: list[str] = []
     final: str | None = None
     usage: dict = {}
-    async for message in query(prompt=prompt, options=ClaudeAgentOptions(**opts)):
+    async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             parts += [b.text for b in message.content if isinstance(b, TextBlock)]
         elif isinstance(message, ResultMessage):

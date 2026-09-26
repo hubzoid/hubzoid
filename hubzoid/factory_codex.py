@@ -271,13 +271,17 @@ class CodexRuntime:
 
         await request(1, "initialize", {"clientInfo": {"name": "hubzoid", "version": __version__}, "capabilities": {"experimentalApi": True}})
         await send({"method": "initialized", "params": {}})
+        # Gated tools this caller may not use are left out, the same decision
+        # the access guard makes at call time (Codex does not consult is_enabled).
+        from .access.guard import visible
+        shown = {n: t for n, t in registry.items() if visible(t)}
         params = {"cwd": cwd, "ephemeral": True, "environments": [],
                   "selectedCapabilityRoots": [], "runtimeWorkspaceRoots": [],
                   "approvalPolicy": "never", "sandbox": "read-only",
                   "baseInstructions": self.instructions, "developerInstructions": "",
                   "dynamicTools": [{"type": "function", "name": t.name,
                     "description": t.description, "inputSchema": t.params_json_schema}
-                    for t in registry.values()], "allowProviderModelFallback": False}
+                    for t in shown.values()], "allowProviderModelFallback": False}
         if self.model:
             params["model"] = self.model
         started = await request(2, "thread/start", params)
@@ -312,7 +316,7 @@ class CodexRuntime:
                 if calls > self.max_turns:
                     raise RuntimeError("Codex reached the configured tool-call limit.")
                 name, arguments = p.get("tool"), p.get("arguments", {})
-                tool = registry.get(name) if not p.get("namespace") else None
+                tool = shown.get(name) if not p.get("namespace") else None
                 if tool is None:
                     result, success = "Tool is not available in this hub.", False
                 else:
@@ -414,7 +418,7 @@ async def _stop(proc):
 
 def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_override=None):
     from . import access, connections, memory, settings
-    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool
+    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool, _add_jev_tool
     from .loaders import agents, knowledge, tools_local, mcp
     from .tools import make_all
     hub_dir = Path(hub_dir).resolve()
@@ -428,6 +432,7 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     connections.attach(ctx)
     registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
     _add_curator_tool(ctx, registry, access)
+    _add_jev_tool(ctx, registry, access)
     from . import handover
     base_registry = dict(registry)
     for delegate in delegates:

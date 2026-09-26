@@ -280,7 +280,12 @@ async def test_guarded_tool_denies_ungranted_caller(tmp_path):
     with identity_scope(Identity.make("person@example.org", surface="mcp")):
         _ = [part async for part in rt._exchange(proc, "show report", "/tmp", {})]
     assert not called
-    assert "denied" in json.dumps(next(m for m in proc.messages if m.get("id") == 10)).lower()
+    # Hidden from this caller: not offered to Codex, and a call naming it is
+    # answered like an unknown tool, so its existence is not disclosed.
+    start = next(m for m in proc.messages if m.get("method") == "thread/start")
+    assert [t["name"] for t in start["params"]["dynamicTools"]] == []
+    reply = json.dumps(next(m for m in proc.messages if m.get("id") == 10))
+    assert "not available" in reply and "reports" not in reply
 
 
 def test_delegate_usage_is_combined_without_pricing_as_the_wrong_model(monkeypatch):

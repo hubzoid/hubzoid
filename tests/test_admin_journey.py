@@ -68,7 +68,7 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
     }
     ps = c.get("/portal/api/permissions?hub=ops").json()["permissions"]
     assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator",
-                                             "share_public_links"}
+                                             "share_public_links", "jev"}
     assert (
         c.post(
             "/portal/api/access/grant",
@@ -105,6 +105,22 @@ def test_console_can_grant_and_revoke_builtin_curator(deployment_client, subject
     assert not gs.can(subject, "ops", "curator")
     assert c.post("/portal/api/access/revoke", json=payload).status_code == 200
     assert not gs.can(subject, "finance", "curator")
+
+
+def test_console_can_grant_and_revoke_builtin_jev(deployment_client):
+    c, gs, _, _ = deployment_client
+    catalog = c.get("/portal/api/permissions?hub=finance").json()["permissions"]
+    jev = next(p for p in catalog if p["permission"] == "jev")
+    assert jev["label"] == "Call Jev"
+    assert "call_jev" in jev["description"] and "JEV_OPENROUTER_API_KEY" in jev["description"]
+    assert not gs.can("jev@example.com", "finance", "jev")     # nobody has it by default
+    payload = dict(subject="jev@example.com", hub="finance", permission="jev")
+    assert c.post("/portal/api/access/grant", json=payload).status_code == 200
+    assert gs.can("jev@example.com", "finance", "jev")
+    assert gs.can("jev@example.com", "finance", "use_hub")
+    assert not gs.can("jev@example.com", "ops", "jev")
+    assert c.post("/portal/api/access/revoke", json=payload).status_code == 200
+    assert not gs.can("jev@example.com", "finance", "jev")
 
 
 def test_hub_admin_audit_and_account_isolation(deployment_client):

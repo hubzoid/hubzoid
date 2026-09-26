@@ -18,7 +18,7 @@ resolved from the active run's context:
     hub.call_llm(prompt, ...)    one tool-free model call (text, JSON or a
                                  Pydantic model), checkpointed as a step
     hub.call_agent(task, ...)    the full agent loop with tools, checkpointed
-    hub.decide(state, questions) a typed decision with probabilities (Jev via
+    hub.call_jev(state, questions) typed decisions with probabilities (Jev via
                                  OpenRouter; experimental), checkpointed
     hub.user.id / .email / .attrs / .can("perm")   the account the run acts as
 
@@ -47,27 +47,27 @@ from .state import WorkflowState
 # wire the real hub runtime; tests set fakes. Signature mirrors the POC.
 _LLM: Callable[..., Any] | None = None     # (spec: dict, hub_dir, subject) -> dict
 _AGENT: Callable[..., Any] | None = None   # (task: str, hub_dir, subject) -> str
-_DECIDE: Callable[..., Any] | None = None  # (spec: dict, hub_dir, subject) -> dict
+_JEV: Callable[..., Any] | None = None     # (spec: dict, hub_dir, subject) -> dict
 # DBOS-step-wrapped versions of the seams (set by runtime.launch()). When present
 # a workflow's call goes through a checkpointed step, so recovery skips a
 # completed model call instead of re-invoking it (durability).
 _LLM_STEP: Callable[..., Any] | None = None
 _AGENT_STEP: Callable[..., Any] | None = None
-_DECIDE_STEP: Callable[..., Any] | None = None
+_JEV_STEP: Callable[..., Any] | None = None
 
 
 def configure(*, llm: Callable[..., Any] | None = None,
               agent: Callable[..., Any] | None = None,
-              decide: Callable[..., Any] | None = None) -> None:
-    """Wire the model / agent / decision implementations (called once at boot).
+              jev: Callable[..., Any] | None = None) -> None:
+    """Wire the model / agent / Jev implementations (called once at boot).
     Kept a seam so runtime-specific construction stays in runtime/server/cli."""
-    global _LLM, _AGENT, _DECIDE
+    global _LLM, _AGENT, _JEV
     if llm is not None:
         _LLM = llm
     if agent is not None:
         _AGENT = agent
-    if decide is not None:
-        _DECIDE = decide
+    if jev is not None:
+        _JEV = jev
 
 
 @dataclass(frozen=True)
@@ -335,25 +335,25 @@ class Hub:
 
         return _validated(extract_json(text), response_model, text)
 
-    def decide(self, state, questions: dict, *, model: str = "typesafe/jev-1.13") -> dict:
-        """Experimental. A typed decision from TypeSafe's Jev through OpenRouter:
-        each question ("noul", "choice" or "score", with instructions and
-        criteria) comes back with its answer, probabilities and confidence.
-        Returns the `answers` mapping. Needs OPENROUTER_API_KEY."""
-        if _DECIDE is None:
+    def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13") -> dict:
+        """Experimental. Typed decisions from TypeSafe's Jev through OpenRouter.
+        Each question is a "noul" (does it hold?), "choice" (which label?) or
+        "score" (where on an ordered scale?), with instructions and criteria;
+        one request may mix them. Returns {question name: answer}, every answer
+        checked against its question. Checkpointed as a step. Needs
+        JEV_OPENROUTER_API_KEY; raises `hubzoid.jev.JevError` on any failure."""
+        if _JEV is None:
             raise RuntimeError(
-                "hub.decide is not configured; call workflows.configure(decide=...) at boot"
+                "hub.call_jev is not configured; call workflows.configure(jev=...) at boot"
             )
-        for name, q in questions.items():
-            if not isinstance(q, dict) or q.get("type") not in ("noul", "choice", "score"):
-                raise ValueError(f'question {name!r} needs type "noul", "choice" or "score"')
         spec = {"model": model, "state": state, "questions": questions}
         ctx = _ctx()
-        if _DECIDE_STEP is not None:
-            data = _DECIDE_STEP(spec, str(ctx.hub_dir), ctx.subject)
+        _recheck(ctx, "A Jev call")
+        if _JEV_STEP is not None:
+            data = _JEV_STEP(spec, str(ctx.hub_dir), ctx.subject)
         else:
-            data = _DECIDE(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
-        return data.get("answers") or {}
+            data = _JEV(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
+        return data["answers"]
 
 
 def _validated(value, response_model, raw_text: str):

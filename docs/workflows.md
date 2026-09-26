@@ -72,7 +72,7 @@ checks every workflow file loads.
 |---|---|---|
 | `hub.call_llm(prompt, *, response_format="text", response_model=None, model=None, system=None)` | One model call with no tools. Returns text; with `response_format="json"` a dict (the reply must be a JSON object); with a Pydantic `response_model` a validated instance. | Once, since it has no side effects |
 | `hub.call_agent(task, *, response_model=None)` | The hub's full agent, with its tools, skills and knowledge. | Only with `agent_max_attempts: N` in `workflows/settings.yaml`, since a retry can repeat a write |
-| `hub.decide(state, questions, *, model="typesafe/jev-1.13")` | Experimental. A typed decision from TypeSafe's Jev through OpenRouter. Each question has a `type` (`noul`, `choice` or `score`), `instructions` and `criteria`; returns the answers with probabilities and confidence. Needs `OPENROUTER_API_KEY`. | Once |
+| `hub.call_jev(state, questions, *, model="typesafe/jev-1.13")` | Experimental. Typed decisions from TypeSafe's Jev through OpenRouter: see [Decisions with Jev](#decisions-with-jev). Needs `JEV_OPENROUTER_API_KEY`. | Rate limits, server errors and timeouts: once |
 
 `call_llm` uses the hub's model unless you pass `model`. For LiteLLM models it
 uses the provider's JSON mode; on `claude-local` it runs one Claude turn with
@@ -81,7 +81,99 @@ no tools. If the reply does not match `response_model`, the call raises
 
 Each call is saved as a step, so a workflow that resumes after a restart does
 not pay for the same call twice. Each call also writes a usage row: tokens and
-estimated cost appear on the Console's **Agents** dashboard.
+cost appear on the Console's **Agents** dashboard. Cost is the provider's own
+figure when it reports one (Jev always does), otherwise an estimate.
+
+## Decisions with Jev
+
+`hub.call_jev` asks [Jev](https://openrouter.ai/docs/guides/community/jev), a
+decision model, typed questions about a `state` (text, an object or a list).
+It returns answers with probabilities instead of prose. It is experimental, and
+OpenRouter's Decisions API is in alpha, so its shapes may change.
+
+| Type | Asks | `criteria` | Answer |
+|---|---|---|---|
+| `noul` | Does this hold? | Optional: `{"true": ..., "false": ...}` | `{"type": "noul", "noul": 0.97}` (the probability of yes) |
+| `choice` | Which one? | Two or more `{label: guidance}` | `{"type": "choice", "choice": "billing", "probabilities": {label: p}, "confidence": 0.9}` |
+| `score` | Where on this scale? | A list of two or more levels, lowest first | `{"type": "score", "score": 1.8, "probabilities": {"0": p, ...}, "legend": {...}, "confidence": 0.8}` |
+
+```python
+# workflows/triage/main.py
+from hubzoid import hub, step, workflow
+
+URGENCY = ["Low: can wait a week", "Medium: handle within a day", "High: business blocked"]
+
+
+@step
+def page_on_call(ticket: str) -> None:
+    ...
+
+
+@workflow()
+def triage():
+    ticket = "Nobody can log in and orders are blocked."
+    answers = hub.call_jev(ticket, {
+        "is_billing": {"type": "noul", "instructions": "Is this a billing problem?"},
+        "team": {"type": "choice", "instructions": "Which team should handle it?",
+                 "criteria": {"billing": "Charges and refunds",
+                              "technical_support": "Errors and outages",
+                              "account_support": "Logins and settings"}},
+        "urgency": {"type": "score", "instructions": "How urgent is it?", "criteria": URGENCY},
+    })
+    if answers["urgency"]["score"] >= 1.5:
+        page_on_call(ticket)
+    return answers["team"]["choice"]
+```
+
+One request can mix the three types, and answers come back by question name.
+Every answer is checked before it is returned: a `choice` is one of your labels,
+a `noul` is between 0 and 1, and a `score` is within the scale. A missing,
+empty or malformed answer raises an error. It never comes back as an empty
+result. Treat probabilities and confidence as signals, not proof that an
+answer is right.
+
+A question has only `type`, `instructions` and `criteria`. Instructions and
+each criteria entry are non-empty text, an object or a list. Anything else is
+refused before a request is made.
+
+Set `JEV_OPENROUTER_API_KEY` in the hub's `.env` to a dedicated OpenRouter key.
+Jev never falls back to `OPENROUTER_API_KEY`, the hub's chat model, or any
+other credentials, and the chat model never uses this key.
+
+### Usage
+
+Each `call_jev` writes one usage row, including any retry:
+
+| Field | Value |
+|---|---|
+| `kind` | `jev` |
+| `subject`, `surface` | `workflow:<name>` on `workflow` for a workflow; the person and their channel (`web`, `api`) for chat |
+| `chat_id` | The chat, for chat calls |
+| `model` | The version that answered, such as `typesafe/jev-1.13-20260917`; the requested model if the call failed |
+| `input_tokens`, `output_tokens`, `cost_usd` | As OpenRouter reports them. Jev bills input tokens only |
+| `status` | `ok`, or `error` for a call that failed, including one refused after a malformed reply |
+
+A row names the workflow, not the run. To see a run's calls, open the run: each
+`call_jev` is a step there with the OpenRouter request id in its result.
+
+### Failures and retries
+
+Failures raise `hubzoid.jev.JevError`, and the step and the run fail with its
+message. A missing key, a rejected key (401 or 403), missing credits (402) or
+invalid questions fail at once. Rate limits (429), server errors and timeouts
+are retried once, after the `Retry-After` delay OpenRouter sends (seconds or a
+date) or one second without one. If OpenRouter asks for more than 10 seconds,
+the call fails at once with that delay in its message instead of waiting. A
+finished call is not made again when a run resumes. A call that was still in
+flight when the process stopped has no saved answer, so the resumed run asks
+again and may be billed twice. Jev calls are at least once, not exactly once.
+
+### In chat
+
+The same adapter is also a chat tool, `call_jev`, disabled until an
+administrator grants the **Call Jev** capability (`jev`) in the
+Console. It is not available on Slack, WhatsApp, Telegram or the hosted MCP
+server. See [access management](access-management.md#decisions-with-jev-in-chat).
 
 ## Who a workflow acts as
 

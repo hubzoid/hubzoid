@@ -62,6 +62,30 @@ Every MCP server is provisioned read-only by default (no writes, no posts).
 Granting write access is a per-server decision. set up the server's
 credentials with the right scope before adding to `.mcp.json`.
 
+On `claude-local`, the agent sees only the MCP servers Hubzoid passes it: the
+hub's own tools, the servers in its `.mcp.json`, the shared browser, and the
+servers the current person connected in Open WebUI. It never loads the
+connectors of the Claude account the box is signed in to (claude.ai Gmail,
+Drive, Slack and so on) or MCP servers from that account's user or project
+settings. `hub.call_llm` and the eval judge get no tools or servers at all.
+Hubzoid refuses to start a Claude run with an SDK that cannot enforce this.
+
+MCP credentials stay off the command line. On `claude-local`, the headers, URLs
+and `env` of the hub's servers and of each person's own connections are written
+to a new file readable only by the account running Hubzoid (mode 0600), one per
+chat turn. That file holds only that person's connections and is deleted when the
+turn ends, fails or is cancelled. Other accounts on the machine cannot see these
+credentials in the process list. Limits:
+
+- It does not protect against root, or against other processes running as the
+  same account as Hubzoid. They can read the file while a turn runs, and each
+  MCP server's own environment.
+- If the Hubzoid process is killed outright (for example `kill -9`) during a
+  turn, that turn's file stays in the system temp directory, still readable only
+  by the same account, until the OS clears it.
+- A secret written into a stdio server's `args` is still visible in that
+  server's own process arguments. Pass secrets to stdio servers in `env`.
+
 ## Per-user MCP via Open WebUI (native OAuth)
 
 The `.mcp.json` connectors above are hub-wide: one credential shared by every

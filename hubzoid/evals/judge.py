@@ -212,23 +212,18 @@ def resolve_model(hub_dir: Path, override: str | None = None) -> str:
 
 
 async def _ask_claude_local(model_id: str, prompt: str) -> str:
-    """Single-turn Claude call with no tools, via the bundled `claude` login."""
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, query
+    """Single-turn Claude call with no tools, via the bundled `claude` login.
+    A judge has no business calling anything: no tools, no MCP servers (not
+    even the host account's connectors), no settings."""
+    from claude_agent_sdk import AssistantMessage, ResultMessage, query
 
-    from ..factory_claude import _parse_model_pin
+    from ..factory_claude import _parse_model_pin, tool_free_options
 
-    opts: dict = {
-        "system_prompt": _SYSTEM,
-        "allowed_tools": [],       # a judge has no business calling anything
-        "max_turns": 1,
-    }
-    pin = _parse_model_pin(model_id)
-    if pin:
-        opts["model"] = pin
+    options = tool_free_options(_SYSTEM, _parse_model_pin(model_id) or None)
 
     chunks: list[str] = []
     final = ""
-    async for message in query(prompt=prompt, options=ClaudeAgentOptions(**opts)):
+    async for message in query(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             for block in getattr(message, "content", []) or []:
                 text = getattr(block, "text", None)

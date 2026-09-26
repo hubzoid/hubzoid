@@ -434,7 +434,7 @@ hubzoid schedule status ./finance
 
 Markdown tasks (`schedule/*.md`) and code workflows (`workflows/<name>/*.py`)
 both run on each hub's DBOS engine. [workflows.md](workflows.md) covers writing
-them, model calls (`hub.call_llm`, `hub.call_agent`, `hub.decide`), retries,
+them, model calls (`hub.call_llm`, `hub.call_agent`, `hub.call_jev`), retries,
 idempotency and code changes. For operators:
 
 - Gateway deployments schedule code workflows. A standalone `hubzoid run` needs

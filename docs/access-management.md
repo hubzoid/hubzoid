@@ -321,6 +321,38 @@ create or replace documents under `knowledge/_learned/`. These documents are
 shared agent knowledge, not private conversation memory. No `restricted/curator.py`
 file is required to make this capability appear.
 
+## Decisions with Jev in chat
+
+The built-in **Call Jev** capability (`jev`) controls the
+`call_jev` chat tool. It asks Jev typed `noul`, `choice` and `score` questions,
+the same as a workflow's `hub.call_jev` ([workflows.md](workflows.md#decisions-with-jev)).
+Nobody has it by default. Agent entry (`use_hub`) and **Manage access** do not
+include it. Grant it only to people who need it, because each call is billed to
+the hub's `JEV_OPENROUTER_API_KEY`. Without that key a granted call fails with
+a message that names it.
+
+Each call writes a usage row (kind `jev`) naming the person, their channel and
+the chat, and an access log entry. On a hub that has not been migrated, an Open
+WebUI group named `jev` grants it instead.
+
+Where Jev is available today:
+
+| Surface | Jev |
+|---|---|
+| Code workflows (`hub.call_jev`) | Yes. Workflow code needs the key, not a grant |
+| Chat in Open WebUI, and the bridge API behind it | With the `jev` grant |
+| Agent runs inside workflows (`hub.call_agent`, markdown tasks) | Only when the workflow identity (`workflow:<name>`) is granted `jev` |
+| Slack, WhatsApp and Telegram | No. They cannot reach controlled tools until those channels verify each person's identity |
+| Hosted MCP (`/mcp`) | No. `call_jev` is not exposed to external assistants |
+
+## Who sees a controlled tool
+
+A controlled tool (a `restricted/` module, `remember` or `call_jev`) is left out
+of the tools the agent is shown for anyone who may not use it, on every runtime
+(`claude-local`, `codex-local` and LiteLLM models). A call that names it anyway
+is answered as an unknown tool, and the guard also refuses and logs any call
+that reaches it another way.
+
 ## Existing hubs
 
 Unmigrated hubs retain their legacy group/roster rules. The Console labels this

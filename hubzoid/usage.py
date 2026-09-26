@@ -1,8 +1,8 @@
 """Usage rows: one per completed chat turn or workflow model call.
 
 Hubzoid records these itself (the bridge for chat, the workflow helpers for
-`call_llm` / `call_agent` / `decide`) in the operational store's `hz_usage`
-table, so the Console's numbers don't depend on which chat UI fronts a hub and
+`call_llm` / `call_agent`, and Jev for `call_jev` in workflows and chat) in the
+operational store's `hz_usage` table, so the Console's numbers don't depend on which chat UI fronts a hub and
 include Slack, WhatsApp and Telegram. No message content is stored.
 
 Cost is an estimate: the backend's own figure when it reports one, otherwise
