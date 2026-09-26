@@ -9,7 +9,7 @@ The account a run acts as decides:
 - which tools and hubs it may use (that account's grants, checked at every call);
 - whose personal connections it uses (never the workflow author's, never an
   administrator's);
-- whose `hub.state`, scratch folder, published reports and email it gets.
+- whose `hub.state`, scratch folder, published artifacts and email it gets.
 
 ## Choosing the account
 
@@ -121,7 +121,7 @@ or was revoked, the agent has no such tool and the call says so; the person
 reconnects from chat.
 
 Step return values are kept in the run history, which the hub's managers can
-see. Keep personal data inside steps, and in the report you publish.
+see. Keep personal data inside steps, and in the artifacts you publish.
 
 ## Legacy hubs and `workflow:*` grants
 
@@ -150,7 +150,7 @@ This is access control inside Hubzoid, not an operating-system sandbox. Workflow
 Python, `run:` scripts and restricted tools run in the bridge process as the
 same operating-system user. Anyone who can edit a hub's code or configuration
 can read what that process can read. The rules above keep people's data apart
-across chat, agents, the report viewer, email and the Console.
+across chat, agents, the artifact viewer, email and the Console.
 
 A `run:` script finds the account it runs as in `HUBZOID_RUN_AS`. This is for
 information only.

@@ -460,6 +460,19 @@ def test_permission_catalog_lists_public_links(hub):
     assert perms[arts.PUBLIC_LINK_PERMISSION]["sensitive"] is True
 
 
+def test_public_sharing_is_named_for_artifacts_and_kept_separate_from_publishing(hub):
+    """UX review: the capability covers every artifact type, says what a public
+    link means, and keeps its stable id. Publishing never implies it."""
+    from hubzoid import deployment
+
+    assert arts.PUBLIC_LINK_PERMISSION == "share_public_links"
+    entry = {p["permission"]: p for p in deployment.permission_catalog(hub)}["share_public_links"]
+    assert entry["label"] == "Share artifacts publicly" == arts.SHARE_PUBLIC.label
+    assert "anyone with the link" in entry["description"].lower()
+    assert "without signing in" in entry["description"]
+    assert "report" not in (entry["label"] + entry["description"]).lower()
+
+
 def test_viewer_names_the_file_in_the_content_url_and_explains_public_sharing(hub, tmp_path, web):
     """Release review: a PDF's viewer showed the title "content"; the disabled
     public-link option did not say what to ask for."""
@@ -472,7 +485,7 @@ def test_viewer_names_the_file_in_the_content_url_and_explains_public_sharing(hu
     assert _as(web, TEAMMATE).get(meta["content_url"]).status_code == 404               # still private
     sharing = meta["sharing"]
     assert sharing["can_public_link"] is False
-    assert "Share reports by public link" in sharing["public_link_hint"]
+    assert "Share artifacts publicly" in sharing["public_link_hint"]
 
 
 def test_report_page_labels_people_and_never_stays_on_loading():
@@ -480,5 +493,6 @@ def test_report_page_labels_people_and_never_stays_on_loading():
 
     doc = pages.shell(mode="public", api=None, nonce="n")
     assert "for:'share-people'" in doc and "People or groups who can view it" in doc
-    assert "Link not available" in doc and "Report not available" in doc   # terminal headings
+    assert "Link not available" in doc and "Artifact not available" in doc   # terminal headings
+    assert "Who can view this artifact" in doc and "Report" not in doc      # any file type, not only reports
     assert "'Create public link'" in doc                                   # one flow from the main button

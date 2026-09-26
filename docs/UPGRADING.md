@@ -147,10 +147,10 @@ If you ran a pre-release build of 1.0.1, also note:
   deployment needs that history and the new version cannot read it, treat the
   rollout as failed and go back. Deleting the old database is not a migration.
 
-## Workflows run as people; reports and email (next release)
+## Workflows run as people; artifacts and email (next release)
 
-Scheduled work now acts as an ordinary account, and can publish private reports
-and email its owner ([workflow-identity.md](workflow-identity.md),
+Scheduled work now acts as an ordinary account, and can publish private
+artifacts (reports, PDFs, CSVs and other files) and email its owner ([workflow-identity.md](workflow-identity.md),
 [reports-and-email.md](reports-and-email.md)). The database gains the tables for
 this at the first start (`op_0005`, forward only: restore a backup to go back).
 
@@ -158,10 +158,10 @@ this at the first start (`op_0005`, forward only: restore a backup to go back).
 |---|---|
 | Runs act as `run_as`, else `HUBZOID_WORKFLOW_USER` (hub, then deployment), else, on Console-managed hubs only, the owner recorded at setup, instead of `workflow:<name>` / `workflow:md:<task>`. | Run `hubzoid schedule list <hub>`: it shows who each workflow and task runs as. On a Console-managed hub, set `run_as` or `HUBZOID_WORKFLOW_USER` if the default is not the account you want. |
 | Grants to `workflow:*` subjects are kept but no longer used. They are never copied to anyone. | For each permission a run's log reports as "not held", grant it to the account the work runs as (or point `run_as` at an account that holds it), then remove the old grant. |
-| A legacy hub (access still in the chat app) switches only when you set `run_as` or `HUBZOID_WORKFLOW_USER`. The owner recorded at setup never switches it. Until then its runs keep their service identity, state and scratch folder as before, with a warning. They still reach no restricted tool. | Nothing. Configure an account when you want reports, email or personal connections there. |
+| A legacy hub (access still in the chat app) switches only when you set `run_as` or `HUBZOID_WORKFLOW_USER`. The owner recorded at setup never switches it. Until then its runs keep their service identity, state and scratch folder as before, with a warning. They still reach no restricted tool. | Nothing. Configure an account when you want artifacts, email or personal connections there. |
 | `hub.state` belongs to the account a run acts as, and each account's state starts empty. State written before the upgrade is kept, untouched and assigned to no one. A markdown task that runs as a person likewise gets its own scratch folder, `.hubzoid/schedule/<task>@<person>/`, and starts with no state file; the old `.hubzoid/schedule/<task>/` is kept as it was. Only a legacy hub with no account configured keeps using the old state. | Expect such a task's first run as a person to begin from scratch (for example, reprocess its first window). To carry state over deliberately, copy the old state file into the person's folder before that run. For state that must survive a change of account, use `hub.shared_state` (keep personal data out of it). |
 | The Console's run history shows a hub's managers each run's workflow, status, timing and a failure summary. It shows the run's result and step outputs only to the account the run acted as, or for legacy service runs. Runs recorded before the upgrade carry no identity, so they show metadata only. | Nothing. On the server, `hubzoid schedule status` still shows everything, and each markdown run's log is under `.hubzoid/schedule/`. |
-| New permission **Share reports by public link** (`share_public_links`). | Grant it only to people who may create "anyone with the link" reports. |
+| New permission **Share artifacts publicly** (`share_public_links`): anyone with such a link can open the artifact without signing in. Publishing an artifact never grants it. | Grant it only to people who may share their artifacts with anyone who has the link. |
 | Grants record when they were made (`op_0007`, forward only). Removing `share_public_links` from someone (or blocking them) ends their public links for good; granting it again does not revive them. Grants from before the upgrade have no time and their links keep working. | Nothing. |
 | `HUBZOID_WORKFLOW_USER` in a hub secret now wins over the same key in `<hub>/.env`, as documented. `hubzoid schedule list` and the Console's **Runs as** show the account runs actually use. | If a hub sets the key in both places with different accounts, keep the one you mean and remove the other. |
 | Email preview files (`HUBZOID_EMAIL_DELIVERY=preview`) are created readable only by Hubzoid's account (files 0600, folders 0700). Files written earlier keep their permissions. | Optionally `chmod -R go-rwx <hub>/.hubzoid/outbox`. |

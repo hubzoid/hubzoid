@@ -1,13 +1,14 @@
 # Hubzoid published artifacts. Apache-2.0 licensed like the rest of the repository.
-"""Published artifacts: a file a workflow generated, owned by the person the run
-acted as, private until that person shares it.
+"""Published artifacts: a file a workflow generated (an HTML report, a PDF, a CSV,
+an image or any other file), owned by the person the run acted as, private until
+that person shares it.
 
 Publishing is separate from generating: `publish` copies an existing file into
 `<hub>/.hubzoid/artifacts/<id>/` (private to agent file tools, unreachable from
 the legacy `/artifacts/<chat>/<file>` route, included in backups) and records
 owner, hub, workflow, run, content type, size, hash, storage and audience in
 `hz_artifacts`. Every publish gets a new id, so a later run never overwrites an
-earlier report even when the file names match.
+earlier artifact even when the file names match.
 
 Who may open an artifact is decided here, in `role`, and nowhere else:
 
@@ -44,10 +45,12 @@ from sqlalchemy import text
 log = logging.getLogger("hubzoid.artifacts")
 
 PUBLIC_LINK_PERMISSION = "share_public_links"
+# Sharing publicly is its own permission. Publishing an artifact, or being able to
+# see or share it inside the agent, never grants it.
 PUBLIC_LINK_META = {
-    "label": "Share reports by public link",
-    "description": ("Create 'anyone with the link' links for reports you own. Anyone who has "
-                    "such a link can open the report without signing in."),
+    "label": "Share artifacts publicly",
+    "description": ("Create links to artifacts you own that anyone with the link can open "
+                    "without signing in. Creating or publishing artifacts does not need it."),
     "sensitive": True,
 }
 # Registered where it is enforced (create_link / open_link below), so the
@@ -147,7 +150,7 @@ def public_base_url(hub_dir=None) -> str:
 
     A gateway bridge's HUBZOID_PUBLIC_URL ends in its download prefix
     (`/b/<hub>`), which the edge routes only for `/artifacts` and `/mcp`. The
-    report viewer and public links live at the site root, so drop it. A process
+    artifact viewer and public links live at the site root, so drop it. A process
     without either setting (a CLI command running a job) uses the address the
     gateway recorded in the deployment manifest."""
     base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
@@ -203,11 +206,11 @@ def content_path(hub_dir, art: Artifact) -> Path:
     try:
         hub_root = deployment.hub_path(Path(hub_dir), art.hub)
     except KeyError:
-        raise ArtifactError(404, "This report is not available.")
+        raise ArtifactError(404, "This artifact is not available.")
     base = (Path(hub_root) / STORE_DIR).resolve()
     target = (Path(hub_root) / art.storage).resolve()
     if base not in target.parents or not target.is_file():
-        raise ArtifactError(404, "This report is not available.")
+        raise ArtifactError(404, "This artifact is not available.")
     return target
 
 
@@ -343,10 +346,10 @@ def _local_owner(hub_dir, subject: str) -> bool:
 
 
 def _owner_current(hub_dir, art: Artifact) -> bool:
-    """Is the report's recorded owner still that owner, now? The same chat-app
+    """Is the artifact's recorded owner still that owner, now? The same chat-app
     account it was published under (an email reused by a replacement account
     inherits nothing), not blocked, and on a Console-managed hub still able to
-    use the hub. A report recorded without an account id is honoured only for
+    use the hub. An artifact recorded without an account id is honoured only for
     the local quickstart account. Legacy hubs keep their membership in the chat
     app, so only the account checks apply there."""
     owner = art.owner
@@ -407,7 +410,7 @@ def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
 
 def _require_owner(hub_dir, art: Artifact | None, actor: str) -> Artifact:
     if role(hub_dir, art, actor) != "owner":
-        raise ArtifactError(404, "This report is not available.")
+        raise ArtifactError(404, "This artifact is not available.")
     return art
 
 
@@ -444,7 +447,7 @@ def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
                     raise ArtifactError(400, f"{principal!r} is not an account email.")
                 if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
                     raise ArtifactError(409, f"{principal} cannot use this agent, so the "
-                                             "report cannot be shared with them.")
+                                             "artifact cannot be shared with them.")
             entries.append((kind, principal))
         entries = sorted(set(entries))
         if len(entries) > MAX_SHARES:
