@@ -167,7 +167,8 @@ def test_resumed_run_reuses_the_checkpointed_jev_answer(hub):
     assert _calls(tmp) == 1                        # the completed call was not made again
     rows = _usage(tmp)
     assert [(r["kind"], r["subject"], r["model"], r["cost_usd"]) for r in rows] == [
-        ("jev", "workflow:triage", "typesafe/jev-1.13-20260917", 0.0000126)]
+        # Runs act as an ordinary account; this local hub has only admin@localhost.
+        ("jev", "admin@localhost", "typesafe/jev-1.13-20260917", 0.0000126)]
     _no_key_anywhere(tmp, first_err, done.stdout, done.stderr)
 
 
