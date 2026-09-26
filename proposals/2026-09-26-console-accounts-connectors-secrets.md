@@ -263,6 +263,40 @@ These are defaults. Only item 1 in Open questions blocks anything.
    on legacy access, with the Open WebUI Users page visible, until an explicit
    migration.
 
+## Founder UX review decisions (2026-09-26)
+
+Approved after reviewing the 8dd898e candidate. They refine, and where they
+differ supersede, the UI details below. Authorization stays server-side.
+
+1. **Users card.** Counts distinct login accounts in the viewer's scope,
+   whatever the period. Service identities and email-only grants are excluded,
+   blocked accounts are included, and the subtext reads "Across N hubs". The
+   period applies to usage metrics only. It shows "unavailable", never 0, when
+   accounts cannot be read.
+2. **One "Add user" flow.** A hub's Access page adds either an existing account
+   or a new one, together with its initial access. The People page uses the same
+   service. A password login is the default. "Google sign-in only" is offered
+   only where Google and merge-by-email are configured, and it never asks for or
+   shares a password. There are no email-only grants presented as accounts, and
+   public sign-up stays closed.
+3. **No new service identities in the UI.** Workflows run as ordinary accounts.
+   Existing `workflow:*` records stay, labelled "Legacy service identity".
+4. **Collapsible capability groups** with "· N selected", and accessible
+   toggles and help.
+5. **Artifacts.** The general feature is "Artifacts". `share_public_links` is
+   labelled "Share artifacts publicly" and grants public links only, never
+   publishing. Revoking it ends existing links for good.
+6. **Short review and success.** Review lists who, the hub, and what is added
+   and removed. Success reads "Access updated".
+7. **Icons.** A settings/shield icon for the Admin Console, a spark for agents,
+   and a muted role badge.
+8. **Open WebUI Admin Panel.** It stays for chat-app administrators, lands on an
+   allowed page, and hides the Users section when the Console manages accounts.
+   Integrations and Groups stay.
+9. **Waiting feedback.** A status line appears from send until the first words.
+10. **Demo knowledge** is corrected: three runtimes and the current positioning.
+11. **Restricted-tool fixtures** cover the review hubs in tests.
+
 ## What should happen
 
 ### 1. Accounts and access (goal 1)
