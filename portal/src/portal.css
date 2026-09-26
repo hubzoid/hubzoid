@@ -794,3 +794,34 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 
 /* A field label with a control beside it (Password · Google sign-in only). */
 .field-label-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+
+/* ---- phones and small tablets: roomier touch targets, no squeezed content ---- */
+@media (max-width: 767px) {
+  /* One level of padding on phones: the page already has side gutters. */
+  .panel { padding: 12px; border-radius: 12px; }
+  .panel h1.ant-typography, .main h1.ant-typography { font-size: 24px; line-height: 1.25; }
+  /* Filters take the full row instead of a sliver of it. */
+  .toolbar .ant-select, .toolbar .ant-input-affix-wrapper, .toolbar > .ant-input { width: 100% !important; max-width: none; }
+  .toolbar > .ant-space, .toolbar > .ant-space-compact { width: 100%; }
+  /* Drawer and dialog actions wrap instead of overflowing, and stay reachable. */
+  .drawer-actions { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; }
+  .ant-modal { max-width: calc(100vw - 32px); }
+  .ant-descriptions-item-content { overflow-wrap: anywhere; }
+}
+
+/* Touch screens and narrow windows: roomier tap targets for links, small buttons and icons. */
+@media (max-width: 991px), (pointer: coarse) {
+  .ant-tabs-tab-btn > a { display: inline-block; padding: 10px 2px; }
+  .ant-tabs-nav .ant-tabs-tab { padding: 2px 0; }
+  .main .ant-breadcrumb .ant-breadcrumb-link > a, .main .ant-breadcrumb li > a { display: inline-block; height: auto; padding: 9px 0; }
+  .agent-card .ant-card-head a, .agent-card h3 a, .agent-card-title a { display: inline-block; padding: 8px 0; }
+  .main .ant-btn-sm { height: 32px; padding-inline: 12px; }
+  .ant-input-password-icon { padding: 8px; margin: -8px; }
+  .ant-typography-copy { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; }
+  .ant-input-clear-icon { padding: 8px; margin: -8px; }
+  .person-cell a, .ant-table a { display: inline-block; padding: 8px 0; }
+  .drawer-body .ant-btn-sm { height: 32px; padding-inline: 12px; }
+  .agent-access-heading a { display: inline-block; padding: 8px 0; }
+  .ant-drawer-close { min-width: 40px; min-height: 40px; }
+  .stat-hint { width: 32px; height: 32px; }
+}
