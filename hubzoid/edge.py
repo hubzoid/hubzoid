@@ -25,6 +25,17 @@ bypassing Open WebUI's auth/RBAC.
 The router streams responses (SSE-safe) and transparently relays websockets
 (Open WebUI uses socket.io for live updates). Pure-Python (Starlette + httpx
 + websockets, all already hubzoid deps).
+
+Two optional behaviours sit on the same front door:
+
+  * `HUBZOID_HIDE_OWUI_USERS=true` sends browser navigation to Open WebUI's
+    admin Users page to the Console's People screen, and refuses browser writes
+    to Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
+    own service calls go to Open WebUI's internal URL and never pass this edge.
+  * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
+    before sending the browser through Open WebUI's OAuth client flow. When the
+    client callback redirects, the edge sends the browser to the journey's done
+    page instead and clears the cookie. Without that cookie nothing changes.
 """
 from __future__ import annotations
 
@@ -32,6 +43,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dataclasses import dataclass
@@ -79,6 +91,60 @@ DEFAULT_ARTIFACT_PREFIX = "/artifacts"
 # OWUI routes whose browser writes are blocked when access management is locked
 # (Casbin authoritative). Override with HUBZOID_OWUI_LOCKED_PREFIXES.
 _OWUI_LOCK_DEFAULT = ("/api/v1/groups",)
+
+
+# Open WebUI's admin Users page (a single-page-app route). The Groups tab
+# (/admin/users/groups) stays: legacy hubs still use Open WebUI groups.
+_USERS_PAGES = frozenset({"/admin/users", "/admin/users/overview"})
+PEOPLE_URL = "/portal/#/people"
+# Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
+# user's own settings, never blocked.
+_ACCOUNT_WRITES = (
+    ("POST", re.compile(r"^/api/v1/auths/add$")),
+    ("POST", re.compile(r"^/api/v1/users/(?!user$)[^/]+/update$")),
+    ("DELETE", re.compile(r"^/api/v1/users/(?!user$)[^/]+$")),
+)
+# The P2 connection-journey contract: the OAuth client callback, and the id the
+# journey page stored in a cookie before starting it.
+_CLIENT_CALLBACK = re.compile(r"^/oauth/clients/[^/]+/callback$")
+_CONNECT_ID = re.compile(r"^[A-Za-z0-9_-]{20,64}$")
+CONNECT_COOKIE = "hz_connect"
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _hide_owui_users(env) -> bool:
+    return _truthy(env.get("HUBZOID_HIDE_OWUI_USERS"))
+
+
+def _clean_path(path: str) -> str:
+    """Collapse repeated slashes and drop a trailing one, for matching only."""
+    path = re.sub(r"/{2,}", "/", path)
+    return path.rstrip("/") or "/"
+
+
+def _is_users_page(path: str) -> bool:
+    return _clean_path(path) in _USERS_PAGES
+
+
+def _is_account_write(method: str, path: str) -> bool:
+    path = _clean_path(path)
+    return any(method == m and rx.match(path) for m, rx in _ACCOUNT_WRITES)
+
+
+def _connect_done(request: Request, status: int) -> str | None:
+    """The done page for a connection journey whose OAuth client callback just
+    redirected, or None when this response is not part of one."""
+    if request.method != "GET" or not 300 <= status < 400:
+        return None
+    if not _CLIENT_CALLBACK.match(_clean_path(request.url.path)):
+        return None
+    journey = request.cookies.get(CONNECT_COOKIE) or ""
+    if not _CONNECT_ID.match(journey):
+        return None
+    return f"/portal/connect/{journey}/done"
 
 
 def _owui_lock_prefixes(env) -> tuple[str, ...]:
@@ -206,6 +272,7 @@ def build_edge_app(
     )
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
     locked_prefixes = _owui_lock_prefixes(os.environ)
+    hide_users = _hide_owui_users(os.environ)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -224,8 +291,15 @@ def build_edge_app(
             return Response("Bad request", status_code=400)
         portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
-            from .portal_navigation import SCRIPT
-            return Response(SCRIPT, media_type='application/javascript')
+            from .portal_navigation import script
+            return Response(script(hide_users=hide_users), media_type='application/javascript')
+        # Accounts are managed in the Console: Open WebUI's Users page lands on
+        # People, and browser writes to its account-admin API are refused.
+        if hide_users and _match(request.url.path, norm_routes) is None:
+            if request.method in ("GET", "HEAD") and _is_users_page(request.url.path):
+                return Response(status_code=302, headers={"location": PEOPLE_URL})
+            if _is_account_write(request.method, request.url.path):
+                return Response("Manage accounts in the Console (People).", status_code=403)
         # Only model ACLs for migrated hubs are locked. Shared groups still serve
         # unmigrated hubs and OWUI's other resources during partial cutover.
         if os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
@@ -316,6 +390,20 @@ def build_edge_app(
                 return JSONResponse(payload)
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 return Response("Agent access is unavailable. Try again.", status_code=503)
+
+        done = _connect_done(request, resp.status_code) if matched is None else None
+        if done:
+            await resp.aclose()
+            headers = {k: v for k, v in _response_headers(resp).items()
+                       if k.lower() != "location"}
+            headers["location"] = done
+            result = Response(status_code=resp.status_code, headers=headers)
+            for k, v in resp.headers.multi_items():
+                if k.lower() == "set-cookie":
+                    result.raw_headers.append((b"set-cookie", v.encode("latin-1")))
+            result.raw_headers.append(
+                (b"set-cookie", f"{CONNECT_COOKIE}=; Max-Age=0; Path=/".encode("latin-1")))
+            return result
 
         if portal_enabled and 'text/html' in resp.headers.get('content-type','') and _match(request.url.path, norm_routes) is None:
             from .portal_navigation import inject
