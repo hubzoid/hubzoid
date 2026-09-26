@@ -79,8 +79,8 @@ correlation easier and avoids colliding with other on-the-hour jobs.
 Each run acts as an ordinary account (`run_as:`, else `HUBZOID_WORKFLOW_USER`,
 else the owner recorded at setup) and uses that account's permissions and its
 own scratch folder: see [workflow-identity.md](workflow-identity.md). With
-`publish_artifacts: true` / `send_email: true` the agent can publish a report
-for that person and email them a link:
+`publish_artifacts: true` / `send_email: true` the agent can publish an artifact
+(a report or any file) for that person and email them a link:
 see [reports-and-email.md](reports-and-email.md).
 
 ## Event-triggered tasks — `on_webhook:`

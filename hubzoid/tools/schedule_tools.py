@@ -16,10 +16,10 @@ Two more, only when the task's frontmatter opts in (the file is the deliberate
 delivery configuration; the model cannot turn them on):
 
   * `publish_artifact` (`publish_artifacts: true`) — publish a file the run
-                       wrote under its writable paths as a private report
+                       wrote under its writable paths as a private artifact
                        owned by the account the run acts as.
   * `send_email`     (`send_email: true`) — email that same account (no other
-                       recipient exists), optionally linking its reports. At
+                       recipient exists), optionally linking its artifacts. At
                        most MAX_EMAILS per run.
 
 All are plain openai-agents FunctionTools, so the existing
@@ -255,14 +255,14 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
 
         @function_tool
         def publish_artifact(path: str, title: str) -> str:
-            """Publish a file you wrote in this run as a report for the person
+            """Publish a file you wrote in this run as an artifact for the person
             this task runs for. Only they can open it until they choose to share
-            it. Returns the report's id and link (they sign in to open it).
+            it. Returns the artifact's id and link (they sign in to open it).
 
             Args:
                 path: hub-relative path of a file under this task's writable
                     paths (for example the scratch folder in your instructions).
-                title: a short human title for the report.
+                title: a short human title for the artifact.
             """
             try:
                 target = resolve_writable(path)
@@ -278,7 +278,7 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
                 return f"[publish_artifact failed: {exc}]"
             emit(event="tool", tool="publish_artifact", path=str(path), artifact=out["id"])
             log.info("schedule[%s] published %s as %s", task.name, path, out["id"])
-            return f"Published report {out['id']}: {out['url']}"
+            return f"Published artifact {out['id']}: {out['url']}"
 
         tools.append(publish_artifact)
 
@@ -287,7 +287,7 @@ def _delivery_tools(hub: Path, task, emit: Callable[..., None], resolve_writable
         @function_tool
         def send_email(subject: str, body: str, artifact_ids: list[str] | None = None) -> str:
             """Email the person this task runs for (the only possible recipient)
-            with a short message and optional links to reports published in this
+            with a short message and optional links to artifacts published in this
             run. Returns what happened; only "Accepted" means it was sent.
 
             Args:

@@ -2,7 +2,7 @@
 
 The recipient is always the run's own account email (see `workflows.identity`).
 There is no to/cc/bcc parameter anywhere, so neither workflow code nor a model
-can address anyone else. Links to published reports are authenticated viewer
+can address anyone else. Links to published artifacts are authenticated viewer
 links (`/portal/artifacts/<id>`), never public-link tokens.
 
 Delivery uses one deployment-wide SMTP sender (`HUBZOID_SMTP_*`; a hub may

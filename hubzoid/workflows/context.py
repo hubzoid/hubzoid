@@ -13,7 +13,7 @@ resolved from the active run's context:
     hub.shared_state["k"]        durable memory shared by everyone who runs it
     hub.run_dir                  a private scratch folder for this run
     hub.publish_artifact(path, title=...)  publish a generated file as a
-                                 private report owned by the run's account
+                                 private artifact owned by the run's account
     hub.send_email(subject, body, artifacts=[...])  email the run's account
     hub.call_llm(prompt, ...)    one tool-free model call (text, JSON or a
                                  Pydantic model), checkpointed as a step
@@ -113,7 +113,7 @@ def publish_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: s
     from .identity import RunIdentity, recheck, require_person
 
     ident = RunIdentity.from_dict(identity)
-    require_person(ident, "Publishing a report")
+    require_person(ident, "Publishing an artifact")
     recheck(Path(hub_dir), hub, ident, what="Publishing")
     return artifacts.publish(
         Path(hub_dir), hub=hub, owner=ident.subject, owner_account=ident.account_id,
@@ -233,7 +233,7 @@ class Hub:
 
     def publish_artifact(self, path, *, title: str | None = None,
                          audience: str = "owner", share_with=()) -> dict:
-        """Publish an existing file as a report owned by the run's account and
+        """Publish an existing file as an artifact owned by the run's account and
         return {"id", "url", "title", "filename", "content_type", "size"}.
 
         Private to the owner by default. `audience="hub"` (everyone who can use
@@ -241,7 +241,7 @@ class Hub:
         {"kind": "group", "principal": "finance"}]` shares it explicitly; both
         need a Console-managed hub. Public links are never made here: the owner
         creates them in the viewer, with permission. Each call stores a new
-        report; earlier ones are never overwritten. Checkpointed as a step."""
+        artifact; earlier ones are never overwritten. Checkpointed as a step."""
         ctx = _ctx()
         source = Path(path)
         if not source.is_absolute():
@@ -257,7 +257,7 @@ class Hub:
     def send_email(self, subject: str, body: str = "", *, artifacts=(),
                    raise_on_failure: bool = True) -> dict:
         """Email the run's own account (there is no other recipient) with
-        optional links to reports it published. Returns the delivery result;
+        optional links to artifacts it published. Returns the delivery result;
         by default raises `EmailError` unless the SMTP server accepted it or it
         was written to the preview outbox. Checkpointed as a step: a recovered
         run never sends an accepted message twice, and an interrupted send is

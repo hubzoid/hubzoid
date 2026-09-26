@@ -372,7 +372,7 @@ def build_app() -> FastAPI:
         uploads_lib.write_with_meta(upload_dir, safe_name, body, mime=mime)
         return JSONResponse({"chat_id": safe_chat, "filename": safe_name, "size": len(body)})
 
-    # Published reports (viewer, sharing, public links) under /portal, so any
+    # Published artifacts (viewer, sharing, public links) under /portal, so any
     # bridge serves them through the edge's /portal route. Before the portal's
     # static mount, which would otherwise answer these paths.
     from .artifacts import web as artifacts_web

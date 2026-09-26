@@ -114,7 +114,7 @@ def test_publish_tool_still_publishes_the_runs_own_output(hub):
     (hub / "reports").mkdir()
     (hub / "reports" / "weekly.csv").write_text("a,b\n1,2\n")
     for path in (f"{task.state_rel}/digest.html", "reports/weekly.csv"):
-        assert _invoke(tool, path).startswith("Published report a"), path
+        assert _invoke(tool, path).startswith("Published artifact a"), path
 
 
 # ---- 2. ownership is bound to the account, its status and its hub access -------------
