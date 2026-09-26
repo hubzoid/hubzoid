@@ -80,21 +80,184 @@ other databases. Moving an existing SQLite deployment's data to PostgreSQL is
 not automated in this release: start PostgreSQL deployments fresh, or copy the
 data yourself. Back up PostgreSQL with `pg_dump` ([BACKUP.md](BACKUP.md)).
 
+## Configuration layers and AWS secrets
+
+Settings come in layers. Each layer is a local file or environment, plus an
+optional JSON secret in AWS Secrets Manager. Nothing changes for a deployment
+that names no secret: hub `.env` files load exactly as before, boto3 is not
+imported and nothing calls AWS.
+
+### Precedence
+
+Lowest first. A later row overrides an earlier one, for the processes it
+reaches.
+
+| # | Layer | Source | Secret named by | Reaches |
+|---|---|---|---|---|
+| 1 | Built-in | Hubzoid defaults | | every process |
+| 2a | Deployment, 0.9.x compatibility | Open WebUI and sign-in keys (`WEBUI_*`, `OAUTH_*`, `ENABLE_SIGNUP` and similar) from hub `.env` files, only when 2b and 2c do not set them | | the gateway and Open WebUI, and the bridges the gateway launches (as in 0.9.x) |
+| 2b | Deployment | The gateway's process environment (systemd `EnvironmentFile`, shell). Standalone `hubzoid run`: the hub `.env` and the process environment | | see below |
+| 2c | Deployment secret | JSON secret | `AWS_SECRET_NAME` in the gateway's environment. Standalone: in the hub `.env` or the environment | see below |
+| 3a | Hub | `<hub>/.env` | | that hub's bridge, inbound, Slack and agent runtime |
+| 3b | Hub secret | JSON secret | `HUBZOID_HUB_SECRET_NAME` in `<hub>/.env` | same as 3a |
+| 4a | Restricted | `<hub>/restricted/.env` | | that hub's restricted tools, in the bridge process |
+| 4b | Restricted secret | JSON secret | `HUBZOID_RESTRICTED_SECRET_NAME` in `restricted/.env` | same as 4a |
+
+- **Within a layer, the secret wins over the file.** A key a secret overrides is
+  logged by name, never by value.
+- **Across layers, the more specific layer wins.** A hub in a gateway applies
+  the deployment secret before its own `.env`.
+- **A standalone hub treats its `.env` as the deployment layer.** There the
+  deployment secret is applied after the `.env` and wins over it. This is the
+  familiar `AWS_SECRET_NAME` pattern: load `.env`, then let the secret override.
+- **One hub cannot redirect the deployment.** In a gateway, `AWS_SECRET_NAME` in
+  a hub `.env` is ignored with a warning. Use `HUBZOID_HUB_SECRET_NAME` for a
+  hub's own secret.
+- **Secret names are read from their own layer only.** `HUBZOID_HUB_SECRET_NAME`
+  is read from `<hub>/.env`. `HUBZOID_RESTRICTED_SECRET_NAME` is read from
+  `restricted/.env`.
+- `DATABASE_URL`, `DATABASE_SCHEMA` and `HUBZOID_OPERATIONAL_DB` still fail on a
+  conflict with the deployment manifest. A hub value of `WEBUI_SECRET_KEY` or an
+  `OAUTH_*_ENCRYPTION_KEY` that differs from the deployment's is a startup
+  warning, not a failure, because older hub `.env` files carry these keys.
+
+### What each process gets
+
+- **The gateway** reads the deployment secret once at start. It loads hub
+  `.env` files only to plan ports and names, and never fetches a hub or
+  restricted secret. It records the deployment secret's name and region (never
+  a value) in `deployment.json` as `deployment_secret`.
+- **Open WebUI** gets the deployment layer without `HUBZOID_*` keys and secret
+  names. When Hubzoid read an AWS secret in that process, the AWS credential
+  variables are removed too. It never gets a hub or restricted layer. Under
+  `hubzoid run` this also stops `restricted/.env` from reaching Open WebUI. An
+  Open WebUI or sign-in key found only in a hub secret or `restricted/.env`
+  still reaches it, with a warning to move it.
+- **Bridges** take only these keys from the deployment secret: the
+  `HUBZOID_GATEWAY_ADMIN_*` keys, `WEBUI_SECRET_KEY`, every
+  `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`, `DATABASE_SCHEMA`,
+  `HUBZOID_OPERATIONAL_DB`, `HUBZOID_PUBLIC_URL`, `WEBUI_URL`, `OWUI_NATIVE_MCP`,
+  `HUBZOID_OTEL_ENDPOINT` and `OTEL_*`. The gateway names the other keys at start
+  (they stay with the gateway and Open WebUI). A bridge turns the deployment
+  `HUBZOID_PUBLIC_URL` into its own `<url>/b/<hub>` address. Each bridge fetches
+  its own hub and restricted secrets.
+- **Bridges the gateway launches** receive the deployment values from the
+  gateway and do not fetch the deployment secret again.
+- **External bridges** (`--no-bridges`) find the deployment secret through the
+  manifest and fetch it themselves, filtered the same way, before their hub
+  layers. Restart them once after the gateway first records the secret.
+- **Agent child processes.** The `claude` CLI, and the stdio MCP servers it
+  starts, get these variables blanked when present:
+  - the secret names: `AWS_SECRET_NAME`, `HUBZOID_HUB_SECRET_NAME`,
+    `HUBZOID_RESTRICTED_SECRET_NAME`
+  - AWS credential material: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+    `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN`,
+    `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`,
+    `AWS_CONTAINER_AUTHORIZATION_TOKEN`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
+    `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_BEARER_TOKEN_BEDROCK`.
+    These are kept when `CLAUDE_CODE_USE_BEDROCK` is on, because the CLI then
+    signs in with them.
+  - Hubzoid and Open WebUI service secrets: `BRIDGE_API_KEYS`,
+    `HUBZOID_ARTIFACT_SECRET`, `HUBZOID_GATEWAY_ADMIN_PASSWORD`,
+    `WEBUI_SECRET_KEY`, every `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`,
+    `HUBZOID_OPERATIONAL_DB`, `HUBZOID_DBOS_DB`
+  - every key set by `restricted/.env` or the restricted secret. A key the hub
+    layers also set gets the hub layer's value instead of a blank.
+
+  The CLI's own `ANTHROPIC_*` and `CLAUDE_*` keys always pass, so
+  `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` keep working. `AWS_PROFILE`,
+  `AWS_REGION` and the AWS config file paths pass, because they select
+  credentials rather than hold them. Other hub `.env` keys pass unchanged, so a
+  stdio MCP server that reads, for example, `SLACK_BOT_TOKEN` still works. An
+  MCP server that needs a blanked value can name it in `.mcp.json`
+  (`"env": {"TOKEN": "${TOOL_TOKEN}"}`), which the bridge fills in. Restricted
+  tools run inside the bridge process for every runtime, so they still see
+  their values. The Codex runtime already starts from a short allowlist, and
+  the OpenAI runtime's stdio MCP servers get the MCP SDK's minimal environment.
+  Agents run as the same OS user as the bridge, so this narrows what children
+  inherit. It is not a filesystem sandbox.
+
+### Using AWS Secrets Manager
+
+Store each secret as a flat JSON object of `NAME: value` pairs:
+
+```json
+{"WEBUI_SECRET_KEY": "...", "HUBZOID_GATEWAY_ADMIN_PASSWORD": "...", "GOOGLE_CLIENT_SECRET": "..."}
+```
+
+- Strings are used as they are. Numbers and booleans become strings (`true`,
+  `false`). `null`, nested values and binary secrets are refused.
+- A secret may not set `AWS_*` keys, the three secret-name keys, or
+  process-control keys (`PATH`, `LD_*`, `DYLD_*`, `PYTHONPATH`, `PYTHONHOME`,
+  `PYTHONSTARTUP`, `NODE_OPTIONS`). Credentials never chain through a secret.
+- Name the region with `AWS_REGION` (or `AWS_DEFAULT_REGION`). A secret ARN
+  carries its own region.
+- **Credentials** come only from boto3's default chain: the instance, task or
+  pod role on AWS. Elsewhere use `AWS_PROFILE`, or `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` (plus `AWS_SESSION_TOKEN` for temporary credentials).
+  Hubzoid never passes keys itself.
+- **IAM.** Grant `secretsmanager:GetSecretValue` on exactly the named secret
+  ARNs, plus `kms:Decrypt` when the secret uses a customer-managed KMS key.
+  With one instance role, every process on the host can read every secret that
+  role allows. Hubzoid scopes secrets per hub in how it loads them, not in IAM.
+  Per-hub IAM isolation needs a task role per hub, or a separate OS user per
+  hub.
+- **Failure is fatal.** A secret that cannot be read stops the process before
+  it serves, with the secret name, the layer and the AWS error class (for
+  example `AccessDeniedException` or `NoCredentialsError`). Values never appear
+  in messages or logs. Logs show the key count at INFO and the key names at
+  DEBUG.
+
+Example gateway environment file:
+
+```bash
+AWS_SECRET_NAME=prod/hubzoid/deployment
+AWS_REGION=ap-south-1
+```
+
+Example hub `.env` and `restricted/.env` lines:
+
+```bash
+HUBZOID_HUB_SECRET_NAME=prod/hubzoid/sales            # in sales/.env
+HUBZOID_RESTRICTED_SECRET_NAME=prod/hubzoid/sales-tools  # in sales/restricted/.env
+```
+
+### Rotation
+
+Values are read once, when a process starts. After rotating a secret, restart:
+
+- the deployment secret: the gateway, then every bridge
+- a hub secret: that hub's bridge, inbound and Slack processes
+- a restricted secret: that hub's bridge
+
+Rotating `WEBUI_SECRET_KEY` signs everyone out. It also makes the stored
+connected-tool tokens (`oauth_session`) undecryptable, so every personal
+connection must be made again. Rotate it only on purpose.
+
 ## Checking a deployment
 
 `hubzoid doctor <hub>` checks a hub and its deployment without changing
-anything: files, the agent build, schedules, database schema, bridge keys,
-chat sign-in, the public bind, model credentials, backup age and scheduled
-work. It exits 1 when any check fails.
+anything: files, configuration layers and secrets, the agent build, schedules,
+database schema, bridge keys, chat sign-in, the public bind, model
+credentials, backup age and scheduled work. It exits 1 when any check fails.
 
 ```bash
-hubzoid doctor ./alpha            # readable
-hubzoid doctor ./alpha --json     # for scripts and monitoring
+hubzoid doctor ./alpha                      # readable
+hubzoid doctor ./alpha --json               # for scripts and monitoring
+hubzoid doctor ./alpha --skip-secret-fetch  # never call AWS
 ```
 
 Each check has a stable id such as `auth.bridge_keys`, `db.operational`,
 `backup.age` or `scheduler.health`, and a status of `ok`, `info`, `warn` or
 `fail`. New checks may be added; existing ids are never renamed.
+
+The layer report (`config.layers`) lists every key a file or secret sets, with
+its layer and source. It never shows a value. `secrets.deployment`,
+`secrets.hub` and `secrets.restricted` read each named secret once to prove it
+is reachable. `secrets.names` warns about a secret name set where it is
+ignored. `auth.google_merge` warns when `GOOGLE_CLIENT_ID` is set without
+`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`, which Google sign-in onto an existing
+password account needs.
 
 ## Path A: native venv on a single Linux box
 
@@ -473,7 +636,9 @@ hub's `.env` is read for that hub only. For deployments upgraded from 0.9.x, the
 gateway still takes those sign-in settings from the hub `.env` files when its own
 environment does not set them, and lists the keys at start (when hubs disagree,
 the last hub listed wins). Nothing else from a hub `.env` reaches the shared
-chat app. `WEBUI_NAME` comes from `--name`.
+chat app. `WEBUI_NAME` comes from `--name`. To keep these settings in AWS
+Secrets Manager instead, see
+[Configuration layers and AWS secrets](#configuration-layers-and-aws-secrets).
 
 **One shared access database.** The bridges share `hubzoid-operational.db` in
 the data directory (or your `HUBZOID_OPERATIONAL_DB` / PostgreSQL). The gateway
