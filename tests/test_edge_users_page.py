@@ -3,6 +3,8 @@
 `HUBZOID_HIDE_OWUI_USERS=true` sends browser navigation to Open WebUI's Users
 page to the Console and refuses browser writes to Open WebUI's account-admin
 API; Hubzoid's own service calls use the internal URL and never pass the edge.
+When every hub is also managed in the Console, Groups is hidden too and the
+whole Users section opens Settings > Integrations.
 The P2 hook rewrites an OAuth client callback redirect to the journey's done
 page when the `hz_connect` cookie is present, and clears the cookie.
 """
@@ -53,11 +55,15 @@ class Upstream:
 
 @pytest.fixture
 def edge(monkeypatch):
-    def make(hide: bool):
+    def make(hide: bool, managed: bool):
         if hide:
             monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
         else:
             monkeypatch.delenv("HUBZOID_HIDE_OWUI_USERS", raising=False)
+        monkeypatch.delenv("HUBZOID_DEPLOYMENT", raising=False)
+        # Whether every hub is Console-managed (read from the deployment; see
+        # the tests of `_fully_managed` below).
+        monkeypatch.setattr("hubzoid.edge._fully_managed", lambda env: managed)
         upstream = Upstream()
         app = build_edge_app(default_base="http://owui",
                              routes=[EdgeRoute("/portal", "http://bridge")])
@@ -76,8 +82,8 @@ def edge(monkeypatch):
 
     made = []
 
-    def factory(hide=False):
-        out = make(hide)
+    def factory(hide=False, managed=False):
+        out = make(hide, managed)
         made.append(out[2])
         return out[0], out[1]
 
@@ -148,6 +154,68 @@ def test_nothing_changes_when_not_hidden(edge):
     assert ("POST", "/api/v1/auths/add") in upstream.seen
 
 
+# ---- every hub managed in the Console: Groups is hidden too ---------------------------
+
+@pytest.mark.parametrize("path", ["/admin", "/admin/", "//admin", "/admin/users", "/admin/users/",
+                                  "/admin/users/overview", "/admin/users/groups",
+                                  "/admin/users/groups/", "//admin/users/groups",
+                                  "/admin/users/anything"])
+def test_the_whole_users_section_opens_settings_when_every_hub_is_managed(edge, path):
+    """Console simplification: with every agent managed in the Console, Open
+    WebUI's groups decide nothing, so neither the user list nor Groups shows. The
+    Admin Panel and any typed /admin/users address open Settings > Integrations."""
+    from hubzoid.edge import SETTINGS_LANDING
+
+    client, upstream = edge(hide=True, managed=True)
+    r = client.get("http://testserver" + path)
+    assert r.status_code == 302 and r.headers["location"] == SETTINGS_LANDING
+    assert client.head("http://testserver" + path).status_code == 302
+    assert upstream.seen == []
+
+
+def test_the_settings_landing_is_outside_the_users_section():
+    """Open WebUI 0.11 opens its admin settings as a dialog from `?settings=`,
+    here over Evaluations, a page that stays; landing under /admin/users again
+    would loop."""
+    from hubzoid.edge import SETTINGS_LANDING, _is_users_section
+
+    page, _, query = SETTINGS_LANDING.partition("?")
+    assert query == "settings=admin%3Aintegrations"
+    assert page.startswith("/admin/evaluations") and not _is_users_section(page)
+
+
+@pytest.mark.parametrize("path", ["/admin/evaluations", "/admin/evaluations/leaderboard",
+                                  "/admin/settings", "/admin/settings/integrations",
+                                  "/admin/functions", "/admin/usersx", "/"])
+def test_other_admin_pages_stay_when_every_hub_is_managed(edge, path):
+    client, upstream = edge(hide=True, managed=True)
+    assert client.get(path).status_code == 200
+    assert upstream.seen == [("GET", path)]
+
+
+def test_managed_hubs_alone_change_nothing_while_the_users_page_shows(edge):
+    """Groups is hidden only together with the user list."""
+    client, upstream = edge(hide=False, managed=True)
+    for path in ("/admin", "/admin/users/groups", "/admin/users/overview"):
+        assert client.get(path).status_code == 200
+    assert "const HIDE_GROUPS = false;" in client.get("/hubzoid-portal-navigation.js").text
+
+
+@pytest.mark.parametrize("method,path,status", [
+    ("POST", "/api/v1/auths/add", 403),                    # accounts: still refused
+    ("DELETE", "/api/v1/users/0b5c-uuid", 403),
+    ("POST", "/api/v1/groups/create", 200),                # groups: unchanged (not locked)
+    ("POST", "/api/v1/groups/id/g1/update", 200),
+    ("GET", "/api/v1/groups/", 200),
+])
+def test_hiding_groups_is_not_access_control(edge, method, path, status):
+    """Hidden links are not access control. Account-admin writes stay refused;
+    group writes keep today's behaviour (HUBZOID_LOCK_OWUI_ACCESS_UI locks them)."""
+    client, upstream = edge(hide=True, managed=True)
+    assert client.request(method, path, json={}).status_code == status
+    assert (upstream.seen == [(method, path)]) is (status == 200)
+
+
 @pytest.mark.parametrize("method,path", [
     ("POST", "/api/v1/auths/add"),
     ("POST", "/api/v1/auths/add/"),
@@ -211,6 +279,19 @@ def test_navigation_script_carries_the_flag(edge):
     assert "const HIDE_USERS = false;" in client2.get("/hubzoid-portal-navigation.js").text
 
 
+@pytest.mark.parametrize("managed", [False, True])
+def test_navigation_script_hides_groups_only_when_every_hub_is_managed(edge, managed):
+    from hubzoid.edge import SETTINGS_LANDING
+
+    client, _ = edge(hide=True, managed=managed)
+    r = client.get("/hubzoid-portal-navigation.js")
+    assert "const HIDE_USERS = true;" in r.text
+    assert f"const HIDE_GROUPS = {'true' if managed else 'false'};" in r.text
+    assert f"const SETTINGS = '{SETTINGS_LANDING}';" in r.text
+    # Decided per request, so a browser must not keep an earlier answer.
+    assert r.headers["cache-control"] == "no-cache"
+
+
 # ---- connection-journey callback (edge contract for P2) --------------------------------
 
 def _set_cookie_values(r):
@@ -253,6 +334,80 @@ def test_callback_untouched_for_other_flows(edge):
     r = client.post("/oauth/clients/mcp:gmail/callback")
     assert r.headers["location"] == "/"
 
+
+
+# ---- fully managed: every hub authoritative in the access store ----------------------
+
+def _deployment(tmp_path, names=("finance", "ops")):
+    from hubzoid import deployment
+
+    dirs = []
+    for name in names:
+        (tmp_path / name).mkdir()
+        dirs.append(tmp_path / name)
+    path = tmp_path / "gateway" / "deployment.json"
+    deployment.save(path, hubs=[dict(key=p.name, name=p.name, path=str(p), model_id=p.name)
+                                for p in dirs],
+                    operational_url=f"sqlite:///{tmp_path}/ops.db", owui_url="http://owui",
+                    owui_db=str(tmp_path / "owui.db"))
+    return str(path), dirs
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    for key in ("HUBZOID_OPERATIONAL_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT"):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_fully_managed_needs_every_hub_on_console_access(tmp_path, monkeypatch, clean_env):
+    from hubzoid.access import store_for
+    from hubzoid.edge import _fully_managed
+
+    manifest, dirs = _deployment(tmp_path)
+    monkeypatch.setenv("HUBZOID_DEPLOYMENT", manifest)
+    env = {"HUBZOID_DEPLOYMENT": manifest}
+    gs = store_for(dirs[0])
+    assert _fully_managed(env) is False                   # both legacy
+    gs.set_authoritative(True, hub="finance")
+    assert _fully_managed(env) is False                   # mixed: ops still legacy
+    gs.set_authoritative(True, hub="ops")
+    assert _fully_managed(env) is True                    # every hub managed
+    gs.set_authoritative(False, hub="ops")                # read again on each use
+    assert _fully_managed(env) is False
+
+
+def test_fully_managed_is_off_without_a_readable_deployment(tmp_path, clean_env):
+    from hubzoid.edge import _fully_managed
+
+    assert _fully_managed({}) is False                    # standalone `hubzoid run`
+    assert _fully_managed({"HUBZOID_DEPLOYMENT": _manifest(tmp_path)}) is False  # no hubs
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json")
+    assert _fully_managed({"HUBZOID_DEPLOYMENT": str(broken)}) is False
+    assert _fully_managed({"HUBZOID_DEPLOYMENT": str(tmp_path / "missing.json")}) is False
+
+
+def test_the_edge_follows_the_hubs_access_mode(tmp_path, monkeypatch, clean_env):
+    """End to end through the edge with a real deployment and access store: a
+    mixed deployment keeps Groups, a fully managed one opens Settings."""
+    from hubzoid.access import store_for
+    from hubzoid.edge import ADMIN_LANDING, SETTINGS_LANDING
+
+    manifest, dirs = _deployment(tmp_path)
+    monkeypatch.setenv("HUBZOID_DEPLOYMENT", manifest)
+    monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
+    gs = store_for(dirs[0])
+    gs.set_authoritative(True, hub="finance")
+    app = build_edge_app(default_base="http://127.0.0.1:1",
+                         routes=[EdgeRoute("/portal", "http://127.0.0.1:2")])
+    with TestClient(app, follow_redirects=False) as client:
+        assert client.get("/admin").headers["location"] == ADMIN_LANDING
+        assert client.get("/admin/users").headers["location"] == "/admin/users/groups"
+        assert "const HIDE_GROUPS = false;" in client.get("/hubzoid-portal-navigation.js").text
+        gs.set_authoritative(True, hub="ops")
+        for path in ("/admin", "/admin/users", "/admin/users/groups", "/admin/users/overview"):
+            assert client.get(path).headers["location"] == SETTINGS_LANDING
+        assert "const HIDE_GROUPS = true;" in client.get("/hubzoid-portal-navigation.js").text
 
 
 # ---- the deployment's default (release review) ---------------------------------------

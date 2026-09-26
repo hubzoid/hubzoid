@@ -24,6 +24,15 @@ administrators see the Admin Panel at all. Hiding links is not access control:
 the edge refuses account-admin writes. A typed `/admin/users/overview` opens the
 Console's People screen (edge).
 
+When every agent in the deployment is also managed in the Console
+(`script(hide_users=True, hide_groups=True)`, decided by the edge), Open WebUI's
+groups decide nothing about agents, so Groups goes too: the Admin Panel's Users
+tab and the Groups tab are hidden, and the Admin Panel entry, and any in-app
+route under `/admin/users`, opens Settings > Integrations over Evaluations
+(`SETTINGS`, the page the edge sends those addresses to) instead. Evaluations,
+Functions and Settings stay. A deployment with any agent still on Open WebUI
+groups keeps the behaviour above.
+
 For every signed-in person it also explains an empty chat: a blocked account,
 or an account with no agent yet, sees a notice instead of an unexplained
 "Select a model".
@@ -40,10 +49,14 @@ stays."""
 SCRIPT = r'''
 (() => {
   const HIDE_USERS = false;
+  // Every agent is managed in the Console as well: Groups is hidden with the user list.
+  const HIDE_GROUPS = false;
   const ID = 'hubzoid-manage-access';
   // Where Open WebUI's Admin Panel opens while its user list is hidden.
   const ADMIN_LANDING = '/admin/users/groups?settings=admin%3Aintegrations';
   const GROUPS = '/admin/users/groups';
+  // ...and while Groups is hidden too: Settings > Integrations over Evaluations.
+  const SETTINGS = '/admin/evaluations/leaderboard?settings=admin%3Aintegrations';
   let authorized = false, revision = 0, queued = false, observedSidebar;
   const style = document.createElement('style');
   // Sized like Open WebUI's own sidebar items: a 16px icon with a 1.5 stroke,
@@ -72,6 +85,8 @@ SCRIPT = r'''
     // While an in-app route heads for the user list, keep it hidden until Groups shows.
     const hidden = document.createElement('style');
     hidden.textContent = 'a[href="/admin/users/overview"]{display:none !important;}' +
+      // The Admin Panel's Users tab (it links to /admin) and the Groups tab.
+      (HIDE_GROUPS ? 'nav a[href="/admin"],a[href^="/admin/users"]{display:none !important;}' : '') +
       'html[data-hz-leaving] :has(> #users-tabs-container){visibility:hidden !important;}';
     document.head.appendChild(hidden);
   }
@@ -90,32 +105,36 @@ SCRIPT = r'''
   }
   const USERS_ROUTES = ['/admin', '/admin/users', '/admin/users/overview'];
   const path = (url) => url.pathname.replace(/\/+$/, '') || '/';
+  // Routes to a hidden page: with Groups hidden too, everything under /admin/users.
+  const hiddenRoute = (p) => USERS_ROUTES.includes(p) || (HIDE_GROUPS && p.startsWith('/admin/users/'));
+  const AWAY = HIDE_GROUPS ? SETTINGS : GROUPS;
   let leaving = 0, left = 0;
   function usersPage() {
     if (!HIDE_USERS) return;
-    const away = USERS_ROUTES.includes(path(location));
+    const away = hiddenRoute(path(location));
     const root = document.documentElement;
     if (root.hasAttribute('data-hz-leaving') !== away) root.toggleAttribute('data-hz-leaving', away);
     // After Open WebUI's own redirect has started, so this navigation is the last
     // one; once, not again for every change the page makes while it runs.
     if (away && !leaving && Date.now() - left > 1500) leaving = setTimeout(() => {
       leaving = 0;
-      if (!USERS_ROUTES.includes(path(location))) return;
+      if (!hiddenRoute(path(location))) return;
       left = Date.now();
-      go(GROUPS, true);
+      go(AWAY, true);
     }, 0);
   }
   // The Admin Panel entry (user menu) and the Admin Panel's Users tab both link to
   // /admin, which Open WebUI routes on to its user list. Take them to an allowed
   // page instead, before any of that renders. Open WebUI's own handler still runs
-  // first (it closes the menu); this navigation starts after it and wins.
+  // first (it closes the menu); this navigation starts after it and wins. With
+  // Groups hidden too, every such link opens Settings.
   addEventListener('click', (e) => {
     if (!HIDE_USERS || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
     if (!a) return;
     const url = new URL(a.href, location.href);
-    if (url.origin !== location.origin || !USERS_ROUTES.includes(path(url))) return;
-    const to = path(url) === '/admin' && !a.closest('nav') ? ADMIN_LANDING : GROUPS;
+    if (url.origin !== location.origin || !hiddenRoute(path(url))) return;
+    const to = HIDE_GROUPS ? SETTINGS : path(url) === '/admin' && !a.closest('nav') ? ADMIN_LANDING : GROUPS;
     e.preventDefault();
     let done = false;
     const once = () => { if (!done) { done = true; go(to); } };
@@ -243,11 +262,18 @@ SCRIPT = r'''
 '''
 
 
-def script(hide_users: bool = False) -> str:
-    """The navigation script, with the Users-page redirect when enabled."""
+def script(hide_users: bool = False, hide_groups: bool = False) -> str:
+    """The navigation script, with the Users-page redirect when enabled.
+
+    `hide_groups` (every agent managed in the Console) also hides Groups. It
+    applies only with `hide_users`: Groups is never hidden while the user list
+    shows."""
     if not hide_users:
         return SCRIPT
-    return SCRIPT.replace("const HIDE_USERS = false;", "const HIDE_USERS = true;", 1)
+    body = SCRIPT.replace("const HIDE_USERS = false;", "const HIDE_USERS = true;", 1)
+    if hide_groups:
+        body = body.replace("const HIDE_GROUPS = false;", "const HIDE_GROUPS = true;", 1)
+    return body
 
 
 def inject(body: bytes) -> bytes:

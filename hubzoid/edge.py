@@ -36,7 +36,12 @@ Two optional behaviours sit on the same front door:
     with Evaluations, Functions and Settings), and refuses browser writes to
     Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
     own service calls go to Open WebUI's internal URL and never pass this edge.
-    In-app navigation is handled the same way by `portal_navigation`.
+    When every hub in the deployment is also managed in the Console (each is
+    authoritative in the access store), Open WebUI's groups decide nothing about
+    agents, so Groups is hidden as well: `/admin` and every `/admin/users` page
+    open Settings > Integrations over Evaluations. A deployment with any hub
+    still on Open WebUI groups keeps Groups. In-app navigation is handled the
+    same way by `portal_navigation`.
   * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
     before sending the browser through Open WebUI's OAuth client flow. When the
     client callback redirects, the edge sends the browser to the journey's done
@@ -58,6 +63,7 @@ import httpx
 import websockets
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -112,6 +118,10 @@ PEOPLE_URL = "/portal/#/people"
 # only for administrators. `portal_navigation.SCRIPT` uses the same address.
 _ADMIN_PANEL = "/admin"
 ADMIN_LANDING = "/admin/users/groups?settings=admin%3Aintegrations"
+# When every hub is managed in the Console, Groups is hidden too: the Admin Panel
+# and every /admin/users page open Settings > Integrations over Evaluations (the
+# Admin Panel page that stays, with Functions and Settings).
+SETTINGS_LANDING = "/admin/evaluations/leaderboard?settings=admin%3Aintegrations"
 # Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
 # user's own settings, never blocked.
 _ACCOUNT_WRITES = (
@@ -147,6 +157,27 @@ def _hide_owui_users(env) -> bool:
         return False
 
 
+def _fully_managed(env) -> bool:
+    """Every hub in the deployment is managed in the Console (authoritative in
+    the access store), so Open WebUI groups decide nothing about any agent.
+    Read on each use, because a hub moves to Console access while the gateway
+    runs. False without a manifest (a standalone `hubzoid run`), with no hubs,
+    or when the store cannot be read: Groups then stays."""
+    if not env.get("HUBZOID_DEPLOYMENT"):
+        return False
+    try:
+        from . import deployment
+        from .access import store_for
+
+        hubs = deployment.read(Path("."), env, require_hub=False).get("hubs") or []
+        return bool(hubs) and all(
+            store_for(Path(h["path"])).is_authoritative(h["key"]) for h in hubs)
+    except Exception:  # noqa: BLE001 - navigation only; keep Groups
+        log.warning("Cannot read how hubs manage access; Open WebUI Groups stays",
+                    exc_info=True)
+        return False
+
+
 def _clean_path(path: str) -> str:
     """Collapse repeated slashes and drop a trailing one, for matching only."""
     path = re.sub(r"/{2,}", "/", path)
@@ -155,6 +186,12 @@ def _clean_path(path: str) -> str:
 
 def _is_users_page(path: str) -> bool:
     return _clean_path(path) in _USERS_PAGES
+
+
+def _is_users_section(path: str) -> bool:
+    """The Admin Panel and every page of its Users section (user list, Groups)."""
+    path = _clean_path(path)
+    return path in (_ADMIN_PANEL, _USERS_SECTION) or path.startswith(_USERS_SECTION + "/")
 
 
 def _is_account_write(method: str, path: str) -> bool:
@@ -326,10 +363,19 @@ def build_edge_app(
         portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import script
-            return Response(script(hide_users=hide_users), media_type='application/javascript')
+            # Whether Groups is hidden changes as hubs move to the Console.
+            managed = hide_users and await run_in_threadpool(_fully_managed, os.environ)
+            return Response(script(hide_users=hide_users, hide_groups=managed),
+                            media_type='application/javascript',
+                            headers={'cache-control': 'no-cache'})
         # Accounts are managed in the Console: Open WebUI's Users page lands on
-        # People, and browser writes to its account-admin API are refused.
+        # People, and browser writes to its account-admin API are refused. With
+        # every hub managed there, its whole Users section (Groups too) opens
+        # Settings instead.
         if hide_users and _match(request.url.path, norm_routes) is None:
+            if (request.method in ("GET", "HEAD") and _is_users_section(request.url.path)
+                    and await run_in_threadpool(_fully_managed, os.environ)):
+                return Response(status_code=302, headers={"location": SETTINGS_LANDING})
             if request.method in ("GET", "HEAD") and _is_users_page(request.url.path):
                 return Response(status_code=302, headers={"location": PEOPLE_URL})
             if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _USERS_SECTION:
