@@ -204,6 +204,9 @@ export type Summary = {
     missed: number | null;
   };
   hubs: SummaryHub[];
+  /** Sign-in accounts in the viewer's scope, independent of `period`.
+   *  `accounts` is null when the account directory could not be read. */
+  user_accounts?: { accounts: number | null; hubs: number };
 };
 
 // status 0 means the request never got a response (network/abort): the server

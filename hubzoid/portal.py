@@ -881,9 +881,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @router.get("/summary")
     def summary(period: str = "7d", admin=Depends(require_admin)):
         """The Console home: usage per hub from Hubzoid's own tables (usage,
-        access decisions, grants, DBOS runs, missed schedule slots). Nothing is
-        read from the chat UI. A number Hubzoid cannot know is null
-        ("unavailable"), never zero."""
+        access decisions, grants, DBOS runs, missed schedule slots), plus
+        `user_accounts`, the login accounts in the viewer's scope read from the
+        chat app's user directory (independent of `period`). A number Hubzoid
+        cannot know is null ("unavailable"), never zero."""
         import time as _time
         from datetime import datetime, timezone
 
@@ -970,6 +971,19 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 failed=r["failed"] if r and key in work_keys else None,
                 missed=missed_slots(h) if key in work_keys else None,
             ))
+        # Login accounts the viewer is responsible for, from the chat app's user
+        # directory. Not tied to the period, unlike `active_users`. A delegate
+        # counts only accounts holding access in their own hubs.
+        from .access.account_counts import user_account_summary
+        from .access.service import Scope
+
+        try:
+            user_accounts = user_account_summary(hub_dir, scope=Scope(
+                org_admin=admin.is_org_admin, hubs=tuple(h["key"] for h in hs)))
+        except Exception:  # noqa: BLE001 — unknown, never zero
+            log.exception("summary: account count unavailable")
+            user_accounts = {"accounts": None, "hubs": len(hs)}
+
         costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
         missed = [r["missed"] for r in rows if r["has_workflows"]]
         totals = dict(
@@ -986,7 +1000,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         return dict(period=period, since=since, generated=now,
                     recording_since=usage["recording_since"], has_workflows=bool(with_work),
-                    runs_available=runs_ok, totals=totals, hubs=rows)
+                    runs_available=runs_ok, totals=totals, hubs=rows,
+                    user_accounts=user_accounts)
 
     @router.get("/overview")
     def overview(admin=Depends(require_admin)):

@@ -14,6 +14,9 @@ const PERIODS = [
   { value: "30d", label: "30 days" },
 ];
 const count = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
+const acrossHubs = (n: number) => `Across ${n.toLocaleString()} ${n === 1 ? "hub" : "hubs"}`;
+const USERS_HINT = "Chat accounts you manage, blocked ones included. Service identities and people "
+  + "invited by email who have not signed up are not counted. The period does not change this total.";
 
 function Stat({ label, value, hint, sub }: {
   label: string;
@@ -68,8 +71,9 @@ export function HomeScreen({ hubs, reloadHubs }: { hubs: Hub[]; reloadHubs: () =
         <div className="stat-grid" role="list" aria-label="Totals">
           <Stat label="Messages" value={count(s.totals.messages)}
             sub={`Across ${count(s.totals.chats)} ${s.totals.chats === 1 ? "conversation" : "conversations"}`} />
-          <Stat label="Users" value={count(s.totals.active_users)}
-            hint="People who sent a message in the selected period." />
+          <Stat label="Users" value={count(s.user_accounts?.accounts)}
+            sub={s.user_accounts?.accounts == null ? "Unavailable" : acrossHubs(s.user_accounts.hubs)}
+            hint={USERS_HINT} />
           <Stat label="Tokens used" value={short(s.totals.input_tokens + s.totals.output_tokens)}
             sub={`${short(s.totals.input_tokens)} in · ${short(s.totals.output_tokens)} out`}
             hint="Includes chat, background calls and workflow model calls." />
