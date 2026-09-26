@@ -49,7 +49,8 @@ access behave as before.
   or WhatsApp sends a personal link bound to that person. The result is checked
   with the provider, confirmed on a browser page and back in WhatsApp, with an
   optional one-time continuation of the waiting request. Built on Open WebUI
-  native MCP, with Composio links routed through the same journey.
+  native MCP only. The optional Composio integration is unchanged and not
+  part of it.
 - Personal Open WebUI MCP connections now work on the OpenAI Agents SDK and
   Codex backends as well as Claude. On managed hubs each app needs its
   `connector_<app>` capability. `connector_` is a reserved capability prefix.

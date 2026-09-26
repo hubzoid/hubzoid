@@ -239,10 +239,15 @@ These are defaults. Only item 1 in Open questions blocks anything.
    identity. The change applies only after that same actor confirms the exact
    plan in the Console with a verified web session. The request is single-use,
    short-lived and audited.
-6. **Connections are built on Open WebUI native MCP by default.** Composio
-   stays as it is, with its link routed through the same bound journey. Each
-   app resolves to exactly one provider per hub. If both could serve it, the
-   journey refuses and names the conflict. This is the rule against duplicates.
+6. **Connections are built on Open WebUI native MCP only.** (Amended
+   2026-09-26 by founder decision: Composio is being sunset, so this release
+   neither introduces nor requires it. The existing optional Composio
+   integration in `connections.py` is unchanged and is not part of the
+   journey. Composio mentions later in this proposal describe the original
+   plan and are superseded.) Each app resolves to exactly one Open WebUI
+   server per hub. If two could serve it, the journey refuses and tells
+   permitted callers that an administrator must keep one. This is the rule
+   against duplicates.
 7. **Connectors are restricted-class capabilities.**
    - Each app `<app>` gets a capability `connector_<app>`, checked by the
      existing `guard.decide`. That includes the `HUBZOID_RESTRICTED_SURFACES`
@@ -875,7 +880,8 @@ provider credentials unless it is marked `e2e`.
 
 ## Open questions
 
-1. **Blocking the Gmail end-to-end only. Which Gmail backend?** No connector
+1. **Resolved 2026-09-26: (a), Open WebUI native MCP.** Composio is being
+   sunset. The original question follows. **Which Gmail backend?** No connector
    path is in use at Isha as far as the evidence shows. Options:
    - **(a)** Open WebUI native MCP with a self-hosted Gmail/Workspace MCP server
      that supports OAuth 2.1, plus a Google OAuth client. An Internal app on

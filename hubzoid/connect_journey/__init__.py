@@ -195,13 +195,15 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
         raise JourneyError("unknown-app", "Name the app to connect, for example Gmail.")
     subject = normalize(ident.user)
     # An app with no Open WebUI server is simply not available here: say so
-    # before asking for a capability no one could grant.
-    provider = providers.for_app(hub_dir, key)
+    # before asking for a capability no one could grant. Everything else about
+    # the setup (such as a duplicate server) is told only to permitted callers.
+    providers.require_available(hub_dir, key)
     allowed, reason = may_start(hub_dir, ident, key)
     if not allowed:
         store.audit(hub_dir, hub=hub, subject=subject, surface=ident.surface, app=key,
                     decision="deny", reason=reason)
         raise JourneyError("denied", _denied_message(key, reason))
+    provider = providers.for_app(hub_dir, key)
 
     try:
         status = provider.status(subject)
