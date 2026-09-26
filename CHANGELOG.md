@@ -108,24 +108,42 @@ upgrade requirements and its known limits.
   and shows usage and runs. Authorized administrators see an **Admin Console**
   entry above their profile in the chat sidebar, with a shield-and-cog icon
   that keeps its name when the sidebar is collapsed.
-- **Add user**, on an agent's Access page and on People, either picks an
-  existing account or creates one (name, email and a typed or generated
-  password to share manually) with its first access in one flow. The password
-  is shown once and is never stored or logged. When Google sign-in and
-  `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` are configured, "Google sign-in only"
-  creates the account with no password to share. A duplicate email offers
-  "Grant access instead". A partial result keeps the account and offers "Try
-  again" without creating a second one. Email-only pre-approval remains,
-  clearly labelled. Public sign-up stays closed.
-- Organization administrators approve pending sign-ups, reset passwords,
-  change the chat-app role and delete accounts from a person's Details.
+- **Add user**, on an agent's Access page and on People, creates a new user
+  (name, email and a typed or generated password to share manually) with their
+  first access in one flow. The password is shown once and is never stored or
+  logged. "Google sign-in only" sits beside the password; when Google sign-in
+  and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` are configured it creates the
+  account with no password to share, otherwise it is disabled with a hint. A
+  duplicate email changes nothing and links to that user, whose access is
+  edited instead. A partial result keeps the account and offers "Try again"
+  without creating a second one. On People, initial access uses the same
+  grouped, collapsible capability sections as Edit access, one per agent.
+  Public sign-up stays closed.
+- A user's details under People show their name, email, status, role and
+  access by agent, with **Edit access** per agent and **Add an agent** for an
+  agent they can't use yet. Organization administrators approve pending
+  sign-ups, reset passwords (a Google-only user's password is managed through
+  Google) and delete users from there.
+- One **Administrator** role: making someone an Administrator sets Hubzoid
+  organization administration and the chat app's admin role together, and
+  **User** clears both. A change that sets only one side is reported with
+  **Try again** (`502 role_partial` from the API), a user who is an
+  administrator on only one side shows **Needs attention** and is never
+  promoted implicitly, and the last administrator can't be demoted or deleted
+  on either side.
+- **Delete user** (in the user's **…** menu, with the email typed to confirm)
+  removes every grant, then the chat account and its chats. Activity history,
+  usage records and published artifacts are kept. The Console no longer offers
+  Block or Reactivate; a user blocked earlier stays blocked and can be unblocked
+  through the management API.
 - Public email and SSO sign-up default to off (`ENABLE_SIGNUP`,
   `ENABLE_OAUTH_SIGNUP`). Explicit operator overrides remain.
 - One authorization service decides every Console and API change. A delegate
   (Manage access on specific agents) grants or removes only what they hold in
   that agent, never Manage access itself. They cannot change their own access
-  or an org admin's, and cannot approve, reset, block or delete accounts. They
-  can create a normal account with access in the agents they manage.
+  or an org admin's, and cannot approve, reset, change roles or delete
+  accounts. They can create a normal account with access in the agents they
+  manage.
   `/portal/api` also accepts an Open WebUI API key (`Bearer sk-...`). Refusals
   carry a `code`.
 - A per-agent **Manage access** grant also lets that person open and chat with
@@ -172,8 +190,14 @@ upgrade requirements and its known limits.
   and refuses its account-admin writes (recorded in `deployment.json`,
   `HUBZOID_HIDE_OWUI_USERS` overrides, existing deployments unchanged). Open
   WebUI's Admin Panel entry then opens Settings > Integrations over Groups, and
-  its Users tab opens Groups. Only Open WebUI administrators see the Admin
-  Panel.
+  its Users tab opens Groups. When every agent is managed in the Console, the
+  whole Users section, Groups included, is hidden and opens Settings >
+  Integrations. Only Open WebUI administrators see the Admin Panel.
+- The Console works at phone and tablet widths: pages don't scroll sideways,
+  tables scroll within their frame, drawers take the full width on phones with
+  their buttons in reach, and links, small buttons and icons have larger touch
+  targets. Agent cards keep their metrics and buttons aligned when a name or
+  badge wraps.
 - The Console's service account reuses its Open WebUI token instead of signing
   in for every sync and account action, which could exhaust Open WebUI's
   sign-in limit for the owner's email.

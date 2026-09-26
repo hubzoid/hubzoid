@@ -13,57 +13,43 @@ on its own.
 ## Accounts and grants
 
 Public sign-up is closed by default. Managers add people with **Add user**, on
-an agent's **Access** tab or on **People**. On an agent it starts with one
-choice:
-
-- **Existing account**: find someone who already signs in, then choose what
-  they can do in this agent.
-- **New account**: create their sign-in and their access in this agent in the
-  same step.
-
-Add user never presents an email without an account as a user. When no account
-uses an email, the Access tab offers **Create a new account** or, explicitly,
-**Pre-approve this email instead**. A pre-approval is a grant to the email that
-starts working when someone signs in with it, for example through single
-sign-on. No account is created and the access list shows **Not signed up yet**.
+an agent's **Access** tab or on **People**. **Add user** always creates a new
+user: their sign-in and their first access in one step. To change what an
+existing user can do, edit their access instead (below). Add user never changes
+an existing account.
 
 ### Add a user (implemented)
 
-On an agent:
-
-1. Open **Agents → the agent → Access → Add user**.
-2. Choose **Existing account** or **New account**.
-   - Existing account: search by name or email. An agent manager sees the
-     people in the agents they manage, and finds anyone else by typing their
-     full email. Only real chat accounts are offered.
-   - New account: enter the name and email. The default sign-in is a password:
-     type one or use **Generate**. **Google sign-in only** appears when the
-     chat app supports it (below).
-3. Choose capabilities. Anything you may not give is shown as **Outside your
-   access** or **Admins only** and cannot be selected.
-4. Review, then save (existing account) or **Create account**.
-5. For a new password account, the sign-in details (chat address, email and
+1. Open **Agents → the agent → Access → Add user**, or **People → Add user**.
+2. Enter their name and email. The sign-in is a password: type one or use
+   **Generate**. **Google sign-in only** sits beside the password. It is
+   selectable only when the chat app supports it (below); otherwise it is
+   disabled with a short hint.
+3. Choose their initial access. From an agent, that agent's capabilities are
+   shown directly. From People, each agent you manage is a collapsed section.
+   Inside, optional groups start collapsed and show how many are selected.
+   Anything you may not give is shown as **Outside your access** or **Admins
+   only** and cannot be selected. Descriptions are in tooltips.
+4. **Review**, then **Create account**.
+5. For a password account, the sign-in details (chat address, email and
    password) are shown once, with **Copy** and **Copy sign-in details**. Share
    them yourself. No invitation or email is sent. The password is dropped from
    the page when you select **Done**.
-
-On **People**, **Add user** creates a new account with initial access in any
-agents you manage, and handles the same outcomes.
 
 The account is created with Open WebUI's normal `user` role through its admin
 API (`POST /api/v1/auths/add`), as the deployment's service account on the
 internal URL. Hubzoid then binds the new account to its email and applies the
 grants in one transaction, audited as `account_create` plus each grant. The
 password is never stored, logged, audited or returned by the server. Initial
-access is per agent: organization administrator rights are granted under People
-once the account exists. Giving an existing account access
-(`POST /portal/api/accounts/grant`) never creates an account and never grants
-to an email that has none.
+access is per agent. The Administrator role is set from the person's details
+once the account exists.
 
 What happens when something goes wrong:
 
-- **The email already has an account.** Nothing is created. **Grant access
-  instead** gives that account the access you chose.
+- **The email already has an account.** Nothing is created or changed. The
+  Console says the user already exists and links to them (**Edit this user**,
+  or **Edit their access** on an agent). There is no way to grant from this
+  message: edit their access, review it, and save.
 - **The account was created but access could not be saved.** The chat app and
   the access store cannot commit together. Hubzoid keeps the account, records
   it without access, and says exactly that. The sign-in details stay on screen.
@@ -71,24 +57,38 @@ What happens when something goes wrong:
   and nothing is deleted to look like a rollback.
 - **The chat app did not answer.** The Console says it couldn't confirm the
   result. **Try again** is safe: if the account was made, the chat app refuses
-  a duplicate and the Console offers **Grant access instead**. It notes that the
-  account may use the password you set in the earlier attempt.
+  a duplicate and the Console says the user exists, noting that the account may
+  use the password you set in the earlier attempt.
 - **The email belonged to a deleted account.** Only an organization
   administrator can re-create it. The old grants are removed first, audited as
   `account_replaced`.
 - **Account management isn't set up.** The Console needs the chat app's
   internal URL and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`HUBZOID_GATEWAY_ADMIN_PASSWORD`.
-  It refuses to write through a public URL. **New account** is unavailable
-  until then.
+  It refuses to write through a public URL. Add user says so until then.
 
 Console account creation works on a deployment whose agents still use legacy
 access. Access for those agents keeps coming from Open WebUI groups.
 
+Add user no longer offers to pre-approve an email that has no account. A grant
+to an email that starts working when someone first signs in with it (for
+example through single sign-on) can still be made with `hubzoid grant <email>
+use_hub --hub <hub>` or the management API.
+
+### Edit an existing user's access (implemented)
+
+- On an agent: **Access → Edit access** on their row.
+- From **People**: open the user. **Access by agent** lists each agent they can
+  use, with **Edit access**. **Add an agent** opens the editor for an agent
+  they can't use yet, starting with Use this agent.
+
+Either way you review the change before it is saved. A blocked user is shown as
+blocked, and new access for them is refused before saving.
+
 ### Google sign-in only (implemented)
 
-**New account** offers **How they sign in: Password or Google sign-in only**
-only when the chat app attaches a Google sign-in to an existing account by
-email. That needs all of these for the chat app:
+**Google sign-in only** can be selected only when the chat app attaches a
+Google sign-in to an existing account by email. That needs all of these for the
+chat app:
 
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set
 - `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`
@@ -100,7 +100,8 @@ generated on the server. It is never returned, shown, stored or logged, so
 nobody can sign in with a password. The person selects **Sign in with Google**
 and Open WebUI links the sign-in to the account by email. When
 `OAUTH_ALLOWED_DOMAINS` limits Google sign-in, the Console accepts only those
-domains.
+domains. The user's details then say their password is managed through Google,
+and the Console does not reset it.
 
 Only Google is offered. Open WebUI 0.11.4 links by email without checking the
 provider's `email_verified` claim, and Google account emails are verified.
@@ -117,23 +118,66 @@ standalone `hubzoid run` reads its own environment.
 A password account can also sign in with Google once the deployment is set up
 this way.
 
-### Account actions for organization administrators (implemented)
+### User details (implemented)
 
-A person's **Details** has a **Chat account** section with the live chat-app
-role. Organization administrators can:
+Open a user from **People**. Their details show name, email, status, **Role**
+and **Access by agent**. For organization administrators they also show:
 
-- **Approve** a pending signup.
+- **Role: User or Administrator.** One role, with a confirmation. See below.
+- **Approve**, in place of the role, for a signup awaiting approval.
 - **Reset password.** The new password is shown once. Open WebUI signs the
-  person out of other sessions.
-- Switch the **chat-app administrator role** (`user` or `admin`). This does not
-  grant Console or agent access.
-- **Delete account.** Type the email to confirm. Every grant is removed first,
-  then the account and its chats. The last organization administrator cannot
-  be removed.
+  person out of other sessions. For a Google-only user the details say the
+  password is managed through Google instead.
+- **Delete user**, in the **…** menu. See below.
 
-You cannot change your own account here, nor the Console's service account.
-Changing an account's email is not offered: grants are keyed on the email, so
-create a new account instead.
+You cannot change your own role or account here, nor the Console's service
+account. Changing an account's email is not offered: grants are keyed on the
+email, so create a new account instead.
+
+### One Administrator role (implemented)
+
+**Administrator** is organization administration in Hubzoid (Manage access for
+the whole deployment) together with the chat app's `admin` role. **User**
+clears both. They are always set together:
+
+- The chat app's role is set first, then Hubzoid administration. If only one
+  side changes, the Console says which side is set and offers **Try again**,
+  which finishes the change. The API answers `502 role_partial`, and repeating
+  the same request finishes it.
+- If the chat app refuses clearly, nothing is changed. If its answer is
+  unclear, Hubzoid administration is left as it was.
+- A user who is an administrator on only one side (for example, made one in
+  the chat app directly) shows **Needs attention**. Reading their details never
+  promotes or demotes anyone. Choose a role to fix it.
+- The last administrator can't be made a User or deleted, on either side. The
+  Console's service account counts as a chat-app administrator only when it
+  also holds Hubzoid administration, that is, when someone administers with it.
+- Changes are audited as `account_role` plus the grant or revoke.
+
+Delegates (Manage access on specific agents) have no role control.
+
+### Delete a user (implemented)
+
+**…** → **Delete user**, then type their email to confirm. This is a real
+deletion:
+
+- Every grant is removed, then the chat account is deleted through Open WebUI,
+  which also deletes their chats, shared chat links and group memberships.
+- Kept: Activity history, usage records and artifacts they published (their
+  public links stop working). The email is marked as removed, so it inherits
+  nothing; only an organization administrator can create an account with it
+  again.
+- The last administrator can't be deleted.
+- Audited as `account_delete`.
+
+### Blocked users
+
+The Console no longer offers Block or Reactivate. A user blocked in an earlier
+release stays blocked: they show as **Blocked**, and new access for them is
+refused. Delete them, or unblock them through the management API
+(`POST /portal/api/people/block` with `{"subject": "<email>", "suspended":
+false}`, as an organization administrator). Unblocking does not restore the
+grants the block removed.
 
 The capability picker shows names and compact Inherited, Required or Locked
 labels. Question-mark buttons expose descriptions and restriction details on
@@ -180,12 +224,12 @@ A delegate cannot:
   organization administrator's access
 - remove all of someone's access in an agent when that person holds a
   capability the delegate does not
-- reset passwords, approve, change roles, delete or block accounts
+- reset passwords, approve, change roles or delete accounts
 
 A delegate can create a normal account, but only with at least one grant in an
-agent they manage and within their ceiling, never an organization
-administrator. **Grant access instead** and **Try again** are checked the same
-way. Organization administrators keep their full scope.
+agent they manage and within their ceiling, never an administrator. **Try
+again** after a partial create is checked the same way. Organization
+administrators keep their full scope.
 
 ## Management API (implemented)
 
@@ -236,20 +280,19 @@ See [administration](ADMINISTRATION.md) for recovery and migration commands.
 
 ## Grant a teammate access
 
-1. Open **Agents → the agent → Access → Add user**.
-2. Choose **Existing account** and find them, or **New account** to create
-   their sign-in in the same step.
-3. Choose capabilities, review the changes, and save.
-4. Share the chat URL (and, for a new account, the sign-in details). No
-   invitation is sent. A person awaiting approval is approved from their
-   Details under People.
-5. Verify with that person's account that allowed agents appear and a disallowed
+1. If they don't have an account yet: **Agents → the agent → Access → Add
+   user**, create it with the capabilities they need, and share the sign-in
+   details.
+2. If they already have one: **Edit access** on their row, or open them under
+   **People** and use **Add an agent**. Choose capabilities, review, and save.
+3. Share the chat URL. No invitation is sent. A person awaiting approval is
+   approved from their details under People.
+4. Verify with that person's account that allowed agents appear and a disallowed
    tool stays unavailable.
 
 Changes apply atomically. If someone else edited access first, reload and review
 again. A lost response can leave the save uncertain; refresh before retrying.
-Use **People** to distinguish an administrator block from a pending or unavailable
-chat account. Reactivation does not recreate grants removed by an explicit block.
+**People** distinguishes a blocked user from a pending or unavailable account.
 
 ## Everyone signed in (no longer granted)
 
@@ -273,11 +316,12 @@ To replace it with named grants:
 
 1. Open **Agents → the agent → Access**. The notice above the list says the
    agent is open to everyone signed in.
-2. Add the people who need the agent by name with **Add user** (an existing
-   account, or a new one). Workflows run as an ordinary account: add that
-   account the same way.
+2. Give the people who need the agent named access: **Add user** for someone
+   new, or **People → the user → Add an agent** for an existing user.
+   Workflows run as an ordinary account: give that account access the same
+   way.
 3. Select **Remove** on the **Everyone signed in** row. The confirmation says how
-   many chat accounts open the agent only through it. They, and anyone who signs
+   many users open the agent only through it. They, and anyone who signs
    up later, lose entry. Named grants are not affected.
 
 From a shell: `hubzoid revoke '*' use_hub --hub <hub> <hub_dir>`.
@@ -438,13 +482,19 @@ explicit `HUBZOID_HIDE_OWUI_USERS=true|false` in the environment of the process
 that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
 - Opening Open WebUI's user list (`/admin/users/overview`) lands on Console
-  **People**. The Users section itself (`/admin/users`, where the Admin Panel
-  opens) lands on Groups. Settings, Evaluations and Functions are unchanged.
+  **People**.
+- When every agent in the deployment is managed in the Console, Open WebUI's
+  groups decide nothing, so its whole Users section is hidden: the Admin Panel
+  (`/admin`) and every `/admin/users` page, Groups included, open **Settings →
+  Integrations** before anything renders, and the Admin Panel shows no Users
+  link. This is checked on each request, so it follows a hub's migration.
+- While any agent still uses legacy access, the Users section opens Groups,
+  and Groups stays.
+- Settings, Evaluations and Functions are unchanged.
 - Browser writes to Open WebUI's account admin API get 403: `POST
   /api/v1/auths/add`, `POST /api/v1/users/{id}/update` and `DELETE
   /api/v1/users/{id}`. A person's own settings (`/api/v1/users/user/...`) are
   unaffected.
-- The Groups tab (`/admin/users/groups`) stays, because legacy agents use groups.
 - Hubzoid's own calls go to the internal URL and never pass the edge.
 
 ## Planned, not built yet

@@ -118,8 +118,8 @@ checked for the caller.
 
 Open WebUI supplies chat and account authentication. Hubzoid's Admin Console supplies access management and execution inspection at `/portal/`. Administrators see an **Admin Console** link above their profile in the chat sidebar (an icon when collapsed). There is one account system. With public sign-up closed by default, an
 administrator uses **Add user** in the Admin Console, from an agent's Access page or
-from People, to create a login account (or pick an existing one) and give it access in
-one step. Nothing is sent: the administrator shares the sign-in details. With Google
+from People, to create a login account and give it access in one step; an existing
+user's access is changed with **Edit access**. Nothing is sent: the administrator shares the sign-in details. With Google
 sign-in and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only**
 creates an account with no password to share.
 

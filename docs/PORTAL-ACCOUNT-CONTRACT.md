@@ -27,8 +27,9 @@ every write. A refusal from it has this body:
 `outside_ceiling`, `self_change`, `legacy`, `unknown_permission`, `blocked`,
 `unavailable`, `conflict`, `account_exists`, `account_replaced`,
 `invalid_password`, `invalid_request`, `accounts_unavailable`, `uncertain`,
-`partial`, `not_found`, `expired`, `not_pending`, `plan_changed`,
-`session_required` and `too_many`.
+`partial`, `role_partial`, `last_admin`, `google_managed`, `invalid_role`,
+`pending`, `confirm_email`, `not_found`, `expired`, `not_pending`,
+`plan_changed`, `session_required` and `too_many`.
 
 ## Two block markers, one enforcement answer
 
@@ -38,14 +39,14 @@ subject as blocked when **either** is set.
 
 | Marker | Set by | Cleared by |
 |---|---|---|
-| `suspended` | An org admin blocking the person (`POST /people/block`), or the store's `account_replaced` safeguard when a known email re-appears under a new OWUI id. Blocking also **deletes every grant** for the subject. | `POST /people/block` with `suspended:false` ("Reactivate"). Grants are **not** restored. |
+| `suspended` | `POST /people/block` (API only; the Console no longer offers Block), a block made in an earlier release, or the store's `account_replaced` safeguard when a known email re-appears under a new OWUI id. Blocking also **deletes every grant** for the subject. | `POST /people/block` with `suspended:false` (unblock; API only). Grants are **not** restored. |
 | `account_unavailable` | Open WebUI: the account is `role=pending` (signed up, not yet approved), or a complete directory read no longer lists an account that was previously bound. | Only by OWUI reporting the account as approved / present again (login, `POST /people/refresh`, or the 30 s visibility loop). An admin cannot clear it from the portal. |
 
 The API exposes both, plus their OR:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `suspended` | bool | Admin block marker. Reactivate can clear this. |
+| `suspended` | bool | Admin block marker. Unblocking can clear this. |
 | `account_unavailable` | bool | Chat-app-side block. Approve/restore the account in Open WebUI, then refresh. |
 | `blocked` | bool | `suspended || account_unavailable`. Always equals what enforcement uses. **Gate "can I add access" on this, not on `status`.** |
 | `status` | string | One display label, see precedence below. |
@@ -73,10 +74,10 @@ Reading the combinations the UI will actually meet:
 |---|---|---|---|---|
 | `active` | false | false | false | Normal user. |
 | `awaiting-signup` | false | false | false | Granted by email; hasn't signed in yet. Not blocked. |
-| `pending-approval` | false | **true** | **true** | Signed up, awaiting OWUI approval. Blocked until approved; Reactivate does nothing. |
-| `blocked` | **true** | false | true | Admin block. Reactivate clears it. |
-| `blocked` | false | **true** | true | Account deleted / missing in OWUI. Reactivate does nothing; restore in OWUI. |
-| `blocked` | **true** | **true** | true | Admin block on a pending or missing account. Reactivate clears the admin part only; `status` then becomes `pending-approval` or stays `blocked` with `account_unavailable=true`. |
+| `pending-approval` | false | **true** | **true** | Signed up, awaiting OWUI approval. Blocked until approved; unblocking does nothing. |
+| `blocked` | **true** | false | true | Admin block. Unblocking clears it. |
+| `blocked` | false | **true** | true | Account deleted / missing in OWUI. Unblocking does nothing; restore in OWUI. |
+| `blocked` | **true** | **true** | true | Admin block on a pending or missing account. Unblocking clears the admin part only; `status` then becomes `pending-approval` or stays `blocked` with `account_unavailable=true`. |
 
 Before this change `status` tested `is_suspended` first, so a pending user always
 rendered as `blocked` and `pending-approval` was unreachable.
@@ -123,15 +124,16 @@ Unchanged behaviour, clearer 409s:
 
 | Cause | 409 `detail` |
 |---|---|
-| `suspended` | `Reactivate this user before granting access` |
+| `suspended` | `This person is blocked, so they can't be given access.` |
 | `account_unavailable` only | `This account is unavailable in the chat app (awaiting approval or removed). Approve or restore it in Open WebUI, then refresh accounts.` |
 
 Revokes to blocked subjects still succeed.
 
 ### `POST /portal/api/people/block` `{subject, suspended?: true}`
 
-Org admin only. Returns the post-action account state instead of a bare
-`{ok:true}`:
+Org admin only. The Console no longer calls it: it stays for API callers, and
+for unblocking someone blocked in an earlier release. Returns the post-action
+account state instead of a bare `{ok:true}`:
 
 ```json
 {
@@ -149,14 +151,14 @@ Org admin only. Returns the post-action account state instead of a bare
 | Field | Meaning |
 |---|---|
 | `ok` | Request handled (kept for compatibility; always `true` on 2xx). |
-| `changed` | Whether the store was written. Block: always `true`. Reactivate: `true` only if the admin marker was set. |
-| `message` | `null`, or a sentence to show the admin when the person is **still blocked** after a reactivate. Prefixed `Admin block cleared.` when the admin marker was removed but OWUI still disallows the account, or `Not blocked by an admin.` when there was nothing to clear. |
+| `changed` | Whether the store was written. Block: always `true`. Unblock: `true` only if the admin marker was set. |
+| `message` | `null`, or a sentence to show the admin when the person is **still blocked** after an unblock. Prefixed `Admin block cleared.` when the admin marker was removed but OWUI still disallows the account, or `Not blocked by an admin.` when there was nothing to clear. |
 | `suspended`, `account_unavailable`, `blocked`, `status` | State after the action, same semantics as above. |
 
 Rules:
 
-- A reactivate with `changed=false` writes nothing: no audit row, no marker
-  change. This removes the misleading "reactivated" audit entry for a no-op.
+- An unblock with `changed=false` writes nothing: no audit row, no marker
+  change. (It is still audited as `reactivate` when it does change something.)
 - The `account_unavailable` marker is never touched by this endpoint. Enforcement
   is exactly as strong as before.
 - Errors are unchanged: 403 for non-org admins or cross-origin, 409 for
@@ -183,9 +185,9 @@ echo a value.
 
 | Status and code | Meaning |
 |---|---|
-| 409 `account_exists` | The email already has an account. Grant access instead. Nothing was created. |
+| 409 `account_exists` | The email already has an account. Nothing was created or changed. The body carries `subject`; edit that user's access instead. |
 | 409 `account_replaced` | The email belonged to a deleted account. Only an organization administrator can re-create it. |
-| 409 `blocked` | The email is blocked. Reactivate it first. |
+| 409 `blocked` | The email is blocked. Nothing was created. |
 | 403 `outside_ceiling`, `forbidden` | A grant the caller may not give. Nothing was created. |
 | 422 `rejected`, `invalid_password` | Open WebUI or the minimum rule (8 characters, at most 72 bytes) refused the password. |
 | 503 `accounts_unavailable` | No internal URL or service account. |
@@ -195,26 +197,29 @@ echo a value.
 A retry never creates a second account: after `uncertain` or `partial`, the
 account is found by email.
 
-### `GET /portal/api/accounts?q=…` and `POST /portal/api/accounts/grant`
+### `POST /portal/api/accounts/grant`
 
-`GET` lists existing sign-in accounts the caller may manage, for "Add user,
-Existing account". `POST /accounts/grant` `{email, grants}` gives access to an
-existing account. It returns 404 `no_account` when the email has no account,
-and never creates an email-only grant silently.
+`{email, grants}` gives access to an existing account: Add user's **Try again**
+after a `partial` create, and API callers. It returns 404 `no_account` when the
+email has no account, and never creates an account or an email-only grant.
+There is no account search endpoint: Add user only creates new users, and
+existing users' access is changed with `POST /access/apply`.
 
 ### Account actions (organization administrators)
 
 | Method and path | Body | Notes |
 |---|---|---|
-| `GET /accounts/{subject}` | | `{subject, name, role}` read live from Open WebUI |
-| `POST /accounts/{subject}/password` | `{password}` | Open WebUI revokes the account's sessions |
+| `GET /accounts/{subject}` | | `{subject, name, role, sign_in, console_admin, chat_admin, administrator}`, read live from Open WebUI. `role` is the chat app's role. `sign_in` is `password`, `google` or null. `administrator` is `admin`, `user`, `console_only`, `chat_only` or `pending`. Reading never changes either side |
+| `POST /accounts/{subject}/password` | `{password}` | Open WebUI revokes the account's sessions. 409 `google_managed` for a Google-only account |
 | `POST /accounts/{subject}/approve` | | `pending` to `user`, then the identity is marked available |
-| `POST /accounts/{subject}/role` | `{role: "user"\|"admin"}` | The chat-app role only. Grants nothing in Hubzoid |
-| `DELETE /accounts/{subject}` | `{confirm_email}` | Removes every grant, then the account. 409 `last_admin` if it would remove the final org admin. 502 `partial` if grants were removed but the account was not |
+| `POST /accounts/{subject}/role` | `{role: "user"\|"admin"}` | The Administrator role: the chat app's role first, then organization-wide `manage_access`. Returns `{ok, subject, role, changed, console_admin, chat_admin, administrator}`. 502 `role_partial` when only one side changed (the body carries `retry: true` and both sides); repeating the request finishes it. 409 `pending` before approval, 409 `last_admin` for the last administrator on either side |
+| `DELETE /accounts/{subject}` | `{confirm_email}` | Removes every grant, then the account and its chats; marks the email removed. 422 `confirm_email` if the email doesn't match. 409 `last_admin` if it would remove the last administrator on either side. 502 `partial` if grants were removed but the account was not |
 
 Each refuses your own account (`self_change`) and the service account
 (`service_account`), and checks that the account linked to the subject still has
-that email (`account_changed`).
+that email (`account_changed`). For the last-administrator check, the service
+account counts as a chat-app administrator only when it also holds
+organization-wide `manage_access`.
 
 ### Change requests
 
@@ -234,13 +239,13 @@ refused stays `pending`. Any other failure marks it `failed`.
 
 ## UI guidance
 
-- After Block / Reactivate, render from the response body; a reload is not
-  required to learn the outcome.
-- If `blocked && !suspended` after Reactivate, show `message` and link to Open
-  WebUI's admin users page, then offer "Refresh accounts" (`POST /people/refresh`).
 - Disable *adds* in the Access drawer when `row.blocked`, not when
   `row.status === "blocked"` (pending users are blocked with a different label).
-- Reactivate should only be offered when `suspended === true`.
+- Show `administrator` values `console_only` and `chat_only` as needing
+  attention, and let the admin choose a role. Never fix them on read.
+- On `role_partial`, show the message and offer to repeat the same request.
+- A caller that unblocks through `POST /people/block` should render from its
+  response body, and show `message` when `blocked && !suspended` afterwards.
 
 ## Limitations (honest list)
 
@@ -255,7 +260,7 @@ refused stays `pending`. Any other failure marks it `failed`.
   (`POST /access/apply`). There is no multi-person batch.
 - A change request interrupted while `applying` (a process crash) stays in that
   state. Propose it again.
-- Reactivate does not restore the grants that blocking deleted.
+- Unblocking does not restore the grants that blocking deleted.
 - Each `/access` row and `/people` entry now costs one extra SQLite read (two
   marker lookups in one connection). `/people` still computes state for every
   identity before paginating, as before.

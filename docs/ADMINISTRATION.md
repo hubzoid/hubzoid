@@ -98,13 +98,13 @@ created, its sign-in details yourself.
 
 ## Grant access and verify the end-user experience
 
-1. Open the agent, go to its **Access** tab and select **Add user**. Choose
-   **Existing account** and find the person, or **New account** to create their
-   sign-in in the same step (name, email, and a password you type or
-   generate).
+1. Open the agent and go to its **Access** tab. For someone without an
+   account, select **Add user** and enter their name, email and a password you
+   type or generate. For an existing user, select **Edit access** on their row,
+   or open them under **People** and use **Add an agent**.
 2. Tick the capabilities they need (a tool capability includes agent entry
-   automatically), then **Review changes** and save (**Create account** for a
-   new account). A new account's sign-in details are shown once to copy.
+   automatically), then review and save (**Create account** for a new user).
+   A new user's sign-in details are shown once to copy.
 3. The permission check changes immediately. The chat app's model picker reflects
    the new access within about 30 seconds; the portal retries that projection on
    its own and only surfaces it if it keeps failing.
@@ -123,9 +123,9 @@ The portal's **People** screen distinguishes accounts awaiting signup, pending
 approval, active accounts, services, and blocked people. **Refresh accounts**
 re-reads the account directory. It does not create accounts. **Add user**
 creates one (see [Accounts in the Console](#accounts-in-the-console)).
-Organization admins add or remove other organization admins from a person's
-**Details**. Agent admins cannot change admin rights or use an entry revocation
-to remove another admin's rights.
+Organization administrators set a user's **Role** (User or Administrator) in
+their details. Agent admins cannot change roles or use an entry revocation to
+remove another administrator's rights.
 
 Agent admins also work within a ceiling. In each agent they manage they can
 grant or remove only the capabilities they hold there themselves, never
@@ -144,14 +144,14 @@ administrator selects **Remove** on that row. The confirmation says how many
 chat accounts rely on it alone. See
 [access management](access-management.md#everyone-signed-in-no-longer-granted).
 
-**Block access** removes a person's direct grants and blocks agent access,
-including access through "Everyone signed in". It leaves the OWUI account and chats intact. Reactivation
-does not restore removed grants. For full account offboarding, use **Delete
-account** in the person's Details (organization administrators), which removes
-every grant and then the chat account and its chats. The person's Open WebUI API
-keys stop working with the account. Open WebUI keeps its stored connection tokens
-for a deleted account in its database. The final organization administrator
-cannot be removed, blocked or deleted.
+To offboard someone, an organization administrator opens them under People
+and uses **…** → **Delete user**. That removes every grant, then the chat
+account and its chats; Activity history, usage records and published artifacts
+are kept. The person's Open WebUI API keys stop working with the account. Open
+WebUI keeps its stored connection tokens for a deleted account in its database.
+The last administrator cannot be made a User or deleted. The Console no longer
+offers Block or Reactivate; a user blocked in an earlier release stays blocked
+(see [blocked users](access-management.md#blocked-users)).
 
 Scheduled workflows run as ordinary accounts ([workflow-identity.md](workflow-identity.md)),
 granted like anyone else. Older `workflow:<function_name>` subjects are kept but
@@ -218,12 +218,12 @@ What managers can do:
 
 | Action | Who | Where |
 |---|---|---|
-| Create an account (role `user`) with initial access | Org admins, and delegates within their ceiling | Agent → Access → Add user → New account, or People → Add user |
-| Give an existing account access | Org admins, and delegates within their ceiling | Agent → Access → Add user → Existing account |
-| Approve a pending signup | Org admins | Person Details → Chat account |
-| Reset a password (shown once) | Org admins | Person Details → Chat account |
-| Switch the chat-app admin role | Org admins | Person Details → Chat account |
-| Delete an account | Org admins | Person Details → Chat account |
+| Create a user (role `user`) with initial access | Org admins, and delegates within their ceiling | Agent → Access → Add user, or People → Add user |
+| Change an existing user's access | Org admins, and delegates within their ceiling | Agent → Access → Edit access, or People → the user → Edit access / Add an agent |
+| Approve a pending signup | Org admins | People → the user → Role |
+| Reset a password (shown once) | Org admins | People → the user → Reset password |
+| Make someone an Administrator, or a User again | Org admins | People → the user → Role |
+| Delete a user | Org admins | People → the user → … → Delete user |
 
 Every action is audited in **Activity → Access changes** (`account_create`,
 `account_approve`, `account_password_reset`, `account_role`, `account_delete`)
@@ -233,13 +233,17 @@ account instead, because grants are keyed on the email.
 Creating an account and granting its access touch two systems that cannot
 commit together. If access fails after the account exists, the Console says the
 account was created without access, keeps its sign-in details on screen, and
-**Try again** grants to that account. A duplicate email offers **Grant access
-instead**. Retrying never creates a second account, and no rollback is claimed.
-Details, and **Google sign-in only** accounts, are in
+**Try again** grants to that account. A duplicate email changes nothing: the
+Console says the user exists and links to them, so you edit their access
+instead. Retrying never creates a second account, and no rollback is claimed.
+**Administrator** sets Hubzoid administration and the chat app's admin role
+together and reports a partial result. Details, **Google sign-in only**
+accounts and deletion are in
 [access management](access-management.md#add-a-user-implemented).
 
-Organization administrators cannot change their own account or the service
-account from the Console. For those, use Open WebUI's own settings or the server.
+Organization administrators cannot change their own role or account, or the
+service account, from the Console. For those, use Open WebUI's own settings or
+the server.
 
 ### Proposals from agents
 
@@ -263,9 +267,11 @@ environment overrides the recorded value; set `true` on an existing deployment
 once Console account management is verified there.
 
 When hidden, Open WebUI's user list (`/admin/users/overview`) opens Console
-People, and its Users section (`/admin/users`, where the Admin Panel opens)
-lands on Groups, which stays for legacy agents. Evaluations, Functions and
-Settings are unchanged. Browser writes to Open WebUI's account admin API
+People. When every agent is managed in the Console, the whole Users section is
+hidden too: the Admin Panel and every `/admin/users` page, Groups included,
+open **Settings → Integrations**. While any agent still uses legacy access, the
+Users section lands on Groups, which stays. Evaluations, Functions and Settings
+are unchanged. Browser writes to Open WebUI's account admin API
 (`POST /api/v1/auths/add`, `POST /api/v1/users/{id}/update`,
 `DELETE /api/v1/users/{id}`) are refused. Public sign-up stays closed either way.
 
@@ -277,12 +283,11 @@ These must stay reachable on the internal URL. None of them passes the edge.
 |---|---|
 | `POST /api/v1/auths/signin`, `POST /api/v1/auths/signup` | Service-account token (signup only on a fresh gateway) |
 | `GET /api/v1/auths/` | Verifying a Console session cookie |
-| `GET /api/v1/users/?page=` | Refresh accounts |
-| `GET /api/v1/users/?query=` | Finding an account by email for Add user's existing-account path |
-| `POST /api/v1/auths/add` | Add user (new account) |
+| `GET /api/v1/users/?page=` | Refresh accounts; listing administrators for the last-administrator check |
+| `POST /api/v1/auths/add` | Add user |
 | `GET /api/v1/users/{id}` | Reading an account before changing it |
-| `POST /api/v1/users/{id}/update` | Approve, reset password, chat-app role |
-| `DELETE /api/v1/users/{id}` | Delete account |
+| `POST /api/v1/users/{id}/update` | Approve, reset password, the chat app's side of the Administrator role |
+| `DELETE /api/v1/users/{id}` | Delete user |
 | `/api/v1/groups/...` | Group provisioning and the legacy visibility mirror |
 | `/api/v1/models/...` | Model registration and the visibility mirror |
 
@@ -485,12 +490,12 @@ idempotency and code changes. For operators:
 | Agent not visible | People screen sync status; service-account credentials; `access sync` |
 | Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
 | Add user says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |
-| Add user has no **Google sign-in only** choice | The chat app needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` from the environment (not `ENABLE_OAUTH_PERSISTENT_CONFIG=true`). A gateway records this when it starts, so restart it after changing them |
+| **Google sign-in only** is disabled in Add user | The chat app needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` from the environment (not `ENABLE_OAUTH_PERSISTENT_CONFIG=true`). A gateway records this when it starts, so restart it after changing them |
 | A delegate's grant is refused as outside their access | They must hold that capability in that agent themselves. An org admin can grant it |
 | A confirmation link says the request isn't available | Only the person who proposed it can open it. It expires after `HUBZOID_CHANGE_REQUEST_TTL` seconds and works once |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
 | No execution history | Correct hub's DBOS database, workflow enabled, run actually submitted |
-| User still has access after revocation | "Everyone signed in" or inherited access; use Block access for offboarding |
+| User still has access after revocation | "Everyone signed in" or inherited access; use **Delete user** for offboarding |
 | `hubzoid grant '*' ...` is refused | New access for everyone signed in can't be created. Grant named people |
 
 For local UI development only, `HUBZOID_PORTAL_DEV=1` plus
@@ -507,11 +512,13 @@ pending accounts unavailable; signup grants stay pending until the actual accoun
 exists. The verified OWUI account ID is bound on migration, login and API-key use.
 If a different account reuses an existing email, direct grants are removed and
 agent access is blocked, with an audit event. An organization administrator must
-review the account, reactivate it and grant access again. An existing
-"Everyone signed in" grant applies after reactivation. This also protects chat and MCP entry before the next sync.
+review the account, then unblock it through the management API
+(`POST /portal/api/people/block` with `"suspended": false`) and grant access
+again, or delete it. The Console has no Reactivate button. An existing
+"Everyone signed in" grant applies after unblocking. This also protects chat and MCP entry before the next sync.
 If the replaced account was the only administrator, use the documented local
 `access bootstrap --admin <new-verified-email>` break-glass path, then verify the
-new account. Do not reactivate an account solely because its email matches.
+new account. Do not unblock an account solely because its email matches.
 
 Gateway planning isolates each hub's dotenv settings; hub-specific secrets are
 not inherited by other hubs, OWUI or the edge. Put deployment-wide OWUI service

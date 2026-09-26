@@ -129,15 +129,18 @@ so it is an explicit choice. Hubzoid never turns it on.
 ### Adding and removing users
 
 - New hire: select **Add user** on an agent's Access tab (or on People) in the
-  Hubzoid Console. Choose **New account**, enter their name and email and a
-  password (or **Google sign-in only** where available), tick their initial
-  access and share the sign-in details once. Someone who already has an account
-  is added with **Existing account**. Delegates can do this for the agents they
-  manage.
-- Departure: an organization administrator opens the person's Details in the
-  Console and uses **Delete account**, or **Block access** to keep the account
-  and history. A blocked person sees a notice in the chat saying so. Open WebUI's
-  user list also still works on deployments that keep it (see
+  Hubzoid Console. Enter their name, email and a password (or tick **Google
+  sign-in only** where available), tick their initial access and share the
+  sign-in details once. Add user only creates new users. Someone who already
+  has an account gets access with **Edit access**, or **Add an agent** in their
+  details under People. Delegates can do this for the agents they manage.
+- Administrators: an organization administrator sets a user's **Role** to
+  **Administrator** in their details. That sets Hubzoid administration and the
+  chat app's admin role together.
+- Departure: an organization administrator opens the user under People and
+  uses **…** → **Delete user**. Their account and chats are deleted; Activity
+  history, usage records and published artifacts are kept. Open WebUI's user
+  list also still works on deployments that keep it (see
   [Hiding the Open WebUI Users page](ADMINISTRATION.md#hiding-the-open-webui-users-page)).
 
 See [access management](access-management.md) for who may do what.

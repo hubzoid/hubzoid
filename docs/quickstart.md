@@ -106,12 +106,13 @@ hubzoid gateway ./my-hub --data-dir ./gateway-data
 
 Sign in with that email and password, open the **Admin Console** from the chat
 sidebar, and add teammates with **Add user** on an agent's Access tab (or on
-People): choose an existing account, or create a new one with its access in one
-step, then share the sign-in details yourself. With Google sign-in and
+People): it creates their account with its access in one step, then you share
+the sign-in details yourself. Existing users get access with **Edit access**. With Google sign-in and
 `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only** creates
 an account with no password to share ([auth.md](auth.md)). Public sign-up stays closed. On a gateway set up this way, Open WebUI's
 own user list is hidden, so accounts are managed in one place: its Users section
-opens on Groups, and Evaluations and Functions stay in the Admin Panel. Set
+opens on Groups, or on Settings once every agent is managed in the Console, and
+Evaluations and Functions stay in the Admin Panel. Set
 `HUBZOID_HIDE_OWUI_USERS=false` to keep Open WebUI's user list.
 
 Before going live, read [administration](ADMINISTRATION.md),
