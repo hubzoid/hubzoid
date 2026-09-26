@@ -45,6 +45,27 @@ All notable changes to Hubzoid. Versions follow the package version in
   unreadable account directory shows as unavailable, never 0.
   `/portal/api/summary` adds `user_accounts`; `totals.active_users` is
   unchanged.
+- **Add user**, on an agent's Access page and on People, either picks an
+  existing account or creates one (name, email and a typed or generated
+  password to share manually) with its first access in one flow. When Google
+  sign-in and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` are configured, "Google
+  sign-in only" creates the account with no password to share. A duplicate
+  email offers "Grant access instead"; a partial result keeps the account and
+  offers "Try again" without creating a second one. Email-only pre-approval
+  remains, clearly labelled. Public sign-up stays closed.
+- New service identities (`workflow:*`) can no longer be added in the Console:
+  workflows run as ordinary accounts. Existing ones stay, labelled "Legacy
+  service identity".
+- Edit access groups capabilities in collapsible sections ("Restricted tools ·
+  2 selected") with keyboard, touch and screen-reader controls. The review
+  lists who, the agent, and what is added and removed; success reads "Access
+  updated".
+- Agents show a spark icon, and role badges are muted and readable in both
+  themes.
+- Chat shows a "Working on it…" status from send until the first words, on
+  every runtime. Stopping before the first word leaves that line on the
+  stopped message.
+- The bundled demo hub describes the three runtimes and current positioning.
 - The chat sidebar's Admin Console link has a shield-and-cog icon at Open
   WebUI's sidebar size, and keeps its name when the sidebar is collapsed.
 - The service account reuses its Open WebUI token instead of signing in for
