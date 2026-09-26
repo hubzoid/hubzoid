@@ -7,6 +7,43 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first.
 
+### Accounts, connections and secrets
+Everything here is off or inert until enabled. Hubs on legacy Open WebUI group
+access behave as before.
+- Admin Console account management: People, Add account creates a chat account
+  through Open WebUI's account API (role user). The password is shown once to
+  share manually and is never stored or logged. Org admins can reset passwords,
+  approve, change the chat role and delete accounts. Google sign-in onto a
+  pre-added account needs `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
+- One authorization service decides every Console and API change. On managed
+  hubs a delegate can grant or remove only what they hold, minus Manage access,
+  and cannot change their own access, an org admin's, public access, or other
+  accounts. `/portal/api` also accepts an Open WebUI API key (`Bearer sk-...`).
+  Refusals carry a `code`.
+- Optional management tools (`HUBZOID_MANAGEMENT_TOOLS`) let an agent propose
+  people and access changes. The change applies only after the same manager
+  confirms the exact plan in the Console. Proposals are single use, expire
+  (`HUBZOID_CHANGE_REQUEST_TTL`) and are audited with their surface.
+- `HUBZOID_HIDE_OWUI_USERS=true` sends Open WebUI's Users page to Console People
+  and refuses its account-admin writes.
+- Connection journeys (`HUBZOID_CONNECT_JOURNEY`): "connect my Gmail" from chat
+  or WhatsApp sends a personal link bound to that person. The result is checked
+  with the provider, confirmed on a browser page and back in WhatsApp, with an
+  optional one-time continuation of the waiting request. Built on Open WebUI
+  native MCP, with Composio links routed through the same journey.
+- Personal Open WebUI MCP connections now work on the OpenAI Agents SDK and
+  Codex backends as well as Claude. On managed hubs each app needs its
+  `connector_<app>` capability. `connector_` is a reserved capability prefix.
+- Optional AWS Secrets Manager secrets per layer (`AWS_SECRET_NAME` with
+  `AWS_REGION` for the deployment, `HUBZOID_HUB_SECRET_NAME`,
+  `HUBZOID_RESTRICTED_SECRET_NAME`), read at start with boto3's normal
+  credential chain. Within a layer the secret wins over the file. Rotation
+  takes effect on restart. `hubzoid doctor` reports each key's layer (names
+  only) and whether each secret is reachable (`--skip-secret-fetch`).
+- Agent child processes (the `claude` CLI and its MCP servers) no longer
+  inherit restricted-tool values, Hubzoid service secrets, SMTP credentials or
+  AWS credentials. Open WebUI no longer receives `HUBZOID_*` settings.
+
 ### Runtime and licensing
 - Local Codex backend through the pinned 0.147.0 app-server protocol, using the
   shared guarded tools and isolated per-request threads. Fresh interactive setup
