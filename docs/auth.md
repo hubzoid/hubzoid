@@ -123,8 +123,9 @@ WEBUI_ADMIN_PASSWORD=<temp pass>
   once. Delegates can do this for the agents they manage.
 - Departure: an organization administrator opens the person's Details in the
   Console and uses **Delete account**, or **Block access** to keep the account
-  and history. Open WebUI's Users panel also still works unless
-  `HUBZOID_HIDE_OWUI_USERS=true`.
+  and history. A blocked person sees a notice in the chat saying so. Open WebUI's
+  user list also still works on deployments that keep it (see
+  [Hiding the Open WebUI Users page](ADMINISTRATION.md#hiding-the-open-webui-users-page)).
 
 See [access management](access-management.md) for who may do what.
 

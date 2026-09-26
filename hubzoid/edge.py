@@ -28,10 +28,13 @@ The router streams responses (SSE-safe) and transparently relays websockets
 
 Two optional behaviours sit on the same front door:
 
-  * `HUBZOID_HIDE_OWUI_USERS=true` sends browser navigation to Open WebUI's
-    admin Users page to the Console's People screen, and refuses browser writes
-    to Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
-    own service calls go to Open WebUI's internal URL and never pass this edge.
+  * Hiding Open WebUI's user management (`HUBZOID_HIDE_OWUI_USERS`, or the
+    deployment's recorded default: on for a gateway set up with Console
+    accounts) sends browser navigation to Open WebUI's user list to the
+    Console's People screen, lands its Users section on Groups (which stays,
+    with Evaluations and Functions), and refuses browser writes to Open WebUI's
+    account-admin API (create, update, delete a user). Hubzoid's own service
+    calls go to Open WebUI's internal URL and never pass this edge.
   * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
     before sending the browser through Open WebUI's OAuth client flow. When the
     client callback redirects, the edge sends the browser to the journey's done
@@ -96,7 +99,10 @@ _OWUI_LOCK_DEFAULT = ("/api/v1/groups",)
 
 # Open WebUI's admin Users page (a single-page-app route). The Groups tab
 # (/admin/users/groups) stays: legacy hubs still use Open WebUI groups.
-_USERS_PAGES = frozenset({"/admin/users", "/admin/users/overview"})
+_USERS_PAGES = frozenset({"/admin/users/overview"})
+# The Users section's own page opens on its user list; send it to Groups instead.
+_USERS_SECTION = "/admin/users"
+GROUPS_URL = "/admin/users/groups"
 PEOPLE_URL = "/portal/#/people"
 # Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
 # user's own settings, never blocked.
@@ -117,7 +123,20 @@ def _truthy(value: str | None) -> bool:
 
 
 def _hide_owui_users(env) -> bool:
-    return _truthy(env.get("HUBZOID_HIDE_OWUI_USERS"))
+    """An explicit HUBZOID_HIDE_OWUI_USERS wins either way. Otherwise the
+    deployment's recorded default: a gateway set up fresh with Console accounts
+    records `hide_owui_users: true`; an older deployment records nothing and
+    keeps Open WebUI's Users page."""
+    raw = (env.get("HUBZOID_HIDE_OWUI_USERS") or "").strip()
+    if raw:
+        return _truthy(raw)
+    manifest = env.get("HUBZOID_DEPLOYMENT")
+    if not manifest:
+        return False
+    try:
+        return bool(json.loads(Path(manifest).read_text()).get("hide_owui_users"))
+    except (OSError, ValueError):
+        return False
 
 
 def _clean_path(path: str) -> str:
@@ -305,6 +324,8 @@ def build_edge_app(
         if hide_users and _match(request.url.path, norm_routes) is None:
             if request.method in ("GET", "HEAD") and _is_users_page(request.url.path):
                 return Response(status_code=302, headers={"location": PEOPLE_URL})
+            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _USERS_SECTION:
+                return Response(status_code=302, headers={"location": GROUPS_URL})
             if _is_account_write(request.method, request.url.path):
                 return Response("Manage accounts in the Console (People).", status_code=403)
         # Only model ACLs for migrated hubs are locked. Shared groups still serve

@@ -126,7 +126,8 @@ def test_ceiling_applies_to_proposals(dep, monkeypatch):
                       {"person": "ann@x.org", "hub": "finance", "grant": ["payroll"]})
         assert "Outside your access" in out
         scope = _invoke(tools["my_management_scope"], {})
-    assert "finance: ledger, use_hub" in scope and "payroll" not in scope
+    # Console labels, with the id a proposal takes.
+    assert "finance: Ledger (ledger), Use this agent (use_hub)" in scope and "payroll" not in scope
 
 
 def test_new_account_proposal_carries_no_password(dep, monkeypatch):
@@ -160,3 +161,15 @@ def test_confirm_url(monkeypatch):
     assert access_admin.confirm_url("/p") == "https://chat.example.com/p"
     monkeypatch.delenv("WEBUI_URL")
     assert access_admin.confirm_url("/p") == "/p"
+
+
+
+def test_runtimes_that_list_tools_themselves_hide_them_from_non_managers(dep, monkeypatch):
+    """Claude and Codex do not evaluate is_enabled; they ask access.guard.visible,
+    which must honour this check too (release review: non-managers saw them)."""
+    from hubzoid.access.guard import visible
+
+    tools = _tools(dep, monkeypatch)
+    for who, shown in ((ROOT, True), (DELEGATE, True), ("stranger@x.org", False)):
+        with identity_scope(Identity.make(who, surface="owui")):
+            assert [visible(t) for t in tools.values()] == [shown] * len(tools), who

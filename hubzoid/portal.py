@@ -403,10 +403,12 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         gs = store_for(hub_dir)
         blocked = gs.is_suspended(subject)
         denied = []
-        for h in deployment.hubs(hub_dir):
+        hubs = deployment.hubs(hub_dir)
+        for h in hubs:
             if blocked or (gs.is_authoritative(h["key"]) and not gs.can(subject, h["key"], USE_HUB)):
                 denied.append(h["model_id"])
-        return {"denied": denied}
+        # `blocked` and `allowed` let the chat explain an empty agent list.
+        return {"denied": denied, "blocked": blocked, "allowed": len(hubs) - len(denied)}
 
     @router.get("/me")
     @_denied

@@ -6,6 +6,8 @@ scripted fake covers STARTTLS/login failures. Nothing leaves the machine.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import logging
 import smtplib
 import socketserver
@@ -204,6 +206,27 @@ def test_preview_writes_the_outbox_and_says_nothing_was_sent(hub, monkeypatch):
     again = _send(hub, identity=ident, idem_key="run-2:1")          # replayed step
     assert again["delivery_id"] == result["delivery_id"] and again.get("repeated")
 
+
+
+def test_preview_files_are_owner_only_from_creation(hub, monkeypatch):
+    """Even with a permissive umask, and an outbox left 0755 by an older release,
+    the email file is created 0600 and its folders are 0700."""
+    import os
+    import stat
+
+    monkeypatch.setenv("HUBZOID_EMAIL_DELIVERY", "preview")
+    legacy = Path(hub) / ".hubzoid" / "outbox"
+    legacy.mkdir(parents=True, exist_ok=True)
+    os.chmod(legacy, 0o755)
+    old = os.umask(0)
+    try:
+        ident = RunIdentity("admin@localhost", None, "local", "admin@localhost")
+        result = _send(hub, identity=ident, idem_key="run-perm:1")
+    finally:
+        os.umask(old)
+    path = Path(result["outbox"])
+    mode = lambda p: stat.S_IMODE(os.stat(p).st_mode)  # noqa: E731
+    assert (mode(path), mode(path.parent), mode(legacy)) == (0o600, 0o700, 0o700)
 
 def test_header_injection_and_legacy_identities_are_refused(hub, smtp):
     smtp()

@@ -103,6 +103,12 @@ def _message(title: str, body: str, status: int) -> HTMLResponse:
     return _page(pages.message(title=title, body=body, nonce=nonce), nonce, status)
 
 
+def _public_link_hint() -> str:
+    """Why public sharing is off, naming the capability as the Console shows it."""
+    return (f"Needs \u201c{arts.SHARE_PUBLIC.label}\u201d. Ask an administrator of this agent "
+            "to grant it to you.")
+
+
 def serve(path: Path, art: arts.Artifact, *, download: bool) -> FileResponse:
     """The stored file with headers that keep it out of the application origin."""
     headers = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
@@ -162,9 +168,12 @@ def build_router(hub_dir) -> APIRouter:
 
     def meta(art: arts.Artifact, who: str, *, public: bool) -> dict:
         base = f"/portal/p/{art.id}" if public else f"/portal/artifacts/{art.id}"
+        # The file name ends the content URL: a browser's PDF viewer titles the
+        # document from its URL, and "content" told people nothing.
         out = dict(id=art.id, title=art.title, filename=art.filename,
                    content_type=art.content_type, size=art.size, created=art.created,
-                   kind=art.kind, role=who, content_url=f"{base}/content",
+                   kind=art.kind, role=who,
+                   content_url=f"{base}/content/{quote(art.filename, safe='')}",
                    download_url=f"{base}/download")
         try:
             out["preview"] = arts.preview(hub_dir, art)
@@ -176,6 +185,7 @@ def build_router(hub_dir) -> APIRouter:
                 audience=art.audience, people=arts.shares(hub_dir, art.id),
                 link=arts.active_link(hub_dir, art.id),
                 can_public_link=arts.can_create_link(hub_dir, art, art.owner),
+                public_link_hint=_public_link_hint(),
                 hub_managed=managed, default_days=arts.link_days(),
                 unmanaged_note=("Not available: this agent's access is still managed in "
                                 "the chat app." if not managed else ""))
@@ -248,7 +258,8 @@ def build_router(hub_dir) -> APIRouter:
                                  nonce=nonce), nonce)
 
     @router.get("/portal/artifacts/{artifact_id}/content")
-    def content(artifact_id: str, request: Request):
+    @router.get("/portal/artifacts/{artifact_id}/content/{_filename}")
+    def content(artifact_id: str, request: Request, _filename: str = ""):
         art, _ = load(artifact_id, api_subject(request))
         try:
             return serve(arts.content_path(hub_dir, art), art, download=False)
@@ -293,7 +304,8 @@ def build_router(hub_dir) -> APIRouter:
         return art
 
     @router.get("/portal/p/{artifact_id}/content")
-    def public_content(artifact_id: str, request: Request):
+    @router.get("/portal/p/{artifact_id}/content/{_filename}")
+    def public_content(artifact_id: str, request: Request, _filename: str = ""):
         art = public_art(artifact_id, request)
         try:
             return serve(arts.content_path(hub_dir, art), art, download=False)

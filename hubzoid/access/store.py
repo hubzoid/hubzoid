@@ -30,6 +30,7 @@ necessary, not sufficient.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Iterable
 
 import casbin
@@ -526,6 +527,24 @@ class GrantStore:
         self._refresh_if_stale()
         return True
 
+    def held_since(self, subject: str, hub: str, permission: str) -> float | None:
+        """When `subject`'s current hold on `permission` in `hub` began: the
+        oldest grant row that gives it now (direct, org-wide, wildcard subject
+        or wildcard permission, as `can` matches). Revoking deletes the row and
+        granting again writes a new time, so a later time means a break. None
+        when no row gives it, or when one predates recorded times (treated as
+        held all along)."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT created FROM hz_grants WHERE (subject=:s OR subject='*') "
+                     "AND (hub=:h OR hub='*') AND (permission=:p OR permission='*')"),
+                {"s": normalize(subject), "h": normalize(hub), "p": normalize(permission)},
+            ).fetchall()
+        times = [r[0] for r in rows]
+        if not times or any(t is None for t in times):
+            return None
+        return float(min(times))
+
     def workflow_default(self, hub: str | None = None) -> str | None:
         """The setup default for workflow runs (see provision_owner), or None.
         A store provisioned before this key existed falls back to the hub's
@@ -872,18 +891,18 @@ class GrantStore:
         if dialect == "sqlite":
             conn.execute(
                 text(
-                    "INSERT OR IGNORE INTO hz_grants(subject, hub, permission) "
-                    "VALUES (:s, :h, :p)"
+                    "INSERT OR IGNORE INTO hz_grants(subject, hub, permission, created) "
+                    "VALUES (:s, :h, :p, :t)"
                 ),
-                {"s": subject, "h": hub, "p": permission},
+                {"s": subject, "h": hub, "p": permission, "t": time.time()},
             )
         else:
             conn.execute(
                 text(
-                    "INSERT INTO hz_grants(subject, hub, permission) VALUES (:s, :h, :p) "
+                    "INSERT INTO hz_grants(subject, hub, permission, created) VALUES (:s, :h, :p, :t) "
                     "ON CONFLICT (subject, hub, permission) DO NOTHING"
                 ),
-                {"s": subject, "h": hub, "p": permission},
+                {"s": subject, "h": hub, "p": permission, "t": time.time()},
             )
 
     @staticmethod

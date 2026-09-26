@@ -39,7 +39,9 @@ provisioning problem must never take the gateway down.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +62,10 @@ _AVATAR_MIME = {
 
 class ProvisionError(RuntimeError):
     """Admin auth failed — nothing could be provisioned."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -129,10 +135,46 @@ def _signin_or_bootstrap(client: httpx.Client, email: str, password: str,
         if signup.status_code == 200:
             log.info("provision: bootstrapped first admin %s", email)
             return signup.json()["token"]
+    if signin.status_code == 429:
+        raise ProvisionError(
+            f"Open WebUI is refusing sign-ins for {email} for a few minutes (HTTP 429: too "
+            "many sign-ins with that email); try again shortly", status=429)
     raise ProvisionError(
         f"cannot sign in to Open WebUI as {email} (signin HTTP {signin.status_code}); "
-        "check HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD"
+        "check HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD", status=signin.status_code,
     )
+
+
+# The service account's token, reused while Open WebUI still accepts it. Open
+# WebUI allows 15 sign-ins per email in 3 minutes, and the service account is
+# usually the owner's own login: signing in for every visibility sync and
+# account action used that allowance up and locked the owner out.
+_TOKENS: dict[tuple[str, str, str], str] = {}
+_TOKENS_LOCK = threading.Lock()
+
+
+def service_token(client: httpx.Client, email: str, password: str) -> str:
+    """A bearer token for the service account: the cached one when Open WebUI
+    still accepts it for that account (a session check, which is not rate
+    limited), else a fresh sign-in. Raises ProvisionError like a sign-in."""
+    key = (str(client.base_url), email.strip().lower(),
+           hashlib.sha256(password.encode()).hexdigest())
+    with _TOKENS_LOCK:
+        token = _TOKENS.get(key)
+    if token:
+        try:
+            r = client.get("/api/v1/auths/", headers={"Authorization": f"Bearer {token}"})
+            if (r.status_code == 200
+                    and str((r.json() or {}).get("email", "")).lower() == key[1]):
+                return token
+        except (httpx.HTTPError, ValueError, AttributeError):
+            pass
+        with _TOKENS_LOCK:
+            _TOKENS.pop(key, None)
+    token = _signin_or_bootstrap(client, email, password, False)
+    with _TOKENS_LOCK:
+        _TOKENS[key] = token
+    return token
 
 
 def _group_ids(client: httpx.Client, headers: dict) -> dict[str, str]:

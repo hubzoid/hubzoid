@@ -149,6 +149,18 @@ def _engine(hub_dir):
     return eng
 
 
+def _write_private(outbox: Path, folder: Path, path: Path, data: bytes) -> None:
+    """Write a previewed email readable only by the account running Hubzoid:
+    the folders are 0700 and the file is created 0600, never readable by
+    others even for a moment. An existing file is never overwritten."""
+    for d in (outbox, folder):
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(d, 0o700)  # an outbox made by an older release was 0755
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
 def _record(hub_dir, delivery_id: str) -> dict | None:
     with _engine(hub_dir).connect() as c:
         r = c.execute(text("SELECT * FROM hz_email_deliveries WHERE id=:i"),
@@ -370,10 +382,10 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
     if cfg.mode == "preview":
         from .workflows.identity import person_slug
 
-        folder = Path(hub_dir) / ".hubzoid" / "outbox" / person_slug(owner)
-        folder.mkdir(parents=True, exist_ok=True)
+        outbox = Path(hub_dir) / ".hubzoid" / "outbox"
+        folder = outbox / person_slug(owner)
         path = folder / f"{time.strftime('%Y%m%dT%H%M%S')}-{delivery_id}.eml"
-        path.write_bytes(msg.as_bytes())
+        _write_private(outbox, folder, path, msg.as_bytes())
         _update(hub_dir, delivery_id, status="previewed", detail=str(path), message_id=message_id)
         log.info("email: preview for %s written to %s (not sent)", owner, path)
         return _result(_record(hub_dir, delivery_id), _MESSAGES["previewed"].format(outbox=path),

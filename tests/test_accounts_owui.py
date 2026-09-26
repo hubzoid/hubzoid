@@ -378,3 +378,32 @@ def test_delete_when_chat_app_fails_reports_partial(dep):
 
 def test_manifest_owui_url_used_by_default(dep):
     assert deployment.read(dep.hub_dir)["owui_url"] == "http://owui.internal"
+
+
+def test_new_access_reaches_the_chat_picker_at_once(dep, monkeypatch):
+    """Release review: a new account's first sign-in showed no agent until the
+    30-second sync. Creating it, changing access and blocking now project
+    visibility straight away."""
+    from hubzoid.access import reconcile
+
+    calls = []
+    monkeypatch.setattr(reconcile, "sync_owui", lambda hub_dir: calls.append(hub_dir) or {"state": "ok"})
+    dep.svc.create_account(actor(ROOT), email="new@x.org", name="New", password=PASSWORD,
+                           grants=[("finance", "use_hub")])
+    assert len(calls) == 1
+    dep.svc.apply_access_change(actor(ROOT), "new@x.org", "finance", [("grant", "ledger")])
+    assert len(calls) == 2
+    dep.svc.set_blocked(actor(ROOT), "new@x.org", True)
+    assert len(calls) == 3
+
+
+def test_a_failed_immediate_sync_never_fails_the_saved_change(dep, monkeypatch):
+    from hubzoid.access import reconcile
+
+    def boom(hub_dir):
+        raise RuntimeError("chat app down")
+
+    monkeypatch.setattr(reconcile, "sync_owui", boom)
+    result = dep.svc.create_account(actor(ROOT), email="ok2@x.org", name="Ok", password=PASSWORD,
+                                    grants=[("finance", "use_hub")])
+    assert result["subject"] == "ok2@x.org" and dep.gs.can("ok2@x.org", "finance", "use_hub")

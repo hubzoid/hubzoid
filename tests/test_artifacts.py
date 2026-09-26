@@ -165,6 +165,54 @@ def test_public_links_need_the_permission(hub, tmp_path):
     assert arts.open_link(hub, _token(link["url"])) is None
 
 
+def test_regranting_public_sharing_never_revives_old_links(hub, tmp_path):
+    """Release review: removing share_public_links must end the owner's links
+    for good. Granting it again does not bring an old URL back, and is not
+    shown as an active link; a link made after the new grant works."""
+    gs = _managed(hub)
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    art, _ = _publish(hub, tmp_path)
+    old = _token(arts.create_link(hub, art, OWNER)["url"])
+    assert arts.open_link(hub, old) is not None
+    gs.revoke(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    time.sleep(0.01)
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    assert arts.open_link(hub, old) is None
+    assert arts.active_link(hub, art.id) is None             # the owner is offered a new one
+    new = _token(arts.create_link(hub, arts.get(hub, art.id), OWNER)["url"])
+    found = arts.open_link(hub, new)
+    assert found is not None and arts.link_live(hub, art.id, found[1]) is not None
+    assert arts.open_link(hub, old) is None
+
+
+def test_blocking_the_owner_ends_links_for_good(hub, tmp_path):
+    gs = _managed(hub)
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    art, _ = _publish(hub, tmp_path)
+    old = _token(arts.create_link(hub, art, OWNER)["url"])
+    gs.revoke_all(OWNER, actor="t")                          # what blocking does to grants
+    time.sleep(0.01)
+    gs.grant(OWNER, "sales", "use_hub", actor="t")
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    assert arts.open_link(hub, old) is None
+
+
+def test_a_grant_made_before_grants_had_times_keeps_its_links(hub, tmp_path):
+    """Grants from before op_0007 have no time: their links keep working."""
+    from sqlalchemy import text
+
+    gs = _managed(hub)
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    art, _ = _publish(hub, tmp_path)
+    link = _token(arts.create_link(hub, art, OWNER)["url"])
+    with gs.engine.begin() as c:
+        c.execute(text("UPDATE hz_grants SET created=NULL WHERE permission=:p"),
+                  {"p": arts.PUBLIC_LINK_PERMISSION})
+    assert arts.open_link(hub, link) is not None
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")   # already held: unchanged
+    assert arts.open_link(hub, link) is not None
+
+
 @pytest.mark.parametrize("public_url, webui_url, base", [
     ("https://hub.example.com/b/sales", None, "https://hub.example.com"),   # gateway bridge
     ("https://hub.example.com/b/sales/", None, "https://hub.example.com"),
@@ -410,3 +458,27 @@ def test_permission_catalog_lists_public_links(hub):
 
     perms = {p["permission"]: p for p in deployment.permission_catalog(hub)}
     assert perms[arts.PUBLIC_LINK_PERMISSION]["sensitive"] is True
+
+
+def test_viewer_names_the_file_in_the_content_url_and_explains_public_sharing(hub, tmp_path, web):
+    """Release review: a PDF's viewer showed the title "content"; the disabled
+    public-link option did not say what to ask for."""
+    _managed(hub)
+    art, _ = _publish(hub, tmp_path, name="Q3 summary.pdf", body="%PDF-1.4 synthetic")
+    meta = _as(web, OWNER).get(f"/portal/artifacts/api/{art.id}").json()
+    assert meta["content_url"] == f"/portal/artifacts/{art.id}/content/Q3%20summary.pdf"
+    assert _as(web, OWNER).get(meta["content_url"]).status_code == 200
+    assert _as(web, OWNER).get(f"/portal/artifacts/{art.id}/content").status_code == 200  # older links
+    assert _as(web, TEAMMATE).get(meta["content_url"]).status_code == 404               # still private
+    sharing = meta["sharing"]
+    assert sharing["can_public_link"] is False
+    assert "Share reports by public link" in sharing["public_link_hint"]
+
+
+def test_report_page_labels_people_and_never_stays_on_loading():
+    from hubzoid.artifacts import pages
+
+    doc = pages.shell(mode="public", api=None, nonce="n")
+    assert "for:'share-people'" in doc and "People or groups who can view it" in doc
+    assert "Link not available" in doc and "Report not available" in doc   # terminal headings
+    assert "'Create public link'" in doc                                   # one flow from the main button

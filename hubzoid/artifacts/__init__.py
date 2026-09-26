@@ -476,6 +476,22 @@ def can_create_link(hub_dir, art: Artifact, subject: str) -> bool:
         return False
 
 
+def _link_permitted(hub_dir, art: Artifact, link_created: float) -> bool:
+    """The owner may share by link now, and has held that permission without a
+    break since the link was made. Removing `share_public_links` (or blocking
+    the owner, which removes their grants) therefore ends the owner's links for
+    good: granting it again makes a newer grant, which does not revive links
+    made before it. New links work as usual."""
+    if not can_create_link(hub_dir, art, art.owner):
+        return False
+    try:
+        since = _store(hub_dir).held_since(art.owner, art.hub, PUBLIC_LINK_PERMISSION)
+    except Exception:  # noqa: BLE001 — fail closed
+        log.exception("artifacts: grant time check failed")
+        return False
+    return since is None or since <= link_created
+
+
 def link_days(requested=None) -> int:
     try:
         default = int(os.environ.get("HUBZOID_ARTIFACT_LINK_DAYS") or DEFAULT_LINK_DAYS)
@@ -499,7 +515,7 @@ def create_link(hub_dir, art: Artifact | None, actor: str, *, days=None) -> dict
     art = _require_owner(hub_dir, art, actor)
     if not can_create_link(hub_dir, art, actor):
         raise ArtifactError(403, "You do not have permission to create public links in this "
-                                 "agent. Ask an administrator for 'Share reports by public link'.")
+                                 f"agent. Ask an administrator for \u201c{SHARE_PUBLIC.label}\u201d.")
     token = secrets.token_urlsafe(32)
     now = _now()
     expires = now + link_days(days) * 86400
@@ -530,11 +546,18 @@ def revoke_links(hub_dir, art: Artifact | None, actor: str) -> None:
 
 
 def active_link(hub_dir, artifact_id: str) -> dict | None:
+    """The link that works now, if any. A link ended by losing the permission is
+    not active, so the owner is offered a new one instead."""
     with _engine(hub_dir).connect() as c:
         r = c.execute(text("SELECT id, created, expires FROM hz_artifact_links "
                            "WHERE artifact_id=:a AND revoked IS NULL AND expires > :t "
                            "ORDER BY created DESC"), {"a": artifact_id, "t": _now()}).fetchone()
-    return dict(id=r[0], created=r[1], expires=r[2]) if r else None
+    if not r:
+        return None
+    art = get(hub_dir, artifact_id)
+    if art is None or not _link_permitted(hub_dir, art, r[1]):
+        return None
+    return dict(id=r[0], created=r[1], expires=r[2])
 
 
 def open_link(hub_dir, token: str) -> tuple[Artifact, str] | None:
@@ -543,13 +566,13 @@ def open_link(hub_dir, token: str) -> tuple[Artifact, str] | None:
     if not isinstance(token, str) or not (20 <= len(token) <= 200):
         return None
     with _engine(hub_dir).connect() as c:
-        r = c.execute(text("SELECT id, artifact_id, expires, revoked FROM hz_artifact_links "
+        r = c.execute(text("SELECT id, artifact_id, expires, revoked, created FROM hz_artifact_links "
                            "WHERE token_hash=:h"), {"h": _token_hash(token)}).fetchone()
     if r is None or r[3] is not None or r[2] <= _now():
         return None
     art = get(hub_dir, r[1])
     if (art is None or art.audience != "link" or not _owner_current(hub_dir, art)
-            or not can_create_link(hub_dir, art, art.owner)):
+            or not _link_permitted(hub_dir, art, r[4])):
         return None
     return art, r[0]
 
@@ -557,13 +580,13 @@ def open_link(hub_dir, token: str) -> tuple[Artifact, str] | None:
 def link_live(hub_dir, artifact_id: str, link_id: str) -> Artifact | None:
     """The artifact if `link_id` is still a live public link for it."""
     with _engine(hub_dir).connect() as c:
-        r = c.execute(text("SELECT artifact_id, expires, revoked FROM hz_artifact_links "
+        r = c.execute(text("SELECT artifact_id, expires, revoked, created FROM hz_artifact_links "
                            "WHERE id=:i"), {"i": link_id}).fetchone()
     if r is None or r[0] != artifact_id or r[2] is not None or r[1] <= _now():
         return None
     art = get(hub_dir, artifact_id)
     if (art is None or art.audience != "link" or not _owner_current(hub_dir, art)
-            or not can_create_link(hub_dir, art, art.owner)):
+            or not _link_permitted(hub_dir, art, r[3])):
         return None
     return art
 

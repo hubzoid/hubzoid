@@ -90,12 +90,24 @@ def test_unknown_and_malformed_links_are_404(client):
     assert client.get("/portal/connect/" + "A" * 32 + "/status").status_code == 404
 
 
-def test_the_page_requires_sign_in(client, hub):
+def test_a_signed_out_opener_signs_in_and_comes_back(client, hub):
     jid = _link(hub)
     r = client.get(f"/portal/connect/{jid}")
-    assert r.status_code == 401
-    assert "Sign in" in r.text and f"/auth?redirect=/portal/connect/{jid}" in r.text
-    assert ALICE not in r.text  # the subject is never disclosed to an anonymous opener
+    assert r.status_code == 302
+    assert r.headers["location"] == f"/auth?redirect=/portal/connect/{jid}"
+    assert ALICE not in r.text + r.headers["location"]  # never disclosed to an anonymous opener
+    done = client.get(f"/portal/connect/{jid}/done")
+    assert done.headers["location"] == f"/auth?redirect=/portal/connect/{jid}/done"
+    # A post cannot be redirected: it shows the page, whose link also comes back.
+    r = client.post(f"/portal/connect/{jid}/start", headers=_SAME)
+    assert r.status_code == 401 and f"/auth?redirect=/portal/connect/{jid}" in r.text
+    assert "come back here after signing in" in r.text
+    assert store.get(hub, jid)["status"] == "pending"
+
+
+def test_an_unknown_link_never_redirects_to_sign_in(client):
+    r = client.get("/portal/connect/" + "Z" * 32)
+    assert r.status_code == 404 and "location" not in r.headers
 
 
 def test_another_account_is_refused_and_audited(client, hub):
@@ -117,7 +129,9 @@ def test_the_owner_sees_the_connect_page_with_safe_headers(client, hub):
     assert "Connect Gmail" in r.text and ALICE in r.text
     assert f'action="/portal/connect/{jid}/start"' in r.text
     assert r.headers["cache-control"] == "no-store"
-    assert r.headers["referrer-policy"] == "no-referrer"
+    # same-origin, not no-referrer: with no-referrer the browser posts the
+    # Continue/Cancel forms with "Origin: null", which the server must refuse.
+    assert r.headers["referrer-policy"] == "same-origin"
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
 
 
@@ -130,7 +144,22 @@ def test_start_requires_the_same_origin(client, hub):
     r = client.post(f"/portal/connect/{jid}/start",
                     headers={**_as(ALICE), "origin": "https://evil.example.com"})
     assert r.status_code == 403
+    for bad in ({"origin": "null"}, {"referer": "https://evil.example.com/x"},
+                {"origin": "https://hub.example.org.evil.com"}):
+        r = client.post(f"/portal/connect/{jid}/start", headers={**_as(ALICE), **bad})
+        assert r.status_code == 403, bad
+        r = client.post(f"/portal/connect/{jid}/cancel", headers={**_as(ALICE), **bad})
+        assert r.status_code == 403, bad
     assert store.get(hub, jid)["status"] == "pending"
+
+
+def test_a_same_origin_referer_alone_is_accepted(client, hub):
+    """What a browser sends for the form post under Referrer-Policy: same-origin
+    when it omits Origin: a same-origin Referer."""
+    jid = _link(hub)
+    r = client.post(f"/portal/connect/{jid}/start",
+                    headers={**_as(ALICE), "referer": f"https://hub.example.org/portal/connect/{jid}"})
+    assert r.status_code == 303
 
 
 def test_start_sends_the_browser_to_open_webui_with_the_journey_cookie(client, hub):
@@ -278,17 +307,18 @@ def test_real_open_webui_session_check(hub, monkeypatch):
     jid = _link(hub)
     c.cookies.set("token", "tok-bob")
     assert c.get(f"/portal/connect/{jid}").status_code == 403
+    signin = f"/auth?redirect=/portal/connect/{jid}"
     c.cookies.set("token", "tok-pending")
-    assert c.get(f"/portal/connect/{jid}").status_code == 401
+    assert c.get(f"/portal/connect/{jid}").headers["location"] == signin
     c.cookies.set("token", "forged")
-    assert c.get(f"/portal/connect/{jid}").status_code == 401
+    assert c.get(f"/portal/connect/{jid}").headers["location"] == signin
     c.cookies.set("token", "tok-alice")
     assert c.get(f"/portal/connect/{jid}").status_code == 200
     assert all(u == "http://owui.internal/api/v1/auths/" for u in seen)
     # A client-sent identity header is never trusted.
     c.cookies.clear()
     r = c.get(f"/portal/connect/{jid}", headers={"X-OpenWebUI-User-Email": ALICE})
-    assert r.status_code == 401
+    assert r.status_code == 302 and r.headers["location"] == signin
 
 
 def test_owui_outage_is_a_retry_not_a_pass(hub, monkeypatch):

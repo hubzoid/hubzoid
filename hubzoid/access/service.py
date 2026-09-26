@@ -376,11 +376,23 @@ class AccessService:
                          "Only organization admins may change an organization administrator's access")
         ceiling = self._ceiling(actor, scope, hub)
         outside = sorted({p for _, p in ops} - ceiling)
+        try:
+            held = self.store.permissions_for(actor.subject, hub) if outside else set()
+        except Exception:  # noqa: BLE001 — wording only; the refusal below stands
+            held = set()
+        admins_only = [p for p in outside if p in held]
+        if admins_only:
+            # Held but not delegable: "not yours" would be untrue.
+            raise Denied(
+                403, "outside_ceiling",
+                f"Only organization administrators can grant or remove {self._labels(hub, admins_only)}, "
+                "even for people who hold it.",
+            )
         if outside:
             raise Denied(
                 403, "outside_ceiling",
                 "Outside your access: you can only grant or remove capabilities you hold in "
-                f"{hub}. Not yours: {', '.join(outside)}.",
+                f"{hub}. Not yours: {self._labels(hub, outside)}.",
             )
         if any(a == "revoke" and p == USE_HUB for a, p in ops):
             held = {p for (s, h, p) in gs.list_grants(hub) if s == subject}
@@ -389,8 +401,17 @@ class AccessService:
                 raise Denied(
                     403, "outside_ceiling",
                     "Outside your access: removing all access would also remove capabilities "
-                    f"you do not hold ({', '.join(beyond)}). Ask an organization administrator.",
+                    f"you do not hold ({self._labels(hub, beyond)}). Ask an organization administrator.",
                 )
+
+    def _labels(self, hub: str, perms) -> str:
+        """Console labels with their ids, for messages read by people and by the
+        agent tools that pass the id back."""
+        try:
+            names = {e["permission"]: e["label"] for e in self.catalog(hub)}
+        except Denied:
+            names = {}
+        return ", ".join(f"{names[p]} ({p})" if names.get(p) and names[p] != p else p for p in perms)
 
     def apply_access_change(self, actor: Actor, subject: str, hub: str,
                             ops: list[tuple[str, str]], *,
@@ -405,11 +426,13 @@ class AccessService:
             revision = gs.revision() if expected_revision is None else expected_revision
             checked = self._check_ops(actor, scope, subject, hub, ops)
             try:
-                return gs.apply_changes(
+                applied = gs.apply_changes(
                     normalize(subject), normalize(hub), checked,
                     expected_revision=revision,
                     actor=actor.subject, surface=actor.surface, request_id=request_id,
                 )
+                self._project_visibility()
+                return applied
             except RevisionConflict as exc:
                 if expected_revision is not None:
                     raise Denied(409, "conflict", str(exc))
@@ -435,7 +458,24 @@ class AccessService:
                            surface=actor.surface)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
+            self._project_visibility()
         return changed
+
+    def _project_visibility(self) -> None:
+        """Mirror access to the chat app's agent picker now, not at the next
+        30-second sync, so a person given access sees the agent on their very
+        first sign-in. Best effort: the periodic sync is still the recovery
+        path, and entry is enforced by the bridge either way."""
+        try:
+            from .. import deployment
+            from . import owui as owui_lib
+            from .reconcile import sync_owui
+
+            if deployment.read(self.hub_dir) and owui_lib.configured(self.hub_dir):
+                sync_owui(self.hub_dir)
+        except Exception:  # noqa: BLE001 — never fail the change that was saved
+            log.warning("access: immediate visibility sync failed; the periodic sync will retry",
+                        exc_info=True)
 
     def refresh_accounts(self, actor: Actor) -> int:
         """Re-read the chat app's account directory (organization administrators)."""
@@ -570,6 +610,7 @@ class AccessService:
                 f"{base_msg} The chat account {email} was created but could not be removed "
                 "automatically. Delete it under People or in the chat app, then try again.",
             )
+        self._project_visibility()
         return dict(
             subject=email, owui_id=created["id"], name=name, role="user",
             grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision,

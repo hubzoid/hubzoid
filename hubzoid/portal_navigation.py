@@ -8,9 +8,14 @@ authorizes and removing it otherwise — on load, on history navigation, when th
 regains focus, and on a slow interval. It is idempotent and never throws into chat.
 
 With `HUBZOID_HIDE_OWUI_USERS` on (`script(hide_users=True)`), the same script
-also sends in-app navigation to Open WebUI's Users page (`/admin/users`,
-`/admin/users/overview`) to the Console's People screen, which the edge already
-does for a full page load, and hides the Users sub-tab. The Groups tab stays."""
+also sends in-app navigation to Open WebUI's user list (`/admin/users/overview`)
+to the Console's People screen and lands the Users section (`/admin/users`, where
+the Admin Panel opens) on Groups, as the edge does for a full page load. It
+hides the user-list tab. Groups, Evaluations and Functions stay reachable.
+
+For every signed-in person it also explains an empty chat: a blocked account,
+or an account with no agent yet, sees a notice instead of an unexplained
+"Select a model"."""
 SCRIPT = r'''
 (() => {
   const HIDE_USERS = false;
@@ -39,8 +44,35 @@ SCRIPT = r'''
   function usersPage() {
     if (!HIDE_USERS) return;
     const p = location.pathname.replace(/\/+$/, '');
-    if (p === '/admin/users' || p === '/admin/users/overview')
-      location.replace('/portal/#/people');
+    if (p === '/admin/users/overview') location.replace('/portal/#/people');
+    else if (p === '/admin/users') location.replace('/admin/users/groups');
+  }
+  const NOTE = 'hubzoid-access-notice';
+  function notice(text) {
+    let n = document.getElementById(NOTE);
+    if (!text) { n?.remove(); return; }
+    if (!n) {
+      n = document.createElement('div');
+      n.id = NOTE;
+      n.setAttribute('role', 'status');
+      // Below the chat header and click-through, so the menu (and sign-out) stay usable.
+      n.style.cssText = 'position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:none;' +
+        'max-width:min(560px,calc(100vw - 32px));padding:10px 14px;border-radius:8px;font:14px/1.4 system-ui,sans-serif;' +
+        'background:#fff4e0;color:#5c3900;border:1px solid #f0c987;box-shadow:0 2px 8px rgba(0,0,0,.12)';
+      document.body.appendChild(n);
+    }
+    if (n.textContent !== text) n.textContent = text;
+  }
+  async function access() {
+    if (location.pathname.startsWith('/auth')) { notice(''); return; }
+    try {
+      const r = await fetch('/portal/api/chat-access', {credentials: 'same-origin'});
+      if (!r.ok) { notice(''); return; }
+      const a = await r.json();
+      if (a.blocked) notice('Your access to agents has been blocked by an administrator. Contact your administrator if you think this is a mistake.');
+      else if (a.allowed === 0) notice('You do not have access to any agent yet. Ask an administrator to give you access.');
+      else notice('');
+    } catch (_) { /* never break chat */ }
   }
   const resize = new ResizeObserver(place);
   function place() {
@@ -87,10 +119,16 @@ SCRIPT = r'''
     if (current !== revision) return;
     authorized = ok;
     place();
+    access();
   }
   // OWUI replaces the sidebar when expanding/collapsing and after SPA login.
-  // Observe layout changes without issuing extra authentication requests.
-  new MutationObserver(() => { schedulePlace(); usersPage(); }).observe(document.body, {childList:true, subtree:true});
+  // Observe layout changes without issuing extra authentication requests,
+  // except on an in-app route change (sign-in lands on the chat that way).
+  let lastPath = location.pathname;
+  new MutationObserver(() => {
+    schedulePlace(); usersPage();
+    if (location.pathname !== lastPath) { lastPath = location.pathname; sync(); }
+  }).observe(document.body, {childList:true, subtree:true});
   usersPage();
   sync();
   addEventListener('popstate', () => { usersPage(); sync(); });

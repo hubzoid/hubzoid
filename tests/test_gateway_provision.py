@@ -266,3 +266,47 @@ def test_provision_one_bad_hub_does_not_block_others(tmp_path):
     assert "sales-agent" not in fake.models       # skipped
     assert "support-agent" in fake.models          # still provisioned
     assert any("skip" in a.lower() for a in actions)
+
+
+def test_service_token_is_reused_until_open_webui_stops_accepting_it():
+    """Open WebUI allows 15 sign-ins per email in 3 minutes, and the service
+    account is usually the owner's own login. Visibility syncs and Console
+    account actions reuse one token instead of signing in each time."""
+    from hubzoid import gateway_provision as gp
+
+    gp._TOKENS.clear()
+    seen = {"signin": 0, "valid": {"tok-1"}}
+
+    def handle(req):
+        if req.url.path == "/api/v1/auths/signin":
+            seen["signin"] += 1
+            return httpx.Response(200, json={"token": f"tok-{seen['signin']}"})
+        if req.url.path == "/api/v1/auths/":
+            tok = req.headers.get("authorization", "").removeprefix("Bearer ")
+            return (httpx.Response(200, json={"email": "Owner@x.org"}) if tok in seen["valid"]
+                    else httpx.Response(401, json={}))
+        return httpx.Response(404)
+
+    def token():
+        with httpx.Client(base_url="http://owui", transport=httpx.MockTransport(handle)) as c:
+            return gp.service_token(c, "owner@x.org", "pw")
+
+    assert [token() for _ in range(5)] == ["tok-1"] * 5 and seen["signin"] == 1
+    seen["valid"] = {"tok-2"}                        # expired, revoked or secret rotated
+    assert token() == "tok-2" and token() == "tok-2" and seen["signin"] == 2
+    gp._TOKENS.clear()
+
+
+def test_a_rate_limited_sign_in_says_so_instead_of_blaming_the_password():
+    from hubzoid import gateway_provision as gp
+    from hubzoid.access.accounts import AccountsUnavailable, OwuiAccounts
+
+    gp._TOKENS.clear()
+    limited = httpx.MockTransport(lambda req: httpx.Response(429, json={"detail": "Too many"}))
+    with httpx.Client(base_url="http://owui", transport=limited) as c:
+        with pytest.raises(gp.ProvisionError) as e:
+            gp.service_token(c, "owner@x.org", "pw")
+    assert e.value.status == 429 and "too many sign-ins" in str(e.value)
+    with pytest.raises(AccountsUnavailable) as e:
+        OwuiAccounts("http://owui", "owner@x.org", "pw", transport=limited).get("u1")
+    assert "too many recent sign-ins" in str(e.value) and "PASSWORD" not in str(e.value)

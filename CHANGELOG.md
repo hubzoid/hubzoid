@@ -21,6 +21,37 @@ All notable changes to Hubzoid. Versions follow the package version in
 - `hub.send_email(...)` emails the run's own account over SMTP (`HUBZOID_SMTP_*`)
   or to a preview outbox, with delivery records that never resend an ambiguous
   send. Markdown tasks opt in with `publish_artifacts: true` / `send_email: true`.
+- A hub secret's `HUBZOID_WORKFLOW_USER` wins over the hub `.env`, and runs,
+  `schedule list` and the Console's new **Runs as** column share one
+  resolution. A manager sees that a run's result exists and whose it is, not
+  the result.
+
+### Accounts and access
+- A new account's agents are mirrored to the chat app at once, so the first
+  sign-in shows them without a reload. A blocked person, or one with no agent
+  yet, gets a notice in the chat instead of an empty picker.
+- A gateway set up fresh with Console accounts hides Open WebUI's user list
+  (recorded in `deployment.json`; `HUBZOID_HIDE_OWUI_USERS` overrides; existing
+  deployments unchanged). Its Users section opens on Groups; Evaluations and
+  Functions stay. The quickstart covers sharing with a team.
+- The service account reuses its Open WebUI token instead of signing in for
+  every sync and account action, which could exhaust Open WebUI's sign-in limit
+  for the owner's email.
+- Tool refusals, the management tools and the connection journey name
+  capabilities by their Console label, with the id where a tool needs it.
+  Management tools are hidden from people who manage nothing on every runtime.
+  A held but non-delegable capability reads "Admins only".
+
+### Reports, email and connections
+- Removing `share_public_links` (or blocking the owner) ends that owner's
+  public links for good; granting it again does not revive them (`op_0007`).
+  "Anyone with the link" and link creation are one step; a dead link shows a
+  clear page; the people field is labelled; PDFs keep their file name.
+- Email preview files are created 0600 in 0700 folders.
+- Connection links work in real browsers (the page no longer strips its own
+  origin), and a signed-out person comes back to the link after signing in.
+- Usage rows name the model that answered, not the Claude CLI's background
+  Haiku call.
 
 ## [1.0.1] - unreleased
 
@@ -180,7 +211,8 @@ access behave as before.
 - Tool decisions are stored in the database (`hz_access_decisions`) instead of
   monthly JSONL files, which are imported once. A restricted call whose
   decision cannot be recorded is refused.
-- Scheduled markdown runs act as `workflow:md:<task>`, grantable like a person.
+- Scheduled markdown runs act as an account (see Unreleased). A legacy hub with
+  no account configured keeps `workflow:md:<task>`, grantable like a person.
 - A per-agent **Manage access** grant also lets that person open and chat with
   that agent, because every direct agent capability includes **Use this
   agent**. Restricted tools still need their own grant. Organization-wide

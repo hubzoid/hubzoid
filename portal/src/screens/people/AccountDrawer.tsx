@@ -15,7 +15,7 @@ import { ApiError, request, type AccountCreated, type Hub, type Me } from "../..
 import { errorText } from "../../hooks/useData";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { hrefWith, personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { USE_HUB, capabilityLabel, isGrantable } from "../../lib/format";
+import { MANAGE_ACCESS, USE_HUB, capabilityLabel, isGrantable } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
 import { generatePassword, passwordProblem } from "./password";
 
@@ -350,6 +350,9 @@ export function AccountDrawer({
                       <div className="capabilities" role="group" aria-label={`Access to ${hub.name}`}>
                         {perms.map((p) => {
                           const outside = !allowed.has(p);
+                          // Held, but only organization administrators may give it.
+                          const adminOnly =
+                            outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
                           const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
                           return (
                             <div className="capability-row" key={p}>
@@ -374,8 +377,16 @@ export function AccountDrawer({
                                 </span>
                               </Checkbox>
                               {outside && (
-                                <Text type="secondary" className="capability-state">
-                                  Outside your access
+                                <Text
+                                  type="secondary"
+                                  className="capability-state"
+                                  title={
+                                    adminOnly
+                                      ? "Only organization administrators can grant this."
+                                      : "You can only give capabilities you hold in this agent yourself."
+                                  }
+                                >
+                                  {adminOnly ? "Admins only" : "Outside your access"}
                                 </Text>
                               )}
                               {required && (

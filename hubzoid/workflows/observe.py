@@ -199,7 +199,15 @@ def catalog(hub_dir) -> list[dict]:
         row["missed"] = health.get("missed", 0)
         row["heartbeat"] = health.get("heartbeat")
         row["downtime"] = health.get("downtime")
-    return rows + markdown_catalog(hub_dir)
+    rows = rows + markdown_catalog(hub_dir)
+    from . import identity
+
+    for row in rows:
+        # Who it runs as, by the same resolution a run uses (CLI and Console).
+        # The legacy service subject is workflow:<name> / workflow:md:<task>.
+        row["runs_as"] = identity.summary(hub_dir, run_as=row.get("run_as"),
+                                          legacy_subject=f"workflow:{row['name']}")
+    return rows
 
 
 def markdown_catalog(hub_dir) -> list[dict]:

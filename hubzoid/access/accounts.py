@@ -142,25 +142,29 @@ class OwuiAccounts:
         self._transport = transport
 
     def _client(self) -> httpx.Client:
+        from ..gateway_provision import ProvisionError, service_token
+
         client = httpx.Client(base_url=self._base, timeout=_TIMEOUT, transport=self._transport)
         try:
-            r = client.post(
-                "/api/v1/auths/signin",
-                json={"email": self._email, "password": self._password},
-            )
+            token = service_token(client, self._email, self._password)
         except httpx.HTTPError as exc:
             client.close()
             raise AccountsUnavailable(
                 "The chat app could not be reached. Try again shortly."
             ) from exc
-        if r.status_code != 200:
+        except ProvisionError as exc:
             client.close()
-            log.warning("accounts: service account sign-in failed (HTTP %s)", r.status_code)
+            log.warning("accounts: service account sign-in failed (HTTP %s)", exc.status)
+            if exc.status == 429:
+                raise AccountsUnavailable(
+                    "The chat app is refusing sign-ins for the Console's service account "
+                    "for a few minutes (too many recent sign-ins). Try again shortly."
+                ) from None
             raise AccountsUnavailable(
                 "The Console's service account could not sign in to the chat app. "
                 "Check HUBZOID_GATEWAY_ADMIN_EMAIL and HUBZOID_GATEWAY_ADMIN_PASSWORD."
-            )
-        client.headers["Authorization"] = f"Bearer {r.json()['token']}"
+            ) from None
+        client.headers["Authorization"] = f"Bearer {token}"
         return client
 
     def _send(self, method: str, path: str, *, json: dict | None = None,

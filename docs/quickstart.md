@@ -73,9 +73,10 @@ the published version instead.
 ## Troubleshooting
 
 - **No reply:** verify the CLI login or provider key and model in `.env`.
-- **No agent available:** sign in with the intended account. An administrator
-  grants **Use this agent**, or an agent capability which implies entry.
-  Organization-wide admin rights alone do not grant chat.
+- **No agent available:** the chat shows why. A blocked account is told so; an
+  account with no agent is told to ask an administrator, who grants **Use this
+  agent** or an agent capability that implies entry. Organization-wide admin
+  rights alone do not grant chat.
 - **Console forbidden:** use the owner's account, or ask that owner for
   **Manage access**. A direct agent grant includes basic chat; organization-wide
   admin rights alone do not grant chat or restricted tools.
@@ -83,5 +84,26 @@ the published version instead.
   changing bridge credentials so the chat app receives current wiring.
 - **Configuration issue:** `hubzoid doctor my-hub` reports loader and setup errors.
 
-Before sharing with a team, read [administration](ADMINISTRATION.md),
+## Share with a team
+
+The local session above has no sign-in. To give teammates their own accounts,
+run the agents behind a gateway with sign-in on and an Open WebUI service
+account:
+
+```bash
+export WEBUI_AUTH=true
+export WEBUI_SECRET_KEY='a-long-random-value'
+export HUBZOID_GATEWAY_ADMIN_EMAIL=you@example.com
+export HUBZOID_GATEWAY_ADMIN_PASSWORD='a-strong-password'
+hubzoid gateway ./my-hub --data-dir ./gateway-data
+```
+
+Sign in with that email and password, open the **Admin Console** from the chat
+sidebar, and add teammates under **People → Add account** with the agents they
+may use. Public sign-up stays closed. On a gateway set up this way, Open WebUI's
+own user list is hidden, so accounts are managed in one place: its Users section
+opens on Groups, and Evaluations and Functions stay in the Admin Panel. Set
+`HUBZOID_HIDE_OWUI_USERS=false` to keep Open WebUI's user list.
+
+Before going live, read [administration](ADMINISTRATION.md),
 [authentication](auth.md), and [deployment](DEPLOYING.md).

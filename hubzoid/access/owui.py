@@ -10,7 +10,7 @@ import httpx
 from dotenv import dotenv_values
 
 from .. import deployment
-from ..gateway_provision import _signin_or_bootstrap
+from ..gateway_provision import service_token
 
 
 def configured(hub_dir) -> bool:
@@ -38,7 +38,7 @@ def client_for(hub_dir):
             raise RuntimeError(
                 "Set HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD for account lookup and visibility sync"
             )
-        token = _signin_or_bootstrap(client, email, password, False)
+        token = service_token(client, email, password)
         client.headers["Authorization"] = f"Bearer {token}"
         yield client
 
