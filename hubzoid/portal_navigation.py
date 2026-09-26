@@ -5,9 +5,15 @@ in-app navigation without a full reload. So a one-shot check on load would show 
 link before an admin has signed in and leave it visible after they sign out. The
 script therefore RE-EVALUATES the session — adding the link when `/portal/api/me`
 authorizes and removing it otherwise — on load, on history navigation, when the tab
-regains focus, and on a slow interval. It is idempotent and never throws into chat."""
+regains focus, and on a slow interval. It is idempotent and never throws into chat.
+
+With `HUBZOID_HIDE_OWUI_USERS` on (`script(hide_users=True)`), the same script
+also sends in-app navigation to Open WebUI's Users page (`/admin/users`,
+`/admin/users/overview`) to the Console's People screen, which the edge already
+does for a full page load, and hides the Users sub-tab. The Groups tab stays."""
 SCRIPT = r'''
 (() => {
+  const HIDE_USERS = false;
   const ID = 'hubzoid-manage-access';
   let authorized = false, revision = 0, queued = false, observedSidebar;
   const style = document.createElement('style');
@@ -24,6 +30,18 @@ SCRIPT = r'''
     #${ID}[data-compact] span { display:none; }
   `;
   document.head.appendChild(style);
+  if (HIDE_USERS) {
+    // Accounts are managed in the Hubzoid Console. Groups stay in Open WebUI.
+    const hidden = document.createElement('style');
+    hidden.textContent = 'a[href="/admin/users/overview"]{display:none !important;}';
+    document.head.appendChild(hidden);
+  }
+  function usersPage() {
+    if (!HIDE_USERS) return;
+    const p = location.pathname.replace(/\/+$/, '');
+    if (p === '/admin/users' || p === '/admin/users/overview')
+      location.replace('/portal/#/people');
+  }
   const resize = new ResizeObserver(place);
   function place() {
     queued = false;
@@ -63,7 +81,7 @@ SCRIPT = r'''
     const current = ++revision;
     let ok = false;
     try {
-      const r = await fetch('/portal/api/me', {credentials: 'same-origin'});
+      const r = await fetch('/portal/api/me?brief=1', {credentials: 'same-origin'});
       ok = r.ok;
     } catch (_) { ok = false; }
     if (current !== revision) return;
@@ -72,13 +90,21 @@ SCRIPT = r'''
   }
   // OWUI replaces the sidebar when expanding/collapsing and after SPA login.
   // Observe layout changes without issuing extra authentication requests.
-  new MutationObserver(schedulePlace).observe(document.body, {childList:true, subtree:true});
+  new MutationObserver(() => { schedulePlace(); usersPage(); }).observe(document.body, {childList:true, subtree:true});
+  usersPage();
   sync();
-  addEventListener('popstate', sync);
+  addEventListener('popstate', () => { usersPage(); sync(); });
   addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
   setInterval(sync, 15000);
 })();
 '''
+
+
+def script(hide_users: bool = False) -> str:
+    """The navigation script, with the Users-page redirect when enabled."""
+    if not hide_users:
+        return SCRIPT
+    return SCRIPT.replace("const HIDE_USERS = false;", "const HIDE_USERS = true;", 1)
 
 
 def inject(body: bytes) -> bytes:

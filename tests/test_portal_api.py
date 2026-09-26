@@ -21,6 +21,9 @@ def client(tmp_path, monkeypatch):
     access._stores.clear()
     gs = access.store_for(tmp_path)
     gs.set_authoritative(True)
+    # Writes are authorized by the access service from the store, not from the
+    # injected resolver, so the test administrator is a real org admin there.
+    gs.grant("root", "*", "manage_access", actor="test")
 
     admin = {"who": PortalAdmin(subject="root", is_org_admin=True, manageable=[])}
 
@@ -222,15 +225,22 @@ def test_expected_revision_guards_concurrent_edits(client):
 
 def test_hub_admin_cannot_grant_manage_access(client):
     hub = client.hub
-    # demote to a hub admin (not org)
+    # demote to a hub admin (not org) who manages this hub and holds prod_in
+    client.gs.grant("ha", hub, "manage_access", actor="test")
+    client.gs.grant("ha", hub, "prod_in", actor="test")
     client.admin["who"] = PortalAdmin(subject="ha", is_org_admin=False, manageable=[hub])
     r = client.post("/portal/api/access/grant",
                     json={"subject": "x", "hub": hub, "permission": "manage_access"})
     assert r.status_code == 403
-    # but can grant a normal permission in their hub
+    # but can grant a normal permission in their hub, within what they hold
     r = client.post("/portal/api/access/grant",
                     json={"subject": "x", "hub": hub, "permission": "prod_in"})
     assert r.status_code == 200
+    # the delegate ceiling: without prod_in themselves, they cannot grant it
+    client.gs.revoke("ha", hub, "prod_in", actor="test")
+    r = client.post("/portal/api/access/grant",
+                    json={"subject": "y", "hub": hub, "permission": "prod_in"})
+    assert r.status_code == 403 and r.json()["code"] == "outside_ceiling"
 
 
 def test_hub_admin_cannot_touch_other_hub(client):

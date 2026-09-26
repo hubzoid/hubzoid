@@ -12,6 +12,7 @@ const shots = process.env.PORTAL_SHOTS || path.join(require("node:os").tmpdir(),
 fs.mkdirSync(shots, { recursive: true });
 const ORIGIN = "http://hubzoid.test";
 const PRIYA = "priya.natarajan@example.org";
+const USE_HUB_PERM = "use_hub";
 
 const steps = [];
 function step(name) {
@@ -903,6 +904,108 @@ function step(name) {
     assert.equal(await drawer().getByRole("button", { name: "Block access" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Refresh accounts" }).count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agent-admin.png"), fullPage: true });
+    state.mutations.length = 0;
+
+    // ---- accounts and confirmations (stubbed API: the fixture predates them) ------------------
+    step("A delegate adds an account: only their own capabilities are selectable; the password shows once");
+    // The fixture's /me predates grantable/account fields; later-registered routes win.
+    const meExtras = () =>
+      state.role === "hub"
+        ? { grantable: { finance: [USE_HUB_PERM] }, account_admin: false, can_create_accounts: true, accounts_configured: true }
+        : { grantable: { finance: state.catalogs.finance.map((p) => p.permission), support: state.catalogs.support.map((p) => p.permission), itops: [] }, account_admin: true, can_create_accounts: true, accounts_configured: true };
+    const meRoute = async (route) => {
+      try {
+        const base = await fixture.handle("GET", "/me", {}, undefined);
+        return route.fulfill({ json: { ...base, ...meExtras() } });
+      } catch (e) {
+        return route.fulfill({ status: e.status || 500, json: { detail: e.detail || String(e) } });
+      }
+    };
+    const accountCalls = [];
+    const accountsRoute = async (route) => {
+      const body = route.request().postDataJSON();
+      accountCalls.push(body);
+      if (body.email === PRIYA)
+        return route.fulfill({ status: 409, json: { detail: "An account with this email already exists. Grant access instead.", code: "account_exists" } });
+      const grants = {};
+      for (const g of body.grants) (grants[g.hub] ??= []).push(g.permission);
+      return route.fulfill({ json: { ok: true, subject: body.email, name: body.name, role: "user", grants, revision: 1 } });
+    };
+    await context.route(`${ORIGIN}/portal/api/me`, meRoute);
+    await context.route(`${ORIGIN}/portal/api/accounts`, accountsRoute);
+    await page.reload();
+    await go("/people");
+    await page.getByRole("button", { name: "Add account" }).click();
+    await drawer().getByText("Initial access").waitFor();
+    // Capabilities the delegate does not hold are shown but not selectable.
+    assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isDisabled(), true);
+    await drawer().getByText("Outside your access").first().waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("new.person@example.org");
+    await drawer().getByRole("textbox", { name: "Name" }).fill("New Person");
+    await drawer().getByRole("button", { name: "Generate" }).click();
+    const generated = await page.locator("#account-password").inputValue();
+    assert.ok(generated.length >= 16, "a generated password is filled in");
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review" }).click();
+    await drawer().getByText("Finance Assistant: Use this agent").waitFor();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("New Person can now sign in as new.person@example.org").waitFor();
+    assert.equal(await page.locator("#one-time-password").inputValue(), generated);
+    assert.deepEqual(accountCalls[0], {
+      email: "new.person@example.org", name: "New Person", password: generated,
+      grants: [{ hub: "finance", permission: USE_HUB_PERM }],
+    });
+    await drawer().getByRole("button", { name: "Done" }).click();
+    await drawer().waitFor({ state: "hidden" });
+
+    step("An existing account is not duplicated; the drawer offers granting access instead");
+    await page.getByRole("button", { name: "Add account" }).click();
+    await drawer().getByRole("textbox", { name: "Email address" }).fill(PRIYA);
+    await drawer().getByRole("textbox", { name: "Name" }).fill("Priya");
+    await page.locator("#account-password").fill("Typed-Password-42");
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("This person already has an account").waitFor();
+    await drawer().getByRole("link", { name: "Grant access in Finance Assistant" }).waitFor();
+    await drawer().getByRole("button", { name: "Done" }).click();
+    await drawer().waitFor({ state: "hidden" });
+
+    step("A change proposed from chat is confirmed on its own page, exactly as proposed");
+    const now = Math.floor(Date.now() / 1000);
+    const changeRequest = {
+      id: "req_abcdefghijklmnopqrstu", status: "pending", kind: "access", hub: "finance",
+      hub_name: "Finance Assistant", target: PRIYA, surface: "whatsapp", created: now - 60,
+      expires: now + 840, decided: null, plan_hash: "plan-hash-1", result: null, problem: null,
+      plan: { kind: "access", hub: "finance", subject: PRIYA, grant: ["invoices"], revoke: [] },
+      summary: "For priya in finance: allow Manage invoices.",
+      labels: Object.fromEntries(state.catalogs.finance.map((p) => [p.permission, p])),
+      current: [USE_HUB_PERM, "ledger"],
+    };
+    const confirmCalls = [];
+    const changeRoute = async (route) => {
+      const u = new URL(route.request().url());
+      if (route.request().method() === "GET") return route.fulfill({ json: changeRequest });
+      confirmCalls.push({ path: u.pathname, body: route.request().postDataJSON() });
+      changeRequest.status = u.pathname.endsWith("/confirm") ? "confirmed" : "rejected";
+      return route.fulfill({ json: { id: changeRequest.id, status: changeRequest.status, result: {} } });
+    };
+    await context.route(`${ORIGIN}/portal/api/change-requests/**`, changeRoute);
+    await go(`/confirm/${changeRequest.id}`);
+    await page.getByRole("heading", { name: "Change access", level: 1 }).waitFor();
+    await page.getByText("Proposed from WhatsApp", { exact: false }).waitFor();
+    await page.getByText("Manage invoices", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Apply change" }).click();
+    await page.getByText("Access updated").waitFor();
+    assert.deepEqual(confirmCalls[0], {
+      path: `/portal/api/change-requests/${changeRequest.id}/confirm`,
+      body: { plan_hash: "plan-hash-1" },
+    });
+    assert.equal(await page.getByRole("button", { name: "Apply change" }).count(), 0);
+    await context.unroute(`${ORIGIN}/portal/api/change-requests/**`, changeRoute);
+    await context.unroute(`${ORIGIN}/portal/api/accounts`, accountsRoute);
+    await context.unroute(`${ORIGIN}/portal/api/me`, meRoute);
     state.mutations.length = 0;
 
     // ---- mobile -------------------------------------------------------------------------------

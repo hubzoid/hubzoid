@@ -288,7 +288,7 @@ export function AccessDrawer({
                   <Text type={touched && subjectError ? "danger" : "secondary"} className="field-help">
                     {touched && subjectError
                       ? subjectError
-                      : identityType === "service" ? "Use a stable workflow:name identity for a configured service. This does not create credentials." : "No invitation is sent. Share the chat URL and ask them to sign in with this exact email. An administrator must create or approve their chat account if required."}
+                      : identityType === "service" ? "Use a stable workflow:name identity for a configured service. This does not create credentials." : "No invitation is sent. Share the chat URL and ask them to sign in with this exact email. To create their sign-in, use People → Add account."}
                   </Text>
                 </div>
               ) : (

@@ -15,6 +15,7 @@ const AgentDetail = lazy(() => import("./screens/AgentDetail").then((m) => ({ de
 const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
+const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
 
 const TABS: AgentTab[] = ["access", "runs", "activity"];
 
@@ -61,6 +62,10 @@ function Router({
   const hubs = useData<{ hubs: Hub[] }>("/hubs");
 
   const status = me.status ?? hubs.status;
+  // A confirmation link from chat or WhatsApp: after signing in, the manager
+  // needs to come back to this exact page.
+  const confirming = route.parts[0] === "confirm";
+  const signIn = `/auth?redirect=${encodeURIComponent(location.pathname + location.hash)}`;
   if (!me.data || !hubs.data)
     return (
       <div className="gate">
@@ -72,12 +77,22 @@ function Router({
             title={status === 401 ? "Sign in to continue" : status === 403 ? "Console access is not enabled for this account" : "Couldn’t connect to the Console"}
             description={
               <>
-                {status === 401 ? "Use your chat account to sign in, then return here." : status === 403 ? "Ask your hub owner for Manage access. You can still open chat to use the agents available to you." : "Check your connection and try again. Your access has not changed."}
+                {status === 401
+                  ? confirming
+                    ? "Sign in with your chat account to review this change. If you land in the chat app afterwards, open the confirmation link again."
+                    : "Use your chat account to sign in, then return here."
+                  : status === 403 ? "Ask your hub owner for Manage access. You can still open chat to use the agents available to you." : "Check your connection and try again. Your access has not changed."}
                 <div style={{ marginTop: 12 }}>
                   <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
-                  <Button type="primary" href="/">
-                    Go to the chat app
-                  </Button>
+                  {status === 401 && confirming ? (
+                    <Button type="primary" href={signIn}>
+                      Sign in
+                    </Button>
+                  ) : (
+                    <Button type="primary" href="/">
+                      Go to the chat app
+                    </Button>
+                  )}
                 </div>
               </>
             }
@@ -126,6 +141,9 @@ function Router({
   } else if (area === "activity") {
     active = "activity";
     screen = <ActivityScreen hubs={list} />;
+  } else if (area === "confirm" && rest[0]) {
+    active = "people";
+    screen = <ConfirmScreen id={rest[0]} hubs={list} />;
   } else {
     screen = (
       <RecoveryScreen

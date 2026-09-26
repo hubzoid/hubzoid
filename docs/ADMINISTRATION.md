@@ -117,10 +117,17 @@ email that received the grant.
 
 The portal's **People** screen distinguishes accounts awaiting signup, pending
 approval, active accounts, services, and blocked people. **Refresh accounts**
-re-reads the account directory; it does not create accounts. Organization admins
-add or remove other organization admins from a person's **Details**. Agent admins
-cannot change admin rights or use an entry revocation to remove another admin's
-rights.
+re-reads the account directory. It does not create accounts. **Add account**
+creates one (see [Accounts in the Console](#accounts-in-the-console)).
+Organization admins add or remove other organization admins from a person's
+**Details**. Agent admins cannot change admin rights or use an entry revocation
+to remove another admin's rights.
+
+Agent admins also work within a ceiling. In each agent they manage they can
+grant or remove only the capabilities they hold there themselves, never
+`manage_access`, never their own access and never an organization
+administrator's. The server checks this on every change. See
+[access management](access-management.md#delegated-management-and-its-ceiling-implemented).
 
 Revoking agent entry also removes that person's direct tool grants in that agent.
 Public access and organization-level admin rights are displayed as inherited
@@ -128,9 +135,12 @@ access. Removing a direct grant does not remove those inherited rights.
 
 **Block access** removes a person's direct grants and blocks agent access,
 including public access. It leaves the OWUI account and chats intact. Reactivation
-does not restore removed grants. For full account offboarding, also suspend/delete
-the account and revoke its sessions/API keys in OWUI. The final organization
-administrator cannot be removed or blocked.
+does not restore removed grants. For full account offboarding, use **Delete
+account** in the person's Details (organization administrators), which removes
+every grant and then the chat account and its chats. The person's Open WebUI API
+keys stop working with the account. Open WebUI keeps its stored connection tokens
+for a deleted account in its database. The final organization administrator
+cannot be removed, blocked or deleted.
 
 Workflow subjects are `workflow:<function_name>` and are granted in a named hub.
 Permission definitions come from `restricted/*.py`; optional display metadata
@@ -165,11 +175,82 @@ Usage comes from Hubzoid's recorded operational data, not historical chat-app
 messages. Open an agent card for access, **Runs & schedules**, or Activity.
 Global Runs is no longer a navigation entry; existing direct links still work.
 
-Public email and SSO account registration default to off. Administrators create
-accounts through **Admin Panel → Users** in the chat app (`/admin`), then grant
-agent access in Console. Console does not duplicate account creation or show a
-Manage accounts shortcut. Explicit sign-up overrides and existing persisted OWUI
-settings remain operator-controlled; see [authentication](auth.md).
+Public email and SSO account registration default to off. Managers create
+accounts in **People → Add account** and grant agent access in the same step.
+Open WebUI's **Admin Panel → Users** keeps working unless you hide it (below).
+Explicit sign-up overrides and existing persisted OWUI settings remain
+operator-controlled. See [authentication](auth.md).
+
+## Accounts in the Console
+
+Implemented in this release. Account management is always available to
+organization administrators and delegates once the server is configured for it.
+Nothing about existing accounts or legacy agents changes until someone uses it.
+
+Requirements:
+
+- the chat app's internal URL: the gateway manifest's `owui_url`, or
+  `OWUI_INTERNAL_URL` under `hubzoid run` (set automatically). A public
+  `WEBUI_URL` alone is refused, so account writes never pass the edge.
+- `HUBZOID_GATEWAY_ADMIN_EMAIL` and `HUBZOID_GATEWAY_ADMIN_PASSWORD`, the
+  deployment's Open WebUI service account (an Open WebUI administrator).
+  Delegates never see or need these credentials.
+
+What managers can do:
+
+| Action | Who | Where |
+|---|---|---|
+| Create an account (role `user`) with initial access | Org admins, and delegates within their ceiling | People → Add account |
+| Approve a pending signup | Org admins | Person Details → Chat account |
+| Reset a password (shown once) | Org admins | Person Details → Chat account |
+| Switch the chat-app admin role | Org admins | Person Details → Chat account |
+| Delete an account | Org admins | Person Details → Chat account |
+
+Every action is audited in **Activity → Access changes** (`account_create`,
+`account_approve`, `account_password_reset`, `account_role`, `account_delete`)
+without the password. Changing an account's email is not offered. Create a new
+account instead, because grants are keyed on the email.
+
+Organization administrators cannot change their own account or the service
+account from the Console. For those, use Open WebUI's own settings or the server.
+
+### Proposals from agents
+
+With `HUBZOID_MANAGEMENT_TOOLS=true` in a hub's `.env` (default off), that hub's
+agent can propose access changes and new accounts on behalf of the signed-in
+manager, from chat, MCP, WhatsApp or Telegram. It replies with a link to
+`/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
+change and confirms it. Nothing applies before that. Links expire after
+`HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
+[access management](access-management.md#proposals-from-chat-whatsapp-and-mcp-implemented-off-by-default).
+
+### Hiding the Open WebUI Users page
+
+After Console account management is verified on a deployment, set
+`HUBZOID_HIDE_OWUI_USERS=true` in the gateway (or `hubzoid run`) environment and
+restart it. Open WebUI's Users page then opens Console People, and browser
+writes to Open WebUI's account admin API (`POST /api/v1/auths/add`,
+`POST /api/v1/users/{id}/update`, `DELETE /api/v1/users/{id}`) are refused. The
+Groups tab stays for legacy agents. Default: off, so nothing changes on upgrade.
+
+### Open WebUI APIs Hubzoid relies on
+
+These must stay reachable on the internal URL. None of them passes the edge.
+
+| API | Used for |
+|---|---|
+| `POST /api/v1/auths/signin`, `POST /api/v1/auths/signup` | Service-account token (signup only on a fresh gateway) |
+| `GET /api/v1/auths/` | Verifying a Console session cookie |
+| `GET /api/v1/users/?page=` | Refresh accounts |
+| `POST /api/v1/auths/add` | Add account |
+| `GET /api/v1/users/{id}` | Reading an account before changing it |
+| `POST /api/v1/users/{id}/update` | Approve, reset password, chat-app role |
+| `DELETE /api/v1/users/{id}` | Delete account |
+| `/api/v1/groups/...` | Group provisioning and the legacy visibility mirror |
+| `/api/v1/models/...` | Model registration and the visibility mirror |
+
+Open WebUI API keys are read from its database (read-only) to verify MCP and
+management API callers.
 
 ## Migrate existing customers
 
@@ -361,6 +442,9 @@ idempotency and code changes. For operators:
 | Grant has no effect | Agent still marked legacy? Correct deployment manifest? Matching signup email? |
 | Agent not visible | People screen sync status; service-account credentials; `access sync` |
 | Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
+| Add account says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |
+| A delegate's grant is refused as outside their access | They must hold that capability in that agent themselves. An org admin can grant it |
+| A confirmation link says the request isn't available | Only the person who proposed it can open it. It expires after `HUBZOID_CHANGE_REQUEST_TTL` seconds and works once |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |
 | No execution history | Correct hub's DBOS database, workflow enabled, run actually submitted |
 | User still has access after revocation | Public/inherited access; use Block access for offboarding |
@@ -372,7 +456,9 @@ Never enable this bypass on an exposed deployment.
 
 ## Account deletion, replacement and approval
 
-OWUI remains the account owner. A successful directory refresh marks missing or
+OWUI remains the credential owner. The Console creates, approves, resets and
+deletes accounts through OWUI's admin API (see
+[Accounts in the Console](#accounts-in-the-console)). A successful directory refresh marks missing or
 pending accounts unavailable; signup grants stay pending until the actual account
 exists. The verified OWUI account ID is bound on migration, login and API-key use.
 If a different account reuses an existing email, direct grants are removed and
