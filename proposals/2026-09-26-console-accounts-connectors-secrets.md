@@ -677,11 +677,35 @@ visible in its own group, marked "No longer available", and can be removed. It
 can never be granted again, and a delegate may remove it only if they hold it
 themselves.
 
+**Everyone signed in is no longer granted** (founder request, 26 September).
+New hubs need named grants. The Access page's "Public access" switch goes.
+- No path creates a new `*` (everyone signed in) `use_hub` grant, for any
+  actor, organization administrators included: `AccessService` (so the Console,
+  `/portal/api` and the account endpoints), change proposals and their
+  confirmation, `hubzoid grant`, and `GrantStore` itself (`grant`,
+  `apply_changes`, `grant_many`, `apply_migration`).
+- The store accepts one only with `carry_over_public=True`, which only
+  migration passes: carrying over demonstrably public legacy access (a public
+  Open WebUI model, `--standalone-public`, or a `*` roster row) preserves
+  existing access. The plan report says "Everyone signed in (carried over)".
+  `hubzoid access rollback` restores a backup's rows as they were.
+- An existing grant is never revoked or hidden by this change. It shows as an
+  **Everyone signed in** row with Use this agent, not editable, with a
+  **Remove** action for organization administrators. The confirmation states how
+  many signed-up accounts open the hub only through it. Delegates see it
+  read-only. `hubzoid revoke '*' use_hub` still works.
+- Other broad paths stay closed: the organization domain carries only
+  `manage_access` (organization administrators only, never through proposals);
+  the `*` permission is refused; there are no group subjects; a delegate's
+  ceiling contains only named capabilities they hold.
+
 **Compatibility.** Ids `use_hub`, `manage_access`, `curator` and every
 restricted stem are unchanged. Legacy hubs (group-based, no
 `permissions.yaml`) are read-only in the Console as before and behave exactly
 as before. Behaviour change for UPGRADING: `permissions.yaml` can no longer
-relabel a built-in.
+relabel a built-in; nobody can create new access for everyone signed in
+(existing grants keep working until an organization administrator removes
+them); `hubzoid grant '*'` exits with an error.
 
 ### Security model (cross-cutting)
 
@@ -1137,13 +1161,20 @@ def layer_report(hub_dir: Path) -> list[dict]                  # [{"key","layer"
 
 ### P4: capabilities in the Console (organization and registration contract)
 
-- **Creates:** `hubzoid/capabilities.py`, `tests/test_capabilities.py`.
+- **Creates:** `hubzoid/capabilities.py`, `tests/test_capabilities.py`,
+  `tests/test_everyone_access.py`.
 - **Owns (modifies):**
   - `hubzoid/deployment.py` (`permission_catalog` becomes a wrapper)
   - `hubzoid/access/service.py` (`catalog`, the ceiling, included and obsolete
     handling)
   - `hubzoid/tools/curator.py` (registers `curator`)
-  - `hubzoid/access/migrate.py` (skips included capabilities)
+  - `hubzoid/access/migrate.py` (skips included capabilities; carries over and
+    reports public legacy access)
+  - `hubzoid/access/store.py` (refuses new everyone grants without
+    `carry_over_public`), `hubzoid/portal.py` (`public_reliant`, refusal text),
+    `hubzoid/cli.py` (`hubzoid grant '*'` refused)
+  - `portal/src/screens/access/AccessEditor.tsx` (the switch removed; the
+    Everyone row and its Remove)
   - `portal/src/screens/access/{AccessDrawer.tsx,plan.ts}`,
     `portal/src/screens/people/AccountDrawer.tsx`, `portal/src/lib/format.ts`,
     `portal/src/api.ts`, `portal/src/components/common.tsx`,
