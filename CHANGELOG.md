@@ -34,6 +34,20 @@ access behave as before.
 - Personal Open WebUI MCP connections now work on the OpenAI Agents SDK and
   Codex backends as well as Claude. On managed hubs each app needs its
   `connector_<app>` capability. `connector_` is a reserved capability prefix.
+- Agents, Access, Edit access groups capabilities as Hub access, Hubzoid tools,
+  Custom restricted tools, Workflows and Administration, and hides empty groups.
+  Built-in capabilities register their label, group, surfaces and required
+  settings (`hubzoid/capabilities.py`), so a new one appears without its own
+  screen. Configuration is shown separately from permission: a missing setting
+  shows a short status such as "Jev key missing" and never grants or blocks
+  anything by itself. Grants for capabilities that no longer exist stay visible
+  and removable. `identity/permissions.yaml` can relabel custom restricted tools
+  only, not built-ins.
+- Public access is removed. New "Everyone signed in" grants are refused in the
+  Console, the API, agent-proposed changes, `hubzoid grant '*'` and the store.
+  Existing ones keep working and appear as an "Everyone signed in" row that an
+  org admin can remove after granting named people. Migrating a legacy hub that
+  was open to everyone carries that over and says so in the plan.
 - Optional AWS Secrets Manager secrets per layer (`AWS_SECRET_NAME` with
   `AWS_REGION` for the deployment, `HUBZOID_HUB_SECRET_NAME`,
   `HUBZOID_RESTRICTED_SECRET_NAME`), read at start with boto3's normal
