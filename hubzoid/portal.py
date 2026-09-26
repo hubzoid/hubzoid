@@ -13,6 +13,14 @@ validates the OWUI session server-side and strips any inbound identity header
 (so a browser can't assert its own identity); a dev resolver keys off an env
 var. Entry requires organization-wide or per-hub `manage_access`; a chat-app admin
 role alone does not grant Console access.
+
+Every endpoint also accepts `Authorization: Bearer sk-...`, an Open WebUI API
+key verified server-side against Open WebUI's key table (the same check as the
+hosted MCP surface). A key caller has no ambient cookie, so the same-origin
+rule applies only to session callers.
+
+Authority is decided by `access.service.AccessService`, never in a handler:
+every mutation builds an `Actor` from the verified identity and calls it.
 """
 
 from __future__ import annotations
@@ -21,22 +29,30 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
-from pydantic import BaseModel, Field, ConfigDict
+import functools
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ConfigDict, SecretStr, ValidationError
 from . import deployment
 from .access.identity import normalize
 
 from .access import store_for
+from .access.service import (
+    LEGACY_MSG,
+    UNAVAILABLE_MSG,
+    AccessService,
+    Actor,
+    Denied,
+)
 from .access.session import require_same_origin, verified_email
 from .access.store import (
     MANAGE_ACCESS,
     ORG,
     USE_HUB,
     EVERYONE,
-    LastAdminError,
-    RevisionConflict,
 )
 
 log = logging.getLogger("hubzoid.portal")
@@ -51,6 +67,16 @@ class PortalAdmin:
     subject: str
     is_org_admin: bool
     manageable: list[str]
+    # How the identity was verified: "session" (Open WebUI cookie, or the local
+    # dev override) or "api-key" (an Open WebUI API key as a Bearer token).
+    via: str = "session"
+
+    def actor(self) -> Actor:
+        return Actor(
+            subject=normalize(self.subject),
+            surface="api" if self.via == "api-key" else "console",
+            via=self.via,
+        )
 
 
 class GrantRequest(BaseModel):
@@ -84,6 +110,68 @@ class PersonRequest(BaseModel):
     suspended: bool = True
 
 
+class AccountGrant(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=200)
+    permission: str = Field(min_length=1, max_length=200)
+
+
+# Passwords are SecretStr so a validation error never echoes them back.
+class AccountCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+    name: str = Field(min_length=1, max_length=200)
+    password: SecretStr
+    grants: list[AccountGrant] = Field(default_factory=list, max_length=200)
+
+
+class PasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: SecretStr
+
+
+class RoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user", "admin"]
+
+
+class DeleteAccountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm_email: str = Field(min_length=1, max_length=320)
+
+
+class ConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_hash: str = Field(min_length=1, max_length=128)
+    password: SecretStr | None = None
+
+
+def _validated(model: type[BaseModel], body: Any) -> Any:
+    """Validate a body that may carry a password. FastAPI's own validation
+    errors echo the offending input, so these bodies are checked here and the
+    error names only the field."""
+    try:
+        return model.model_validate(body if body is not None else {})
+    except ValidationError as exc:
+        fields = sorted({".".join(str(x) for x in e["loc"]) or "body" for e in exc.errors()})
+        raise Denied(422, "invalid_request",
+                     "Check these fields: " + ", ".join(fields) + ".")
+
+
+def _denied(fn):
+    """Turn a service refusal into `{"detail", "code"}` with its status."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Denied as exc:
+            return JSONResponse({"detail": exc.message, "code": exc.code},
+                                status_code=exc.status)
+
+    return wrapper
+
+
 def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | None"]:
     """Resolve the portal admin from the request.
 
@@ -93,6 +181,8 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
     `can(subject, *, manage_access)` (org) or any hub's manage_access.
     """
     hub_dir = Path(hub_dir)
+
+    service = AccessService(hub_dir)
 
     def resolve(request: Request) -> "PortalAdmin | None":
         # The dev override is a deliberate TWO-part opt-in: both
@@ -115,18 +205,38 @@ def default_admin_resolver(hub_dir: Path) -> Callable[[Request], "PortalAdmin | 
             subject = _verify_owui_session(request, hub_dir)
         if not subject:
             raise HTTPException(401, "Sign in to continue.")
-        gs = store_for(hub_dir)
-        org = gs.can(subject, ORG, MANAGE_ACCESS)
-        manageable = [
-            h
-            for h in _known_hubs(hub_dir, gs)
-            if org or gs.can(subject, h, MANAGE_ACCESS)
-        ]
-        if not org and not manageable:
+        try:
+            scope = service.scope(Actor(normalize(subject), "console", "session"))
+        except Denied as exc:
+            raise HTTPException(exc.status, exc.message)
+        if not scope.any:
             return None
-        return PortalAdmin(subject=subject, is_org_admin=org, manageable=manageable)
+        return PortalAdmin(subject=subject, is_org_admin=scope.org_admin,
+                           manageable=sorted(scope.hubs))
 
     return resolve
+
+
+def api_key_admin(request: Request, hub_dir: Path) -> "PortalAdmin | None":
+    """Resolve `Authorization: Bearer sk-...` to its Open WebUI owner. Only an
+    Open WebUI API key is accepted; any other Authorization value is refused."""
+    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token.startswith("sk-"):
+        raise HTTPException(401, "Use an Open WebUI API key (Bearer sk-...).")
+    from .access import owui_api_keys
+
+    email = owui_api_keys.resolve_email(hub_dir, token)
+    if not email:
+        raise HTTPException(401, "This API key is not valid.")
+    try:
+        scope = AccessService(hub_dir).scope(Actor(normalize(email), "api", "api-key"))
+    except Denied as exc:
+        raise HTTPException(exc.status, exc.message)
+    if not scope.any:
+        return None
+    return PortalAdmin(subject=normalize(email), is_org_admin=scope.org_admin,
+                       manageable=sorted(scope.hubs), via="api-key")
 
 
 def _is_loopback(request: Request) -> bool:
@@ -138,8 +248,11 @@ _check_same_origin = require_same_origin
 _verify_owui_session = verified_email
 
 
-def _known_hubs(hub_dir: Path, gs) -> list[str]:
-    return sorted(h["key"] for h in deployment.hubs(hub_dir))
+def _check_mutation(request: Request, admin: PortalAdmin) -> None:
+    """Session callers carry an ambient cookie, so their writes must come from
+    our own origin. An API-key caller sends its credential explicitly."""
+    if admin.via != "api-key":
+        _check_same_origin(request)
 
 
 # ---- account state ----------------------------------------------------------
@@ -152,19 +265,12 @@ def _known_hubs(hub_dir: Path, gs) -> list[str]:
 # reports the account as approved/present again. The portal exposes them apart
 # so the UI can tell "blocked by an admin" from "blocked by the chat app".
 
-_UNAVAILABLE_MSG = (
-    "This account is unavailable in the chat app (awaiting approval or removed). "
-    "Approve or restore it in Open WebUI, then refresh accounts."
-)
+_UNAVAILABLE_MSG = UNAVAILABLE_MSG
 
 # A hub whose access is not yet dashboard-managed (Casbin not authoritative) is still
 # governed by the chat app. Editing its access here would neither take effect nor
 # survive migration, so those edits are refused (in the API, not only the UI).
-_LEGACY_MSG = (
-    "This agent's access is still managed in the chat app — it has not been migrated "
-    "to the dashboard. Migrate the agent first; edits made here would not take effect "
-    "and would be overwritten by migration."
-)
+_LEGACY_MSG = LEGACY_MSG
 
 
 def _account_flags(gs, subject: str) -> dict:
@@ -211,14 +317,42 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     hub_dir = Path(hub_dir)
     resolver = admin_resolver or default_admin_resolver(hub_dir)
     router = APIRouter(prefix="/portal/api", tags=["portal"])
+    service = AccessService(hub_dir)
 
     def require_admin(request: Request) -> PortalAdmin:
-        admin = resolver(request)
+        if request.headers.get("authorization"):
+            admin = api_key_admin(request, hub_dir)
+        else:
+            admin = resolver(request)
         if admin is None:
             raise HTTPException(
                 403, "Sign in with an account allowed to manage agent access."
             )
         return admin
+
+    def require_person(request: Request) -> Actor:
+        """Any verified caller, manager or not: for change requests, whose own
+        check is "only the proposer may see or decide it"."""
+        if request.headers.get("authorization"):
+            scheme, _, token = request.headers["authorization"].partition(" ")
+            from .access import owui_api_keys
+
+            email = (owui_api_keys.resolve_email(hub_dir, token.strip())
+                     if scheme.lower() == "bearer" and token.strip().startswith("sk-") else None)
+            if not email:
+                raise HTTPException(401, "This API key is not valid.")
+            return Actor(normalize(email), "api", "api-key")
+        if admin_resolver is not None:
+            admin = admin_resolver(request)
+            if admin is None:
+                raise HTTPException(403, "Sign in to continue.")
+            return admin.actor()
+        dev = (os.environ.get("HUBZOID_PORTAL_DEV_USER") or "").strip()
+        subject = dev if dev and _truthy_env("HUBZOID_PORTAL_DEV") else ""
+        subject = subject or _verify_owui_session(request, hub_dir)
+        if not subject:
+            raise HTTPException(401, "Sign in to continue.")
+        return Actor(normalize(subject), "console", "session")
 
     def allowed_hubs(admin):
         return [
@@ -234,6 +368,12 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             return deployment.hub_path(hub_dir, hub)
         except KeyError:
             raise HTTPException(404, "Hub is not registered in this deployment")
+
+    def _grantable(admin, hub) -> list[str]:
+        try:
+            return sorted(service.ceiling(admin.actor(), hub))
+        except Denied:
+            return []
 
     def selected(admin, hub):
         if hub:
@@ -260,12 +400,26 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         return {"denied": denied}
 
     @router.get("/me")
-    def me(admin=Depends(require_admin)):
-        return dict(
+    @_denied
+    def me(brief: bool = False, admin=Depends(require_admin)):
+        out = dict(
             subject=admin.subject,
             org_admin=admin.is_org_admin,
             manageable=[h["key"] for h in allowed_hubs(admin)],
         )
+        if brief:  # the chat sidebar link only needs to know the Console opens
+            return out
+        from .access import accounts as accountlib
+
+        actor = admin.actor()
+        out.update(
+            grantable=service.grantable(actor),
+            account_admin=admin.is_org_admin,
+            can_create_accounts=service.can_create_accounts(actor),
+            accounts_configured=accountlib.configured(hub_dir),
+            via=admin.via,
+        )
+        return out
 
     @router.get("/hubs")
     def hubs(admin=Depends(require_admin)):
@@ -284,11 +438,13 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         }
 
     @router.get("/permissions")
+    @_denied
     def permissions(hub: str, admin=Depends(require_admin)):
-        path = require_hub(admin, hub)
-        return dict(hub=hub, permissions=deployment.permission_catalog(path))
+        require_hub(admin, hub)
+        return dict(hub=hub, permissions=service.catalog(hub))
 
     @router.get("/access")
+    @_denied
     def access(
         hub: str,
         q: str = "",
@@ -296,7 +452,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         limit: int = Query(50, ge=1, le=200),
         admin=Depends(require_admin),
     ):
-        path = require_hub(admin, hub)
+        require_hub(admin, hub)
         gs = store_for(hub_dir)
         # One consistent read of (revision, every grant): the returned revision
         # describes exactly the rows below, so the editor's concurrency guard is
@@ -354,7 +510,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             editable=gs.is_authoritative(hub),
             authoritative=gs.is_authoritative(hub),
             can_manage_admins=admin.is_org_admin,
-            permissions=deployment.permission_catalog(path),
+            permissions=service.catalog(hub),
+            # What this viewer may grant or remove here (a delegate's ceiling).
+            # Display only: every write is checked again by the service.
+            grantable=_grantable(admin, hub) if gs.is_authoritative(hub) else [],
+            viewer=normalize(admin.subject),
             total=len(result),
             public=public,
             revision=revision,
@@ -362,123 +522,44 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
 
     def mutate(request, payload, admin, revoke=False):
-        _check_same_origin(request)
-        subject, hub, perm = map(
-            normalize, (payload.subject, payload.hub, payload.permission)
+        _check_mutation(request, admin)
+        revision = service.apply_access_change(
+            admin.actor(), payload.subject, payload.hub,
+            [("revoke" if revoke else "grant", payload.permission)],
+            expected_revision=payload.expected_revision,
         )
-        gs = store_for(hub_dir)
-        if hub == ORG:
-            if not admin.is_org_admin or perm != MANAGE_ACCESS or subject == "*":
-                raise HTTPException(
-                    403,
-                    "Only organization admins can manage organization administrators",
-                )
-        else:
-            path = require_hub(admin, hub)
-            if not gs.is_authoritative(hub):
-                raise HTTPException(409, _LEGACY_MSG)
-            known = {p["permission"] for p in deployment.permission_catalog(path)}
-            if perm not in known and not (
-                revoke and (subject, hub, perm) in gs.list_grants(hub)
-            ):
-                raise HTTPException(422, "Unknown permission for this hub")
-        if subject == "*" and not (admin.is_org_admin and perm == USE_HUB):
-            raise HTTPException(
-                403, "Only organization admins may change public hub access"
-            )
-        if not admin.is_org_admin and (
-            perm == MANAGE_ACCESS
-            or (revoke and perm == USE_HUB and gs.can(subject, hub, MANAGE_ACCESS))
-        ):
-            raise HTTPException(
-                403, "Only organization admins may change administrator access"
-            )
-        if (
-            payload.expected_revision is not None
-            and gs.revision() != payload.expected_revision
-        ):
-            raise HTTPException(
-                409,
-                "Access changed since you loaded it — someone else edited it. "
-                "Reload and review the current access before saving.",
-            )
-        try:
-            if revoke:
-                gs.revoke(subject, hub, perm, actor=admin.subject)
-            else:
-                flags = _account_flags(gs, subject)
-                if flags["suspended"]:
-                    raise HTTPException(
-                        409, "Reactivate this user before granting access"
-                    )
-                if flags["account_unavailable"]:
-                    raise HTTPException(409, _UNAVAILABLE_MSG)
-                gs.grant(subject, hub, perm, actor=admin.subject)
-        except (ValueError, LastAdminError) as exc:
-            raise HTTPException(409, str(exc))
-        return dict(ok=True, revision=gs.revision())
+        return dict(ok=True, revision=revision)
 
     @router.post("/access/grant")
+    @_denied
     def grant(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
         return mutate(request, payload, admin)
 
     @router.post("/access/revoke")
+    @_denied
     def revoke(request: Request, payload: GrantRequest, admin=Depends(require_admin)):
         return mutate(request, payload, admin, True)
 
     @router.post("/access/apply")
+    @_denied
     def apply(request: Request, payload: ApplyRequest, admin=Depends(require_admin)):
         """Apply one person's whole change set for a hub in a single guarded
         transaction. Atomic: either every operation applies on the expected
         revision, or none does (409 on a concurrent change)."""
-        _check_same_origin(request)
+        _check_mutation(request, admin)
         subject = normalize(payload.subject)
         hub = normalize(payload.hub)
+        # Request shape for this endpoint: organization roles and public access
+        # have their own controls. Authority is decided by the service.
         if hub == ORG:
             raise HTTPException(400, "Organization admin rights are changed per person, not here")
         if subject == EVERYONE:
             raise HTTPException(403, "Public access is changed with the public-access toggle")
-        path = require_hub(admin, hub)
-        gs = store_for(hub_dir)
-        if not gs.is_authoritative(hub):
-            raise HTTPException(409, _LEGACY_MSG)
-        known = {p["permission"] for p in deployment.permission_catalog(path)}
-        existing = set(gs.list_grants(hub))
-        ops: list[tuple[str, str]] = []
-        grants = False
-        for op in payload.operations:
-            perm = normalize(op.permission)
-            if not admin.is_org_admin and (
-                perm == MANAGE_ACCESS
-                or (op.action == "revoke" and perm == USE_HUB and gs.can(subject, hub, MANAGE_ACCESS))
-            ):
-                raise HTTPException(
-                    403, "Only organization admins may change administrator access"
-                )
-            # A removed/renamed tool can still be revoked even though it left the
-            # catalogue, but never granted.
-            if perm not in known and not (
-                op.action == "revoke" and (subject, hub, perm) in existing
-            ):
-                raise HTTPException(422, "Unknown permission for this hub")
-            grants = grants or op.action == "grant"
-            ops.append((op.action, perm))
-        if grants:
-            flags = _account_flags(gs, subject)
-            if flags["suspended"]:
-                raise HTTPException(409, "Reactivate this user before granting access")
-            if flags["account_unavailable"]:
-                raise HTTPException(409, _UNAVAILABLE_MSG)
-        try:
-            revision = gs.apply_changes(
-                subject, hub, ops,
-                expected_revision=payload.expected_revision,
-                actor=admin.subject,
-            )
-        except RevisionConflict as exc:
-            raise HTTPException(409, str(exc))
-        except (ValueError, LastAdminError) as exc:
-            raise HTTPException(409, str(exc))
+        revision = service.apply_access_change(
+            admin.actor(), subject, hub,
+            [(op.action, op.permission) for op in payload.operations],
+            expected_revision=payload.expected_revision,
+        )
         return dict(ok=True, revision=revision)
 
     @router.get("/people")
@@ -524,51 +605,21 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         return {"people": rows[offset : offset + limit], "total": len(rows)}
 
     @router.post("/people/refresh")
+    @_denied
     def refresh_people(request: Request, admin=Depends(require_admin)):
-        _check_same_origin(request)
-        if not admin.is_org_admin:
-            raise HTTPException(403, "Organization admin required")
-        from .access.owui import directory
-
-        try:
-            rows = directory(hub_dir)
-            store_for(hub_dir).reconcile_accounts(
-                [
-                    dict(
-                        id=r["owui_id"],
-                        email=r["email"],
-                        name=r["display"],
-                        role=r["role"],
-                    )
-                    for r in rows
-                ]
-            )
-            return {"ok": True, "count": len(rows)}
-        except Exception:
-            log.exception("OWUI directory refresh failed")
-            raise HTTPException(
-                503, "Account refresh failed. Check OWUI service credentials and logs."
-            )
+        _check_mutation(request, admin)
+        return {"ok": True, "count": service.refresh_accounts(admin.actor())}
 
     @router.post("/people/block")
+    @_denied
     def block(request: Request, payload: PersonRequest, admin=Depends(require_admin)):
-        _check_same_origin(request)
-        if not admin.is_org_admin:
-            raise HTTPException(403, "Organization admin required")
+        _check_mutation(request, admin)
         gs = store_for(hub_dir)
         subject = normalize(payload.subject)
-        if not subject or subject == "*":
-            raise HTTPException(409, "a person or service is required")
-        before = _account_flags(gs, subject)
         # Reactivate only clears the admin marker. When it isn't set there is
-        # nothing to do: skip the (audit-writing) store call rather than record
-        # a "reactivate" that changes nothing.
-        changed = payload.suspended or before["suspended"]
-        if changed:
-            try:
-                gs.suspend(subject, actor=admin.subject, suspended=payload.suspended)
-            except (LastAdminError, ValueError) as exc:
-                raise HTTPException(409, str(exc))
+        # nothing to do: the service skips the (audit-writing) store call rather
+        # than record a "reactivate" that changes nothing.
+        changed = service.set_blocked(admin.actor(), subject, payload.suspended)
         state = _account_state(gs, subject)
         message = None
         if not payload.suspended and state["account_unavailable"]:
@@ -710,13 +761,87 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         }
 
     @router.post("/sync")
+    @_denied
     def sync(request: Request, admin=Depends(require_admin)):
-        _check_same_origin(request)
-        if not admin.is_org_admin:
-            raise HTTPException(403, "Organization admin required")
-        from .access.reconcile import sync_owui
+        _check_mutation(request, admin)
+        return service.sync_visibility(admin.actor())
 
-        return sync_owui(hub_dir)
+    # ---- accounts (Open WebUI logins, created and changed as the service account)
+
+    @router.post("/accounts")
+    @_denied
+    def create_account(request: Request, body: Any = Body(None), admin=Depends(require_admin)):
+        _check_mutation(request, admin)
+        payload = _validated(AccountCreate, body)
+        created = service.create_account(
+            admin.actor(), email=payload.email, name=payload.name,
+            password=payload.password.get_secret_value(),
+            grants=[(g.hub, g.permission) for g in payload.grants],
+        )
+        return dict(ok=True, **created)
+
+    @router.post("/accounts/{subject}/password")
+    @_denied
+    def reset_password(subject: str, request: Request, body: Any = Body(None),
+                       admin=Depends(require_admin)):
+        _check_mutation(request, admin)
+        payload = _validated(PasswordRequest, body)
+        service.set_password(admin.actor(), subject, payload.password.get_secret_value())
+        return dict(ok=True, subject=normalize(subject))
+
+    @router.post("/accounts/{subject}/approve")
+    @_denied
+    def approve_account(subject: str, request: Request, admin=Depends(require_admin)):
+        _check_mutation(request, admin)
+        service.approve_account(admin.actor(), subject)
+        return dict(ok=True, subject=normalize(subject))
+
+    @router.post("/accounts/{subject}/role")
+    @_denied
+    def chat_role(subject: str, request: Request, payload: RoleRequest,
+                  admin=Depends(require_admin)):
+        _check_mutation(request, admin)
+        service.set_chat_role(admin.actor(), subject, payload.role)
+        return dict(ok=True, subject=normalize(subject), role=payload.role)
+
+    @router.delete("/accounts/{subject}")
+    @_denied
+    def delete_account(subject: str, request: Request,
+                       payload: DeleteAccountRequest = Body(...),
+                       admin=Depends(require_admin)):
+        _check_mutation(request, admin)
+        if normalize(payload.confirm_email) != normalize(subject):
+            raise Denied(422, "confirm_email", "Type the account's email to confirm.")
+        service.delete_account(admin.actor(), subject)
+        return dict(ok=True, subject=normalize(subject))
+
+    # ---- change requests (proposed by agent tools, confirmed here) -------------
+
+    @router.get("/change-requests/{request_id}")
+    @_denied
+    def get_change_request(request_id: str, actor=Depends(require_person)):
+        return service.get_request(actor, request_id)
+
+    @router.post("/change-requests/{request_id}/confirm")
+    @_denied
+    def confirm_change_request(request_id: str, request: Request, body: Any = Body(None),
+                               actor=Depends(require_person)):
+        if actor.via != "api-key":
+            _check_same_origin(request)
+        payload = _validated(ConfirmRequest, body)
+        return service.confirm(
+            actor, request_id, plan_hash=payload.plan_hash,
+            password=payload.password.get_secret_value() if payload.password else None,
+        )
+
+    @router.post("/change-requests/{request_id}/reject")
+    @_denied
+    def reject_change_request(request_id: str, request: Request,
+                              actor=Depends(require_person)):
+        if actor.via != "api-key":
+            _check_same_origin(request)
+        service.reject(actor, request_id)
+        return dict(ok=True, id=request_id, status="rejected")
 
     _PERIODS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 

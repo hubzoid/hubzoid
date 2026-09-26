@@ -207,15 +207,17 @@ class GrantStore:
             ).fetchall()
         return rev or last_rev, [(s, h, p) for (s, h, p) in rows]
 
-    def _grant_in_txn(self, conn, subject, hub, permission, actor) -> None:
+    def _grant_in_txn(self, conn, subject, hub, permission, actor,
+                      surface=None, request_id=None) -> None:
         rows = [(subject, hub, permission)]
         if hub != ORG and permission != USE_HUB:
             rows.append((subject, hub, USE_HUB))
         for s, h, p in rows:
             self._insert_grant(conn, s, h, p)
-            self._audit(conn, actor, "grant", s, h, p)
+            self._audit(conn, actor, "grant", s, h, p, surface, request_id)
 
-    def _revoke_in_txn(self, conn, subject, hub, permission, actor) -> None:
+    def _revoke_in_txn(self, conn, subject, hub, permission, actor,
+                       surface=None, request_id=None) -> None:
         removes_admin = hub == ORG and permission == MANAGE_ACCESS
         if removes_admin:
             admins = self._org_admins_locked(conn)
@@ -229,7 +231,8 @@ class GrantStore:
                 {"s": subject, "h": hub},
             ):
                 if removed != USE_HUB:
-                    self._audit(conn, actor, "revoke", subject, hub, removed)
+                    self._audit(conn, actor, "revoke", subject, hub, removed,
+                                surface, request_id)
             conn.execute(
                 text("DELETE FROM hz_grants WHERE subject=:s AND hub=:h"),
                 {"s": subject, "h": hub},
@@ -245,7 +248,7 @@ class GrantStore:
             raise LastAdminError(
                 "cannot remove the last org admin; grant another first"
             )
-        self._audit(conn, actor, "revoke", subject, hub, permission)
+        self._audit(conn, actor, "revoke", subject, hub, permission, surface, request_id)
 
     def apply_changes(
         self,
@@ -255,6 +258,8 @@ class GrantStore:
         *,
         expected_revision: int | None = None,
         actor: str | None = None,
+        surface: str | None = None,
+        request_id: str | None = None,
     ) -> int:
         """Apply one subject's whole change set for a hub in a SINGLE transaction,
         guarded by `expected_revision`. `operations` are (action, permission) with
@@ -277,9 +282,9 @@ class GrantStore:
                 )
             for action, p in ops:
                 if action == "revoke":
-                    self._revoke_in_txn(conn, subject, hub, p, actor)
+                    self._revoke_in_txn(conn, subject, hub, p, actor, surface, request_id)
                 else:
-                    self._grant_in_txn(conn, subject, hub, p, actor)
+                    self._grant_in_txn(conn, subject, hub, p, actor, surface, request_id)
             self._bump_revision(conn)
         self._refresh_if_stale()
         return self.revision()
@@ -512,13 +517,15 @@ class GrantStore:
         rows = conn.execute(text(sql), {"o": ORG, "m": MANAGE_ACCESS}).fetchall()
         return {s for (s,) in rows}
 
-    def _audit(self, conn, actor, action, subject, hub, permission) -> None:
+    def _audit(self, conn, actor, action, subject, hub, permission,
+               surface=None, request_id=None) -> None:
         import time
 
         conn.execute(
             text(
-                "INSERT INTO hz_access_audit (ts, actor, action, subject, hub, permission) "
-                "VALUES (:t, :a, :ac, :s, :h, :p)"
+                "INSERT INTO hz_access_audit "
+                "(ts, actor, action, subject, hub, permission, surface, request_id) "
+                "VALUES (:t, :a, :ac, :s, :h, :p, :su, :r)"
             ),
             {
                 "t": time.time(),
@@ -527,8 +534,27 @@ class GrantStore:
                 "s": subject,
                 "h": hub,
                 "p": permission,
+                "su": surface,
+                "r": request_id,
             },
         )
+
+    def write_audit(self, conn, actor, action, *, subject=None, hub=None,
+                    permission=None, surface=None, request_id=None) -> None:
+        """Record one access-audit row inside the caller's transaction, so a
+        state change and its audit row commit together. Never pass secrets."""
+        self._audit(conn, actor, action, subject, hub, permission, surface, request_id)
+
+    def audit_event(self, actor, action, *, subject=None, hub=None,
+                    permission=None, surface=None, request_id=None) -> None:
+        """Record one access-audit row in its own transaction."""
+        with self._engine.begin() as conn:
+            self._audit(conn, actor, action, subject, hub, permission, surface, request_id)
+
+    @property
+    def engine(self) -> Engine:
+        """The operational database engine this store writes to."""
+        return self._engine
 
     def publish_workflows(
         self, hub: str, workflows: Iterable[tuple[str, str | None, str | None]]
@@ -575,6 +601,7 @@ class GrantStore:
         since=None,
         until=None,
         offset=0,
+        request_id=None,
     ) -> list[dict]:
         """Recent access CHANGE events (grant/revoke), newest first. Filters are
         applied in SQL, so pagination is over the filtered set, not the page."""
@@ -602,18 +629,21 @@ class GrantStore:
         if until is not None:
             clauses.append("ts <= :until")
             params["until"] = float(until)
+        if request_id:
+            clauses.append("request_id = :request_id")
+            params["request_id"] = request_id
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT ts, actor, action, subject, hub, permission "
+                    "SELECT ts, actor, action, subject, hub, permission, surface, request_id "
                     "FROM hz_access_audit"
                     + where
                     + " ORDER BY ts DESC LIMIT :n OFFSET :offset"
                 ),
                 params,
             ).fetchall()
-        keys = ("ts", "actor", "action", "subject", "hub", "permission")
+        keys = ("ts", "actor", "action", "subject", "hub", "permission", "surface", "request_id")
         return [dict(zip(keys, r)) for r in rows]
 
     # ---- writes (the grant_service; every write is one transaction) ----------
@@ -647,7 +677,8 @@ class GrantStore:
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def revoke_all(self, subject: str, *, actor: str | None = None) -> None:
+    def revoke_all(self, subject: str, *, actor: str | None = None,
+                   surface: str | None = None, request_id: str | None = None) -> None:
         """Remove every grant for a subject across all hubs (portal 'revoke all').
         Refuses if it would remove the last org admin (race-safe)."""
         subject = normalize(subject)
@@ -662,7 +693,7 @@ class GrantStore:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
-            self._audit(conn, actor, "revoke_all", subject, ORG, None)
+            self._audit(conn, actor, "revoke_all", subject, ORG, None, surface, request_id)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -905,6 +936,106 @@ class GrantStore:
         keys = ("subject", "email", "owui_id", "phone", "display", "pending")
         return dict(zip(keys, row))
 
+    def bind_new_account(
+        self,
+        subject: str,
+        *,
+        owui_id: str,
+        display: str | None,
+        grants: "dict[str, Iterable[tuple[str, str]]]",
+        actor: str,
+        expected_revision: int | None = None,
+        replace: bool = False,
+        surface: str | None = None,
+        request_id: str | None = None,
+    ) -> int:
+        """Bind a just-created chat account to its subject and apply its initial
+        grants in ONE transaction, audited as `account_create` plus each grant.
+
+        `grants` maps hub -> (action, permission) operations. An identity already
+        bound to a different chat account is the account-replacement case: it is
+        refused unless `replace` (an organization administrator re-creating it),
+        which removes the old account's grants first, audited as
+        `account_replaced`. A blocked subject is refused. Raises RevisionConflict
+        when `expected_revision` no longer matches, so the caller's authority
+        check and this write describe the same policy state."""
+        import time
+
+        subject = normalize(subject)
+        planned = {
+            normalize(h): [(a, normalize(p)) for a, p in ops] for h, ops in grants.items()
+        }
+        for hub, ops in planned.items():
+            if hub == ORG:
+                raise ValueError("initial account grants are per agent")
+            for _action, p in ops:
+                _validate_grant(subject, hub, p)
+        with self._engine.begin() as conn:
+            current = self._read_revision_locked(conn)
+            if expected_revision is not None and current != expected_revision:
+                raise RevisionConflict(
+                    "Access changed while the account was being created. Review and try again."
+                )
+            if self._meta_get(conn, "suspended:" + subject) == "1":
+                raise ValueError(
+                    "This person is blocked. Reactivate them under People first."
+                )
+            row = conn.execute(
+                text("SELECT owui_id FROM hz_identities WHERE subject=:s"),
+                {"s": subject},
+            ).fetchone()
+            previous = row[0] if row else None
+            if previous and previous != owui_id:
+                if not replace:
+                    raise ValueError(
+                        "This email belonged to an earlier chat account. An organization "
+                        "administrator must re-create it."
+                    )
+                conn.execute(text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject})
+                self._audit(conn, actor, "account_replaced", subject, ORG, None,
+                            surface, request_id)
+            fields = {"s": subject, "o": owui_id, "d": display or None, "t": time.time()}
+            if row:
+                conn.execute(
+                    text(
+                        "UPDATE hz_identities SET email=:s, owui_id=:o, "
+                        "display=COALESCE(:d, display), pending=0 WHERE subject=:s"
+                    ),
+                    fields,
+                )
+            else:
+                conn.execute(
+                    text(
+                        "INSERT INTO hz_identities (subject, email, owui_id, display, pending, "
+                        "created) VALUES (:s, :s, :o, :d, 0, :t)"
+                    ),
+                    fields,
+                )
+            self._meta_set(conn, "account_unavailable:" + subject, "0")
+            self._audit(conn, actor, "account_create", subject, ORG, None, surface, request_id)
+            for hub, ops in planned.items():
+                for action, p in ops:
+                    if action == "revoke":
+                        self._revoke_in_txn(conn, subject, hub, p, actor, surface, request_id)
+                    else:
+                        self._grant_in_txn(conn, subject, hub, p, actor, surface, request_id)
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+        return self.revision()
+
+    def mark_account_removed(self, subject: str, *, actor: str,
+                             surface: str | None = None,
+                             request_id: str | None = None) -> None:
+        """Record that the subject's chat account was deleted: it is unavailable
+        until an account is bound to it again. Grants are removed separately
+        (`revoke_all`) before the account itself is deleted."""
+        subject = normalize(subject)
+        with self._engine.begin() as conn:
+            self._meta_set(conn, "account_unavailable:" + subject, "1")
+            self._audit(conn, actor, "account_delete", subject, ORG, None, surface, request_id)
+            self._bump_revision(conn)
+        self._refresh_if_stale()
+
     # ---- attributes (per hub, subject) --------------------------------------
 
     def set_attr(self, hub: str, subject: str, key: str, value: str) -> None:
@@ -965,7 +1096,8 @@ class GrantStore:
                 for prefix in ("suspended:", "account_unavailable:")
             )
 
-    def suspend(self, subject: str, *, actor: str, suspended=True) -> None:
+    def suspend(self, subject: str, *, actor: str, suspended=True,
+                surface: str | None = None, request_id: str | None = None) -> None:
         subject = normalize(subject)
         if not subject or subject == EVERYONE:
             raise ValueError("a person or service is required")
@@ -985,6 +1117,8 @@ class GrantStore:
                 subject,
                 ORG,
                 None,
+                surface,
+                request_id,
             )
             self._bump_revision(conn)
         self._refresh_if_stale()
