@@ -78,7 +78,7 @@ class _ScriptedAgent:
         published = await self.invoke(self.tools["publish_artifact"],
                                       {"path": f"{scratch}/digest.html", "title": "Digest"})
         self.seen["published"] = published
-        aid = re.search(r"report (a[\w-]+):", published).group(1)
+        aid = re.search(r"artifact (a[\w-]+):", published).group(1)
         self.seen["mail"] = await self.invoke(self.tools["send_email"], {
             "subject": "Your digest", "body": "Ready.", "artifact_ids": [aid]})
         self.seen["artifact"] = aid
