@@ -41,6 +41,12 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
+**Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
+schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
+Check with the same Python the hub uses:
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+
 Open [localhost:3080](http://localhost:3080), select your agent, and try **“Say hello using the hello skill.”** The minimal template includes a skill, knowledge file, custom tool, and sub-agent you can inspect and change. Edit `my-hub/AGENTS.md` to make the hub yours.
 
 The default is local single-user mode. For a shared deployment, enable authentication and configure the intended owner before exposing the public port. See [administration](docs/ADMINISTRATION.md). This branch's changes may be ahead of the package published on PyPI; [source installation](docs/quickstart.md#run-this-checkout) tests the checked-out revision.
@@ -111,9 +117,11 @@ checked for the caller.
 - **Operate one or several hubs.** Run one hub or use `hubzoid gateway` for a shared chat app and deployment. Back up before upgrades and verify access with ordinary user accounts.
 
 Open WebUI supplies chat and account authentication. Hubzoid's Admin Console supplies access management and execution inspection at `/portal/`. Administrators see an **Admin Console** link above their profile in the chat sidebar (an icon when collapsed). There is one account system. With public sign-up closed by default, an
-administrator uses **Add user** in the Admin Console to create a login account (or pick
-an existing one) and give it access in one step. Nothing is sent: the administrator
-shares the sign-in details.
+administrator uses **Add user** in the Admin Console, from an agent's Access page or
+from People, to create a login account (or pick an existing one) and give it access in
+one step. Nothing is sent: the administrator shares the sign-in details. With Google
+sign-in and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only**
+creates an account with no password to share.
 
 The dashboard brings agent cards together with messages, users, token usage,
 workflow runs and approximate cost. Open an agent to manage access, inspect its

@@ -1,9 +1,15 @@
 # Upgrading to 1.0.1 from 0.9.x
 
 This release changes security defaults, moves markdown schedules onto the
-workflow engine, versions Hubzoid's own database tables and changes the Docker
-image. Hub files (`AGENTS.md`, skills, `schedule/*.md`, `workflows/`) need no
-changes. Read the list below once, then follow the steps.
+workflow engine, runs scheduled work as ordinary accounts, adds the Admin
+Console, versions Hubzoid's own database tables and changes the Docker image.
+Hub files (`AGENTS.md`, skills, `schedule/*.md`, `workflows/`) need no changes.
+Read the list below once, then follow the steps. The
+[release notes](release-notes/1.0.1.md) summarize the release and its known
+limits.
+
+**Before you start:** on Python 3.12, workflows (markdown schedules and code
+workflows) need SQLite 3.42 or newer, or PostgreSQL. Step 5 shows how to check.
 
 ## What changes, and what to do
 
@@ -11,7 +17,7 @@ changes. Read the list below once, then follow the steps.
 |---|---|
 | Security: the edge no longer shares one visitor's sign-in cookie with another. | After upgrading, rotate `WEBUI_SECRET_KEY` (everyone signs in again) so any session that may have leaked ends. Personal Open WebUI MCP connections must then be reconnected. |
 | The public bridge key `dev` is refused for downloads, and `hubzoid doctor` fails when `BRIDGE_API_KEYS` is unset. | Before restarting, set `BRIDGE_API_KEYS` to a long random value in each hub's `.env` (`openssl rand -hex 32`). The gateway hands each hub's key to the chat app when it starts. Hubzoid refreshes its owned connection URLs and keys at startup, including when native MCP enables persistence. Other saved integrations and settings are preserved. |
-| Public sign-up is off by default. Hubzoid now sets `ENABLE_SIGNUP` and `ENABLE_OAUTH_SIGNUP` to `false` unless you set them. In 0.9.x the chat app let anyone who reached the sign-in page create an email account unless `ENABLE_SIGNUP=false` was set. | Existing accounts keep working. Add new people in the chat app's admin panel (**Admin Panel → Users**). To allow self sign-up again, set `ENABLE_SIGNUP=true` (email) or `ENABLE_OAUTH_SIGNUP=true` (SSO) explicitly. If the chat app keeps its settings in its database (for example with `OWUI_NATIVE_MCP=true`), check **Enable New Sign Ups** in its admin settings too, because a value saved there earlier can win. See [auth.md](auth.md). |
+| Public sign-up is off by default. Hubzoid now sets `ENABLE_SIGNUP` and `ENABLE_OAUTH_SIGNUP` to `false` unless you set them. In 0.9.x the chat app let anyone who reached the sign-in page create an email account unless `ENABLE_SIGNUP=false` was set. | Existing accounts keep working. Add new people with **Add user** in the Admin Console, from an agent's Access page or from People. It creates or picks the sign-in account and grants access in one flow. To allow self sign-up again, set `ENABLE_SIGNUP=true` (email) or `ENABLE_OAUTH_SIGNUP=true` (SSO) explicitly. If the chat app keeps its settings in its database (for example with `OWUI_NATIVE_MCP=true`), check **Enable New Sign Ups** in its admin settings too, because a value saved there earlier can win. See [auth.md](auth.md). |
 | Download links for files the agent made are signed. Links from earlier versions stop working. | Nothing. The files are still there; ask the agent for the link again. Optional expiry: `HUBZOID_ARTIFACT_LINK_TTL`. |
 | Administrators can no longer open or export other people's chats in the chat app. | To allow it again, set `ENABLE_ADMIN_CHAT_ACCESS=true` and `ENABLE_ADMIN_EXPORT=true`. |
 | The chat app keeps its own branding unless the hub has files in `branding/`. | Nothing, unless you relied on Hubzoid's logo. See [branding.md](branding.md). |
@@ -24,13 +30,11 @@ changes. Read the list below once, then follow the steps.
 | Gateway: all bridges share one access and usage database, `hubzoid-operational.db` in the gateway's data directory. The gateway points each hub at it when it starts. | If the bridges run as their own services (`--no-bridges`), restart them once after the gateway's first start so they use the shared database. |
 | The `claude` CLI and the MCP servers it starts no longer inherit restricted-tool values (`restricted/.env`), Hubzoid service secrets (bridge keys, `WEBUI_SECRET_KEY`, database URLs, SMTP credentials) or AWS credentials. Restricted tools run in the bridge and keep working. | Nothing, unless an MCP server in `.mcp.json` read one of those values from its environment. Give it the value in its own `env` block. |
 | Open WebUI no longer receives `HUBZOID_*` settings. Under `hubzoid run`, values from `restricted/.env` no longer reach it either (sign-in settings found there still pass, with a warning). | Keep Open WebUI and sign-in settings in the hub `.env` or the gateway environment. |
-| New features are off until enabled: Console account management, agent-proposed access changes (`HUBZOID_MANAGEMENT_TOOLS`), hiding the Open WebUI Users page (`HUBZOID_HIDE_OWUI_USERS`), connection journeys (`HUBZOID_CONNECT_JOURNEY`) and AWS Secrets Manager layers. An existing deployment keeps Open WebUI's Users page: only a gateway set up fresh with Console accounts records `hide_owui_users: true` in `deployment.json`. | Nothing. See [ADMINISTRATION.md](ADMINISTRATION.md), [mcp.md](mcp.md) and [DEPLOYING.md](DEPLOYING.md) to turn them on. |
-| The Console's service account reuses its Open WebUI token instead of signing in for every visibility sync and account action. Open WebUI allows 15 sign-ins per email in 3 minutes, and the service account is usually the owner's own login. | Nothing. |
-| The Console's **Add person** is now **Add user**: it creates or picks a sign-in account. `POST /portal/api/accounts` keeps an account whose grants failed (502 `partial`) instead of deleting it, so a retry grants to it. New `workflow:*` identities can't be added in the Console; existing ones keep working. | Nothing. Scripts calling `/portal/api/accounts` should treat `partial` as "account exists without access" and retry the grant. |
-| The Console's Public access switch is removed, and new "Everyone signed in" grants are refused everywhere, including `hubzoid grant '*'`. Existing ones keep working and show as an "Everyone signed in" row. | Nothing is required. To move to named access, grant the people or groups who need the agent, then remove the "Everyone signed in" row (org admins). |
+| New features are off until enabled: agent-proposed access changes (`HUBZOID_MANAGEMENT_TOOLS`), hiding the Open WebUI Users page (`HUBZOID_HIDE_OWUI_USERS`), connection journeys (`HUBZOID_CONNECT_JOURNEY`) and AWS Secrets Manager layers. Console account management (**Add user**) works once the deployment's service account is configured. Nothing about existing accounts changes until someone uses it. An existing deployment keeps Open WebUI's Users page: only a gateway set up fresh with Console accounts records `hide_owui_users: true` in `deployment.json`. | Nothing. See [ADMINISTRATION.md](ADMINISTRATION.md#accounts-in-the-console), [mcp.md](mcp.md) and [DEPLOYING.md](DEPLOYING.md) to turn them on. |
+| Console-managed access goes to named people. New "Everyone signed in" grants are refused everywhere, including `hubzoid grant '*'`. Migrating a legacy hub that was open to all signed-in users carries that over as an "Everyone signed in" row, which keeps working. | Nothing is required. To move to named access, grant the people or groups who need the agent, then remove the "Everyone signed in" row (org admins). |
 | `identity/permissions.yaml` can no longer relabel built-in capabilities (Use this agent, Manage access, Save shared knowledge). Such entries are ignored with a warning. | Remove those entries if you had any. Labels for `restricted/` tools still work. |
 | On hubs already migrated to Console access, a personal Open WebUI MCP connection is used only by people granted that app's `connector_<app>` capability. | Grant `connector_<app>` to the people who use it. Legacy hubs are unchanged. |
-| Gateway: any bridge can serve the Console and the agent picker's access check. While one bridge is down or restarting, the next one answers. | Nothing. |
+| Gateway: any bridge can serve the Console and the agent picker's access check. While one bridge is down or restarting, the edge tries the next one. This covers the Console and the picker check only. It is not high availability for the gateway or chat. | Nothing. |
 | Usage is recorded per chat turn and workflow call (no message content). The Console shows usage totals above the agent cards. | Nothing. Counting starts at the upgrade. |
 | The public port rejects `.` and `..` path segments and drops client-sent `X-Hubzoid-*` and `X-OpenWebUI-*` headers. | Nothing, unless you relied on those. |
 | Docker: the old `docker/Dockerfile` is removed. The image is built from the `Dockerfile` at the repository root, now on Debian 13, and installs the checked-out source. Each release is also published as `ghcr.io/hubzoid/hubzoid:<version>` (amd64 and arm64). | Check out the release tag and run `docker build -t hubzoid .`, or pull the published image. `--build-arg HUBZOID_VERSION` no longer picks the version. For Compose, use `docker/docker-compose.yml` (SQLite) and add `docker/docker-compose.postgres.yml` for PostgreSQL. See [DEPLOYING.md](DEPLOYING.md#path-b-docker). |
@@ -67,9 +71,19 @@ files with the rollback materials. The default backup excludes secrets and `.env
 5. **Check**:
    ```bash
    hubzoid doctor <hub>
+   python -c "import sqlite3; print(sqlite3.sqlite_version)"
    ```
    Fix every `fail`. `db.operational` shows `info` or `warn` until the first
    start upgrades the schema.
+
+   **Workflows on Python 3.12 need SQLite 3.42 or newer, or PostgreSQL.** The
+   workflow engine (DBOS) runs markdown schedules and code workflows. On Python
+   3.12 with an older SQLite it refuses to start, and doctor reports
+   `deps.sqlite` as `fail`. Run the second command with the same Python the
+   hub uses (the virtual environment's `python`, or the container's). Python
+   3.11 is not affected. Hubzoid supports Python 3.11 and 3.12. To fix it, use a
+   Python build with a newer SQLite (python.org, uv, Homebrew, Debian 13,
+   Ubuntu 24.04) or PostgreSQL.
 6. **Start** as before. At the first start Hubzoid upgrades its tables. It
    imports the old decision logs the first time it records or reads a tool
    decision. With a gateway whose bridges run as their own services, restart
@@ -135,6 +149,11 @@ to carry over.
 
 If you ran a pre-release build of 1.0.1, also note:
 
+- The Console's **Add person** is now **Add user**, and its Public access switch
+  is removed. `POST /portal/api/accounts` keeps an account whose grants failed
+  (502 `partial`), so treat `partial` as "account exists without access" and
+  retry the grant. New `workflow:*` identities can't be added in the Console.
+  The Console's service account reuses its Open WebUI token.
 - In code workflows, `hub.call_llm` is now one model call without tools. Pre-release
   builds ran the full agent there. If a workflow needs tools there, use
   `hub.call_agent`.
@@ -148,7 +167,7 @@ If you ran a pre-release build of 1.0.1, also note:
   deployment needs that history and the new version cannot read it, treat the
   rollout as failed and go back. Deleting the old database is not a migration.
 
-## Workflows run as people; artifacts and email (next release)
+## Workflows run as people; artifacts and email
 
 Scheduled work now acts as an ordinary account, and can publish private
 artifacts (reports, PDFs, CSVs and other files) and email its owner ([workflow-identity.md](workflow-identity.md),

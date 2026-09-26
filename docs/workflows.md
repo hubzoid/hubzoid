@@ -17,8 +17,20 @@ be exact. The [Watchtower sample](../hubzoid/templates/watchtower/README.md)
 workflow to copy from.
 
 Both kinds run on the hub's [DBOS](https://docs.dbos.dev) engine, so they share
-one run history (`hubzoid schedule status`, the Console's **Runs** page), the
-same pause, resume and cancel commands, and the same backup.
+one run history (`hubzoid schedule status`, each agent's **Runs & schedules**
+tab in the Console), the same pause, resume and cancel commands, and the same
+backup.
+
+## Requirements
+
+Hubzoid supports Python 3.11 and 3.12. **Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
+schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
+Check with the same Python the hub uses:
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+Without it, the engine refuses to start with a clear message and no scheduled
+task or workflow runs. Use a Python build with a newer SQLite (python.org, uv,
+Homebrew, Debian 13, Ubuntu 24.04) or PostgreSQL.
 
 ## A code workflow
 
@@ -214,8 +226,10 @@ something outside the hub safe to repeat:
 - Record what you finished in `hub.state` and skip it next time.
 
 Markdown tasks work the same way for their commit and push steps. Their agent
-work is never repeated: an interrupted markdown run is reported as interrupted
-and the next slot runs the task.
+work is not re-run inside the interrupted run: it is reported as interrupted,
+and the next slot runs the task again from the start. Anything the interrupted
+run already did outside the hub is not undone, so write tasks that check before
+they act.
 
 Runs belong to the workflow code that started them: a hash of the Hubzoid
 version and `workflows/**/*.py` (code imported from outside `workflows/` is not
@@ -246,7 +260,7 @@ then releases them.
 ## Watching it
 
 - `hubzoid schedule status <hub>`: definitions, recent runs and errors.
-- The Console's **Runs** page: every run across agents, its steps and errors.
+- The Console's **Runs & schedules** tab on each agent: its runs, steps and errors.
   A hub's managers see each run's workflow, status, timing and a failure
   summary. What a run produced (its result, step outputs and data-bearing
   errors) is shown only to the account the run acted as. The exception is a
