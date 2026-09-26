@@ -524,8 +524,41 @@ body .ant-alert .ant-alert-icon {
   color: var(--ink);
 }
 
+/* Cards in one row share their row tracks (subgrid), so tags, the metric
+   dividers and the buttons line up even when a name or a badge wraps. Rows
+   size to content: nothing is clipped and no height is fixed. */
+.agent-card {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+}
+
+.agent-card .ant-card-body {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+  align-content: start;
+}
+
+.agent-card .ant-card-body::before,
+.agent-card .ant-card-body::after {
+  display: none;
+}
+
+.agent-card-head { grid-row: 1; align-self: start; align-items: flex-start; }
+.agent-card-head > :first-child { flex: none; }
+.agent-card-tags { grid-row: 2; align-self: start; }
+.agent-card-usage { grid-row: 3; align-self: start; }
+
+.agent-name,
+.agent-card-title .identity {
+  overflow-wrap: anywhere;
+}
+
 /* Primary action on its own row; the two secondary views share the next row. */
 .agent-card-actions {
+  grid-row: 4;
+  align-self: end;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -791,6 +824,19 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .review-agent { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .access-review .review-list { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .capability-group-chevron { transition: none; } }
+
+/* Add user → Initial access nests Agent → Group → Permission: each level is
+   indented under a light guide line. (The access editor's groups aren't
+   nested, so this doesn't touch it.) */
+.capability-group-panel > .capabilities { margin-left: 6px; padding-left: 14px; border-left: 1px solid var(--subtle-border); }
+.capability-group-panel .capability-group-panel { padding-left: 16px; }
+/* A long group or agent name wraps beside the chevron, which stays top right. */
+.capability-group-toggle { position: relative; padding-right: 28px; }
+.capability-group-toggle .capability-group-chevron { position: absolute; top: 14px; right: 2px; margin-left: 0; }
+@media (max-width: 767px) {
+  .capability-group-panel > .capabilities { margin-left: 4px; padding-left: 10px; }
+  .capability-group-panel .capability-group-panel { padding-left: 10px; }
+}
 
 /* A field label with a control beside it (Password · Google sign-in only). */
 .field-label-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
