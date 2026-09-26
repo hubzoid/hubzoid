@@ -121,47 +121,15 @@ def owui_url(hub_dir: Path) -> str:
 
 
 def permission_catalog(hub_dir: Path) -> list[dict]:
-    """Discover names without executing restricted tool code in the portal.
+    """Every capability this hub offers, from `capabilities.catalog`.
 
-    Optional identity/permissions.yaml adds labels, descriptions and sensitivity.
+    Restricted names are discovered without executing restricted tool code.
+    Optional identity/permissions.yaml labels custom restricted capabilities.
+    Each entry keeps the original fields (permission, label, description,
+    sensitive) and adds group, surfaces, status, available, default,
+    delegate_grantable and obsolete. Built-ins register in the module that
+    enforces them (`capabilities.register`), not here.
     """
-    from ._fs import resolve_bucket
-    import yaml
+    from . import capabilities
 
-    # remember ships with every hub; it has no restricted/<permission>.py file
-    # for the directory scan to discover.
-    names = {"use_hub", "manage_access", "curator"}
-    restricted = resolve_bucket(hub_dir, "restricted")
-    if restricted:
-        names.update(
-            p.stem.lower()
-            for p in restricted.glob("*.py")
-            if not p.name.startswith("_")
-        )
-    identity = resolve_bucket(hub_dir, "identity")
-    meta_path = identity / "permissions.yaml" if identity else None
-    metadata = (
-        yaml.safe_load(meta_path.read_text()) or {}
-        if meta_path and meta_path.exists()
-        else {}
-    )
-    labels = {"use_hub": "Use this agent", "manage_access": "Manage access",
-              "curator": "Save shared knowledge"}
-    out = []
-    for name in sorted(names):
-        m = metadata.get(name, {})
-        if not isinstance(m, dict):
-            raise ValueError(f"Permission metadata for {name} must be a mapping")
-        out.append(
-            dict(
-                permission=name,
-                label=m.get("label", labels.get(name, name.replace("_", " ").title())),
-                description=m.get("description", {
-                    "use_hub": "Chat with this agent and use its unrestricted tools.",
-                    "manage_access": "Review and change permissions. A direct grant includes basic chat, but not restricted tools.",
-                    "curator": "Use remember to create or replace learned knowledge shared by this agent.",
-                }.get(name, "Use the restricted tools assigned to this capability.")),
-                sensitive=bool(m.get("sensitive", False)),
-            )
-        )
-    return out
+    return capabilities.catalog(hub_dir)

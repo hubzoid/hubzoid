@@ -42,12 +42,19 @@ import yaml
 from agents import function_tool
 
 from .._fs import resolve_bucket
+from ..capabilities import Capability, register
 
 log = logging.getLogger("hubzoid")
 
-# The permission a caller needs (its OWUI group name, normalized) to use the
-# curator tools. Kept here so factories and tests agree on the one string.
-CURATOR_PERMISSION = "curator"
+# The capability a caller needs to use `remember`, registered here where it is
+# enforced so the Console row and the guard share one id. Factories and tests
+# read CURATOR_PERMISSION; on legacy hubs it is also the OWUI group name.
+CURATOR = register(Capability(
+    permission="curator", label="Save shared knowledge", group="tools",
+    description="Use remember to create or replace learned knowledge shared by this agent.",
+    surfaces=("chat", "workflow"),
+))
+CURATOR_PERMISSION = CURATOR.permission
 
 _LEARNED_SUBDIR = "_learned"
 _MAX_TOPIC_LEN = 80

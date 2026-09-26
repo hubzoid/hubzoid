@@ -155,10 +155,11 @@ def plan_standalone_public(hub_dir, plan: MigrationPlan) -> MigrationPlan:
     roster = load_resolver(hub_dir)
     hub = normalize(hub_dir.name)
     subjects = {normalize(s) for s, _, _ in plan.grants} | {"__future_signed_in__"}
-    permissions = {p["permission"] for p in permission_catalog(hub_dir)} - {
-        "use_hub",
-        "manage_access",
-    }
+    # Included capabilities come with entry and have no grant of their own.
+    permissions = {
+        p["permission"] for p in permission_catalog(hub_dir)
+        if p.get("default", "grant") != "included" and not p.get("obsolete")
+    } - {"use_hub", "manage_access"}
     permissions.update(p for _, _, p in plan.grants)
     plan.add_grant(EVERYONE, hub, USE_HUB)
     for subject in sorted(subjects):
@@ -317,7 +318,9 @@ def plan_from_owui(
                     for gid in block.get("group_ids", []) or []:
                         allowed.update(members.get(gid, set()))
                 plan.visibility_backup = dict(model_id=model_id, access_grants=original)
-    tool_perms = {normalize(p) for p in permissions} - {USE_HUB, "manage_access"}
+    from ..capabilities import included_ids
+
+    tool_perms = {normalize(p) for p in permissions} - {USE_HUB, "manage_access"} - included_ids()
     # CSV group permissions and OWUI groups previously formed a union.
     old_csv = {(normalize(s), p) for s, h, p in plan.grants if h == hub_name}
     all_emails = set(emails.values()) | {s for s, _ in old_csv}
