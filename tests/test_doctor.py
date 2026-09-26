@@ -16,6 +16,8 @@ STABLE_IDS = {
     "workflows.definitions", "access.restricted", "identity.resolver", "deps.versions", "deps.sqlite",
     "db.operational", "db.hub", "db.read", "auth.bridge_keys", "auth.chat_signin",
     "exposure.bind", "model.credentials", "backup.age", "scheduler.health",
+    "config.layers", "secrets.deployment", "secrets.hub", "secrets.restricted",
+    "secrets.names", "auth.google_merge",
 }
 
 
