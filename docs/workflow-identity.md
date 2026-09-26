@@ -21,7 +21,8 @@ The first match wins:
 3. `HUBZOID_WORKFLOW_USER` in the deployment's configuration (the gateway's
    environment, or the deployment secret).
 4. The **setup default**: the owner account recorded when Hubzoid first set up
-   the deployment.
+   the deployment. It applies only on Console-managed hubs. A legacy hub never
+   switches on it.
 
 ```python
 # workflows/daily_report/main.py
@@ -128,10 +129,12 @@ task as `workflow:md:<task>`.
   log and the server log name it. To keep the behaviour, grant that permission
   to the account the workflow runs as. You can also point `run_as` at an
   account that already holds it. Then remove the old grant.
-- **Legacy hubs with nothing configured keep running unchanged.** A legacy hub
-  is one whose access is still managed in the chat app. If it has no `run_as`,
-  no `HUBZOID_WORKFLOW_USER` and no provisioned owner, its runs keep their old
-  service identity, and a warning names the fix. On a legacy hub that identity
+- **Legacy hubs switch only when you configure them.** A legacy hub is one whose
+  access is still managed in the chat app.
+  - Its runs keep their old service identity, old state and old scratch folder,
+    with a warning naming the fix, until you set `run_as` or
+    `HUBZOID_WORKFLOW_USER`.
+  - A recorded setup owner does not switch it. On a legacy hub that identity
   holds no restricted access, exactly as before.
 - **Publishing, email and personal connections always need a real account.**
 - **Restricted tools in scheduled runs need a Console-managed hub.** On a legacy

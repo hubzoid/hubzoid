@@ -43,7 +43,8 @@ Concurrent work this plan must not compete with:
    3. `HUBZOID_WORKFLOW_USER` from the deployment layer (gateway environment or
       deployment secret);
    4. the **setup default**: the configured initial owner, recorded once when
-      Hubzoid provisions that owner (`GrantStore.provision_owner`). Locally
+      Hubzoid provisions that owner (`GrantStore.provision_owner`). Console-managed hubs only: a legacy hub switches only on
+      explicit configuration (1-3). Locally
       (authentication off, no deployment) that is `admin@localhost`. In a shared
       deployment it is the configured owner account
       (`HUBZOID_GATEWAY_ADMIN_EMAIL`), never a hard-coded address.
