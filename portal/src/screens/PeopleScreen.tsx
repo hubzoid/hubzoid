@@ -119,7 +119,7 @@ export function PeopleScreen({
             <Title level={1} style={{ fontSize: 28 }}>People</Title>
             <Paragraph type="secondary">
               {me.can_create_accounts
-                ? "Everyone with access to an agent you manage. Create chat sign-ins with Add account; access is decided here."
+                ? "Everyone with access to an agent you manage. Add user creates their sign-in and access in one step."
                 : "Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here."}
             </Paragraph>
           </div>
@@ -134,7 +134,7 @@ export function PeopleScreen({
               )}
               {me.can_create_accounts && (
                 <Button type="primary" icon={<UserPlus size={16} />} onClick={() => setAdding(true)}>
-                  Add account
+                  Add user
                 </Button>
               )}
             </Space>

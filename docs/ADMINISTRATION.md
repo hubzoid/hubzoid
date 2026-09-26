@@ -18,7 +18,7 @@ hubzoid gateway ./finance ./operations --data-dir ./gateway-data
 
 The OWUI service account must be an OWUI administrator. Use the same credentials
 in the gateway service environment for provisioning, account lookup and visibility
-sync. No email/invitation is sent by a portal grant. OWUI signup/OIDC and account
+sync. No email or invitation is sent by the Console. OWUI signup/OIDC and account
 approval continue to work as configured in OWUI.
 
 The gateway writes `gateway-data/deployment.json` and a discovery pointer at
@@ -91,16 +91,20 @@ hubzoid access bootstrap --authoritative ./finance
 
 Bootstrap administration does not imply every tool capability. Check **Use this
 agent** separately for chat. Keep `WEBUI_AUTH=true` on shared deployments.
-Accounts, password/SSO and account approval stay in Open WebUI; there is no second
-Console credential. A grant sends no invitation. Share the chat URL with the exact
-email that received the grant.
+Credentials and sign-in stay in Open WebUI; there is no second Console
+credential. The Console creates and changes accounts through Open WebUI's admin
+API. Nothing sends an invitation: share the chat URL and, for an account you
+created, its sign-in details yourself.
 
 ## Grant access and verify the end-user experience
 
-1. Open the agent and go to its **Access** tab. Use **Add person** and enter the
-   person's signup email.
+1. Open the agent, go to its **Access** tab and select **Add user**. Choose
+   **Existing account** and find the person, or **New account** to create their
+   sign-in in the same step (name, email, and a password you type or
+   generate).
 2. Tick the capabilities they need (a tool capability includes agent entry
-   automatically), then **Review changes** and **Save**.
+   automatically), then **Review changes** and save (**Create account** for a
+   new account). A new account's sign-in details are shown once to copy.
 3. The permission check changes immediately. The chat app's model picker reflects
    the new access within about 30 seconds; the portal retries that projection on
    its own and only surfaces it if it keeps failing.
@@ -117,7 +121,7 @@ email that received the grant.
 
 The portal's **People** screen distinguishes accounts awaiting signup, pending
 approval, active accounts, services, and blocked people. **Refresh accounts**
-re-reads the account directory. It does not create accounts. **Add account**
+re-reads the account directory. It does not create accounts. **Add user**
 creates one (see [Accounts in the Console](#accounts-in-the-console)).
 Organization admins add or remove other organization admins from a person's
 **Details**. Agent admins cannot change admin rights or use an entry revocation
@@ -189,7 +193,8 @@ messages. Open an agent card for access, **Runs & schedules**, or Activity.
 Global Runs is no longer a navigation entry; existing direct links still work.
 
 Public email and SSO account registration default to off. Managers create
-accounts in **People → Add account** and grant agent access in the same step.
+accounts with **Add user** (on an agent's Access tab or on People) and grant
+agent access in the same step.
 Open WebUI's **Admin Panel → Users** keeps working unless you hide it (below).
 Explicit sign-up overrides and existing persisted OWUI settings remain
 operator-controlled. See [authentication](auth.md).
@@ -213,7 +218,8 @@ What managers can do:
 
 | Action | Who | Where |
 |---|---|---|
-| Create an account (role `user`) with initial access | Org admins, and delegates within their ceiling | People → Add account |
+| Create an account (role `user`) with initial access | Org admins, and delegates within their ceiling | Agent → Access → Add user → New account, or People → Add user |
+| Give an existing account access | Org admins, and delegates within their ceiling | Agent → Access → Add user → Existing account |
 | Approve a pending signup | Org admins | Person Details → Chat account |
 | Reset a password (shown once) | Org admins | Person Details → Chat account |
 | Switch the chat-app admin role | Org admins | Person Details → Chat account |
@@ -223,6 +229,14 @@ Every action is audited in **Activity → Access changes** (`account_create`,
 `account_approve`, `account_password_reset`, `account_role`, `account_delete`)
 without the password. Changing an account's email is not offered. Create a new
 account instead, because grants are keyed on the email.
+
+Creating an account and granting its access touch two systems that cannot
+commit together. If access fails after the account exists, the Console says the
+account was created without access, keeps its sign-in details on screen, and
+**Try again** grants to that account. A duplicate email offers **Grant access
+instead**. Retrying never creates a second account, and no rollback is claimed.
+Details, and **Google sign-in only** accounts, are in
+[access management](access-management.md#add-a-user-implemented).
 
 Organization administrators cannot change their own account or the service
 account from the Console. For those, use Open WebUI's own settings or the server.
@@ -264,7 +278,8 @@ These must stay reachable on the internal URL. None of them passes the edge.
 | `POST /api/v1/auths/signin`, `POST /api/v1/auths/signup` | Service-account token (signup only on a fresh gateway) |
 | `GET /api/v1/auths/` | Verifying a Console session cookie |
 | `GET /api/v1/users/?page=` | Refresh accounts |
-| `POST /api/v1/auths/add` | Add account |
+| `GET /api/v1/users/?query=` | Finding an account by email for Add user's existing-account path |
+| `POST /api/v1/auths/add` | Add user (new account) |
 | `GET /api/v1/users/{id}` | Reading an account before changing it |
 | `POST /api/v1/users/{id}/update` | Approve, reset password, chat-app role |
 | `DELETE /api/v1/users/{id}` | Delete account |
@@ -469,7 +484,8 @@ idempotency and code changes. For operators:
 | Grant has no effect | Agent still marked legacy? Correct deployment manifest? Matching signup email? |
 | Agent not visible | People screen sync status; service-account credentials; `access sync` |
 | Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
-| Add account says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |
+| Add user says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |
+| Add user has no **Google sign-in only** choice | The chat app needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` from the environment (not `ENABLE_OAUTH_PERSISTENT_CONFIG=true`). A gateway records this when it starts, so restart it after changing them |
 | A delegate's grant is refused as outside their access | They must hold that capability in that agent themselves. An org admin can grant it |
 | A confirmation link says the request isn't available | Only the person who proposed it can open it. It expires after `HUBZOID_CHANGE_REQUEST_TTL` seconds and works once |
 | Workflow absent/error | `doctor`, Workflow state/error, literal valid schedule/timezone, bridge logs |

@@ -12,46 +12,110 @@ on its own.
 
 ## Accounts and grants
 
-Public sign-up is closed by default. A manager creates a login in **People → Add
-account** (see below) or an administrator creates one in Open WebUI. **Add person**
-on an agent's Access tab grants permissions to an email address. It does not
-create an account or send an invitation. Access can be prepared before the
-matching account exists.
+Public sign-up is closed by default. Managers add people with **Add user**, on
+an agent's **Access** tab or on **People**. On an agent it starts with one
+choice:
 
-### Create an account in the Console (implemented)
+- **Existing account**: find someone who already signs in, then choose what
+  they can do in this agent.
+- **New account**: create their sign-in and their access in this agent in the
+  same step.
 
-1. Open **People → Add account**.
-2. Enter the email address, the person's name and a password. Type one or use
-   **Generate**.
-3. Tick initial access in the agents you manage. Capabilities you may not give
-   are shown as **Outside your access** and cannot be selected.
-4. Review, then **Create account**.
-5. The password is shown once with **Copy**. Share it with the person directly.
+Add user never presents an email without an account as a user. When no account
+uses an email, the Access tab offers **Create a new account** or, explicitly,
+**Pre-approve this email instead**. A pre-approval is a grant to the email that
+starts working when someone signs in with it, for example through single
+sign-on. No account is created and the access list shows **Not signed up yet**.
+
+### Add a user (implemented)
+
+On an agent:
+
+1. Open **Agents → the agent → Access → Add user**.
+2. Choose **Existing account** or **New account**.
+   - Existing account: search by name or email. An agent manager sees the
+     people in the agents they manage, and finds anyone else by typing their
+     full email. Only real chat accounts are offered.
+   - New account: enter the name and email. The default sign-in is a password:
+     type one or use **Generate**. **Google sign-in only** appears when the
+     chat app supports it (below).
+3. Choose capabilities. Anything you may not give is shown as **Outside your
+   access** or **Admins only** and cannot be selected.
+4. Review, then save (existing account) or **Create account**.
+5. For a new password account, the sign-in details (chat address, email and
+   password) are shown once, with **Copy** and **Copy sign-in details**. Share
+   them yourself. No invitation or email is sent. The password is dropped from
+   the page when you select **Done**.
+
+On **People**, **Add user** creates a new account with initial access in any
+agents you manage, and handles the same outcomes.
 
 The account is created with Open WebUI's normal `user` role through its admin
 API (`POST /api/v1/auths/add`), as the deployment's service account on the
 internal URL. Hubzoid then binds the new account to its email and applies the
 grants in one transaction, audited as `account_create` plus each grant. The
-password is never stored, logged, audited or returned by the server.
+password is never stored, logged, audited or returned by the server. Initial
+access is per agent: organization administrator rights are granted under People
+once the account exists. Giving an existing account access
+(`POST /portal/api/accounts/grant`) never creates an account and never grants
+to an email that has none.
 
 What happens when something goes wrong:
 
-- **The email already has an account.** Nothing is created. The Console offers
-  **Grant access** on the agent instead.
-- **The account was created but access could not be granted.** Hubzoid deletes
-  the new account (it has no chats) and says nothing changed. If that deletion
-  also fails, the message names the account so you can delete it under People.
-- **The chat app did not answer.** The Console says the outcome is uncertain.
-  Use **Refresh accounts** and check before trying again.
+- **The email already has an account.** Nothing is created. **Grant access
+  instead** gives that account the access you chose.
+- **The account was created but access could not be saved.** The chat app and
+  the access store cannot commit together. Hubzoid keeps the account, records
+  it without access, and says exactly that. The sign-in details stay on screen.
+  **Try again** grants the access to that account. It is never created twice,
+  and nothing is deleted to look like a rollback.
+- **The chat app did not answer.** The Console says it couldn't confirm the
+  result. **Try again** is safe: if the account was made, the chat app refuses
+  a duplicate and the Console offers **Grant access instead**. It notes that the
+  account may use the password you set in the earlier attempt.
 - **The email belonged to a deleted account.** Only an organization
   administrator can re-create it. The old grants are removed first, audited as
   `account_replaced`.
 - **Account management isn't set up.** The Console needs the chat app's
   internal URL and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`HUBZOID_GATEWAY_ADMIN_PASSWORD`.
-  It refuses to write through a public URL.
+  It refuses to write through a public URL. **New account** is unavailable
+  until then.
 
 Console account creation works on a deployment whose agents still use legacy
 access. Access for those agents keeps coming from Open WebUI groups.
+
+### Google sign-in only (implemented)
+
+**New account** offers **How they sign in: Password or Google sign-in only**
+only when the chat app attaches a Google sign-in to an existing account by
+email. That needs all of these for the chat app:
+
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set
+- `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`
+- OAuth settings from the environment (`ENABLE_OAUTH_PERSISTENT_CONFIG` not
+  `true`), so what Hubzoid reads is what the chat app uses
+
+The account is created through the same admin call with a random password
+generated on the server. It is never returned, shown, stored or logged, so
+nobody can sign in with a password. The person selects **Sign in with Google**
+and Open WebUI links the sign-in to the account by email. When
+`OAUTH_ALLOWED_DOMAINS` limits Google sign-in, the Console accepts only those
+domains.
+
+Only Google is offered. Open WebUI 0.11.4 links by email without checking the
+provider's `email_verified` claim, and Google account emails are verified.
+Generic OIDC and Microsoft are not offered. Adding a user never changes sign-in
+policy: merging, sign-up and domains stay operator settings (see
+[authentication](auth.md)).
+
+A gateway records these facts in its deployment manifest as flags, for example
+`"sign_in": {"google": true, "merge_by_email": true}` plus any allowed domains,
+never a client id or secret. Bridges started separately (`gateway
+--no-bridges`) read them from there. The gateway rewrites them on each start. A
+standalone `hubzoid run` reads its own environment.
+
+A password account can also sign in with Google once the deployment is set up
+this way.
 
 ### Account actions for organization administrators (implemented)
 
@@ -119,7 +183,9 @@ A delegate cannot:
 - reset passwords, approve, change roles, delete or block accounts
 
 A delegate can create a normal account, but only with at least one grant in an
-agent they manage. Organization administrators keep their full scope.
+agent they manage and within their ceiling, never an organization
+administrator. **Grant access instead** and **Try again** are checked the same
+way. Organization administrators keep their full scope.
 
 ## Management API (implemented)
 
@@ -170,12 +236,13 @@ See [administration](ADMINISTRATION.md) for recovery and migration commands.
 
 ## Grant a teammate access
 
-1. Open **Agents → the agent → Access → Add person**.
-2. Enter the exact email the person uses for chat sign-in.
+1. Open **Agents → the agent → Access → Add user**.
+2. Choose **Existing account** and find them, or **New account** to create
+   their sign-in in the same step.
 3. Choose capabilities, review the changes, and save.
-4. Share the chat URL. No account or invitation is created by an access grant.
-   If they have no sign-in yet, create one with **People → Add account**, or
-   approve their pending signup from their Details.
+4. Share the chat URL (and, for a new account, the sign-in details). No
+   invitation is sent. A person awaiting approval is approved from their
+   Details under People.
 5. Verify with that person's account that allowed agents appear and a disallowed
    tool stays unavailable.
 
@@ -206,8 +273,9 @@ To replace it with named grants:
 
 1. Open **Agents → the agent → Access**. The notice above the list says the
    agent is open to everyone signed in.
-2. Add the people who need the agent by name (**Add person**, or **People → Add
-   account** for a new sign-in). Add workflow identities the same way.
+2. Add the people who need the agent by name with **Add user** (an existing
+   account, or a new one). Workflows run as an ordinary account: add that
+   account the same way.
 3. Select **Remove** on the **Everyone signed in** row. The confirmation says how
    many chat accounts open the agent only through it. They, and anyone who signs
    up later, lose entry. Named grants are not affected.
@@ -296,7 +364,7 @@ A second example, a capability used outside chat:
 
 ```python
 SHARE_PUBLIC = register(Capability(
-    permission="share_public_links", label="Share reports by public link", group="tools",
+    permission="share_public_links", label="Share artifacts publicly", group="tools",
     description="Create 'anyone with the link' links for reports you own. Anyone who "
                 "has such a link can open the report without signing in.",
     surfaces=(), sensitive=True,
@@ -384,8 +452,6 @@ that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 - Connections started from chat (`connector_<app>` capabilities and the
   `hz_connect` journey) are a separate work package. The edge hook they need is
   in place and inert without its cookie.
-- `hubzoid doctor` will warn when Google sign-in is configured without
-  `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
 - The Console does not yet list a person's connections.
 
 ## Administration boundary

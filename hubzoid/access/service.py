@@ -28,7 +28,15 @@ Rules (checked on every write, from the store, never from the caller):
     `included` capability comes with `use_hub` and has no grant of its own; an
     obsolete grant (its capability is gone) can be removed, never granted.
   * Accounts are created with the chat-app role `user`. The password is never
-    stored, logged, audited, returned or placed in a change request.
+    stored, logged, audited, returned or placed in a change request. A Google
+    sign-in-only account gets a random password generated here that nobody is
+    told, and is offered only when the chat app links Google sign-in to an
+    existing account by email (`accounts.sign_in_options`).
+  * Creating an account and granting its initial access touch two systems
+    that cannot commit together. The account is never deleted to fake a
+    rollback: if access fails after the account exists, the result says so
+    (`partial`) and a retry grants access to that account
+    (`grant_existing_account`), never creating a second one.
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
@@ -111,13 +119,15 @@ class Scope:
 
 class Denied(Exception):
     """A refused request. `status` is an HTTP status, `code` a stable token and
-    `message` safe to show (never a secret)."""
+    `message` safe to show (never a secret). `extra` carries structured, equally
+    safe detail for callers (for example the account a partial result created)."""
 
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, *, extra: dict | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.extra = extra or {}
 
 
 def ttl() -> int:
@@ -544,77 +554,145 @@ class AccessService:
         except AccountError as exc:
             raise Denied(exc.status, exc.code, exc.message)
 
-    def create_account(self, actor: Actor, *, email: str, name: str, password: str,
-                       grants: list[tuple[str, str]], request_id: str | None = None) -> dict:
+    def sign_in_options(self) -> dict:
+        """How a new account can sign in here (`accounts.sign_in_options`)."""
+        from . import accounts as accountlib
+
+        return accountlib.sign_in_options(self.hub_dir)
+
+    def _new_password(self, email: str, password: str | None, sign_in: str) -> str:
+        """The password to create the account with, checked before anything is
+        created. Google sign-in only: a random one nobody is told."""
+        if sign_in == "password":
+            return check_password(password)
+        if sign_in != "google":
+            raise Denied(422, "invalid_sign_in", "Choose how they sign in.")
+        if password:
+            raise Denied(422, "invalid_request",
+                         "An account that signs in with Google has no password to set.")
+        options = self.sign_in_options()
+        if not options.get("google"):
+            raise Denied(409, "google_unavailable",
+                         "Google sign-in isn't set up to attach to accounts on this deployment. "
+                         "Create the account with a password.")
+        domains = options.get("google_domains")
+        if domains is not None and email.rsplit("@", 1)[-1] not in domains:
+            allowed = ", ".join(d for d in domains if d) or "no domains"
+            raise Denied(422, "google_domain",
+                         f"Google sign-in here accepts only these domains: {allowed}.")
+        from .accounts import unusable_password
+
+        return unusable_password()
+
+    def create_account(self, actor: Actor, *, email: str, name: str, password: str | None = None,
+                       grants: list[tuple[str, str]], sign_in: str = "password",
+                       request_id: str | None = None) -> dict:
         """Create a chat login (role `user`), bind it and apply initial grants.
 
-        Everything that can be checked is checked before the chat app is
-        called. If binding or granting then fails, the new account is deleted
-        (it has no chats); if that also fails the error says so plainly."""
+        `sign_in` is "password" (the caller's password) or "google" (Google
+        sign-in only; see `_new_password`). Everything that can be checked is
+        checked before the chat app is called. Binding and grants then commit
+        in one store transaction. If that fails the account still exists: it is
+        bound on its own when possible and the refusal says the account was
+        created without access (`partial`), so a retry grants access to it
+        instead of creating it again."""
         email = normalize(email)
         if not _EMAIL.match(email) or len(email) > 320:
             raise Denied(422, "invalid_email", "Enter a valid email address.")
         name = (name or "").strip()
         if not name or len(name) > 200:
             raise Denied(422, "invalid_name", "Enter the person's name.")
-        check_password(password)
+        secret = self._new_password(email, password, sign_in)
         by_hub = self._group_grants(grants)
         scope, replace = self._check_new_account(actor, email, by_hub)
         directory = self.accounts()
-        created = self._directory_call(
-            directory.create, email=email, name=name, password=password, role="user")
-        if normalize(created.get("email") or "") != email or created.get("role") != "user":
-            self._remove_new(directory, created)
-            raise Denied(502, "chat_app_error",
-                         "The chat app created an unexpected account; it was removed.")
-        gs = self.store
+        from .accounts import AccountError
+
         try:
-            revision = None
-            for _attempt in range(3):
-                scope = self._require_scope(actor)
-                base = gs.revision()
-                planned = {
-                    hub: self._check_ops(actor, scope, email, hub,
-                                         [("grant", p) for p in sorted(perms)], new_account=True)
-                    for hub, perms in by_hub.items()
-                }
-                try:
-                    revision = gs.bind_new_account(
-                        email, owui_id=created["id"], display=name, grants=planned,
-                        actor=actor.subject, expected_revision=base, replace=replace,
-                        surface=actor.surface, request_id=request_id,
-                    )
-                    break
-                except RevisionConflict:
-                    continue
-            if revision is None:
-                raise Denied(409, "conflict",
-                             "Access kept changing while saving. Review and try again.")
-        except Exception as exc:  # noqa: BLE001 — compensate, then report honestly
-            removed = self._remove_new(directory, created)
-            base_msg = exc.message if isinstance(exc, Denied) else "Access could not be granted."
-            if not isinstance(exc, Denied):
-                log.exception("account create: binding failed for a new account")
-            try:
-                self._audit(actor, "account_create_failed", subject=email, hub=ORG,
-                            request_id=request_id)
-            except Exception:  # noqa: BLE001
-                log.warning("account create: failure could not be audited")
-            if removed:
-                status = exc.status if isinstance(exc, Denied) else 503
-                code = exc.code if isinstance(exc, Denied) else "store_unavailable"
-                raise Denied(status, code,
-                             f"{base_msg} The new chat account was removed, so nothing changed.")
+            created = directory.create(email=email, name=name, password=secret, role="user")
+        except AccountError as exc:
+            if exc.code == "account_exists":
+                raise Denied(409, "account_exists",
+                             "An account with this email already exists. Grant access to it instead.")
+            if not exc.certain:
+                raise Denied(503, "uncertain",
+                             "The chat app didn't confirm whether the account was created. Try "
+                             "again: if it was created, you'll be offered to grant access to it "
+                             "instead, and it won't be created twice.")
+            raise Denied(exc.status, exc.code, exc.message)
+        finally:
+            secret = None  # noqa: F841 — not kept past the chat-app call
+        if normalize(created.get("email") or "") != email or created.get("role") != "user":
+            if self._remove_new(directory, created):
+                raise Denied(502, "chat_app_error",
+                             "The chat app created an unexpected account; it was removed.")
+            raise Denied(502, "chat_app_error",
+                         "The chat app created an unexpected account and it could not be removed. "
+                         f"Check the account for {email} in the chat app.")
+        account = dict(subject=email, name=name, sign_in=sign_in)
+        try:
+            revision = self._bind_with_grants(actor, email, created, name, by_hub,
+                                              replace=replace, request_id=request_id)
+        except Exception as exc:  # noqa: BLE001 — the account exists: report exactly that
+            if isinstance(exc, Denied):
+                reason = exc.message
+            else:
+                log.exception("account create: access could not be saved for a new account")
+                reason = "Access could not be saved."
+            bound = self._bind_only(actor, email, created, name, replace=replace,
+                                    request_id=request_id)
             raise Denied(
                 502, "partial",
-                f"{base_msg} The chat account {email} was created but could not be removed "
-                "automatically. Delete it under People or in the chat app, then try again.",
+                f"The account for {email} was created, but access was not granted. {reason} "
+                "Try again to grant access; the account won't be created twice.",
+                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason),
             )
         self._project_visibility()
         return dict(
-            subject=email, owui_id=created["id"], name=name, role="user",
+            subject=email, owui_id=created["id"], name=name, role="user", sign_in=sign_in,
             grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision,
         )
+
+    def _bind_with_grants(self, actor: Actor, email: str, created: dict, name: str,
+                          by_hub: dict[str, set[str]], *, replace: bool,
+                          request_id: str | None) -> int:
+        """Bind the new account and apply its grants in one transaction, with
+        the authority check re-run against the revision it writes on."""
+        gs = self.store
+        for _attempt in range(3):
+            scope = self._require_scope(actor)
+            base = gs.revision()
+            planned = {
+                hub: self._check_ops(actor, scope, email, hub,
+                                     [("grant", p) for p in sorted(perms)], new_account=True)
+                for hub, perms in by_hub.items()
+            }
+            try:
+                return gs.bind_new_account(
+                    email, owui_id=created["id"], display=name, grants=planned,
+                    actor=actor.subject, expected_revision=base, replace=replace,
+                    surface=actor.surface, request_id=request_id,
+                )
+            except RevisionConflict:
+                continue
+            except ValueError as exc:
+                raise Denied(409, "conflict", str(exc))
+        raise Denied(409, "conflict", "Access kept changing while saving.")
+
+    def _bind_only(self, actor: Actor, email: str, created: dict, name: str, *,
+                   replace: bool, request_id: str | None) -> bool:
+        """After a failed grant: record the new account without access (audited
+        `account_create`), so People lists it and a retry finds it here. The
+        periodic account sync also binds it later if this fails."""
+        try:
+            self.store.bind_new_account(
+                email, owui_id=created["id"], display=name, grants={}, actor=actor.subject,
+                replace=replace, surface=actor.surface, request_id=request_id,
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            log.warning("account create: the new account could not be recorded yet")
+            return False
 
     def _group_grants(self, grants: list[tuple[str, str]]) -> dict[str, set[str]]:
         by_hub: dict[str, set[str]] = {}
@@ -622,6 +700,10 @@ class AccessService:
             hub, perm = normalize(hub), normalize(perm)
             if not hub or not perm:
                 raise Denied(422, "invalid_grant", "Each grant needs an agent and a capability")
+            if hub == ORG:
+                raise Denied(422, "invalid_grant",
+                             "Initial access is given per agent. Organization administrator "
+                             "rights are granted under People once the account exists.")
             by_hub.setdefault(hub, set()).add(perm)
         return by_hub
 
@@ -652,7 +734,7 @@ class AccessService:
                              "Approve the account instead.")
             if not flags["account_unavailable"]:
                 raise Denied(409, "account_exists",
-                             "An account with this email already exists. Grant access instead.")
+                             "An account with this email already exists. Grant access to it instead.")
             if not scope.org_admin:
                 raise Denied(409, "account_replaced",
                              "This email belonged to an earlier chat account. Ask an "
@@ -684,8 +766,70 @@ class AccessService:
             directory.delete(created["id"])
             return True
         except Exception:  # noqa: BLE001
-            log.error("account create: could not remove a partially created account")
+            log.error("account create: could not remove an unexpected account")
             return False
+
+    def grant_existing_account(self, actor: Actor, *, email: str,
+                               grants: list[tuple[str, str]],
+                               request_id: str | None = None) -> dict:
+        """Give an existing chat account access: Add user's "existing account"
+        choice, "Grant access instead" after a duplicate, and the retry after a
+        partial create. Never creates an account, and never grants to an email
+        that has no account (that is `apply_access_change`'s explicit path).
+
+        The account is found here, or in the chat app when this deployment has
+        not recorded it yet (then it is recorded, as an account refresh would).
+        Each agent's grants commit atomically, agent by agent; when a later
+        agent fails the refusal says which agents were granted (`partial_access`)."""
+        email = normalize(email)
+        if not _EMAIL.match(email) or len(email) > 320:
+            raise Denied(422, "invalid_email", "Choose an account by its email address.")
+        by_hub = self._group_grants(grants)
+        if not by_hub:
+            raise Denied(422, "grant_required", "Choose the access to give.")
+        scope = self._require_scope(actor)
+        for hub, perms in by_hub.items():  # authority first: nothing is looked up or written
+            self._check_ops(actor, scope, email, hub, [("grant", p) for p in sorted(perms)])
+        identity = self._existing_account(email)
+        granted: dict[str, list[str]] = {}
+        hubs = sorted(by_hub)
+        for i, hub in enumerate(hubs):
+            try:
+                self.apply_access_change(actor, email, hub,
+                                         [("grant", p) for p in sorted(by_hub[hub])],
+                                         request_id=request_id)
+            except Denied as exc:
+                if not granted:
+                    raise
+                raise Denied(
+                    exc.status, "partial_access",
+                    f"Access was granted in {', '.join(granted)}, but not in {hub}. {exc.message}",
+                    extra=dict(granted=granted, failed=hubs[i:]),
+                )
+            granted[hub] = sorted(by_hub[hub])
+        return dict(subject=email, name=identity.get("display") or None, grants=granted)
+
+    def _existing_account(self, email: str) -> dict:
+        """The recorded chat account for `email`, recording it from the chat app
+        when it exists there but not here yet. 404 `no_account` otherwise."""
+        gs = self.store
+        identity = gs.identity(email) or {}
+        if identity.get("owui_id"):
+            return identity
+        missing = Denied(404, "no_account",
+                         "No account uses this email. Create a new account instead.")
+        from . import accounts as accountlib
+
+        if self._accounts_override is None and not accountlib.configured(self.hub_dir):
+            raise Denied(404, "no_account",
+                         "No account with this email is known here yet. It appears after they "
+                         "first sign in, or create a new account instead.")
+        found = self._directory_call(self.accounts().find, email)
+        if not found or not found.get("id"):
+            raise missing
+        gs.upsert_identity(email=email, owui_id=found["id"], display=found.get("name"),
+                           pending=found.get("role") == "pending")
+        return gs.identity(email) or {}
 
     def account_info(self, actor: Actor, subject: str) -> dict:
         """The chat account behind a person, read live (organization administrators)."""

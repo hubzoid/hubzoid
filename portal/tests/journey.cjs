@@ -57,7 +57,10 @@ function step(name) {
           );
           return route.fulfill({ json: data });
         } catch (e) {
-          return route.fulfill({ status: e.status || 500, json: { detail: e.detail || String(e) } });
+          return route.fulfill({
+            status: e.status || 500,
+            json: { ...(e.extra || {}), detail: e.detail || String(e), ...(e.code ? { code: e.code } : {}) },
+          });
         }
       }
       if (url.pathname === "/" || url.pathname === "/admin")
@@ -331,19 +334,40 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
 
-    // ---- add a person: validation, implied entry, minimal requests ----------------------
-    step("Adding a person asks only for an email, validates it, and lists each change once");
-    await page.getByRole("button", { name: "Add person" }).click();
-    assert.equal(await drawer().getByRole("radio").count(), 0, "no Person/Service switch");
+    // ---- Add user: an existing account or a new one, never a silent email grant -------------
+    const addUser = async () => {
+      await page.getByRole("button", { name: "Add user", exact: true }).click();
+      await drawer().getByRole("radiogroup", { name: "Who to add" }).waitFor();
+    };
+    const pickAccount = async (text, name) => {
+      await drawer().getByRole("textbox", { name: "Account" }).fill(text);
+      await drawer().getByRole("button", { name: new RegExp(`^Choose ${name}`) }).click();
+    };
+    const newAccount = async ({ name, email, password }) => {
+      await drawer().getByRole("radiogroup", { name: "Who to add" }).getByText("New account", { exact: true }).click();
+      await drawer().getByRole("textbox", { name: "Name" }).fill(name);
+      await drawer().getByRole("textbox", { name: "Email address" }).fill(email);
+      if (password === "generate") await drawer().getByRole("button", { name: "Generate" }).click();
+      else if (password) await page.locator("#new-account-password").fill(password);
+      return password ? page.locator("#new-account-password").inputValue() : "";
+    };
+
+    step("Add user offers an existing account or a new one; choosing an account grants in one request");
+    state.identities["ravi.menon@example.org"] = { display: "Ravi Menon", owui_id: "u_ravi", pending: 0 };
+    await addUser();
+    const whoToAdd = drawer().getByRole("radiogroup", { name: "Who to add" });
+    assert.equal(await whoToAdd.getByRole("radio", { name: "Existing account" }).isChecked(), true, "existing account comes first");
+    assert.equal(await whoToAdd.getByRole("radio", { name: "New account" }).isDisabled(), false);
     assert.equal(await drawer().getByText(/workflow:|Service identity/).count(), 0, "nothing suggests creating a workflow identity");
-    const subject = drawer().getByRole("textbox", { name: "Email address" });
-    await subject.fill("not an email");
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("Choose an account first.").waitFor();
+    await drawer().getByRole("textbox", { name: "Account" }).fill("ravi");
+    await drawer().getByRole("button", { name: /^Choose Ravi Menon/ }).waitFor();
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-existing.png"), fullPage: true });
+    await pickAccount("ravi", "Ravi Menon");
+    await drawer().getByRole("button", { name: "Choose a different account" }).waitFor();
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
-    await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("Enter a valid email address.", { exact: true }).waitFor();
-    assert.equal(state.mutations.length, 0);
-    await subject.fill("Ravi.Menon@example.org");
     await drawer().getByRole("button", { name: "Review changes" }).click();
     const adding = drawer().getByRole("list", { name: "Adding" });
     await adding.getByText("Read ledger").waitFor();
@@ -351,24 +375,32 @@ function step(name) {
     assert.equal(await adding.getByRole("listitem").count(), 2);
     await drawer().getByRole("button", { name: "Save 2 changes" }).click();
     await saved();
-    assert.equal(state.mutations.length, 1);
-    assert.equal(state.mutations[0].endpoint, "/access/apply");
-    assert.equal(state.mutations[0].subject, "ravi.menon@example.org");
-    assert.deepEqual(state.mutations[0].operations, [
-      { action: "grant", permission: "ledger" },
-    ], "use_hub is implied by the ledger grant: still one operation");
-    await page.getByRole("row").filter({ hasText: "ravi.menon" }).getByText("Not signed up yet").waitFor();
+    assert.deepEqual(state.mutations, [
+      { endpoint: "/accounts/grant", email: "ravi.menon@example.org", grants: [{ hub: "finance", permission: "ledger" }] },
+    ], "use_hub is implied by the ledger grant: one request, and it creates no account");
+    assert.deepEqual(state.accountsCreated, []);
+    await page.getByRole("row").filter({ hasText: "Ravi Menon" }).getByText("Active", { exact: true }).waitFor();
     state.mutations.length = 0;
 
-    step("New service identities can't be created; an existing legacy one opens for editing");
-    await page.getByRole("button", { name: "Add person" }).click();
-    const newSubject = drawer().getByRole("textbox", { name: "Email address" });
-    await newSubject.fill("workflow:md:daily-notes");
+    step("Only real accounts are offered; an email with no account is an explicit, labelled choice");
+    await addUser();
+    const accountSearch = drawer().getByRole("textbox", { name: "Account" });
+    await accountSearch.fill("monthly_close");
+    await drawer().getByText("No matching account.").waitFor();
+    await accountSearch.fill("daniel.okafor@example.org"); // an email-only grant, not an account
+    await drawer().getByText("No account uses daniel.okafor@example.org").waitFor();
+    await drawer().getByRole("button", { name: "Create a new account" }).waitFor();
+    await accountSearch.fill("late.change@example.org");
+    await drawer().getByRole("button", { name: "Pre-approve this email instead" }).click();
+    const preApprove = drawer().getByRole("textbox", { name: "Pre-approve an email" });
+    assert.equal(await preApprove.inputValue(), "late.change@example.org");
+    await drawer().getByText("No account is created.", { exact: false }).waitFor();
+    await preApprove.fill("workflow:md:daily-notes");
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("New service identities can’t be added", { exact: false }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0, "nothing is created");
-    await newSubject.fill("workflow:monthly_close");
+    await preApprove.fill("workflow:monthly_close");
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("already has access to Finance Assistant").waitFor();
     await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
@@ -377,8 +409,146 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
     assert.equal(state.grants.some(([s]) => s === "workflow:md:daily-notes"), false);
-    await page.reload();
+    // Pre-approving goes through review, says no account is made, and shows as such.
+    await addUser();
+    await drawer().getByRole("textbox", { name: "Account" }).fill("Pre.Approved@example.org");
+    await drawer().getByRole("button", { name: "Pre-approve this email instead" }).click();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("No account is created", { exact: true }).waitFor();
+    await drawer().getByRole("button", { name: "Save change" }).click();
+    await saved();
+    assert.equal(lastMutation().endpoint, "/access/apply");
+    assert.equal(lastMutation().subject, "pre.approved@example.org");
+    await page.getByRole("row").filter({ hasText: "pre.approved" }).getByText("Not signed up yet").waitFor();
+    state.mutations.length = 0;
 
+    step("A new account is created with its access in one step; the sign-in shows once, then is cleared");
+    await addUser();
+    await drawer().getByRole("radiogroup", { name: "Who to add" }).getByText("New account", { exact: true }).click();
+    assert.equal(await drawer().getByText("How they sign in").count(), 0, "no Google choice unless the chat app can attach it");
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("Enter their name.").waitFor();
+    assert.equal(state.mutations.length, 0);
+    const niaPassword = await newAccount({ name: "Nia Patel", email: "Nia.Patel@addusers.local", password: "generate" });
+    assert.ok(niaPassword.length >= 16, "a generated password is filled in");
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-new.png"), fullPage: true });
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("New account, signs in with a password").waitFor();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Read ledger").waitFor();
+    assert.equal(state.mutations.length, 0, "review writes nothing");
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("Nia Patel can now sign in as nia.patel@addusers.local").waitFor();
+    assert.equal(await page.locator("#one-time-password").inputValue(), niaPassword);
+    await drawer().getByRole("button", { name: "Copy sign-in details" }).waitFor();
+    assert.deepEqual(state.mutations, [{
+      endpoint: "/accounts", email: "nia.patel@addusers.local", name: "Nia Patel", sign_in: "password",
+      password: niaPassword, grants: [{ hub: "finance", permission: "ledger" }],
+    }]);
+    const browserStorage = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+    assert.ok(!browserStorage.includes(niaPassword), "the password never reaches browser storage");
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-created.png"), fullPage: true });
+    await drawer().getByRole("button", { name: "Done" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByText("Nia Patel was added").waitFor();
+    await page.getByRole("row").filter({ hasText: "Nia Patel" }).getByText("Read ledger").waitFor();
+    // Done dropped the password: a new form starts empty.
+    await addUser();
+    await drawer().getByRole("radiogroup", { name: "Who to add" }).getByText("New account", { exact: true }).click();
+    assert.equal(await page.locator("#new-account-password").inputValue(), "");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    state.mutations.length = 0;
+
+    step("A duplicate email is not created twice: Grant access instead gives that account the access");
+    state.chatOnly.set("sam.okoro@addusers.local", "Sam Okoro"); // in the chat app, not yet recorded here
+    await addUser();
+    await newAccount({ name: "Sam Okoro", email: "sam.okoro@addusers.local", password: "Typed-Password-42" });
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("An account with sam.okoro@addusers.local already exists").waitFor();
+    await drawer().getByText("No second account was created", { exact: false }).waitFor();
+    assert.equal(await page.locator("#one-time-password").count(), 0, "no password is shown for an account made elsewhere");
+    await drawer().getByRole("button", { name: "Grant access instead" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByText("Access given to Sam Okoro").waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/accounts/grant"]);
+    assert.deepEqual(lastMutation().grants, [{ hub: "finance", permission: "ledger" }]);
+    assert.ok(!state.accountsCreated.includes("sam.okoro@addusers.local"));
+    await page.getByRole("row").filter({ hasText: "Sam Okoro" }).getByText("Read ledger").waitFor();
+    state.mutations.length = 0;
+
+    step("An account created without its access says so, and Try again grants to that account");
+    state.accountFault = "partial";
+    await addUser();
+    const leoPassword = await newAccount({ name: "Leo Varga", email: "leo.varga@addusers.local", password: "generate" });
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("The account was created, but access wasn’t granted").waitFor();
+    assert.equal(await page.locator("#one-time-password").inputValue(), leoPassword, "the account exists, so its sign-in is shown");
+    assert.equal(await drawer().getByText(/rolled back|was removed|nothing changed/i).count(), 0, "no rollback is claimed");
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-partial.png"), fullPage: true });
+    await drawer().getByRole("button", { name: "Try again" }).click();
+    await drawer().getByText("Leo Varga can now sign in as leo.varga@addusers.local").waitFor();
+    assert.equal(await page.locator("#one-time-password").inputValue(), leoPassword);
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/accounts/grant"], "the retry grants, it doesn't create");
+    assert.equal(state.accountsCreated.filter((e) => e === "leo.varga@addusers.local").length, 1);
+    await drawer().getByRole("button", { name: "Done" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByRole("row").filter({ hasText: "Leo Varga" }).getByText("Read ledger").waitFor();
+    state.mutations.length = 0;
+
+    step("An unconfirmed create is retried safely: the account is detected, never duplicated");
+    state.accountFault = "lost";
+    await addUser();
+    await newAccount({ name: "Ada Chen", email: "ada.chen@addusers.local", password: "Typed-Password-42" });
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("Couldn’t confirm whether the account was created").waitFor();
+    await drawer().getByRole("button", { name: "Try again" }).click();
+    await drawer().getByText("An account with ada.chen@addusers.local already exists").waitFor();
+    await drawer().getByText("It may be the account your earlier attempt created", { exact: false }).waitFor();
+    assert.equal(await page.locator("#one-time-password").inputValue(), "Typed-Password-42");
+    await drawer().getByRole("button", { name: "Grant access instead" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByText("Access given to Ada Chen").waitFor();
+    assert.equal(state.accountsCreated.filter((e) => e === "ada.chen@addusers.local").length, 1, "created once");
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/accounts", "/accounts/grant"]);
+    state.mutations.length = 0;
+
+    step("Google sign-in only appears when the chat app can attach it, and sets no password anyone knows");
+    state.signIn = { password: true, google: true, google_domains: ["addusers.local"] };
+    await page.reload();
+    await addUser();
+    await newAccount({ name: "Kai Moreno", email: "kai.moreno@example.org" });
+    await drawer().getByRole("radio", { name: "Google sign-in only" }).check();
+    assert.equal(await page.locator("#new-account-password").count(), 0, "no password to set");
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-google.png"), fullPage: true });
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("Google sign-in here accepts only addusers.local addresses.").waitFor();
+    assert.equal(state.mutations.length, 0);
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("kai.moreno@addusers.local");
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByText("New account, signs in with Google").waitFor();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("Kai Moreno can now sign in as kai.moreno@addusers.local").waitFor();
+    await drawer().getByText("There is no password to share", { exact: false }).waitFor();
+    assert.equal(await page.locator("#one-time-password").count(), 0);
+    assert.deepEqual(state.mutations, [{
+      endpoint: "/accounts", email: "kai.moreno@addusers.local", name: "Kai Moreno", sign_in: "google",
+      grants: [{ hub: "finance", permission: "use_hub" }],
+    }], "no password is sent");
+    await drawer().getByRole("button", { name: "Done" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    state.signIn = { password: true, google: false };
+    state.mutations.length = 0;
+    await page.reload();
     step("Optional groups start collapsed with counts; configuration reads apart from permission; toggles and help work by keyboard");
     // Temporary synthetic capabilities: one missing its setting, one included
     // with entry, and a grant whose capability no longer exists.
@@ -474,8 +644,9 @@ function step(name) {
     await page.reload();
 
     step("A group holding a problem found at review opens by itself");
-    await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address" }).fill("late.change@example.org");
+    await addUser();
+    await drawer().getByRole("textbox", { name: "Account" }).fill("late.change@example.org");
+    await drawer().getByRole("button", { name: "Pre-approve this email instead" }).click();
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Run payroll/ }).check();
     await group("Restricted tools").click(); // close it again; the choice stays
@@ -502,8 +673,8 @@ function step(name) {
     assert.equal(state.mutations.length, 0);
 
     step("Adding someone who already has access switches to editing their current access");
-    await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address" }).fill(PRIYA);
+    await addUser();
+    await pickAccount("priya", "Priya Natarajan");
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByText("already has access to Finance Assistant").waitFor();
     assert.equal(await headerText("Restricted tools"), "Restricted tools · 2 selected");
@@ -513,14 +684,21 @@ function step(name) {
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
 
-    step("Granting to a blocked person surfaces the server's refusal with context");
-    await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address" }).fill("tomas.herrera@example.org");
+    step("A blocked account can be found but not given access; the reason shows before saving");
+    await addUser();
+    await pickAccount("tomas", "Tomás Herrera");
+    await drawer().getByText("Blocked", { exact: true }).waitFor();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByRole("button", { name: "Save change" }).click();
-    await drawer().getByText("Nothing was saved").waitFor();
-    await drawer().getByText("Reactivate this user before granting access").waitFor();
-    await drawer().getByRole("button", { name: /Done/ }).click();
+    await drawer().getByText("One selected capability can’t be granted", { exact: false }).waitFor();
+    await drawer().getByText("Blocked by an administrator", { exact: false }).first().waitFor();
+    assert.equal(state.mutations.length, 0);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    // The server refuses it too, for any caller.
+    await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
+      email: "tomas.herrera@example.org", grants: [{ hub: "finance", permission: "use_hub" }],
+    }), (e) => e.status === 409);
     state.mutations.length = 0;
 
     // ---- uncertain save: server error can't be confirmed --------------------------
@@ -582,11 +760,11 @@ function step(name) {
     // Editor is LOCKED: the list is replaced by an error + retry, with no editable controls.
     await page.getByText("Couldn’t load this view").waitFor();
     await page.getByText("Access store temporarily unavailable").waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add person" }).count(), 0, "no Add while stale");
+    assert.equal(await page.getByRole("button", { name: "Add user" }).count(), 0, "no Add while stale");
     assert.equal(await page.getByRole("button", { name: /^Edit access for/ }).count(), 0, "no rows editable while stale");
     // A successful retry unlocks the editor and reflects the applied change.
     await page.getByRole("button", { name: "Try again" }).click();
-    await page.getByRole("button", { name: "Add person" }).waitFor();
+    await page.getByRole("button", { name: "Add user" }).waitFor();
     assert.equal(await priyaRow2.getByText("Read ledger", { exact: true }).count(), 0, "the revoke did apply");
     // Restore Priya's ledger grant for later steps.
     state.grants.push([PRIYA, "finance", "ledger"]);
@@ -595,8 +773,9 @@ function step(name) {
 
     // ---- concurrency: a change since load is refused --------------------------------------
     step("An edit built on stale access is refused when another admin changed it first");
-    await page.getByRole("button", { name: "Add person" }).click();
-    await drawer().getByRole("textbox", { name: "Email address" }).fill("concurrent.user@example.org");
+    await addUser();
+    await drawer().getByRole("textbox", { name: "Account" }).fill("concurrent.user@example.org");
+    await drawer().getByRole("button", { name: "Pre-approve this email instead" }).click();
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
@@ -681,8 +860,8 @@ function step(name) {
     step("A legacy agent shows access read-only (managed in the chat app), with edits disabled");
     await go("/agents/itops/access"); // itops is not authoritative in the fixture
     await page.getByText("access is managed in the chat app", { exact: false }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add person" }).isDisabled(), true,
-      "legacy hub must not offer Add person");
+    assert.equal(await page.getByRole("button", { name: "Add user" }).isDisabled(), true,
+      "legacy hub must not offer Add user");
     assert.equal(await page.getByRole("switch").count(), 0);
     assert.equal(state.mutations.length, 0);
 
@@ -1108,42 +1287,37 @@ function step(name) {
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agent-admin.png"), fullPage: true });
     state.mutations.length = 0;
 
-    // ---- accounts and confirmations (stubbed API: the fixture predates them) ------------------
-    step("A delegate adds an account: only their own capabilities are selectable; the password shows once");
-    // The fixture's /me predates grantable/account fields; later-registered routes win.
-    const meExtras = () =>
-      state.role === "hub"
-        ? { grantable: { finance: [USE_HUB_PERM] }, account_admin: false, can_create_accounts: true, accounts_configured: true }
-        : { grantable: { finance: state.catalogs.finance.map((p) => p.permission), support: state.catalogs.support.map((p) => p.permission), itops: [] }, account_admin: true, can_create_accounts: true, accounts_configured: true };
-    const meRoute = async (route) => {
-      try {
-        const base = await fixture.handle("GET", "/me", {}, undefined);
-        return route.fulfill({ json: { ...base, ...meExtras() } });
-      } catch (e) {
-        return route.fulfill({ status: e.status || 500, json: { detail: e.detail || String(e) } });
-      }
-    };
-    const accountCalls = [];
-    const accountsRoute = async (route) => {
-      const body = route.request().postDataJSON();
-      accountCalls.push(body);
-      if (body.email === PRIYA)
-        return route.fulfill({ status: 409, json: { detail: "An account with this email already exists. Grant access instead.", code: "account_exists" } });
-      const grants = {};
-      for (const g of body.grants) (grants[g.hub] ??= []).push(g.permission);
-      return route.fulfill({ json: { ok: true, subject: body.email, name: body.name, role: "user", grants, revision: 1 } });
-    };
-    await context.route(`${ORIGIN}/portal/api/me`, meRoute);
-    await context.route(`${ORIGIN}/portal/api/accounts`, accountsRoute);
-    await page.reload();
+    // ---- a delegate adds users, within their own access ------------------------------------
+    step("A delegate's Add user on an agent locks capabilities they don't hold");
+    await go("/agents/finance/access");
+    await addUser();
+    await drawer().getByRole("radiogroup", { name: "Who to add" }).getByText("New account", { exact: true }).click();
+    await expand("Restricted tools");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isDisabled(), true);
+    await drawer().locator('[data-permission="payroll"]').getByText("Outside your access").waitFor();
+    await expand("Administration");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true, "never an administrator");
+    // Refused by the server as well, whatever the page allows.
+    await assert.rejects(fixture.handle("POST", "/accounts", {}, {
+      email: "x@addusers.local", name: "X", password: "Typed-Password-42", grants: [{ hub: "finance", permission: "payroll" }],
+    }), (e) => e.status === 403);
+    await assert.rejects(fixture.handle("POST", "/accounts", {}, {
+      email: "x@addusers.local", name: "X", password: "Typed-Password-42", grants: [{ hub: "support", permission: "use_hub" }],
+    }), (e) => e.status === 403);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    state.mutations.length = 0;
+
+    step("A delegate adds a user on People: only their own capabilities are selectable; the password shows once");
     await go("/people");
-    await page.getByRole("button", { name: "Add account" }).click();
+    await page.getByRole("button", { name: "Add user" }).click();
     await drawer().getByText("Initial access").waitFor();
     // Capabilities the delegate does not hold are shown but not selectable.
     assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isDisabled(), true);
     await drawer().getByText("Outside your access").first().waitFor();
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
-    await drawer().getByRole("textbox", { name: "Email address" }).fill("new.person@example.org");
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("new.person@addusers.local");
     await drawer().getByRole("textbox", { name: "Name" }).fill("New Person");
     await drawer().getByRole("button", { name: "Generate" }).click();
     const generated = await page.locator("#account-password").inputValue();
@@ -1152,27 +1326,32 @@ function step(name) {
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByText("Finance Assistant: Use this agent").waitFor();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("New Person can now sign in as new.person@example.org").waitFor();
+    await drawer().getByText("New Person can now sign in as new.person@addusers.local").waitFor();
     assert.equal(await page.locator("#one-time-password").inputValue(), generated);
-    assert.deepEqual(accountCalls[0], {
-      email: "new.person@example.org", name: "New Person", password: generated,
-      grants: [{ hub: "finance", permission: USE_HUB_PERM }],
-    });
+    assert.deepEqual(state.mutations, [{
+      endpoint: "/accounts", email: "new.person@addusers.local", name: "New Person", sign_in: "password",
+      password: generated, grants: [{ hub: "finance", permission: USE_HUB_PERM }],
+    }]);
     await drawer().getByRole("button", { name: "Done" }).click();
     await drawer().waitFor({ state: "hidden" });
+    state.mutations.length = 0;
 
-    step("An existing account is not duplicated; the drawer offers granting access instead");
-    await page.getByRole("button", { name: "Add account" }).click();
-    await drawer().getByRole("textbox", { name: "Email address" }).fill(PRIYA);
-    await drawer().getByRole("textbox", { name: "Name" }).fill("Priya");
+    step("On People, a duplicate is not created again; Grant access instead gives the existing account access");
+    await page.getByRole("button", { name: "Add user" }).click();
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("ravi.menon@example.org");
+    await drawer().getByRole("textbox", { name: "Name" }).fill("Ravi");
     await page.locator("#account-password").fill("Typed-Password-42");
     await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("This person already has an account").waitFor();
-    await drawer().getByRole("link", { name: "Grant access in Finance Assistant" }).waitFor();
+    await drawer().getByText("An account with this email already exists").waitFor();
+    await drawer().getByRole("button", { name: "Grant access instead" }).click();
+    await drawer().getByText("Access granted to Ravi Menon").waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/accounts/grant"]);
+    assert.ok(!state.accountsCreated.includes("ravi.menon@example.org"));
     await drawer().getByRole("button", { name: "Done" }).click();
     await drawer().waitFor({ state: "hidden" });
+    state.mutations.length = 0;
 
     step("A change proposed from chat is confirmed on its own page, exactly as proposed");
     const now = Math.floor(Date.now() / 1000);
@@ -1206,8 +1385,6 @@ function step(name) {
     });
     assert.equal(await page.getByRole("button", { name: "Apply change" }).count(), 0);
     await context.unroute(`${ORIGIN}/portal/api/change-requests/**`, changeRoute);
-    await context.unroute(`${ORIGIN}/portal/api/accounts`, accountsRoute);
-    await context.unroute(`${ORIGIN}/portal/api/me`, meRoute);
     state.mutations.length = 0;
 
     // ---- mobile -------------------------------------------------------------------------------

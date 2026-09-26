@@ -11,7 +11,7 @@ import {
   Typography,
 } from "antd";
 import { Plus, Search } from "lucide-react";
-import { request, query, type Access, type AccessRow, type Hub } from "../../api";
+import { request, query, type Access, type AccessRow, type Hub, type Me } from "../../api";
 import { errorText, useData } from "../../hooks/useData";
 import {
   AccountTag,
@@ -44,6 +44,8 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const data = useData<Access>(
     "/access" + query({ hub: hub.key, q: search, offset: (page - 1) * PAGE, limit: PAGE }),
   );
+  // Whether this viewer may create accounts, and how new accounts can sign in.
+  const me = useData<Me>("/me");
   const [draft, setDraft] = useState<Draft | null>(null);
   // Each result is a new alert (keyed), so a repeated "Access updated" is announced again.
   const [notice, setNotice] = useState({ text: "", n: 0 });
@@ -217,7 +219,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
           disabled={locked}
           onClick={() => setDraft(draftFor())}
         >
-          Add person
+          Add user
         </Button>
       </div>
 
@@ -288,7 +290,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
             >
               {!search && (
                 <Button type="primary" disabled={locked} onClick={() => setDraft(draftFor())}>
-                  Add the first person
+                  Add the first user
                 </Button>
               )}
             </Empty>
@@ -299,11 +301,12 @@ export function AccessEditor({ hub }: { hub: Hub }) {
       <AccessDrawer
         hub={hub}
         access={access}
+        me={me.data}
         draft={draft}
         setDraft={setDraft}
         onReload={data.reload}
-        onSaved={() => {
-          announce("Access updated");
+        onSaved={(text) => {
+          announce(text || "Access updated");
           data.reload();
         }}
       />

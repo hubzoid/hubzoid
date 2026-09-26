@@ -2,7 +2,10 @@
 // no customer service is contacted and no real access is changed. The
 // handlers mirror hubzoid/portal.py + hubzoid/access/store.py semantics that
 // the UI depends on (cascade on use_hub revoke, auto-grant of use_hub, org
-// domain '*', last-admin protection, blocked subjects, role scoping).
+// domain '*', last-admin protection, blocked subjects, role scoping), and the
+// account service (hubzoid/access/service.py): a duplicate is refused, an
+// account created without its access is reported as such, and granting to an
+// existing account never creates one.
 
 const ORG = "*";
 const EVERYONE = "*";
@@ -91,6 +94,16 @@ function createFixture() {
     // Accounts that vanished from the chat-app directory (deleted/renamed).
     // Blocked in effect, but NOT an admin suspension — reactivate can't fix it.
     unavailable: new Set(),
+    // How new accounts can sign in (GET /me sign_in).
+    signIn: { password: true, google: false },
+    // Accounts that exist in the chat app but are not recorded here yet
+    // (email -> name), e.g. created by an answer that was lost.
+    chatOnly: new Map(),
+    // Every account the chat app was asked to create, in order.
+    accountsCreated: [],
+    // One-shot faults for POST /accounts: "partial" (created, access not
+    // saved) or "lost" (created, but the answer never arrived).
+    accountFault: null,
     revision: 0, // policy revision; every grant/revoke/block bumps it
     grants: [
       ["admin@example.org", ORG, MANAGE_ACCESS],
@@ -249,6 +262,35 @@ function createFixture() {
     blocked: state.suspended.has(subject) || state.unavailable.has(subject),
   });
 
+  // What an administrator may grant in a hub (service.ceiling): an org admin
+  // every grantable capability; an agent manager what they hold there,
+  // minus Manage access and admin-only capabilities.
+  function ceiling(a, hub) {
+    const entries = state.catalogs[hub].filter(grantable);
+    if (a.org) return entries.map((p) => p.permission).sort();
+    const held = gs.permissionsFor(a.subject, hub);
+    return entries
+      .filter((p) => p.delegate_grantable !== false && p.permission !== MANAGE_ACCESS && held.includes(p.permission))
+      .map((p) => p.permission)
+      .sort();
+  }
+  function checkGrants(a, subject, grants) {
+    for (const g of grants) {
+      const hub = String(g.hub || "").trim().toLowerCase();
+      const perm = String(g.permission || "").trim().toLowerCase();
+      if (hub === ORG) throw error(422, "Initial access is given per agent.", "invalid_grant");
+      requireHub(a, hub);
+      if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG, "legacy");
+      if (!grantable(state.catalogs[hub].find((p) => p.permission === perm))) throw error(422, "Unknown permission for this hub", "unknown_permission");
+      if (!a.org) {
+        if (perm === MANAGE_ACCESS) throw error(403, "Only organization admins may change administrator access", "forbidden");
+        if (subject === a.subject) throw error(403, "You can't change your own access. Ask an organization administrator.", "self_change");
+        if (gs.can(subject, ORG, MANAGE_ACCESS)) throw error(403, "Only organization admins may change an organization administrator's access", "forbidden");
+        if (!ceiling(a, hub).includes(perm)) throw error(403, `Outside your access: you can only grant or remove capabilities you hold in ${hub}.`, "outside_ceiling");
+      }
+    }
+  }
+
   function catalogFor(hub) {
     const known = new Set(state.catalogs[hub].map((p) => p.permission));
     const stale = [...new Set(state.grants.filter(([, h, p]) => h === hub && !known.has(p)).map(([, , p]) => p))].sort();
@@ -274,7 +316,95 @@ function createFixture() {
     }
     switch (endpoint) {
       case "/me":
-        return { subject: a.subject, org_admin: a.org, manageable: allowedHubs(a).map((h) => h.key) };
+        return {
+          subject: a.subject,
+          org_admin: a.org,
+          manageable: allowedHubs(a).map((h) => h.key),
+          grantable: Object.fromEntries(allowedHubs(a).map((h) => [h.key, h.authoritative ? ceiling(a, h.key) : []])),
+          account_admin: a.org,
+          can_create_accounts: a.org || allowedHubs(a).some((h) => h.authoritative),
+          accounts_configured: true,
+          sign_in: state.signIn,
+        };
+      case "/accounts": {
+        if (method === "GET") {
+          // Scoped like People: an agent manager sees their agents' people and
+          // one account by its full email. Only real accounts are listed.
+          const q = String(params.q || "").trim().toLowerCase();
+          const scopes = allowedHubs(a).map((h) => h.key);
+          const visible = new Set(state.grants.filter(([, h]) => scopes.includes(h)).map(([s]) => s));
+          const rows = [];
+          for (const [subject, id] of Object.entries(state.identities).sort()) {
+            if (!id.owui_id || subject.startsWith("workflow:") || subject === EVERYONE) continue;
+            if (!a.org && !visible.has(subject) && subject !== q) continue;
+            if (q && !(subject + " " + (id.display || "")).toLowerCase().includes(q)) continue;
+            rows.push({ subject, display: id.display, status: identityStatus(subject), ...accountFlags(subject), organization_admin: gs.can(subject, ORG, MANAGE_ACCESS) });
+            if (rows.length >= Number(params.limit || 20)) break;
+          }
+          return { accounts: rows };
+        }
+        const email = String(body.email || "").trim().toLowerCase();
+        const name = String(body.name || "").trim();
+        const signIn = body.sign_in || "password";
+        if (!EMAIL_RE.test(email)) throw error(422, "Enter a valid email address.", "invalid_email");
+        if (!name) throw error(422, "Enter the person's name.", "invalid_name");
+        if (signIn === "google") {
+          if (!state.signIn.google) throw error(409, "Google sign-in isn't set up to attach to accounts on this deployment. Create the account with a password.", "google_unavailable");
+          if (body.password) throw error(422, "An account that signs in with Google has no password to set.", "invalid_request");
+        } else if (!body.password || String(body.password).length < 8) {
+          throw error(422, "Use a password of at least 8 characters.", "invalid_password");
+        }
+        const grants = body.grants || [];
+        if (!a.org && !grants.length) throw error(422, "Choose access in at least one agent you manage.", "grant_required");
+        if (state.suspended.has(email)) throw error(409, "This person is blocked. Reactivate them under People first.", "blocked");
+        const known = state.identities[email];
+        if (known && known.owui_id && !state.unavailable.has(email))
+          throw error(409, "An account with this email already exists. Grant access to it instead.", "account_exists");
+        checkGrants(a, email, grants);
+        // The chat app refuses a duplicate it holds but this deployment hasn't recorded.
+        if (state.chatOnly.has(email))
+          throw error(409, "An account with this email already exists. Grant access to it instead.", "account_exists");
+        state.accountsCreated.push(email);
+        const fault = state.accountFault;
+        state.accountFault = null;
+        if (fault === "lost") {
+          state.chatOnly.set(email, name);
+          throw error(503, "The chat app didn't confirm whether the account was created. Try again: if it was created, you'll be offered to grant access to it instead, and it won't be created twice.", "uncertain");
+        }
+        state.identities[email] = { display: name, owui_id: `u_${state.accountsCreated.length}`, pending: 0 };
+        gs.audit(a.subject, "account_create", email, ORG, null);
+        state.revision += 1;
+        if (fault === "partial")
+          throw error(502, `The account for ${email} was created, but access was not granted. Access could not be saved. Try again to grant access; the account won't be created twice.`,
+            "partial", { account: { subject: email, name, sign_in: signIn }, access_granted: false, recorded: true, reason: "Access could not be saved." });
+        const out = {};
+        for (const g of grants) {
+          gs.grant(email, g.hub, g.permission, a.subject);
+          (out[g.hub] ??= []).push(g.permission);
+        }
+        return { ok: true, subject: email, owui_id: state.identities[email].owui_id, name, role: "user", sign_in: signIn, grants: out, revision: state.revision };
+      }
+      case "/accounts/grant": {
+        // Access for an account that exists; never creates one or an email-only grant.
+        const email = String(body.email || "").trim().toLowerCase();
+        const grants = body.grants || [];
+        if (!grants.length) throw error(422, "Choose the access to give.", "grant_required");
+        checkGrants(a, email, grants);
+        let id = state.identities[email];
+        if (!id || !id.owui_id) {
+          if (!state.chatOnly.has(email)) throw error(404, "No account uses this email. Create a new account instead.", "no_account");
+          id = state.identities[email] = { display: state.chatOnly.get(email), owui_id: `u_bound_${email}`, pending: 0 };
+          state.chatOnly.delete(email);
+        }
+        if (state.suspended.has(email)) throw error(409, "Reactivate this user before granting access", "blocked");
+        if (state.unavailable.has(email)) throw error(409, "This account is unavailable in the chat app.", "unavailable");
+        const out = {};
+        for (const g of grants) {
+          gs.grant(email, g.hub, g.permission, a.subject);
+          (out[g.hub] ??= []).push(g.permission);
+        }
+        return { ok: true, subject: email, name: id.display, grants: out };
+      }
       case "/hubs":
         return { hubs: allowedHubs(a) };
       case "/permissions":
@@ -314,6 +444,8 @@ function createFixture() {
             id.owui_id && !id.pending && !subject.startsWith("workflow:") && !state.suspended.has(subject) &&
             !state.grants.some(([s, h, p]) => s === subject && h === hub && p === USE_HUB)).length,
           revision: state.revision,
+          grantable: state.hubs.find((h) => h.key === hub).authoritative ? ceiling(a, hub) : [],
+          viewer: a.subject,
           rows: list.slice(offset, offset + limit),
         };
       }
@@ -654,12 +786,15 @@ function running(hub, name, id, startedSeconds) {
 function step(name, started, completed, output, err = null) {
   return { name, started, completed, output, error: err };
 }
-function error(status, detail) {
+function error(status, detail, code, extra) {
   const e = new Error(detail);
   e.status = status;
   e.detail = detail;
+  e.code = code;
+  e.extra = extra;
   return e;
 }
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const conflict = (detail) => error(409, detail);
 
 module.exports = { createFixture, perm };

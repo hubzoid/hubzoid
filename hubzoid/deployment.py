@@ -52,7 +52,7 @@ def save(
     owui_database_url: str | None = None, owui_database_schema: str | None = None,
     deployment_secret: dict | None = None, owner: str | None = None,
     public_url: str | None = None, workflow_user: str | None = None,
-    hide_owui_users: bool | None = None,
+    hide_owui_users: bool | None = None, sign_in: dict | None = None,
 ) -> None:
     """Write the manifest and each hub's pointer to it.
 
@@ -60,6 +60,9 @@ def save(
     root people open) and `workflow_user` (the gateway's HUBZOID_WORKFLOW_USER)
     let bridges and CLI commands that did not inherit the gateway's environment
     act the same as the gateway. Omitted when unset.
+
+    `sign_in` (from `sign_in_flags`) records how the chat app signs people in,
+    as booleans and a domain list only: never a client id or secret.
 
     `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
     external bridges can fetch it. Only the name and region are stored, never a
@@ -85,6 +88,8 @@ def save(
         # The deployment's default for hiding Open WebUI's user management
         # (an explicit HUBZOID_HIDE_OWUI_USERS still wins at the edge).
         data["hide_owui_users"] = bool(hide_owui_users)
+    if sign_in is not None:
+        data["sign_in"] = _flags_only(sign_in)
     if deployment_secret and deployment_secret.get("name"):
         data["deployment_secret"] = {"name": str(deployment_secret["name"]),
                                      "region": deployment_secret.get("region") or None}
@@ -109,6 +114,46 @@ def hide_owui_users_default(prior: dict, *, fresh: bool, env) -> bool | None:
             and (env.get("HUBZOID_GATEWAY_ADMIN_PASSWORD") or "").strip()):
         return True
     return None
+
+
+def sign_in_flags(env) -> dict:
+    """Non-secret facts about the chat app's sign-in setup, parsed exactly as
+    Open WebUI 0.11.4 parses them (`config.py`), for the Console's Add user.
+
+    * "google": GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are both set (Open
+      WebUI registers Google only then).
+    * "merge_by_email": OAUTH_MERGE_ACCOUNTS_BY_EMAIL is true, so a Google
+      sign-in attaches to the existing account with that email.
+    * "allowed_domains": present only when OAUTH_ALLOWED_DOMAINS restricts
+      Google sign-in (the values, compared exactly as Open WebUI does).
+    * "oauth_settings_in_app": ENABLE_OAUTH_PERSISTENT_CONFIG is true, so the
+      live OAuth settings may have been changed inside the chat app and cannot
+      be read from here.
+
+    Never records a client id, secret or any other value."""
+    def true(key: str, default: str = "False") -> bool:
+        return (env.get(key) or default).lower() == "true"
+
+    flags: dict = {
+        "google": bool(env.get("GOOGLE_CLIENT_ID") and env.get("GOOGLE_CLIENT_SECRET")),
+        "merge_by_email": true("OAUTH_MERGE_ACCOUNTS_BY_EMAIL"),
+    }
+    raw = env.get("OAUTH_ALLOWED_DOMAINS")
+    domains = [d.strip() for d in ("*" if raw is None else raw).split(",")]
+    if "*" not in domains:
+        flags["allowed_domains"] = domains
+    if true("ENABLE_OAUTH_PERSISTENT_CONFIG"):
+        flags["oauth_settings_in_app"] = True
+    return flags
+
+
+def _flags_only(sign_in: dict) -> dict:
+    out = {k: bool(sign_in.get(k)) for k in ("google", "merge_by_email")}
+    if isinstance(sign_in.get("allowed_domains"), list):
+        out["allowed_domains"] = [str(d) for d in sign_in["allowed_domains"]]
+    if sign_in.get("oauth_settings_in_app"):
+        out["oauth_settings_in_app"] = True
+    return out
 
 
 def deployment_secret(hub_dir: Path, env=None) -> dict | None:
