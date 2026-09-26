@@ -263,7 +263,7 @@ from hubzoid.capabilities import Capability, register
 
 JEV = register(Capability(
     permission="jev",                  # stable id; grants refer to it; never rename
-    label="Ask Jev for decisions",
+    label="Call Jev",
     group="tools",                     # hub | tools | restricted | workflows | admin
     description="Use call_jev in chat for typed decisions from Jev. "
                 "Each call is billed to the hub's JEV_OPENROUTER_API_KEY.",

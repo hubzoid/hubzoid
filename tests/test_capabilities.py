@@ -260,3 +260,17 @@ def test_obsolete_grants_stay_visible_and_removable_but_never_grantable(api):
     assert _apply(api.as_(ROOT), "ann@x.org", ("revoke", "old_tool")).status_code == 200
     assert api.gs.permissions_for("ann@x.org", "finance") == {"use_hub", "ledger"}
     assert "old_tool" not in _by_id(api.svc.catalog("finance"))
+
+
+def test_connector_apps_appear_as_sensitive_hubzoid_tools(tmp_path, monkeypatch):
+    """P2's connection journey offers connector_<app>; the catalogue shows it in
+    Hubzoid tools, sensitive, without a bespoke UI row."""
+    hub = tmp_path / "sales"
+    hub.mkdir()
+    (hub / "AGENTS.md").write_text("---\nname: sales\n---\nbody")
+    (hub / ".env").write_text("HUBZOID_CONNECT_JOURNEY=true\nCONNECTIONS=gmail\n")
+    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
+    rows = {r["permission"]: r for r in capabilities.catalog(hub)}
+    gmail = rows["connector_gmail"]
+    assert gmail["group"] == "tools" and gmail["sensitive"] is True
+    assert "use_hub" in rows and rows["use_hub"]["group"] == "hub"
