@@ -940,7 +940,7 @@ function step(name) {
       ["daniel.okafor@example.org", "Not signed up yet"],
       ["Mei Lin Chen", "Awaiting approval"],
       ["Tomás Herrera", "Blocked"],
-      ["workflow:monthly_close", "Service"],
+      ["workflow:monthly_close", "Legacy service identity"],
     ])
       await page.getByRole("row").filter({ hasText: who }).getByText(status, { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Org admin").waitFor();

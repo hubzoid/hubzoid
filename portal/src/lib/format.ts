@@ -111,7 +111,7 @@ export function validateSubject(raw: string): string | null {
   if (value === EVERYONE) return "Access for everyone signed in can’t be granted. Add people by name.";
   if (/^workflow:(?:md:)?[a-z0-9_.-]+$/.test(value)) return null;
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return null;
-  return "Enter a valid email address (or workflow:<name> for a service).";
+  return "Enter a valid email address.";
 }
 
 export const normalizeSubject = (raw: string) => raw.trim().toLowerCase();
@@ -140,7 +140,7 @@ export function capabilityLabel(
 export const CAPABILITY_GROUPS = [
   { key: "hub", title: "Hub access" },
   { key: "tools", title: "Hubzoid tools" },
-  { key: "restricted", title: "Custom restricted tools" },
+  { key: "restricted", title: "Restricted tools" },
   { key: "workflows", title: "Workflows" },
   { key: "admin", title: "Administration" },
   { key: "obsolete", title: "No longer available" },
@@ -233,7 +233,7 @@ export function accountStatus(status: string): Presentation {
     case "blocked":
       return { label: "Blocked", color: "red", hint: "All agent access is suspended." };
     case "service":
-      return { label: "Service", color: "blue", hint: "A workflow identity, not a person." };
+      return { label: "Legacy service identity", color: "default", hint: "Created before workflows ran as user accounts; its access is kept." };
     case "everyone":
       return { label: "Public", color: "purple", hint: "Applies to everyone who can sign in." };
     default:

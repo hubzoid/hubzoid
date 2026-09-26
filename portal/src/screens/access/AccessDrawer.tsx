@@ -46,7 +46,6 @@ const { Text, Title } = Typography;
 /** Groups that are always open: entry ("Use this agent") and removable leftovers. */
 const ALWAYS_OPEN = new Set(["hub", "obsolete"]);
 /** Shorter drawer titles where the shared catalogue title reads as jargon. */
-const GROUP_TITLES: Record<string, string> = { restricted: "Restricted tools" };
 
 const NO_NEW_SERVICES =
   "New service identities can’t be added. Workflows run as an ordinary account: enter that account’s email address.";
@@ -518,7 +517,7 @@ export function AccessDrawer({
                       <CapabilityGroup
                         key={g.key}
                         id={g.key}
-                        title={GROUP_TITLES[g.key] ?? g.title}
+                        title={g.title}
                         collapsible={collapsible}
                         open={expanded.includes(g.key)}
                         onToggle={() =>
