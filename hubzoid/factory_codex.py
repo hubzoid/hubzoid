@@ -66,7 +66,7 @@ def codex_available() -> bool:
 class CodexRuntime:
     def __init__(self, *, name, instructions, registry, model_setting="codex-local",
                  hub_dir=None, max_turns=20, tool_mode="compact", mcp_servers=None,
-                 vision=(True, 1568, 4), effort=None):
+                 vision=(True, 1568, 4), effort=None, personal_mcp=False):
         self.name = name
         self.instructions = instructions
         self.registry = registry
@@ -76,6 +76,9 @@ class CodexRuntime:
         self.tool_mode = tool_mode
         self.vision = vision
         self.effort = effort
+        # Only the hub's main agent carries the caller's personal MCP servers,
+        # as on the Claude and OpenAI backends (delegates never do).
+        self.personal_mcp = personal_mcp
         self._servers = mcp_servers or []
         self._stack = None
         self._processes = set()
@@ -116,7 +119,63 @@ class CodexRuntime:
         return "".join([part async for part in self.stream(prompt)])
 
     async def stream(self, prompt):
+        """Run one turn. When the caller connected personal MCP servers in Open
+        WebUI (see `owui_mcp`), their tools join a per-turn copy of the
+        registry for this turn only. The shared registry never changes."""
+        personal = self._personal_servers()
+        if not personal:
+            async for part in self._stream(prompt, self.registry):
+                yield part
+            return
+        from .runtime import relay_in_task
+
         self._error.set(None)
+        outcome = {}
+
+        async def turn():
+            async for part in self._stream_personal(prompt, personal):
+                yield part
+            outcome["error"] = self._error.get()
+
+        async for part in relay_in_task(turn):
+            yield part
+        # The turn ran in its own task; carry its error state back to ours.
+        self._error.set(outcome.get("error"))
+
+    def _personal_servers(self):
+        if not (self.personal_mcp and self.hub_dir):
+            return []
+        from . import owui_mcp
+        from .access.identity import current_identity
+        try:
+            return owui_mcp.per_user_servers(self.hub_dir, current_identity())
+        except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
+            log.warning("owui-mcp per-user injection skipped", exc_info=True)
+            return []
+
+    async def personal_registry(self, stack, personal):
+        """A copy of the shared registry plus the caller's personal MCP tools,
+        connected on `stack`. A server whose tool name is already taken is
+        skipped for this turn (see `runtime.open_personal_mcp`)."""
+        from .runtime import open_personal_mcp
+
+        registry = dict(self.registry)
+        for _server, tools in await open_personal_mcp(stack, personal, set(registry)):
+            for tool in tools:
+                registry[tool.name] = tool
+        return registry
+
+    async def _stream_personal(self, prompt, personal):
+        async with AsyncExitStack() as stack:
+            registry = await self.personal_registry(stack, personal)
+            async for part in self._stream(prompt, registry):
+                yield part
+
+    async def _stream(self, prompt, registry):
+        self._error.set(None)
+        # Only a per-turn registry (personal MCP tools) is passed down; the
+        # shared path calls the exchange exactly as before.
+        turn_tools = {} if registry is self.registry else {"registry": registry}
         proc = None
         shown = []
         usage = {}
@@ -160,7 +219,7 @@ class CodexRuntime:
                 self._processes.add(proc)
                 try:
                     async with asyncio.timeout(300):
-                        async for part in self._exchange(proc, prompt, tmp, usage):
+                        async for part in self._exchange(proc, prompt, tmp, usage, **turn_tools):
                             shown.append(part)
                             yield part
                 finally:
@@ -185,7 +244,9 @@ class CodexRuntime:
         if footer:
             yield footer
 
-    async def _exchange(self, proc, prompt, cwd, usage):
+    async def _exchange(self, proc, prompt, cwd, usage, registry=None):
+        registry = self.registry if registry is None else registry
+
         async def send(message):
             proc.stdin.write((json.dumps(message) + "\n").encode())
             await proc.stdin.drain()
@@ -216,7 +277,7 @@ class CodexRuntime:
                   "baseInstructions": self.instructions, "developerInstructions": "",
                   "dynamicTools": [{"type": "function", "name": t.name,
                     "description": t.description, "inputSchema": t.params_json_schema}
-                    for t in self.registry.values()], "allowProviderModelFallback": False}
+                    for t in registry.values()], "allowProviderModelFallback": False}
         if self.model:
             params["model"] = self.model
         started = await request(2, "thread/start", params)
@@ -251,7 +312,7 @@ class CodexRuntime:
                 if calls > self.max_turns:
                     raise RuntimeError("Codex reached the configured tool-call limit.")
                 name, arguments = p.get("tool"), p.get("arguments", {})
-                tool = self.registry.get(name) if not p.get("namespace") else None
+                tool = registry.get(name) if not p.get("namespace") else None
                 if tool is None:
                     result, success = "Tool is not available in this hub.", False
                 else:
@@ -386,4 +447,5 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     return CodexRuntime(name=main.spec.name, instructions=_compose_instructions(main.instructions, ctx, backend="codex-local"),
                         registry=registry, model_setting=model, hub_dir=hub_dir,
                         max_turns=max_turns, tool_mode=config.show_tools, mcp_servers=mcp.load_all(hub_dir),
-                        vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort)
+                        vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
+                        personal_mcp=True)

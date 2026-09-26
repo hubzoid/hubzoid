@@ -101,8 +101,15 @@ def list_mcp_connections(hub_dir) -> list[dict]:
             "url": url,
             "auth_type": (c.get("auth_type") or "").lower(),
             "allowed_tools": _parse_filter(cfg.get("function_name_filter_list")),
+            # Only an explicit `enable: false` switches a server off here. The
+            # connection journey does not offer a switched-off server.
+            "enabled": cfg.get("enable") is not False,
         })
     return out
+
+
+# Auth types whose servers a person connects with their own OAuth account.
+OAUTH_AUTH_TYPES = frozenset({"oauth_2.1", "oauth_2.1_static"})
 
 
 def mcp_connection(hub_dir, server_id: str) -> dict | None:

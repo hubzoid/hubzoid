@@ -81,7 +81,8 @@ WebUI**, where each user connects their own account. **No Hubzoid UI, no
    server as themselves. The connection follows their identity to other
    surfaces that map to the same OWUI account, but only surfaces allowed to
    reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`). A shared Slack
-   channel never carries it. It is used by the Claude backend today.
+   channel never carries it. All three backends use it (see
+   [Runtimes](#runtimes) below).
 
 ### Enable it (operator - one line)
 
@@ -109,8 +110,9 @@ that, env is the default and admin edits in OWUI persist normally.
 
 **Gateway mode:** set `OWUI_NATIVE_MCP=true` at the **gateway** level - one
 shared OWUI means one tool-server registry and one token store, so it is
-gateway-wide (every hub bridge injects; access is still gated by OWUI Groups per
-server). Bridges read the shared gateway DB automatically. The OAuth redirect
+gateway-wide: every hub bridge injects. Hubzoid does not read OWUI's own access
+settings for a tool server. On a managed hub the `connector_<app>` capability is
+the gate (see below). Bridges read the shared gateway DB automatically. The OAuth redirect
 returns to the shared OWUI, so set `WEBUI_URL` / `HUBZOID_PUBLIC_URL` to your
 real public URL or the provider redirect will fail.
 
@@ -146,6 +148,153 @@ real public URL or the provider redirect will fail.
   in sync (single source of truth). A user only reconnects if the refresh token
   itself is revoked or has expired.
 - **Turn it off:** remove `OWUI_NATIVE_MCP` (or set it to `0`).
+
+### Runtimes
+
+Implemented. One per-turn source (`hubzoid/owui_mcp.py`, `per_user_servers`)
+feeds all three backends, so a hub behaves the same whichever backend it runs.
+
+| Backend | How the caller's servers join a turn | Tool names |
+|---|---|---|
+| Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server | `mcp__owui_<name>__<tool>` |
+| OpenAI Agents | Per-turn Streamable HTTP clients and a per-turn clone of the agent | the MCP tool name |
+| Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools | the MCP tool name |
+
+Rules that hold on all three:
+
+- The token rides only in the MCP client's `Authorization` header. It never
+  enters the prompt, a log line or a tool result.
+- The admin's per-server tool allow-list applies.
+- A personal tool never shadows a hub tool. On a name clash the personal
+  server is skipped for that turn and a warning is logged. Claude namespaces
+  every server, so there the clash can only be a server key.
+- A server that cannot be reached is dropped for that turn. The turn goes on.
+- Only the hub's main agent gets personal servers. Delegates do not.
+- The shared agent, options and registry are never changed. Clients are
+  opened and closed inside the turn.
+
+### Connector capability (`connector_<app>`)
+
+Implemented. Each OAuth MCP server is a connector app named by its server ID
+(the ID typed in OWUI when registering it, lowercased, other characters
+turned into `_`). A server registered as `gmail` is the app `gmail` and the
+capability `connector_gmail`.
+
+- **Managed hubs** (access managed in the Console): a personal server is
+  injected only when the caller holds `connector_<app>` in that hub. Grant it
+  like any other capability.
+- **Legacy hubs** (Open WebUI groups): injection is unchanged, apart from the
+  surface rule above. Starting a connection from chat (below) needs an Open
+  WebUI group named `connector_<app>`.
+- If the access store cannot be read, no personal server is injected that turn.
+
+## Connect from chat (connection journey)
+
+Implemented, off by default. A person asks the agent to connect an app (for
+example "connect my Gmail") in web chat or WhatsApp. The agent sends a
+personal link. The person approves access in the browser, a Hubzoid page shows
+the verified result, and WhatsApp gets a confirmation.
+
+### Turn it on
+
+In the hub's `.env`:
+
+```dotenv
+HUBZOID_CONNECT_JOURNEY=true
+# HUBZOID_CONNECT_TTL=600   # link lifetime in seconds (60 to 3600)
+```
+
+The agent then has a `connect_account(app, reconnect=false)` tool on every
+backend. It also needs:
+
+- an app to connect. Either an OAuth 2.1 MCP server registered in OWUI with
+  `OWUI_NATIVE_MCP=true` (the default path), or the app listed in
+  `CONNECTIONS` with a `COMPOSIO_API_KEY` (the Composio path).
+- the `connector_<app>` capability for the person (Console grant on a managed
+  hub, OWUI group of that name on a legacy hub).
+- the surface in `HUBZOID_RESTRICTED_SURFACES`. Add `whatsapp` for WhatsApp.
+- `WEBUI_URL` set to the public address people open (the link is
+  `<WEBUI_URL>/portal/connect/<id>`).
+
+### What happens
+
+1. `connect_account` checks the capability (surface first), finds the one
+   provider for the app and asks it whether the person is connected already.
+   If they are, the agent says so. Otherwise it gets a link to
+   `/portal/connect/<id>`, never a provider URL.
+2. The link page needs a signed-in OWUI session. The email of that session
+   must be the person who asked. Anyone else gets "This link is for another
+   account" (and the attempt is recorded in the access log).
+3. **Continue** (a same-origin POST) re-checks a block or a revoked grant and
+   sends the browser to the provider. For OWUI native MCP that is OWUI's own
+   authorize route, with a short-lived `hz_connect` cookie.
+4. After consent the browser comes back to `/portal/connect/<id>/done`. The
+   page asks the provider whether this journey connected. It never reads the
+   parameters on the return URL.
+   - OWUI: a new `oauth_session` row for that person and server, created after
+     the journey started, whose token is usable now.
+   - Composio: the connected account this journey's link created is ACTIVE for
+     that person and app.
+5. The page shows **connected**, **not connected** or **finishing** (it checks
+   `/status` for up to 30 seconds). WhatsApp gets its confirmation from the
+   hub's inbound process (see [inbound surfaces](inbound-surfaces.md)).
+
+Other outcomes: **Cancel** on the page, an **expired** link (the TTL), and a
+**newer link** for the same app (the older one stops working). Asking with
+`reconnect=true` replaces the existing connection. OWUI deletes the old session
+itself. For Composio the older ACTIVE account is deleted after the new one is
+verified.
+
+**One provider per app.** If an app could be connected through both an OWUI
+server and Composio (or through two OWUI servers), the tool refuses and names
+both, so no one ends up with two connections. Remove one.
+
+With the journey on, Composio's own links are never shown. A tool that raises
+`NeedsConnection` hands out the bound journey link instead, and a Composio
+credential also needs `connector_<app>` on a managed hub and an allowed
+surface.
+
+The connector capabilities a hub offers are listed by
+`connect_journey.permissions(hub)` for the Console.
+
+### Needs the edge rewrite (or falls back)
+
+OWUI always sends the browser to its own home page after authorization. The
+edge turns that redirect into `/portal/connect/<id>/done` while the
+`hz_connect` cookie is present (the edge side lands separately). Without it the
+person lands on the chat home page. The connection still works, WhatsApp still
+gets its confirmation (the inbound process checks the provider), and asking the
+agent again reports "already connected".
+
+### Limits
+
+- A Composio journey can be verified only where that hub's `COMPOSIO_API_KEY`
+  is loaded: the hub's own bridge or its inbound process. Behind a gateway the
+  `/portal` pages may be served by another hub's bridge. There the done page
+  keeps saying "finishing" until the hub's own process confirms it.
+- The WhatsApp confirmation and the YES continuation are WhatsApp only.
+  Telegram and web chat get the link and the done page.
+- OWUI's `/auth?redirect=` is offered on the sign-in page but is not yet
+  verified against the pinned OWUI bundle. The page also says to open the link
+  again after signing in.
+
+### Check it with real accounts (manual)
+
+Unit tests use fakes. Before relying on it, run once on a test deployment:
+
+1. Register a Gmail MCP server that supports OAuth 2.1 in OWUI (ID `gmail`),
+   with a Google OAuth client whose redirect URI is
+   `<WEBUI_URL>/oauth/clients/mcp:gmail/callback`.
+2. Set `OWUI_NATIVE_MCP=true`, `HUBZOID_CONNECT_JOURNEY=true` and add
+   `whatsapp` to `HUBZOID_RESTRICTED_SURFACES`. Grant `connector_gmail`.
+3. From a WhatsApp number in `identity/access.csv`, ask "connect my Gmail".
+   Open the link while signed in as another account (expect 403), then as the
+   right one. Approve in Google.
+4. Expect the done page to say connected, one WhatsApp confirmation, and on
+   YES the waiting request to run once. Check `oauth_session` has one row for
+   that person and server.
+5. Ask something that needs Gmail on each backend (`claude-local`, an OpenAI
+   model, `codex-local`). The tool must answer with that person's mailbox.
 
 For deployment and upgrade checks, see [administration](ADMINISTRATION.md) and
 [upgrading](UPGRADING.md). Preserve saved tool-server connections when upgrading.

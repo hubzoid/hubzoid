@@ -216,6 +216,8 @@ def build_app(
     stream_interval: float = _STREAM_EDIT_INTERVAL,
     max_upload_bytes: int = settingslib.DEFAULT_MAX_UPLOAD_BYTES,
     ingest_media_fn: "Callable | None" = None,
+    connect_journeys: "bool | None" = None,
+    connect_gate=None,
 ) -> Starlette:
     # Every public route is namespaced under the hub slug so one front door can
     # serve many inbound hubs. `slug` is the hub's own slug; the gateway edge
@@ -228,12 +230,28 @@ def build_app(
     msgs = messages or Messages()
     ingest = ingest_media_fn or _make_default_ingest(bridge_url, api_key, max_upload_bytes)
     routes = []
+    # Connection journeys (HUBZOID_CONNECT_JOURNEY): guarantee the link reaches
+    # WhatsApp, keep the waiting request for a one-use YES, and confirm the
+    # verified outcome back in the chat. Off by default: nothing below runs.
+    if connect_journeys is None:
+        from .. import connect_journey
+        connect_journeys = connect_journey.enabled()
+    poller = None
 
     if whatsapp is not None:
         routes += _whatsapp_routes(
             base, whatsapp, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
-            msgs, ingest,
+            msgs, ingest, hub_dir=hub_dir if connect_journeys else None,
         )
+        if connect_journeys:
+            from ..connect_journey.notify import Poller
+            if connect_gate is None:
+                connect_gate = _composio_gate(hub_dir)
+            wa = whatsapp
+            poller = Poller(
+                hub_dir, resolver=resolver, gate=connect_gate,
+                send=lambda *, to, text: wa.send_text(
+                    phone_number_id=wa.phone_number_id, token=wa.token, to=to, text=text))
     if telegram is not None:
         routes += _telegram_routes(
             base, telegram, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model,
@@ -241,13 +259,93 @@ def build_app(
         )
     if webhook is not None:
         routes += _webhook_routes(base, webhook, dedup)
-    return Starlette(routes=routes)
+    if poller is None:
+        return Starlette(routes=routes)
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        poller.start()
+        try:
+            yield
+        finally:
+            poller.stop()
+
+    app = Starlette(routes=routes, lifespan=lifespan)
+    app.state.connect_poller = poller
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Connection journeys (see hubzoid.connect_journey)
+# ---------------------------------------------------------------------------
+_YES = {"yes", "y", "yes please", "ok yes"}
+
+
+def _composio_gate(hub_dir):  # noqa: ARG001
+    """This hub's Composio gate, so the outbox can verify a Composio journey
+    with the hub's own key. Built from the environment the inbound process
+    already loaded from the hub. None when the hub declares no connections."""
+    import os
+    from types import SimpleNamespace
+    try:
+        from .. import connections
+        raw = os.environ.get("CONNECTIONS") or ""
+        cfg = SimpleNamespace(
+            connections=tuple(s.strip().lower() for s in raw.split(",") if s.strip()),
+            composio_api_key=(os.environ.get("COMPOSIO_API_KEY") or "").strip() or None)
+        gate = connections.build(cfg)
+        return gate if gate.active else None
+    except Exception:  # noqa: BLE001
+        log.warning("inbound: Composio gate unavailable for connection checks", exc_info=True)
+        return None
+
+
+def _is_yes(text: str) -> bool:
+    return (text or "").strip().strip(".!").strip().lower() in _YES
+
+
+def _journey_before_turn(hub_dir, *, email, chat_id, text, has_media) -> "str | None":
+    """A YES claims the offered continuation (single use) and returns its
+    text. Any other message clears an open offer. Never raises."""
+    from .. import connect_journey
+    try:
+        if _is_yes(text) and not has_media:
+            return connect_journey.take_continuation(
+                hub_dir, subject=email, surface="whatsapp", chat_id=chat_id)
+        connect_journey.decline_continuation(
+            hub_dir, subject=email, surface="whatsapp", chat_id=chat_id)
+    except Exception:  # noqa: BLE001 — a journey hiccup never blocks the turn
+        log.warning("whatsapp: continuation check failed", exc_info=True)
+    return None
+
+
+def _journey_after_turn(hub_dir, *, email, chat_id, since, user_text, reply) -> str:
+    """After a turn: make sure every link the turn created is in the reply
+    (the model may drop or mangle it), and keep the turn's request for a
+    one-use continuation. Returns the extra text to send. Never raises."""
+    from .. import connect_journey
+    from ..connect_journey import store
+    extra = []
+    try:
+        for j in store.created_since(hub_dir, subject=email, surface="whatsapp",
+                                     chat_id=chat_id, since=since):
+            if j["status"] in store.OPEN and connect_journey.link_path(j["id"]) not in reply:
+                extra.append(f"Connect {connect_journey.label(j['app'])}: "
+                             f"{connect_journey.link_url(j['id'])}")
+        connect_journey.attach_continuation(hub_dir, subject=email, surface="whatsapp",
+                                            chat_id=chat_id, since=since, text=user_text)
+    except Exception:  # noqa: BLE001
+        log.warning("whatsapp: connection follow-up failed", exc_info=True)
+    return "\n\n".join(extra)
 
 
 # ---------------------------------------------------------------------------
 # WhatsApp
 # ---------------------------------------------------------------------------
-def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest):
+def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url, api_key, model, msgs, ingest,
+                     hub_dir=None):
     async def get_handler(request):
         challenge = verify_challenge(dict(request.query_params), wa.verify_token)
         if challenge is None:
@@ -294,14 +392,29 @@ def _whatsapp_routes(base, wa, dedup, history, resolver, dispatch_fn, bridge_url
         # and then sees it in history (ordering + context). Media download above
         # stays outside the lock, so a queued message fetches while it waits.
         with _chat_lock(chat_id):
+            email = identity.get("email")
+            if hub_dir is not None:
+                # "YES" re-runs the request that waited for a connection, as a
+                # fresh turn: the bridge re-checks entry and every capability.
+                waiting = _journey_before_turn(hub_dir, email=email, chat_id=chat_id,
+                                               text=m.text, has_media=bool(m.media))
+                if waiting:
+                    user_text = waiting
+            turn_started = time.time() - 0.25
             prior = history.load(chat_id)
             reply = dispatch_fn(
                 bridge_url=bridge_url, api_key=api_key, model=model,
                 messages=prior + [{"role": "user", "content": user_text}], surface="whatsapp",
-                user_email=identity.get("email"), groups=identity.get("groups") or [],
+                user_email=email, groups=identity.get("groups") or [],
                 chat_id=chat_id,
             )
             text = wa_render_final(reply)
+            if hub_dir is not None:
+                extra = _journey_after_turn(hub_dir, email=email, chat_id=chat_id,
+                                            since=turn_started, user_text=user_text,
+                                            reply=reply or "")
+                if extra:
+                    text = f"{text.rstrip()}\n\n{extra}" if text.strip() else extra
             # A blank rendered reply (e.g. all think/tool blocks) must still acknowledge
             # the user — WhatsApp has no placeholder to fall back on. (code-review #4)
             wa.send_text(phone_number_id=wa.phone_number_id, token=wa.token,
