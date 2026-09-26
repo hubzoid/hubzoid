@@ -143,8 +143,13 @@ def max_bytes() -> int:
 
 
 def public_base_url() -> str:
-    """Where people open Hubzoid in a browser (the edge, fronting /portal)."""
-    base = (os.environ.get("HUBZOID_PUBLIC_URL") or os.environ.get("WEBUI_URL") or "").rstrip("/")
+    """Where people open Hubzoid in a browser (the edge, fronting /portal).
+
+    A gateway bridge's HUBZOID_PUBLIC_URL ends in its download prefix
+    (`/b/<hub>`), which the edge routes only for `/artifacts` and `/mcp`. The
+    report viewer and public links live at the site root, so drop it."""
+    base = (os.environ.get("HUBZOID_PUBLIC_URL") or "").rstrip("/")
+    base = re.sub(r"/b/[^/]+$", "", base) or (os.environ.get("WEBUI_URL") or "").rstrip("/")
     return base or f"http://127.0.0.1:{os.environ.get('PORT') or '3080'}"
 
 

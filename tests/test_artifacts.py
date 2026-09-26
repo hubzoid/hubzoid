@@ -165,6 +165,28 @@ def test_public_links_need_the_permission(hub, tmp_path):
     assert arts.open_link(hub, _token(link["url"])) is None
 
 
+@pytest.mark.parametrize("public_url, webui_url, base", [
+    ("https://hub.example.com/b/sales", None, "https://hub.example.com"),   # gateway bridge
+    ("https://hub.example.com/b/sales/", None, "https://hub.example.com"),
+    ("https://hub.example.com", None, "https://hub.example.com"),           # standalone
+    (None, "https://chat.example.com/", "https://chat.example.com"),
+    (None, None, "http://127.0.0.1:3080"),
+])
+def test_report_and_public_links_use_the_site_root(hub, tmp_path, monkeypatch,
+                                                    public_url, webui_url, base):
+    # The edge routes a gateway bridge's /b/<hub> prefix only for downloads and
+    # MCP; /portal/artifacts and /portal/p are served at the site root.
+    for key, value in (("HUBZOID_PUBLIC_URL", public_url), ("WEBUI_URL", webui_url)):
+        if value:
+            monkeypatch.setenv(key, value)
+    monkeypatch.delenv("PORT", raising=False)
+    gs = _managed(hub)
+    gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
+    art, out = _publish(hub, tmp_path)
+    assert out["url"] == f"{base}/portal/artifacts/{art.id}"
+    assert arts.create_link(hub, art, OWNER)["url"].startswith(f"{base}/portal/p/#")
+
+
 def test_public_link_rotation_revocation_expiry_and_audience(hub, tmp_path, monkeypatch):
     gs = _managed(hub)
     gs.grant(OWNER, "sales", arts.PUBLIC_LINK_PERMISSION, actor="t")
