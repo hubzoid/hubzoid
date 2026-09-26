@@ -64,6 +64,14 @@ class FakeOwui:
             uid = self.add_user(body["email"], body["name"], role=body.get("role", "pending"))
             return httpx.Response(200, json={**self.users[uid], "token": "new-user-token"})
         parts = path.strip("/").split("/")
+        if parts == ["api", "v1", "users"] and request.method == "GET":
+            # The admin list: substring search on name and email, 30 per page.
+            query = (request.url.params.get("query") or "").lower()
+            page = int(request.url.params.get("page") or 1)
+            hits = [u for u in self.users.values()
+                    if query in u["email"].lower() or query in u["name"].lower()]
+            return httpx.Response(200, json={"users": hits[(page - 1) * 30:page * 30],
+                                             "total": len(hits)})
         if parts[:3] == ["api", "v1", "users"] and len(parts) >= 4:
             uid = parts[3]
             user = self.users.get(uid)

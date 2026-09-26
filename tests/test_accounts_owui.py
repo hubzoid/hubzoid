@@ -1,13 +1,18 @@
 """Console account management against a fake Open WebUI (httpx.MockTransport).
 
 The adapter always creates `role: "user"`, never keeps the new account's token,
-maps EMAIL_TAKEN, and refuses a public-only URL. The service creates, binds
-and grants in one step, undoes a half-created account, and never lets a
-password reach the audit log, the access store, a response or a log line.
+maps EMAIL_TAKEN, finds an account by email, and refuses a public-only URL. The
+service creates, binds and grants in one step; when access fails after the
+account exists it says so and a retry grants access to that account instead of
+creating a second one. A password never reaches the audit log, the access
+store, a response or a log line, and a Google sign-in-only account's random
+password is never returned at all.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 
 import httpx
 import pytest
@@ -199,34 +204,104 @@ def test_existing_account_offers_grant_instead(dep):
     assert not dep.gs.can("bob@x.org", "finance", "ledger")
 
 
-def test_failed_grant_deletes_the_new_account(dep, monkeypatch):
-    def boom(*_a, **_k):
-        raise RuntimeError("database went away")
+def _adds(dep, email):
+    return [b for m, p, b in dep.owui.requests if p == "/api/v1/auths/add" and b["email"] == email]
 
-    monkeypatch.setattr(dep.gs, "bind_new_account", boom)
+
+def _fail_grants_once(dep, monkeypatch, *, record_too=False):
+    """The store refuses the bind-with-grants transaction once. With
+    `record_too` the follow-up bind without access fails as well (store down)."""
+    original = dep.gs.bind_new_account
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if k.get("grants") or record_too:
+            raise RuntimeError("database went away")
+        return original(*a, **k)
+
+    monkeypatch.setattr(dep.gs, "bind_new_account", flaky)
+    return lambda: monkeypatch.setattr(dep.gs, "bind_new_account", original)
+
+
+def test_failed_grant_keeps_the_account_and_a_retry_grants_to_it(dep, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    restore = _fail_grants_once(dep, monkeypatch)
     with pytest.raises(Denied) as e:
         dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
                                grants=[("finance", "ledger")])
-    assert "removed, so nothing changed" in e.value.message
-    assert dep.owui.by_email("ann@x.org") is None
-    assert any(m == "DELETE" for m, _, _ in dep.owui.requests)
-
-
-def test_failed_grant_and_failed_cleanup_is_reported_honestly(dep, monkeypatch):
-    def boom(*_a, **_k):
-        raise RuntimeError("database went away")
-
-    monkeypatch.setattr(dep.gs, "bind_new_account", boom)
-    dep.owui.fail["delete"] = 500
+    restore()
+    # Accurate: the account exists, access does not, and nothing was "rolled back".
+    assert e.value.code == "partial" and "was created, but access was not granted" in e.value.message
+    assert "removed" not in e.value.message and PASSWORD not in e.value.message
+    assert e.value.extra == {"account": {"subject": "ann@x.org", "name": "Ann", "sign_in": "password"},
+                             "access_granted": False, "recorded": True}
+    user = dep.owui.by_email("ann@x.org")
+    assert user and not any(m == "DELETE" for m, _, _ in dep.owui.requests)
+    assert dep.gs.identity("ann@x.org")["owui_id"] == user["id"]
+    assert not dep.gs.can("ann@x.org", "finance", "use_hub")
+    assert "account_create" in [r["action"] for r in dep.gs.read_access_audit(20, subject="ann@x.org")]
+    # Creating again is refused as a duplicate; granting to the account works.
     with pytest.raises(Denied) as e:
         dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
                                grants=[("finance", "ledger")])
-    assert e.value.code == "partial"
-    assert "ann@x.org was created" in e.value.message and PASSWORD not in e.value.message
-    assert dep.owui.by_email("ann@x.org")  # still there, and the message says so
+    assert e.value.code == "account_exists"
+    out = dep.svc.grant_existing_account(actor(ROOT), email="ann@x.org",
+                                         grants=[("finance", "ledger")])
+    assert out["grants"] == {"finance": ["ledger"]}
+    assert dep.gs.can("ann@x.org", "finance", "ledger")
+    assert len(_adds(dep, "ann@x.org")) == 1  # never created twice
+    assert PASSWORD not in _everything_stored(dep) and PASSWORD not in caplog.text
 
 
-def test_ceiling_shrinking_mid_create_undoes_the_account(dep, monkeypatch):
+def test_retry_finds_an_account_the_store_could_not_record(dep, monkeypatch):
+    restore = _fail_grants_once(dep, monkeypatch, record_too=True)
+    with pytest.raises(Denied) as e:
+        dep.svc.create_account(actor(DELEGATE), email="ann@x.org", name="Ann",
+                               password=PASSWORD, grants=[("finance", "ledger")])
+    restore()
+    assert e.value.code == "partial" and e.value.extra["recorded"] is False
+    assert dep.gs.identity("ann@x.org") is None and dep.owui.by_email("ann@x.org")
+    # The retry by the same delegate finds the account in the chat app.
+    dep.svc.grant_existing_account(actor(DELEGATE), email="Ann@X.org",
+                                   grants=[("finance", "ledger")])
+    assert dep.gs.identity("ann@x.org")["owui_id"] == dep.owui.by_email("ann@x.org")["id"]
+    assert dep.gs.can("ann@x.org", "finance", "ledger")
+    assert len(_adds(dep, "ann@x.org")) == 1
+
+
+def test_uncertain_create_then_retry_detects_the_account(dep):
+    """The chat app created the account but its answer was lost. Retrying
+    finds it, never duplicates it, and grants access to it."""
+    lost = {"n": 0}
+
+    def answer_lost(request):
+        response = dep.owui(request)
+        if request.url.path == "/api/v1/auths/add" and not lost["n"]:
+            lost["n"] += 1
+            raise httpx.ReadTimeout("answer lost", request=request)
+        return response
+
+    directory = OwuiAccounts("http://owui.internal", SERVICE, "svc-secret",
+                             transport=httpx.MockTransport(answer_lost))
+    from hubzoid.access.service import AccessService
+
+    svc = AccessService(dep.hub_dir, accounts=directory)
+    with pytest.raises(Denied) as e:
+        svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
+                           grants=[("finance", "ledger")])
+    assert (e.value.status, e.value.code) == (503, "uncertain")
+    assert "won't be created twice" in e.value.message
+    with pytest.raises(Denied) as e:
+        svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
+                           grants=[("finance", "ledger")])
+    assert e.value.code == "account_exists"
+    svc.grant_existing_account(actor(ROOT), email="ann@x.org", grants=[("finance", "ledger")])
+    assert dep.gs.can("ann@x.org", "finance", "ledger")
+    assert sum(u["email"] == "ann@x.org" for u in dep.owui.users.values()) == 1
+
+
+def test_ceiling_shrinking_mid_create_leaves_an_account_without_that_access(dep, monkeypatch):
     original = dep.directory.create
 
     def create_then_shrink(**kwargs):
@@ -238,9 +313,156 @@ def test_ceiling_shrinking_mid_create_undoes_the_account(dep, monkeypatch):
     with pytest.raises(Denied) as e:
         dep.svc.create_account(actor(DELEGATE), email="ann@x.org", name="Ann",
                                password=PASSWORD, grants=[("finance", "ledger")])
-    assert e.value.code == "outside_ceiling"
-    assert dep.owui.by_email("ann@x.org") is None
+    assert e.value.code == "partial" and "Outside your access" in e.value.message
+    assert dep.owui.by_email("ann@x.org") and dep.gs.identity("ann@x.org")["owui_id"]
     assert not dep.gs.can("ann@x.org", "finance", "ledger")
+    # The retry is checked against the ceiling as it is now.
+    with pytest.raises(Denied) as e:
+        dep.svc.grant_existing_account(actor(DELEGATE), email="ann@x.org",
+                                       grants=[("finance", "ledger")])
+    assert e.value.code == "outside_ceiling"
+    dep.svc.grant_existing_account(actor(DELEGATE), email="ann@x.org",
+                                   grants=[("finance", "use_hub")])
+    assert dep.gs.can("ann@x.org", "finance", "use_hub")
+
+
+def test_initial_access_is_per_agent_and_checked_before_creating(dep):
+    """Nobody creates an organization administrator through Add user."""
+    for who in (ROOT, DELEGATE):
+        with pytest.raises(Denied) as e:
+            dep.svc.create_account(actor(who), email="boss@x.org", name="Boss",
+                                   password=PASSWORD, grants=[("*", "manage_access")])
+        assert e.value.status in (403, 422)
+    assert not _adds(dep, "boss@x.org") and not dep.gs.can("boss@x.org", "*", "manage_access")
+
+
+# ---- existing accounts ------------------------------------------------------------
+
+def test_grant_to_an_existing_account(dep):
+    uid = dep.owui.add_user("bob@x.org", "Bob")
+    dep.gs.upsert_identity(email="bob@x.org", owui_id=uid, display="Bob")
+    out = dep.svc.grant_existing_account(actor(DELEGATE), email="bob@x.org",
+                                         grants=[("finance", "ledger")])
+    assert out == {"subject": "bob@x.org", "name": "Bob", "grants": {"finance": ["ledger"]}}
+    assert dep.gs.can("bob@x.org", "finance", "ledger")
+    assert not any(p == "/api/v1/auths/add" for _, p, _ in dep.owui.requests)
+
+
+@pytest.mark.parametrize("subject,grants,code", [
+    ("bob@x.org", [("finance", "payroll")], "outside_ceiling"),
+    ("bob@x.org", [("ops", "use_hub")], "forbidden"),
+    ("bob@x.org", [("finance", "manage_access")], "forbidden"),
+    ("bob@x.org", [("*", "manage_access")], "invalid_grant"),
+    (DELEGATE, [("finance", "use_hub")], "self_change"),
+    (ROOT, [("finance", "use_hub")], "forbidden"),
+    ("bob@x.org", [], "grant_required"),
+])
+def test_delegate_ceiling_on_existing_accounts(dep, subject, grants, code):
+    for email in ("bob@x.org", DELEGATE, ROOT):
+        uid = dep.owui.add_user(email, email)
+        dep.gs.upsert_identity(email=email, owui_id=uid)
+    before = dep.gs.revision()
+    with pytest.raises(Denied) as e:
+        dep.svc.grant_existing_account(actor(DELEGATE), email=subject, grants=grants)
+    assert e.value.code == code
+    assert dep.gs.revision() == before
+
+
+def test_existing_account_path_never_grants_to_an_email_without_an_account(dep):
+    with pytest.raises(Denied) as e:
+        dep.svc.grant_existing_account(actor(ROOT), email="nobody@x.org",
+                                       grants=[("finance", "use_hub")])
+    assert (e.value.status, e.value.code) == (404, "no_account")
+    assert dep.gs.identity("nobody@x.org") is None
+    assert not dep.gs.can("nobody@x.org", "finance", "use_hub")
+
+
+def test_existing_account_grants_are_reported_agent_by_agent(dep, monkeypatch):
+    uid = dep.owui.add_user("bob@x.org", "Bob")
+    dep.gs.upsert_identity(email="bob@x.org", owui_id=uid)
+    original = dep.svc.apply_access_change
+
+    def ops_fails(actor_, subject, hub, ops, **kw):
+        if hub == "ops":
+            raise Denied(503, "store_unavailable", "Access data is unavailable.")
+        return original(actor_, subject, hub, ops, **kw)
+
+    monkeypatch.setattr(dep.svc, "apply_access_change", ops_fails)
+    with pytest.raises(Denied) as e:
+        dep.svc.grant_existing_account(actor(ROOT), email="bob@x.org",
+                                       grants=[("finance", "ledger"), ("ops", "inventory")])
+    assert e.value.code == "partial_access"
+    assert e.value.extra == {"granted": {"finance": ["ledger"]}, "failed": ["ops"]}
+    assert dep.gs.can("bob@x.org", "finance", "ledger")
+
+
+# ---- Google sign-in only ---------------------------------------------------------------
+
+def _sign_in(dep, **flags):
+    """Record the deployment's sign-in flags in its manifest, as the gateway does."""
+    manifest = json.loads((dep.hub_dir / ".hubzoid" / "deployment.json").read_text())["manifest"]
+    data = json.loads(open(manifest).read())
+    data["sign_in"] = flags
+    open(manifest, "w").write(json.dumps(data))
+
+
+def test_google_sign_in_only_is_offered_only_when_it_can_attach(dep):
+    assert dep.svc.sign_in_options() == {"password": True, "google": False}
+    with pytest.raises(Denied) as e:
+        dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", sign_in="google",
+                               grants=[("finance", "use_hub")])
+    assert e.value.code == "google_unavailable" and not _adds(dep, "ann@x.org")
+    for flags in (dict(google=True, merge_by_email=False), dict(google=False, merge_by_email=True),
+                  dict(google=True, merge_by_email=True, oauth_settings_in_app=True)):
+        _sign_in(dep, **flags)
+        assert dep.svc.sign_in_options()["google"] is False, flags
+    _sign_in(dep, google=True, merge_by_email=True)
+    assert dep.svc.sign_in_options() == {"password": True, "google": True}
+    _sign_in(dep, google=True, merge_by_email=True, allowed_domains=["x.org"])
+    assert dep.svc.sign_in_options()["google_domains"] == ["x.org"]
+    with pytest.raises(Denied) as e:
+        dep.svc.create_account(actor(ROOT), email="ann@elsewhere.org", name="Ann",
+                               sign_in="google", grants=[("finance", "use_hub")])
+    assert e.value.code == "google_domain" and not _adds(dep, "ann@elsewhere.org")
+
+
+def test_google_account_has_a_password_nobody_knows(dep, caplog):
+    caplog.set_level(logging.DEBUG)
+    _sign_in(dep, google=True, merge_by_email=True)
+    with pytest.raises(Denied) as e:  # the administrator never sets one
+        dep.svc.create_account(actor(DELEGATE), email="ann@x.org", name="Ann", sign_in="google",
+                               password=PASSWORD, grants=[("finance", "ledger")])
+    assert e.value.code == "invalid_request"
+    out = dep.svc.create_account(actor(DELEGATE), email="ann@x.org", name="Ann",
+                                 sign_in="google", grants=[("finance", "ledger")])
+    dep.svc.create_account(actor(ROOT), email="bob@x.org", name="Bob", sign_in="google", grants=[])
+    sent = [_adds(dep, e)[0]["password"] for e in ("ann@x.org", "bob@x.org")]
+    # Random, different each time, within bcrypt's limit and Open WebUI's strength rule.
+    assert sent[0] != sent[1] and all(len(p.encode()) <= 72 for p in sent)
+    strong = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).{8,}$")
+    assert all(strong.match(p) for p in sent)
+    assert out["sign_in"] == "google" and dep.gs.can("ann@x.org", "finance", "ledger")
+    for secret in sent:
+        assert secret not in repr(out) and secret not in _everything_stored(dep)
+        assert secret not in caplog.text
+
+
+def test_password_accounts_are_unchanged_by_google_settings(dep):
+    _sign_in(dep, google=True, merge_by_email=True)
+    out = dep.svc.create_account(actor(ROOT), email="ann@x.org", name="Ann", password=PASSWORD,
+                                 grants=[("finance", "use_hub")])
+    assert out["sign_in"] == "password" and _adds(dep, "ann@x.org")[0]["password"] == PASSWORD
+
+
+def test_adapter_finds_an_account_by_exact_email():
+    fake = FakeOwui()
+    for i in range(40):  # substring matches fill the first pages
+        fake.add_user(f"joann@x.org.{i}.example", f"Filler {i}")
+    fake.add_user("ann@x.org", "Ann")
+    adapter = _adapter(fake)
+    assert adapter.find("ANN@x.org")["email"] == "ann@x.org"
+    assert adapter.find("nobody@x.org") is None
+    assert adapter.find("ann@x.org.1") is None  # substring only, never a partial match
 
 
 def test_recreating_a_deleted_accounts_email(dep):

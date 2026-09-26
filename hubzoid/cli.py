@@ -682,7 +682,10 @@ def gateway(
         owner=os.environ.get("HUBZOID_GATEWAY_ADMIN_EMAIL"),
         public_url=pub or os.environ.get("WEBUI_URL"),
         workflow_user=os.environ.get("HUBZOID_WORKFLOW_USER"),
-        hide_owui_users=_hide_default)
+        hide_owui_users=_hide_default,
+        # How the shared chat app signs people in (flags only, no values), so
+        # the Console on every bridge offers only sign-in modes that work.
+        sign_in=deployment.sign_in_flags(os.environ))
     _explicit_hide = (os.environ.get("HUBZOID_HIDE_OWUI_USERS") or "").strip()
     if _explicit_hide or _hide_default:
         _hidden = (_explicit_hide.lower() in ("1", "true", "yes", "on")) if _explicit_hide else True

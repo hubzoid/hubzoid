@@ -9,6 +9,7 @@ other than Open WebUI would replace this module (and `access.session`).
 Open WebUI endpoints used (0.11.4):
   * `POST /api/v1/auths/signin`          service-account token
   * `POST /api/v1/auths/add`             create (always with role "user")
+  * `GET  /api/v1/users/?query=`         find the account using an email
   * `GET  /api/v1/users/{id}`            read one account before changing it
   * `POST /api/v1/users/{id}/update`     password, role or name
   * `DELETE /api/v1/users/{id}`          delete
@@ -16,11 +17,21 @@ Open WebUI endpoints used (0.11.4):
 Passwords travel only in request bodies to Open WebUI. They are never logged,
 stored, returned or put into an error message. The token Open WebUI returns
 for a new account is discarded.
+
+Google sign-in only. Open WebUI 0.11.4 attaches a Google sign-in to an
+existing account with the same email only when `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`
+is true (`utils/oauth.py`, merge by email). It does not check the provider's
+`email_verified` claim, so only Google, whose account emails are verified, is
+offered; generic OIDC and Microsoft are not. Such an account is created through
+the same supported `auths/add` call with a random password generated here and
+never returned, shown, stored or logged (`unusable_password`), so nobody can
+sign in with a password and Google attaches on first sign-in.
 """
 from __future__ import annotations
 
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Protocol
 
@@ -55,6 +66,45 @@ class AccountDirectory(Protocol):
                role: str | None = None, name: str | None = None) -> None: ...
     def delete(self, account_id: str) -> None: ...
     def get(self, account_id: str) -> dict | None: ...
+    def find(self, email: str) -> dict | None: ...
+
+
+def unusable_password() -> str:
+    """A password nobody is told, for an account that signs in with Google only.
+
+    About 300 random bits, within bcrypt's 72 bytes, and it always meets Open
+    WebUI's optional strength rule (lower, upper, digit, symbol). The caller
+    passes it straight to the chat app and drops it: it is never returned,
+    shown, stored or logged."""
+    return secrets.token_urlsafe(40)[:50] + "-Aa1"
+
+
+def sign_in_options(hub_dir: Path) -> dict:
+    """How a new account can sign in: {"password": True, "google": bool} plus
+    "google_domains" when the chat app accepts Google sign-in only for some
+    domains. Read without a network call.
+
+    "google" is true only when the chat app attaches a Google sign-in to an
+    existing account by email: Google configured, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`
+    true and OAuth settings taken from the environment. A gateway records these
+    facts (never the values) in its deployment manifest, because bridges started
+    separately (`gateway --no-bridges`) may not share its environment; a
+    standalone hub reads its own. Nothing here changes the chat app's policy."""
+    from .. import deployment
+
+    try:
+        manifest = deployment.read(Path(hub_dir))
+    except Exception:  # noqa: BLE001 — unreadable: offer nothing that depends on it
+        log.warning("accounts: deployment manifest unreadable; Google sign-in not offered")
+        return {"password": True, "google": False}
+    flags = (manifest.get("sign_in") or {}) if manifest else deployment.sign_in_flags(_env(hub_dir))
+    google = (bool(flags.get("google")) and bool(flags.get("merge_by_email"))
+              and not flags.get("oauth_settings_in_app"))
+    out: dict = {"password": True, "google": google}
+    domains = flags.get("allowed_domains")
+    if google and isinstance(domains, list):
+        out["google_domains"] = [str(d) for d in domains]
+    return out
 
 
 def _env(hub_dir: Path) -> dict:
@@ -168,10 +218,12 @@ class OwuiAccounts:
         return client
 
     def _send(self, method: str, path: str, *, json: dict | None = None,
-              secret: str | None = None, what: str) -> httpx.Response:
-        client = self._client()
+              params: dict | None = None, secret: str | None = None, what: str,
+              client: httpx.Client | None = None) -> httpx.Response:
+        own = client is None
+        client = client or self._client()
         try:
-            r = client.request(method, path, json=json)
+            r = client.request(method, path, json=json, params=params)
         except httpx.HTTPError as exc:
             raise AccountError(
                 503, "uncertain",
@@ -180,7 +232,8 @@ class OwuiAccounts:
                 certain=False,
             ) from exc
         finally:
-            client.close()
+            if own:
+                client.close()
         if r.status_code >= 500:
             log.warning("accounts: %s failed (HTTP %s)", what, r.status_code)
             raise AccountError(
@@ -228,6 +281,36 @@ class OwuiAccounts:
                                f"The chat app returned HTTP {r.status_code}.")
         data = r.json()
         return {k: data.get(k) for k in ("id", "email", "name", "role")}
+
+    def find(self, email: str) -> dict | None:
+        """The account using `email` (case-insensitive), or None. The chat app
+        searches names and emails by substring; the exact match is picked here."""
+        email = (email or "").strip().lower()
+        if not email:
+            return None
+        client = self._client()
+        try:
+            for page in range(1, 21):  # 30 per page; an exact email matches few
+                r = self._send("GET", "/api/v1/users/", params={"query": email, "page": page},
+                               what="look up the account", client=client)
+                if r.status_code != 200:
+                    raise AccountError(502, "chat_app_error",
+                                       f"The chat app returned HTTP {r.status_code}.")
+                try:
+                    data = r.json()
+                    batch = data["users"]
+                    total = int(data["total"])
+                except (ValueError, KeyError, TypeError):
+                    raise AccountError(502, "chat_app_error",
+                                       "The chat app returned an unexpected account list.")
+                for user in batch:
+                    if isinstance(user, dict) and str(user.get("email") or "").strip().lower() == email:
+                        return {k: user.get(k) for k in ("id", "email", "name", "role")}
+                if not batch or page * 30 >= total:
+                    return None
+            return None
+        finally:
+            client.close()
 
     def update(self, account_id: str, *, password: str | None = None,
                role: str | None = None, name: str | None = None) -> None:

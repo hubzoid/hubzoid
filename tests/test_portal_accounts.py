@@ -7,6 +7,8 @@ The chat app is the fake Open WebUI from test_access_service.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -207,3 +209,117 @@ def test_account_proposal_confirmed_with_password(api):
                     json={"plan_hash": view["plan_hash"], "password": PASSWORD})
     assert r.status_code == 200 and PASSWORD not in r.text
     assert api.owui.by_email("new@x.org")
+
+
+# ---- Add user: existing accounts, Google sign-in only, partial results ----------------
+
+def _manifest_sign_in(api, **flags):
+    import json
+
+    pointer = json.loads((api.hub_dir / ".hubzoid" / "deployment.json").read_text())["manifest"]
+    data = json.loads(open(pointer).read())
+    data["sign_in"] = flags
+    open(pointer, "w").write(json.dumps(data))
+
+
+def test_me_reports_sign_in_modes(api):
+    assert api.as_(ROOT).get("/portal/api/me").json()["sign_in"] == {"password": True, "google": False}
+    _manifest_sign_in(api, google=True, merge_by_email=True, allowed_domains=["x.org"])
+    assert api.as_(DELEGATE).get("/portal/api/me").json()["sign_in"] == {
+        "password": True, "google": True, "google_domains": ["x.org"]}
+
+
+def test_account_search_is_scoped_like_people(api):
+    for email, name in (("ann@x.org", "Ann Lee"), ("bob@x.org", "Bob Lee"), ("cy@x.org", "Cy")):
+        api.gs.upsert_identity(email=email, owui_id=api.owui.add_user(email, name), display=name)
+    api.gs.grant("bob@x.org", "finance", "use_hub", actor="test")
+    api.gs.grant("pre@x.org", "finance", "use_hub", actor="test")  # email only: not an account
+    api.gs.grant("workflow:close", "finance", "use_hub", actor="test")
+    found = lambda client, q: [r["subject"] for r in client.get(  # noqa: E731
+        "/portal/api/accounts", params={"q": q}).json()["accounts"]]
+    assert found(api.as_(ROOT), "lee") == ["ann@x.org", "bob@x.org"]
+    assert "pre@x.org" not in found(api.as_(ROOT), "") and "workflow:close" not in found(api.as_(ROOT), "")
+    # A delegate sees accounts in their agents, and one account by its full email.
+    assert found(api.as_(DELEGATE), "lee") == ["bob@x.org"]
+    assert found(api.as_(DELEGATE), "cy") == []
+    assert found(api.as_(DELEGATE), "CY@x.org") == ["cy@x.org"]
+    row = api.as_(ROOT).get("/portal/api/accounts", params={"q": "ann"}).json()["accounts"][0]
+    assert row["display"] == "Ann Lee" and row["status"] == "active" and row["organization_admin"] is False
+    assert api.as_("nobody@x.org").get("/portal/api/accounts").status_code == 403
+
+
+def test_grant_to_existing_account_endpoint(api):
+    api.gs.upsert_identity(email="ann@x.org", owui_id=api.owui.add_user("ann@x.org", "Ann"))
+    client = api.as_(DELEGATE)
+    r = client.post("/portal/api/accounts/grant",
+                    json=dict(email="ann@x.org", grants=[dict(hub="finance", permission="ledger")]))
+    assert r.status_code == 200 and r.json()["grants"] == {"finance": ["ledger"]}
+    r = client.post("/portal/api/accounts/grant",
+                    json=dict(email="ann@x.org", grants=[dict(hub="finance", permission="payroll")]))
+    assert r.status_code == 403 and r.json()["code"] == "outside_ceiling"
+    r = client.post("/portal/api/accounts/grant",
+                    json=dict(email="nobody@x.org", grants=[dict(hub="finance", permission="use_hub")]))
+    assert r.status_code == 404 and r.json()["code"] == "no_account"
+    assert not api.gs.can("nobody@x.org", "finance", "use_hub")
+    r = client.post("/portal/api/accounts/grant", headers={"origin": "http://evil.example"},
+                    json=dict(email="ann@x.org", grants=[dict(hub="finance", permission="use_hub")]))
+    assert r.status_code == 403
+
+
+def test_duplicate_then_grant_instead(api):
+    api.owui.add_user("ann@x.org", "Ann")  # in the chat app, not yet recorded here
+    r = _create(api.as_(DELEGATE), [("finance", "ledger")])
+    assert r.status_code == 409 and r.json()["code"] == "account_exists"
+    r = api.as_(DELEGATE).post("/portal/api/accounts/grant", json=dict(
+        email="ann@x.org", grants=[dict(hub="finance", permission="ledger")]))
+    assert r.status_code == 200, r.text
+    assert api.gs.can("ann@x.org", "finance", "ledger")
+    assert api.gs.identity("ann@x.org")["owui_id"] == api.owui.by_email("ann@x.org")["id"]
+
+
+def test_partial_create_reports_the_account_and_retry_does_not_duplicate(api, monkeypatch):
+    original = api.gs.bind_new_account
+
+    def grants_fail(*a, **k):
+        if k.get("grants"):
+            raise RuntimeError("database went away")
+        return original(*a, **k)
+
+    monkeypatch.setattr(api.gs, "bind_new_account", grants_fail)
+    r = _create(api.as_(ROOT), [("finance", "ledger")])
+    monkeypatch.setattr(api.gs, "bind_new_account", original)
+    body = r.json()
+    assert r.status_code == 502 and body["code"] == "partial" and PASSWORD not in r.text
+    assert body["account"] == {"subject": "ann@x.org", "name": "Ann", "sign_in": "password"}
+    assert body["access_granted"] is False
+    assert _create(api.as_(ROOT), [("finance", "ledger")]).json()["code"] == "account_exists"
+    r = api.as_(ROOT).post("/portal/api/accounts/grant", json=dict(
+        email="ann@x.org", grants=[dict(hub="finance", permission="ledger")]))
+    assert r.status_code == 200 and api.gs.can("ann@x.org", "finance", "ledger")
+    assert sum(u["email"] == "ann@x.org" for u in api.owui.users.values()) == 1
+
+
+def test_google_sign_in_only_over_http(api, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    body = dict(email="ann@x.org", name="Ann", sign_in="google",
+                grants=[dict(hub="finance", permission="ledger")])
+    r = api.as_(DELEGATE).post("/portal/api/accounts", json=body)
+    assert r.status_code == 409 and r.json()["code"] == "google_unavailable"
+    assert api.owui.by_email("ann@x.org") is None
+    _manifest_sign_in(api, google=True, merge_by_email=True)
+    r = api.as_(DELEGATE).post("/portal/api/accounts", json={**body, "password": PASSWORD})
+    assert r.status_code == 422 and PASSWORD not in r.text
+    r = api.as_(DELEGATE).post("/portal/api/accounts", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["sign_in"] == "google" and "password" not in r.json()
+    sent = next(b["password"] for m, p, b in api.owui.requests
+                if p == "/api/v1/auths/add" and b["email"] == "ann@x.org")
+    assert sent not in r.text and sent not in caplog.text
+    audit = json.dumps(api.gs.read_access_audit(50), default=str)
+    assert sent not in audit and "account_create" in audit
+    # A password-mode create still needs a password.
+    r = api.as_(ROOT).post("/portal/api/accounts", json=dict(
+        email="bob@x.org", name="Bob", grants=[]))
+    assert r.status_code == 422 and r.json()["code"] == "invalid_password"

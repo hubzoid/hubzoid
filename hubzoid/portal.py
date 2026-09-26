@@ -121,8 +121,18 @@ class AccountCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(min_length=3, max_length=320)
     name: str = Field(min_length=1, max_length=200)
-    password: SecretStr
+    # "password" (the default) needs `password`; "google" (Google sign-in only)
+    # takes none: the server sets a random one nobody is told.
+    sign_in: Literal["password", "google"] = "password"
+    password: SecretStr | None = None
     grants: list[AccountGrant] = Field(default_factory=list, max_length=200)
+
+
+class ExistingAccountGrant(BaseModel):
+    """Access for an account that already exists (never creates one)."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+    grants: list[AccountGrant] = Field(min_length=1, max_length=200)
 
 
 class PasswordRequest(BaseModel):
@@ -166,7 +176,9 @@ def _denied(fn):
         try:
             return fn(*args, **kwargs)
         except Denied as exc:
-            return JSONResponse({"detail": exc.message, "code": exc.code},
+            # `extra` is structured detail the service marks safe to show
+            # (e.g. which account a partial create made); never a secret.
+            return JSONResponse({**exc.extra, "detail": exc.message, "code": exc.code},
                                 status_code=exc.status)
 
     return wrapper
@@ -428,6 +440,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             account_admin=admin.is_org_admin,
             can_create_accounts=service.can_create_accounts(actor),
             accounts_configured=accountlib.configured(hub_dir),
+            # How a new account can sign in: {"password", "google", "google_domains"?}.
+            sign_in=accountlib.sign_in_options(hub_dir),
             via=admin.via,
         )
         return out
@@ -796,6 +810,36 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
 
     # ---- accounts (Open WebUI logins, created and changed as the service account)
 
+    @router.get("/accounts")
+    def find_accounts(q: str = "", limit: int = Query(20, ge=1, le=50),
+                      admin=Depends(require_admin)):
+        """Chat accounts to choose from in Add user. Scoped like People: an
+        organization administrator searches every account; an agent manager
+        sees accounts with access to an agent they manage, plus the one account
+        whose email they type in full (the disclosure a duplicate create already
+        makes). Legacy service identities and email-only grants are not accounts."""
+        gs = store_for(hub_dir)
+        text_q = normalize(q)
+        visible = None
+        if not admin.is_org_admin:
+            scopes = {h["key"] for h in allowed_hubs(admin)}
+            visible = {s for (s, h, _p) in gs.list_grants() if h in scopes}
+        rows = []
+        for person in gs.identities():
+            sub = person["subject"]
+            if not person.get("owui_id") or sub == EVERYONE or sub.startswith("workflow:"):
+                continue
+            if visible is not None and sub not in visible and sub != text_q:
+                continue
+            if text_q and text_q not in (sub + " " + (person.get("display") or "")).lower():
+                continue
+            state = _account_state(gs, sub, person)
+            rows.append(dict(subject=sub, display=person.get("display") or None,
+                             organization_admin=gs.can(sub, ORG, MANAGE_ACCESS), **state))
+            if len(rows) >= limit:
+                break
+        return {"accounts": rows}
+
     @router.post("/accounts")
     @_denied
     def create_account(request: Request, body: Any = Body(None), admin=Depends(require_admin)):
@@ -803,10 +847,24 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         payload = _validated(AccountCreate, body)
         created = service.create_account(
             admin.actor(), email=payload.email, name=payload.name,
-            password=payload.password.get_secret_value(),
+            password=payload.password.get_secret_value() if payload.password else None,
+            sign_in=payload.sign_in,
             grants=[(g.hub, g.permission) for g in payload.grants],
         )
         return dict(ok=True, **created)
+
+    @router.post("/accounts/grant")
+    @_denied
+    def grant_existing_account(request: Request, payload: ExistingAccountGrant,
+                               admin=Depends(require_admin)):
+        """Give an existing account access (Add user's existing-account choice,
+        "Grant access instead", and the retry after a partial create)."""
+        _check_mutation(request, admin)
+        result = service.grant_existing_account(
+            admin.actor(), email=payload.email,
+            grants=[(g.hub, g.permission) for g in payload.grants],
+        )
+        return dict(ok=True, **result)
 
     @router.get("/accounts/{subject}")
     @_denied
