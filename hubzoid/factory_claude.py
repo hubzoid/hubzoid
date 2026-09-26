@@ -20,15 +20,23 @@ How identity is preserved:
 Auth: the Claude Agent SDK shells out to the local `claude` CLI
 subprocess, which authenticates via `claude login` (subscription) or
 `ANTHROPIC_API_KEY`, in that order. No hubzoid-managed key.
+
+Child environment: the SDK starts the CLI with this process's environment plus
+`options.env`. `options.env` blanks the keys no agent child needs (service
+secrets, AWS credentials, secret names, restricted-layer keys), so they do not
+reach the CLI or the stdio MCP servers it starts. The CLI's own ANTHROPIC_* and
+CLAUDE_* keys pass. See `config_secrets.child_env_overrides`.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from . import _request_ctx
+from . import config_secrets
 from . import memory as memlib
 from . import reasoning as reasoninglib
 from . import settings as settingslib
@@ -296,6 +304,9 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
+    child_env = config_secrets.child_env_overrides(os.environ)
+    if child_env:
+        opts_kwargs["env"] = child_env
     if agent_defs:
         opts_kwargs["agents"] = agent_defs
     if model_pin is not None:
@@ -737,6 +748,9 @@ async def claude_complete(prompt: str, *, system: str | None = None,
         setting_sources=[],
         max_turns=1,
     )
+    child_env = config_secrets.child_env_overrides(os.environ)
+    if child_env:
+        opts["env"] = child_env
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
     if pin is not None:
         opts["model"] = pin

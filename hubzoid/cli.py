@@ -63,6 +63,18 @@ def _stop_processes(procs, *, timeout: float = 8.0) -> None:
             p.wait()
 
 
+def _load_settings(hub: Path):
+    """settings.load for a command, turning an unreadable AWS secret into a
+    clear message and exit status 1 (the message never carries a value)."""
+    from .config_secrets import SecretFetchError
+
+    try:
+        return settingslib.load(hub)
+    except SecretFetchError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
 def _public_scheme(env: dict, *urls: str) -> str:
     """The public scheme ("https") the edge should assert as X-Forwarded-Proto.
 
@@ -316,16 +328,19 @@ def run(
         console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
         raise typer.Exit(2)
 
-    settings = settingslib.load(hub)
+    settings = _load_settings(hub)
     ui_port = port or settings.ui_port
     br_port = bridge_port or settings.bridge_port
+    from . import config_secrets
 
     if not no_ui:
         os.environ["OWUI_INTERNAL_URL"] = f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}"
 
     # 1. Start the bridge in a subprocess. We pass HUBZOID_HUB_DIR via env so
-    #    `hubzoid.server.build_app` knows what to load.
-    bridge_env = os.environ.copy()
+    #    `hubzoid.server.build_app` knows what to load. The bridge (and the
+    #    Slack and inbound children) load the hub secret and restricted layers
+    #    themselves, so they start from the environment without them.
+    bridge_env = config_secrets.for_hub_children(os.environ)
     bridge_env["HUBZOID_HUB_DIR"] = str(hub)
     # Tell the bridge process its REAL port. Uvicorn binds it via --port, but
     # settings.load() inside the bridge reads BRIDGE_PORT from env (else defaults
@@ -404,6 +419,9 @@ def run(
                 # MCP callers authenticate with per-user OWUI api keys, so the
                 # minting UI must exist (keys stay deny-all inside OWUI).
                 enable_api_keys=settings.mcp_server,
+                # The deployment layer only: never the hub secret or
+                # restricted/.env (config_secrets.deployment_view).
+                base_env=config_secrets.deployment_view(os.environ),
             )
             log_path = getattr(ui_proc, "_log_path", None)
             console.print("[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
@@ -418,7 +436,7 @@ def run(
             display_url = f"http://{host}:{ui_port}"
             if edge_enabled:
                 # Start the public-facing edge router in front of bridge + OWUI.
-                edge_env = os.environ.copy()
+                edge_env = config_secrets.deployment_view(os.environ)
                 edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
                 edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
                 edge_routes = [
@@ -563,9 +581,42 @@ def gateway(
             console.print(f"[red]Not a hub (no AGENTS.md):[/red] {h}")
             raise typer.Exit(2)
 
+    # Deployment layer: the gateway's own environment (2b), overridden by the
+    # deployment secret named by AWS_SECRET_NAME there (2c). A hub .env never
+    # names the deployment secret.
+    from functools import partial
+
+    from . import config_secrets
+
+    process_env = os.environ.copy()
+    dep_secret: dict | None = None
+    dep_values: dict[str, str] = {}
+    secret_name = (process_env.get("AWS_SECRET_NAME") or "").strip()
+    if secret_name:
+        region = config_secrets.region_for(secret_name, process_env)
+        try:
+            dep_values = config_secrets.load_secret(secret_name, region=region, layer=config_secrets.DEPLOYMENT)
+        except config_secrets.SecretFetchError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+        os.environ.update(dep_values)
+        dep_secret = {"name": secret_name, "region": region}
+        console.print(f"[cyan]→ secrets[/cyan]  deployment secret {secret_name}: {len(dep_values)} key(s)")
+        for_owui_only = sorted(k for k in dep_values if not config_secrets.bridge_deployment_key(k))
+        if for_owui_only:
+            console.print(f"[yellow]→ secrets[/yellow]  kept from bridges (gateway and Open WebUI only): "
+                          f"{', '.join(for_owui_only)}")
+    for h in hub_dirs:
+        if gateway_lib._own_env_value(h, "AWS_SECRET_NAME"):
+            console.print(f"[yellow]→ secrets[/yellow]  AWS_SECRET_NAME in {h.name}/.env is ignored: the "
+                          "deployment secret is named in the gateway's environment. Use "
+                          "HUBZOID_HUB_SECRET_NAME for a hub secret.")
+
     deployment_env = os.environ.copy()
     try:
-        gp = gateway_lib.plan(hub_dirs)
+        # Files only: the gateway never fetches or holds a hub's secrets. Each
+        # bridge fetches its own hub and restricted secrets.
+        gp = gateway_lib.plan(hub_dirs, load=partial(settingslib.load, secrets=False))
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2)
@@ -609,14 +660,15 @@ def gateway(
         raise typer.Exit(2)
     deployment.save(gw_data / "deployment.json",
         hubs=[dict(key=b.hub_dir.name.lower(), name=b.display_name or b.slug,
-                   path=str(b.hub_dir), model_id=b.model_label,
+                   path=str(b.hub_dir), model_id=b.model_label, slug=b.slug,
                    dbos_url=deployment_env.get('HUBZOID_DBOS_DB') or
                        (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL','').startswith('postgres') else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
         operational_url=shared_op_url,
         owui_url=f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}",
         owui_db=str(gw_data / "webui.db"),
         owui_database_url=deployment_env.get("DATABASE_URL") or f"sqlite:///{gw_data / 'webui.db'}",
-        owui_database_schema=deployment_env.get("DATABASE_SCHEMA"))
+        owui_database_schema=deployment_env.get("DATABASE_SCHEMA"),
+        deployment_secret=dep_secret)
 
     # Deterministic gateway chrome branding. Stamp a chosen logo / favicon into
     # OWUI's static dirs so the login page, tab icon and sidebar show a brand
@@ -661,6 +713,18 @@ def gateway(
     if launch_bridges:
         for b in gp.backends:
             bridge_env = os.environ.copy()
+            if dep_secret:
+                # A bridge takes only BRIDGE_DEPLOYMENT_KEYS from the deployment
+                # secret. It must not fetch the secret again: the pins below
+                # (per-hub public URL and so on) would be overwritten.
+                for key in dep_values:
+                    if config_secrets.bridge_deployment_key(key):
+                        continue
+                    if key in process_env:
+                        bridge_env[key] = process_env[key]
+                    else:
+                        bridge_env.pop(key, None)
+                bridge_env[config_secrets.INHERITED_MARKER] = "1"
             # Shared OWUI data directory for uploads and legacy SQLite readers.
             # Identity readers use the manifest's database URL (Postgres or
             # SQLite); keep this path even when DATABASE_URL selects Postgres.
@@ -1144,7 +1208,7 @@ def slack_run(
 
     # Trigger .env load so SLACK_* vars are visible to the adapter and
     # settings.load() sees the same picture as `hubzoid run`.
-    settingslib.load(hub)
+    _load_settings(hub)
 
     try:
         rc = run_adapter(hub)
@@ -1221,7 +1285,7 @@ def inbound_run(
     if not (hub / "AGENTS.md").is_file():
         console.print(f"[red]No AGENTS.md in {hub}. Run `hubzoid init` first.[/red]")
         raise typer.Exit(2)
-    settingslib.load(hub)
+    _load_settings(hub)
     raise typer.Exit(run_inbound(hub))
 
 
@@ -1366,7 +1430,7 @@ def schedule_run(
                 raise typer.Exit(2)
             console.print(f"Would run workflow {want} from {match_def['source']}; no code executed.")
             return
-        settingslib.load(hub)
+        _load_settings(hub)
         # Second source: a DBOS workflow under <hub>/workflows/<name>/. The
         # registry is keyed by the function name; accept the folder name too
         # (hyphens/underscores interchangeable).

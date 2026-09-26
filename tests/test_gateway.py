@@ -271,7 +271,7 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
         gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
         gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
     ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
 
     captured = {}
 
@@ -350,7 +350,7 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_ur
         gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="sales-key", model_label="sales-agent"),
         gateway.GatewayBackend(hub_dir=support, slug="support", bridge_port=8001, api_key="support-key", model_label="support-agent"),
     ))
-    def fake_plan_with_hub_env(hub_dirs):
+    def fake_plan_with_hub_env(hub_dirs, **kw):
         # settings.load mutates the process environment during plan creation.
         os.environ["DATABASE_URL"] = "postgresql+psycopg://wrong@localhost/wrong"
         os.environ["DATABASE_SCHEMA"] = "wrong"
@@ -415,7 +415,7 @@ def _gateway_harness(tmp_path, monkeypatch):
             description="Sales helper", suggestions=("How do I place an order?",),
         ),
     ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
 
     def fake_start_gateway(**kwargs):
         proc = MagicMock()
@@ -607,7 +607,7 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
     fake_plan = gateway.GatewayPlan(backends=(
         gateway.GatewayBackend(hub_dir=sales, slug="sales", bridge_port=8000, api_key="k", model_label="sales-agent"),
     ))
-    monkeypatch.setattr(gateway, "plan", lambda hub_dirs: fake_plan)
+    monkeypatch.setattr(gateway, "plan", lambda hub_dirs, **kw: fake_plan)
 
     def fake_start_gateway(**kwargs):
         proc = MagicMock()

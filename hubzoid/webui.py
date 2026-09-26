@@ -12,6 +12,10 @@ Hubzoid sets ~24 env vars on the OWUI subprocess to strip platform surfaces
 product, not "Open WebUI hosting a model". Every default is applied via
 `setdefault` semantics, so a user `.env` value always wins. See
 docs/branding.md for the full list and why each is set the way it is.
+
+The subprocess environment is the deployment layer only: `hubzoid run` passes
+the hub's environment without its hub secret and restricted layers, and every
+HUBZOID_* key and secret name is dropped (config_secrets.owui_env).
 """
 from __future__ import annotations
 
@@ -24,8 +28,10 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import Mapping
 
 from . import branding
+from . import config_secrets
 
 log = logging.getLogger("hubzoid.webui")
 
@@ -455,12 +461,14 @@ def start(
     suggestions: list[str] | None = None,
     response_watermark: str | None = None,
     enable_api_keys: bool = False,
+    base_env: Mapping[str, str] | None = None,
 ) -> subprocess.Popen:
     """Spawn Open WebUI as a subprocess. Returns the Popen handle.
 
     `suggestions` populates the new-chat quick-start buttons. Sourced from
     the main agent's AGENTS.md frontmatter (`suggestions:` field).
     `response_watermark` defaults to the hub folder name when None.
+    `base_env` is the environment to start from (default: this process's).
     """
     # Single-hub wiring: one bridge, one model. These OPENAI_* values are
     # not operator-overridable — they are how hubzoid joins the bridge to
@@ -492,6 +500,7 @@ def start(
         bypass_model_access_control=True,
         enable_api_keys=enable_api_keys,
         debrand=debrand_requested(hub_dir),
+        base_env=base_env,
     )
 
 
@@ -506,6 +515,7 @@ def start_gateway(
     suggestions: list[str] | None = None,
     enable_api_keys: bool = False,
     brand_dir: Path | None = None,
+    base_env: Mapping[str, str] | None = None,
 ) -> subprocess.Popen:
     """Spawn ONE Open WebUI fronting many bridges (the `hubzoid gateway` path).
 
@@ -531,6 +541,7 @@ def start_gateway(
         bypass_model_access_control=False,
         enable_api_keys=enable_api_keys,
         debrand=debrand_requested(brand_dir),
+        base_env=base_env,
     )
 
 
@@ -546,6 +557,7 @@ def _spawn_owui(
     bypass_model_access_control: bool = False,
     enable_api_keys: bool = False,
     debrand: bool = False,
+    base_env: Mapping[str, str] | None = None,
 ) -> subprocess.Popen:
     """Shared Open WebUI launcher for both `start` and `start_gateway`.
 
@@ -571,7 +583,9 @@ def _spawn_owui(
         )
 
     data_dir.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
+    # The deployment layer only: no HUBZOID_* keys, secret names, or (when this
+    # process read an AWS secret) AWS credentials. See config_secrets.owui_env.
+    env = config_secrets.owui_env(os.environ if base_env is None else base_env)
 
     # 1. Wiring + per-hub state. Not operator-overridable.
     env["DATA_DIR"] = str(data_dir)
