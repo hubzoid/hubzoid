@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="portal/src/assets/brand/wordmark-dark.png">
-    <img alt="Hubzoid" src="portal/src/assets/brand/wordmark-light.png" width="240">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg">
+    <img alt="Hubzoid" src="assets/mark-light.svg" width="240">
   </picture>
 </p>
 
