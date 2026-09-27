@@ -54,6 +54,10 @@ pytest
 
 ## Running tests
 
+CI runs only when a GitHub release is published. Pushes and pull requests do
+not start automated checks; run the relevant tests locally before pushing.
+Maintainers: see [publishing a release](docs/RELEASING.md).
+
 ```bash
 pytest                       # unit + integration (no LLM calls)
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)

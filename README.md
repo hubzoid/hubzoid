@@ -18,16 +18,20 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-0B0B0C" alt="Apache License 2.0"></a>
 </p>
 
+**Hubzoid is an open-source, self-hostable platform for internal AI agents.**
+Keep your team's knowledge, instructions, skills, and tools in a versionable
+folder. Use that shared Hub through chat, repeatable workflows, or your own
+assistant through MCP.
+
+Start with a useful agent on your laptop. Give it the context and capabilities
+it needs, then share it with your team using accounts and scoped permissions.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/shared-hub-dark.svg">
     <img alt="A versioned agent folder becomes a shared Hub for team chat, workflows and personal assistants through MCP, with scoped access, an Admin Console and a choice of runtimes." src="assets/shared-hub-light.svg" width="1120">
   </picture>
 </p>
-
-Hubzoid helps builders turn a useful personal agent into something their team can use. A **Hub** holds instructions, knowledge, skills, tools, and agent definitions in a versionable folder. Workflows, team chat, and supported assistants reuse the relevant parts under the hub's access rules.
-
-Start on your laptop. Add the context and capabilities your team needs. Bring the hub to a shared deployment when you are ready to manage accounts, permissions, and ongoing operation.
 
 ## Start a hub
 
@@ -51,27 +55,19 @@ Open [localhost:3080](http://localhost:3080), select your agent, and try **“Sa
 
 The default is local single-user mode. For a shared deployment, enable authentication and configure the intended owner before exposing the public port. See [administration](docs/ADMINISTRATION.md). This branch's changes may be ahead of the package published on PyPI; [source installation](docs/quickstart.md#run-this-checkout) tests the checked-out revision.
 
-## Your context is worth keeping
-
-The terminology, the decisions, the way your team checks a report—this is the
-context that makes an agent useful. Keep it alongside reusable skills and tools
-in a Hub instead of copying it into every prompt or rebuilding it for each chat
-surface. Update the source files as the team learns, review them in Git, and
-reuse the relevant parts wherever the work happens.
-
-Business data can stay in its source systems. Connect it through Python tools or
-MCP, and grant the capabilities each person needs. Shared context does not mean
-shared credentials or unrestricted access.
-
 ## One hub, three ways to work
 
 | Experience | Use it for | Start here |
 |---|---|---|
 | **Chat** | Ask questions and take authorized actions using the hub's context | [Web and account setup](docs/auth.md), [Slack](docs/slack.md), [other channels](docs/inbound-surfaces.md) |
-| **Workflows** | Repeatable work with recorded runs, steps, schedules, and recovery. Each run acts as an ordinary account and can publish a private artifact (a report, a CSV or any file) and email that person a link. | [Markdown tasks](docs/schedule.md), [Python workflows](docs/workflows.md), [Who a workflow runs as](docs/workflow-identity.md), [Artifacts and email](docs/reports-and-email.md) |
+| **Workflows** | Run scheduled reports and checks, inspect their steps, and save the results | [Markdown tasks](docs/schedule.md), [Python workflows](docs/workflows.md), [reports and email](docs/reports-and-email.md) |
 | **Your assistant through MCP** | Bring hub tools, knowledge, and skills into a supported personal assistant | [Connect an MCP client](docs/mcp-server.md) |
 
-These experiences share a foundation. Conversation history, workflow state, and permissions remain distinct. Each integration has its own setup and supported capabilities.
+Business data can stay in its source systems, connected through tools or MCP.
+Shared context does not mean shared credentials: conversation history, workflow
+state, and permissions remain distinct. Each integration has its own setup.
+
+## A hub is a folder
 
 ```text
 my-hub/
@@ -89,57 +85,43 @@ my-hub/
 
 Only `AGENTS.md` is required for the hub structure. Runtime credentials and configuration still need to be set. Start small and add files when they become useful. [Author a hub →](docs/authoring-a-hub.md)
 
-## Start with work your team already does
+## Start with a useful job
 
-A useful Hub begins with a specific job. These are examples you can build with
-hub knowledge, tools and workflows; connecting your real systems is part of setup.
-
-| Job | In the Hub | How the team uses it |
+| Example | What it does | Try it |
 |---|---|---|
-| **Morning operations briefing** | Reporting definitions, source connectors, a briefing skill and a scheduled workflow | Read the saved result, then ask follow-up questions in chat |
-| **Supplier or inventory checks** | Matching rules, authorized data tools and an exception-checking workflow | Inspect the run and investigate exceptions using the same definitions |
-| **Team knowledge assistant** | Policies, terminology and reusable skills | Ask in chat or bring the Hub into a personal assistant through MCP |
-| **Engineering support** | Project context, review instructions and issue-system tools | Use the shared context from a supported coding assistant |
+| **AskHub** | Answer team questions from shared knowledge | [Company Q&A template](templates/company-qna) |
+| **Daily Reports** | Prepare a recurring briefing from business inputs | [Morning briefing template](templates/morning-briefing) |
+| **Watchtower** | Check bundled metrics against thresholds and explain exceptions | `hubzoid init watchtower --template watchtower` |
 
-For example, a purchasing Hub can define what counts as an overdue order once.
-A workflow produces the daily report; a teammate asks which suppliers need
-attention; a personal assistant uses the authorized reporting tools while drafting
-a follow-up. Each experience uses the same maintained definition, with access
-checked for the caller.
+Examples use sample data and placeholder integrations where stated. Read the
+example's instructions before connecting real systems or enabling schedules.
+[Browse all templates →](templates/README.md)
 
-## From your laptop to your team
+## Share it with your team
 
-- **Keep context in files.** Review changes in Git and maintain the knowledge the agent relies on.
-- **Connect existing systems.** Use MCP connectors, user-owned connections, or Python tools. Keep credentials separate from agent-readable material.
-- **Grant capabilities deliberately.** The Admin Console manages agent entry and restricted tools. Enforcement happens outside the model, with recorded allow and deny decisions.
-- **Inspect what ran.** View usage, workflow results, steps, people, and activity. Estimated model cost is guidance; your provider's bill is authoritative.
-- **Choose a runtime.** Hubzoid supports OpenAI Agents, Claude Agent and local Codex backends. Provider and channel capabilities vary; use the [provider guide](docs/providers.md) for the supported paths.
-- **Operate one or several hubs.** Run one hub or use `hubzoid gateway` for a shared chat app and deployment. Back up before upgrades and verify access with ordinary user accounts.
+- **Connect existing systems.** Add Python tools and MCP connections. Keep
+  credentials separate from agent-readable files.
+- **Control who can do what.** Grant agent access and restricted capabilities
+  in the Console. Hubzoid checks permissions before a restricted tool runs.
+- **See what happened.** Inspect workflow runs, steps, usage, and activity.
+  Model cost estimates are guidance; your provider's bill is authoritative.
+- **Choose your runtime.** Use OpenAI Agents, Claude Agent SDK, or local Codex.
+  Provider and channel capabilities vary. See [providers](docs/providers.md).
+- **Run it yourself.** Deploy one hub, or use `hubzoid gateway` to serve several
+  hubs through a shared chat app. See [deployment](docs/DEPLOYING.md).
 
-Open WebUI supplies chat and account authentication. Hubzoid's Admin Console supplies access management and execution inspection at `/portal/`. Administrators see an **Admin Console** link above their profile in the chat sidebar (an icon when collapsed). There is one account system. With public sign-up closed by default, an
-administrator uses **Add user** in the Admin Console, from an agent's Access page or
-from People, to create a login account and give it access in one step; an existing
-user's access is changed with **Edit access**. Nothing is sent: the administrator shares the sign-in details. With Google
-sign-in and `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only**
-creates an account with no password to share.
-
-The dashboard brings agent cards together with messages, users, token usage,
-workflow runs and approximate cost. Open an agent to manage access, inspect its
-runs and schedules, or review activity. Restricted capabilities remain enforced
-by Hubzoid before the tool runs, rather than by an instruction asking the model
-to behave.
+Open WebUI provides chat and account authentication. Hubzoid's **Console** at
+`/portal/` manages access and shows execution details, using the same accounts.
+Administrators can open it from the **Admin Console** link in the chat sidebar.
+For adding teammates, Google sign-in, permissions, and shared deployment setup,
+see [administration](docs/ADMINISTRATION.md).
 
 ## Try a worked example
 
 ```bash
 # Guided chat tour
 hubzoid init guided-hub --template demo
-
-# Workflow example with bundled metrics
-hubzoid init watchtower --template watchtower
 ```
-
-The [template catalog](templates/README.md) also has examples for briefings, accounts, supplier checks, inventory, Q&A, and operations. Examples use sample data and placeholder integrations where stated. Inspect their README before connecting real systems or enabling schedules.
 
 For a small Python workflow:
 
@@ -176,7 +158,10 @@ pip install -e '.[dev]'
 pytest
 ```
 
-Real-provider tests are separate and skip without credentials. Changes to the Console also require its build and browser checks. See [the contributor guide](CONTRIBUTING.md).
+Real-provider tests are separate and skip without credentials. Changes to the
+Console also require its build and browser checks. CI runs when a GitHub release
+is published, so run the relevant checks locally before pushing. See
+[contributing](CONTRIBUTING.md) and [publishing a release](docs/RELEASING.md).
 
 ## License and help
 

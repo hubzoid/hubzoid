@@ -2,30 +2,31 @@ name: release
 
 # Release pipeline. The file keeps the name ci.yml because PyPI trusted
 # publishing is registered against this workflow file name.
-# Push a tag vX.Y.Z whose version matches pyproject.toml. Everything is
-# validated from the tag first; nothing is published unless every check
-# passes and every artifact, including the amd64 + arm64 image, is built.
-# Publishing runs in the `pypi` environment, so it can require a manual
-# approval in the repository settings. It pushes the image first, then PyPI,
-# then the GitHub release, so a registry failure publishes nothing.
+# Publish a GitHub release with a vX.Y.Z tag matching pyproject.toml.
+# Validate the tagged source and both native image builds before publishing.
+# Keep image -> PyPI -> GitHub attachments as separate, retryable jobs.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -66,35 +67,37 @@ jobs:
           /tmp/clean/bin/pip check
           cd /tmp && /tmp/clean/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_install.py" "$GITHUB_REF_NAME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-dists
           path: dist/
 
   image:
-    # Builds the published image for both architectures now, so an arm64 or
-    # build failure stops the release before anything is public. The layers go
-    # to the GitHub Actions cache, and `publish` pushes them from there.
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # Each architecture builds and boots natively; no emulation on this path.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - name: Build the image (amd64 + arm64)
-        uses: docker/build-push-action@v6
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and load the native image
+        uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Load the amd64 image from that build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           load: true
           tags: hubzoid:candidate
+          cache-from: |
+            type=gha,scope=release-${{ matrix.arch }}
+            type=registry,ref=ghcr.io/${{ github.repository }}:latest
+          cache-to: type=gha,scope=release-${{ matrix.arch }},mode=max
       - name: Check the image starts
         run: |
           cp -r demo-hub /tmp/hub && chmod -R a+rwX /tmp/hub
@@ -105,25 +108,20 @@ jobs:
           ! curl -fs -m 3 http://127.0.0.1:8000/healthz
           docker rm -f candidate
 
-  publish:
+  publish-image:
     needs: [validate, image]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: pypi
       url: https://pypi.org/project/hubzoid/
     permissions:
-      contents: write
-      id-token: write
+      contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -132,21 +130,51 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Publish the image (amd64 + arm64) from the checked build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
+          cache-from: |
+            type=gha,scope=release-amd64
+            type=gha,scope=release-arm64
+            type=registry,ref=ghcr.io/${{ github.repository }}:latest
+          cache-to: type=inline
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
             ghcr.io/${{ github.repository }}:latest
+
+  publish-pypi:
+    needs: publish-image
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/hubzoid/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-dists
+          path: dist/
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
           # A previous attempt may have published these before a later failure.
           skip-existing: true
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-dists
+          path: dist/
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

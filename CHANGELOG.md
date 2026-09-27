@@ -3,6 +3,17 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.0.2]
+
+- CI runs only when a GitHub release is published; pushes and pull requests
+  no longer start automated checks. Full validation still runs for releases.
+- Docker builds and startup checks run concurrently on native Intel and ARM
+  runners, with architecture-specific caches and reuse of published image cache.
+- Image, PyPI, and GitHub attachment publishing are separate jobs so failed
+  publishing can be retried without repeating successful jobs.
+- Existing GitHub releases receive the validated package files automatically;
+  publishing retries tolerate packages that are already on PyPI.
+
 ## [1.0.1]
 
 Upgrading from 0.9.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first. The
