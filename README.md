@@ -27,10 +27,7 @@ Start with a useful agent on your laptop. Give it the context and capabilities
 it needs, then share it with your team using accounts and scoped permissions.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/shared-hub-dark.svg">
-    <img alt="A versioned agent folder becomes a shared Hub for team chat, workflows and personal assistants through MCP, with scoped access, an Admin Console and a choice of runtimes." src="assets/shared-hub-light.svg" width="1120">
-  </picture>
+  <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="assets/shared-hub-light.svg" width="680">
 </p>
 
 ## Start a hub
