@@ -3,6 +3,12 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.0.3]
+
+- Fix README images and documentation links on PyPI with absolute URLs.
+  Brand images use a fixed source revision so published descriptions retain
+  the reviewed artwork.
+
 ## [1.0.2]
 
 - CI runs only when a GitHub release is published; pushes and pull requests
