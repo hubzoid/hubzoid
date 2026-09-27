@@ -167,7 +167,7 @@ export function PeopleScreen({
             style={{ minWidth: 150 }}
             options={[
               { value: "admin", label: "Administrator" },
-              { value: "regular", label: "Regular" },
+              { value: "regular", label: "User" },
               { value: "service", label: "Legacy service identity" },
             ]}
           />
