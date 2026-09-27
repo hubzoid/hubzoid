@@ -95,7 +95,7 @@ Issues = "https://github.com/hubzoid/hubzoid/issues"
 Changelog = "https://github.com/hubzoid/hubzoid/releases"
 
 [tool.setuptools]
-packages = ["hubzoid", "hubzoid.access", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram", "hubzoid.workflows", "hubzoid.migrations", "hubzoid.migrations.operational", "hubzoid.migrations.hub"]
+packages = ["hubzoid", "hubzoid.access", "hubzoid.artifacts", "hubzoid.connect_journey", "hubzoid.evals", "hubzoid.loaders", "hubzoid.slack", "hubzoid.tools", "hubzoid.inbound", "hubzoid.whatsapp", "hubzoid.telegram", "hubzoid.workflows", "hubzoid.migrations", "hubzoid.migrations.operational", "hubzoid.migrations.hub"]
 include-package-data = true
 license-files = ["LICENSE", "NOTICE"]
 

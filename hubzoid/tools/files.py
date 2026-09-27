@@ -323,23 +323,33 @@ def _with_path_header(target: Path, body: str) -> str:
 # Internal helpers.
 # ---------------------------------------------------------------------------
 def _read_refusal(hub_dir: Path, target: Path) -> str | None:
-    """Public content plus this chat's uploads/artifacts, never another chat's."""
+    """Public content plus this chat's files or this scheduled run's scratch."""
     reason = _fs.agent_read_refusal(hub_dir, target)
+    if not reason:
+        return None
+    scopes: list[Path] = []
     chat_id = memlib.sanitize_chat_id(_request_ctx.get_chat_id())
-    if reason and chat_id:
+    if chat_id:
         # Existing overflow hints use read_file for the current chat's output.
-        # Only these explicit session scopes may cross the private state wall.
         chat_root = memlib.chat_root(hub_dir, chat_id)
-        for scope in (chat_root / "uploads", chat_root / "artifacts"):
-            try:
-                scope.resolve().relative_to(hub_dir.resolve())
-                target.absolute().relative_to(scope.absolute())
-                if scope.resolve() != scope.absolute():
-                    continue
-            except (ValueError, OSError, RuntimeError):
+        scopes.extend((chat_root / "uploads", chat_root / "artifacts"))
+    else:
+        scheduled = _request_ctx.get_schedule_read_scope()
+        if scheduled and scheduled[0] == hub_dir.resolve():
+            scopes.append(scheduled[1])
+    # Only explicit execution scopes may cross the private state wall. Keep
+    # the content guard inside the scope, so dotenv files, databases and
+    # restricted folders are still refused even in the run's own scratch.
+    for scope in scopes:
+        try:
+            scope.resolve().relative_to(hub_dir.resolve())
+            target.absolute().relative_to(scope.absolute())
+            if scope.resolve() != scope.absolute():
                 continue
-            if _fs.agent_read_refusal(scope, target) is None:
-                return None
+        except (ValueError, OSError, RuntimeError):
+            continue
+        if _fs.agent_read_refusal(scope, target) is None:
+            return None
     return reason
 
 

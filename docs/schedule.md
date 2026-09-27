@@ -159,6 +159,13 @@ run that ends incomplete (or a server that reboots mid-run) loses nothing —
 the next fire resumes from the recorded state. Write your task body around
 it ("your state file records X").
 
+During a scheduled run, `read_file` and `list_files` can read its own account's
+scratch folder, including progress state and working notes. `grep_data` uses
+the same read boundary. This access follows the runner's verified identity
+and ends with the run. Other jobs' and users' state remains private, as do
+credentials, databases and restricted content inside the scratch folder.
+No extra configuration is needed.
+
 **Tools available during a run** (and only during a run — chat never sees
 these):
 

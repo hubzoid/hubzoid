@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Iterator
 
 # None when no chat is active (CLI calls, unit tests). A short string
@@ -51,6 +52,34 @@ _current_usage: ContextVar[dict | None] = ContextVar("hubzoid_usage", default=No
 # tool call produces no output at all, and an eval asserting `expect_tools`
 # would silently fail on a hub that turns tool display off.
 _current_tool_calls: ContextVar[list | None] = ContextVar("hubzoid_tool_calls", default=None)
+
+
+# Set by the scheduled runner after resolving the account and its scratch path.
+# Context-local rather than a global allowlist: parallel jobs and chats cannot
+# borrow one another's access. Store the lexical scope so later symlink changes
+# are checked by the file tools rather than silently granting the link target.
+_schedule_read_scope: ContextVar[tuple[Path, Path] | None] = ContextVar(
+    "hubzoid_schedule_read_scope", default=None,
+)
+
+
+def get_schedule_read_scope() -> tuple[Path, Path] | None:
+    return _schedule_read_scope.get()
+
+
+@contextmanager
+def schedule_read_scope(hub_dir: Path, scratch_rel: str) -> Iterator[None]:
+    """Allow this scheduled execution to read its own account's working files.
+
+    Runner-owned scope, never a tool argument or a broad writable-path grant.
+    File tools still enforce containment, symlink and private-content checks.
+    """
+    hub = Path(hub_dir).resolve()
+    token = _schedule_read_scope.set((hub, hub / scratch_rel))
+    try:
+        yield
+    finally:
+        _schedule_read_scope.reset(token)
 
 
 def get_chat_id() -> str | None:
