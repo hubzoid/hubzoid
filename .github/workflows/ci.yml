@@ -86,6 +86,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Load the amd64 image from that build
         uses: docker/build-push-action@v6
@@ -144,7 +145,16 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          # A previous attempt may have published these before a later failure.
+          skip-existing: true
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file <(python .github/scripts/changelog_section.py "$GITHUB_REF_NAME")
+        run: |
+          if gh release view "$GITHUB_REF_NAME"; then
+            # Keep existing release notes; attach the validated distributions.
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            python .github/scripts/changelog_section.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
