@@ -1,5 +1,9 @@
 # Hosted MCP server — bring your own intelligence
 
+> **OAuth is now available:** use `MCP_AUTH_MODE=dual` to preserve API keys while
+> enabling Open WebUI login and Hubzoid consent. See [Connect to Claude](mcp-oauth-claude.md).
+> The API-key instructions below remain valid in `legacy` and `dual` modes.
+
 A hub can serve its tools and knowledge to **external MCP clients** — Claude
 Code, Codex, Hermes, Cursor, and other Streamable-HTTP MCP clients. The caller brings their own
 model (their subscription, their harness, their context); the hub provides
@@ -71,12 +75,12 @@ credentials, so do not enable OAuth for this connection. See the
 
 These clients support Hubzoid's transport/authentication contract. Hubzoid's
 regressions exercise MCP HTTP calls and token revocation; they do not claim
-end-to-end testing of every client version. A plugin could package setup and
-instructions later, but is not needed to connect.
+end-to-end testing of every client version. An optional [Claude Code plugin template](../plugins/claude/hubzoid/README.md)
+packages the connection configuration; it is not needed to connect.
 
 ## Identity & access
 
-The Bearer token is resolved **read-only against Open WebUI's own database**
+In API-key mode, the Bearer token is resolved **read-only against Open WebUI's own database**
 (`api_key` table → user identity), on SQLite or PostgreSQL. It is a **per-user
 API key**, not the browser login JWT or a bridge secret. Deleting the key revokes
 MCP access; expiry, pending approval and suspended accounts are enforced.
@@ -149,9 +153,9 @@ revoke managed-hub access. See [access management](access-management.md).
 
 * Stateless Streamable HTTP: no sessions, safe behind load balancers and
   across bridge restarts; one POST per JSON-RPC call.
-* Auth failures are 401 with `WWW-Authenticate` (OAuth-ready for a later
-  claude.ai-connector phase); claude.ai custom connectors require OAuth and
-  are not supported by this token phase.
+* Auth failures are 401 with `WWW-Authenticate`. In `dual` or `oauth` mode,
+  discovery metadata supports the Claude remote-connector OAuth flow. See
+  [OAuth setup](mcp-oauth-claude.md).
 * Keep the exposed tool list curated — every tool schema spends context
   tokens in every connected client.
 * MCP use does not touch OWUI's `last_used_at` on the key (the lookup is

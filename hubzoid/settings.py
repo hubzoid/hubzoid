@@ -141,6 +141,11 @@ Environment variables explicitly supported:
                          authenticate with the caller's own Open WebUI API key
                          and get the hub's tools + knowledge under the same
                          per-group access rules as chat. See docs/mcp-server.md.
+  MCP_AUTH_MODE          legacy (default) | dual | oauth. Dual accepts existing
+                         API keys and OAuth; oauth accepts only OAuth tokens.
+  MCP_PUBLIC_URL         Full HTTPS public MCP URL required for dual/oauth:
+                         https://host/mcp or https://host/b/<slug>/mcp.
+                         Login remains in Open WebUI; Hubzoid asks for consent.
   MCP_ACCESS_GROUP       Optional OWUI group name gating the WHOLE /mcp
                          surface: only members get past auth (401 otherwise).
                          Essential in gateway mode, where one shared user DB
@@ -330,6 +335,8 @@ class Settings:
     reasoning_effort: str | None = None
     thinking_mode: str = "indicator"
     show_tools: str = "compact"
+    mcp_auth_mode: str = "legacy"
+    mcp_public_url: str = ""
     mcp_server: bool = False
     mcp_access_group: str | None = None
     slack_identity_mapping: bool = False
@@ -416,6 +423,8 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
         thinking_mode=reasoninglib.normalize_thinking(os.environ.get("SHOW_THINKING")),
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
+        mcp_auth_mode=(os.environ.get("MCP_AUTH_MODE") or "legacy").strip().lower(),
+        mcp_public_url=(os.environ.get("MCP_PUBLIC_URL") or "").strip(),
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
         mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),

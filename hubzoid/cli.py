@@ -452,6 +452,10 @@ def run(
                     edge_routes.append(
                         {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
                     )
+                if settings.mcp_server and settings.mcp_auth_mode != "legacy":
+                    for prefix in ("/.well-known/oauth-protected-resource/mcp",
+                                   "/.well-known/oauth-authorization-server/mcp/oauth"):
+                        edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
                 if whatsapp or telegram or webhook:
                     # Inbound surfaces receive on a loopback inbound port; only
                     # /webhooks/<hub> is exposed publicly (each POST is signature-,
@@ -767,6 +771,8 @@ def gateway(
             # overrides), so this only settles the .env-less inheritance.
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
             bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
+            bridge_env["MCP_AUTH_MODE"] = b.mcp_auth_mode
+            bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
             # Gateway mode: enable scheduled workflows (the HUBZOID_SCHEDULES gate
             # is auto-satisfied here), and pin every bridge to ONE shared
             # operational DB (access grants, per-hub authority markers, identities,

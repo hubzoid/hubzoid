@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 from hubzoid import migrations
 from hubzoid.migrations import SchemaError
 
-OPERATIONAL = {"hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
+OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
                "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
                "hz_access_decisions", "hz_change_requests", "hz_connect_states",
                "hz_artifacts", "hz_artifact_shares", "hz_artifact_links", "hz_email_deliveries"}

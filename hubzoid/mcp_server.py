@@ -3,7 +3,7 @@
 
 The inverse of `loaders/mcp.py` (which *consumes* MCP servers): this module
 serves the hub's own FunctionTool registry to external MCP clients (Claude
-Code, Cursor, claude.ai via OAuth later) so users can bring their own model
+Code, Cursor, claude.ai via optional OAuth) so users can bring their own model
 and use the hub purely for context and tools.
 
     claude mcp add --transport http myhub https://hub.example.com/mcp \
@@ -388,10 +388,20 @@ def build_mcp_app(
         settings = settingslib.load(hub_dir)
     registry, permissions = build_registry(hub_dir, settings=settings)
 
+    mode = settings.mcp_auth_mode
+    if mode not in {"legacy", "dual", "oauth"}:
+        raise ValueError("MCP_AUTH_MODE must be legacy, dual, or oauth")
+    auth = _build_verifier(hub_dir, access_group=settings.mcp_access_group)
+    if mode != "legacy":
+        from fastmcp.server.auth import MultiAuth
+        from .mcp_oauth import HubOAuth
+        oauth = HubOAuth(hub_dir, settings.mcp_public_url, settings.mcp_access_group)
+        auth = MultiAuth(server=oauth, verifiers=[auth]) if mode == "dual" else oauth
+
     mcp = FastMCP(
         name=_agent_name(hub_dir),
         instructions=_instructions(hub_dir),
-        auth=_build_verifier(hub_dir, access_group=settings.mcp_access_group),
+        auth=auth,
         middleware=[_build_list_filter(hub_dir, permissions)],
     )
     for ft in registry.values():
