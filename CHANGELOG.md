@@ -3,6 +3,45 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Added
+- Workflow tools for agents: `list_workflows`, `workflow_runs`,
+  `run_workflow`, `pause_workflow`, `resume_workflow` and
+  `cancel_workflow_run`. Two capabilities control them: See workflows and runs
+  (`workflows_view`) and Run and control workflows (`workflows_manage`,
+  sensitive). They act only on the agent they run in. A run started from chat
+  acts as the workflow's own account and is audited as `run_start` with the
+  person and surface. Off for everyone until granted.
+- Access tools `who_has_access` and `explain_access`, next to the existing
+  proposal tools.
+- Console: **Hubzoid tools** shows sections, **Workflows** and **Access
+  control**, in the access and new-account drawers. Activity shows runs started
+  from chat.
+- Capabilities can declare a `section`, a `probe` that says why they can't run
+  in a hub (for example "No workflows in this agent"), and several switches.
+- `hubzoid/workflows/control.py`: run, pause, resume and cancel in one service
+  used by the CLI and the tools.
+
+### Changed
+- The access tools need the Manage access from chat capability (`access_tools`,
+  granted by organization administrators) instead of `HUBZOID_MANAGEMENT_TOOLS`.
+  `HUBZOID_ACCESS_TOOLS=false` and `HUBZOID_WORKFLOW_TOOLS=false` remove a family
+  from an agent.
+- MCP `tools/list` hides gated built-in tools from callers who may not use them
+  (calls were already refused).
+- Pause, resume and cancel audit rows record the surface.
+
+### Fixed
+- Markdown task and scheduled eval run ids include the hub
+  (`md:<task>:<slot>@<hub>`), so hubs sharing one PostgreSQL database no longer
+  skip each other's scheduled work or return another hub's result.
+
+### Deprecated
+- `HUBZOID_MANAGEMENT_TOOLS=true` keeps its 1.0.x meaning (every manager gets
+  the access tools without a grant) for this release only. `hubzoid doctor`
+  warns. Grant `access_tools` instead.
+
 ## [1.0.3]
 
 - Fix README images and documentation links on PyPI with absolute URLs.

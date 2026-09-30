@@ -17,7 +17,7 @@ STABLE_IDS = {
     "db.operational", "db.hub", "db.read", "auth.bridge_keys", "auth.chat_signin",
     "exposure.bind", "model.credentials", "backup.age", "scheduler.health",
     "config.layers", "secrets.deployment", "secrets.hub", "secrets.restricted",
-    "secrets.names", "auth.google_merge",
+    "secrets.names", "auth.google_merge", "tools.legacy_management_flag",
 }
 
 
@@ -145,3 +145,13 @@ def test_old_sqlite_on_python_312_is_a_failure(hub, monkeypatch):
     assert runtime.sqlite_problem("postgresql+psycopg://h/db") is None
     monkeypatch.setattr(sqlite3, "sqlite_version", "3.46.1")
     assert runtime.sqlite_problem("sqlite:///x") is None
+
+
+def test_deprecated_management_flag_warns(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_MANAGEMENT_TOOLS", raising=False)
+    assert "tools.legacy_management_flag" not in _by_id(doc.run(hub))
+    monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "false")  # still a switch, not a warning
+    assert "tools.legacy_management_flag" not in _by_id(doc.run(hub))
+    monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "true")
+    check = _by_id(doc.run(hub))["tools.legacy_management_flag"]
+    assert check.status == "warn" and "access_tools" in check.summary

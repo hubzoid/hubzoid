@@ -253,9 +253,44 @@ hubzoid schedule cancel <hub> <run-id>
 ```
 
 These work for both kinds and are recorded in the access log. The Console
-shows paused work and the log, but has no run buttons: controls stay with
-whoever runs the server. `hubzoid backup` also holds new runs while it copies,
-then releases them.
+shows paused work and the log, but has no run buttons. On the server, controls
+act with the authority of whoever runs the command. People you grant it can
+also use them from chat or an assistant (next section). `hubzoid backup` also
+holds new runs while it copies, then releases them.
+
+## From chat and assistants
+
+An agent can list its workflows, report on runs, start a run, and pause,
+resume or cancel, for the people you allow. Nobody has these tools until a
+manager grants them in the Console: **Agents → the agent → Access**, then
+under **Hubzoid tools → Workflows**:
+
+| Capability | Tools | What it allows |
+|---|---|---|
+| See workflows and runs (`workflows_view`) | `list_workflows`, `workflow_runs` | Workflows and schedules in this agent, their state, next and last run, and recent runs with their steps. |
+| Run and control workflows (`workflows_manage`, sensitive) | `run_workflow`, `pause_workflow`, `resume_workflow`, `cancel_workflow_run` | Start a run now, pause or resume a schedule, cancel a queued or running run. |
+
+- The tools act only on the agent they run in, for both code workflows and
+  Markdown tasks.
+- A run started from chat acts as the workflow's own account (its `run_as`),
+  never as the person asking. That person is recorded as the one who started
+  it (`run_start` in the access log, with the surface).
+- Results stay private as before: output and error details are shown only to
+  the account the run acted as. Others see the status and the error type.
+- `run_workflow` returns the existing run when one is already queued or
+  running, and refuses while a backup holds new runs. Code workflows must be
+  running on the agent (`HUBZOID_SCHEDULES=1`, or under `hubzoid gateway`).
+- The agent names the workflow back and waits for a yes before it acts. That
+  is guidance for the model. The grant, the per-call check and the audit are
+  the controls.
+- The tools work in web chat, the API, MCP, WhatsApp and Telegram. They are
+  never offered on Slack or inside a scheduled run, so a workflow cannot
+  start or pause another one.
+- `HUBZOID_WORKFLOW_TOOLS=false` in a hub's `.env` removes them from that
+  agent. The Console then shows the capabilities as disabled.
+
+Workflows can't be created or edited from chat. Write them in `workflows/` or
+`schedule/` as described above.
 
 ## Watching it
 
