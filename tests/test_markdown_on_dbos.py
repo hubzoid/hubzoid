@@ -87,7 +87,9 @@ def test_script_task_commits_and_pushes(repo):
     log = subprocess.run(["git", "--git-dir", str(remote), "log", "--oneline", "-1"],
                          capture_output=True, text=True).stdout
     assert "schedule(sync)" in log  # the commit reached the remote
-    assert ids == ["md:sync:20260925T0300"]
+    from hubzoid.workflows import markdown
+
+    assert ids == [markdown.run_id("sync", "20260925T0300", "hub")]
     from hubzoid import scheduling as sch
 
     assert sch.ScheduleState(hub).get("sync")["last_result"] == "done"
@@ -224,12 +226,12 @@ _START_AND_HANG = textwrap.dedent('''
 _RECOVER = textwrap.dedent('''
     import json, sys, time
     from dbos import DBOS
-    from hubzoid.workflows import runtime
+    from hubzoid.workflows import markdown, runtime
     runtime.init(sys.argv[1])
     runtime.launch()
     deadline = time.time() + 60
     while time.time() < deadline:
-        st = DBOS.get_workflow_status("md:slow:s1")
+        st = DBOS.get_workflow_status(markdown.run_id("slow", "s1"))
         if st.status in ("SUCCESS", "ERROR"):
             break
         time.sleep(0.5)
@@ -290,7 +292,7 @@ _UNDER_VERSION = textwrap.dedent('''
     if phase == "recover":
         deadline = time.time() + 60
         while time.time() < deadline:
-            st = DBOS.get_workflow_status("md:sync:s1:requeued")
+            st = DBOS.get_workflow_status(markdown.run_id("sync", "s1") + ":requeued")
             if st and st.status in ("SUCCESS", "ERROR"):
                 break
             time.sleep(0.5)
@@ -325,12 +327,15 @@ def test_queued_run_survives_a_code_change_even_if_requeue_is_interrupted(repo):
     proc.send_signal(signal.SIGKILL)  # "sync" is still queued behind "slow"
     proc.wait(timeout=30)
 
+    from hubzoid.workflows import markdown
+
+    sync = markdown.run_id("sync", "s1", "hub")
     _, runs = phase("wf-new", "enqueue-fails")
-    assert runs == {"md:sync:s1": "ENQUEUED"}  # not cancelled without a replacement
+    assert runs == {sync: "ENQUEUED"}  # not cancelled without a replacement
     code, _ = phase("wf-new", "crash-after-enqueue")
     assert code == 9  # killed after the re-queue, before the cancel
     _, runs = phase("wf-new", "recover")
-    assert runs == {"md:sync:s1": "CANCELLED", "md:sync:s1:requeued": "SUCCESS"}
+    assert runs == {sync: "CANCELLED", sync + ":requeued": "SUCCESS"}
     assert (hub / "count.txt").read_text().count("x") == 1
 
 
