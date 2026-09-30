@@ -53,7 +53,9 @@ def _seed(path, *, user_id, email, server_id, url, token, secret, allow=None):
 def _native_mcp_on(monkeypatch):
     # The feature is opt-in (OWUI_NATIVE_MCP=true). Turn it on for the injection
     # tests; individual tests override to 0/unset to exercise the off path.
+    # Open WebUI connections exist only in the legacy UI mode.
     monkeypatch.setenv("OWUI_NATIVE_MCP", "1")
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @pytest.fixture(autouse=True)

@@ -73,6 +73,9 @@ def owui_env(monkeypatch, db, secret):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
+    # Open WebUI connections exist only in the legacy UI mode; the default mode
+    # uses Hubzoid's own (tests/test_connectors_*).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     tok._fernet_cache.clear()
 
 
