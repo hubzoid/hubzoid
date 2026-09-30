@@ -408,7 +408,14 @@ class AccessService:
         hubs: one entry per agent in scope, in deployment order, with hub,
         name, authoritative, capabilities ([{permission, sources}], from the
         grants) and effective (what the enforcer allows now: nothing while
-        blocked)."""
+        blocked).
+
+        `known` says whether the actor may see the person at all: an
+        organization administrator always; a delegate only when the person
+        holds a grant of their own in an agent the delegate manages (as on
+        the Console's People and Access pages). Otherwise display, account
+        state and organization_admin are withheld (None): "everyone signed
+        in" alone never exposes someone from outside the delegate's agents."""
         scope = self._require_scope(actor)
         subject = normalize(subject)
         if not subject or subject == EVERYONE:
@@ -417,6 +424,22 @@ class AccessService:
         names = {h["key"]: h.get("name") or h["key"] for h in self._hubs()}
         gs = self.store
         revision, all_grants = gs.access_snapshot()
+        managed = set(scope.hubs)
+        known = scope.org_admin or any(s == subject and h in managed for s, h, _p in all_grants)
+        if not known:
+            hidden = dict(suspended=None, account_unavailable=None, blocked=None, status=None)
+            entries = []
+            for key in hubs:
+                sources = _sources(all_grants, subject, key)
+                entries.append(dict(
+                    hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
+                    capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],
+                    effective=None,
+                ))
+            return dict(subject=subject, display=None,
+                        kind="service" if subject.startswith("workflow:") else "person",
+                        organization_admin=None, known=False, **hidden, revision=revision,
+                        hubs=entries)
         identity = gs.identity(subject) or {}
         state = _account_state(gs, subject, identity)
         entries = []
@@ -431,7 +454,7 @@ class AccessService:
             subject=subject, display=identity.get("display") or subject,
             kind="service" if subject.startswith("workflow:") else "person",
             organization_admin=(subject, ORG, MANAGE_ACCESS) in all_grants,
-            **state, revision=revision, hubs=entries,
+            known=True, **state, revision=revision, hubs=entries,
         )
 
     # ---- access changes -----------------------------------------------------------

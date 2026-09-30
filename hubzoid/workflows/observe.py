@@ -57,12 +57,15 @@ def _run_owner(client, workflow_id: str) -> dict | None:
         return None
 
 
-def may_see_results(owner: dict | None, viewer: str | None) -> bool:
-    """Whether `viewer` may see what a run produced. Fails closed."""
+def may_see_results(owner: dict | None, viewer: str | None, *,
+                    legacy_visible: bool = True) -> bool:
+    """Whether `viewer` may see what a run produced. Fails closed.
+    `legacy_visible=False` keeps legacy service runs private too: for readers
+    who are not the hub's managers (the agent's workflow tools)."""
     if not owner:
         return False
     if owner.get("source") == "legacy-service":
-        return True          # a hub service run: no person's data or connections
+        return legacy_visible  # a hub service run: no person's data or connections
     subject = (owner.get("subject") or "").strip().lower()
     return bool(viewer) and subject == viewer.strip().lower()
 
@@ -364,13 +367,16 @@ def runs(
     offset=0,
     viewer: str | None = None,
     trusted: bool = False,
+    legacy_visible: bool = True,
 ) -> list[dict]:
     """Single-agent run history. Includes per-step detail when ``run_id`` is set.
     Filters (name/status/date/run-id) are applied by DBOS before pagination.
 
     Results are redacted unless ``viewer`` is the account the run acted as (see
     the module docstring). ``trusted`` is only for the server's own operator
-    (the CLI on the box), who can read the database directly anyway."""
+    (the CLI on the box), who can read the database directly anyway.
+    ``legacy_visible=False`` redacts legacy service runs as well (see
+    ``may_see_results``)."""
     from dbos import DBOSClient
     from .runtime import _app_name
 
@@ -407,7 +413,7 @@ def runs(
         for w in result:
             steps = client.list_workflow_steps(w.workflow_id) if run_id else None
             owner = _identity_of(steps) if run_id else _run_owner(client, w.workflow_id)
-            visible = trusted or may_see_results(owner, viewer)
+            visible = trusted or may_see_results(owner, viewer, legacy_visible=legacy_visible)
             row = _run_row(hub_name, w, visible=visible, owner=owner)
             if run_id:
                 row["steps"] = [_step_row(x, visible) for x in steps]

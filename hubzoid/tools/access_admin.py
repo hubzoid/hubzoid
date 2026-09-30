@@ -290,6 +290,14 @@ def make(ctx) -> list:
             return f"[not available: {exc.message}]"
         subject = view["subject"]
         held = [h for h in view["hubs"] if h["capabilities"]]
+        if not view.get("known", True):
+            # Not someone this delegate manages: no account detail, only what
+            # everyone signed in gets in the agents they manage.
+            public = [h["hub"] for h in held]
+            if not public:
+                return f"{subject} has no access in the agents you manage."
+            return (f"{subject} has no access of their own in the agents you manage. "
+                    f"Everyone signed in can use: {', '.join(public)}.")
         if not held:
             # Nothing about other agents or the account: only what this caller manages.
             return (f"{subject} has no access to {view['hubs'][0]['hub']}." if hub and view["hubs"]

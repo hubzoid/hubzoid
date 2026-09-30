@@ -423,3 +423,24 @@ def test_person_access_stays_in_scope(dep):
         with pytest.raises(Denied) as e:
             svc.person_access(actor(who), subject, hub)
         assert e.value.status == status
+
+
+def test_person_access_hides_people_outside_a_delegates_agents(dep):
+    """"Everyone signed in" in a hub the delegate manages must not expose a
+    person who only has access elsewhere: no name, account state or role."""
+    gs, svc = dep.gs, dep.svc
+    gs.grant("carol@x.org", "ops", "inventory", actor="test")
+    gs.upsert_identity(email="carol@x.org", owui_id="u-carol", display="Carol Secret")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    view = svc.person_access(actor(DELEGATE), "carol@x.org")
+    assert view["known"] is False
+    assert (view["display"], view["status"], view["blocked"], view["organization_admin"]) == (
+        None, None, None, None)
+    assert [(h["hub"], h["capabilities"]) for h in view["hubs"]] == [
+        ("finance", [{"permission": "use_hub", "sources": ["everyone"]}])]
+    # An organization administrator sees the person; so does a delegate once
+    # the person holds a grant of their own in one of the delegate's agents.
+    assert svc.person_access(actor(ROOT), "carol@x.org")["display"] == "Carol Secret"
+    gs.grant("carol@x.org", "finance", "use_hub", actor="test")
+    seen = svc.person_access(actor(DELEGATE), "carol@x.org")
+    assert seen["known"] is True and seen["display"] == "Carol Secret"

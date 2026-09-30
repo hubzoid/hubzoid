@@ -363,3 +363,36 @@ def test_cancel_is_scoped_to_this_hub_and_refuses_finished_runs(tmp_path, env):
     cancels = [(r["permission"], r["actor"], r["surface"])
                for r in _audit(tmp_path) if r["action"] == "run_cancel"]
     assert cancels == [(queued, "bob@x.org", "whatsapp")]
+
+
+# ---- review fixes -------------------------------------------------------------------
+
+def test_markdown_starts_refused_for_webhook_tasks_and_the_kill_switch(hub, monkeypatch):
+    _task(hub, "inbox", 'on_webhook: squadcast\nrun: "true"')
+    with pytest.raises(control.ControlError) as e:
+        control._check_startable(hub, control.resolve(hub, "inbox"))
+    assert e.value.code == "event" and "squadcast" in e.value.message
+    control._check_startable(hub, control.resolve(hub, "daily"))  # a scheduled task is fine
+    monkeypatch.setenv("HUBZOID_DISABLE_SCHEDULE", "1")
+    with pytest.raises(control.ControlError) as e:
+        control._check_startable(hub, control.resolve(hub, "daily"))
+    assert e.value.code == "broken" and "HUBZOID_DISABLE_SCHEDULE" in e.value.message
+
+
+def test_bare_name_prefers_the_code_workflow_md_prefix_the_task(hub):
+    _task(hub, "nightly_sync", 'schedule: "0 3 * * *"\nrun: "true"')
+    assert control.resolve(hub, "nightly_sync") == control.Target("nightly_sync", "code")
+    assert control.resolve(hub, "md:nightly_sync") == control.Target(
+        "md:nightly_sync", "markdown", "nightly_sync")
+
+
+def test_history_keeps_legacy_service_runs_private_and_reads_queued(hub, monkeypatch):
+    from hubzoid.workflows import observe
+
+    seen = {}
+    monkeypatch.setattr(observe, "runs", lambda *a, **k: seen.update(k) or [])
+    control.history(hub, viewer="ann@x.org", status="queued")
+    assert seen["legacy_visible"] is False and seen["statuses"] == ["ENQUEUED"]
+    legacy = {"source": "legacy-service", "subject": "workflow:x"}
+    assert observe.may_see_results(legacy, "ann@x.org") is True  # the Console's managers
+    assert observe.may_see_results(legacy, "ann@x.org", legacy_visible=False) is False

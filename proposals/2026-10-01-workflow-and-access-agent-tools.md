@@ -27,7 +27,9 @@ same Hub, where these controls are most useful.
     organization administrators grant it). Tools: my management scope, who has
     access, explain access, propose access change, propose new account.
 - Every call is checked in code against the verified caller, never a tool
-  argument, and audited. Access changes still need confirmation in the Console.
+  argument. Workflow tool calls are recorded in the decision log, and every
+  run control and access change in the access audit. Access changes still need
+  confirmation in the Console.
 - A run started from chat acts as the workflow's own account. The person who
   started it is recorded. Results stay visible only to the run's account.
 - Workflow tools act only on the agent they run in. They are never offered on
