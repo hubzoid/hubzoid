@@ -134,7 +134,8 @@ def test_cancel_a_queued_run(hub, tmp_path):
                             env=dict(os.environ))
     try:
         assert proc.stdout.readline().startswith("QUEUED")
-        r = CliRunner().invoke(cli.app, ["schedule", "cancel", str(hub), "md:daily:s2"])
+        run = f"md:daily:s2@{hub.name.lower()}"
+        r = CliRunner().invoke(cli.app, ["schedule", "cancel", str(hub), run])
         assert r.exit_code == 0, r.output
         from dbos import DBOSClient
 
@@ -143,10 +144,10 @@ def test_cancel_a_queued_run(hub, tmp_path):
 
         client = DBOSClient(system_database_url=db.dbos_url(hub), application_name=_app_name(hub.name))
         try:
-            assert client.retrieve_workflow("md:daily:s2").get_status().status == "CANCELLED"
+            assert client.retrieve_workflow(run).get_status().status == "CANCELLED"
         finally:
             client.destroy()
-        assert ("run_cancel", "md:daily:s2") in [(a[1], a[3]) for a in _audit(tmp_path)]
+        assert ("run_cancel", run) in [(a[1], a[3]) for a in _audit(tmp_path)]
     finally:
         proc.kill()
         proc.wait(timeout=30)

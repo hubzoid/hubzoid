@@ -87,7 +87,7 @@ def test_script_task_commits_and_pushes(repo):
     log = subprocess.run(["git", "--git-dir", str(remote), "log", "--oneline", "-1"],
                          capture_output=True, text=True).stdout
     assert "schedule(sync)" in log  # the commit reached the remote
-    assert ids == ["md:sync:20260925T0300"]
+    assert ids == ["md:sync:20260925T0300@hub"]  # the hub is part of the id
     from hubzoid import scheduling as sch
 
     assert sch.ScheduleState(hub).get("sync")["last_result"] == "done"
@@ -229,7 +229,7 @@ _RECOVER = textwrap.dedent('''
     runtime.launch()
     deadline = time.time() + 60
     while time.time() < deadline:
-        st = DBOS.get_workflow_status("md:slow:s1")
+        st = DBOS.get_workflow_status("md:slow:s1@hub")
         if st.status in ("SUCCESS", "ERROR"):
             break
         time.sleep(0.5)
@@ -290,7 +290,7 @@ _UNDER_VERSION = textwrap.dedent('''
     if phase == "recover":
         deadline = time.time() + 60
         while time.time() < deadline:
-            st = DBOS.get_workflow_status("md:sync:s1:requeued")
+            st = DBOS.get_workflow_status("md:sync:s1@hub:requeued")
             if st and st.status in ("SUCCESS", "ERROR"):
                 break
             time.sleep(0.5)
@@ -326,11 +326,11 @@ def test_queued_run_survives_a_code_change_even_if_requeue_is_interrupted(repo):
     proc.wait(timeout=30)
 
     _, runs = phase("wf-new", "enqueue-fails")
-    assert runs == {"md:sync:s1": "ENQUEUED"}  # not cancelled without a replacement
+    assert runs == {"md:sync:s1@hub": "ENQUEUED"}  # not cancelled without a replacement
     code, _ = phase("wf-new", "crash-after-enqueue")
     assert code == 9  # killed after the re-queue, before the cancel
     _, runs = phase("wf-new", "recover")
-    assert runs == {"md:sync:s1": "CANCELLED", "md:sync:s1:requeued": "SUCCESS"}
+    assert runs == {"md:sync:s1@hub": "CANCELLED", "md:sync:s1@hub:requeued": "SUCCESS"}
     assert (hub / "count.txt").read_text().count("x") == 1
 
 
@@ -410,7 +410,46 @@ def test_run_ids_name_their_task_even_when_requeued():
     from hubzoid.workflows.markdown import task_name_from_id
 
     assert task_name_from_id("md:sync:20260925T0300") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300@finance") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300@finance:requeued") == "sync"
     assert task_name_from_id("md:sync:20260925T0300:requeued") == "sync"
     assert task_name_from_id("md:sync:20260925T0300:requeued:requeued") == "sync"
     assert task_name_from_id("md:alerts:events-20260925T0300-abcdef0123456789") == "alerts"
     assert task_name_from_id("wf-123") is None
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "postgres"])
+def test_two_hubs_sharing_one_database_each_run_their_own_task(tmp_path, request, engine):
+    """DBOS workflow ids are global in a shared system database. Two hubs with
+    the same task and slot are two runs: each executes its own task and gets
+    its own result (launch review finding 3)."""
+    env = dict(os.environ)
+    for key in ("DATABASE_URL", "HUBZOID_DEPLOYMENT"):
+        env.pop(key, None)
+    if engine == "postgres":
+        url = request.getfixturevalue("postgres_url")
+        env["HUBZOID_OPERATIONAL_DB"] = env["HUBZOID_DBOS_DB"] = url
+    else:
+        env["HUBZOID_OPERATIONAL_DB"] = f"sqlite:///{tmp_path / 'ops.db'}"
+        env["HUBZOID_DBOS_DB"] = f"sqlite:///{tmp_path / 'shared-dbos.db'}"
+    results = {}
+    for name in ("alpha", "beta"):
+        hub = tmp_path / name
+        (hub / "schedule").mkdir(parents=True)
+        (hub / "AGENTS.md").write_text("---\nname: h\ndescription: d\n---\nbody")
+        _task(hub, "daily", f'run: "echo {name} > effect.txt"\nschedule: "0 3 * * *"')
+        results[name] = _run(hub, env, "daily", "20260927T0300")
+    for name in ("alpha", "beta"):
+        assert (tmp_path / name / "effect.txt").read_text().strip() == name, \
+            f"{name} never executed its own task"
+        out, ids = results[name]
+        assert isinstance(out, dict) and out["result"] == "done", out
+        assert f"md:daily:20260927T0300@{name}" in ids
+
+
+def test_run_ids_are_namespaced_by_hub():
+    from hubzoid.workflows import markdown
+
+    assert markdown.run_id("daily", "s1", "Alpha") == "md:daily:s1@alpha"
+    assert markdown.eval_run_id(["b", "a"], "s1", "alpha") == "eval:a,b:s1@alpha"
+    assert markdown.task_name_from_id(markdown.run_id("daily", "s1", "alpha")) == "daily"
