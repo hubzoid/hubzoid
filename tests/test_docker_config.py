@@ -52,11 +52,16 @@ def test_bridge_always_binds_loopback():
 
 
 def test_image_uses_cpu_pytorch_without_cuda():
-    lock = (ROOT / "requirements.lock").read_text().lower()
+    """The default image has no PyTorch at all; the legacy Open WebUI image
+    (and its lock) uses the CPU build."""
+    core = (ROOT / "requirements.lock").read_text().lower()
+    assert "\ntorch==" not in core
+    lock = (ROOT / "requirements-openwebui.lock").read_text().lower()
     assert "download.pytorch.org/whl/cpu" in (ROOT / "Dockerfile").read_text()
     assert "+cpu" in lock
-    for pkg in ("nvidia-", "cuda-toolkit", "triton=="):
-        assert f"\n{pkg}" not in lock, pkg
+    for text in (core, lock):
+        for pkg in ("nvidia-", "cuda-toolkit", "triton=="):
+            assert f"\n{pkg}" not in text, pkg
 
 
 def test_image_base_has_a_new_enough_sqlite():

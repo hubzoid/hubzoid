@@ -3,6 +3,30 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.1.0]
+
+Not released yet. These notes cover packaging and launch; the web app notes are
+added as its parts land.
+
+### Install
+- `pip install hubzoid` no longer installs Open WebUI (or PyTorch). The Open
+  WebUI chat app stays available for this release as legacy mode:
+  `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`.
+- New required dependencies for the web app: pwdlib (argon2 and bcrypt),
+  Authlib, itsdangerous and python-multipart.
+- Every package under `hubzoid/` ships: packages are discovered instead of
+  listed by hand, and a test fails when a directory of Python modules would not
+  ship.
+
+### Fixes
+- Hubs sharing one PostgreSQL workflow database no longer collide on markdown
+  schedule tasks and scheduled evals. Run ids now name the hub
+  (`md:<task>:<slot>@<hub>`), so two hubs with the same task and slot both run.
+  Runs queued under the earlier ids are still listed, re-queued and cancelled.
+- Backups leave the deployment key (`secret.key`) out unless secrets are
+  requested, and restoring in place keeps the current key and link secret.
+- `.webui_secret_key` is no longer tracked in the repository.
+
 ## [1.0.3]
 
 - Fix README images and documentation links on PyPI with absolute URLs.

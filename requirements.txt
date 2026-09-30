@@ -5,12 +5,13 @@
 #   - From a clone:       pip install -e .          (or -e '.[dev]' for tests)
 #
 # This file exists only as a convenience for `pip install -r requirements.txt`
-# from a fresh clone when you don't want an editable install.
+# from a fresh clone when you don't want an editable install. The legacy Open
+# WebUI chat app is the `openwebui` extra (pip install -e '.[openwebui]'), not
+# listed here.
 
 openai-agents[litellm]>=0.17.3,<0.18
 litellm>=1.95.0,<1.96
 claude-agent-sdk>=0.2.159,<0.3
-open-webui==0.11.4
 fastapi>=0.136.3,<1
 fastmcp>=3.4.7,<4
 starlette>=0.47,<2
@@ -35,3 +36,7 @@ dbos>=3.1,<4
 croniter>=6.2,<7
 alembic>=1.18,<2
 boto3>=1.42,<2
+pwdlib[argon2,bcrypt]>=0.3.1,<0.4
+authlib>=1.7.2,<2
+itsdangerous>=2.2,<3
+python-multipart>=0.0.32,<0.1
