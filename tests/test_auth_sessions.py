@@ -1,0 +1,258 @@
+"""Sessions: the cookie, expiry (absolute and idle), last-seen throttling,
+revocation on password, role, status and deletion, suspension, local mode."""
+from __future__ import annotations
+
+import time
+
+import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+
+from hubzoid.auth import current_user, routes, sessions, users
+from hubzoid.auth.schema import engine_for
+
+ENV = (
+    "HUBZOID_UI", "HUBZOID_AUTH", "WEBUI_AUTH", "HUBZOID_PUBLIC_URL", "WEBUI_URL",
+    "HUBZOID_ALLOWED_ORIGINS", "HUBZOID_ADMIN_EMAIL", "HUBZOID_ADMIN_PASSWORD",
+    "WEBUI_ADMIN_EMAIL", "WEBUI_ADMIN_PASSWORD", "HUBZOID_GATEWAY_ADMIN_EMAIL",
+    "HUBZOID_DEPLOYMENT", "DATABASE_URL", "HUBZOID_SESSION_DAYS", "HUBZOID_SESSION_IDLE_DAYS",
+    "ENABLE_SIGNUP", "ENABLE_LOGIN_FORM", "ENABLE_PASSWORD_AUTH", "HUBZOID_AUTH_MAX_FAILURES",
+)
+ORIGIN = {"origin": "http://testserver"}
+PASSWORD = "correct horse battery"
+
+
+@pytest.fixture
+def hub(tmp_path, monkeypatch):
+    for key in ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    d = tmp_path / "sales"
+    d.mkdir()
+    (d / "AGENTS.md").write_text("---\nname: Sales\n---\nHelp.\n")
+    sessions.reset_cache()
+    yield d
+    sessions.reset_cache()
+
+
+def client(hub, **kw) -> TestClient:
+    app = FastAPI()
+    routes.mount(app, hub)
+
+    @app.get("/whoami")
+    def whoami(request: Request):
+        user = current_user(request, hub)
+        return {"email": user.email if user else None}
+
+    return TestClient(app, **kw)
+
+
+def person(hub, email="ana@example.com", **kw):
+    user = users.create(hub, email=email, name="Ana", password=PASSWORD, **kw)
+    users.sync_identity(hub, user)
+    return user
+
+
+def sign_in(c, email="ana@example.com", password=PASSWORD, **headers):
+    return c.post("/api/auth/login", json={"email": email, "password": password},
+                  headers={**ORIGIN, **headers})
+
+
+def who(c) -> str | None:
+    return c.get("/whoami").json()["email"]
+
+
+def rows(hub):
+    with engine_for(hub).connect() as conn:
+        return [dict(r._mapping) for r in conn.execute(text("SELECT * FROM hz_sessions"))]
+
+
+def set_row(hub, **values):
+    sets = ", ".join(f"{k}=:{k}" for k in values)
+    with engine_for(hub).begin() as conn:
+        conn.execute(text(f"UPDATE hz_sessions SET {sets}"), values)
+
+
+def test_cookie_attributes_and_stored_digest(hub):
+    person(hub)
+    c = client(hub)
+    r = sign_in(c)
+    assert r.status_code == 200
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith("hz_session=")
+    for part in ("HttpOnly", "Path=/", "SameSite=lax", f"Max-Age={30 * 86400}"):
+        assert part in cookie
+    assert "Secure" not in cookie
+    token = cookie.split(";")[0].split("=", 1)[1]
+    assert len(token) >= 43
+    stored = rows(hub)
+    assert len(stored) == 1 and stored[0]["token_hash"] == sessions.digest(token)
+    assert token not in str(stored)
+    assert stored[0]["method"] == "password" and stored[0]["idle_seconds"] == 7 * 86400
+    assert who(c) == "ana@example.com"
+
+
+def test_secure_cookie_behind_https(hub):
+    person(hub)
+    r = sign_in(client(hub), **{"x-forwarded-proto": "https"})
+    assert "Secure" in r.headers["set-cookie"]
+
+
+def test_absolute_and_idle_expiry(hub, monkeypatch):
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    now = time.time()
+    set_row(hub, expires_at=now - 1)
+    assert who(c) is None
+    set_row(hub, expires_at=now + 3600, created_at=now - 31 * 86400)  # older than 30 days
+    assert who(c) is None
+    set_row(hub, created_at=now, last_seen_at=now - 8 * 86400)  # idle 8 days
+    assert who(c) is None
+    set_row(hub, last_seen_at=now - 2 * 86400)
+    assert who(c) == "ana@example.com"
+    monkeypatch.setenv("HUBZOID_SESSION_IDLE_DAYS", "1")  # lowering applies to existing sessions
+    set_row(hub, last_seen_at=now - 2 * 86400)
+    assert who(c) is None
+    monkeypatch.setenv("HUBZOID_SESSION_DAYS", "0.5")
+    set_row(hub, last_seen_at=now, created_at=now - 86400)
+    assert who(c) is None
+
+
+def test_last_seen_is_written_at_most_every_five_minutes(hub):
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    now = time.time()
+    set_row(hub, last_seen_at=now - 100)
+    assert who(c) == "ana@example.com"
+    assert abs(rows(hub)[0]["last_seen_at"] - (now - 100)) < 1
+    set_row(hub, last_seen_at=now - 400)
+    assert who(c) == "ana@example.com"
+    assert rows(hub)[0]["last_seen_at"] >= now - 5
+
+
+def test_role_status_deletion_and_suspension_end_sessions(hub):
+    from hubzoid.access import store_for
+
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    users.set_role(hub, user["id"], "admin")
+    assert who(c) is None
+    sign_in(c)
+    users.set_status(hub, user["id"], "pending")
+    assert who(c) is None
+    users.set_status(hub, user["id"], "active")
+    sign_in(c)
+    store_for(hub).suspend("ana@example.com", actor="test")
+    assert who(c) is None
+    assert sign_in(c).json()["detail"]["code"] == "suspended"
+    store_for(hub).suspend("ana@example.com", actor="test", suspended=False)
+    assert sign_in(c).status_code == 200
+    users.delete(hub, user["id"])
+    assert who(c) is None
+
+
+def test_password_change_ends_other_sessions_only(hub):
+    person(hub)
+    laptop, phone = client(hub), client(hub)
+    sign_in(laptop)
+    sign_in(phone)
+    r = laptop.post("/api/auth/password", headers=ORIGIN,
+                    json={"current_password": PASSWORD, "new_password": "a brand new secret"})
+    assert r.status_code == 204
+    assert who(laptop) == "ana@example.com"
+    assert who(phone) is None
+    assert sign_in(phone).status_code == 401
+    assert sign_in(phone, password="a brand new secret").status_code == 200
+
+
+def test_logout_revokes_this_session_and_clears_the_cookie(hub):
+    person(hub)
+    laptop, phone = client(hub), client(hub)
+    sign_in(laptop)
+    sign_in(phone)
+    r = laptop.post("/api/auth/logout", headers=ORIGIN)
+    assert r.status_code == 204
+    assert 'hz_session=""' in r.headers["set-cookie"] and "Max-Age=0" in r.headers["set-cookie"]
+    assert who(laptop) is None
+    assert who(phone) == "ana@example.com"
+    assert sum(1 for s in rows(hub) if s["revoked_at"]) == 1
+
+
+def test_signing_in_again_replaces_the_previous_session(hub):
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    first = c.cookies.get("hz_session")
+    sign_in(c)
+    assert c.cookies.get("hz_session") != first
+    assert sessions.resolve_token(hub, first) is None
+
+
+def test_revoke_helpers(hub):
+    user = person(hub)
+    a = sessions.create_session(hub, user, method="password")
+    b = sessions.create_session(hub, user, method="password")
+    assert sessions.resolve_token(hub, a).email == "ana@example.com"
+    assert sessions.revoke_user(hub, user["id"], except_token=a) == 1
+    assert sessions.resolve_token(hub, a) is not None and sessions.resolve_token(hub, b) is None
+    assert sessions.revoke(hub, a) is True and sessions.revoke(hub, a) is False
+    assert sessions.resolve_token(hub, "x" * 300) is None
+    assert sessions.resolve_token(hub, "") is None
+
+
+def test_database_errors_fail_closed(hub, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+
+    def broken(_hub):
+        raise OperationalError("SELECT", {}, Exception("down"))
+
+    monkeypatch.setattr(sessions, "engine_for", broken)
+    r = c.get("/whoami")
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == "accounts_unavailable"
+
+
+# ---- local mode -----------------------------------------------------------------
+
+def test_local_mode_is_the_local_owner(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_AUTH")
+    c = client(hub)
+    body = c.get("/api/auth/session").json()
+    assert body["authenticated"] and body["mode"] == "local"
+    assert body["user"]["email"] == "admin@localhost" and body["user"]["role"] == "admin"
+    assert body["providers"] == [] and body["password"] is False and body["signup"] is False
+    assert who(c) == "admin@localhost"
+    assert sign_in(c).json()["detail"]["code"] == "sign_in_off"
+    owner = users.find_by_email(hub, "admin@localhost")
+    assert owner["source"] == "local"
+    assert sessions.local_owner(hub).id == owner["id"]
+
+
+@pytest.mark.parametrize("host,allowed", [
+    ("localhost:3080", True), ("127.0.0.1:3080", True), ("[::1]:3080", True),
+    ("192.168.1.20:3080", True), ("my-laptop:3080", True), ("app.localhost", True),
+    ("evil.example.com", False), ("evil.example.com:3080", False),
+])
+def test_local_mode_refuses_other_host_names(hub, monkeypatch, host, allowed):
+    """Sign-in off makes every request the owner; a web page reaching the
+    server through DNS rebinding names it by the attacker's host name."""
+    monkeypatch.delenv("HUBZOID_AUTH")
+    c = client(hub)
+    seen = c.get("/whoami", headers={"host": host}).json()["email"]
+    assert seen == ("admin@localhost" if allowed else None)
+
+
+def test_local_mode_accepts_configured_names(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_AUTH")
+    monkeypatch.setenv("HUBZOID_ALLOWED_ORIGINS", "https://hub.example.com")
+    c = client(hub)
+    assert c.get("/whoami", headers={"host": "hub.example.com"}).json()["email"] == "admin@localhost"
