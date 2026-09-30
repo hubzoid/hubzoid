@@ -328,3 +328,106 @@ export function query(
   const s = q.toString();
   return s ? "?" + s : "";
 }
+
+// ---- Personal connections: the connector registry (organization administrators) ----
+
+export type Connector = {
+  id: string;
+  name: string;
+  url: string;
+  auth_type: "oauth" | "none";
+  client_id: string | null;
+  /** A pre-registered client secret is stored. The secret itself is never sent. */
+  has_client_secret: boolean;
+  scopes: string | null;
+  /** Tool names people may use; null allows every tool. */
+  tool_allowlist: string[] | null;
+  enabled: boolean;
+  /** The capability that gates it on managed agents: connector_<id>. */
+  capability: string;
+  /** Hubzoid registered its own client with the provider (RFC 7591). */
+  dynamic_client: boolean;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+  /** Where the provider sends people back. Register it when pre-registering a client. */
+  redirect_uri: string;
+  /** How many people are connected. */
+  connections: number;
+};
+
+export type ConnectorInput = {
+  id?: string;
+  name?: string;
+  url?: string;
+  auth_type?: "oauth" | "none";
+  client_id?: string | null;
+  /** Omit to keep the stored secret; null removes it. */
+  client_secret?: string | null;
+  scopes?: string | null;
+  tool_allowlist?: string[] | null;
+  enabled?: boolean;
+};
+
+/** POST /connectors/{id}/test: what discovery found. Changes nothing. */
+export type ConnectorTest = {
+  connector_id: string;
+  auth_type: "oauth" | "none";
+  ok: boolean;
+  redirect_uri: string;
+  error?: { code: string; message: string };
+  requires_auth?: boolean | null;
+  status?: number | null;
+  resource?: string | null;
+  resource_metadata_url?: string | null;
+  issuer?: string;
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  registration_endpoint?: string | null;
+  revocation_endpoint?: string | null;
+  iss_parameter_supported?: boolean;
+  pkce?: "S256" | "assumed";
+  scopes_supported?: string[] | null;
+  default_scope?: string | null;
+  scope?: string | null;
+  registration?: "pre-registered" | "dynamic" | "unavailable";
+  token_endpoint_auth_methods?: string[] | null;
+  notes?: string[];
+};
+
+/** Calls under /portal/api/connectors. Their errors are {"detail": {"code", "message"}}. */
+export async function connectorsRequest<T>(
+  path: string,
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch("/portal/api/connectors" + path, {
+      credentials: "include",
+      signal,
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(e instanceof Error && e.message ? e.message : "Network error", 0);
+  }
+  if (!response.ok) {
+    let message = `${response.status}: Request failed`;
+    let code: string | undefined;
+    try {
+      const data = await response.json();
+      const detail = data?.detail;
+      if (detail && typeof detail === "object") {
+        if (typeof detail.message === "string") message = detail.message;
+        if (typeof detail.code === "string") code = detail.code;
+      } else if (typeof detail === "string") message = detail;
+    } catch {
+      /* use status */
+    }
+    throw new ApiError(message, response.status, code);
+  }
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
