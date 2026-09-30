@@ -82,10 +82,15 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
     by = _by_id(entries)
     assert {p: e["group"] for p, e in by.items()} == {
         "use_hub": "hub", "curator": "tools", "jev": "tools", "share_public_links": "tools",
+        "workflows_view": "tools", "workflows_manage": "tools", "access_tools": "tools",
         "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
-    # Display order follows the drawer's groups; no empty Workflows group.
+    # Display order follows the drawer's groups (no empty Workflows group), and
+    # inside Hubzoid tools the unsectioned rows, then Workflows, then Access control.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "curator", "jev", "share_public_links", "ledger", "payroll", "manage_access"]
+        "use_hub", "curator", "jev", "share_public_links", "workflows_view", "workflows_manage",
+        "access_tools", "ledger", "payroll", "manage_access"]
+    assert [by[p]["section"] for p in ("curator", "workflows_view", "access_tools")] == [
+        "", "workflows", "access"]
     for e in entries:
         assert {"permission", "label", "description", "sensitive", "group", "surfaces", "status",
                 "available", "default", "delegate_grantable", "obsolete"} <= set(e)
