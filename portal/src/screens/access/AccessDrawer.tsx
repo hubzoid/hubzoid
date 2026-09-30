@@ -35,6 +35,7 @@ import {
   isService,
   normalizeSubject,
   personName,
+  splitSections,
   toCatalog,
   type Catalog,
 } from "../../lib/format";
@@ -51,6 +52,7 @@ import {
 } from "./plan";
 import {
   CapabilityGroup,
+  CapabilitySection,
   HelpText,
   HelpToggle,
   LegacyServiceTag,
@@ -779,32 +781,38 @@ export function AccessDrawer({
                         unconfigured={g.items.filter((p) => !p.obsolete && p.available === false && isChecked(p)).length}
                         problems={g.items.filter((p) => problems[p.permission]).length}
                       >
-                        {g.items.map((p) => {
-                          const inherited = draft.row.inherited.includes(p.permission);
-                          return (
-                            <CapabilityRow
-                              key={p.permission}
-                              p={p}
-                              checked={isChecked(p)}
-                              lock={lockFor(p.permission, draft.row, access, draft.selected, p)}
-                              publicOnly={
-                                p.permission === USE_HUB &&
-                                access.public &&
-                                !draft.selected.includes(USE_HUB) &&
-                                !inherited
-                              }
-                              problem={problems[p.permission]}
-                              onChange={(on) => {
-                                if (problems[p.permission]) {
-                                  const rest = { ...problems };
-                                  delete rest[p.permission];
-                                  setProblems(rest);
-                                }
-                                setDraft({ ...draft, selected: toggle(draft.selected, p.permission, on) });
-                              }}
-                            />
-                          );
-                        })}
+                        {/* Sub-headings (Workflows, Access control) only group
+                            rows for reading; counts stay with the group. */}
+                        {splitSections(g.items).map((s) => (
+                          <CapabilitySection key={s.key} id={`${g.key}-${s.key}`} title={s.title}>
+                            {s.items.map((p) => {
+                              const inherited = draft.row.inherited.includes(p.permission);
+                              return (
+                                <CapabilityRow
+                                  key={p.permission}
+                                  p={p}
+                                  checked={isChecked(p)}
+                                  lock={lockFor(p.permission, draft.row, access, draft.selected, p)}
+                                  publicOnly={
+                                    p.permission === USE_HUB &&
+                                    access.public &&
+                                    !draft.selected.includes(USE_HUB) &&
+                                    !inherited
+                                  }
+                                  problem={problems[p.permission]}
+                                  onChange={(on) => {
+                                    if (problems[p.permission]) {
+                                      const rest = { ...problems };
+                                      delete rest[p.permission];
+                                      setProblems(rest);
+                                    }
+                                    setDraft({ ...draft, selected: toggle(draft.selected, p.permission, on) });
+                                  }}
+                                />
+                              );
+                            })}
+                          </CapabilitySection>
+                        ))}
                       </CapabilityGroup>
                     );
                   })}
