@@ -268,7 +268,8 @@ def make(ctx) -> list:
             lines.append(f"... and {len(rows) - MAX_ROWS} more, see the Console.")
         return "\n".join(lines)
 
-    @function_tool
+    # Not strict: `hub` is optional, so a call naming only the person validates.
+    @function_tool(strict_mode=False)
     def explain_access(person: str, hub: str = "") -> str:
         """Explain one person's access in the agents you manage, and why they have it.
 

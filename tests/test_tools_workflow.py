@@ -269,3 +269,14 @@ def test_same_names_and_schemas_through_the_claude_adapter(dep, monkeypatch, cal
     with identity_scope(Identity.make(ANN, surface="workflow")):
         out = asyncio.run(adapted.handler({"name": "daily"}))
     assert "access denied" in out["content"][0]["text"]
+
+
+def test_optional_filters_are_optional_in_the_schema(dep, monkeypatch):
+    """A call with only run_id must validate (the Claude runtime checks the
+    schema before invoking: a strict all-required schema failed the first call)."""
+    monkeypatch.delenv("HUBZOID_WORKFLOW_TOOLS", raising=False)
+    tools = {t.name: t for t in workflow_tools.make(SimpleNamespace(hub_dir=dep.hub_dir))}
+    schema = tools["workflow_runs"].params_json_schema
+    assert schema.get("required", []) == []
+    assert set(schema["properties"]) == {"workflow", "run_id", "status", "limit"}
+    assert tools["run_workflow"].params_json_schema["required"] == ["name"]
