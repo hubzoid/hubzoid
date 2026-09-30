@@ -182,6 +182,27 @@ export function groupCapabilities(permissions: Permission[], held: string[]) {
   })).filter((g) => g.items.length > 0);
 }
 
+/** Sub-headings inside a group, in display order after the unsectioned rows
+ *  (hubzoid/capabilities.py SECTIONS). Presentation only, like the groups. */
+export const CAPABILITY_SECTIONS = [
+  { key: "workflows", title: "Workflows" },
+  { key: "access", title: "Access control" },
+] as const;
+
+/**
+ * One group's rows split by section: the unsectioned block first (key and
+ * title ""), then each known section in order, empty ones left out. A section
+ * this Console doesn't know (an older or newer bridge) reads as unsectioned.
+ * Input order is kept inside each block.
+ */
+export function splitSections<T extends Pick<Permission, "section">>(items: T[]) {
+  const known = (s?: string) => CAPABILITY_SECTIONS.some((k) => k.key === s);
+  return [
+    { key: "", title: "", items: items.filter((p) => !known(p.section)) },
+    ...CAPABILITY_SECTIONS.map((s) => ({ key: s.key, title: s.title, items: items.filter((p) => p.section === s.key) })),
+  ].filter((s) => s.items.length > 0);
+}
+
 /** Can be granted: current, and not included with Use this agent. */
 export const isGrantable = (p?: Permission) => !!p && !p.obsolete && p.default !== "included";
 
@@ -326,6 +347,24 @@ function workflowLabel(name?: string | null) {
   return name.startsWith("md:") ? `the ${name.slice(3)} schedule` : `the ${name} workflow`;
 }
 
+const RUN_CONTROL_SURFACES: Record<string, string> = {
+  owui: "from chat",
+  web: "from chat",
+  openwebui: "from chat",
+  mcp: "over MCP",
+  api: "over the API",
+  whatsapp: "from WhatsApp",
+  telegram: "from Telegram",
+  cli: "from the CLI",
+};
+
+/** Where a run control came from, as the end of its sentence. Rows written
+ *  before the surface was recorded have none, and read as before. */
+function fromSurface(surface?: string | null) {
+  if (!surface || surface === "system") return [];
+  return [text(` ${RUN_CONTROL_SURFACES[surface] ?? `via ${humanize(surface)}`}`)];
+}
+
 export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sentence {
   const who =
     row.actor === "owui-identity"
@@ -396,14 +435,22 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [text("A new account reused "), person(subjectName), text("’s email")],
         detail: "Previous access was removed and the identity blocked until an administrator reviews it.",
       };
-    // Run controls come from `hubzoid schedule pause | resume | cancel` on the
-    // server; the target is kept in the permission column.
+    // Run controls come from `hubzoid schedule run | pause | resume | cancel` on
+    // the server, or from agent tools for people granted Run and control
+    // workflows. The workflow (or, for a cancel, the run) is kept in the
+    // permission column; a started run's id is the subject.
+    case "run_start":
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" started "), text(workflowLabel(row.permission)), ...inAgent(hubName), ...fromSurface(row.surface)],
+        detail: row.subject ? `Run ${row.subject}` : undefined,
+      };
     case "workflow_pause":
-      return { tone: "negative", parts: [actor(who), text(" paused "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+      return { tone: "negative", parts: [actor(who), text(" paused "), text(workflowLabel(row.permission)), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "workflow_resume":
-      return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+      return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "run_cancel":
-      return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName)] };
+      return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "account_unavailable":
       return {
         tone: "negative",
