@@ -12,9 +12,11 @@ Not in the archive:
     git repository.
   - PostgreSQL databases. The backup names them; docs/BACKUP.md has the
     pg_dump route.
-  - secrets (`.env`, `.hubzoid/artifact_secret`, `.webui_secret_key`) and the
-    database passwords in the gateway's `deployment.json` (saved as `***`),
-    unless asked for with `include_secrets`.
+  - secrets (`.env`, `.hubzoid/artifact_secret`, the deployment key
+    `secret.key`, `.webui_secret_key`) and the database passwords in the
+    gateway's `deployment.json` (saved as `***`), unless asked for with
+    `include_secrets`. The deployment key is backed up separately from the data
+    it protects (see hubzoid.secretbox).
 
 A backup holds new scheduled runs and waits for running ones to finish. Chat
 keeps working throughout. Due runs fire when the hold ends.
@@ -22,6 +24,8 @@ keeps working throughout. Due runs fire when the hold ends.
 Restore puts each saved directory back where it was, or under a new prefix
 (`moves`), and rewrites the absolute paths Hubzoid and Open WebUI store.
 Whatever was at a target is kept beside it as `<name>.pre-restore-<stamp>`.
+Secret files the archive does not hold stay as they were at the target, so
+restoring data in place never replaces the deployment key or the link secret.
 """
 from __future__ import annotations
 
@@ -45,7 +49,7 @@ FORMAT = 1
 INDEX = "hubzoid-backup.json"
 STATE_DIRS = (".hubzoid", ".inbound", "logs", "output")
 UI_DIR = ".openwebui-data"
-SECRET_FILES = {".env", "artifact_secret", ".webui_secret_key", ".admin_token"}
+SECRET_FILES = {".env", "artifact_secret", "secret.key", ".webui_secret_key", ".admin_token"}
 _SKIP_SUFFIXES = ("-wal", "-shm", "-journal", ".tmp", ".part")
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 # Enough to cover a long copy. The hold is cleared when the backup ends, and
@@ -564,6 +568,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
             if not src.exists():
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
+            aside = None
             if target.exists():
                 aside = target.with_name(f"{target.name}.pre-restore-{stamp}")
                 os.replace(target, aside)
@@ -573,6 +578,8 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
                     if stale.exists():
                         os.replace(stale, Path(str(aside) + side))
             shutil.move(str(src), str(target))
+            if aside is not None and root["kind"] != "file":
+                _keep_secrets(aside, target)
             say(f"Restored {target}")
 
     if any(a != b for a, b in moves):
@@ -582,6 +589,21 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
     return {"restored": [str(t) for t in targets.values()], "kept": kept,
             "not_included": index.get("not_included", []),
             "redacted": [str(p) for p in redacted if p.is_file()]}
+
+
+def _keep_secrets(previous: Path, restored: Path) -> None:
+    """Copy secret files the archive did not hold (a backup made without
+    secrets) from the directory the restore replaced. Restoring data must not
+    swap the deployment key or the artifact link secret for new ones."""
+    if not previous.is_dir():
+        return
+    for path in previous.rglob("*"):
+        if path.name not in SECRET_FILES or path.is_symlink() or not path.is_file():
+            continue
+        dest = restored / path.relative_to(previous)
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
 
 
 def _rewrite_paths(index: dict, targets: dict[str, Path], move_text) -> None:
