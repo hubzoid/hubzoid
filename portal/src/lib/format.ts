@@ -462,6 +462,21 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [actor(who), text(" confirmed a change for "), person(subjectName), ...inAgent(hubName), text(", but it failed")],
         detail: "Nothing was applied.",
       };
+    // Connector registry changes (Connectors). The capability id is in the permission column.
+    case "connector_create":
+    case "connector_update":
+    case "connector_delete": {
+      const id = capability((row.permission || "").replace(/^connector_/, ""));
+      if (row.action === "connector_create")
+        return { tone: "positive", parts: [actor(who), text(" added the connector "), id] };
+      if (row.action === "connector_update")
+        return { tone: "neutral", parts: [actor(who), text(" changed the connector "), id] };
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" removed the connector "), id],
+        detail: "Everyone’s connection to it was removed.",
+      };
+    }
     default:
       return {
         tone: "neutral",
