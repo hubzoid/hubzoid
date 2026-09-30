@@ -546,7 +546,7 @@ function step(name) {
     );
     assert.deepEqual(
       await toolsPanel.locator(".capability").evaluateAll((nodes) => nodes.map((n) => n.dataset.permission)),
-      ["curator", "jev", "email_me", "workflows_manage", "workflows_view", "access_tools"],
+      ["curator", "jev", "email_me", "workflows_view", "workflows_manage", "access_tools"],
     );
     const workflowsSection = toolsPanel.getByRole("group", { name: "Workflows", exact: true });
     await workflowsSection.getByRole("checkbox", { name: /See workflows and runs/ }).waitFor();
