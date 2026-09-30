@@ -35,7 +35,6 @@ class GatewayBackend:
     bridge_port: int
     api_key: str       # the bridge's first BRIDGE_API_KEYS entry
     model_label: str   # what /v1/models reports (best-effort, for display)
-    mcp_auth_mode: str = "legacy"
     mcp_public_url: str = ""
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
     mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
@@ -112,10 +111,9 @@ class GatewayPlan:
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",
                     "strip_prefix": base,
                 })
-                if b.mcp_auth_mode != "legacy":
-                    for prefix in (f"/.well-known/oauth-protected-resource{base}/mcp",
-                                   f"/.well-known/oauth-authorization-server{base}/mcp/oauth"):
-                        routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{b.bridge_port}"})
+                for prefix in (f"/.well-known/oauth-protected-resource{base}/mcp",
+                               f"/.well-known/oauth-authorization-server{base}/mcp/oauth"):
+                    routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{b.bridge_port}"})
             # Inbound surfaces (WhatsApp/Telegram/generic webhook): the hub's
             # inbound server owns /webhooks/<slug>/* (e.g. /webhooks/<slug>/whatsapp)
             # on a loopback port, each POST signature-, secret-, or HMAC-verified
@@ -134,9 +132,7 @@ class GatewayPlan:
 
     @property
     def any_mcp(self) -> bool:
-        """True when at least one fronted hub serves /mcp — the gateway then
-        enables OWUI per-user API-key minting (locked to deny-all inside
-        OWUI; see webui._MCP_API_KEY_ENV)."""
+        """True when at least one fronted hub serves OAuth-protected MCP."""
         return any(b.mcp for b in self.backends)
 
     def branding_source(self, gw_data: Path, override: str | None = None) -> Path:
@@ -222,9 +218,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         seen_slugs[base_slug] = n + 1
         slug = base_slug if n == 0 else f"{base_slug}-{n + 1}"
 
-        auth_mode = (_own_env_value(hub_dir, "MCP_AUTH_MODE") or "legacy").lower()
         mcp_public_url = _own_env_value(hub_dir, "MCP_PUBLIC_URL")
-        if _mcp_enabled(hub_dir) and auth_mode != "legacy":
+        if _mcp_enabled(hub_dir):
             from urllib.parse import urlsplit
             from .mcp_oauth import validate_public_url
             mcp_public_url = validate_public_url(mcp_public_url)
@@ -265,7 +260,6 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
             model_label=label,
-            mcp_auth_mode=auth_mode,
             mcp_public_url=mcp_public_url,
             mcp=_mcp_enabled(hub_dir),
             mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),

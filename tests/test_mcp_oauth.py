@@ -27,12 +27,12 @@ REDIRECT = "http://localhost:54321/callback"
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
-    hub = _mk_hub(tmp_path)
+    hub = _mk_hub(tmp_path, oauth_fixture=False)
     db = tmp_path / "owui.db"
     _mk_owui_db(db)
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("MCP_SERVER", "true")
-    monkeypatch.setenv("MCP_AUTH_MODE", "dual")
+    monkeypatch.delenv("MCP_AUTH_MODE", raising=False)
     monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
     from hubzoid.access import session
 
@@ -134,7 +134,7 @@ def run_flow(hub, flow):
     asyncio.run(run())
 
 
-def test_oauth_lifecycle_and_legacy(setup):
+def test_oauth_lifecycle_rejects_old_api_keys(setup):
     hub, _ = setup
 
     async def flow(c):
@@ -162,7 +162,7 @@ def test_oauth_lifecycle_and_legacy(setup):
         tokens = r.json()
         assert (await exchange(c, client, code)).status_code >= 400
         assert _result(await rpc(c, tokens["access_token"]))["tools"]
-        assert _result(await rpc(c, "sk-test"))["tools"]
+        assert (await rpc(c, "sk-test")).status_code == 401
         r = await c.post(
             "/mcp/oauth/token",
             data={
@@ -257,7 +257,6 @@ def test_oauth_configuration_and_mode(setup, monkeypatch):
     with pytest.raises(ValueError, match="HTTPS"):
         app_for(hub)
     monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
-    monkeypatch.setenv("MCP_AUTH_MODE", "oauth")
 
     async def flow(c):
         assert (await rpc(c, "sk-test")).status_code == 401
@@ -308,16 +307,15 @@ def test_gateway_discovery_routes_and_per_hub_settings(tmp_path, monkeypatch):
         h.mkdir()
         (h / "AGENTS.md").write_text(f"---\nname: {name}\n---\n")
         extra = (
-            f"MCP_AUTH_MODE=dual\nMCP_PUBLIC_URL=https://hub.example/b/{name}/mcp\n"
-            if name == "a"
-            else ""
+            f"MCP_PUBLIC_URL=https://hub.example/b/{name}/mcp\n" if name == "a" else ""
         )
         (h / ".env").write_text(
-            f"BRIDGE_PORT={port}\nMCP_SERVER=true\nBRIDGE_API_KEYS=test-key\n" + extra
+            f"BRIDGE_PORT={port}\nMCP_SERVER={str(name == 'a').lower()}\nBRIDGE_API_KEYS=test-key\n"
+            + extra
         )
     gp = gateway.plan([tmp_path / "a", tmp_path / "b"])
-    assert gp.backends[0].mcp_auth_mode == "dual"
-    assert gp.backends[1].mcp_auth_mode == "legacy"
+    assert gp.backends[0].mcp
+    assert not gp.backends[1].mcp
     assert gp.backends[1].mcp_public_url == ""
     routes = gp.edge_routes()
     assert any(
@@ -453,7 +451,21 @@ def test_gateway_wrong_public_path_is_rejected(tmp_path):
     h.mkdir()
     (h / "AGENTS.md").write_text("---\nname: sales\n---\n")
     (h / ".env").write_text(
-        "MCP_SERVER=true\nMCP_AUTH_MODE=dual\nMCP_PUBLIC_URL=https://hub.example/mcp\nBRIDGE_API_KEYS=test\n"
+        "MCP_SERVER=true\nMCP_PUBLIC_URL=https://hub.example/mcp\nBRIDGE_API_KEYS=test\n"
     )
     with pytest.raises(ValueError, match="MCP_PUBLIC_URL"):
         gateway.plan([h])
+
+
+@pytest.mark.parametrize("obsolete_mode", ["legacy", "dual"])
+def test_obsolete_mode_cannot_restore_api_keys(setup, monkeypatch, obsolete_mode):
+    hub, _ = setup
+    monkeypatch.setenv("MCP_AUTH_MODE", obsolete_mode)
+
+    async def flow(c):
+        assert (await rpc(c, "sk-test")).status_code == 401
+        assert (
+            await c.get("/.well-known/oauth-protected-resource/mcp")
+        ).status_code == 200
+
+    run_flow(hub, flow)

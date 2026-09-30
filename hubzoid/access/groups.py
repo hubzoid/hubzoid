@@ -19,7 +19,7 @@ default is preserved: a lookup that goes wrong denies, it never grants.
 
 Deliberately NOT used for the MCP front door (``MCP_ACCESS_GROUP``), which is an
 OWUI-admin-managed tenant boundary — the roster must not be able to open it.
-That check stays OWUI-only in ``mcp_server._build_verifier``.
+That check stays OWUI-only in ``mcp_oauth.HubOAuth``.
 """
 from __future__ import annotations
 

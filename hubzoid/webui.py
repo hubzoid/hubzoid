@@ -199,17 +199,10 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_ADMIN_EXPORT": _OFF,
 }
 
-# Env flipped on when a hub enables the hosted MCP server (MCP_SERVER=true).
-# Users mint per-user API keys in OWUI (Settings -> Account -> API keys) and
-# present them as Bearer tokens on /mcp. The endpoint-restriction pair with an
-# EMPTY allowlist makes OWUI 403 every API request authenticated by key —
-# verified in OWUI 0.9.6 source (utils/auth.py, get_current_user_by_api_key):
-# the key mints fine but is inert against OWUI itself, so the original
-# "per-user API keys defeat auth" concern stays honored. The key is an
-# identity credential for the MCP surface only (hubzoid.access.owui_api_keys
-# resolves it read-only against OWUI's DB). Both spellings: OWUI renamed the
-# vars in 0.9.6 (plural) but still falls back to the singular forms for the
-# restriction pair. `setdefault` as everywhere — the operator's .env wins.
+# Optional OWUI API-key minting for callers explicitly requesting this feature.
+# Hosted MCP does not enable it and does not accept these keys. The historical
+# constant name is retained for compatibility. Endpoint restrictions keep keys
+# denied inside OWUI unless the operator explicitly changes the allowlist.
 _MCP_API_KEY_ENV: dict[str, str] = {
     "ENABLE_API_KEY": _ON,
     "ENABLE_API_KEYS": _ON,

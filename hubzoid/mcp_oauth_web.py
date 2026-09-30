@@ -228,7 +228,7 @@ def browser_routes(provider):
             body += f'<article><strong>{escape(g["client_name"])}</strong><form method="post"><input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="grant" value="{escape(g["id"])}"><button class="secondary">Revoke connection</button></form></article>'
         if not grants:
             body += "<p>No active assistant connections.</p>"
-        body += "<p><small>API keys are managed separately in Open WebUI → Settings → Account.</small></p>"
+        body += "<p><small>These connections use OAuth. Static API keys cannot connect to this MCP server.</small></p>"
         return set_cookie(page("Your assistant connections", body), csrf)
 
     return [

@@ -26,16 +26,15 @@ python -m pip install -e .
 Before restarting, back up the Hubzoid operational database. Startup applies the
 additive `op_0008` migration. The repo's migration runner refuses a database from a
 newer schema when running older code; rollback to an older SDK therefore requires
-restoring the matching pre-upgrade backup. Switching this build back to legacy
-mode does not require a schema rollback.
+restoring the matching pre-upgrade backup.
 
-## 2. Enable both authentication methods
+## 2. Enable OAuth-only MCP
 
 In your **hub folder's** `.env` (not the SDK repo's `.env`):
 
 ```dotenv
 MCP_SERVER=true
-MCP_AUTH_MODE=dual
+WEBUI_AUTH=true
 MCP_PUBLIC_URL=https://your-domain.example/mcp
 ```
 
@@ -43,7 +42,7 @@ For a gateway hub:
 
 ```dotenv
 MCP_SERVER=true
-MCP_AUTH_MODE=dual
+WEBUI_AUTH=true
 MCP_PUBLIC_URL=https://your-domain.example/b/your-hub-slug/mcp
 ```
 
@@ -113,22 +112,16 @@ Organization administrators may need to enable the connector first. Availability
 and menu labels depend on your Claude plan/version. This is the remote connector
 flow; a Claude Code plugin folder is not needed here.
 
-## 5. Revoke a connection or finish migration
+## 5. Revoke a connection
 
 Open `https://your-domain.example/mcp/oauth/connections`, or the corresponding
 `/b/<slug>/mcp/oauth/connections` URL. Sign in with Open WebUI and revoke an
 assistant connection. Its access and refresh tokens stop working immediately.
-API keys are managed separately in Open WebUI.
-
-| Mode | OWUI API keys | OAuth |
-| --- | --- | --- |
-| `legacy` (default) | Accepted | Off |
-| `dual` (recommended transition) | Accepted | Accepted |
-| `oauth` | Rejected on this MCP endpoint | Accepted |
-
-Nothing automatically deletes or invalidates your existing API keys. Once all
-users have moved, change to `MCP_AUTH_MODE=oauth` and restart. Returning to `dual`
-restores acceptance of any OWUI key that is still valid.
+Static Open WebUI API keys are rejected on MCP. The old `MCP_AUTH_MODE` switch
+has been removed; setting it to `legacy` or `dual` cannot restore key access.
+Existing API keys are not deleted from Open WebUI, but cannot connect here.
+OAuth still uses short-lived access tokens internally; clients obtain these
+through login and consent rather than asking users to paste a permanent key.
 
 ## Plugin location
 

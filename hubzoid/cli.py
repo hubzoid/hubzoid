@@ -416,9 +416,6 @@ def run(
                 model_label=settings.model_label or main_name,
                 webui_name=resolved_webui_name,
                 suggestions=suggestions,
-                # MCP callers authenticate with per-user OWUI api keys, so the
-                # minting UI must exist (keys stay deny-all inside OWUI).
-                enable_api_keys=settings.mcp_server,
                 # The deployment layer only: never the hub secret or
                 # restricted/.env (config_secrets.deployment_view).
                 base_env=config_secrets.deployment_view(os.environ),
@@ -452,7 +449,7 @@ def run(
                     edge_routes.append(
                         {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
                     )
-                if settings.mcp_server and settings.mcp_auth_mode != "legacy":
+                if settings.mcp_server:
                     for prefix in ("/.well-known/oauth-protected-resource/mcp",
                                    "/.well-known/oauth-authorization-server/mcp/oauth"):
                         edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
@@ -771,7 +768,6 @@ def gateway(
             # overrides), so this only settles the .env-less inheritance.
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
             bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
-            bridge_env["MCP_AUTH_MODE"] = b.mcp_auth_mode
             bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
             # Gateway mode: enable scheduled workflows (the HUBZOID_SCHEDULES gate
             # is auto-satisfied here), and pin every bridge to ONE shared
@@ -811,9 +807,6 @@ def gateway(
             ui_host=owui_host,
             connection_env=gp.connection_env(),
             webui_name=name,
-            # Any MCP-enabled hub needs users to mint per-user api keys in
-            # the shared OWUI (keys stay deny-all inside OWUI itself).
-            enable_api_keys=gp.any_mcp,
             brand_dir=brand_src,
         )
     except FileNotFoundError as exc:

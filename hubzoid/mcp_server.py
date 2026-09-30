@@ -3,23 +3,21 @@
 
 The inverse of `loaders/mcp.py` (which *consumes* MCP servers): this module
 serves the hub's own FunctionTool registry to external MCP clients (Claude
-Code, Cursor, claude.ai via optional OAuth) so users can bring their own model
+Code, Cursor, claude.ai via OAuth) so users can bring their own model
 and use the hub purely for context and tools.
 
-    claude mcp add --transport http myhub https://hub.example.com/mcp \
-        --header "Authorization: Bearer sk-..."
+    claude mcp add --transport http myhub https://hub.example.com/mcp
 
 Design points:
 
   * Opt-in per hub: ``MCP_SERVER=true`` in ``<hub>/.env`` (see settings.py).
     The bridge mounts the endpoint at ``/mcp``; the edge exposes it publicly
     (``/mcp`` single-hub, ``/b/<hub>/mcp`` in gateway mode).
-  * Auth: Open WebUI per-user API keys, resolved read-only against OWUI's
-    database (`access/owui_api_keys.py`). The caller's email then maps to
-    their OWUI groups exactly like a chat request, and every tool call runs
-    under `access.identity_scope` with surface ``mcp`` — restricted tools
-    follow the same group rules, and every decision is audited. The bridge's
-    own `BRIDGE_API_KEYS` are never accepted on this surface.
+  * Auth: OAuth authorization code flow with PKCE. Open WebUI authenticates
+    the user; Hubzoid collects consent and issues scoped OAuth credentials.
+    Static API keys and bridge secrets are rejected. Every request rechecks
+    the current account and hub permissions; tools run under identity_scope
+    with surface ``mcp`` and the same access rules as chat.
   * Tool set: the same registry the chat agent gets (built-ins + hub-local +
     guarded restricted/), minus chat-scoped tools (`write_artifact`,
     `read_upload`, ...) which have no chat directory to resolve outside a
@@ -48,7 +46,7 @@ log = logging.getLogger("hubzoid.mcp")
 
 #: The identity surface MCP callers run under. Listed in
 #: `access.policy.DEFAULT_RESTRICTED_SURFACES` because the caller carries a
-#: per-person verified login (their own OWUI API key) — unlike Slack, where
+#: per-person verified login (their own OAuth grant) — unlike Slack, where
 #: one bot token speaks for everyone.
 MCP_SURFACE = "mcp"
 
@@ -155,73 +153,13 @@ def _mcp_identity(hub_dir: Path) -> "access.Identity":
     # Union OWUI groups with the hub roster (keyed by the same email), so a
     # coordinator granted a permission in identity/access.* gets it over MCP
     # too. This governs RESTRICTED-TOOL permissions only. The MCP front door
-    # (MCP_ACCESS_GROUP, in _build_verifier) stays OWUI-only on purpose: the
+    # (MCP_ACCESS_GROUP, in mcp_oauth.allowed) stays OWUI-only on purpose: the
     # roster must not be able to open the gateway tenant boundary.
     groups = access.effective_groups(hub_dir, email=email, surface=MCP_SURFACE)
     return access.Identity.make(user=email, groups=groups, surface=MCP_SURFACE)
 
 
-def _build_verifier(hub_dir: Path, *, access_group: str | None = None):
-    """An auth provider that accepts OWUI per-user API keys as Bearer tokens.
 
-    When `access_group` is set (MCP_ACCESS_GROUP), key holders must also be
-    members of that OWUI group or the whole surface answers 401. This is the
-    per-hub front door for gateway mode, where one shared user database backs
-    every hub: without it, any logged-in user of any team could reach this
-    hub's *unrestricted* tools and knowledge.
-    """
-    from fastmcp.server.auth import AccessToken, TokenVerifier
-
-    from .access import owui_api_keys
-
-    required = access.normalize(access_group or "")
-
-    class _OwuiApiKeyVerifier(TokenVerifier):
-        async def verify_token(self, token: str) -> "AccessToken | None":
-            email = owui_api_keys.resolve_email(hub_dir, token)
-            if not email:
-                return None
-            # The front door. Once Casbin is authoritative it IS the tenant gate:
-            # `can(email, hub, use_hub)`. MCP_ACCESS_GROUP is retired as an authz
-            # source (never re-consulted), so OWUI group state can't reopen a hub.
-            # FAIL CLOSED: once authoritative, any store error denies — it never
-            # drops back to the legacy group gate (which would be a bypass).
-            from .access import store_for
-            from .access.store import USE_HUB
-
-            try:
-                gs = store_for(hub_dir)
-                authoritative = gs.is_authoritative(hub_dir.name)
-                if gs.is_suspended(email):
-                    return None
-            except Exception:  # noqa: BLE001 — can't determine authority -> deny
-                log.exception("mcp: store unavailable; denying %s", email)
-                return None
-            if authoritative:
-                try:
-                    ok = gs.can(email, hub_dir.name, USE_HUB)
-                except Exception:  # noqa: BLE001 — authoritative but errored -> deny
-                    log.exception("mcp: can() failed; denying %s", email)
-                    return None
-                if not ok:
-                    log.info("mcp: %s denied — no use_hub in %s", email, hub_dir.name)
-                    return None
-                return AccessToken(
-                    token=token, client_id=email, scopes=[], claims={"email": email}
-                )
-            if required and required not in access.owui_groups.resolve_groups(
-                hub_dir, email
-            ):
-                log.info(
-                    "mcp: %s denied — not in MCP_ACCESS_GROUP %r", email, required
-                )
-                return None
-            # claims["email"] is what `_mcp_identity` reads back per call.
-            return AccessToken(
-                token=token, client_id=email, scopes=[], claims={"email": email}
-            )
-
-    return _OwuiApiKeyVerifier()
 
 
 # ---------------------------------------------------------------------------
@@ -388,15 +326,8 @@ def build_mcp_app(
         settings = settingslib.load(hub_dir)
     registry, permissions = build_registry(hub_dir, settings=settings)
 
-    mode = settings.mcp_auth_mode
-    if mode not in {"legacy", "dual", "oauth"}:
-        raise ValueError("MCP_AUTH_MODE must be legacy, dual, or oauth")
-    auth = _build_verifier(hub_dir, access_group=settings.mcp_access_group)
-    if mode != "legacy":
-        from fastmcp.server.auth import MultiAuth
-        from .mcp_oauth import HubOAuth
-        oauth = HubOAuth(hub_dir, settings.mcp_public_url, settings.mcp_access_group)
-        auth = MultiAuth(server=oauth, verifiers=[auth]) if mode == "dual" else oauth
+    from .mcp_oauth import HubOAuth
+    auth = HubOAuth(hub_dir, settings.mcp_public_url, settings.mcp_access_group)
 
     mcp = FastMCP(
         name=_agent_name(hub_dir),

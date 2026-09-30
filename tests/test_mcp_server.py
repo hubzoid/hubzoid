@@ -46,7 +46,7 @@ def _mk_owui_db(path: Path, *, email="alice@example.com", key="sk-test",
     return path
 
 
-def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "") -> Path:
+def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "", oauth_fixture: bool = True) -> Path:
     """A tiny hub: AGENTS.md, one knowledge doc, one restricted tool."""
     hub = tmp_path / "hub"
     (hub / "knowledge").mkdir(parents=True)
@@ -62,6 +62,9 @@ def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "") -> Path:
         '    """Echo, but only for the clickup group."""\n'
         "    return f'clickup says: {text}'\n"
     )
+    from tests.mcp_credentials import seed
+    if oauth_fixture:
+        seed(hub)
     return hub
 
 
@@ -87,7 +90,7 @@ def _result(resp: httpx.Response) -> dict:
     return payload["result"]
 
 
-def _call(app, body: dict, token: str | None = "sk-test") -> httpx.Response:
+def _call(app, body: dict, token: str | None = "oauth-test") -> httpx.Response:
     async def go():
         async with app.lifespan(app):
             transport = httpx.ASGITransport(app=app)
@@ -108,6 +111,7 @@ def _clean_mcp_env(monkeypatch):
     production. Scrub before every test so no test inherits another's hub."""
     monkeypatch.delenv("MCP_SERVER", raising=False)
     monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
+    monkeypatch.setenv("MCP_PUBLIC_URL", "https://hub.example/mcp")
 
 
 @pytest.fixture
@@ -280,7 +284,7 @@ def test_bridge_mounts_mcp_when_enabled(bridge_env, monkeypatch):
         assert r.status_code == 401                               # OWUI key required
         r = client.post(
             "/mcp", json=_rpc("tools/list"),
-            headers={**RPC_HEADERS, "Authorization": "Bearer sk-test"},
+            headers={**RPC_HEADERS, "Authorization": "Bearer oauth-test"},
         )
         assert r.status_code == 200
         names = {t["name"] for t in _result(r)["tools"]}
@@ -319,7 +323,7 @@ def _mk_gateway_hub(base: Path, name: str, port: int, *, mcp: bool) -> Path:
     (hub / "AGENTS.md").write_text(f"---\nname: {name}\n---\nbody\n")
     env = f"BRIDGE_PORT={port}\n"
     if mcp:
-        env += "MCP_SERVER=true\n"
+        env += f"MCP_SERVER=true\nMCP_PUBLIC_URL=https://hub.example/b/{name}/mcp\n"
     (hub / ".env").write_text(env)
     return hub
 
@@ -386,7 +390,7 @@ def test_gateway_plan_carries_access_group(tmp_path):
     from hubzoid import gateway
 
     hub = _mk_gateway_hub(tmp_path, "alpha", 8100, mcp=True)
-    (hub / ".env").write_text("BRIDGE_PORT=8100\nMCP_SERVER=true\nMCP_ACCESS_GROUP=sales\n")
+    (hub / ".env").write_text("BRIDGE_PORT=8100\nMCP_SERVER=true\nMCP_ACCESS_GROUP=sales\nMCP_PUBLIC_URL=https://hub.example/b/alpha/mcp\n")
     gp = gateway.plan([hub])
     assert gp.backends[0].mcp_access_group == "sales"
 
@@ -469,6 +473,9 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     from hubzoid import mcp_server
 
+    from tests.mcp_credentials import seed
+    seed(hub, token="oauth-alice", email="alice@x.io", account_id="u1")
+    seed(hub, token="oauth-bob", email="bob@x.io", account_id="u2")
     app = mcp_server.build_mcp_app(hub)
 
     async def go():
@@ -482,7 +489,7 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
                         headers={**RPC_HEADERS, "Authorization": f"Bearer {token}"},
                     )
                 # alice sleeps longer, so bob's request completes inside her window
-                return await asyncio.gather(call("sk-alice", 0.3, 1), call("sk-bob", 0.05, 2))
+                return await asyncio.gather(call("oauth-alice", 0.3, 1), call("oauth-bob", 0.05, 2))
 
     r_alice, r_bob = asyncio.run(go())
     assert "alice@x.io|['clickup']" in _result(r_alice)["content"][0]["text"]
