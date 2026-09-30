@@ -374,5 +374,14 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
         entries[name] = _obsolete(name)
     order = {g: i for i, g in enumerate((*GROUPS, OBSOLETE_GROUP))}
     sections = {s: i + 1 for i, s in enumerate(SECTIONS)}
-    return sorted(entries.values(), key=lambda e: (
-        order.get(e["group"], len(order)), sections.get(e.get("section") or "", 0), e["permission"]))
+    # Inside a section, built-ins keep the order their module registered them
+    # (e.g. "See workflows and runs" before "Run and control workflows").
+    registered_at = {cap.permission: i for i, cap in enumerate(registered())}
+
+    def key(e):
+        section = e.get("section") or ""
+        return (order.get(e["group"], len(order)), sections.get(section, 0),
+                registered_at.get(e["permission"], len(registered_at)) if section else 0,
+                e["permission"])
+
+    return sorted(entries.values(), key=key)

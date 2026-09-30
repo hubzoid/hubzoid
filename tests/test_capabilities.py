@@ -293,6 +293,10 @@ def test_sections_order_rows_inside_their_group(api, register):
     tools = [e["permission"] for e in entries if e["group"] == "tools"]
     # Unsectioned rows first, then each section in SECTIONS order.
     assert tools.index("zz_z_plain") < tools.index("zz_a_flow") < tools.index("zz_b_door")
+    # Inside a section, registration order, not the id.
+    register(Capability(permission="zz_0_later", label="Later", group="tools", section="workflows"))
+    tools = [e["permission"] for e in api.svc.catalog("finance") if e["group"] == "tools"]
+    assert tools.index("zz_a_flow") < tools.index("zz_0_later")
     by = _by_id(entries)
     assert (by["zz_a_flow"]["section"], by["zz_b_door"]["section"], by["zz_z_plain"]["section"]) == (
         "workflows", "access", "")
