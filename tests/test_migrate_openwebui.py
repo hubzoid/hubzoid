@@ -131,6 +131,9 @@ async def main():
         access_grants=[{"principal_type": "group", "principal_id": groups["ops-team"], "permission": "read"},
                        {"principal_type": "user", "principal_id": ids["erin"], "permission": "read"}]),
         ids["admin"])
+    assert await Models.insert_new_model(ModelForm(
+        id="finance-helper", base_model_id="finance", name="Finance helper", meta=ModelMeta(),
+        params=ModelParams(), access_grants=[]), ids["admin"])
 
     chats, mids = manifest["chats"], manifest["messages"]
     def m(name):
@@ -251,6 +254,11 @@ async def main():
                    '<details type="tool_calls" done="true" id="call_1" name="web_search" '
                    'arguments="{&quot;q&quot;: &quot;x&quot;}" result="&quot;ok&quot;">\n<summary>Tool Executed</summary>\n</details>\n'
                    'Final answer with \\(a+b\\).', model="ops", done=True, ts=T0 + 5)], mids["c12a1"])
+
+    # 13. A workspace model built on the finance agent.
+    await add("workspace", "alice", "Helper", "finance-helper",
+              [msg(m("c13u1"), None, "user", "Help"),
+               assistant(m("c13a1"), mids["c13u1"], "finance-helper", "Helped")], mids["c13a1"])
 
     await async_engine.dispose()
     with engine.connect() as c:
@@ -418,7 +426,7 @@ def test_dry_run_changes_nothing(gateway):
     assert report.blocking == [] and report.applied is False
     counts = report.counts
     assert counts["users"]["to_import"] == 8
-    assert counts["conversations"]["to_import"] == 10
+    assert counts["conversations"]["to_import"] == 11
     assert counts["files"]["copied_from_open_webui"] == 1  # would copy: nothing written
     assert report.access["finance"]["state"] == "convert"
     assert report.access["finance"]["differences"] == 0
@@ -491,7 +499,9 @@ def test_apply_gateway_moves_people_groups_access_and_chats(gateway):
     # Conversations: same ids, owner, hub, agent, archive state, current branch.
     convs = {r["id"]: r for r in d.rows("SELECT * FROM hz_conversations")}
     assert set(convs) == {d.chat(k) for k in ("branches", "files", "legacy", "archived", "shared", "clone",
-                                              "pending", "system", "errors", "details")}
+                                              "pending", "system", "errors", "details", "workspace")}
+    assert (convs[d.chat("workspace")]["hub"], convs[d.chat("workspace")]["agent"]) == ("finance", "finance")
+    assert report.counts["conversations"]["agent_found_through_a_workspace_model"] == 1
     branches = convs[d.chat("branches")]
     assert (branches["owner_id"], branches["hub"], branches["agent"], branches["head_id"],
             branches["source"], branches["title_source"]) == \
@@ -587,7 +597,7 @@ def test_apply_twice_is_idempotent(gateway):
     assert _tree(gateway.root / "finance") == tree
     counts = second.counts
     assert counts["users"]["unchanged"] == 8 and "imported" not in counts["users"]
-    assert counts["conversations"]["unchanged"] == 10
+    assert counts["conversations"]["unchanged"] == 11
     assert counts["messages"].get("imported", 0) == 0 and counts["messages"].get("updated", 0) == 0
     assert counts["shares"]["already_present"] == 2
     assert counts["groups"]["already_present"] == 4
@@ -789,7 +799,7 @@ def test_standalone_rehearsal_on_a_copy(standalone, tmp_path):
 def test_model_alias_imports_an_old_agent(standalone):
     report = _run(standalone, aliases={"ops": "finance", "retired-agent": "solo"})
     assert report.unknown_models == {}
-    assert report.counts["conversations"]["to_import"] == 11
+    assert report.counts["conversations"]["to_import"] == 12
 
 
 def test_report_has_no_content_and_no_email(gateway):
@@ -832,11 +842,11 @@ def test_postgres_operational_store(gateway, postgres_url):
     url = make_url(postgres_url).set(database=name).render_as_string(hide_password=False)
     setup = mig.locate(gateway.entry, operational_db=url)
     dry = mig.run(setup)
-    assert dry.blocking == [] and dry.counts["conversations"]["to_import"] == 10
+    assert dry.blocking == [] and dry.counts["conversations"]["to_import"] == 11
     report = mig.run(setup, apply=True)
-    assert report.applied and report.counts["messages"]["imported"] == 30
+    assert report.applied and report.counts["messages"]["imported"] == 32
     again = mig.run(mig.locate(gateway.entry, operational_db=url), apply=True)
-    assert again.applied and again.counts["conversations"]["unchanged"] == 10
+    assert again.applied and again.counts["conversations"]["unchanged"] == 11
     engine = create_engine(url)
     try:
         with engine.connect() as conn:
