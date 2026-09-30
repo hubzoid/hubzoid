@@ -21,6 +21,12 @@ dist/
 # Open WebUI per hub state
 .openwebui-data/
 
+# Signing and encryption keys. Open WebUI writes .webui_secret_key into the
+# directory it starts in; the deployment key (HUBZOID_SECRET_KEY's file) is
+# secret.key. Neither belongs in git.
+.webui_secret_key
+secret.key
+
 # Per-hub chat/runtime state (uploads, per-chat artifacts)
 .hubzoid/
 
