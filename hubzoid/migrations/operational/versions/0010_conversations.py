@@ -60,6 +60,8 @@ def upgrade() -> None:
     )
     op.create_index("hz_messages_conversation", "hz_messages", ["conversation_id", "created_at"])
     op.create_index("hz_messages_parent", "hz_messages", ["parent_id"])
+    # A bridge start marks its hub's interrupted replies ('running') as failed.
+    op.create_index("hz_messages_status", "hz_messages", ["status"])
 
     op.create_table(
         "hz_shares",
