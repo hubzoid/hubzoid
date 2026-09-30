@@ -124,6 +124,28 @@ def test_secrets_only_when_asked(tmp_path):
     assert any(n.endswith("artifact_secret") for n in names)
 
 
+def test_the_deployment_key_stays_out_of_archives_and_survives_restore(tmp_path):
+    from hubzoid import secretbox
+
+    hub = _standalone(tmp_path)
+    secretbox.reset_cache()
+    secretbox.keys(hub)  # creates .hubzoid/secret.key
+    key = (hub / ".hubzoid" / "secret.key").read_bytes()
+    link_secret = (hub / ".hubzoid" / "artifact_secret").read_bytes()
+    archive = tmp_path / "b.tar.gz"
+    bk.backup(hub, archive, wait=0)
+    assert not any(n.endswith("secret.key") for n in _names(archive))
+
+    bk.restore(archive)  # in place, from an archive without secrets
+    assert (hub / ".hubzoid" / "secret.key").read_bytes() == key
+    assert (hub / ".hubzoid" / "artifact_secret").read_bytes() == link_secret
+
+    with_secrets = tmp_path / "s.tar.gz"
+    bk.backup(hub, with_secrets, wait=0, include_secrets=True)
+    assert any(n.endswith("secret.key") for n in _names(with_secrets))
+    secretbox.reset_cache()
+
+
 def test_restore_in_place_keeps_the_current_state_aside(tmp_path):
     hub = _standalone(tmp_path)
     archive = tmp_path / "b.tar.gz"
