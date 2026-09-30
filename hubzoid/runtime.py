@@ -3,9 +3,13 @@
 A `Runtime` exposes a tiny surface that the FastAPI bridge (`server.py`) and
 CLI (`cli.py`) consume without caring which engine sits underneath:
 
-  * `name`               -> what /v1/models reports
-  * `stream(prompt)`     -> async iterator of text deltas (SSE-friendly)
-  * `run(prompt)`        -> single accumulated response string
+  * `name`                  -> what /v1/models reports
+  * `stream_events(prompt)` -> async iterator of answer text (`str`) and typed
+                               `hubzoid.run_events` items (tool calls and
+                               results, reasoning, notices)
+  * `stream(prompt)`        -> the 1.0.x text of the same turn:
+                               `run_events.as_text(stream_events(prompt))`
+  * `run(prompt)`           -> single accumulated response string
 
 Three backends today:
   * OpenAI Agents SDK (provider-prefixed models) — `OpenAIAgentsRuntime`, in this file.
@@ -24,13 +28,17 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator, Protocol
 
+from . import run_events
 from . import settings as settingslib
+from .run_events import Notice, StreamItem, ToolCall, ToolResult
 
 log = logging.getLogger("hubzoid.runtime")
 
 
 class Runtime(Protocol):
     name: str
+
+    def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]: ...
 
     def stream(self, prompt: str) -> AsyncIterator[str]: ...
 
@@ -123,6 +131,11 @@ def build(hub_dir: Path, *, extra_tools: dict | None = None,
                 "hub %s: no MODEL in .env; defaulting to %s",
                 hub_dir.name, model_id,
             )
+
+    from . import testing_runtime
+    if testing_runtime.is_test_model(model_id):
+        # Deterministic scripted replies for tests; refused unless enabled.
+        return testing_runtime.build(hub_dir, model_id=model_id, settings=settings)
 
     if model_id == "codex-local" or model_id.startswith("codex-local/"):
         from .factory_codex import build_codex_runtime
@@ -219,18 +232,23 @@ class OpenAIAgentsRuntime:
             self._stack = None
         self._opened = False
 
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        """Run one turn. When the caller connected personal MCP servers in Open
-        WebUI (see `owui_mcp`), the turn runs on a per-turn clone of the agent
-        that also carries those servers, each with the caller's own token. The
-        shared agent is never modified."""
+    async def stream_events(self, prompt: str) -> AsyncIterator[StreamItem]:
+        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
+        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
+        the turn runs on a per-turn clone of the agent that also carries those
+        servers, each with the caller's own token. The shared agent is never
+        modified."""
         personal = self._personal_servers()
         if not personal:
-            async for chunk in self._stream(self._agent, prompt):
-                yield chunk
+            async for item in self._stream(self._agent, prompt):
+                yield item
             return
-        async for chunk in relay_in_task(lambda: self._stream_personal(prompt, personal)):
-            yield chunk
+        async for item in relay_in_task(lambda: self._stream_personal(prompt, personal)):
+            yield item
+
+    def stream(self, prompt: str) -> AsyncIterator[str]:
+        """The 1.0.x text of one turn (the typed stream, rendered)."""
+        return run_events.as_text(self.stream_events(prompt))
 
     def _personal_servers(self) -> list:
         if self._hub_dir is None:
@@ -268,7 +286,7 @@ class OpenAIAgentsRuntime:
             async for chunk in self._stream(agent, prompt):
                 yield chunk
 
-    async def _stream(self, agent, prompt: str) -> AsyncIterator[str]:
+    async def _stream(self, agent, prompt: str) -> AsyncIterator[StreamItem]:
         from agents import ItemHelpers, Runner
         from openai.types.responses import ResponseTextDeltaEvent
 
@@ -277,6 +295,8 @@ class OpenAIAgentsRuntime:
         self.last_error = None
         text_accumulated = False
         shown: list[str] = []
+        # call id -> short tool name, to name the result of each call.
+        called: dict[str, str] = {}
         # Native image vision: expand any [Image: name] reference into an input
         # list (text + input_image blocks). Plain string when nothing to inject.
         run_input = prompt
@@ -287,6 +307,7 @@ class OpenAIAgentsRuntime:
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
+        result = None
         try:
             result = Runner.run_streamed(agent, run_input, max_turns=self._max_turns)
             async for event in result.stream_events():
@@ -304,7 +325,6 @@ class OpenAIAgentsRuntime:
                             shown.append(text)
                             yield text
                     elif item.type == "tool_call_item":
-                        # One line per tool call. No matching "returned" line.
                         raw = getattr(item, "raw_item", None)
                         name = getattr(raw, "name", None) or "tool"
                         args = getattr(raw, "arguments", None)
@@ -314,29 +334,44 @@ class OpenAIAgentsRuntime:
                                 args = _json.loads(args)
                             except Exception:  # noqa: BLE001
                                 pass
+                        short = tool_events.short_name(name)
                         # Record before formatting: `format_call` returns ""
                         # when SHOW_TOOLS=off, but an eval's expect_tools must
                         # still see the call.
-                        _request_ctx.record_tool_call(
-                            tool_events.short_name(name), args)
-                        line = tool_events.format_call(
-                            tool_events.short_name(name), args,
-                            mode=self._tool_mode,
-                        )
-                        if line:
-                            yield line
+                        _request_ctx.record_tool_call(short, args)
+                        call_id = _openai_call_id(item)
+                        called[call_id] = short
+                        # 1.0.x printed one line per call and nothing for its result.
+                        yield ToolCall(id=call_id, name=short, args=args,
+                                       legacy=tool_events.format_call(short, args, mode=self._tool_mode))
+                    elif item.type == "tool_call_output_item":
+                        call_id = _openai_call_id(item)
+                        failed = _openai_tool_failed(item)
+                        yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
+                                         message=_TOOL_FAILED if failed else None)
             # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.
             footer = tool_events.format_artifact_footer(
                 _request_ctx.drain_artifacts(), "".join(shown))
             if footer:
-                yield footer
+                yield Notice(kind="artifacts", text=footer, legacy=footer)
         except Exception as exc:  # noqa: BLE001
             log.exception("openai-agents stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
-            yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
+            detail = f"{type(exc).__name__}: {exc}"
+            yield Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
+        except BaseException:
+            # Stopped before the end (the caller cancelled the turn, or closed
+            # this stream): stop the model run too instead of letting it finish
+            # unobserved in the background.
+            if result is not None:
+                try:
+                    result.cancel()
+                except Exception:  # noqa: BLE001 — best-effort
+                    log.debug("could not cancel the agents run", exc_info=True)
+            raise
 
     async def run(self, prompt: str) -> str:
         pieces: list[str] = []
@@ -448,6 +483,32 @@ class _Failure:
         self.exc = exc
 
 
+# The short text a failed tool shows in the web app. The error itself goes to
+# the model and the server log, never to the chat.
+_TOOL_FAILED = "The tool did not complete. The agent may retry or ask for more information."
+
+# The Agents SDK turns a tool exception into this text for the model (its
+# default `failure_error_function`); that is how a failed call shows in the run.
+_AGENTS_TOOL_ERROR_PREFIXES = (
+    "An error occurred while running the tool",
+    "An error occurred while parsing tool arguments",
+)
+
+
+def _openai_call_id(item) -> str:
+    """The call id of an Agents SDK tool call or tool output item ('' if none)."""
+    cid = getattr(item, "call_id", None)
+    if not cid:
+        raw = getattr(item, "raw_item", None)
+        cid = raw.get("call_id") if isinstance(raw, dict) else getattr(raw, "call_id", None)
+    return str(cid or "")
+
+
+def _openai_tool_failed(item) -> bool:
+    output = getattr(item, "output", None)
+    return isinstance(output, str) and output.startswith(_AGENTS_TOOL_ERROR_PREFIXES)
+
+
 def _agent_model_name(agent) -> str | None:
     """The model id an Agents SDK agent runs on (a string or a LitellmModel)."""
     model = getattr(agent, "model", None)
@@ -488,7 +549,10 @@ def _record_openai_usage(result, model: str | None = None) -> None:
 def describe(hub_dir: Path) -> str:
     settings = settingslib.load(hub_dir)
     model = _resolve_model_id(hub_dir, settings)
-    backend = "codex-local" if model.startswith("codex-local") else "claude-local" if model.lower().startswith("claude-local") else "openai-agents"
+    from . import testing_runtime
+    backend = ("hubzoid-test" if testing_runtime.is_test_model(model)
+               else "codex-local" if model.startswith("codex-local")
+               else "claude-local" if model.lower().startswith("claude-local") else "openai-agents")
     return json.dumps({"backend": backend, "model": model})
 
 
@@ -509,6 +573,10 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
     the whole run, so a restricted tool the workflow was granted is reachable and
     audited under that identity.
 
+    Returns only the model's answer: tool entries, reasoning, download footers
+    and error decorations are chat presentation and never reach a workflow's
+    data or report (`run_events.answer_only`).
+
     Raises `AgentRunError` when the run fails, rather than returning the error
     text the chat surface shows.
     """
@@ -527,7 +595,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         await rt.aopen()
         try:
             with _request_ctx.chat_scope(None):
-                text = await rt.run(prompt)
+                text = await run_events.answer_only(rt, prompt)
                 raw.update(_request_ctx.drain_usage())
         finally:
             await rt.aclose()
@@ -557,14 +625,18 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
         )
 
 
-def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
+def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
+                  surface: str = "workflow", kind: str = "llm",
+                  chat_id: str | None = None) -> dict:
     """One tool-free model call: the seam behind a workflow's `hub.call_llm`.
 
     `spec` is plain data (so a DBOS step can checkpoint it): prompt, system,
     model (default: the hub's model), response_format ("text" or "json") and an
     optional JSON Schema. LiteLLM models use their JSON mode; claude-local runs a
     single turn with no tools. Both get the same instruction and the same
-    tolerant parsing. Returns {"text", "json", "model"} and records a usage row.
+    tolerant parsing. Returns {"text", "json", "model"} and records a usage row
+    (`surface`, `kind` and `chat_id` label it: the web app's conversation
+    titles are `web` / `background`).
     """
     import asyncio
     import time
@@ -580,7 +652,10 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
     usage: dict = {}
     status = "error"
     try:
-        if model_id == "codex-local" or model_id.startswith("codex-local/"):
+        from . import testing_runtime
+        if testing_runtime.is_test_model(model_id):
+            text, usage = testing_runtime.complete(spec, model_id=model_id)
+        elif model_id == "codex-local" or model_id.startswith("codex-local/"):
             from .factory_codex import CodexRuntime
             async def codex_complete():
                 rt = CodexRuntime(name="workflow", instructions=system or "Answer the user's request.",
@@ -620,7 +695,8 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
         return result
     finally:
         usage_lib.record(
-            hub_dir, hub=hub_dir.name, surface="workflow", kind="llm", subject=subject,
+            hub_dir, hub=hub_dir.name, surface=surface, kind=kind, subject=subject,
+            chat_id=chat_id,
             model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
