@@ -246,8 +246,10 @@ def test_standalone_run_keeps_hub_only_layers_out_of_open_webui_and_edge(tmp_pat
     hub = tmp_path / "solo"
     (hub / "restricted").mkdir(parents=True)
     (hub / "AGENTS.md").write_text("---\nname: solo\n---\nbody")
+    # Legacy Open WebUI mode; tests/test_cli_run_webapp.py covers the web app's edge.
     (hub / ".env").write_text("BRIDGE_API_KEYS=solo-bridge-key-long-enough\nAWS_SECRET_NAME=dep\n"
-                              "AWS_REGION=eu-west-1\nHUBZOID_HUB_SECRET_NAME=solo-hub\nSHARED=hub\n")
+                              "AWS_REGION=eu-west-1\nHUBZOID_HUB_SECRET_NAME=solo-hub\nSHARED=hub\n"
+                              "HUBZOID_UI=openwebui\n")
     (hub / "restricted" / ".env").write_text("SOLO_TOOL_TOKEN=solo-tool-token\nSHARED=restricted\n"
                                              "HUBZOID_RESTRICTED_SECRET_NAME=solo-restricted\n")
     install(monkeypatch, {"dep": {"WEBUI_SECRET_KEY": "deployment-signing-key", "WEBUI_AUTH": "true"},

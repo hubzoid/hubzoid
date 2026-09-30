@@ -12,12 +12,17 @@ try:  # one source of truth: pyproject.toml, via the installed package metadata
 except Exception:  # noqa: BLE001 — running from a source tree that is not installed
     __version__ = "0+unknown"
 
-from .factory import build_agent  # noqa: E402,F401  (public re-export)
-
 
 def __getattr__(name):
-    # Lazy re-export of the workflow façade so `import hubzoid` never pulls in
-    # DBOS. Authors write `from hubzoid import workflow, step, hub`.
+    # Lazy public re-exports, so `import hubzoid` stays light: the CLI, the edge
+    # and the web app start without loading the agent SDKs (OpenAI Agents,
+    # LiteLLM) or DBOS until something uses them.
+    # `from hubzoid import build_agent` and `from hubzoid import workflow, step,
+    # hub` work as before.
+    if name == "build_agent":
+        from .factory import build_agent
+
+        return build_agent
     if name in ("workflow", "step", "hub"):
         from . import workflows
 

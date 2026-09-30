@@ -4,8 +4,10 @@ We start `open-webui serve` as a child process and point it at the hubzoid
 bridge as its OpenAI-compatible upstream. Per-hub state (SQLite DB, uploads)
 lives under `<hub>/.openwebui-data/` so each hub has isolated history.
 
-`open-webui` is a required dep of hubzoid (`pip install hubzoid` bundles it).
-If the binary is not on PATH we tell the user how to repair the install.
+Open WebUI is the legacy chat app (HUBZOID_UI=openwebui) and an optional extra
+for this release: `pip install "hubzoid[openwebui]"`. Nothing on the default
+path imports `open_webui`; when the binary is missing, legacy mode says how to
+install it.
 
 Hubzoid sets ~24 env vars on the OWUI subprocess to strip platform surfaces
 (community sharing, code interpreter, etc.) so the UI looks like a single
@@ -568,11 +570,9 @@ def _spawn_owui(
     binary = _find_binary()
     if binary is None:
         raise FileNotFoundError(
-            "open-webui not found next to the running Python or on PATH. "
-            "It is bundled with hubzoid; reinstall to repair:\n"
-            "    pip install --force-reinstall hubzoid\n"
-            "or install it directly:\n"
-            "    pip install open-webui"
+            "open-webui not found next to the running Python or on PATH. The legacy "
+            "Open WebUI chat app (HUBZOID_UI=openwebui) is an optional extra:\n"
+            '    pip install "hubzoid[openwebui]"'
         )
 
     data_dir.mkdir(parents=True, exist_ok=True)
