@@ -783,12 +783,13 @@ function perm(permission, label, description, sensitive = false, extra = {}) {
 function agentTools(workflows = {}) {
   const tools = { group: "tools", surfaces: ["chat", "mcp"] };
   return [
-    perm("workflows_manage", "Run and control workflows",
-      "Start a workflow now, pause or resume its schedule, and cancel a run. Runs act as the workflow's own account.",
-      true, { ...tools, section: "workflows", ...workflows }),
+    // Registration order inside a section (capabilities.catalog), not the id.
     perm("workflows_view", "See workflows and runs",
       "List this agent's workflows and schedules and check recent runs.",
       false, { ...tools, section: "workflows", ...workflows }),
+    perm("workflows_manage", "Run and control workflows",
+      "Start a workflow now, pause or resume its schedule, and cancel a run. Runs act as the workflow's own account.",
+      true, { ...tools, section: "workflows", ...workflows }),
     perm("access_tools", "Manage access from chat",
       "See and propose access changes in the agents this person manages. Has an effect only for people who manage access. Every change is confirmed in the Console.",
       true, { ...tools, section: "access", delegate_grantable: false }),
