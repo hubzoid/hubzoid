@@ -50,6 +50,8 @@ Rules (checked on every write, from the store, never from the caller):
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
+  * Reads follow the same scope: `hub_access` and `person_access` cover only
+    agents the actor manages (every agent for organization administrators).
   * Store or directory errors deny (fail closed).
 """
 from __future__ import annotations
@@ -331,6 +333,106 @@ class AccessService:
             return True
         gs = self.store
         return any(gs.is_authoritative(h) for h in scope.hubs)
+
+    # ---- reading access -----------------------------------------------------------
+
+    def _readable(self, scope: Scope, hub: str) -> str:
+        """`hub`, normalized, when `scope` may read it. Scope before existence,
+        so a delegate learns nothing about agents they don't manage."""
+        hub = normalize(hub)
+        if not scope.org_admin and hub not in scope.hubs:
+            raise Denied(403, "forbidden", f"Cannot manage {hub}")
+        self._hub_path(hub)
+        return hub
+
+    def hub_access(self, actor: Actor, hub: str, *, scope: Scope | None = None) -> dict:
+        """Everyone with access to one agent: the Console's Access tab and the
+        `who_has_access` tool. Organization administrators and managers of
+        `hub` only (403). `scope` is the actor's scope when the caller already
+        resolved it for this request (the Console does, per request); by
+        default it is read from the store.
+
+        Returns hub, authoritative, revision, public, public_reliant and rows
+        sorted by subject. A row is a subject holding something in `hub`, or an
+        organization administrator: subject, perms (direct grants here),
+        inherited (organization-wide grants), kind (person|service), center,
+        display, the account flags and status (`_account_state`) and effective
+        (what the enforcer allows now: nothing while blocked, though `perms`
+        keeps the grants). One consistent read of (revision, every grant): the
+        revision describes exactly these rows, so an editor's concurrency guard
+        is not defeated by new rows arriving under an old revision."""
+        hub = self._readable(self.scope(actor) if scope is None else scope, hub)
+        gs = self.store
+        revision, all_grants = gs.access_snapshot()
+        rows: dict[str, dict] = {}
+        for subject, domain, perm in all_grants:
+            if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
+                row = rows.setdefault(subject, dict(
+                    subject=subject, perms=[], inherited=[],
+                    kind="service" if subject.startswith("workflow:") else "person",
+                ))
+                row["perms" if domain == hub else "inherited"].append(perm)
+        for subject, row in rows.items():
+            row["center"] = gs.get_attr(hub, subject, "center")
+            identity = gs.identity(subject) or {}
+            row["display"] = identity.get("display") or subject
+            state = _account_state(gs, subject, identity)
+            row.update(state)
+            # Effective access must match the enforcer: a blocked account (admin
+            # suspension OR an unavailable chat account) holds nothing.
+            row["effective"] = [] if state["blocked"] else _effective(all_grants, subject, hub)
+        public = any(s == EVERYONE and h in (hub, ORG) and p == USE_HUB for (s, h, p) in all_grants)
+        # Chat accounts that enter only through "everyone signed in": signed
+        # up, approved, not blocked, and without a direct grant in this hub.
+        # Shown before an administrator removes that grant.
+        public_reliant = 0
+        if public:
+            direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
+            for ident in gs.identities():
+                subject = ident["subject"]
+                if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
+                        and not subject.startswith("workflow:") and subject not in direct
+                        and not gs.is_suspended(subject)):
+                    public_reliant += 1
+        return dict(hub=hub, authoritative=gs.is_authoritative(hub), revision=revision,
+                    public=public, public_reliant=public_reliant,
+                    rows=sorted(rows.values(), key=lambda r: r["subject"]))
+
+    def person_access(self, actor: Actor, subject: str, hub: str | None = None) -> dict:
+        """One person's (or service's) access in the agents `actor` manages, or
+        only in `hub`, with where each capability comes from (`SOURCES`).
+        Managers only (403); agents outside the actor's scope are never read.
+
+        Returns subject, display, kind, organization_admin (holds the
+        organization-wide grant), the account flags and status, revision and
+        hubs: one entry per agent in scope, in deployment order, with hub,
+        name, authoritative, capabilities ([{permission, sources}], from the
+        grants) and effective (what the enforcer allows now: nothing while
+        blocked)."""
+        scope = self._require_scope(actor)
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE:
+            raise Denied(422, "invalid_subject", "Name one person or service.")
+        hubs = [self._readable(scope, hub)] if hub else list(scope.hubs)
+        names = {h["key"]: h.get("name") or h["key"] for h in self._hubs()}
+        gs = self.store
+        revision, all_grants = gs.access_snapshot()
+        identity = gs.identity(subject) or {}
+        state = _account_state(gs, subject, identity)
+        entries = []
+        for key in hubs:
+            sources = _sources(all_grants, subject, key)
+            entries.append(dict(
+                hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
+                capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],
+                effective=[] if state["blocked"] else sorted(sources),
+            ))
+        return dict(
+            subject=subject, display=identity.get("display") or subject,
+            kind="service" if subject.startswith("workflow:") else "person",
+            organization_admin=(subject, ORG, MANAGE_ACCESS) in all_grants,
+            **state, revision=revision, hubs=entries,
+        )
 
     # ---- access changes -----------------------------------------------------------
 
@@ -1376,11 +1478,81 @@ def deleted_by_console(gs, subject: str, owui_id: str | None) -> bool:
         return False
 
 
+# ---- account state ----------------------------------------------------------
+#
+# The store keeps two independent block markers per subject and `is_suspended`
+# ORs them: `suspended:<subject>` (an admin's explicit block, or an
+# account_replaced safeguard) and `account_unavailable:<subject>` (derived from
+# Open WebUI: the account is pending approval, or vanished from the directory).
+# Only the first is cleared by "reactivate"; the second only clears when OWUI
+# reports the account as approved/present again. They are exposed apart so the
+# Console can tell "blocked by an admin" from "blocked by the chat app".
+
 def _account_flags(gs, subject: str) -> dict:
-    """The store's two block markers, read separately. `blocked` is their OR."""
+    """The store's two block markers, read separately (read-only). `blocked`
+    is their OR and always equals `gs.is_suspended(subject)`."""
     subject = normalize(subject)
     with gs.engine.connect() as conn:
         suspended = gs._meta_get(conn, "suspended:" + subject) == "1"  # noqa: SLF001
         unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"  # noqa: SLF001
     return dict(suspended=suspended, account_unavailable=unavailable,
                 blocked=suspended or unavailable)
+
+
+def _account_status(subject: str, identity: dict, flags: dict) -> str:
+    """One display status per subject. Precedence: an admin block beats
+    everything; then the structural kinds; then signup/approval progress; an
+    OWUI-side unavailable account that is *not* pending (deleted/missing) is
+    reported as `blocked` with `account_unavailable=true` alongside."""
+    if flags["suspended"]:
+        return "blocked"
+    if subject == EVERYONE:
+        return "everyone"
+    if subject.startswith("workflow:"):
+        return "service"
+    if not identity.get("owui_id"):
+        return "awaiting-signup"
+    if identity.get("pending"):
+        return "pending-approval"
+    if flags["account_unavailable"]:
+        return "blocked"
+    return "active"
+
+
+def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
+    """The account flags plus their display `status`."""
+    identity = identity if identity is not None else (gs.identity(subject) or {})
+    flags = _account_flags(gs, subject)
+    return dict(flags, status=_account_status(normalize(subject), identity, flags))
+
+
+# ---- reading access over one snapshot ----------------------------------------
+
+#: Where an effective capability comes from, in display order: a grant to the
+#: subject in that agent, the grant to everyone signed in, or an
+#: organization-wide grant (organization administration).
+SOURCES = ("direct", "everyone", "organization")
+
+
+def _effective(grants, subject: str, hub: str) -> list[str]:
+    """What `subject` holds in `hub` over one grant snapshot, as the enforcer
+    matches it (`GrantStore.permissions_for`): direct, organization-wide and
+    everyone signed in. A blocked subject holds nothing; callers check that."""
+    return sorted({p for (s, h, p) in grants if s in (subject, EVERYONE) and h in (hub, ORG)})
+
+
+def _sources(grants, subject: str, hub: str) -> dict[str, list[str]]:
+    """{permission: [source]} for the same set as `_effective`, sources in
+    `SOURCES` order."""
+    out: dict[str, set[str]] = {}
+    for s, h, p in grants:
+        if s == subject and h == hub:
+            source = "direct"
+        elif s == EVERYONE and h in (hub, ORG):
+            source = "everyone"
+        elif s == subject and h == ORG:
+            source = "organization"
+        else:
+            continue
+        out.setdefault(p, set()).add(source)
+    return {p: sorted(out[p], key=SOURCES.index) for p in sorted(out)}
