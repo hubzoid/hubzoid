@@ -308,11 +308,17 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Per-chat artifact + upload routes.
     # ------------------------------------------------------------------
+    from . import appmode
+
+    web_app = not appmode.is_legacy(hub_dir)
+
     @app.get("/artifacts/{chat_id}/{filename:path}")
     async def get_artifact(chat_id: str, filename: str, request: Request):
         # Browsers click links without a Bearer header. We accept either:
         #   * a signed token in `?t=<hex>` (the link Hubzoid writes into
         #     chat by default — see hubzoid._signing), OR
+        #   * in the web app, the signed-in owner of that conversation (their
+        #     session cookie), so an expired link still works for them, OR
         #   * a real Bearer api key (for curl / SDK callers). This route is
         #     public behind the edge, so the default "dev" key is not accepted.
         safe_chat = _require_safe_chat_id(chat_id)
@@ -321,7 +327,9 @@ def build_app() -> FastAPI:
         expires = request.query_params.get("e")
         if not _signing.verify_artifact_token(
             safe_chat, safe_name, token, expires, hub_dir=hub_dir
-        ):
+        ) and not (web_app and await asyncio.to_thread(
+            _owns_conversation, request, hub_dir, safe_chat
+        )):
             auth = request.headers.get("authorization", "")
             if auth[7:].strip() == "dev" and auth.lower().startswith("bearer "):
                 raise HTTPException(status_code=401, detail="invalid or expired link")
@@ -717,6 +725,24 @@ def _require_safe_chat_id(raw: str) -> str:
     if not safe:
         raise HTTPException(status_code=400, detail="invalid chat_id")
     return safe
+
+
+def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
+    """True when the signed-in person (web app session) owns the conversation
+    whose files live under this chat id. Any failure is a no."""
+    try:
+        from . import auth
+        from .chat import store as chat_store
+
+        user = auth.current_user(request, hub_dir)
+        if user is None:
+            return False
+        conv = chat_store.for_hub(hub_dir).get_conversation(chat_id)
+        return (conv is not None and conv["owner_id"] == user.id
+                and conv["hub"] == Path(hub_dir).name.lower())
+    except Exception:  # noqa: BLE001 — fall back to the token and key checks
+        log.warning("artifacts: session check failed", exc_info=True)
+        return False
 
 
 # ---------------------------------------------------------------------------
