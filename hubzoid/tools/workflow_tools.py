@@ -252,7 +252,9 @@ def make(ctx) -> list:
             lines.append(f"…and {len(rows) - MAX_ROWS} more.")
         return "\n".join(lines)
 
-    @function_tool
+    # Not strict: its filters are optional, so a call with only `run_id` (or
+    # none) must validate on every runtime instead of failing once.
+    @function_tool(strict_mode=False)
     async def workflow_runs(workflow: str = "", run_id: str = "", status: str = "",
                             limit: int = 10) -> str:
         """Check recent runs of this agent's workflows, or one run in detail.

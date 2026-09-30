@@ -369,3 +369,8 @@ def test_explain_access_never_describes_an_outsider(dep, monkeypatch):
     assert out == ("carol@x.org has no access of their own in the agents you manage. "
                    "Everyone signed in can use: finance.")
     assert "Carol" not in out and "Account" not in out
+
+
+def test_explain_access_hub_is_optional_in_the_schema(dep, monkeypatch):
+    tools = _tools(dep, monkeypatch)
+    assert tools["explain_access"].params_json_schema.get("required") == ["person"]
