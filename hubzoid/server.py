@@ -379,6 +379,18 @@ def build_app() -> FastAPI:
 
     app.include_router(artifacts_web.build_router(hub_dir))
 
+    # The Hubzoid web app (default UI mode): sign-in, conversations, personal
+    # connections, agents and the page shell. Registered before the portal's
+    # static mount so /portal/api/... routes it adds are not shadowed. The legacy
+    # Open WebUI mode (HUBZOID_UI=openwebui) keeps the 1.0.x surface unchanged.
+    from . import appmode
+
+    if not appmode.is_legacy(hub_dir):
+        from . import webapp
+
+        webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
+                     model_label=model_label)
+
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
     try:

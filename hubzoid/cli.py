@@ -2095,6 +2095,24 @@ app.add_typer(
     rich_help_panel="Commands",
 )
 
+# Accounts for the Hubzoid web app (hubzoid/auth/cli.py) and the move from an
+# Open WebUI install (hubzoid/migrate_openwebui.py). Each lives in its own module.
+from .auth.cli import admin_app  # noqa: E402
+from .migrate_openwebui import migrate_app  # noqa: E402
+
+app.add_typer(
+    admin_app,
+    name="admin",
+    help="Accounts: create administrators and users, reset passwords.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    migrate_app,
+    name="migrate",
+    help="Move an Open WebUI install to the Hubzoid web app.",
+    rich_help_panel="Commands",
+)
+
 
 # ---------------------------------------------------------------------------
 # version
