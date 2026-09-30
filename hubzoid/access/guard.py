@@ -99,14 +99,19 @@ def _named(hub_dir: Path, permission: str) -> str:
     return f"'{permission}'"
 
 
-def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
+def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
+               surfaces: "frozenset[str] | None" = None) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
     The original is left untouched (`dataclasses.replace` copies it). The
     decision is read from the per-request identity at call time, so one guarded
     instance built at boot serves every user correctly.
+
+    `surfaces` replaces the restricted-tool surface policy for this tool (a
+    tool family with its own rule, e.g. the management tools'
+    `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
     """
-    surfaces = _allowed_surfaces()
+    surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 

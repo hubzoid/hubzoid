@@ -281,3 +281,79 @@ def test_connector_apps_appear_as_sensitive_hubzoid_tools(tmp_path, monkeypatch)
     gmail = rows["connector_gmail"]
     assert gmail["group"] == "tools" and gmail["sensitive"] is True
     assert "use_hub" in rows and rows["use_hub"]["group"] == "hub"
+
+
+# ---- sections, probes and switches ---------------------------------------------------
+
+def test_sections_order_rows_inside_their_group(api, register):
+    register(Capability(permission="zz_a_flow", label="Flow", group="tools", section="workflows"))
+    register(Capability(permission="zz_b_door", label="Door", group="tools", section="access"))
+    register(Capability(permission="zz_z_plain", label="Plain", group="tools"))
+    entries = api.svc.catalog("finance")
+    tools = [e["permission"] for e in entries if e["group"] == "tools"]
+    # Unsectioned rows first, then each section in SECTIONS order.
+    assert tools.index("zz_z_plain") < tools.index("zz_a_flow") < tools.index("zz_b_door")
+    by = _by_id(entries)
+    assert (by["zz_a_flow"]["section"], by["zz_b_door"]["section"], by["zz_z_plain"]["section"]) == (
+        "workflows", "access", "")
+    assert all("section" in e for e in entries)  # every kind of row carries the key
+    with pytest.raises(ValueError, match="section"):
+        Capability(permission="zz_bad_section", label="Bad", group="tools", section="nope")
+
+
+def test_probe_says_why_a_capability_cannot_run_in_this_hub(api, register):
+    def broken(_hub):
+        raise RuntimeError("probe failed")
+
+    asked = []
+    register(Capability(permission="zz_probed", label="P", group="tools",
+                        probe=lambda hub: "No workflows in this agent"))
+    register(Capability(permission="zz_probe_ok", label="P", group="tools",
+                        probe=lambda hub: asked.append(hub) or ""))
+    register(Capability(permission="zz_probe_err", label="P", group="tools", probe=broken))
+    register(Capability(permission="zz_probe_off", label="P", group="tools",
+                        enabled_by="HZ_PROBE_ON", probe=lambda hub: "never asked"))
+    (api.dirs["finance"] / ".env").write_text("HZ_PROBE_ON=false\n")
+    by = _by_id(api.svc.catalog("finance"))
+    status = {k: (by[k]["available"], by[k]["status"])
+              for k in ("zz_probed", "zz_probe_ok", "zz_probe_err", "zz_probe_off")}
+    assert status == {
+        "zz_probed": (False, "No workflows in this agent"),
+        "zz_probe_ok": (True, ""),
+        "zz_probe_err": (None, "Not checked"),
+        "zz_probe_off": (False, "Disabled for this hub"),  # the switch wins; probe not asked
+    }
+    assert asked and asked[0] == api.dirs["finance"]
+
+
+def test_any_named_switch_turns_a_capability_off(api, register):
+    cap = register(Capability(permission="zz_two", label="Two", group="tools",
+                              enabled_by=("HZ_PROBE_ON", "HZ_PROBE_KEY")))
+    hub_env = api.dirs["finance"] / ".env"
+    assert _by_id(api.svc.catalog("finance"))["zz_two"]["available"] is True
+    hub_env.write_text("HZ_PROBE_KEY=off\n")
+    assert _by_id(api.svc.catalog("finance"))["zz_two"]["status"] == "Disabled for this hub"
+    assert capabilities.switched_off(cap, {"HZ_PROBE_ON": "false"})
+    assert capabilities.switched_off(cap, {"HZ_PROBE_ON": "true", "HZ_PROBE_KEY": "0"})
+    assert not capabilities.switched_off(cap, {"HZ_PROBE_ON": "true"})
+    assert not capabilities.switched_off(cap, {})
+
+
+def test_guard_tool_can_carry_its_own_surface_rule(api, register):
+    cap = register(Capability(permission="zz_surf", label="Surf", group="tools"))
+    assert _apply(api.as_(ROOT), "ann@x.org", ("grant", "zz_surf")).status_code == 200
+
+    async def run(_ctx, _raw):
+        return "ran"
+
+    ft = FunctionTool(name="surf_tool", description="s", params_json_schema={
+        "type": "object", "properties": {}, "additionalProperties": True},
+        on_invoke_tool=run, strict_json_schema=False)
+    default = guard_tool(ft, cap.permission, api.hub_dir)
+    own = guard_tool(ft, cap.permission, api.hub_dir, surfaces=frozenset({"whatsapp"}))
+    with identity_scope(Identity.make("ann@x.org", surface="whatsapp")):
+        assert own.is_enabled() is True and _invoke(own, {}) == "ran"
+        assert default.is_enabled() is False  # not a restricted-tool surface by default
+    with identity_scope(Identity.make("ann@x.org", surface="owui")):
+        assert own.is_enabled() is False and "access denied" in _invoke(own, {})
+        assert default.is_enabled() is True

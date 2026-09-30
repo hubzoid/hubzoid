@@ -22,9 +22,13 @@ A run is split into checkpointed steps:
   4. finish - record the result; archive the webhook events the run handled.
 
 All tasks share one registered DBOS workflow (`hz_markdown_task`); the run's
-workflow id `md:<task>:<slot>` carries the task name, so tasks added or edited
-while the hub runs work without re-registering, and the same slot can never be
-enqueued twice.
+workflow id `md:<task>:<slot>@<hub>` carries the task name, so tasks added or
+edited while the hub runs work without re-registering, and the same slot can
+never be enqueued twice. The hub is part of the id because DBOS workflow ids are
+global in a system database that several hubs share (PostgreSQL): without it,
+two hubs with the same task and slot would be one run, and the second hub would
+silently get the first one's result. Runs queued before this change keep their
+old `md:<task>:<slot>` ids; both forms parse the same.
 """
 from __future__ import annotations
 
@@ -40,13 +44,29 @@ EVAL_WORKFLOW = "hz_eval_suite"
 _FNS: dict = {}
 
 
-def run_id(task_name: str, slot: str) -> str:
-    return f"md:{task_name}:{slot}"
+def _hub_key(hub: str | None) -> str:
+    from . import runtime
+
+    return (hub or runtime._HUB_NAME or "").strip().lower()
+
+
+def run_id(task_name: str, slot: str, hub: str | None = None) -> str:
+    """`md:<task>:<slot>@<hub>` (the running hub unless `hub` is given)."""
+    key = _hub_key(hub)
+    return f"md:{task_name}:{slot}@{key}" if key else f"md:{task_name}:{slot}"
+
+
+def eval_run_id(names: list[str], slot: str, hub: str | None = None) -> str:
+    """`eval:<case,...>:<slot>@<hub>`, namespaced like `run_id`."""
+    key = _hub_key(hub)
+    base = f"eval:{','.join(sorted(names))}:{slot}"
+    return f"{base}@{key}" if key else base
 
 
 def task_name_from_id(workflow_id: str) -> str | None:
-    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>`,
-    plus `:requeued` for each time a code change re-queued it."""
+    """The markdown task a run belongs to, from its workflow id:
+    `md:<task>:<slot>@<hub>` (or the older `md:<task>:<slot>`), plus `:requeued`
+    for each time a code change re-queued it."""
     if not workflow_id.startswith("md:"):
         return None
     rest = workflow_id[3:]
@@ -193,11 +213,13 @@ def enqueue_task(task_name: str, slot: str, claimed: list[str] | None = None,
 
 
 def active_runs(task_name: str) -> list[str]:
-    """Ids of this task's runs that are queued or running."""
+    """Ids of this task's runs that are queued or running in this hub. The
+    listing is scoped to this hub's DBOS application, so another hub's task of
+    the same name never counts."""
     from dbos import DBOS
 
     return [w.workflow_id for w in DBOS.list_workflows(
-        workflow_id_prefix=run_id(task_name, ""), status=["PENDING", "ENQUEUED"],
+        workflow_id_prefix=f"md:{task_name}:", status=["PENDING", "ENQUEUED"],
         load_input=False, load_output=False)]
 
 
@@ -207,5 +229,5 @@ def enqueue_evals(names: list[str], now: datetime):
     from . import runtime
 
     slot = now.strftime("%Y%m%dT%H%M")
-    with SetWorkflowID(f"eval:{','.join(sorted(names))}:{slot}"):
+    with SetWorkflowID(eval_run_id(names, slot)):
         return runtime._MD_QUEUE.enqueue(_FNS["eval_suite"], list(names), now.isoformat())
