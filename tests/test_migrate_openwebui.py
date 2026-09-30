@@ -879,3 +879,85 @@ def test_postgres_source_is_read_only(postgres_url):
                 conn.execute(text("INSERT INTO chat (id) VALUES ('x')"))
     finally:
         engine.dispose()
+
+
+def test_a_different_file_with_the_same_name_is_kept_apart(gateway):
+    folder = gateway.hubs["finance"] / ".hubzoid" / "chats" / gateway.chat("files") / "uploads"
+    (folder / "report.pdf").write_bytes(b"a later, different report with the same name")
+    report = _run(gateway, apply=True)
+    assert report.applied
+    parts = json.loads(gateway.rows("SELECT content FROM hz_messages WHERE id=:i",
+                                    i=gateway.msg("c2u1"))[0]["content"])
+    pdf = next(p for p in parts if p.get("name") == "report.pdf")
+    tag = gateway.m["files"]["report"][:8]
+    assert pdf["file_id"] == f"report ({tag}).pdf"
+    assert (folder / pdf["file_id"]).read_bytes().startswith(b"%PDF")
+    assert (folder / "report.pdf").read_bytes().startswith(b"a later")  # untouched
+
+
+def test_history_only_in_the_chat_message_table(gateway):
+    """Open WebUI 0.9+ also writes each message to chat_message. When a chat's
+    own history is empty, the messages come from there."""
+    owui = sqlite3.connect(gateway.owui)
+    raw = json.loads(owui.execute("SELECT chat FROM chat WHERE id=?", (gateway.chat("pending"),)).fetchone()[0])
+    raw["history"] = {"messages": {}, "currentId": None}
+    raw["messages"] = []
+    owui.execute("UPDATE chat SET chat=? WHERE id=?", (json.dumps(raw), gateway.chat("pending")))
+    owui.commit()
+    owui.close()
+    report = _run(gateway, apply=True)
+    assert report.counts["conversations"]["history_read_from_chat_message_table"] == 1
+    rows = gateway.rows("SELECT id, parent_id, role, content FROM hz_messages WHERE conversation_id=:c",
+                        c=gateway.chat("pending"))
+    assert {r["id"] for r in rows} == {gateway.msg("c7u1"), gateway.msg("c7a1")}
+    answer = next(r for r in rows if r["role"] == "assistant")
+    assert answer["parent_id"] == gateway.msg("c7u1") and json.loads(answer["content"])[-1]["text"] == "Hi"
+    head = gateway.rows("SELECT head_id FROM hz_conversations WHERE id=:c", c=gateway.chat("pending"))[0]
+    assert head["head_id"] == gateway.msg("c7a1")
+
+
+def test_older_open_webui_layouts(tmp_path, clean_env):
+    """Before 0.6: `oauth_sub` on the user row, members as `group.user_ids`,
+    model access as JSON, share copies as chat rows owned by `shared-<chat id>`."""
+    hub = _hub(tmp_path / "old", "Old", ("ledger",))
+    data = hub / ".openwebui-data"
+    data.mkdir()
+    history = {"messages": {"old-msg-0001": {"id": "old-msg-0001", "parentId": None, "role": "user",
+                                             "content": "hi", "timestamp": 1700000000}},
+               "currentId": "old-msg-0001"}
+    con = sqlite3.connect(data / "webui.db")
+    con.executescript("""
+        CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT, email TEXT, role TEXT, oauth_sub TEXT,
+                           created_at INTEGER, updated_at INTEGER, last_active_at INTEGER);
+        CREATE TABLE auth (id TEXT PRIMARY KEY, email TEXT, password TEXT, active INTEGER);
+        CREATE TABLE "group" (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, description TEXT,
+                              user_ids TEXT, created_at INTEGER, updated_at INTEGER);
+        CREATE TABLE model (id TEXT PRIMARY KEY, user_id TEXT, is_active INTEGER, access_control TEXT);
+        CREATE TABLE chat (id TEXT PRIMARY KEY, user_id TEXT, title TEXT, chat TEXT, created_at INTEGER,
+                           updated_at INTEGER, share_id TEXT, archived INTEGER);
+    """)
+    con.execute("INSERT INTO user VALUES ('old-user-0001', 'Grace', 'Grace@Example.com', 'user', "
+                "'google@gsub-1', 1700000000, 1700000000, 1700000000)")
+    con.execute("INSERT INTO user VALUES ('old-user-0002', 'Hal', 'hal@example.com', 'user', "
+                "'abc-oidc-sub', 1700000001, 1700000001, 1700000001)")
+    con.execute('INSERT INTO "group" VALUES (\'old-group-001\', \'old-user-0001\', \'ledger\', \'\', '
+                '\'["old-user-0001"]\', 1700000000, 1700000000)')
+    con.execute("INSERT INTO chat VALUES ('old-chat-0001', 'old-user-0001', 'Old', ?, 1700000000, "
+                "1700000000, 'old-share-001', 0)", (json.dumps({"models": ["old"], "history": history}),))
+    con.execute("INSERT INTO chat VALUES ('old-share-001', 'shared-old-chat-0001', 'Old', ?, 1700000000, "
+                "1700000000, NULL, 0)", (json.dumps({"models": ["old"], "history": history}),))
+    con.commit()
+    con.close()
+    (hub / ".env").write_text("MODEL_LABEL=old\n")
+    report = mig.run(mig.locate(hub), apply=True)
+    assert report.applied, report.blocking
+    dep = Deployment(tmp_path, data / "webui.db", hub / ".hubzoid" / "hub.db", {}, hub, {})
+    links = {(r["provider"], r["subject"]) for r in dep.rows("SELECT * FROM hz_user_identities")}
+    assert links == {("google", "gsub-1"), ("oidc", "abc-oidc-sub")}
+    assert dep.rows("SELECT email FROM hz_group_members") == [{"email": "grace@example.com"}]
+    share = dep.rows("SELECT id, conversation_id, snapshot FROM hz_shares")
+    assert [(s["id"], s["conversation_id"]) for s in share] == [("old-share-001", "old-chat-0001")]
+    assert json.loads(share[0]["snapshot"])["audience"] == "signed_in"
+    store = dep.store()
+    assert store.can("grace@example.com", "old", "ledger") and not store.can("hal@example.com", "old", "ledger")
+    assert store.can("hal@example.com", "old", "use_hub")
