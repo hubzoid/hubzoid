@@ -534,6 +534,14 @@ class OwuiSource:
                 out[gid] = {uid: None for uid in ids if isinstance(uid, str)}
         return out
 
+    def model_bases(self) -> dict[str, str]:
+        """Workspace model id -> the model it is built on (``base_model_id``)."""
+        if not self.has("model", "base_model_id"):
+            return {}
+        with self.engine.connect() as conn:
+            return {mid: base for mid, base in conn.execute(
+                text("SELECT id, base_model_id FROM model WHERE base_model_id IS NOT NULL")) if mid and base}
+
     def share_meta(self) -> dict[str, dict]:
         """Every share token -> where its snapshot lives (without the snapshot)."""
         out: dict[str, dict] = {}
@@ -1662,6 +1670,11 @@ class ConversationImporter:
             hub = self.by_model.get(goal) or next((h for h in setup.hubs if h.key == goal.lower()), None)
             if hub is not None:  # locate() refused unknown targets
                 self.by_model[alias] = hub
+        self.via_workspace_model: set[str] = set()
+        for model_id, base in source.model_bases().items():
+            if model_id not in self.by_model and base in self.by_model:
+                self.by_model[model_id] = self.by_model[base]
+                self.via_workspace_model.add(model_id)
         self.claimed: set[str] = set()
         self.share_meta = source.share_meta()
         self.shares_by_chat: dict[str, list[str]] = defaultdict(list)
@@ -1678,6 +1691,8 @@ class ConversationImporter:
                        if m.get("role") == "assistant" and isinstance(m.get("model"), str)]
         for model in candidates:
             if model in self.by_model:
+                if model in self.via_workspace_model:
+                    self.report.bump("conversations", "agent_found_through_a_workspace_model")
                 return self.by_model[model], model
         return None, (candidates[0] if candidates else "")
 
@@ -2378,6 +2393,8 @@ def render(report: Report, verbose: bool = False) -> str:
     if report.blocking:
         lines.append("Nothing was written: resolve the blocking items first." if report.mode == "apply"
                      else "A run with --apply would be refused until the blocking items are resolved.")
+    elif report.applied and data.get("rehearsal_copy"):
+        lines.append(f"Migrated the rehearsal copy in {data['rehearsal_copy']}. The original was not changed.")
     elif report.applied:
         lines.append("Migrated. Start the deployment in the default mode (HUBZOID_UI=hubzoid).")
     else:
@@ -2427,6 +2444,8 @@ def openwebui(
             console.print(f"Rehearsing on a copy in {Path(rehearse).expanduser().resolve()}; "
                           "the original is not changed.", markup=False)
         report = run(setup, apply=apply, grants_mode=grants)
+        if rehearse is not None:
+            report.info["rehearsal_copy"] = str(setup.entry)
     except MigrationBlocked as exc:
         if as_json:
             typer.echo(json.dumps({"mode": "apply" if apply else "dry-run", "applied": False,
