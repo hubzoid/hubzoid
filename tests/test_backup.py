@@ -461,7 +461,7 @@ def test_running_runs_sees_a_live_scheduled_run(tmp_path):
         while not busy and time.time() < deadline:
             time.sleep(0.3)
             busy = bk.running_runs(p)
-        assert busy == ["hub: md:slow:s1"]
+        assert busy == ["hub: md:slow:s1@hub"]  # run ids carry the hub
     finally:
         proc.kill()
         proc.wait(timeout=30)
