@@ -1327,7 +1327,8 @@ class GrantStore:
         tasks, the function name for code workflows). Dispatchers skip these."""
         return set(self.metadata("workflow_paused:" + normalize(hub), []) or [])
 
-    def set_workflow_paused(self, hub: str, name: str, paused: bool, *, actor: str) -> None:
+    def set_workflow_paused(self, hub: str, name: str, paused: bool, *, actor: str,
+                            surface: str | None = None, request_id: str | None = None) -> None:
         """Pause or resume one workflow's schedule, audited in the same transaction."""
         import json
 
@@ -1338,12 +1339,16 @@ class GrantStore:
             names = (names | {name}) if paused else (names - {name})
             self._meta_set(c, key, json.dumps(sorted(names)))
             self._audit(c, actor, "workflow_pause" if paused else "workflow_resume",
-                        None, normalize(hub), name)
+                        None, normalize(hub), name, surface, request_id)
 
-    def audit_run_control(self, hub: str, action: str, target: str, *, actor: str) -> None:
-        """Record an operator's run control (e.g. a cancel) in the access audit."""
+    def audit_run_control(self, hub: str, action: str, target: str, *, actor: str,
+                          surface: str | None = None, request_id: str | None = None,
+                          subject: str | None = None) -> None:
+        """Record a run control (a start or a cancel) in the access audit.
+        `target` is what was acted on (the workflow for a start, the run for a
+        cancel); `subject` optionally names the run a start created."""
         with self._engine.begin() as c:
-            self._audit(c, actor, action, None, normalize(hub), target)
+            self._audit(c, actor, action, subject, normalize(hub), target, surface, request_id)
 
     HOLD_KEY = "maintenance:hold"
 
