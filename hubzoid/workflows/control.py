@@ -38,7 +38,7 @@ _start_lock = threading.Lock()
 class ControlError(Exception):
     """A run control that cannot be done. `message` is safe to show a person;
     `code` is a stable token: unknown, unknown_run, not_running, code_off,
-    broken, held, finished, bad_filter. `status` is the run's state when that
+    broken, event, held, finished, bad_filter. `status` is the run's state when that
     explains the refusal (a finished run)."""
 
     def __init__(self, message: str, code: str, *, status: str | None = None):
@@ -57,20 +57,24 @@ class Target:
 
 def resolve(hub_dir, name: str) -> Target:
     """A task or workflow name as a person or the CLI writes it (`md:x`, `x`,
-    hyphens or underscores for a code workflow) to its stored form."""
+    hyphens or underscores for a code workflow) to its stored form. `md:x` is
+    always the markdown task. A bare name is the code workflow when one has
+    it (listings show markdown tasks as `md:<task>`), else the markdown task."""
     from .. import scheduling as sch
 
     hub_dir = Path(hub_dir)
     raw = (name or "").strip()
-    bare = raw[3:] if raw.startswith("md:") else raw
+    explicit_md = raw.startswith("md:")
+    bare = raw[3:] if explicit_md else raw
     if bare:
+        if not explicit_md:
+            want = bare.replace("-", "_")
+            for w in observe.definitions(hub_dir):
+                if w["name"] in (bare, want):
+                    return Target(w["name"], "code")
         tasks, _ = sch.load_tasks(hub_dir)
         if any(t.name == bare for t in tasks):
             return Target(f"md:{bare}", "markdown", bare)
-        want = bare.replace("-", "_")
-        for w in observe.definitions(hub_dir):
-            if w["name"] in (bare, want):
-                return Target(w["name"], "code")
     raise ControlError(f"There is no workflow or scheduled task named {raw!r} in this agent.",
                        "unknown")
 
@@ -113,13 +117,17 @@ def history(hub_dir, *, viewer: str | None, workflow: str | None = None,
         limit = 10
     limit = max(1, min(MAX_RUNS, limit))
     name = resolve(hub_dir, workflow).name if workflow else None
+    if isinstance(status, str) and status.strip().lower() == "queued":
+        status = "ENQUEUED"  # the listings say "queued"
     try:
         statuses = observe.resolve_statuses(status)
     except ValueError:
         raise ControlError("Unknown status. Use running, failed, succeeded or cancelled.",
                            "bad_filter") from None
+    # Legacy service runs stay private here: their results are for the hub's
+    # managers (the Console), not for everyone who may list runs.
     return observe.runs(hub_dir, name=name, run_id=run_id or None, statuses=statuses,
-                        limit=limit, viewer=viewer)
+                        limit=limit, viewer=viewer, legacy_visible=False)
 
 
 def _engine_here(hub_dir: Path) -> bool:
@@ -146,10 +154,21 @@ def _check_startable(hub_dir: Path, target: Target) -> None:
     from .boot import schedules_enabled
 
     if target.kind == "markdown":
+        import os
+
+        if (os.environ.get("HUBZOID_DISABLE_SCHEDULE") or "").strip().lower() in (
+                "1", "true", "yes", "on"):
+            raise ControlError("Scheduled tasks are switched off on this agent "
+                               "(HUBZOID_DISABLE_SCHEDULE), so they can't be started.", "broken")
         task = next((t for t in sch.load_tasks(hub_dir)[0] if t.name == target.task), None)
         if task is not None and not task.enabled:
             raise ControlError(f"{target.name} is switched off in its file (enabled: false), "
                                "so it can't be started.", "broken")
+        if task is not None and task.is_webhook:
+            # Started by hand it would have no events of its own, and a task
+            # that reads its inbox could handle the next delivery twice.
+            raise ControlError(f"{target.name} runs when its webhook ({task.on_webhook}) "
+                               "delivers events, so it can't be started by hand.", "event")
         return
     definition = next((d for d in observe.definitions(hub_dir) if d["name"] == target.name), None)
     if definition and definition["error"]:

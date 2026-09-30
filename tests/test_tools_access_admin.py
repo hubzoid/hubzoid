@@ -356,3 +356,16 @@ def test_explain_access_stays_in_scope(dep, monkeypatch):
     assert ops == "[not available: Cannot manage ops]"
     assert "In finance:" in mine and "In ops" not in mine
     assert "- Manage access from chat (access_tools): direct grant" in mine
+
+
+def test_explain_access_never_describes_an_outsider(dep, monkeypatch):
+    gs = dep.gs
+    gs.grant("carol@x.org", "ops", "inventory", actor="test")
+    gs.upsert_identity(email="carol@x.org", owui_id="u-carol", display="Carol Secret")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    tools = _granted(dep, monkeypatch, DELEGATE)
+    with identity_scope(Identity.make(DELEGATE, surface="owui")):
+        out = _invoke(tools["explain_access"], {"person": "carol@x.org"})
+    assert out == ("carol@x.org has no access of their own in the agents you manage. "
+                   "Everyone signed in can use: finance.")
+    assert "Carol" not in out and "Account" not in out

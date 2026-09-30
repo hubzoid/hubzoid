@@ -145,6 +145,9 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
         return allowed
 
     _is_enabled.hubzoid_permission = permission
+    # Tools sharing a permission and surface rule share one decision per turn
+    # (`visible_map`).
+    _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
 
 
@@ -157,6 +160,26 @@ def visible(ft) -> bool:
     if getattr(check, "hubzoid_permission", None) is None:
         return True
     return bool(check())
+
+
+def visible_map(tools: dict) -> dict[str, bool]:
+    """`visible` for a whole registry at once ({name: shown}), for runtimes
+    that filter the tool list every turn. Each distinct check runs once: tools
+    guarded by the same permission and surface rule (`hubzoid_key`), or
+    sharing one `is_enabled` (the management tools), get one decision. Called
+    per turn, so a grant or revocation shows on the next turn."""
+    decided: dict = {}
+    out: dict[str, bool] = {}
+    for name, ft in tools.items():
+        check = getattr(ft, "is_enabled", True)
+        if getattr(check, "hubzoid_permission", None) is None:
+            out[name] = True
+            continue
+        key = getattr(check, "hubzoid_key", None) or ("fn", id(check))
+        if key not in decided:
+            decided[key] = bool(check())
+        out[name] = decided[key]
+    return out
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

@@ -667,13 +667,13 @@ class ClaudeRuntime:
         no-op path), so hubs using none pay nothing."""
         import dataclasses
         import os
-        from .access.guard import visible
+        from .access.guard import visible_map
         from .access.identity import current_identity
         from . import otel as otellib
         from . import owui_mcp
 
         ident = current_identity()
-        hidden = {n for n, ft in self._registry.items() if not visible(ft)}
+        hidden = {n for n, shown in visible_map(self._registry).items() if not shown}
 
         extra_specs: dict = {}
         extra_allowed: list[str] = []

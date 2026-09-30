@@ -1502,7 +1502,9 @@ def schedule_run(
             if match:
                 console.print(f"[cyan]→ running workflow {match}[/cyan]")
                 try:
-                    result = _wf.run_now(match)
+                    handle = _wf.start(match)
+                    _audit_cli_start(hub, match, handle.get_workflow_id())
+                    result = handle.get_result()
                 except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
                     console.print(f"[red]✗ workflow {match} failed: {type(run_exc).__name__}: {run_exc}[/red]")
                     console.print("[dim]The failed run is in `hubzoid schedule status` and the Console's Runs page.[/dim]")
@@ -1568,6 +1570,7 @@ def schedule_run(
         _wf.launch()
         handle = _md.enqueue_task(task.name, "manual-" + _dt.now().strftime("%Y%m%dT%H%M%S"),
                                   overrides=overrides)
+        _audit_cli_start(hub, f"md:{task.name}", handle.get_workflow_id())
         try:
             outcome = handle.get_result()
         except Exception as exc:  # noqa: BLE001 — the run failed; report it
@@ -1584,6 +1587,20 @@ def schedule_run(
         console.print(f"[red]✗ {outcome.get('result')} after {outcome.get('rounds')} round(s)[/red] "
                       f"{outcome.get('error') or ''}")
         raise typer.Exit(1)
+
+
+def _audit_cli_start(hub: Path, name: str, run_id: str) -> None:
+    """Record a manual run in the access audit (`run_start`, surface `cli`), as
+    the agent tools do. A failed write is logged; the run goes ahead."""
+    import logging
+
+    try:
+        from .access import store_for
+
+        store_for(hub).audit_run_control(hub.name, "run_start", name, actor=_operator(),
+                                         surface="cli", subject=run_id)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("hubzoid.cli").exception("could not audit the manual run of %s", name)
 
 
 def _operator() -> str:

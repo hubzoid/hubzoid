@@ -218,6 +218,9 @@ def test_already_running_and_listing_text(dep, monkeypatch):
 
 
 def test_switch_removes_the_tools_and_marks_the_rows(dep, monkeypatch):
+    from hubzoid import config_secrets
+
+    monkeypatch.setattr(config_secrets, "_base_env", None)  # deployment layer = os.environ
     monkeypatch.setenv("HUBZOID_WORKFLOW_TOOLS", "false")
     assert workflow_tools.make(SimpleNamespace(hub_dir=dep.hub_dir)) == []
     by = {e["permission"]: e for e in capabilities.catalog(dep.hub_dir)}

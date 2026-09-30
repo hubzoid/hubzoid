@@ -7,6 +7,7 @@ test_access_service, a throwaway registered capability and a fake tool.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 
@@ -366,3 +367,40 @@ def test_guard_tool_can_carry_its_own_surface_rule(api, register):
     with identity_scope(Identity.make("ann@x.org", surface="owui")):
         assert own.is_enabled() is False and "access denied" in _invoke(own, {})
         assert default.is_enabled() is True
+
+
+def test_visible_map_decides_each_distinct_check_once(api, register, monkeypatch):
+    from hubzoid.access import guard
+
+    cap = register(Capability(permission="zz_many", label="Many", group="tools"))
+
+    async def run(_ctx, _raw):
+        return "ran"
+
+    def tool(name):
+        return FunctionTool(name=name, description="t", params_json_schema={
+            "type": "object", "properties": {}, "additionalProperties": True},
+            on_invoke_tool=run, strict_json_schema=False)
+
+    shared_calls = []
+
+    def shared(*_a, **_k):
+        shared_calls.append(1)
+        return False
+
+    shared.hubzoid_permission = "zz_custom"
+    registry = {f"t{i}": guard_tool(tool(f"t{i}"), cap.permission, api.hub_dir) for i in range(4)}
+    registry["plain"] = tool("plain")
+    registry["c1"] = dataclasses.replace(tool("c1"), is_enabled=shared)
+    registry["c2"] = dataclasses.replace(tool("c2"), is_enabled=shared)
+    calls = []
+    real = guard.decide
+    monkeypatch.setattr(guard, "decide", lambda *a, **k: calls.append(a[2]) or real(*a, **k))
+    assert _apply(api.as_(ROOT), "ann@x.org", ("grant", "zz_many")).status_code == 200
+    with identity_scope(Identity.make("ann@x.org", surface="owui")):
+        shown = guard.visible_map(registry)
+    assert shown == {"t0": True, "t1": True, "t2": True, "t3": True, "plain": True,
+                     "c1": False, "c2": False}
+    assert calls == ["zz_many"] and len(shared_calls) == 1
+    with identity_scope(Identity.make("bob@x.org", surface="owui")):
+        assert not any(guard.visible_map(registry)[f"t{i}"] for i in range(4))
