@@ -40,12 +40,16 @@ from . import deployment
 from .access.identity import normalize
 
 from .access import store_for
-from .access.service import (
+from .access.service import (  # noqa: F401 — the account-state helpers stay importable here
     LEGACY_MSG,
     UNAVAILABLE_MSG,
     AccessService,
     Actor,
     Denied,
+    Scope,
+    _account_flags,
+    _account_state,
+    _account_status,
     deleted_by_console,
 )
 from .access.session import require_same_origin, verified_email
@@ -284,13 +288,10 @@ def _check_mutation(request: Request, admin: PortalAdmin) -> None:
 
 # ---- account state ----------------------------------------------------------
 #
-# The store keeps two independent block markers per subject and `is_suspended`
-# ORs them: `suspended:<subject>` (an admin's explicit block, or an
-# account_replaced safeguard) and `account_unavailable:<subject>` (derived from
-# Open WebUI: the account is pending approval, or vanished from the directory).
-# Only the first is cleared by "reactivate"; the second only clears when OWUI
-# reports the account as approved/present again. The portal exposes them apart
-# so the UI can tell "blocked by an admin" from "blocked by the chat app".
+# The two block markers and the display status live in `access.service`
+# (`_account_state`), shared with the agent tools. The portal exposes the
+# markers apart so the UI can tell "blocked by an admin" from "blocked by the
+# chat app".
 
 _UNAVAILABLE_MSG = UNAVAILABLE_MSG
 
@@ -298,46 +299,6 @@ _UNAVAILABLE_MSG = UNAVAILABLE_MSG
 # governed by the chat app. Editing its access here would neither take effect nor
 # survive migration, so those edits are refused (in the API, not only the UI).
 _LEGACY_MSG = LEGACY_MSG
-
-
-def _account_flags(gs, subject: str) -> dict:
-    """Read the store's two block markers separately (read-only). `blocked` is
-    the OR of both and always equals `gs.is_suspended(subject)`."""
-    subject = normalize(subject)
-    with gs._engine.connect() as conn:  # noqa: SLF001 — read-only marker lookup
-        suspended = gs._meta_get(conn, "suspended:" + subject) == "1"
-        unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"
-    return dict(
-        suspended=suspended,
-        account_unavailable=unavailable,
-        blocked=suspended or unavailable,
-    )
-
-
-def _account_status(subject: str, identity: dict, flags: dict) -> str:
-    """One display status per subject. Precedence: an admin block beats
-    everything; then the structural kinds; then signup/approval progress; an
-    OWUI-side unavailable account that is *not* pending (deleted/missing) is
-    reported as `blocked` with `account_unavailable=true` alongside."""
-    if flags["suspended"]:
-        return "blocked"
-    if subject == "*":
-        return "everyone"
-    if subject.startswith("workflow:"):
-        return "service"
-    if not identity.get("owui_id"):
-        return "awaiting-signup"
-    if identity.get("pending"):
-        return "pending-approval"
-    if flags["account_unavailable"]:
-        return "blocked"
-    return "active"
-
-
-def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
-    identity = identity if identity is not None else (gs.identity(subject) or {})
-    flags = _account_flags(gs, subject)
-    return dict(flags, status=_account_status(normalize(subject), identity, flags))
 
 
 def build_router(hub_dir, admin_resolver=None) -> APIRouter:
@@ -479,84 +440,31 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         admin=Depends(require_admin),
     ):
         require_hub(admin, hub)
-        gs = store_for(hub_dir)
-        # One consistent read of (revision, every grant): the returned revision
-        # describes exactly the rows below, so the editor's concurrency guard is
-        # not defeated by new rows arriving under an old revision (or the reverse).
-        revision, all_grants = gs.access_snapshot()
-        rows = {}
-        for subject, domain, perm in all_grants:
-            if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
-                row = rows.setdefault(
-                    subject,
-                    dict(
-                        subject=subject,
-                        perms=[],
-                        inherited=[],
-                        kind="service" if subject.startswith("workflow:") else "person",
-                    ),
-                )
-                row["perms" if domain == hub else "inherited"].append(perm)
-
-        def effective_for(subject: str) -> list[str]:
-            # Mirrors GrantStore.permissions_for over the same snapshot: direct +
-            # org-wide + public wildcard. Suspended subjects hold nothing.
-            return sorted(
-                {
-                    p
-                    for (s, h, p) in all_grants
-                    if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
-                }
-            )
-
-        for subject, row in rows.items():
-            row["center"] = gs.get_attr(hub, subject, "center")
-            identity = gs.identity(subject) or {}
-            row["display"] = identity.get("display") or subject
-            state = _account_state(gs, subject, identity)
-            row.update(state)
-            # Effective access must match the enforcer: a blocked account (admin
-            # suspension OR an unavailable chat account) holds nothing, though its
-            # direct grants are preserved separately in `perms`.
-            row["effective"] = [] if state["blocked"] else effective_for(subject)
+        # Who has access, from the service; this route adds only what depends
+        # on the viewer (their scope, ceiling and filter) and pagination.
+        view = service.hub_access(admin.actor(), hub,
+                                  scope=Scope(admin.is_org_admin, tuple(admin.manageable)))
         result = [
             r
-            for r in rows.values()
+            for r in view["rows"]
             if q.lower() in (r["subject"] + " " + r["display"]).lower()
         ]
-        result.sort(key=lambda r: r["subject"])
-        public = any(
-            s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
-            for (s, h, p) in all_grants
-        )
-        # Chat accounts that enter only through "everyone signed in": signed
-        # up, approved, not blocked, and without a direct grant in this hub.
-        # Shown before an administrator removes that grant.
-        public_reliant = 0
-        if public:
-            direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
-            for ident in gs.identities():
-                subject = ident["subject"]
-                if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
-                        and not subject.startswith("workflow:") and subject not in direct
-                        and not gs.is_suspended(subject)):
-                    public_reliant += 1
         return dict(
             hub=hub,
             # Editable only once the hub is dashboard-managed. A legacy (un-migrated)
             # hub is read-only here; its access still lives in the chat app.
-            editable=gs.is_authoritative(hub),
-            authoritative=gs.is_authoritative(hub),
+            editable=view["authoritative"],
+            authoritative=view["authoritative"],
             can_manage_admins=admin.is_org_admin,
             permissions=service.catalog(hub),
             # What this viewer may grant or remove here (a delegate's ceiling).
             # Display only: every write is checked again by the service.
-            grantable=_grantable(admin, hub) if gs.is_authoritative(hub) else [],
+            grantable=_grantable(admin, hub) if view["authoritative"] else [],
             viewer=normalize(admin.subject),
             total=len(result),
-            public=public,
-            public_reliant=public_reliant,
-            revision=revision,
+            public=view["public"],
+            public_reliant=view["public_reliant"],
+            revision=view["revision"],
             rows=result[offset : offset + limit],
         )
 

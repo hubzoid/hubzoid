@@ -105,7 +105,7 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
     for key in ("HUBZOID_OPERATIONAL_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
                 "OWUI_INTERNAL_URL", "WEBUI_URL", "HUBZOID_PUBLIC_URL",
                 "HUBZOID_GATEWAY_ADMIN_EMAIL", "HUBZOID_GATEWAY_ADMIN_PASSWORD",
-                "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS",
+                "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS", "HUBZOID_ACCESS_TOOLS",
                 "HUBZOID_CHANGE_REQUEST_TTL", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER"):
         monkeypatch.delenv(key, raising=False)
     access._stores.clear()
@@ -162,7 +162,8 @@ def test_scope_from_store_only(dep):
 
 def test_ceiling_matrix(dep):
     svc, gs = dep.svc, dep.gs
-    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev"}
+    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev",
+            "access_tools"}
     assert svc.ceiling(actor(ROOT), "finance") == full
     # A delegate: what they hold, never manage_access.
     assert svc.ceiling(actor(DELEGATE), "finance") == {"use_hub", "ledger"}
@@ -316,3 +317,109 @@ def test_store_failure_fails_closed(dep, monkeypatch):
     with pytest.raises(Denied) as e:
         dep.svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
     assert e.value.status == 503
+
+
+def test_only_organization_administrators_grant_access_tools(dep):
+    svc, gs = dep.svc, dep.gs
+    with pytest.raises(Denied) as e:
+        svc.apply_access_change(actor(DELEGATE), "ann@x.org", "finance", [("grant", "access_tools")])
+    assert e.value.code == "outside_ceiling"
+    svc.apply_access_change(actor(ROOT), DELEGATE, "finance", [("grant", "access_tools")])
+    assert gs.can(DELEGATE, "finance", "access_tools")
+    # Holding it does not let a delegate pass it on.
+    assert "access_tools" not in svc.ceiling(actor(DELEGATE), "finance")
+    with pytest.raises(Denied) as e:
+        svc.apply_access_change(actor(DELEGATE), "ann@x.org", "finance", [("grant", "access_tools")])
+    assert e.value.code == "outside_ceiling" and "Only organization administrators" in e.value.message
+    assert not gs.can("ann@x.org", "finance", "access_tools")
+
+
+# ---- reading access ----------------------------------------------------------------
+
+def _unavailable(gs, subject):
+    from sqlalchemy import text
+
+    with gs.engine.begin() as conn:
+        conn.execute(text("INSERT INTO hz_meta(k, v) VALUES(:k, '1') "
+                          "ON CONFLICT (k) DO UPDATE SET v='1'"),
+                     {"k": "account_unavailable:" + subject})
+
+
+def test_hub_access_rows(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "finance", "ledger", actor="test")
+    gs.upsert_identity(email="ann@x.org", owui_id="u-ann", display="Ann A")
+    gs.set_attr("finance", "ann@x.org", "center", "Chennai")
+    gs.grant("workflow:close", "finance", "ledger", actor="test")
+    gs.grant("gone@x.org", "finance", "use_hub", actor="test")
+    _unavailable(gs, "gone@x.org")
+    gs.grant("cy@x.org", "ops", "inventory", actor="test")
+    view = svc.hub_access(actor(DELEGATE), "finance")
+    assert (view["hub"], view["authoritative"], view["revision"]) == ("finance", True, gs.revision())
+    by = {r["subject"]: r for r in view["rows"]}
+    assert list(by) == sorted(by)
+    assert set(by) == {"ann@x.org", DELEGATE, ROOT, "workflow:close", "gone@x.org"}
+    ann = by["ann@x.org"]
+    assert (ann["display"], ann["status"], ann["kind"], ann["center"]) == (
+        "Ann A", "active", "person", "Chennai")
+    assert sorted(ann["perms"]) == ["ledger", "use_hub"] and ann["effective"] == ["ledger", "use_hub"]
+    assert (by[ROOT]["perms"], by[ROOT]["inherited"]) == ([], ["manage_access"])
+    assert (by["workflow:close"]["kind"], by["workflow:close"]["status"]) == ("service", "service")
+    gone = by["gone@x.org"]  # grants kept, nothing effective while unavailable
+    assert gone["perms"] == ["use_hub"] and gone["effective"] == []
+    assert gone["account_unavailable"] and gone["blocked"] and not gone["suspended"]
+    assert (view["public"], view["public_reliant"]) == (False, 0)
+    # Everyone signed in: an approved account without its own grant relies on it.
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    gs.upsert_identity(email="dan@x.org", owui_id="u-dan", display="Dan")
+    view = svc.hub_access(actor(ROOT), "finance")
+    assert (view["public"], view["public_reliant"]) == (True, 1)
+    assert {r["subject"]: r for r in view["rows"]}["*"]["status"] == "everyone"
+
+
+@pytest.mark.parametrize("who,hub,status", [
+    (DELEGATE, "ops", 403),
+    (DELEGATE, "nope", 403),  # scope first: no hint whether it exists
+    ("ann@x.org", "finance", 403),
+    (ROOT, "nope", 404),
+])
+def test_hub_access_is_scoped(dep, who, hub, status):
+    with pytest.raises(Denied) as e:
+        dep.svc.hub_access(actor(who), hub)
+    assert e.value.status == status
+
+
+def test_person_access_explains_sources(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "finance", "ledger", actor="test")
+    gs.grant("ann@x.org", "ops", "inventory", actor="test")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    view = svc.person_access(actor(ROOT), "Ann@X.org")
+    assert (view["subject"], view["organization_admin"], view["status"]) == (
+        "ann@x.org", False, "awaiting-signup")
+    by = {h["hub"]: {c["permission"]: c["sources"] for c in h["capabilities"]} for h in view["hubs"]}
+    assert by == {"finance": {"ledger": ["direct"], "use_hub": ["direct", "everyone"]},
+                  "ops": {"inventory": ["direct"], "use_hub": ["direct"]}}
+    assert view["hubs"][0]["effective"] == ["ledger", "use_hub"]
+    root = svc.person_access(actor(ROOT), ROOT, "finance")
+    assert root["organization_admin"] and [h["hub"] for h in root["hubs"]] == ["finance"]
+    assert {c["permission"]: c["sources"] for c in root["hubs"][0]["capabilities"]} == {
+        "manage_access": ["organization"], "use_hub": ["everyone"]}
+
+
+def test_person_access_stays_in_scope(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "ops", "inventory", actor="test")
+    view = svc.person_access(actor(DELEGATE), "ann@x.org")
+    assert [h["hub"] for h in view["hubs"]] == ["finance"]
+    assert view["hubs"][0]["capabilities"] == []
+    gs.grant("gone@x.org", "finance", "use_hub", actor="test")
+    _unavailable(gs, "gone@x.org")
+    gone = svc.person_access(actor(DELEGATE), "gone@x.org", "finance")
+    assert gone["blocked"] and gone["hubs"][0]["capabilities"] and gone["hubs"][0]["effective"] == []
+    for who, subject, hub, status in ((DELEGATE, "ann@x.org", "ops", 403),
+                                      ("ann@x.org", DELEGATE, None, 403),
+                                      (ROOT, "*", None, 422)):
+        with pytest.raises(Denied) as e:
+            svc.person_access(actor(who), subject, hub)
+        assert e.value.status == status
