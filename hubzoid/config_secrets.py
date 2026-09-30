@@ -15,7 +15,7 @@ processes it reaches.
 
 A standalone hub (not registered in a gateway manifest) treats its own `.env` as
 part of the deployment. There the deployment secret is applied after
-`<hub>/.env` and wins over it, as in prs-facade. A hub registered in a gateway
+`<hub>/.env` and wins over it. A hub registered in a gateway
 takes the deployment secret from the manifest (`deployment_secret`). It is
 applied before `<hub>/.env` and filtered to `BRIDGE_DEPLOYMENT_KEYS`. A hub
 `.env` that names `AWS_SECRET_NAME` is ignored in that case, so one hub cannot
