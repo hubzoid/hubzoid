@@ -111,8 +111,8 @@ What is missing:
   (`oauth.py:2093-2095`).
   - Use `OAUTH_ALLOWED_DOMAINS` to restrict domains (`config.py:2609`).
   - OAuth settings are env-only by default (`config.py:3232`).
-  - Isha's runbook forbids Google SSO while two domains are live
-    (`IshaHubAgents/docs/deployment-runbook.md:93-94`).
+  - A customer's deployment runbook forbids Google SSO while two domains are
+    live.
 - **How Hubzoid signs in to Open WebUI.**
   - `access/owui.py:28-43` signs in as `HUBZOID_GATEWAY_ADMIN_EMAIL/_PASSWORD`
     (`gateway_provision.py:115-134`).
@@ -134,13 +134,13 @@ resolves phone to email (`inbound/harness.py:276-302`). Dispatch sends
 already injects that user's Open WebUI MCP tokens on WhatsApp. OpenAI and Codex
 do not.
 
-**Which path Isha uses: neither, as far as the evidence shows.** I read the
-local clone of `IshaHubAgents` (key names only).
+**Which path the reference customer deployment uses: neither, as far as the
+evidence shows.** I read a local clone of its agents repository (key names only).
 - Seen:
   - No `OWUI_NATIVE_MCP`, `COMPOSIO_*`, `CONNECTIONS`, `GMAIL*` or `AWS_*` key
     in any hub `.env` or `restricted/.env`.
   - No connections config.
-  - Every `.mcp.json` is empty except ApprovalHub's `playwright` stdio server.
+  - Every `.mcp.json` is empty except one hub's `playwright` stdio server.
   - The local `webui.db` files have no tool servers and zero `oauth_session`
     rows.
   - The only Composio trace is a throwaway `smoke_connections.py` (GitHub
@@ -173,7 +173,7 @@ local clone of `IshaHubAgents` (key names only).
 - **boto3.** 1.42.62 is installed only because open-webui pins it
   (`requirements.lock:98-99`). It is not a declared Hubzoid dependency
   (`pyproject.toml:42-71`).
-- **The prs-facade pattern** (`~/Desktop/Isha/IRS/prs-facade/Connectors/aws_secrets.py:7-31`):
+- **An existing service's AWS secrets loader** (in a customer codebase):
   - `load_dotenv()`, then if `AWS_SECRET_NAME` is set, `get_secret_value` in
     `AWS_REGION`
   - `json.loads`, and each key is written to `os.environ`, so **the secret
@@ -257,10 +257,10 @@ These are defaults. Only item 1 in Open questions blocks anything.
    - On legacy hubs it gates the journey through the legacy group of the same
      name. Existing injection there is unchanged apart from the surface gate.
 8. **Secrets are one remote `.env` per layer.** Within a layer, the AWS secret
-   overrides the local file, as in prs-facade. Values are read at start. A
+   overrides the local file, as in that loader. Values are read at start. A
    rotation takes effect on restart of that layer's components.
-9. **All new behaviour is off by default** for existing deployments. Isha stays
-   on legacy access, with the Open WebUI Users page visible, until an explicit
+9. **All new behaviour is off by default** for existing deployments. The
+   reference customer deployment stays on legacy access, with the Open WebUI Users page visible, until an explicit
    migration.
 
 ## Founder UX review decisions (2026-09-26)
@@ -301,7 +301,7 @@ differ supersede, the UI details below. Authorization stays server-side.
 
 ### 1. Accounts and access (goal 1)
 
-**Flow (Isha's current flow, moved into the Console).**
+**Flow (the reference customer's current flow, moved into the Console).**
 1. A manager opens **People, Add account**.
 2. They enter email, display name and a password, typed or **Generate**.
 3. They tick initial access in the hubs they manage. Only capabilities within
@@ -342,8 +342,8 @@ because grants are keyed on email.
 - set `OAUTH_ALLOWED_DOMAINS` to the organization's domains
 
 The same Console-created account can then sign in with Google. Doctor warns
-when Google is configured without merge. Enabling this for Isha is a separate
-operator decision (runbook `:93-94`).
+when Google is configured without merge. Enabling this for the reference
+customer is a separate operator decision (see its runbook).
 
 **Hiding the Open WebUI Users page.** Controlled by `HUBZOID_HIDE_OWUI_USERS`,
 default off.
@@ -610,7 +610,7 @@ for the components it reaches.
   fail-on-conflict behaviour (`ADMINISTRATION.md:56-59`).
 - A hub value of `WEBUI_SECRET_KEY` or `OAUTH_*_ENCRYPTION_KEY` that differs
   from the deployment value produces a startup warning, not a failure. This is
-  for compatibility: several Isha hub `.env` files carry `WEBUI_*` keys.
+  for compatibility: several customer hub `.env` files carry `WEBUI_*` keys.
 
 `hubzoid doctor` gains a layer report. It lists key names with their layer and
 source, never values, plus a fetch check for each named secret.
@@ -772,7 +772,8 @@ them); `hubzoid grant '*'` exits with an error.
 
 ### Compatibility and the live deployment
 
-- **Isha changes nothing by upgrading.** None of these features can activate
+- **The reference customer changes nothing by upgrading.** None of these
+  features can activate
   without new keys:
   - no `AWS_*` key
   - `HUBZOID_MANAGEMENT_TOOLS` and `HUBZOID_HIDE_OWUI_USERS` off
@@ -788,8 +789,8 @@ them); `hubzoid grant '*'` exits with an error.
     Telegram unless those are listed in `HUBZOID_RESTRICTED_SURFACES`.
   - Managed hubs using native MCP need `connector_<app>` grants.
   - Claude subprocesses no longer inherit restricted and service credentials.
-- **Rehearsal.** Run this on a clone of IshaHubAgents, including ApprovalHub,
-  the one hub with a stdio MCP server. Do it before any production upgrade.
+- **Rehearsal.** Run this on a clone of the customer's agents repository,
+  including the one hub with a stdio MCP server. Do it before any production upgrade.
 - **Hub structure.** No new required hub files or frontmatter. `connector_`
   becomes a reserved capability prefix, like `use_hub`.
 
@@ -814,7 +815,7 @@ them); `hubzoid grant '*'` exits with an error.
 - **Rejected alternatives.**
   - A Hubzoid-owned OAuth vault: new crypto and storage.
   - A second account store: splits identity.
-  - Composio for everything: moves Isha's tokens to a third party by default.
+  - Composio for everything: moves customer tokens to a third party by default.
 
 ## Testing plan
 
@@ -876,7 +877,7 @@ provider credentials unless it is marked `e2e`.
   - WhatsApp delivery with a Meta test number
   - an AWS fetch with an instance role and with a local profile
   - Google sign-in merging onto a Console-created account
-  - the production Isha box's Hubzoid version and Open WebUI tool-server and
+  - the production customer server's Hubzoid version and Open WebUI tool-server and
     `oauth_session` counts (read-only, counts only)
 
 ## Rollout
@@ -888,9 +889,9 @@ provider credentials unless it is marked `e2e`.
    rewrite because the poller is its fallback.
 3. The lead writes the CHANGELOG and UPGRADING entries at merge. Release in the
    next minor.
-4. Rehearse the upgrade on a clone of IshaHubAgents with every flag off. Upgrade
-   Isha only when the owner asks.
-5. Isha adopts these features separately, each by explicit decision:
+4. Rehearse the upgrade on a clone of the customer's agents repository with
+   every flag off. Upgrade the customer deployment only when the owner asks.
+5. The customer adopts these features separately, each by explicit decision:
    - Console accounts (needs an org-admin bootstrap)
    - per-hub migration to managed access
    - `HUBZOID_HIDE_OWUI_USERS`, only after every hub is managed
@@ -907,7 +908,8 @@ provider credentials unless it is marked `e2e`.
   reload.
 - **Not built now:** LibreChat or AssistantUI adapters. The service and
   adapters are designed for them.
-- **No migration of Isha to managed access.** No Composio default for Gmail. No
+- **No migration of the customer deployment to managed access.** No Composio
+  default for Gmail. No
   Telegram journey verification. No continuation for web chat.
 - **No sub-delegation.** Delegates cannot grant `manage_access`.
 - **No Console view of a person's connections.**
@@ -916,7 +918,8 @@ provider credentials unless it is marked `e2e`.
 
 1. **Resolved 2026-09-26: (a), Open WebUI native MCP.** Composio is being
    sunset. The original question follows. **Which Gmail backend?** No connector
-   path is in use at Isha as far as the evidence shows. Options:
+   path is in use at the reference customer as far as the evidence shows.
+   Options:
    - **(a)** Open WebUI native MCP with a self-hosted Gmail/Workspace MCP server
      that supports OAuth 2.1, plus a Google OAuth client. An Internal app on
      the Workspace domain avoids Google's restricted-scope verification.
@@ -926,9 +929,9 @@ provider credentials unless it is marked `e2e`.
 
    P2 builds the journey and the Open WebUI adapter, and tests with a local
    OAuth MCP server, without this decision.
-2. **Production state.** A read-only check of the Isha box is needed before
-   claiming which path Isha uses (hubzoid version, tool-server and session
-   counts).
+2. **Production state.** A read-only check of the customer server is needed
+   before claiming which path it uses (hubzoid version, tool-server and
+   session counts).
 3. **Delegate password reset.** Defaulted to org admins only, per "no global
    account changes". It could later be allowed for accounts a delegate created
    that have no access outside the delegate's hubs.
@@ -961,8 +964,8 @@ provider credentials unless it is marked `e2e`.
   - A missing permission fails at start with a clear, value-free message.
   - Hub A's secret never appears in hub B, the gateway or Open WebUI.
   - Local `.env` files behave as before.
-- **Isha is unaffected.** An IshaHubAgents clone upgrades with no behaviour
-  change. `pytest` is green. New modules have unit tests. `e2e` tests auto-skip
+- **The customer deployment is unaffected.** A clone of its agents repository
+  upgrades with no behaviour change. `pytest` is green. New modules have unit tests. `e2e` tests auto-skip
   without keys.
 
 ## Implementation work packages
