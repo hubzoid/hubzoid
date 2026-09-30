@@ -245,15 +245,25 @@ Organization administrators cannot change their own role or account, or the
 service account, from the Console. For those, use Open WebUI's own settings or
 the server.
 
-### Proposals from agents
+### Access and workflows from chat
 
-With `HUBZOID_MANAGEMENT_TOOLS=true` in a hub's `.env` (default off), that hub's
-agent can propose access changes and new accounts on behalf of the signed-in
-manager, from chat, MCP, WhatsApp or Telegram. It replies with a link to
-`/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
-change and confirms it. Nothing applies before that. Links expire after
-`HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
-[access management](access-management.md#proposals-from-chat-whatsapp-and-mcp-implemented-off-by-default).
+Two families of agent tools are off for everyone until granted in the Console,
+under **Hubzoid tools**:
+
+- **Access control → Manage access from chat** (`access_tools`, organization
+  administrators grant it). A manager can ask the agent who has access, why a
+  person has it, and propose access changes and new accounts, from chat, MCP,
+  WhatsApp or Telegram. The agent replies with a link to
+  `/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
+  change and confirms it. Nothing applies before that. Links expire after
+  `HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
+  [access management](access-management.md#access-tools-in-chat-whatsapp-and-mcp-implemented-off-until-granted).
+- **Workflows → See workflows and runs** and **Run and control workflows**
+  (`workflows_view`, `workflows_manage`). See
+  [workflows](workflows.md#from-chat-and-assistants).
+
+`HUBZOID_ACCESS_TOOLS=false` or `HUBZOID_WORKFLOW_TOOLS=false` in a hub's
+`.env` removes a family from that agent.
 
 ### Hiding the Open WebUI Users page
 

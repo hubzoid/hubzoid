@@ -190,6 +190,9 @@ hover, keyboard focus or tap. Review and confirm before changes are saved.
 | Use this agent (`use_hub`) | Enter the hub through supported authenticated surfaces and use unrestricted tools |
 | A restricted module, such as `erp` | Call that module's tools; agent entry is included |
 | Manage access (`manage_access`) | Review/change access; a direct agent grant includes basic chat, but not restricted tools. Organization-wide admin rights alone do not grant chat |
+| See workflows and runs (`workflows_view`) | List this agent's workflows and recent runs from chat or an assistant ([workflows.md](workflows.md#from-chat-and-assistants)) |
+| Run and control workflows (`workflows_manage`, sensitive) | Start, pause, resume and cancel this agent's workflows from chat or an assistant. Runs act as the workflow's own account |
+| Manage access from chat (`access_tools`, sensitive, admins only) | Use the access tools below in this agent's chat. Has an effect only for people who manage access |
 
 An organization administrator manages access across the deployment. That is not
 a blanket grant to use every agent or every restricted tool. People with no entry
@@ -242,10 +245,22 @@ write. Keys can only be minted where Open WebUI API keys are enabled (Hubzoid
 turns them on with `MCP_SERVER=true`). Endpoints and response fields are listed
 in [PORTAL-ACCOUNT-CONTRACT.md](PORTAL-ACCOUNT-CONTRACT.md).
 
-## Proposals from chat, WhatsApp and MCP (implemented, off by default)
+## Access tools in chat, WhatsApp and MCP (implemented, off until granted)
 
-Set `HUBZOID_MANAGEMENT_TOOLS=true` in a hub's `.env` to give its agent three
-tools: `my_management_scope`, `propose_access_change` and `propose_new_account`.
+An agent can help managers see access and propose changes. An organization
+administrator turns this on per person: **Agents → the agent → Access**, then
+**Hubzoid tools → Access control → Manage access from chat** (`access_tools`).
+Delegates can't grant it. It has an effect only for people who manage access,
+and what they can see or propose stays within what they manage.
+
+| Tool | What it does |
+|---|---|
+| `my_management_scope` | The agents you manage and what you can grant in each |
+| `who_has_access` | People with access to one agent you manage, their capabilities and account state |
+| `explain_access` | One person's effective access in the agents you manage, and why: a direct grant, everyone signed in, or organization administration |
+| `propose_access_change` | Propose granting or removing capabilities for one person in one agent |
+| `propose_new_account` | Propose a chat account for a new person with access to one agent |
+
 They work only on an agent whose access is managed in the Console.
 
 - The acting person is always the signed-in caller. No tool takes an actor.
@@ -261,6 +276,13 @@ They work only on an agent whose access is managed in the Console.
 - `change_proposed`, `change_confirmed`, `change_rejected`, `change_expired` and
   `change_failed` are audited with the surface and request id. The grants made
   by a confirmed request carry the same request id.
+- `HUBZOID_ACCESS_TOOLS=false` in a hub's `.env` removes the tools from that
+  agent, and the Console shows the capability as disabled.
+- Upgrading from 1.0.x: `HUBZOID_MANAGEMENT_TOOLS=true` keeps its old meaning
+  (every manager gets the tools without a grant) for one more release, with a
+  warning in the log and in `hubzoid doctor`. Grant `access_tools` to the
+  managers who should keep them, then remove the setting.
+  `HUBZOID_MANAGEMENT_TOOLS=false` still turns the tools off.
 
 ## First owner
 
@@ -334,9 +356,9 @@ do, in groups. Empty groups are hidden.
 | Group | What it holds |
 |---|---|
 | Hub access | Use this agent (`use_hub`) |
-| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities |
+| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities. Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`) and **Access control** (`access_tools`) |
 | Custom restricted tools | `restricted/<capability>.py` modules |
-| Workflows | Workflow-only capabilities (none today) |
+| Workflows | Workflow-only capabilities (none today; the workflow tools live under Hubzoid tools) |
 | Administration | Manage access (`manage_access`): change access to this agent and create chat accounts for it, within your own access |
 | No longer available | A grant whose capability no longer exists. Remove it; it can't be granted again |
 
@@ -397,8 +419,14 @@ Then add the module to `capabilities.REGISTRANTS`.
 - `sensitive=True` marks it for review when granted.
   `delegate_grantable=False` lets only organization administrators grant it. The
   service enforces both; the Console only explains them.
-- `enabled_by="SOME_SWITCH"`: when that setting is present and false, the status
-  is "Disabled for this hub".
+- `enabled_by="SOME_SWITCH"` (or a tuple of names): when a named setting is
+  present and false, the status is "Disabled for this hub". The tool module
+  checks `capabilities.switched_off(CAP)` to leave its tools out.
+- `section="workflows"` or `"access"` shows the row under that sub-heading
+  inside its group. Rows without a section come first.
+- `probe=fn` (`fn(hub_dir) -> str`) reports why the capability can't run in a
+  hub, for example "No workflows in this agent". It runs only when the
+  settings allow the capability, and a failing probe reads "Not checked".
 - Keep `guard_tool` as the only gate: it hides the tool from callers without the
   grant and refuses a call that reaches it anyway, on every runtime.
 - Workflow APIs are not chat exposure. A workflow's `hub.call_jev` stays

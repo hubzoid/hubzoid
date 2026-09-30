@@ -280,13 +280,25 @@ Environment variables explicitly supported:
                          Internal. Set by `hubzoid gateway` on the bridges it
                          launches, which then use the deployment values the
                          gateway passed instead of fetching the secret again.
+  HUBZOID_ACCESS_TOOLS
+                         Hub. false removes the access tools (my_management_scope,
+                         who_has_access, explain_access, propose_access_change,
+                         propose_new_account) from this agent. Unset: they are
+                         there but hidden until an organization administrator
+                         grants "Manage access from chat" (access_tools).
+                         Effective only on managed hubs. A proposal applies only
+                         after the same manager confirms it in the Console.
   HUBZOID_MANAGEMENT_TOOLS
-                         Hub. true | false (default). Registers the agent tools
-                         that propose access changes and new accounts
-                         (my_management_scope, propose_access_change,
-                         propose_new_account). Effective only on managed hubs. A
-                         proposal applies only after the same manager confirms
-                         it in the Console.
+                         Hub. Deprecated. true keeps the 1.0.x meaning for one
+                         release: every manager gets the access tools without
+                         the access_tools grant (doctor warns). false turns the
+                         access tools off, like HUBZOID_ACCESS_TOOLS=false.
+  HUBZOID_WORKFLOW_TOOLS
+                         Hub. false removes the workflow tools (list_workflows,
+                         workflow_runs, run_workflow, pause_workflow,
+                         resume_workflow, cancel_workflow_run) from this agent.
+                         Unset: they are there but hidden until granted
+                         (workflows_view, workflows_manage).
   HUBZOID_CHANGE_REQUEST_TTL
                          Seconds a proposed access change waits for
                          confirmation in the Console. Default 900.
