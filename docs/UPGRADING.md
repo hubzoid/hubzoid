@@ -132,11 +132,12 @@ Also note:
 - **Microsoft links** without a tenant GUID in `MICROSOFT_CLIENT_TENANT_ID`,
   and OpenID Connect links without a discovery URL in `OPENID_PROVIDER_URL`,
   carry a placeholder issuer until the person signs in again.
-- **Open WebUI API keys.** In this release, while the old Open WebUI database
-  is still in place (`<hub>/.openwebui-data/webui.db`, or Open WebUI's tables
-  in `DATABASE_URL`), the Console's management API still accepts that
-  database's API keys (`Authorization: Bearer sk-...`) for their owners.
-  Delete API keys you no longer need in Open WebUI before you migrate.
+- **Open WebUI API keys stop working.** In the Hubzoid web app mode the
+  Console's management API ignores `Authorization: Bearer sk-...`, even while
+  the old Open WebUI database is still on disk, so a key-only request gets 401.
+  Scripts sign in with `POST /api/auth/login`, keep the `hz_session` cookie,
+  and send an `Origin` header with every write. Keys keep working only in the
+  legacy mode (`HUBZOID_UI=openwebui`).
 
 ### The first sign-in after the move
 

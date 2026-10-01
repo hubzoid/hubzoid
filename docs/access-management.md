@@ -234,8 +234,9 @@ administrators keep their full scope.
 ## Management API (implemented)
 
 The Console's API under `/portal/api` is also the management API. Besides the
-session cookie, every endpoint accepts `Authorization: Bearer sk-...` with the
-caller's Open WebUI API key. The key is verified against Open WebUI's key table,
+session cookie, in the legacy Open WebUI mode (`HUBZOID_UI=openwebui`) only,
+every endpoint accepts `Authorization: Bearer sk-...` with the caller's Open
+WebUI API key. The Hubzoid web app mode ignores these keys. The key is verified against Open WebUI's key table,
 as for the hosted MCP surface, and the caller acts as its owner under the same
 rules. A key caller does not need an Origin header. Cookie callers do, for every
 write. Keys can only be minted where Open WebUI API keys are enabled (Hubzoid
