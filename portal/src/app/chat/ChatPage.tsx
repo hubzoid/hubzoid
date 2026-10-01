@@ -23,7 +23,7 @@ import { displayName } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Agent, Conversation, ConversationDetail } from "../lib/types";
 import { ShareDialog } from "../components/ShareDialog";
-import { toast } from "../components/toast";
+import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
 import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
@@ -410,6 +410,7 @@ function FollowRuns({
         messages.splice(0, messages.length, ...settled);
         for (const m of fresh.messages ?? []) session.ids.markPersisted(m.id);
         importTree();
+        announce(t.chat.responseDone);
         if (fresh.conversation?.title) patchLocal(fresh.conversation.id, { title: fresh.conversation.title });
       } catch {
         /* the polled state is already on screen */

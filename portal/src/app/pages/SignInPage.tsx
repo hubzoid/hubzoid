@@ -75,9 +75,9 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
   const validate = () => {
     const errors: typeof fieldErrors = {};
     if (mode === "signup" && !name.trim()) errors.name = t.auth.missingName;
-    if (!email.trim()) errors.email = t.auth.missingFields;
+    if (!email.trim()) errors.email = t.auth.missingEmail;
     else if (!EMAIL.test(email.trim())) errors.email = t.auth.invalidEmail;
-    if (!password) errors.password = t.auth.missingFields;
+    if (!password) errors.password = t.auth.missingPassword;
     else if (mode === "signup" && password.length < 8) errors.password = t.auth.passwordTooShort;
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;

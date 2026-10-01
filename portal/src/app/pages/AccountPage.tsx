@@ -74,7 +74,7 @@ function PasswordForm() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const found: typeof errors = {};
-    if (!current) found.current = t.auth.missingFields;
+    if (!current) found.current = t.auth.missingPassword;
     if (next.length < 8) found.next = t.auth.passwordTooShort;
     else if (next !== confirm) found.confirm = t.account.passwordMismatch;
     setErrors(found);

@@ -138,8 +138,6 @@ export class ChatSession {
   events: SessionEvents;
   /** How many files the composer holds now (set by the thread view). */
   countAttachments: () => number = () => 0;
-  /** The server id of the reply streaming right now, for Stop. */
-  activeReplyId: string | null = null;
   /** Files accepted by add() that the composer doesn't list yet. */
   private reservedAttachments = 0;
   private creating: Promise<string> | null = null;
@@ -277,7 +275,6 @@ export class ChatSession {
       void cancelRun(this.apiBase, this.ids.toServer(localReplyId));
     };
     abortSignal.addEventListener("abort", onAbort, { once: true });
-    this.activeReplyId = replyId;
 
     const acc = new MessageAccumulator();
     let announcedTitle: string | null = null;
@@ -348,10 +345,10 @@ export class ChatSession {
       }
     } finally {
       abortSignal.removeEventListener("abort", onAbort);
-      if (this.activeReplyId === replyId) this.activeReplyId = null;
-      if (settled && !abortSignal.aborted) {
-        this.saveHead(localReplyId);
-      }
+      // Remember the new reply as the branch to open next time, unless the
+      // page is going away (a detach), when the server keeps its own head.
+      const detached = (abortSignal.reason as { detach?: boolean } | undefined)?.detach === true;
+      if (settled && !detached) this.saveHead(localReplyId);
       if (this.conversationId) this.events.onRunSettled(this.conversationId);
     }
   }

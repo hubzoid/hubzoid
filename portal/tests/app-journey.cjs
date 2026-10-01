@@ -166,7 +166,8 @@ function chartPng(width = 160, height = 100) {
     await onlyFixture("sign-in errors", async () => {
       step("Every sign-in failure reads as a plain sentence");
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
-      await page.getByText("Enter your email and password.").first().waitFor();
+      await page.getByText("Enter your email address.").waitFor();
+      await page.getByText("Enter your password.").waitFor();
       await signIn(page, "ada@example.com", "wrong-password");
       await page.getByText("That email and password don't match. Check them and try again.").waitFor();
       await signIn(page, "pending@example.com");
@@ -715,11 +716,17 @@ function chartPng(width = 160, height = 100) {
       await invited.goto(`${BASE}/auth/set-password?token=set-token-valid-0001`);
       await invited.getByRole("heading", { name: "This link can't be used" }).waitFor();
 
-      step("Signing out ends the session; self sign-up creates an account");
+      step("Signing out ends the session; self sign-up creates an account or waits for approval");
       await invited.goto(`${BASE}/`);
       await invited.getByRole("button", { name: /^Account menu/ }).click();
       await invited.getByRole("menuitem", { name: "Sign out" }).click();
       await invited.waitForURL(`${BASE}/auth`);
+      await invited.getByRole("button", { name: "Create an account" }).click();
+      await invited.getByLabel("Your name").fill("Lee Park");
+      await invited.getByLabel("Email").fill("lee@other.org");
+      await invited.getByLabel("Password").fill("lee-password");
+      await invited.getByRole("button", { name: "Create account" }).click();
+      await invited.getByText(/Your account is waiting for an administrator to approve it/).waitFor();
       await invited.getByRole("button", { name: "Create an account" }).click();
       await invited.getByLabel("Your name").fill("Noor Haddad");
       await invited.getByLabel("Email").fill("noor@example.com");
@@ -728,6 +735,45 @@ function chartPng(width = 160, height = 100) {
       await invited.waitForURL(`${BASE}/`);
       await invited.getByRole("button", { name: /^Account menu: Noor Haddad/ }).waitFor();
       await fresh.close();
+
+      step("A session that ends mid-use goes back to sign-in, then returns to the same chat");
+      await fetch(`${BASE}/__fixture/expire`);
+      await page.goto(`${BASE}/c/c_adastandup01`);
+      await page.waitForURL(/\/auth\?redirect=%2Fc%2Fc_adastandup01/);
+      await signIn(page);
+      await page.waitForURL(`${BASE}/c/c_adastandup01`);
+      await page.getByTestId("chat-title").getByText("Standup agent plan").waitFor();
+
+      step("Branding from the hub: name, logo, favicon and stylesheet");
+      await fetch(`${BASE}/__fixture/flag/branded/true`);
+      await page.goto(`${BASE}/`);
+      await settled();
+      const brandLink = page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: "Acme Support" });
+      await brandLink.waitFor();
+      assert.equal(await brandLink.locator("img").getAttribute("src"), "/branding/logo.svg");
+      await page.waitForFunction(() => document.title.endsWith("· Acme Support"));
+      assert.equal(await page.evaluate(() => document.querySelector('link[rel="icon"]').getAttribute("href")), "/branding/favicon.svg");
+      assert.equal(await page.evaluate(() => document.querySelector("link[data-hz-branding]").getAttribute("href")), "/branding/custom.css");
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--acme-brand").trim()), "#1f6f5c");
+      await shot(page, "app-26-branding");
+      await fetch(`${BASE}/__fixture/flag/branded/false`);
+
+      step("External sign-in returns to the page that asked; cancelling it says so");
+      const viaGoogle = await browser.newContext({ viewport: { width: 1200, height: 860 } });
+      const gp = await viaGoogle.newPage();
+      watch(gp);
+      await gp.goto(`${BASE}/account`);
+      await gp.waitForURL(/\/auth\?redirect=%2Faccount/);
+      await gp.getByRole("link", { name: "Continue with Google" }).click();
+      await gp.getByRole("link", { name: "Cancel" }).click();
+      await gp.getByText("Sign-in was cancelled. Try again when you're ready.").waitFor();
+      await gp.goto(`${BASE}/auth?redirect=%2Faccount`);
+      await gp.getByRole("link", { name: "Continue with Google" }).click();
+      await gp.getByRole("link", { name: "sam@example.com" }).click();
+      await gp.waitForURL(`${BASE}/account`);
+      await gp.getByText("sam@example.com").first().waitFor();
+      await viaGoogle.close();
+
     });
 
     // ---- local mode ----------------------------------------------------------------------
