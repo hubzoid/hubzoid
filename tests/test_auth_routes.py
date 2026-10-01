@@ -384,3 +384,25 @@ def test_the_bridge_serves_sign_in_with_the_web_app(tmp_path, monkeypatch):
     assert c.get("/api/agents").status_code == 200
     me = c.get("/portal/api/me").json()
     assert me["org_admin"] is True and me["sign_in"]["links"] is True
+
+
+def test_access_logs_never_hold_link_tokens_or_oauth_codes(hub):
+    """uvicorn logs the path with its query string; mounting the sign-in routes
+    installs a filter that redacts one-time credentials first."""
+    import logging
+
+    from hubzoid.auth import logredact
+
+    client(hub)  # mounting installs the filter
+    logger = logging.getLogger("uvicorn.access")
+    assert any(isinstance(f, logredact.RedactCredentials) for f in logger.filters)
+    record = logger.makeRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("203.0.113.7:5000", "GET", "/auth/set-password?token=SECRET-TOKEN&x=1", "1.1", 200), None)
+    for f in logger.filters:
+        f.filter(record)
+    assert "SECRET-TOKEN" not in record.getMessage() and "token=[redacted]&x=1" in record.getMessage()
+    assert logredact.redact("/api/auth/link/SECRET-TOKEN") == "/api/auth/link/[redacted]"
+    assert logredact.redact("/oauth/google/callback?code=C0DE&state=S7") == \
+        "/oauth/google/callback?code=[redacted]&state=[redacted]"
+    assert logredact.redact("/c/abc?q=1") == "/c/abc?q=1"

@@ -1,5 +1,7 @@
 """Sign-in rate limits: per address and per email, 10 failures in 15 minutes
-lock for 15 minutes, success clears, and the counters are shared between
+lock for 15 minutes, attempts counted before the password is checked (so a
+parallel burst can't outrun the lock), success clears the email and takes back
+only its own attempt on the address, and the counters are shared between
 processes through the database."""
 from __future__ import annotations
 
@@ -48,6 +50,13 @@ def attempt(c, email="ana@example.com", password="wrong password!"):
     return c.post("/api/auth/login", json={"email": email, "password": password}, headers=ORIGIN)
 
 
+def fail(hub, **keys):
+    """One failed attempt, as the sign-in route records it."""
+    if ratelimit.admit(hub, **keys):
+        return True
+    return bool(ratelimit.record_failure(hub, **keys))
+
+
 def test_ten_failures_lock_the_email(hub):
     users.create(hub, email="ana@example.com", password=PASSWORD)
     c = client(hub)
@@ -80,8 +89,46 @@ def test_success_clears_the_counters(hub):
     for _ in range(9):
         attempt(c)
     assert attempt(c, password=PASSWORD).status_code == 200
+    # The email's counter starts again (seen from another address, whose own
+    # counter has nothing to do with the first one's nine failures).
+    other = client(hub, ip="198.51.100.20")
     for _ in range(9):
-        assert attempt(c).status_code == 401  # a fresh window of ten
+        assert attempt(other).status_code == 401
+
+
+def test_a_valid_account_cannot_reset_a_spraying_address(hub):
+    """Failures against other accounts keep counting on the address however
+    often the sprayer signs in to an account of their own."""
+    users.create(hub, email="mine@example.com", password=PASSWORD)
+    c = client(hub)
+    for i in range(9):
+        assert attempt(c, email=f"victim{i}@example.com").status_code == 401
+        assert attempt(c, email="mine@example.com", password=PASSWORD).status_code == 200
+    assert attempt(c, email="victim9@example.com").status_code == 429
+    assert attempt(c, email="mine@example.com", password=PASSWORD).status_code == 429
+
+
+def test_a_parallel_burst_cannot_outrun_the_lock(hub):
+    """Attempts are counted before the password is checked: of a burst of
+    parallel guesses at most ten reach the password check."""
+    users.create(hub, email="ana@example.com", password=PASSWORD)
+    c = client(hub)
+    ratelimit.retry_after(hub, email="warm@example.com")  # migrate before the threads start
+    results: list[int] = []
+    lock = threading.Lock()
+
+    def guess():
+        status = attempt(c).status_code
+        with lock:
+            results.append(status)
+
+    threads = [threading.Thread(target=guess) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(results) == 16
+    assert results.count(401) <= 10 and results.count(429) >= 6, results
 
 
 def test_the_lock_ends_after_fifteen_minutes(hub):
@@ -101,8 +148,8 @@ def test_expired_window_resets_the_count(hub):
     """Old failures stop counting: an expired window starts again at one."""
     now = time.time()
     for _ in range(9):
-        ratelimit.record_failure(hub, email="ana@example.com", now=now - 20 * 60)
-    assert ratelimit.record_failure(hub, email="ana@example.com", now=now) == 0
+        ratelimit.admit(hub, email="ana@example.com", now=now - 20 * 60)
+    assert ratelimit.admit(hub, email="ana@example.com", now=now) == 0
     with engine_for(hub).connect() as conn:
         assert conn.execute(text("SELECT failures FROM hz_auth_attempts")).scalar() == 1
 
@@ -115,20 +162,21 @@ def test_loopback_addresses_are_not_counted_per_address(hub):
     assert ratelimit.keys(ip="testclient") == []
     assert ratelimit.keys(ip="203.0.113.7") == ["ip:203.0.113.7"]
     for i in range(12):
-        ratelimit.record_failure(hub, ip="127.0.0.1", email=f"x{i}@example.com")
+        fail(hub, ip="127.0.0.1", email=f"x{i}@example.com")
     assert ratelimit.retry_after(hub, ip="127.0.0.1", email="fresh@example.com") == 0
 
 
 def test_limit_setting(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_AUTH_MAX_FAILURES", "3")
     for _ in range(2):
-        assert ratelimit.record_failure(hub, email="a@example.com") == 0
-    assert ratelimit.record_failure(hub, email="a@example.com") > 0
+        assert not fail(hub, email="a@example.com")
+    assert fail(hub, email="a@example.com")
+    assert ratelimit.admit(hub, email="a@example.com") > 0
 
 
-def test_concurrent_failures_are_all_counted(hub):
+def test_concurrent_attempts_are_all_counted(hub):
     ratelimit.retry_after(hub, email="warm@example.com")  # migrate before the threads start
-    threads = [threading.Thread(target=ratelimit.record_failure, args=(hub,),
+    threads = [threading.Thread(target=ratelimit.admit, args=(hub,),
                                 kwargs={"email": "race@example.com"}) for _ in range(8)]
     for t in threads:
         t.start()
@@ -144,7 +192,9 @@ import sys
 from pathlib import Path
 from hubzoid.auth import ratelimit
 for _ in range(10):
-    ratelimit.record_failure(Path(sys.argv[1]), ip="203.0.113.50", email="shared@example.com")
+    hub = Path(sys.argv[1])
+    ratelimit.admit(hub, ip="203.0.113.50", email="shared@example.com")
+    ratelimit.record_failure(hub, ip="203.0.113.50", email="shared@example.com")
 print("done")
 """
 
@@ -178,8 +228,14 @@ def test_postgres_upsert(postgres_url, tmp_path, monkeypatch):
     hub = tmp_path / "pg"
     hub.mkdir()
     for _ in range(9):
-        assert ratelimit.record_failure(hub, ip="203.0.113.1", email="pg@example.com") == 0
-    assert ratelimit.record_failure(hub, ip="203.0.113.1", email="pg@example.com") > 0
+        assert not fail(hub, ip="203.0.113.1", email="pg@example.com")
+    assert fail(hub, ip="203.0.113.1", email="pg@example.com")
     assert ratelimit.retry_after(hub, email="pg@example.com") > 0
-    ratelimit.record_success(hub, ip="203.0.113.1", email="pg@example.com")
-    assert ratelimit.retry_after(hub, ip="203.0.113.1", email="pg@example.com") == 0
+    assert ratelimit.admit(hub, email="pg@example.com") > 0  # locked: refused, not counted
+    # Over the limit at admission locks too (a burst that never reached the check).
+    for _ in range(11):
+        ratelimit.admit(hub, email="burst@example.com")
+    assert ratelimit.retry_after(hub, email="burst@example.com") > 0
+    ratelimit.admit(hub, ip="203.0.113.9", email="ok@example.com")
+    ratelimit.record_success(hub, ip="203.0.113.9", email="ok@example.com")
+    assert ratelimit.retry_after(hub, ip="203.0.113.9", email="ok@example.com") == 0

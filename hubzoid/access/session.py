@@ -32,9 +32,10 @@ def _truthy_env(name: str) -> bool:
 
 def require_same_origin(request: Request) -> None:
     """Reject a cross-site mutation. The session cookie is ambient, so a POST
-    must come from our own origin: an Origin (or Referer) that is one of the
-    deployment's origins (``appmode.allowed_origins``), or whose host equals
-    the request's Host."""
+    must come from our own origin: an Origin (or Referer) whose host equals
+    the request's Host or, in the default mode, one of the deployment's
+    origins (``appmode.allowed_origins``; a deployment may answer on two
+    public names). Legacy mode keeps the 1.0.x rule exactly."""
     from urllib.parse import urlparse
 
     from .. import appmode
@@ -47,9 +48,10 @@ def require_same_origin(request: Request) -> None:
         raise HTTPException(
             status_code=403, detail="missing or invalid Origin on a mutation"
         )
-    allowed = appmode.allowed_origins()
-    if allowed and appmode.normalize_origin(origin) in allowed:
-        return
+    if not appmode.is_legacy():
+        allowed = appmode.allowed_origins()
+        if allowed and appmode.normalize_origin(origin) in allowed:
+            return
     req_host = request.headers.get("host", "")
     if not req_host or parsed.netloc != req_host:
         raise HTTPException(status_code=403, detail="cross-origin request refused")

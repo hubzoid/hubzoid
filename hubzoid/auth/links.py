@@ -54,7 +54,10 @@ def create(hub_dir: Path, user_id: str, *, purpose: str = "set_password",
     now = time.time()
     expires = now + lifetime_seconds()
     with engine_for(Path(hub_dir)).begin() as conn:
-        if conn.execute(sa.select(users.c.id).where(users.c.id == str(user_id))).first() is None:
+        # The account row is locked (PostgreSQL; SQLite serializes writers), so
+        # two links issued at once can't both survive.
+        if conn.execute(sa.select(users.c.id).where(users.c.id == str(user_id))
+                        .with_for_update()).first() is None:
             raise KeyError(user_id)
         conn.execute(links.delete().where(links.c.user_id == str(user_id),
                                           links.c.used_at.is_(None)))

@@ -26,9 +26,11 @@ Who signs in (contract 6.1):
     when the provider marks the email verified and
     ``OAUTH_MERGE_ACCOUNTS_BY_EMAIL`` is true. Never on an unverified email.
   * ``OAUTH_ALLOWED_DOMAINS`` (``*`` or unset: any) limits every external
-    sign-in to those email domains. For Google a work domain must also be the
-    account's Google Workspace domain (``hd``), so a personal Google account
-    registered with a work address is refused.
+    sign-in to those email domains, judged on a verified email only (a linked
+    sign-in whose current email is unverified is judged on its account's
+    email). For Google a work domain must also be the account's Google
+    Workspace domain (``hd``), so a personal Google account registered with a
+    work address is refused.
   * With ``ENABLE_OAUTH_SIGNUP`` a new account is created ``pending`` (an
     administrator approves it), or ``active`` when its verified email is in an
     explicitly allowed domain. Without it: ``/auth?error=no_account``.
@@ -539,8 +541,14 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
         st.unlink_identity(issuer, subject)  # its account was deleted
         linked = None
     if domains is not None:
-        checked = email or (user or {}).get("email") or ""
-        if not checked or not domain_allowed(p.id, checked, claims, domains):
+        if user is not None:
+            checked = email if verified else user["email"]
+        elif not verified:
+            # Only a verified email can vouch for an allowed domain.
+            raise SignInRefused("email_not_verified" if email else "no_email")
+        else:
+            checked = email
+        if not domain_allowed(p.id, checked, claims, domains):
             raise SignInRefused("domain_not_allowed")
     if user is not None:
         st.touch_identity(issuer, subject, email or user["email"])
@@ -561,8 +569,10 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
             if existing is None:
                 raise SignInRefused("unavailable")
         else:
-            st.link_identity(provider=p.id, issuer=issuer, subject=subject,
-                             user_id=existing["id"], email=email)
+            winner = _link(st, p, issuer, subject, existing, email)
+            if winner["id"] != existing["id"]:
+                st.delete(existing["id"])  # a concurrent first sign-in linked another account
+                return winner
             users.sync_identity(Path(hub_dir), existing)
             log.info("auth: %s sign-up created %s account %s", p.id, existing["status"], email)
             return existing
@@ -574,10 +584,25 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
         raise SignInRefused("not_linked")
     if existing.get("source") == "local":
         raise SignInRefused("no_account")
+    winner = _link(st, p, issuer, subject, existing, email)
+    if winner["id"] == existing["id"]:
+        log.info("auth: %s sign-in linked to the existing account %s", p.id, email)
+    return winner
+
+
+def _link(st, p: Provider, issuer: str, subject: str, user: dict, email: str) -> dict:
+    """Link (issuer, subject) to ``user``. If a concurrent first sign-in
+    linked it first, the account the identity is linked to wins: the identity
+    is the key, never the email this request happened to carry."""
+    from . import users
+
     try:
-        st.link_identity(provider=p.id, issuer=issuer, subject=subject,
-                         user_id=existing["id"], email=email)
+        st.link_identity(provider=p.id, issuer=issuer, subject=subject, user_id=user["id"],
+                         email=email)
+        return user
     except users.AccountExists:
-        pass  # a concurrent first sign-in linked it
-    log.info("auth: %s sign-in linked to the existing account %s", p.id, email)
-    return existing
+        linked = st.find_identity(issuer, subject)
+        winner = st.get(linked["user_id"]) if linked else None
+        if winner is None:
+            raise SignInRefused("unavailable")
+        return winner

@@ -190,9 +190,54 @@ def test_oauth_signup_is_active_for_a_verified_allowed_domain(hub, idp, monkeypa
     c = client(hub)
     assert sign_in(c).headers["location"] == "/c/abc"
     assert users.find_by_email(hub, "ana@example.com")["status"] == "active"
-    # Unverified: still created (to be approved), never active.
+    # Unverified: it can't vouch for an allowed domain, so nothing is created.
     idp.claims = {"sub": "u2", "email": "bo@example.com", "email_verified": False}
+    assert error_of(sign_in(client(hub))) == "email_not_verified"
+    assert users.find_by_email(hub, "bo@example.com") is None
+
+
+def test_unverified_signup_without_domain_limits_waits_for_approval(hub, idp, monkeypatch):
+    monkeypatch.setenv("ENABLE_OAUTH_SIGNUP", "true")
+    idp.claims = {"sub": "u3", "email": "cy@example.com", "email_verified": False}
     assert error_of(sign_in(client(hub))) == "pending"
+    assert users.find_by_email(hub, "cy@example.com")["status"] == "pending"
+
+
+def test_a_linked_sign_in_with_an_unverified_email_is_judged_on_its_account(hub, idp, monkeypatch):
+    """Domains restricted after linking: an unverified email claiming an
+    allowed domain doesn't count; the account's own email does."""
+    monkeypatch.setenv("OAUTH_MERGE_ACCOUNTS_BY_EMAIL", "true")
+    existing(hub, email="ana@outside.example.net")
+    idp.claims = {"sub": "lk", "email": "ana@outside.example.net", "email_verified": True}
+    assert sign_in(client(hub)).headers["location"] == "/c/abc"  # linked, no limits yet
+    monkeypatch.setenv("OAUTH_ALLOWED_DOMAINS", "example.com")
+    idp.claims = {"sub": "lk", "email": "ana@example.com", "email_verified": False}
+    assert error_of(sign_in(client(hub))) == "domain_not_allowed"
+    idp.claims = {"sub": "lk", "email": "ana@example.com", "email_verified": True}
+    assert sign_in(client(hub)).headers["location"] == "/c/abc"
+
+
+def test_a_lost_link_race_returns_the_identitys_own_account(hub, idp, monkeypatch):
+    """Two first sign-ins race to link one (issuer, subject): the account the
+    identity ends up linked to is the one signed in, never the email's."""
+    monkeypatch.setenv("OAUTH_MERGE_ACCOUNTS_BY_EMAIL", "true")
+    winner = existing(hub, email="first@example.com")
+    existing(hub, email="ana@example.com")
+    st = users.store(hub)
+    st.link_identity(provider="oidc", issuer=idp.issuer, subject="raced", user_id=winner["id"],
+                     email="first@example.com")
+    real = users.UserStore.find_identity
+    calls = []
+
+    def not_yet(self, issuer, subject):  # the first look happened before the other link landed
+        calls.append(subject)
+        return None if len(calls) == 1 else real(self, issuer, subject)
+
+    monkeypatch.setattr(users.UserStore, "find_identity", not_yet)
+    idp.claims = {"sub": "raced", "email": "ana@example.com", "email_verified": True}
+    c = client(hub)
+    assert sign_in(c).headers["location"] == "/c/abc"
+    assert signed_in(c) == "first@example.com"
 
 
 def test_allowed_domains_limit_every_external_sign_in(hub, idp, monkeypatch):

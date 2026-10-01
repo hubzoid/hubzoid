@@ -39,14 +39,14 @@ def hub(tmp_path, monkeypatch):
 
 
 def request(*, cookies: dict | None = None, headers: dict | None = None,
-            host: str = "testserver") -> Request:
+            host: str = "localhost:3080") -> Request:
     raw = [(b"host", host.encode())]
     if cookies:
         raw.append((b"cookie", "; ".join(f"{k}={v}" for k, v in cookies.items()).encode()))
     for k, v in (headers or {}).items():
         raw.append((k.lower().encode(), v.encode()))
     return Request({"type": "http", "method": "GET", "path": "/", "headers": raw,
-                    "query_string": b"", "scheme": "http", "server": (host, 80)})
+                    "query_string": b"", "scheme": "http", "server": ("127.0.0.1", 3080)})
 
 
 def account(hub, email, role="user", **kw):
@@ -179,6 +179,7 @@ def test_configured_owner_in_legacy_mode_is_unchanged(hub, monkeypatch):
 def test_require_same_origin(monkeypatch, origin, host, ok):
     from fastapi import HTTPException
 
+    monkeypatch.delenv("HUBZOID_UI", raising=False)
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com")
     monkeypatch.setenv("HUBZOID_ALLOWED_ORIGINS", "https://chat.example.org")
     req = request(host=host, headers={"origin": origin} if origin else {})
@@ -188,6 +189,20 @@ def test_require_same_origin(monkeypatch, origin, host, ok):
         with pytest.raises(HTTPException) as exc:
             session.require_same_origin(req)
         assert exc.value.status_code == 403
+
+
+def test_require_same_origin_in_legacy_mode_is_unchanged(monkeypatch):
+    """Open WebUI deployments keep the 1.0.x rule: the Origin's host must be
+    the request's Host, whatever origins are configured."""
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com")
+    with pytest.raises(HTTPException):
+        session.require_same_origin(request(host="127.0.0.1:3080",
+                                            headers={"origin": "https://hub.example.com"}))
+    session.require_same_origin(request(host="hub.example.com",
+                                        headers={"origin": "https://hub.example.com"}))
 
 
 # ---- MCP OAuth consent on Hubzoid sessions ------------------------------------------------

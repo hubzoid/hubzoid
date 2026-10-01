@@ -520,8 +520,27 @@ class AccessService:
                            surface=actor.surface)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
+            if suspended:
+                self._end_sessions(subject)
             self._project_visibility()
         return changed
+
+    def _end_sessions(self, subject: str) -> None:
+        """Default mode: a blocked person's sessions end for good, so lifting
+        the block never brings an old sign-in (or a stolen cookie) back. Open
+        WebUI keeps its own sessions in legacy mode."""
+        from .. import appmode
+
+        if appmode.is_legacy(self.hub_dir):
+            return
+        try:
+            from ..auth import users
+
+            account = users.find_by_email(self.hub_dir, subject)
+            if account is not None:
+                users.store(self.hub_dir).revoke_sessions(account["id"])
+        except Exception:  # noqa: BLE001 — the block stands; a blocked session is refused anyway
+            log.warning("block: sessions could not be ended now; they are refused while blocked")
 
     def _project_visibility(self) -> None:
         """Mirror access to the chat app's agent picker now, not at the next

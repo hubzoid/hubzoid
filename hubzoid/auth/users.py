@@ -137,6 +137,18 @@ class UserStore:
             rows = conn.execute(q.order_by(users.c.email)).fetchall()
         return [_public(r) for r in rows]
 
+    def credentials(self, email: str | None) -> tuple[dict | None, str | None]:
+        """(account, password hash) for a sign-in, in one query whatever the
+        outcome, so an unknown email costs the same database work. The hash is
+        None without a password or when password sign-in is off."""
+        email = normalize_email(email)
+        with self.engine.connect() as conn:
+            row = conn.execute(sa.select(users).where(users.c.email == email)).first()
+        if row is None:
+            return None, None
+        m = row._mapping
+        return _public(row), (m["password_hash"] or None) if m["password_enabled"] else None
+
     def password_hash(self, user_id: str) -> str | None:
         """The stored hash, for verifying a sign-in only. None when the person
         has no password or signs in with an external provider only."""

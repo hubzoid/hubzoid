@@ -205,6 +205,101 @@ def test_revoke_helpers(hub):
     assert sessions.resolve_token(hub, "") is None
 
 
+def test_a_change_racing_sign_in_leaves_no_session(hub):
+    """The account changed between reading the credential and starting the
+    session (a reset, a role change): nothing is kept."""
+    user = person(hub)
+    users.set_password(hub, user["id"], "changed meanwhile")  # bumps updated_at
+    with pytest.raises(sessions.SessionRace):
+        sessions.create_session(hub, user, method="password", expect_updated_at=user["updated_at"])
+    assert rows(hub) == []
+    fresh = users.get(hub, user["id"])
+    token = sessions.create_session(hub, fresh, method="password",
+                                    expect_updated_at=fresh["updated_at"])
+    assert sessions.resolve_token(hub, token).email == "ana@example.com"
+    users.set_status(hub, user["id"], "pending")
+    stale = users.get(hub, user["id"])
+    with pytest.raises(sessions.SessionRace):  # not active
+        sessions.create_session(hub, stale, method="password", expect_updated_at=stale["updated_at"])
+
+
+def test_sign_in_racing_a_reset_is_refused(hub, monkeypatch):
+    """A password checked just before an administrator's reset commits can't
+    start a session that outlives the reset."""
+    person(hub)
+    c = client(hub)
+    real = users.UserStore.credentials
+
+    def read_then_reset(self, email):
+        found = real(self, email)
+        self.set_password(found[0]["id"], "reset by the admin")  # lands mid sign-in
+        return found
+
+    monkeypatch.setattr(users.UserStore, "credentials", read_then_reset)
+    r = sign_in(c)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "sign_in_changed"
+    assert who(c) is None and rows(hub) == []
+
+
+def test_blocking_ends_sessions_for_good(hub):
+    """Lifting a block never brings an old session (or a stolen cookie) back."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService, Actor
+
+    gs = store_for(hub)
+    gs.bootstrap(["boss@example.com"])
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    stolen = c.cookies.get("hz_session")
+    service = AccessService(hub)
+    boss = Actor("boss@example.com", "console", "session")
+    service.set_blocked(boss, "ana@example.com", True)
+    assert who(c) is None
+    service.set_blocked(boss, "ana@example.com", False)
+    assert sessions.resolve_token(hub, stolen) is None
+    assert sign_in(c).status_code == 200  # signing in again works
+
+
+def test_a_session_seen_while_blocked_is_revoked(hub):
+    """Any other way of blocking: the session is ended the first time it is
+    presented while blocked."""
+    from hubzoid.access import store_for
+
+    user = person(hub)
+    token = sessions.create_session(hub, user, method="password")
+    store_for(hub).suspend("ana@example.com", actor="test")
+    assert sessions.resolve_token(hub, token) is None
+    store_for(hub).suspend("ana@example.com", actor="test", suspended=False)
+    assert sessions.resolve_token(hub, token) is None
+
+
+def test_short_idle_limits_keep_active_sessions(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_SESSION_IDLE_DAYS", str(120 / 86400))  # two minutes
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+    now = time.time()
+    set_row(hub, last_seen_at=now - 90, idle_seconds=120)
+    assert who(c) == "ana@example.com"
+    assert rows(hub)[0]["last_seen_at"] >= now - 5  # touched although under five minutes
+
+
+def test_store_failures_are_503_not_500(hub, monkeypatch):
+    import hubzoid.access as access
+
+    person(hub)
+    c = client(hub)
+    sign_in(c)
+
+    def broken(_hub):
+        raise RuntimeError("access store unavailable")
+
+    monkeypatch.setattr(access, "store_for", broken)
+    r = c.get("/whoami")
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "accounts_unavailable"
+
+
 def test_database_errors_fail_closed(hub, monkeypatch):
     from sqlalchemy.exc import OperationalError
 
@@ -239,16 +334,29 @@ def test_local_mode_is_the_local_owner(hub, monkeypatch):
 
 @pytest.mark.parametrize("host,allowed", [
     ("localhost:3080", True), ("127.0.0.1:3080", True), ("[::1]:3080", True),
-    ("192.168.1.20:3080", True), ("my-laptop:3080", True), ("app.localhost", True),
+    ("192.168.1.20:3080", True), ("app.localhost", True), ("testserver", True),
     ("evil.example.com", False), ("evil.example.com:3080", False),
+    ("my-laptop:3080", False), ("evil", False),
 ])
 def test_local_mode_refuses_other_host_names(hub, monkeypatch, host, allowed):
     """Sign-in off makes every request the owner; a web page reaching the
-    server through DNS rebinding names it by the attacker's host name."""
+    server through DNS rebinding names it by the attacker's host name (a
+    single-label name too, which a hostile network's resolver can answer).
+    The name the server listens on (here the test client's) is fine."""
     monkeypatch.delenv("HUBZOID_AUTH")
     c = client(hub)
     seen = c.get("/whoami", headers={"host": host}).json()["email"]
     assert seen == ("admin@localhost" if allowed else None)
+
+
+def test_a_forwarded_address_cannot_unlock_local_mode(hub, monkeypatch):
+    """Only the Host and the listening socket decide: request headers such as
+    X-Forwarded-For (which a page can set) change nothing."""
+    monkeypatch.delenv("HUBZOID_AUTH")
+    c = client(hub)
+    r = c.get("/whoami", headers={"host": "evil.example.com", "x-forwarded-for": "testclient",
+                                  "x-forwarded-host": "localhost"})
+    assert r.json()["email"] is None
 
 
 def test_local_mode_accepts_configured_names(hub, monkeypatch):
