@@ -18,6 +18,7 @@ aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.13.5
     # via
+    #   hubzoid (pyproject.toml)
     #   kubernetes
     #   litellm
     #   open-webui
@@ -456,6 +457,7 @@ markupsafe==3.0.3
     #   mako
 mcp==1.27.2
     # via
+    #   hubzoid (pyproject.toml)
     #   claude-agent-sdk
     #   fastmcp-slim
     #   open-webui
@@ -520,6 +522,7 @@ open-webui==0.11.4
     # via hubzoid (pyproject.toml)
 openai==2.29.0
     # via
+    #   hubzoid (pyproject.toml)
     #   composio
     #   litellm
     #   open-webui
@@ -894,6 +897,7 @@ threadpoolctl==3.7.0
     # via scikit-learn
 tiktoken==0.13.0
     # via
+    #   hubzoid (pyproject.toml)
     #   litellm
     #   open-webui
 tokenizers==0.22.2
