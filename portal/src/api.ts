@@ -328,3 +328,29 @@ export function query(
   const s = q.toString();
   return s ? "?" + s : "";
 }
+
+// ---- One-time sign-in links (Hubzoid accounts, the default mode) -------------
+// Add user and Reset password return a link for the person to set their own
+// password instead of a password typed here. Open WebUI deployments (legacy
+// mode) keep passwords; there `sign_in.links` is absent.
+
+export type LinkSignInOptions = SignInOptions & { links?: boolean };
+/** A one-time sign-in link: absolute, or a path on this site. Works once. */
+export type SignInLink = {
+  link?: string | null;
+  /** Unix seconds. */
+  expires_at?: number;
+  /** Set when the account exists but its link could not be made. */
+  link_error?: string;
+};
+export type AccountCreatedWithLink = AccountCreated & SignInLink;
+
+/** Whether this deployment hands out one-time sign-in links. */
+export function usesSignInLinks(me?: Me | null): boolean {
+  return !!(me?.sign_in as LinkSignInOptions | undefined)?.links;
+}
+
+/** The address to share: as given when absolute, else on this site. */
+export function shareableLink(link: string): string {
+  return /^https?:\/\//i.test(link) ? link : window.location.origin + link;
+}
