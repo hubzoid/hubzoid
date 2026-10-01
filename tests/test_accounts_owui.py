@@ -620,6 +620,8 @@ def test_new_access_reaches_the_chat_picker_at_once(dep, monkeypatch):
     visibility straight away."""
     from hubzoid.access import reconcile
 
+    # The Open WebUI picker mirror runs in the legacy mode only.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     calls = []
     monkeypatch.setattr(reconcile, "sync_owui", lambda hub_dir: calls.append(hub_dir) or {"state": "ok"})
     dep.svc.create_account(actor(ROOT), email="new@x.org", name="New", password=PASSWORD,
