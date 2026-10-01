@@ -296,6 +296,35 @@ function chartPng(width = 160, height = 100) {
       assert.equal(await link.getAttribute("href"), `/artifacts/${firstId}/quarterly-report.csv`);
       assert.equal((await link.innerText()).trim(), "quarterly-report.csv", "the chip names the file once");
 
+      step("Images the agent wrote show at once; an image on another site loads only when asked, naming its host");
+      // An answer can carry an image whose address holds data from the chat (a
+      // tool's reply can ask for one). Showing it would send that data away.
+      const remote = [];
+      await context.route("https://images.example.net/**", (route) => {
+        remote.push(route.request().url());
+        return route.fulfill({ status: 200, contentType: "image/png", body: chartPng(40, 30) });
+      });
+      await send("show me the image");
+      await waitIdle();
+      const ownSrc = `/artifacts/${firstId}/chart.png`;
+      const own = lastAssistant().getByRole("img", { name: "Quarterly chart" });
+      await own.waitFor();
+      assert.equal(await own.getAttribute("src"), ownSrc);
+      await page.waitForFunction((src) => [...document.images].some((i) => i.getAttribute("src") === src && i.complete && i.naturalWidth > 0), ownSrc);
+      await page.waitForTimeout(400);
+      assert.deepEqual(remote, [], "nothing is fetched from another site before the person asks");
+      assert.equal(await page.locator('img[src*="images.example.net"]').count(), 0);
+      const ask = lastAssistant().getByRole("button", { name: /^Load image from images\.example\.net/ });
+      await ask.getByText("Revenue trend").waitFor();
+      await shot(page, "app-06b-images");
+      await ask.click();
+      const loaded = lastAssistant().getByRole("img", { name: "Revenue trend" });
+      await loaded.waitFor();
+      assert.equal(await loaded.getAttribute("referrerpolicy"), "no-referrer");
+      await page.waitForFunction(() => [...document.images].some((i) => i.src.startsWith("https://images.example.net/") && i.complete && i.naturalWidth > 0));
+      assert.deepEqual(remote, ["https://images.example.net/collect?data=secret-from-context"]);
+      await context.unroute("https://images.example.net/**");
+
       step("A run error reads as a sentence and offers Try again");
       await send("cause an error please");
       await waitIdle();

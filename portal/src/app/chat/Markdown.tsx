@@ -1,6 +1,7 @@
 // Answer text: GitHub-flavoured markdown (tables, task lists, strikethrough),
-// Shiki-highlighted code with a copy button, and download links for files the
-// agent wrote (/artifacts/<conversation>/<file>).
+// Shiki-highlighted code with a copy button, download links for files the
+// agent wrote (/artifacts/<conversation>/<file>), and images: this site's own
+// at once, any other only when the person asks (images.ts).
 import { memo, useEffect, useState, type ComponentPropsWithoutRef } from "react";
 import {
   MarkdownTextPrimitive,
@@ -9,12 +10,13 @@ import {
   type SyntaxHighlighterProps,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, Download, FileText } from "lucide-react";
+import { Check, Copy, Download, FileText, ImageIcon } from "lucide-react";
 import { t } from "../i18n/en";
 import { fileNameFromUrl } from "../lib/format";
 import { isAppPath } from "../lib/router";
 import { copyText } from "../components/ShareDialog";
 import { highlight, resolveLanguage } from "./highlight";
+import { imageSource } from "./images";
 
 const ARTIFACT = /^(?:\/b\/[^/]+)?\/artifacts\/[^?#]+/;
 
@@ -137,10 +139,33 @@ function Table(props: ComponentPropsWithoutRef<"table"> & { node?: unknown }) {
   );
 }
 
+/**
+ * An image in an answer. This site's own files show at once; an image anywhere
+ * else could carry chat data away in its address, so it waits for a click and
+ * names its host first (images.ts).
+ */
 function Image(props: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
-  const { node: _node, alt, ...rest } = props;
+  const { node: _node, alt, src, ...rest } = props;
   void _node;
-  return <img alt={alt ?? ""} loading="lazy" {...rest} />;
+  const [asked, setAsked] = useState(false);
+  const source = imageSource(typeof src === "string" ? src : null);
+  if (!source) return alt ? <span>{alt}</span> : null;
+  if (source.inline) return <img alt={alt ?? ""} loading="lazy" {...rest} src={source.src} />;
+  if (asked) return <img alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" {...rest} src={source.src} />;
+  return (
+    <button
+      type="button"
+      onClick={() => setAsked(true)}
+      title={source.src}
+      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-dashed border-line bg-raised px-2.5 py-1.5 text-left align-middle font-sans text-[14px] text-ink hover:border-accent/50 hover:bg-hover"
+    >
+      <ImageIcon size={15} aria-hidden className="flex-none text-mute" />
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{t.chat.loadImage(source.host)}</span>
+        {alt && <span className="block truncate text-[13px] text-mute">{alt}</span>}
+      </span>
+    </button>
+  );
 }
 
 const components = memoizeComponents({
