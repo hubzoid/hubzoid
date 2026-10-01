@@ -69,13 +69,20 @@ def test_package_data_covers_templates_migrations_and_the_web_app():
                 "migrations/operational/versions/0009_accounts.py",
                 "migrations/operational/script.py.mako"):
         assert (PKG / rel).resolve() in data, rel
-    for name in ("minimal", "demo", "watchtower"):
+    for name in ("operations", "minimal", "demo", "watchtower"):
         tpl = PKG / "templates" / name
         assert all(p.resolve() in data for p in tpl.rglob("*") if p.is_file()
                    and "__pycache__" not in p.parts and p.suffix != ".pyc"), name
     index = PKG / "portal_dist" / "index.html"
     if index.is_file():
         assert index.resolve() in data
+
+
+def test_template_bytecode_never_ships():
+    """Tests and local runs import template tools (tools_local/*.py), which
+    leaves __pycache__ beside them; a wheel built afterwards must not carry it."""
+    excluded = PYPROJECT["tool"]["setuptools"]["exclude-package-data"]["hubzoid"]
+    assert "*.pyc" in excluded and "**/__pycache__/*" in excluded
 
 
 def _requirement_names(reqs: list[str]) -> dict[str, str]:
