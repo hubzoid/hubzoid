@@ -604,11 +604,16 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             raise AgentRunError(f"agent run failed{kind}: {type(err).__name__}: {err}") from err
         return text
 
+    async def _bounded():
+        from .workflows.deadlines import remaining
+        async with asyncio.timeout(remaining(600)):
+            return await _go()
+
     def _run() -> str:
         if ident is not None:
             with identity_scope(ident):
-                return asyncio.run(_go())
-        return asyncio.run(_go())
+                return asyncio.run(_bounded())
+        return asyncio.run(_bounded())
 
     status = "error"
     try:
@@ -648,6 +653,11 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
     want_json = spec.get("response_format") == "json"
     prompt = spec["prompt"] + (structured.json_instruction(spec.get("schema")) if want_json else "")
     system = spec.get("system")
+    from .workflows.deadlines import remaining
+    budget = min(float(spec.get("timeout", 120)), remaining(120))
+    async def bounded(coro):
+        async with asyncio.timeout(budget):
+            return await coro
     started = time.monotonic()
     usage: dict = {}
     status = "error"
@@ -666,20 +676,20 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
                 if rt.last_error:
                     raise AgentRunError(str(rt.last_error)) from rt.last_error
                 return answer, measured
-            text, usage = asyncio.run(codex_complete())
+            text, usage = asyncio.run(bounded(codex_complete()))
         elif model_id.lower().startswith("claude-local"):
             from .factory_claude import claude_complete
 
-            text, usage = asyncio.run(claude_complete(prompt, system=system, model_setting=model_id))
+            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id)))
         else:
             import litellm
 
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}]
-            kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 1}
+            kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget}
             if want_json:
                 kwargs["response_format"] = {"type": "json_object"}
-            resp = litellm.completion(**kwargs)
+            resp = asyncio.run(bounded(litellm.acompletion(**kwargs)))
             text = resp.choices[0].message.content or ""
             u = getattr(resp, "usage", None)
             try:

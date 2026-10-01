@@ -231,14 +231,19 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
             "OPENROUTER_API_KEY and the chat model are never used for Jev.")
     body = {"model": model, "state": spec["state"], "questions": questions}
     started = time.monotonic()
+    from .workflows.deadlines import remaining
+    budget = min(float(spec.get("timeout", 90)), remaining(90))
     data: dict = {}
     status = "error"
     try:
         for attempt in range(1, ATTEMPTS + 1):
+            left = budget - (time.monotonic() - started)
+            if left <= 0:
+                raise JevError("Jev overall deadline exceeded")
             err: JevError
             wait = float(attempt)
             try:
-                resp = httpx.post(URL, json=body, timeout=TIMEOUT_S,
+                resp = httpx.post(URL, json=body, timeout=min(TIMEOUT_S, left),
                                   headers={"Authorization": f"Bearer {key}"})
             except httpx.TimeoutException:
                 err = JevError(f"Jev did not answer within {TIMEOUT_S:g}s", retryable=True)
@@ -273,6 +278,8 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
                     err.args = (f"{err.args[0]}; gave up after {attempt} attempts",)
                 raise err
             log.warning("jev: %s; retrying in %.1fs", err, wait)
+            if wait >= budget - (time.monotonic() - started):
+                raise JevError("Jev overall deadline would be exceeded by retry")
             _sleep(wait)
         raise AssertionError("unreachable")
     finally:

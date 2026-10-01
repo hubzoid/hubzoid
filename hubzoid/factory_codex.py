@@ -263,7 +263,8 @@ class CodexRuntime:
                     start_new_session=True, limit=8 * 1024 * 1024)
                 self._processes.add(proc)
                 try:
-                    async with asyncio.timeout(300):
+                    from .workflows.deadlines import remaining
+                    async with asyncio.timeout(remaining(600)):
                         async for part in self._exchange(proc, prompt, tmp, usage, **turn_tools):
                             shown.append(run_events.text_of(part))
                             yield part
