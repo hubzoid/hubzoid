@@ -361,3 +361,47 @@ def test_console_in_local_mode_is_the_local_owner(hub, monkeypatch):
     c = console(hub)
     me = c.get("/portal/api/me").json()
     assert me["subject"] == "admin@localhost" and me["org_admin"] is True
+
+
+def test_deleting_an_account_drops_its_connection_tokens(hub, owner, monkeypatch):
+    """Lane D's token store, when installed, forgets a deleted account's
+    personal connection tokens; without it deletion works the same."""
+    import sys
+    import types
+
+    service = AccessService(hub)
+    service.create_account(actor(), email="gone@example.com", name="Gone", grants=[])
+    user = users.find_by_email(hub, "gone@example.com")
+    calls = []
+    fake = types.ModuleType("hubzoid.connectors.tokens")
+    fake.drop_user = lambda hub_dir, user_id: calls.append((str(hub_dir), user_id))
+    monkeypatch.setitem(sys.modules, "hubzoid.connectors.tokens", fake)
+    import hubzoid.connectors as connectors
+
+    monkeypatch.setattr(connectors, "tokens", fake, raising=False)
+    service.delete_account(actor(), "gone@example.com")
+    assert calls == [(str(hub), user["id"])]
+    monkeypatch.delitem(sys.modules, "hubzoid.connectors.tokens")
+    monkeypatch.delattr(connectors, "tokens")
+    service.create_account(actor(), email="gone2@example.com", name="Gone", grants=[])
+    service.delete_account(actor(), "gone2@example.com")  # no token store: still deleted
+    assert users.find_by_email(hub, "gone2@example.com") is None
+
+
+def test_approval_clears_the_unavailable_marker(hub, owner):
+    waiting = users.create(hub, email="w2@example.com", name="W", status="pending",
+                           source="signup")
+    users.sync_identity(hub, waiting)
+    gs = store_for(hub)
+    with gs.engine.connect() as conn:
+        assert gs._meta_get(conn, "account_unavailable:w2@example.com") == "1"  # noqa: SLF001
+    AccessService(hub).approve_account(actor(), "w2@example.com")
+    with gs.engine.connect() as conn:
+        assert gs._meta_get(conn, "account_unavailable:w2@example.com") == "0"  # noqa: SLF001
+
+
+def test_localhost_addresses_get_no_account_or_link(hub, owner):
+    service = AccessService(hub)
+    with pytest.raises(Denied) as exc:
+        service.create_account(actor(), email="x@app.localhost", name="X", grants=[])
+    assert exc.value.code == "rejected"

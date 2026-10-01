@@ -14,7 +14,15 @@ Rules held here:
     (used to verify a sign-in). Public views never include them.
   * Changing a password, the role or the status to pending ends the person's
     sessions. Deleting a person also deletes their sessions, external sign-in
-    identities and one-time links.
+    identities and one-time links (and their personal connection tokens, when
+    ``hubzoid.connectors.tokens`` is installed).
+  * ``updated_at`` moves on every change to the account row (not on sign-in
+    activity, ``last_login_at``). A session only starts if it hasn't moved
+    since the credential was read (``sessions.create_session``).
+  * External identities migrated from Open WebUI, which recorded the provider
+    but not the issuer, carry the placeholder issuer
+    ``openwebui-migrated:<provider>`` until that provider next signs the person
+    in (``adopt_migrated_identity``).
 
 SQL is SQLAlchemy Core over the tables in ``auth.schema``, portable between
 SQLite and PostgreSQL. Database errors propagate: callers deny (fail closed).
@@ -40,6 +48,7 @@ from .schema import engine_for, identities, links, ready, sessions, users
 log = logging.getLogger("hubzoid.auth")
 
 ROLES = ("admin", "user")
+MIGRATED_ISSUER_PREFIX = "openwebui-migrated:"
 STATUSES = ("active", "pending")
 # How an account came to exist (hz_users.source).
 SOURCES = ("local", "admin", "signup", "bootstrap", "migrated", "oidc")
@@ -84,6 +93,13 @@ def _public(row) -> dict | None:
         "updated_at": m["updated_at"],
         "last_login_at": m["last_login_at"],
     }
+
+
+def is_local_address(email: str | None) -> bool:
+    """``admin@localhost`` and other ``localhost`` addresses: the local owner's
+    kind, which no password or external provider signs in to."""
+    domain = normalize_email(email).rpartition("@")[2]
+    return domain == "localhost" or domain.endswith(".localhost")
 
 
 def sign_in_of(user: Mapping) -> str:
@@ -225,13 +241,17 @@ class UserStore:
             conn.execute(links.delete().where(links.c.user_id == str(user_id),
                                               links.c.used_at.is_(None)))
 
-    def rehash(self, user_id: str, new_hash: str, old_hash: str) -> None:
+    def rehash(self, user_id: str, new_hash: str, old_hash: str) -> float | None:
         """Replace a migrated or outdated hash after a successful sign-in,
-        only if it is still the one that was verified. Sessions are kept."""
+        only if it is still the one that was verified. Sessions are kept.
+        Returns the account's new ``updated_at``, or None when the hash had
+        already changed (then the sign-in must not go ahead on the old one)."""
+        now = time.time()
         with self.engine.begin() as conn:
-            conn.execute(users.update().where(
+            done = conn.execute(users.update().where(
                 users.c.id == str(user_id), users.c.password_hash == old_hash,
-            ).values(password_hash=new_hash))
+            ).values(password_hash=new_hash, updated_at=now)).rowcount
+        return now if done else None
 
     def set_name(self, user_id: str, name: str) -> dict:
         name = (name or "").strip()
@@ -338,6 +358,32 @@ class UserStore:
                 identities.c.issuer == issuer, identities.c.subject == subject,
             ).values(last_login_at=time.time(), email=normalize_email(email) or None))
 
+    def find_migrated_identity(self, provider: str, subject: str) -> dict | None:
+        """An identity migrated from Open WebUI for this provider and subject,
+        still under its placeholder issuer."""
+        return self.find_identity(MIGRATED_ISSUER_PREFIX + provider, subject)
+
+    def adopt_migrated_identity(self, provider: str, issuer: str, subject: str) -> dict | None:
+        """Give a migrated identity its real issuer, now that the provider has
+        signed this subject in. Idempotent and safe when two sign-ins race.
+        Returns the identity under the real issuer, or None."""
+        placeholder = MIGRATED_ISSUER_PREFIX + provider
+        with self.engine.begin() as conn:
+            row = conn.execute(sa.select(identities.c.user_id).where(
+                identities.c.issuer == placeholder, identities.c.subject == subject,
+            ).with_for_update()).first()
+            if row is not None:
+                taken = conn.execute(sa.select(identities.c.user_id).where(
+                    identities.c.issuer == issuer, identities.c.subject == subject)).first()
+                if taken is None:
+                    conn.execute(identities.update().where(
+                        identities.c.issuer == placeholder, identities.c.subject == subject,
+                    ).values(issuer=issuer, provider=provider))
+                else:
+                    conn.execute(identities.delete().where(
+                        identities.c.issuer == placeholder, identities.c.subject == subject))
+        return self.find_identity(issuer, subject)
+
     def unlink_identity(self, issuer: str, subject: str) -> None:
         with self.engine.begin() as conn:
             conn.execute(identities.delete().where(
@@ -403,7 +449,32 @@ def set_status(hub_dir: Path, user_id: str, status: str) -> bool:
 
 
 def delete(hub_dir: Path, user_id: str) -> bool:
-    return store(hub_dir).delete(user_id)
+    """Delete an account (``UserStore.delete``) and its personal connection
+    tokens when the connections part is installed."""
+    done = store(hub_dir).delete(user_id)
+    if done:
+        _drop_connector_tokens(Path(hub_dir), str(user_id))
+    return done
+
+
+def _drop_connector_tokens(hub_dir: Path, user_id: str) -> None:
+    """``hubzoid.connectors.tokens.drop_user(hub_dir, user_id)``, when present.
+    The account is already gone; a failure here is logged, never raised."""
+    try:
+        from ..connectors import tokens
+    except ImportError as exc:
+        if getattr(exc, "name", None) not in ("hubzoid.connectors.tokens", "hubzoid.connectors"):
+            log.warning("auth: personal connection tokens of a deleted account were not removed "
+                        "(the connections module did not load)")
+        return
+    drop = getattr(tokens, "drop_user", None)
+    if not callable(drop):
+        return
+    try:
+        drop(hub_dir, user_id)
+    except Exception:  # noqa: BLE001
+        log.warning("auth: personal connection tokens of a deleted account could not be removed",
+                    exc_info=True)
 
 
 def touch_login(hub_dir: Path, user_id: str) -> None:
@@ -466,9 +537,11 @@ def _reusable_id(st: UserStore, hub_dir: Path, email: str) -> str | None:
 def ensure_local_owner(hub_dir: Path) -> dict:
     """The local owner account (``admin@localhost``), created on first use.
 
-    Its id is the one already recorded for that email in ``hz_identities``
-    (so an install that ran Open WebUI keeps its bindings), else a new one. In
-    local mode it is always an active administrator."""
+    An existing account with that email (for example one migrated from Open
+    WebUI) is the local owner, never a second one, so its id is stable across
+    restarts. A new one takes the id already recorded for that email in
+    ``hz_identities`` (an install that ran Open WebUI keeps its bindings), else
+    a fresh one. In local mode it is always an active administrator."""
     from .. import appmode
 
     hub_dir = Path(hub_dir)

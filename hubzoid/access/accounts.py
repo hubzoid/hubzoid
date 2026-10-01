@@ -476,6 +476,8 @@ class HubzoidAccounts:
 
         if role != "user":
             raise ValueError("accounts are created with the user role only")
+        if users.is_local_address(email):
+            raise AccountError(422, "rejected", "A localhost address can't sign in. Use a real email.")
         st = self._store()
         try:
             user = self._run(st.create, email=email, name=name, role="user", status="active",
@@ -531,8 +533,12 @@ class HubzoidAccounts:
             raise AccountError(409, "not_found", "The account no longer exists.")
 
     def delete(self, account_id: str) -> None:
-        """Delete the account, its sessions, external sign-ins and links."""
-        if not self._run(self._store().delete, account_id):
+        """Delete the account, its sessions, external sign-ins, links and
+        personal connection tokens."""
+        from ..auth import users
+
+        self._store()
+        if not self._run(users.delete, self.hub_dir, account_id):
             raise AccountError(409, "not_found", "The account no longer exists.")
 
     # ---- default mode only ---------------------------------------------------------
@@ -551,12 +557,23 @@ class HubzoidAccounts:
                                        created_by=created_by)
         except KeyError:
             raise AccountError(409, "not_found", "The account no longer exists.")
+        except ValueError:
+            raise AccountError(409, "local_owner", "This is the local owner of a server without "
+                                                   "sign-in. It has no password to set.")
         return {"link": links.url(token, appmode.public_url()), "expires_at": expires}
 
     def reset_with_link(self, account_id: str, *, created_by: str | None = None) -> dict:
         """Reset a password: the current one stops working and every session
         ends now; the returned link sets a new one."""
+        from ..auth import users
+
         st = self._store()
+        account = self._run(st.get, account_id)
+        if account is None:
+            raise AccountError(409, "not_found", "The account no longer exists.")
+        if users.is_local_address(account["email"]):
+            raise AccountError(409, "local_owner", "This is the local owner of a server without "
+                                                   "sign-in. It has no password to set.")
         try:
             self._run(st.set_password, account_id, None)
         except KeyError:

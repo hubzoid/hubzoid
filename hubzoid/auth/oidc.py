@@ -21,7 +21,9 @@ then its issuer, audience, expiry and nonce.
 
 Who signs in (contract 6.1):
   * An external sign-in is keyed on (issuer, subject) and linked to one
-    account in ``hz_user_identities``.
+    account in ``hz_user_identities``. A sign-in migrated from Open WebUI is
+    found by provider and subject under its placeholder issuer, and takes the
+    real issuer once this sign-in goes ahead.
   * A first sign-in attaches to an existing account with the same email only
     when the provider marks the email verified and
     ``OAUTH_MERGE_ACCOUNTS_BY_EMAIL`` is true. Never on an unverified email.
@@ -536,10 +538,14 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
     verified = bool(email) and email_verified(p.id, claims)
     domains = allowed_domains(env)
     linked = st.find_identity(issuer, subject)
+    migrated = False
+    if linked is None:
+        linked = st.find_migrated_identity(p.id, subject)
+        migrated = linked is not None
     user = st.get(linked["user_id"]) if linked else None
     if linked and user is None:
-        st.unlink_identity(issuer, subject)  # its account was deleted
-        linked = None
+        st.unlink_identity(linked["issuer"], subject)  # its account was deleted
+        linked, migrated = None, False
     if domains is not None:
         if user is not None:
             checked = email if verified else user["email"]
@@ -551,11 +557,17 @@ def account_for(hub_dir: Path, p: Provider, claims: Mapping,
         if not domain_allowed(p.id, checked, claims, domains):
             raise SignInRefused("domain_not_allowed")
     if user is not None:
+        if migrated:
+            adopted = st.adopt_migrated_identity(p.id, issuer, subject)
+            if adopted is not None and adopted["user_id"] != user["id"]:
+                user = st.get(adopted["user_id"])  # a concurrent sign-in adopted it first
+                if user is None:
+                    raise SignInRefused("unavailable")
         st.touch_identity(issuer, subject, email or user["email"])
         return user
     if not email:
         raise SignInRefused("no_email")
-    if email.endswith("@localhost") or email.endswith(".localhost"):
+    if users.is_local_address(email):
         raise SignInRefused("no_account")
     existing = st.find_by_email(email)
     if existing is None and signup_enabled(env):

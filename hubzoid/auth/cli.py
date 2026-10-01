@@ -79,11 +79,13 @@ def _when(ts: float | None) -> str:
 
 
 def _email(raw: str) -> str:
-    from .users import EMAIL_PATTERN, normalize_email
+    from .users import EMAIL_PATTERN, is_local_address, normalize_email
 
     email = normalize_email(raw)
     if not EMAIL_PATTERN.match(email) or len(email) > 320:
         _fail("Enter a valid email address.", 2)
+    if is_local_address(email):
+        _fail("A localhost address can't sign in. Use a real email address.", 2)
     return email
 
 

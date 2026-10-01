@@ -53,12 +53,17 @@ def create(hub_dir: Path, user_id: str, *, purpose: str = "set_password",
     token = sessionlib.new_token()
     now = time.time()
     expires = now + lifetime_seconds()
+    from .users import is_local_address
+
     with engine_for(Path(hub_dir)).begin() as conn:
         # The account row is locked (PostgreSQL; SQLite serializes writers), so
         # two links issued at once can't both survive.
-        if conn.execute(sa.select(users.c.id).where(users.c.id == str(user_id))
-                        .with_for_update()).first() is None:
+        row = conn.execute(sa.select(users.c.id, users.c.email).where(users.c.id == str(user_id))
+                           .with_for_update()).first()
+        if row is None:
             raise KeyError(user_id)
+        if is_local_address(row[1]):
+            raise ValueError("the local owner has no password to set")
         conn.execute(links.delete().where(links.c.user_id == str(user_id),
                                           links.c.used_at.is_(None)))
         conn.execute(links.insert().values(
@@ -79,7 +84,9 @@ def _row(conn, token: str):
 
 
 def _usable(hub_dir: Path, m, now: float) -> bool:
-    if m["used_at"] is not None or m["expires_at"] <= now:
+    from .users import is_local_address
+
+    if m["used_at"] is not None or m["expires_at"] <= now or is_local_address(m["email"]):
         return False
     if m["status"] != "active" or not m["password_enabled"]:
         return False

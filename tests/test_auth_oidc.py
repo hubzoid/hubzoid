@@ -478,3 +478,33 @@ def test_provider_configuration():
     assert oidc.allowed_domains({}) is None
     assert oidc.allowed_domains({"OAUTH_ALLOWED_DOMAINS": "*"}) is None
     assert oidc.allowed_domains({"OAUTH_ALLOWED_DOMAINS": " A.com, b.org ,"}) == ["a.com", "b.org"]
+
+
+def test_an_identity_migrated_from_open_webui_takes_its_real_issuer(hub, idp):
+    """Open WebUI recorded the provider and subject, not the issuer: the
+    migrated identity is found by both and upgraded at its next sign-in."""
+    user = existing(hub, email="migrated@example.com")
+    st = users.store(hub)
+    st.link_identity(provider="oidc", issuer="openwebui-migrated:oidc", subject="user-1",
+                     user_id=user["id"], email="migrated@example.com")
+    c = client(hub)  # no merging by email: only the migrated identity can match
+    assert sign_in(c).headers["location"] == "/c/abc"
+    assert signed_in(c) == "migrated@example.com"
+    assert st.find_identity("openwebui-migrated:oidc", "user-1") is None
+    assert st.find_identity(idp.issuer, "user-1")["user_id"] == user["id"]
+    assert sign_in(client(hub)).headers["location"] == "/c/abc"  # now by the real issuer
+
+
+def test_a_migrated_identity_of_another_provider_or_a_deleted_account_is_not_used(hub, idp):
+    user = existing(hub, email="other@example.com")
+    st = users.store(hub)
+    st.link_identity(provider="google", issuer="openwebui-migrated:google", subject="user-1",
+                     user_id=user["id"], email="other@example.com")
+    assert error_of(sign_in(client(hub))) == "no_account"  # oidc, not google
+    gone = existing(hub, email="gone@example.com")
+    st.link_identity(provider="oidc", issuer="openwebui-migrated:oidc", subject="user-1",
+                     user_id=gone["id"], email="gone@example.com")
+    with st.engine.begin() as conn:  # the account went away without its identity
+        conn.exec_driver_sql("DELETE FROM hz_users WHERE id = ?", (gone["id"],))
+    assert error_of(sign_in(client(hub))) == "no_account"
+    assert st.find_identity("openwebui-migrated:oidc", "user-1") is None

@@ -287,3 +287,34 @@ def test_credentials_in_one_query(store):
     assert store.credentials("nobody@example.com") == (None, None)
     google = store.create(email="g9@example.com", password_enabled=False)
     assert store.credentials("g9@example.com") == (google, None)
+
+
+def test_the_local_owner_id_is_stable_across_restarts(hub):
+    first = sessions.local_owner(hub).id
+    sessions.reset_cache()  # a restart
+    assert sessions.local_owner(hub).id == first
+    assert [u["email"] for u in users.list_users(hub)] == ["admin@localhost"]
+
+
+def test_a_migrated_local_owner_is_used_as_is(hub):
+    migrated = users.create(hub, email="admin@localhost", id="owui-admin-1", role="admin",
+                            source="migrated")
+    assert sessions.local_owner(hub).id == "owui-admin-1" == migrated["id"]
+    assert len(users.list_users(hub)) == 1
+
+
+def test_every_account_change_moves_updated_at(hub):
+    user = users.create(hub, email="u@example.com", password="first password")
+    st = users.store(hub)
+    stamps = [user["updated_at"]]
+    for change in (lambda: st.set_name(user["id"], "U"), lambda: st.set_role(user["id"], "admin"),
+                   lambda: st.set_status(user["id"], "pending"),
+                   lambda: st.set_password(user["id"], "second password"),
+                   lambda: st.set_password_enabled(user["id"], False)):
+        time.sleep(0.01)
+        change()
+        stamps.append(st.get(user["id"])["updated_at"])
+    assert stamps == sorted(stamps) and len(set(stamps)) == len(stamps)
+    before = st.get(user["id"])["updated_at"]
+    st.touch_login(user["id"])  # sign-in activity is not a change of the account
+    assert st.get(user["id"])["updated_at"] == before

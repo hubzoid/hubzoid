@@ -247,6 +247,10 @@ def build_router(hub_dir: Path) -> APIRouter:
                 raise _rate_limited(wait)
             st = users.store(hub_dir)
             user, stored = st.credentials(email)
+            if user is not None and users.is_local_address(user["email"]):
+                # The local owner (admin@localhost) never signs in with a
+                # password: Open WebUI gave it the well-known "admin" one.
+                stored = None
             ok, new_hash = passwords.verify_and_update(f["password"], stored)
             if not ok:
                 locked = ratelimit.record_failure(hub_dir, ip=ip, email=email)
@@ -261,7 +265,9 @@ def build_router(hub_dir: Path) -> APIRouter:
                 return refusal(401, "invalid_credentials", "The email or password is not right.",
                                background=audit)
             if new_hash:
-                st.rehash(user["id"], new_hash, stored)
+                bumped = st.rehash(user["id"], new_hash, stored)
+                if bumped is not None:
+                    user = {**user, "updated_at": bumped}
             ratelimit.record_success(hub_dir, ip=ip, email=email)
             return complete(request, user, method="password")
         except SQLAlchemyError:
