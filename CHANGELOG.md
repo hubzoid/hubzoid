@@ -186,21 +186,81 @@ upgrade requirements and its known limits.
   requested, and restoring in place keeps the current key and link secret.
 - `.webui_secret_key` is no longer tracked in the repository.
 
-### Known limits
-- Per-address sign-in limits depend on `X-Forwarded-For` from a TLS proxy.
-  Without one, a client can send its own. Per-email limits always apply.
-- A reloaded page follows a running reply by polling. There is no stream
-  resume.
-- Personal connections need a provider with dynamic client registration or a
-  client registered in advance. `private_key_jwt` and provider-specific
-  authorization parameters are not supported.
-- Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
-  LDAP and trusted proxy headers are legacy-mode only.
-- The release notes list the remaining limits.
+### Webhook workflows
+- `@workflow(on_webhook="name")` starts a code workflow from a named webhook
+  declared in `workflows/settings.yaml`, served by the hub's own bridge at
+  `/webhooks/<hub>/<name>`, in single-hub and gateway modes. Several webhooks per
+  hub, each with its own `WEBHOOK_SECRET_<NAME>`, and a shared-secret header or a
+  timestamped HMAC (five-minute window). Bodies are limited to 256 KiB.
+- A 200 means the event is stored. Each event is one durable record keyed by
+  hub, webhook and sender event key (`event_key`, then delivery-id headers,
+  then the body hash). Repeats attach to it, and different content under the
+  same key answers 409 and raises an alert.
+- Hubzoid retries a failed event itself (`webhook_retry_delays`, default 60 and
+  300 seconds, three attempts) and then marks it failed with an alert.
+  `hubzoid schedule redrive <event-id>` retries it explicitly and
+  `hubzoid schedule deliveries` lists events and alert deliveries. Cancelling a
+  webhook run fails its event for an explicit redrive.
+- After a code change, events that never started run on the current code,
+  matched by webhook name. Events whose attempt began under the old code are
+  failed visibly, never replayed on changed code.
+- `concurrency=N` and `concurrency_key="field.path"` limit runs per workflow and
+  per key (one ticket at a time). `max_executor_threads` (default 32) bounds the
+  hub's worker threads. A backlog on one webhook workflow does not delay others.
+- The run reads its event as `hub.event` (`id`, `key`, `body`, safe headers,
+  `webhook`, `received_at`, `attempt`).
 
-## [Unreleased]
+### Workflow engine
+- One engine owner per hub: a file lock on SQLite and an advisory lock on
+  PostgreSQL, with a fenced lease and readiness that webhook admission checks.
+  `hubzoid schedule run` hands its run to the live owner, or owns the hub for
+  that one run and serves only that workflow's queue.
+- A bridge that finds another owner keeps chat running and takes over when the
+  owner releases the hub, retrying every 15 seconds.
+- A PostgreSQL owner that loses its database session stops claiming work at
+  once and keeps chat running. Runs it had claimed stay recoverable instead of
+  failing, and the bridge regains ownership by itself.
+- Deadlines: `@workflow(timeout=...)` and `workflow_timeout`, 15 minutes by
+  default for webhook runs. `hub.call_llm`, `hub.call_agent` and `hub.call_jev`
+  take a `timeout` (defaults 120 s, 10 min and 90 s) on every runtime. A run that
+  returns just after its deadline keeps its result and raises a timeout alert.
+- The workflow engine pins DBOS 3.1.0.
 
-### Added
+### Alerts and health
+- Durable, retried alerts (up to five attempts, `Idempotency-Key`, optional
+  `X-Hubzoid-Signature` with `HUBZOID_ALERT_SECRET`) to a webhook, Slack or
+  email, per hub (`alerts.to`), per workflow (`alert_to=`) or per markdown task
+  (`alert_to:`), with `HUBZOID_ALERT_URL` as the deployment fallback.
+- Alerts for failed runs, failed scheduled eval suites, overdue runs, failures
+  in a row (`failures_in_a_row`, default 3), a schedule that stopped firing,
+  event content mismatches and stale engines, with a one-hour cooldown.
+- A schedule that fails 20 scheduled runs in a row pauses itself
+  (`pause_after_failures`, `0` turns it off). Manual and webhook runs do not
+  count. Webhook workflows are never paused.
+- Alert messages carry only the hub, kind, workflow, run id, a count and a
+  Console link. Outputs and exception text stay on the server.
+- The engine reads only runs finished since its last check, by completion time,
+  so monitoring cost does not grow with history.
+- The edge watches every hub's engine, alerts when one goes stale and when it
+  recovers, and serves `GET /healthz/workflows` (503 while any hub is unhealthy)
+  for an external uptime monitor.
+
+### Evals
+- Multi-turn cases (`## Turn 1`, `## Turn 2`) in one chat, with one deadline
+  for the whole case.
+- Tool calls are recorded with arguments, outcome, duration and a 500-character
+  preview on every runtime. `expect_tool_args` checks arguments and
+  `hubzoid eval run --details` prints the calls.
+- `run_as:` in a case, or `--run-as`, runs it as an account. It grants nothing.
+- Results are private, atomically written schema 2 files with a locked index
+  and retention (`HUBZOID_EVAL_KEEP_RUNS`, default 200). Schema 1 files still
+  read.
+- A read-only Evals tab on each agent's page. Details of a `run_as` run are
+  visible only to that account. Scheduled suites with failing cases now end as
+  failed runs, so they raise alerts.
+
+### Agent tools for workflows and access
+#### Added
 - Workflow tools for agents: `list_workflows`, `workflow_runs`,
   `run_workflow`, `pause_workflow`, `resume_workflow` and
   `cancel_workflow_run`. Two capabilities control them: See workflows and runs
@@ -218,7 +278,7 @@ upgrade requirements and its known limits.
 - `hubzoid/workflows/control.py`: run, pause, resume and cancel in one service
   used by the CLI and the tools.
 
-### Changed
+#### Changed
 - The access tools need the Manage access from chat capability (`access_tools`,
   granted by organization administrators) instead of `HUBZOID_MANAGEMENT_TOOLS`.
   `HUBZOID_ACCESS_TOOLS=false` and `HUBZOID_WORKFLOW_TOOLS=false` remove a family
@@ -227,15 +287,39 @@ upgrade requirements and its known limits.
   (calls were already refused).
 - Pause, resume and cancel audit rows record the surface.
 
-### Fixed
-- Markdown task and scheduled eval run ids include the hub
-  (`md:<task>:<slot>@<hub>`), so hubs sharing one PostgreSQL database no longer
-  skip each other's scheduled work or return another hub's result.
-
-### Deprecated
+#### Deprecated
 - `HUBZOID_MANAGEMENT_TOOLS=true` keeps its 1.0.x meaning (every manager gets
   the access tools without a grant) for this release only. `hubzoid doctor`
   warns. Grant `access_tools` instead.
+
+### Compatibility
+- `on_failure` now goes through the alert outbox: its POST body is the alert
+  payload, with no `error` field, the one-hour cooldown applies, and a value
+  that is not an `http(s)://` URL is read as an environment variable name
+  holding the URL (1.0.x only logged it).
+- `workflows/settings.yaml` is validated when the bridge starts. An invalid file
+  turns workflows off for that hub with the error in workflow health. Chat and
+  other hubs keep running.
+- Webhook names `whatsapp`, `telegram` and the hub's `WEBHOOK_INBOUND_NAME`
+  (default `webhook`) are refused, since the inbound server already serves them.
+- On PostgreSQL, a new engine owner waits for the previous owner's lease to
+  lapse, so after a crash workflows resume up to 90 seconds later. A clean stop
+  releases it at once.
+
+### Known limits
+- Per-address sign-in limits depend on `X-Forwarded-For` from a TLS proxy.
+  Without one, a client can send its own. Per-email limits always apply.
+- A reloaded page follows a running reply by polling. There is no stream
+  resume.
+- Personal connections need a provider with dynamic client registration or a
+  client registered in advance. `private_key_jwt` and provider-specific
+  authorization parameters are not supported.
+- Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
+  LDAP and trusted proxy headers are legacy-mode only.
+- Arbitrary synchronous workflow code cannot be stopped at its deadline. It
+  keeps its thread and ticket partition until it returns.
+- Event and alert records have no automatic retention yet.
+- The release notes list the remaining limits.
 
 ## [1.0.3]
 

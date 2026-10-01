@@ -63,7 +63,9 @@ def daily_report():
 - `@workflow(schedule, timezone=None, on_failure=None)`. The schedule is a cron
   expression or plain English: `every 15 minutes`, `every 3 hours`,
   `daily 06:00`, `every monday 08:30`. Leave it out for a workflow you only run
-  by hand. `on_failure` can be a URL that gets a POST when a run fails.
+  by hand. `on_failure` is a URL, or the name of an environment variable that
+  holds one, that gets an alert when a run fails (see
+  [Deadlines and alerts](#deadlines-and-alerts) for what changed in 1.1).
 - `@step(max_attempts=1)` marks a function whose result is saved. A finished
   step is not run again when the workflow resumes after a restart. Set
   `max_attempts` above 1 only for steps that are safe to repeat.
@@ -308,3 +310,176 @@ Workflows can't be created or edited from chat. Write them in `workflows/` or
   the server shows everything.
 - `hubzoid doctor <hub>`: `scheduler.health` reports holds, pauses, and a
   dispatcher that stopped.
+
+## Named webhook workflows (1.1)
+
+The bridge receives named webhooks even when scheduled code workflows are off.
+Add a declaration to `workflows/settings.yaml`:
+
+```yaml
+max_executor_threads: 32
+webhooks:
+  ticket-updated:
+    verify: header
+    header: X-Webhook-Secret
+    event_key: "{ticket.id}:{ticket.modifiedTime}"
+webhook_retry_delays: [60, 300]
+alerts:
+  to:
+    - webhook: ALERT_WEBHOOK_URL
+  cooldown: 1h
+  failures_in_a_row: 3
+  pause_after_failures: 20
+```
+
+Set `WEBHOOK_SECRET_TICKET_UPDATED` in the hub environment. A sender POSTs a JSON
+object to `/webhooks/<hub-slug>/ticket-updated`, with that secret in the configured
+header. Bodies are limited to 256 KiB. Query parameters are not credentials.
+For timestamped HMAC use `verify: hmac`, `signature_header: X-Signature`, and
+`timestamp_header: X-Timestamp`. The signature is `sha256=` plus the hex HMAC-SHA256
+of `<timestamp>.<raw body>` using the secret. Timestamps are Unix seconds and
+must be within five minutes. Provider-specific signing formats need their own
+verified adapter. This is not a claim of native authentication for every provider.
+
+Webhook names are lowercase letters, digits, `-` and `_`. `whatsapp`, `telegram`
+and the hub's legacy inbound webhook name (`WEBHOOK_INBOUND_NAME`, default
+`webhook`) are already routes of the hub's inbound server, so they are refused
+rather than silently taken over.
+
+A mistake in `workflows/settings.yaml` (bad YAML, an unknown verification, an
+empty alert destination) turns the workflow engine off for that hub and records
+the error in workflow health, which the edge reports and alerts on. Chat, and
+every other hub of a gateway, keep running. Its webhook URLs answer 503 until
+the file is fixed and the bridge restarts.
+
+```python
+from hubzoid import workflow, step, hub
+
+@workflow(on_webhook="ticket-updated", concurrency=2,
+          concurrency_key="ticket.id", timeout="15m")
+def ticket_updated():
+    event = hub.event
+    decision = hub.call_jev(
+        state=event.body,
+        questions={"needs_review": {
+            "type": "noul", "instructions": "Does this ticket need human review?"
+        }},
+        timeout=90,
+    )
+    # A destination write should use event.key for idempotency, or check the
+    # current ticket state before applying the same change again.
+    return decision
+```
+
+`hub.event` has `id`, `key`, `body`, safe `headers`, `webhook`, `received_at`, and
+`attempt`. It is `None` for manual and scheduled calls, and authors accepting
+those triggers must handle that case. One webhook has one consumer. Workflow
+queues apply the same concurrency policy to all triggers. A missing partition
+field uses a shared `missing` partition. `concurrency=2` permits two runs overall
+while the same ticket remains serialized. The bounded thread pool is hub-wide.
+A backlog on one webhook workflow does not hold up events for another.
+
+A 200 means the event is durably stored, not that the handler succeeded. Repeats
+with the same hub, webhook, key and body attach to it, including after completion.
+Changed content under that key returns 409 and records an alert. Without an
+`event_key`, provider delivery-id headers are used, then a warned body-hash
+fallback. Retries belong to Hubzoid: by default three attempts, after 60 and 300
+seconds. External actions remain at-least-once across a crash. A checkpoint
+cannot undo or guarantee deduplication of a remote write.
+
+Inspect deliveries with `hubzoid schedule deliveries <hub>`. Failed events can
+be retried explicitly with `hubzoid schedule redrive <event-id> --hub <hub>` after
+checking side effects. Cancelling a webhook run from the Console fails its event
+with that advice instead of retrying it. Event identity and digest records have
+no automatic retention expiry, so old sender retries remain deduplicated.
+Include the operational store in backups.
+
+After a code change, an event that never started runs on the current code, found
+by its webhook name, so renaming the workflow function is safe. An event whose
+attempt had started under the old code is failed visibly for an explicit
+redrive. It is never replayed silently on changed code.
+
+### One engine per hub
+
+Only one engine owns a hub. A lifetime SQLite file lock or PostgreSQL advisory
+lock enforces exclusion. Expiring readiness closes admission but never grants a
+second engine permission to run. `hubzoid schedule run` hands work to the live
+owner. With no live owner it owns the hub for that one run and serves only that
+workflow's queue: interrupted unrelated runs are queued again for the bridge,
+not run by the command. A bridge that starts while another process owns the hub
+keeps chat running and retries every 15 seconds.
+
+If a PostgreSQL owner loses its database session, it stops claiming queued work
+at once, keeps chat running, and retries ownership every 15 seconds. A run it had
+already claimed stops at its next guarded point without recording a failure, so
+the next owner recovers it, as after a crash. Guarded points are `@step`
+functions, model, agent and Jev calls, emails, artifacts, and a markdown task's
+start, commit and push. Code that ran before that point may run again
+(at-least-once). A model or agent call already in progress, with its tools,
+is not interrupted. On PostgreSQL a new owner also
+waits for the previous owner's lease to lapse, so after a crash workflows
+resume up to 90 seconds later. A clean stop releases the lease at once.
+
+## Deadlines and alerts
+
+`hub.call_llm(..., timeout=120)`, `hub.call_jev(..., timeout=90)` and
+`hub.call_agent(..., timeout=600)` accept seconds or strings such as `"2m"`.
+The smallest enclosing run or call deadline wins, including retries. Webhook runs
+have a default 15-minute deadline. Scheduled runs have no default run deadline.
+`workflow_timeout` in settings supplies a hub default, and `@workflow(timeout=...)`
+overrides it. Arbitrary synchronous Python cannot be safely killed: an overdue
+run alerts but keeps its thread and ticket partition until it exits. A run that
+returns successfully just after its deadline stays successful, with a timeout
+alert, so its side effects are not repeated. Authors must bound their own
+network and file calls. The remote server may still process a request after the
+client closes, so use destination idempotency for writes.
+
+Hubzoid's `call_jev(state, questions, model=...)` interface is stable. Its provider
+adapter remains the versioned OpenRouter **alpha** Decisions API, currently
+`typesafe/jev-1.13`, with a dedicated `JEV_OPENROUTER_API_KEY`. Provider schema or
+model changes are not covered by that interface promise.
+
+Alerts cover failed runs (webhooks only after attempts exhaust), failed scheduled
+evals, overdue runs, failure streaks, schedules that stop dispatching and engine
+health. Run failures and timeouts have a default one-hour cooldown, and
+suppressed occurrences are counted in the next alert. Twenty consecutive failed
+**scheduled** runs pause that schedule through the existing controls. Manual,
+Console and webhook runs neither count toward that nor reset it. Set
+`pause_after_failures: 0` to disable auto-pause. Webhook events are not paused.
+Resume from the Console or `hubzoid schedule resume` after fixing the cause.
+
+The engine checks for finished runs every 30 seconds. It reads only runs that
+finished since its last check, by completion time, from a cursor kept in the
+operational store, so a long outage is caught up and history size does not
+slow it down. On its first start it looks back 24 hours.
+
+Destinations under `alerts.to` accept `webhook: ENV_VAR`, `slack: ENV_VAR` (incoming
+webhook), and `email: address`. Email uses the existing deployment SMTP settings.
+Preview mode writes private `.hubzoid/alert-preview/` files. `@workflow(alert_to=...)`
+or a markdown task's `alert_to:` overrides the hub destinations. `HUBZOID_ALERT_URL`
+is the deployment fallback. Missing destinations and exhausted deliveries are
+visible in `schedule deliveries`. They do not disappear as successful sends.
+
+`on_failure` from 1.0.x still works, with three changes:
+
+- It goes through this alert outbox, so the POST body is the alert payload
+  below. It has no `error` field, and exception text never leaves the server.
+- The one-hour cooldown applies: repeated failures within the hour arrive as
+  one alert with a count.
+- A value that is not an `http://` or `https://` URL is read as the name of an
+  environment variable holding the URL. In 1.0.x it was only logged.
+
+Delivery is durable and retried up to five times, at-least-once. Webhook messages
+carry `Idempotency-Key`, `X-Hubzoid-Timestamp` and, when `HUBZOID_ALERT_SECRET` is
+set, `X-Hubzoid-Signature` (HMAC-SHA256 of timestamp + `.` + raw body). The body
+is JSON with `hub`, `kind`, `url` (a Console link) and, when they apply,
+`workflow`, `run_id` and `count`. Private outputs and raw exception text stay
+out. Slack and email receivers may still see a duplicate after an ambiguous
+transport failure.
+
+The edge independently watches engine readiness and sends stale and recovered
+alerts. `GET /healthz/workflows` returns 503 if a configured hub is unhealthy,
+without exposing hub names or errors. Monitor this URL **externally** and
+supervise the process: an edge cannot report its own host's death. Bridge
+liveness remains separate from workflow health. This endpoint requires the
+edge. A standalone headless bridge should be monitored by its supervisor.

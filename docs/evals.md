@@ -348,3 +348,45 @@ what the tool returned".
 - An unknown frontmatter key is an error, not a warning. A typo'd
   `expected_tools:` would otherwise make a case look green while asserting
   nothing.
+
+## Multi-turn cases, tool details and account privacy (1.1)
+
+```markdown
+---
+timeout: 120
+run_as: tester@example.com
+expect_tool_args:
+  read_knowledge:
+    name: refund-policy
+---
+## Turn 1
+What is the refund policy?
+## Turn 2
+Does that apply after the event starts?
+## Criteria
+Uses the actual policy and preserves the context from the first answer.
+```
+
+The entire case, all turns and judging share one timeout. Checks and criteria
+apply to the final answer. The judge also sees prior turns and tool arguments.
+Tool details include name, arguments, success/failure, duration and a preview
+capped at 500 characters. `hubzoid eval run <hub> --details` prints the calls.
+`--run-as account@example.com` selects a suite default. A case's `run_as` wins.
+These identities grant no access. Evals invoke **real tools** and may have side
+effects, so use dedicated test accounts and fixtures. For model-free journeys,
+put `MODEL=hubzoid-test/scripted` in the test hub's own `.env`.
+
+The agent's read-only Evals tab shows cases, paged history and result details.
+There is no Console run button. Managers can see verdicts, but details of a run
+with `run_as` belong only to that account (which must also have Console/agent
+access). Other viewers see an explicit private-result notice. Scheduled suites
+save results before reporting failure to workflow monitoring.
+
+Schema 2 results live in private `.hubzoid/evals/` JSON files. Schema 1 remains
+readable. Unknown future schemas are rejected. Writes use unique IDs, an atomic
+rename and a shared retention/index lock. `index.json` is a rebuildable summary,
+not a transcript. The newest 200 results are retained by default.
+`HUBZOID_EVAL_KEEP_RUNS=0` keeps all. Redaction applies to saved arguments,
+previews, errors, transcripts and judge reasoning using secret-key and token
+patterns. It cannot identify every arbitrary secret embedded in prose. Use
+synthetic data and protect the hub's backups. `.hubzoid/` stays outside git.
