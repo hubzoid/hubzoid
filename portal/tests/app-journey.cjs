@@ -193,6 +193,8 @@ function chartPng(width = 160, height = 100) {
     await page.goto(`${BASE}/`);
     await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
     await onlyFixture("agent picker", async () => {
+      // The page is "New chat", not the agent: with one hub its name is the brand too.
+      await page.waitForFunction(() => document.title === "New chat · Hubzoid");
       const cards = page.getByRole("radiogroup", { name: "Choose an agent" }).getByRole("radio");
       assert.equal(await cards.count(), 3);
       await page.goto(`${BASE}/?agent=finance`);
@@ -201,7 +203,8 @@ function chartPng(width = 160, height = 100) {
       await page.goto(`${BASE}/?models=it-ops`);
       await page.getByRole("heading", { name: "What can IT Ops help with?" }).waitFor();
       await page.goto(`${BASE}/?agent=nobody`);
-      await page.getByText(/isn't available to you anymore/).waitFor();
+      // The last agent used (IT Ops, just above) takes its place.
+      await page.getByText("The agent in that link isn't available to you, so this chat uses IT Ops.").waitFor();
       await page.getByRole("radio", { name: /Hubzoid Guide/ }).click();
       await page.getByRole("heading", { name: "What can Hubzoid Guide help with?" }).waitFor();
       await page.getByRole("button", { name: "What is Hubzoid?" }).waitFor();
@@ -250,6 +253,13 @@ function chartPng(width = 160, height = 100) {
       await toggle.click();
       assert.equal(await toggle.getAttribute("aria-expanded"), "true");
       await running.getByText('"path": "knowledge/pricing.md"').waitFor();
+      await send("Check my research notes on pricing");
+      await waitIdle();
+      const personal = page.getByTestId("tool-entry").last();
+      await personal.getByText("Done").waitFor();
+      await personal.getByText("list_knowledge", { exact: true }).waitFor();
+      assert.equal(await personal.getByTestId("tool-server").innerText(), "research");
+      assert.equal(await personal.getByText(/mcp__/).count(), 0, "no raw MCP tool name");
       await send("try the failing tool");
       const failed = page.getByTestId("tool-entry").last();
       await failed.getByText("Failed").waitFor();
@@ -284,6 +294,7 @@ function chartPng(width = 160, height = 100) {
       await waitIdle();
       const link = lastAssistant().getByRole("link", { name: "Download quarterly-report.csv" });
       assert.equal(await link.getAttribute("href"), `/artifacts/${firstId}/quarterly-report.csv`);
+      assert.equal((await link.innerText()).trim(), "quarterly-report.csv", "the chip names the file once");
 
       step("A run error reads as a sentence and offers Try again");
       await send("cause an error please");
@@ -803,9 +814,12 @@ function chartPng(width = 160, height = 100) {
       const fresh = await browser.newContext({ viewport: { width: 1200, height: 860 } });
       const invited = await fresh.newPage();
       watch(invited);
+      await invited.goto(`${BASE}/auth/set-password?token=reset-token-valid-001`);
+      await invited.getByRole("heading", { name: "Choose a new password" }).waitFor();
       await invited.goto(`${BASE}/auth/set-password?token=set-token-valid-0001`);
       await invited.getByRole("heading", { name: "Set your password" }).waitFor();
       await invited.getByText("For sam@example.com").waitFor();
+      assert.equal(new URL(invited.url()).search, "", "the one-time token leaves the address bar");
       await axe(invited, "set password");
       await invited.getByLabel("New password").fill("short");
       await invited.getByRole("button", { name: "Save password and sign in" }).click();
@@ -859,6 +873,17 @@ function chartPng(width = 160, height = 100) {
       assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--acme-brand").trim()), "#1f6f5c");
       await shot(page, "app-26-branding");
       await fetch(`${BASE}/__fixture/flag/branded/false`);
+
+      step("Signing in for a server page outside the chat app (the MCP consent page) returns to that page");
+      const consent = await browser.newContext({ viewport: { width: 1200, height: 860 } });
+      const cp = await consent.newPage();
+      watch(cp);
+      await cp.goto(`${BASE}/mcp/oauth/consent?ticket=t-123`);
+      await cp.waitForURL(/\/auth\?redirect=%2Fmcp%2Foauth%2Fconsent%3Fticket%3Dt-123$/);
+      await signIn(cp);
+      await cp.waitForURL(`${BASE}/mcp/oauth/consent?ticket=t-123`);
+      await cp.getByRole("heading", { name: "Allow Claude to use Hubzoid Guide?" }).waitFor();
+      await consent.close();
 
       step("External sign-in returns to the page that asked; cancelling it says so");
       const viaGoogle = await browser.newContext({ viewport: { width: 1200, height: 860 } });

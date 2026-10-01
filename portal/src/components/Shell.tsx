@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
 import { History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users, UsersRound } from "lucide-react";
-import type { Me, MeGroups } from "../api";
+import { usesSignInLinks, type Me, type MeGroups } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
@@ -17,12 +17,24 @@ export type Area = "home" | "agents" | "runs" | "people" | "activity" | "connect
 // endpoint (same origin as the portal); a client-side cookie delete would not
 // invalidate it. Only redirect once the endpoint confirms it cleared the
 // session — a failed or unreachable call must NOT look like a successful logout.
-function SignOutButton() {
+function SignOutButton({ me }: { me: Me }) {
   const { message } = App.useApp();
   const [busy, setBusy] = useState(false);
   async function onClick() {
     setBusy(true);
     try {
+      // The Hubzoid web app (the default mode; /me says so with one-time sign-in
+      // links and groups) owns the session: end it there, then show sign-in.
+      if (usesSignInLinks(me) || (me as { groups?: boolean }).groups === true) {
+        const res = await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        if (!res.ok) throw new Error(`signout failed (${res.status})`);
+        location.href = "/auth";
+        return;
+      }
       const res = await fetch("/api/v1/auths/signout", {
         method: "POST",
         credentials: "include",
@@ -122,7 +134,7 @@ function Sidebar({
           <Text type="secondary">
             {me.org_admin ? "Administrator" : "Agent administrator"}
           </Text>
-          <SignOutButton />
+          <SignOutButton me={me} />
         </div>
       </div>
     </>
