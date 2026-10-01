@@ -88,6 +88,7 @@ async def test_progress_is_saved_while_the_reply_runs(hub, monkeypatch):
     from hubzoid.chat import runs as runs_mod
 
     monkeypatch.setattr(runs_mod, "PERSIST_INTERVAL", 0.05)
+    monkeypatch.setenv("HUBZOID_TEST_SLOW_SECONDS", "30")
     app = build_app()
     agent = app.state.chat.model_label
     transport = httpx.ASGITransport(app=app)
@@ -105,8 +106,10 @@ async def test_progress_is_saved_while_the_reply_runs(hub, monkeypatch):
         assert status["message"]["content"][0]["text"].startswith("Chunk 1.")
         conv = (await client.get("/api/conversations/c_prog00001")).json()
         assert conv["messages"][1]["status"] == "running"
-        await task
-    assert store.get_message("m_asst00001")["status"] == "complete"
+        await client.post("/api/runs/m_asst00001/cancel", headers=ORIGIN)
+        await asyncio.wait_for(task, timeout=10)
+    final = store.get_message("m_asst00001")
+    assert final["status"] == "cancelled" and final["content"][0]["text"].startswith(partial)
 
 
 @pytest.mark.asyncio
