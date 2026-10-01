@@ -539,6 +539,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     with _lock:
         if not _INITED:
             return
+        workers = [t for t in threading.enumerate() if t.name.startswith("dbos-executor-")]
         try:
             if _DBOS is not None:
                 _DBOS.destroy(workflow_completion_timeout_sec=completion_timeout_sec)
@@ -546,8 +547,19 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
             log.exception("workflows: DBOS shutdown failed (continuing)")
         finally:
             if _OWNER is not None:
-                _OWNER.close()
-                _OWNER = None
+                owner, _OWNER = _OWNER, None
+                alive = [t for t in workers if t.is_alive()]
+                if alive:
+                    # DBOS.destroy does not join timed-out synchronous work.
+                    # Keep exclusion until every old executor thread exits.
+                    def release_after_exit():
+                        for worker in alive:
+                            worker.join()
+                        owner.close()
+                    threading.Thread(target=release_after_exit, daemon=True,
+                                     name="hubzoid-owner-drain").start()
+                else:
+                    owner.close()
             _DBOS = None
             _INITED = False
             _LAUNCHED = False

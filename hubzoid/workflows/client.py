@@ -20,7 +20,7 @@ def enqueue_live(hub_dir, name, *, markdown=False, overrides=None):
             from .markdown import TASK_WORKFLOW
             options = {'workflow_name': TASK_WORKFLOW, 'queue_name': _app_name(hub_dir.name)+'-md', 'workflow_id': rid}
             # Matches markdown.enqueue_task's persisted argument contract.
-            args = (name, str(hub_dir), hub_dir.name, overrides)
+            args = (name, [], dict(overrides or {}))
         else:
             definition = ready.get('definitions', {}).get(name)
             if definition is None:
