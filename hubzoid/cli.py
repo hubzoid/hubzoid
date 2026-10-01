@@ -1418,22 +1418,27 @@ def _gateway_upgrade_guard(gw_data: Path, prior: dict, operational_url: str, *, 
     """A gateway that ran Open WebUI before (1.0.x) keeps its people and chats
     there until they are moved. With sign-in on and no Hubzoid account yet,
     starting the web app would lock everyone out: stop with instructions. With
-    sign-in off, say that old chats can be imported."""
+    sign-in off, say that old chats can be imported.
+
+    The local owner that sign-in-off mode creates (admin@localhost) is not an
+    account anyone signs in to, so it does not count. A start in the web app
+    keeps the manifest's record of Open WebUI's database (see
+    _gateway_web_app), so a database server recorded there still counts as
+    Open WebUI data after a start in local mode."""
+    server_db = str(prior.get("owui_database_url") or "")
     had_owui = (gw_data / "webui.db").exists() or (
         bool(prior) and str(prior.get("ui_mode") or "openwebui") != "hubzoid"
-        and bool(prior.get("owui_url")))
+        and bool(prior.get("owui_url"))) or (bool(server_db) and not server_db.startswith("sqlite"))
     if not had_owui:
         return
-    from sqlalchemy import text
-
     from . import db as dblib
-    from . import migrations
+    from . import migrations, upgrade
 
     try:
         engine = dblib._engine_for_url(operational_url)
         migrations.upgrade(engine, "operational")
         with engine.connect() as conn:
-            accounts = int(conn.execute(text("SELECT COUNT(*) FROM hz_users")).scalar() or 0)
+            accounts = upgrade.people(conn)
     except Exception as exc:  # noqa: BLE001 — fail closed: never start blind
         console.print(f"[red]Could not read the Hubzoid accounts ({type(exc).__name__}). "
                       "Check the operational database, then start the gateway again.[/red]")
@@ -1551,8 +1556,12 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
                        (deployment_env.get('DATABASE_URL') if deployment_env.get('DATABASE_URL', '').startswith('postgres')
                         else f"sqlite:///{b.hub_dir}/.hubzoid/dbos.db")) for b in gp.backends],
         operational_url=shared_op_url,
-        # No Open WebUI in this mode.
-        owui_url="", owui_db="",
+        # No Open WebUI runs in this mode. A gateway that ran it before keeps
+        # where its database is: `hubzoid migrate openwebui` and the upgrade
+        # guard find the people and chats still to move there.
+        owui_url="", owui_db=str(prior.get("owui_db") or ""),
+        owui_database_url=prior.get("owui_database_url") or None,
+        owui_database_schema=prior.get("owui_database_schema") or None,
         deployment_secret=dep_secret,
         owner=owner,
         public_url=pub or os.environ.get("WEBUI_URL"),
