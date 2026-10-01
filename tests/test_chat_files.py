@@ -52,7 +52,7 @@ def test_upload_stores_file_and_sidecar(hub, client):
     assert r.status_code == 201
     assert r.json() == {"file_id": "notes.txt", "name": "notes.txt", "size": 11,
                         "mime": "text/plain", "kind": "file"}
-    folder = memory.chat_upload_dir(hub, "c_files0001")
+    folder = memory.chat_upload_dir(hub, "web-c_files0001")
     assert (folder / "notes.txt").read_bytes() == b"hello world"
     assert uploads.read_meta(folder, "notes.txt") == {"mime": "text/plain", "size": 11, "kind": "text"}
     image = _upload(client, "chart.png", PNG, "image/png").json()
@@ -90,7 +90,7 @@ def test_size_limit_is_enforced(client, hub):
     r = _upload(client, "big.bin", b"x" * 1025, "application/octet-stream")
     assert r.status_code == 413 and r.json()["detail"]["code"] == "file_too_large"
     assert _upload(client, "fits.bin", b"x" * 1024, "application/octet-stream").status_code == 201
-    folder = memory.chat_upload_dir(hub, "c_files0001")
+    folder = memory.chat_upload_dir(hub, "web-c_files0001")
     assert sorted(p.name for p in folder.iterdir() if not uploads.is_sidecar(p.name)) == ["fits.bin"]
 
 

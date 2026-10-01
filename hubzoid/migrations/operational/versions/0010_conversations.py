@@ -40,6 +40,14 @@ def upgrade() -> None:
     )
     op.create_index("hz_conversations_owner", "hz_conversations",
                     ["owner_id", "archived", "updated_at"])
+    # A web conversation's files live in <hub>/.hubzoid/chats/web-<id>/
+    # (hubzoid.chat.store.chat_key). On a case-insensitive file system c_Ab and
+    # c_ab would share that folder, so their ids are unique ignoring case. An
+    # imported Open WebUI conversation keeps its own id as its folder, never
+    # web-<id>, so it is left out: an import never collides with a web id.
+    not_migrated = sa.text("source <> 'migrated'")
+    op.create_index("hz_conversations_web_id", "hz_conversations", [sa.text("lower(id)")],
+                    unique=True, sqlite_where=not_migrated, postgresql_where=not_migrated)
 
     op.create_table(
         "hz_messages",

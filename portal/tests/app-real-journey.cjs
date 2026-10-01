@@ -817,7 +817,7 @@ journey("artifact", "A file the agent writes: a download link that works with th
   const href = await link.getAttribute("href");
   const url = new URL(href, ctx.BASE);
   assert.equal(url.origin, ctx.BASE, `the link points at this server (${href})`);
-  assert.equal(url.pathname, `/artifacts/${id}/scripted-report.md`);
+  assert.equal(url.pathname, `/artifacts/web-${id}/scripted-report.md`);
   assert.equal(await link.getAttribute("aria-label"), "Download scripted-report.md");
   await ctx.shot(page, "14-artifact-link");
 
@@ -829,7 +829,7 @@ journey("artifact", "A file the agent writes: a download link that works with th
   assert.match(fs.readFileSync(saved, "utf8"), /^# Scripted report/);
 
   step("The owner's session is enough: no token needed");
-  const bare = `${ctx.BASE}/artifacts/${encodeURIComponent(id)}/scripted-report.md`;
+  const bare = `${ctx.BASE}/artifacts/web-${encodeURIComponent(id)}/scripted-report.md`;
   const own = await context.request.get(bare);
   assert.equal(own.status(), 200);
   assert.match(await own.text(), /^# Scripted report/);
@@ -861,7 +861,7 @@ journey("sidebar", "Sidebar: rename, search by title and text, archive, restore,
   await c.idle();
   const id = c.conversationId();
   await page.getByTestId("tool-entry").filter({ hasText: "write_artifact" }).getByText("Done").waitFor();
-  const chatDir = path.join(ctx.accounts.hub, ".hubzoid", "chats", id);
+  const chatDir = path.join(ctx.accounts.hub, ".hubzoid", "chats", `web-${id}`);
   assert.ok(fs.existsSync(path.join(chatDir, "artifacts", "scripted-report.md")), "the agent's file is on disk");
   await page.getByRole("button", { name: "New chat" }).click();
   await c.settled();
@@ -933,7 +933,7 @@ journey("sidebar", "Sidebar: rename, search by title and text, archive, restore,
   await page.waitForURL(`${ctx.BASE}/`);
   assert.equal((await ctx.apiGet(context, `/api/conversations/${id}`)).status, 404);
   assert.equal(fs.existsSync(chatDir), false, "the chat's folder is gone from disk");
-  const gone = await context.request.get(`${ctx.BASE}/artifacts/${encodeURIComponent(id)}/scripted-report.md`);
+  const gone = await context.request.get(`${ctx.BASE}/artifacts/web-${encodeURIComponent(id)}/scripted-report.md`);
   assert.ok([401, 403, 404].includes(gone.status()), `the deleted chat's file answers ${gone.status()}`);
   await page.goto(`${ctx.BASE}/c/${encodeURIComponent(id)}`);
   await page.getByRole("heading", { name: "This chat doesn't exist or was deleted." }).waitFor();

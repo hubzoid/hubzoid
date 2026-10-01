@@ -243,7 +243,7 @@ async def test_identity_and_chat_scope_inside_the_run(hub, monkeypatch):
         await client.post("/api/chat", headers=ORIGIN, json=chat_body(
             "c_scope0001", "who am i", agent=agent, message_id="m_user00001",
             assistant_id="m_asst00001"))
-    assert seen == {"user": "admin@localhost", "surface": "web", "chat": "c_scope0001"}
+    assert seen == {"user": "admin@localhost", "surface": "web", "chat": "web-c_scope0001"}
     assert busy_during == [True] and not app.state.chat.inflight.busy()
 
 
@@ -293,7 +293,8 @@ async def test_idle_streams_send_keepalives_and_leaving_unsubscribes(monkeypatch
 
     monkeypatch.setattr(runs_mod, "KEEPALIVE_SECONDS", 0.05)
     manager = runs_mod.RunManager(SimpleNamespace())
-    run = runs_mod.Run(message_id="m_idle00001", conversation_id="c_idle00001", owner_id="u",
+    run = runs_mod.Run(message_id="m_idle00001", conversation_id="c_idle00001",
+                       chat_key="web-c_idle00001", owner_id="u",
                        email="e", builder=MessageBuilder("m_idle00001", "c_idle00001"),
                        loop=asyncio.get_running_loop(), started=0.0)
     manager._publish(run, run.builder.start())

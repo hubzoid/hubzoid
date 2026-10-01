@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from hubzoid import _signing, memory
 from tests.chat_helpers import ORIGIN, as_people, build_app, chat_body, events, make_hub, reply_text, who
 
-ARTIFACT = "/artifacts/c_art000001/scripted-report.md"
+ARTIFACT = "/artifacts/web-c_art000001/scripted-report.md"   # the folder of web conversation c_art000001
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def test_web_app_links_expire_after_seven_days(hub, monkeypatch):
     assert abs(expires - (time.time() + 7 * 24 * 3600)) < 120
     # an expired link still works for the owner, not for others
     past = int(time.time()) - 5
-    token = _signing._mac("c_art000001", "scripted-report.md", past, hub)
+    token = _signing._mac("web-c_art000001", "scripted-report.md", past, hub)
     expired = f"{ARTIFACT}?t={token}&e={past}"
     assert client.get(expired, headers={"X-Test-User": "ben"}).status_code == 401
     assert client.get(expired, headers={"X-Test-User": "ana"}).status_code == 200
@@ -89,9 +89,9 @@ def test_another_hubs_conversation_does_not_open_this_hubs_files(hub, monkeypatc
     app.state.chat.store.create_conversation(conv_id="c_art000002", owner_id="u_ana",
                                              owner_email="ana@example.org", hub="another-hub",
                                              agent="x")
-    folder = memory.chat_artifact_dir(hub, "c_art000002")
+    folder = memory.chat_artifact_dir(hub, "web-c_art000002")
     (folder / "left.txt").write_text("from an API call")
-    assert client.get("/artifacts/c_art000002/left.txt",
+    assert client.get("/artifacts/web-c_art000002/left.txt",
                       headers={"X-Test-User": "ana"}).status_code == 401
 
 
