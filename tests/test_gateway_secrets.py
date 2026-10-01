@@ -36,7 +36,8 @@ def _clean(monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-    with clean_process_env():
+    # These pin the legacy Open WebUI gateway (HUBZOID_UI=openwebui).
+    with clean_process_env(HUBZOID_UI="openwebui"):
         yield
 
 

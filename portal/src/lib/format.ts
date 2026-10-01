@@ -86,6 +86,9 @@ export const humanize = (s: string) =>
 
 export const isService = (subject: string) => subject.startsWith("workflow:");
 
+/** A group grantee: `group:<id>` (web app mode). */
+export const isGroup = (subject: string) => subject.startsWith("group:");
+
 /** A person's readable name; falls back to the identity itself. */
 export function personName(subject: string, display?: string | null) {
   if (subject === EVERYONE) return "Everyone signed in";
@@ -236,6 +239,8 @@ export function accountStatus(status: string): Presentation {
       return { label: "Legacy service identity", color: "default", hint: "Created before workflows ran as user accounts; its access is kept." };
     case "everyone":
       return { label: "Public", color: "purple", hint: "Applies to everyone who can sign in." };
+    case "group":
+      return { label: "Group", color: "geekblue", hint: "Its access applies to every member of the group." };
     default:
       return { label: humanize(status), color: "default", hint: "" };
   }
@@ -481,6 +486,23 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [person(subjectName), text(" set a password with a one-time link")],
         detail: "Their other sessions were signed out.",
       };
+    // Groups (the Groups screen). The group's name is kept in the permission column.
+    case "group_create":
+      return { tone: "positive", parts: [actor(who), text(" created the group "), person(row.permission || "")] };
+    case "group_rename":
+      return { tone: "neutral", parts: [actor(who), text(" renamed a group to "), person(row.permission || "")] };
+    case "group_describe":
+      return { tone: "neutral", parts: [actor(who), text(" changed the description of the group "), person(row.permission || "")] };
+    case "group_delete":
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" deleted the group "), person(row.permission || "")],
+        detail: "Its access and memberships were removed.",
+      };
+    case "group_member_add":
+      return { tone: "positive", parts: [actor(who), text(" added "), person(subjectName), text(" to the group "), person(row.permission || "")] };
+    case "group_member_remove":
+      return { tone: "negative", parts: [actor(who), text(" removed "), person(subjectName), text(" from the group "), person(row.permission || "")] };
     // Changes proposed from chat, WhatsApp or MCP and confirmed in the Console.
     case "change_proposed":
       return {

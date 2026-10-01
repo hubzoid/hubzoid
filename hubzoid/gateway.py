@@ -1,5 +1,16 @@
-"""Gateway planning — one Open WebUI fronting many hub bridges.
+"""Gateway planning — many hub bridges behind one front door.
 
+Web app mode (the default): `hubzoid gateway` runs N bridges and one edge, no
+Open WebUI. Every bridge serves the Hubzoid web app and shares the operational
+store (sessions, accounts, conversations, groups, grants), so any bridge can
+answer a deployment-wide call. The edge sends `/b/<slug>/api/*`,
+`/b/<slug>/artifacts/*`, `/b/<slug>/mcp` and `/b/<slug>/branding/*` to that
+hub's bridge with the prefix stripped (`edge_routes(web_app=True)`),
+`/webhooks/<slug>/*` to that hub's inbound server, and everything else to the
+first bridge. The chat app calls hub-scoped routes at `${api_base}/api/...`
+with `api_base` = `/b/<slug>`.
+
+Legacy Open WebUI mode (`HUBZOID_UI=openwebui`, 1.0.x, unchanged below):
 `hubzoid run` is one bridge + one Open WebUI per hub. That is full isolation
 but N heavy OWUI processes. For a team-of-teams deployment (sales hub, support
 hub, …) where the weight matters and per-team *access* — not per-team URLs —
@@ -86,16 +97,18 @@ class GatewayPlan:
             env["DEFAULT_MODELS"] = labels[0]
         return env
 
-    def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
+    def edge_routes(self, *, artifact_prefix: str = "/artifacts", web_app: bool = False) -> list[dict]:
         """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
         /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
+        With `web_app` (the web app mode) also /b/<slug>/api and
+        /b/<slug>/branding, the hub-scoped web app calls.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
-        `/artifacts/...` (or `/mcp`) path. Only MCP-enabled hubs get an /mcp
-        route — the bridge wouldn't serve it anyway, but the edge should not
-        even forward the path. The /webhooks/<slug> route (no strip) reaches the
-        hub's own inbound server; every inbound hub gets one, so several can run
-        behind one front door.
+        `/artifacts/...` (or `/mcp`, `/api/...`, `/branding/...`) path. Only
+        MCP-enabled hubs get an /mcp route — the bridge wouldn't serve it anyway,
+        but the edge should not even forward the path. The /webhooks/<slug>
+        route (no strip) reaches the hub's own inbound server; every inbound hub
+        gets one, so several can run behind one front door.
         """
         routes = []
         for b in self.backends:
@@ -105,6 +118,13 @@ class GatewayPlan:
                 "upstream": f"http://127.0.0.1:{b.bridge_port}",
                 "strip_prefix": base,
             })
+            if web_app:
+                for part in ("/api", "/branding"):
+                    routes.append({
+                        "prefix": base + part,
+                        "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                        "strip_prefix": base,
+                    })
             if b.mcp:
                 routes.append({
                     "prefix": base + "/mcp",
