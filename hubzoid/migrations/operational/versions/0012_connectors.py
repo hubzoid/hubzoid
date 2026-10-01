@@ -70,6 +70,10 @@ def upgrade() -> None:
         sa.Column("return_to", sa.Text),
         sa.Column("created_at", sa.Float, nullable=False),
         sa.Column("expires_at", sa.Float, nullable=False),
+        # set when the callback takes the flow (single use); the row is this
+        # authorization's generation until its tokens are saved with it. A
+        # disconnect deletes it, so a callback still in flight saves nothing.
+        sa.Column("claimed_at", sa.Float),
     )
     op.create_index("hz_connector_flows_expires", "hz_connector_flows", ["expires_at"])
 

@@ -302,7 +302,7 @@ def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:
                     "redirect_uri": oauth_flow.redirect_uri(origin, c.id)}
     if c.auth_type == "none":
         try:
-            with net.client() as client:
+            with net.client(c.url) as client:
                 probe = discovery.probe(client, c.url)
         except ConnectorError as err:
             return {**result, "ok": False, "error": {"code": err.code, "message": err.message}}

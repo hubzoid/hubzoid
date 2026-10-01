@@ -417,26 +417,27 @@ def test_disconnect_waits_for_a_refresh_and_revokes_what_it_deletes(hub, fake):
     assert tokens.get(hub, UID, CID) is None
 
 
-def test_a_new_authorization_keeps_a_refresh_token_only_once_it_is_settled(hub, fake):
+def test_a_new_authorization_replaces_the_record_whole(hub, fake):
+    """Review finding 3: no refresh token is carried over from an earlier
+    authorization, even for the same client and issuer: the new one may be
+    another remote account. A refresh in progress elsewhere is not waited for:
+    it loses its compare-and-set (review finding 5)."""
     save(hub, issuer="https://as.example.org")
     with connectors.engine(hub).begin() as conn:  # a refresh is spending rt-1 right now
         conn.execute(text("UPDATE hz_connector_tokens SET refresh_lock_until = :t"),
                      {"t": time.time() + 30})
-    timer = threading.Timer(0.5, write_elsewhere, args=(hub,))
-    timer.start()
-    try:
-        tokens.store(hub, user_id=UID, email=f.OWNER, connector_id=CID,
-                     token=record(access_token="at-new", refresh_token=None),
-                     inherit_refresh=("https://as.example.org", "cid"))
-    finally:
-        timer.join()
-    stored = tokens.token_record(hub, UID, CID)
-    assert stored["access_token"] == "at-new" and stored["refresh_token"] == "rt-other"
-    # Another client's or issuer's refresh token is never kept.
+    began = time.monotonic()
     tokens.store(hub, user_id=UID, email=f.OWNER, connector_id=CID,
-                 token=record(access_token="at-3", refresh_token=None),
-                 inherit_refresh=("https://as.example.org", "another-client"))
-    assert tokens.token_record(hub, UID, CID)["refresh_token"] is None
+                 token=record(access_token="at-new", refresh_token=None,
+                              expires_at=time.time() + 3600))
+    assert time.monotonic() - began < 2
+    stored = tokens.token_record(hub, UID, CID)
+    assert stored["access_token"] == "at-new" and stored["refresh_token"] is None
+    assert tokens.access_token_for(hub, UID, CID) == "at-new"
+    # The lease is released: the running refresh loses its compare-and-set.
+    with connectors.engine(hub).connect() as conn:
+        lease = conn.execute(text("SELECT refresh_lock_until FROM hz_connector_tokens")).scalar()
+    assert lease is None
 
 
 def test_a_refresh_request_cannot_outlive_its_lease(hub, monkeypatch):

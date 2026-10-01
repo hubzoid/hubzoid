@@ -13,9 +13,11 @@ The MCP authorization spec, as a client sees it:
 
 The ``mcp`` SDK supplies the URL builders, header parsing and metadata models.
 This module adds what a multi-user server needs on top: every URL checked
-against the connector URL rule, bounded responses, no redirects, and one
-result object that the flow, the Console test and the refresh path share.
-Nothing here writes state.
+against the connector URL and address rules (``http.py``: a remote server may
+not send Hubzoid into the deployment's private network), bounded responses and
+one deadline for the whole discovery, no redirects, and one result object that
+the flow, the Console test and the refresh path share. Nothing here writes
+state.
 """
 from __future__ import annotations
 
@@ -146,31 +148,47 @@ def probe(c: httpx.Client, url: str) -> Probe:
         raise ConnectorError("unreachable", "The server could not be reached. Check the URL "
                                             "and that the server is running.", 502) from None
     if session:
-        # A server that needs no sign-in opened a session for our probe: close it.
+        # A server that needs no sign-in opened a session for our probe: close
+        # it. The answer is never read: only that the DELETE was sent matters.
         try:
-            c.delete(url, headers={"mcp-session-id": session,
-                                   "MCP-Protocol-Version": version}, timeout=5.0)
+            with c.stream("DELETE", url, headers={"mcp-session-id": session,
+                                                  "MCP-Protocol-Version": version},
+                          timeout=5.0):
+                pass
         except httpx.HTTPError:
             pass
     return result
 
 
-def _resource_metadata(c: httpx.Client, url: str, pr: Probe):
+def _refused(refused: list[str], what: str, url: str, exc: BaseException) -> None:
+    """Record a request the address rule refused, for the final error."""
+    while exc is not None and not isinstance(exc, net.AddressRefused):
+        exc = exc.__cause__ or exc.__context__
+    if exc is not None:
+        log.info("connectors: not fetching %s (address rule)", _shown(url))
+        refused.append(net.refusal(what, exc.host, exc.reason))
+
+
+def _resource_metadata(c: httpx.Client, url: str, pr: Probe, refused: list[str]):
     """(raw PRM dict, parsed model, the URL it came from) or (None, None, None)."""
     from mcp.client.auth.utils import build_protected_resource_metadata_discovery_urls
     from mcp.shared.auth import ProtectedResourceMetadata
     from mcp.shared.auth_utils import check_resource_allowed, resource_url_from_server_url
 
     hinted = pr.resource_metadata
+    what = "The resource metadata URL"
     for candidate in build_protected_resource_metadata_discovery_urls(hinted, url):
         try:
-            candidate = net.check_url(candidate, what="The resource metadata URL", base=url)
-        except ConnectorError:
+            candidate = net.check_url(candidate, what=what, base=url)
+        except ConnectorError as err:
             log.info("connectors: ignoring resource metadata URL %s (URL rule)", _shown(candidate))
+            if err.code == "private_address":
+                refused.append(err.message)
             continue
         try:
             status, raw = net.get_json(c, candidate)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            _refused(refused, what, candidate, exc)
             continue
         if status != 200 or raw is None:
             continue
@@ -190,20 +208,24 @@ def _resource_metadata(c: httpx.Client, url: str, pr: Probe):
     return None, None, None
 
 
-def _authorization_metadata(c: httpx.Client, url: str, as_url: str | None):
+def _authorization_metadata(c: httpx.Client, url: str, as_url: str | None, refused: list[str]):
     """(raw dict, parsed model) for ``as_url`` (or the server origin, the
     pre-2025-06 location), or (None, None)."""
     from mcp.client.auth.utils import build_oauth_authorization_server_metadata_discovery_urls
     from mcp.shared.auth import OAuthMetadata
 
+    what = "The authorization server"
     for candidate in build_oauth_authorization_server_metadata_discovery_urls(as_url, url):
         try:
-            candidate = net.check_url(candidate, what="The authorization metadata URL", base=url)
-        except ConnectorError:
+            candidate = net.check_url(candidate, what=what, base=url)
+        except ConnectorError as err:
+            if err.code == "private_address":
+                refused.append(err.message)
             continue
         try:
             status, raw = net.get_json(c, candidate)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            _refused(refused, what, candidate, exc)
             continue
         if status >= 500:
             break
@@ -234,10 +256,11 @@ def discover(url: str, *, c: httpx.Client | None = None) -> Discovery:
     Raises ConnectorError with a message an administrator can act on."""
     url = net.check_url(url)
     own = c is None
-    c = c or net.client()
+    c = c or net.client(url)
+    refused: list[str] = []
     try:
         pr = probe(c, url)
-        prm_raw, prm, prm_url = _resource_metadata(c, url, pr)
+        prm_raw, prm, prm_url = _resource_metadata(c, url, pr, refused)
         notes: list[str] = []
         servers = [str(s) for s in (prm.authorization_servers if prm else [])]
         if prm_raw is not None and isinstance(prm_raw.get("authorization_servers"), list):
@@ -248,13 +271,18 @@ def discover(url: str, *, c: httpx.Client | None = None) -> Discovery:
             if as_url is not None:
                 try:
                     as_url = net.check_url(as_url, what="The authorization server URL", base=url)
-                except ConnectorError:
+                except ConnectorError as err:
+                    if err.code == "private_address":
+                        refused.append(err.message)
                     continue
-            raw, meta = _authorization_metadata(c, url, as_url)
+            raw, meta = _authorization_metadata(c, url, as_url, refused)
             if meta is not None:
                 issuer = raw.get("issuer") if isinstance(raw.get("issuer"), str) else str(meta.issuer)
                 break
         if meta is None:
+            if refused:
+                # The likely cause, and what an administrator can do about it.
+                raise ConnectorError("private_address", refused[0], 502)
             if pr.requires_auth is False and prm is None:
                 raise ConnectorError("no_authorization", "This server does not ask for sign-in. "
                                      "Register it with authentication set to none.", 409)
