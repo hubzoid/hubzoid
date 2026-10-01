@@ -618,9 +618,16 @@ def build_edge_app(
 
 
 def _redact_oauth_callback_logs() -> None:
-    """The edge's access log sees the same OAuth callback addresses as the
-    bridge (their query strings carry one-time codes). Use the connections
-    module's redaction when this build has it; never fail to start over it."""
+    """The edge's access log sees the same addresses as the bridge: one-time
+    sign-in links (``/auth/set-password?token=``, ``/api/auth/link/<token>``),
+    sign-in callbacks and connection callbacks all carry single-use secrets.
+    Install the same redaction the bridge uses; never fail to start over it."""
+    try:
+        from .auth import logredact
+
+        logredact.install()
+    except Exception:  # noqa: BLE001 - logging hygiene must not stop the front door
+        log.warning("edge: could not install sign-in log redaction", exc_info=True)
     try:
         from .connectors import routes as connector_routes
     except ImportError:

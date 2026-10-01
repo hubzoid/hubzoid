@@ -246,6 +246,14 @@ def api_key(request: Request) -> str | None:
     scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
     token = token.strip()
     if scheme.lower() == "bearer" and token.startswith("sk-"):
+        from . import appmode
+
+        # Open WebUI's keys belong to the legacy mode only. In the web app mode
+        # an old database may still be on disk after the move, and its keys
+        # must not keep opening the Console: the header is ignored and the
+        # request falls back to the session cookie like any other.
+        if not appmode.is_legacy():
+            return None
         return token
     return None
 

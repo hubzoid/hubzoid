@@ -127,7 +127,16 @@ def plan(hub_dir: Path, *, include_secrets: bool = False) -> Plan:
         if include_secrets and (path / ".env").is_file():
             add(path / ".env", "file", key)
     if manifest:
-        gw_data = Path(manifest["owui_db"]).resolve().parent
+        # The gateway's data folder holds its manifest (and, in the legacy mode,
+        # Open WebUI's database). The web app mode records no Open WebUI path.
+        located = deployment.manifest_path(hub_dir)
+        if located is not None:
+            gw_data = located.resolve().parent
+        elif manifest.get("owui_db"):
+            gw_data = Path(manifest["owui_db"]).resolve().parent
+        else:
+            raise BackupError("Cannot find this gateway's data folder. Set HUBZOID_DEPLOYMENT "
+                              "to its deployment.json and run hubzoid backup again.")
         if any(gw_data == h or gw_data in h.parents for _, h in hubs):
             raise BackupError(f"The gateway data directory {gw_data} contains a hub. "
                               "Give the gateway its own --data-dir to use hubzoid backup.")
