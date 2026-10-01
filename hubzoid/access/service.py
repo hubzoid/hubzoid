@@ -399,7 +399,6 @@ class AccessService:
         is not defeated by new rows arriving under an old revision."""
         hub = self._readable(self.scope(actor) if scope is None else scope, hub)
         gs = self.store
-        gs = self.store
         # One consistent read of (revision, every grant, every group): the
         # returned revision describes exactly the rows below, so the editor's
         # concurrency guard is not defeated by new rows arriving under an old
