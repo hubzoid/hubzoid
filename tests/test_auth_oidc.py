@@ -350,7 +350,12 @@ def test_sign_in_is_off_in_local_mode(hub, monkeypatch):
 
 
 @pytest.mark.parametrize("redirect", ["//evil.example.com/x", "https://evil.example.com",
-                                      "/\\evil.example.com", "javascript:alert(1)"])
+                                      "/\\evil.example.com", "javascript:alert(1)",
+                                      # Browsers drop tabs and newlines inside a URL, so
+                                      # these are //evil.example.com once decoded.
+                                      "/\t/evil.example.com", "/\n/evil.example.com",
+                                      "/\r/evil.example.com", "\t//evil.example.com",
+                                      "/\t\\evil.example.com"])
 def test_redirects_stay_on_this_site(hub, idp, monkeypatch, redirect):
     monkeypatch.setenv("OAUTH_MERGE_ACCOUNTS_BY_EMAIL", "true")
     existing(hub)

