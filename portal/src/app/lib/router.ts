@@ -29,11 +29,25 @@ export function useLocation(): { path: string; search: URLSearchParams; href: st
   return { path: path.replace(/\/+$/, "") || "/", search, href };
 }
 
-/** Same-origin relative paths only: "/x" yes, "//evil" and "https://" no. */
+/**
+ * Same-origin relative paths only: "/x" yes, "//evil" and "https://" no. The
+ * browser drops tabs and newlines anywhere in a URL and reads "\" as "/", so
+ * "/<tab>/evil.example" would leave the site: control characters and
+ * backslashes are refused, and what remains must resolve to this origin.
+ * Returns the normalised path, query and fragment.
+ */
 export function safeRedirect(value: string | null | undefined, fallback = "/"): string {
   if (!value) return fallback;
-  if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return fallback;
-  return value;
+  // eslint-disable-next-line no-control-regex -- control characters are what this refuses
+  if (!value.startsWith("/") || value.startsWith("//") || /[\u0000-\u001f\u007f\\]/.test(value)) return fallback;
+  let url: URL;
+  try {
+    url = new URL(value, location.origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== location.origin) return fallback;
+  return url.pathname + url.search + url.hash;
 }
 
 /**
