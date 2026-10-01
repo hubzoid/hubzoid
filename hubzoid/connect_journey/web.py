@@ -1,9 +1,11 @@
 """The connection pages: `/portal/connect/<id>` and its actions.
 
-Every page is bound to the journey's subject: it needs a signed-in Open WebUI
-session (checked server-side by `access.session.verified_email`) whose email is
-the person who asked. A signed-out visitor is sent to sign in and brought back
-to the same page. Another account gets 403 and the attempt is audited.
+Every page is bound to the journey's subject: it needs a signed-in session
+whose email is the person who asked, checked server-side: a Hubzoid session
+(`hubzoid.auth.current_user`) in the default UI mode, an Open WebUI session
+(`access.session.verified_email`) in the legacy mode. A signed-out visitor is
+sent to sign in and brought back to the same page. Another account gets 403
+and the attempt is audited.
 Mutations (`start`, `cancel`) also require the same Origin. The pages use
 `Referrer-Policy: same-origin` so the browser sends that Origin on its own form
 posts (with `no-referrer` it sends `Origin: null`, which is refused), while a
@@ -150,12 +152,36 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
     router = APIRouter(prefix="/portal/connect")
     hub_dir = Path(hub_dir)
 
+    def legacy() -> bool:
+        from .. import appmode
+
+        return appmode.is_legacy(hub_dir)
+
     def email_of(request: Request) -> str:
         if session_email is not None:
             return normalize(session_email(request) or "")
-        from ..access.session import verified_email
+        if legacy():
+            from ..access.session import verified_email
 
-        return normalize(verified_email(request, hub_dir) or "")
+            return normalize(verified_email(request, hub_dir) or "")
+        from ..auth import current_user
+
+        user = current_user(request, hub_dir)
+        request.state.hz_user = user
+        return normalize(user.email) if user else ""
+
+    def user_of(request: Request, email: str):
+        """The signed-in account behind ``email`` (default mode), for the
+        connector flow. A test's ``session_email`` hook has no account object,
+        so one is resolved the way chat turns resolve it."""
+        user = getattr(request.state, "hz_user", None)
+        if user is not None:
+            return user
+        from ..auth import AuthUser
+        from ..connectors import tokens
+
+        uid = tokens.user_id_for(hub_dir, email)
+        return AuthUser(id=uid, email=email) if uid else None
 
     def bind(request: Request, j: dict):
         """(email, None) for the journey's own signed-in subject, else
@@ -252,7 +278,14 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                          [f"You no longer have permission to connect {_e(label(j['app']))}.",
                           "Ask your administrator."], 403, tone="bad")
         try:
-            target = providers.begin_url(hub_dir, j)
+            if j["provider"] == providers.ConnectorProvider.name:
+                user = user_of(request, email)
+                if user is None:
+                    return _page("Cannot start", ["Your account could not be found. Sign in "
+                                                  "again and reopen the link."], 403, tone="bad")
+                target = providers.begin_url(hub_dir, j, request=request, user=user)
+            else:
+                target = providers.begin_url(hub_dir, j)
         except JourneyError as err:
             return _page("Cannot start", [_e(err.message)], 410, tone="bad")
         if not store.mark_started(hub_dir, jid, ttl=ttl()):
@@ -261,12 +294,14 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                     decision="started", reason=j["provider"] or "")
         resp = RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
                                                                   "Referrer-Policy": "no-referrer"})
-        # The edge sends Open WebUI's post-authorization redirect back to our
-        # done page while this cookie is present (see edge.py).
-        secure = (request.url.scheme == "https"
-                  or request.headers.get("x-forwarded-proto", "").lower() == "https")
-        resp.set_cookie(COOKIE, jid, max_age=ttl(), path="/", httponly=True,
-                        samesite="lax", secure=secure)
+        if j["provider"] == providers.OwuiMcpProvider.name:
+            # The edge sends Open WebUI's post-authorization redirect back to our
+            # done page while this cookie is present (see edge.py). Hubzoid's
+            # own flow returns to the done page by itself.
+            secure = (request.url.scheme == "https"
+                      or request.headers.get("x-forwarded-proto", "").lower() == "https")
+            resp.set_cookie(COOKIE, jid, max_age=ttl(), path="/", httponly=True,
+                            samesite="lax", secure=secure)
         return resp
 
     @router.post("/{jid}/cancel")

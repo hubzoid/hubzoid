@@ -16,6 +16,7 @@ const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ 
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
+const ConnectorsScreen = lazy(() => import("./screens/ConnectorsScreen").then((m) => ({ default: m.ConnectorsScreen })));
 
 const TABS: AgentTab[] = ["access", "runs", "activity"];
 
@@ -144,6 +145,9 @@ function Router({
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;
+  } else if (area === "connectors" && me.data.org_admin) {
+    active = "connectors";
+    screen = <ConnectorsScreen />;
   } else {
     screen = (
       <RecoveryScreen
