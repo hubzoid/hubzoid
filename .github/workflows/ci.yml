@@ -47,9 +47,9 @@ jobs:
           npm install -g @openai/codex@0.147.0
           cd portal && npx playwright install --with-deps chromium && npm test
 
-      - name: Full test suite
+      - name: Full test suite (legacy Open WebUI mode included)
         run: |
-          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev]'
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
           pytest -q --no-header
 
       - name: Build sdist and wheel
@@ -63,8 +63,9 @@ jobs:
       - name: Clean install of the wheel works and serves the Console
         run: |
           python -m venv /tmp/clean
-          /tmp/clean/bin/pip install --extra-index-url https://download.pytorch.org/whl/cpu dist/*.whl
+          /tmp/clean/bin/pip install dist/*.whl
           /tmp/clean/bin/pip check
+          ! /tmp/clean/bin/python -c "import open_webui"
           cd /tmp && /tmp/clean/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_install.py" "$GITHUB_REF_NAME"
 
       - uses: actions/upload-artifact@v6
@@ -102,10 +103,15 @@ jobs:
         run: |
           cp -r demo-hub /tmp/hub && chmod -R a+rwX /tmp/hub
           printf 'MODEL=openrouter/anthropic/claude-haiku-4.5\nOPENROUTER_API_KEY=not-used\nBRIDGE_API_KEYS=ci-key\n' > /tmp/hub/.env
-          docker run -d --name candidate -p 3080:3080 -v /tmp/hub:/hub hubzoid:candidate
-          for i in $(seq 1 100); do curl -fs http://127.0.0.1:3080/health && break; sleep 3; done
-          curl -fs http://127.0.0.1:3080/health
+          # Without sign-in, the container's network bind is refused with instructions.
+          set +e; docker run --rm -v /tmp/hub:/hub hubzoid:candidate; refused=$?; set -e
+          test "$refused" = 2
+          docker run -d --name candidate -p 3080:3080 -v /tmp/hub:/hub -e HUBZOID_AUTH=true hubzoid:candidate
+          for i in $(seq 1 100); do curl -fs http://127.0.0.1:3080/healthz && break; sleep 3; done
+          curl -fs http://127.0.0.1:3080/healthz
+          curl -fs -o /dev/null http://127.0.0.1:3080/
           ! curl -fs -m 3 http://127.0.0.1:8000/healthz
+          ! docker exec candidate python -c "import open_webui"
           docker rm -f candidate
 
   publish-image:
