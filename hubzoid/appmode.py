@@ -13,7 +13,13 @@ turns it on; the 1.0.x name ``WEBUI_AUTH`` is still honoured so existing hub
 ``.env`` files keep their meaning after an upgrade.
 
 A gateway records both facts in its deployment manifest, because bridges started
-separately (``gateway --no-bridges``) may not share its environment.
+separately (``gateway --no-bridges``) may not share its environment. For a hub
+registered in a deployment the recorded mode wins, and so does the recorded
+sign-in of a web app deployment: a hub ``.env`` or a bridge's own environment
+can never turn sign-in off behind the gateway's public edge.
+``deployment_conflicts`` names settings that disagree, and a bridge refuses to
+start with any. A standalone hub reads its environment as before, and so does
+the sign-in of a legacy (Open WebUI) deployment, which Open WebUI enforces.
 """
 from __future__ import annotations
 
@@ -46,26 +52,86 @@ def _manifest(hub_dir: Path | None, env: Mapping[str, str] | None) -> dict:
         return {}
 
 
+def _mode(raw: str) -> str:
+    return UI_OPENWEBUI if raw.strip().lower() in _LEGACY_NAMES else UI_HUBZOID
+
+
 def ui_mode(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> str:
-    """``hubzoid`` or ``openwebui``. Environment first, then the deployment record."""
-    raw = _env("HUBZOID_UI", env).lower()
-    if not raw:
-        raw = str(_manifest(hub_dir, env).get("ui_mode") or "").lower()
-    return UI_OPENWEBUI if raw in _LEGACY_NAMES else UI_HUBZOID
+    """``hubzoid`` or ``openwebui``. The mode recorded for the deployment this
+    hub is registered in, else ``HUBZOID_UI``."""
+    recorded = str(_manifest(hub_dir, env).get("ui_mode") or "")
+    return _mode(recorded or _env("HUBZOID_UI", env))
 
 
 def is_legacy(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> bool:
     return ui_mode(hub_dir, env) == UI_OPENWEBUI
 
 
+def _requested_auth(env: Mapping[str, str] | None) -> tuple[str, str] | None:
+    """(name, value) of the sign-in setting the environment asks for:
+    ``HUBZOID_AUTH``, then ``WEBUI_AUTH``. None when neither is set."""
+    for name in ("HUBZOID_AUTH", "WEBUI_AUTH"):
+        raw = _env(name, env)
+        if raw:
+            return name, raw
+    return None
+
+
+def _recorded_auth(manifest: dict) -> bool | None:
+    """The sign-in a web app deployment recorded, which its bridges keep. None
+    without a record, or for a legacy deployment (Open WebUI signs people in)."""
+    recorded = manifest.get("auth")
+    mode = str(manifest.get("ui_mode") or "")
+    if not isinstance(recorded, bool) or not mode or _mode(mode) != UI_HUBZOID:
+        return None
+    return recorded
+
+
 def auth_enabled(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> bool:
-    """True when people must sign in. ``HUBZOID_AUTH``, then ``WEBUI_AUTH``, then
-    the deployment record. Default off (local single-user mode)."""
-    raw = _env("HUBZOID_AUTH", env) or _env("WEBUI_AUTH", env)
-    if raw:
-        return raw.lower() in _TRUE
-    recorded = _manifest(hub_dir, env).get("auth")
+    """True when people must sign in. A hub registered in a web app deployment
+    keeps the sign-in its gateway recorded. Otherwise ``HUBZOID_AUTH``, then
+    ``WEBUI_AUTH``, then the deployment record. Default off (local mode)."""
+    manifest = _manifest(hub_dir, env)
+    recorded = _recorded_auth(manifest)
+    if recorded is not None:
+        return recorded
+    requested = _requested_auth(env)
+    if requested:
+        return requested[1].lower() in _TRUE
+    recorded = manifest.get("auth")
     return bool(recorded) if isinstance(recorded, bool) else False
+
+
+def deployment_conflicts(hub_dir: Path, env: Mapping[str, str] | None = None) -> list[str]:
+    """Settings in this environment (every configuration layer loaded) that
+    disagree with the deployment this hub is registered in. A bridge with any
+    must not start: one bridge in another mode, or without sign-in behind the
+    gateway's public edge, would serve everyone as the local owner. Empty for a
+    standalone hub."""
+    manifest = _manifest(hub_dir, env)
+    if not manifest:
+        return []
+    from . import deployment
+
+    where = deployment.manifest_path(Path(hub_dir), env) or "its deployment manifest"
+    problems: list[str] = []
+    recorded_mode = str(manifest.get("ui_mode") or "")
+    asked_mode = _env("HUBZOID_UI", env)
+    if recorded_mode and asked_mode and _mode(asked_mode) != _mode(recorded_mode):
+        problems.append(
+            f"HUBZOID_UI={asked_mode} disagrees with the deployment this hub belongs to ({where}), "
+            f"which runs {'Open WebUI' if _mode(recorded_mode) == UI_OPENWEBUI else 'the Hubzoid web app'}. "
+            "Remove HUBZOID_UI from this hub's .env and this bridge's environment: the mode is set "
+            "once, in the gateway's environment.")
+    recorded = _recorded_auth(manifest)
+    requested = _requested_auth(env)
+    if recorded is not None and requested and (requested[1].lower() in _TRUE) != recorded:
+        name, raw = requested
+        problems.append(
+            f"{name}={raw} disagrees with the deployment this hub belongs to ({where}), which runs "
+            f"with sign-in {'on' if recorded else 'off'}. Remove {name} from this hub's .env and this "
+            "bridge's environment: sign-in is set once, in the gateway's environment.")
+    return problems
 
 
 def public_url(env: Mapping[str, str] | None = None) -> str:
