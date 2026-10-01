@@ -692,98 +692,16 @@ def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None
     raise typer.Exit(2)
 
 
-def _openwebui_database(hub: Path):
-    """(SQLAlchemy URL, schema, where) of the Open WebUI database this hub used,
-    resolved as hubzoid.access.owui_db does (the deployment's registered
-    database, then DATABASE_URL, then the SQLite file) without importing
-    hubzoid.access, which loads the agent SDKs and would slow every start."""
-    from sqlalchemy.engine import URL, make_url
-
-    from . import deployment
-
-    try:
-        manifest = deployment.read(hub)
-    except Exception:  # noqa: BLE001 - a malformed manifest is reported by the bridge
-        manifest = {}
-    raw = manifest.get("owui_database_url") or os.environ.get("DATABASE_URL")
-    if raw:
-        url = make_url(raw)
-        if url.drivername in {"postgres", "postgresql", "postgresql+asyncpg"}:
-            url = url.set(drivername="postgresql+psycopg")
-        schema = (manifest.get("owui_database_schema") if manifest.get("owui_database_url")
-                  else os.environ.get("DATABASE_SCHEMA")) or None
-        if url.get_backend_name() != "sqlite":
-            return url, schema, "the Open WebUI database in DATABASE_URL"
-        return url, None, str(url.database or "")
-    path = Path(manifest.get("owui_db") or os.environ.get("HUBZOID_OWUI_DB")
-                or hub / ".openwebui-data" / "webui.db")
-    return URL.create("sqlite", database=str(path)), None, str(path)
-
-
-def _openwebui_people(hub: Path) -> tuple[str, int] | None:
-    """(where, number of accounts) of an Open WebUI database this hub used, or
-    None. Read-only; never creates a file or prints a database URL."""
-    from sqlalchemy import create_engine, func, inspect, select, table
-    from sqlalchemy.pool import NullPool
-
-    try:
-        url, schema, where = _openwebui_database(hub)
-        if url.get_backend_name() == "sqlite":
-            path = Path(url.database or "")
-            if not path.is_file():
-                return None
-            url = url.set(database=path.resolve().as_uri(), query={"mode": "ro", "uri": "true"})
-            args = {"timeout": 5.0}
-        else:
-            args = {"connect_timeout": 5}
-        engine = create_engine(url, poolclass=NullPool, connect_args=args, hide_parameters=True)
-    except Exception:  # noqa: BLE001 - not a database we can read: nothing to move
-        return None
-    try:
-        with engine.connect() as con:
-            if not inspect(con).has_table("user", schema=schema):
-                return None
-            people = con.execute(select(func.count()).select_from(
-                table("user", schema=schema))).scalar() or 0
-    except Exception:  # noqa: BLE001 - unreachable or unreadable: the bridge reports it
-        return None
-    finally:
-        engine.dispose()
-    return (where, int(people)) if people else None
-
-
-def _hubzoid_accounts(hub: Path) -> int:
-    """Accounts in the Hubzoid web app (hz_users). 0 before the first start."""
-    from sqlalchemy import create_engine, inspect, text
-
-    from . import db
-
-    try:
-        url = db.operational_url(hub)
-    except Exception:  # noqa: BLE001 - reported when the bridge starts
-        return 0
-    if url.startswith("sqlite") and not Path(url.split(":///", 1)[-1]).exists():
-        return 0
-    engine = create_engine(url)
-    try:
-        if not inspect(engine).has_table("hz_users"):
-            return 0
-        with engine.connect() as conn:
-            return int(conn.execute(text("SELECT COUNT(*) FROM hz_users")).scalar() or 0)
-    except Exception:  # noqa: BLE001 - unreachable store: the bridge reports it
-        return 0
-    finally:
-        engine.dispose()
-
-
 def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
     """Upgrading from 1.0.x: an Open WebUI install with no Hubzoid accounts yet.
 
     With sign-in on, starting would lock everyone out, so stop with the two ways
     forward. In local mode there is nothing to sign in to; say that the old
     chats can be imported."""
-    found = _openwebui_people(hub)
-    if found is None or _hubzoid_accounts(hub):
+    from . import upgrade
+
+    found = upgrade.openwebui_accounts(hub)
+    if found is None or upgrade.hubzoid_accounts(hub):
         return
     where, people = found
     if not auth_on:
