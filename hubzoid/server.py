@@ -552,14 +552,42 @@ def _usage_envelope(raw: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Identity derivation
 # ---------------------------------------------------------------------------
+_UNSET = object()
+
+
+def _trust(request: Request, hub_dir: Path | None):
+    """(legacy, vouched) for this request, computed once.
+
+    Legacy Open WebUI mode: identity headers are trusted as sent, because only
+    holders of the bridge key (Open WebUI, the adapters) reach the bridge.
+    Web app mode: only what a valid `X-Hubzoid-Assertion` covers exactly
+    (`hubzoid.assertions`); `vouched` is None for an anonymous request."""
+    state = getattr(request, "state", None)
+    cached = getattr(state, "hubzoid_trust", _UNSET) if state is not None else _UNSET
+    if cached is not _UNSET:
+        return cached
+    from . import appmode, assertions
+
+    legacy = appmode.is_legacy(hub_dir)
+    vouched = None if legacy else assertions.vouched(hub_dir, request.headers)
+    result = (legacy, vouched)
+    if state is not None:
+        try:
+            state.hubzoid_trust = result
+        except AttributeError:
+            pass
+    return result
+
+
 def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     """Once Casbin is authoritative, require `use_hub` to enter the hub at all.
 
-    Uses ONLY the verified identity from the trusted front headers
-    (`X-OpenWebUI-User-Email` / `X-Hubzoid-User`) — never the caller-controlled
-    `body.user` — so an authoritative hub cannot be entered anonymously or under
-    a spoofed subject. Fail-closed: a store error denies (503). Un-migrated hubs
-    pass through (legacy)."""
+    Uses ONLY the verified identity — never the caller-controlled `body.user` —
+    so an authoritative hub cannot be entered anonymously or under a spoofed
+    subject. Legacy mode: the trusted front headers (`X-OpenWebUI-User-Email` /
+    `X-Hubzoid-User`). Web app mode: the email a valid identity assertion
+    vouches for. Fail-closed: a store error denies (503). Un-migrated hubs pass
+    through (legacy)."""
     if hub_dir is None:
         return
     from .access import store_for
@@ -571,13 +599,20 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
-    verified = (
-        request.headers.get("x-openwebui-user-email")
-        or request.headers.get("x-hubzoid-user")
-        or ""
-    ).strip().lower()
-    try:
+    legacy, vouched = _trust(request, hub_dir)
+    if legacy:
+        verified = (
+            request.headers.get("x-openwebui-user-email")
+            or request.headers.get("x-hubzoid-user")
+            or ""
+        ).strip().lower()
         account_id = request.headers.get('x-openwebui-user-id')
+    else:
+        # No Open WebUI in this mode: its account id header means nothing and
+        # is never used to rebind an identity.
+        verified = vouched.email if vouched is not None else ""
+        account_id = None
+    try:
         if verified and account_id:
             gs.upsert_identity(email=verified, owui_id=account_id)
         blocked = bool(verified and gs.is_suspended(verified))
@@ -636,7 +671,23 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     non-Open-WebUI surface (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``)
     is refused restricted tools regardless. ``body["user"]`` is only a display
     fallback for the user id; it never carries groups.
+
+    That is the legacy Open WebUI mode. In the web app mode the headers count
+    only when a valid ``X-Hubzoid-Assertion`` covers exactly their values
+    (``hubzoid.assertions``); the groups are then the person's Hubzoid groups,
+    the roster's and the asserted ones. Without one the request is anonymous
+    on the ``api`` surface, and ``body["user"]`` is ignored.
     """
+    legacy, vouched = _trust(request, hub_dir)
+    if not legacy:
+        if vouched is None:
+            return access.Identity.make(user=None, groups=None, surface="api")
+        email = vouched.email or None
+        surface = vouched.surface or "api"
+        groups = access.effective_groups(
+            hub_dir, email=email, surface=surface, header_groups=list(vouched.groups),
+        )
+        return access.Identity.make(user=email, groups=groups, surface=surface)
     headers = request.headers
     owui_email = headers.get("x-openwebui-user-email")
     user = headers.get("x-hubzoid-user") or owui_email
