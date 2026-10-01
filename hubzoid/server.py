@@ -62,6 +62,13 @@ def _hub_dir() -> Path:
 def build_app() -> FastAPI:
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
+    # A hub in a gateway's deployment serves only in the mode and sign-in the
+    # gateway recorded; settings that disagree stop the bridge before it serves.
+    from . import appmode
+
+    conflicts = appmode.deployment_conflicts(hub_dir)
+    if conflicts:
+        raise RuntimeError(" ".join(conflicts))
     # Bring Hubzoid's own tables to the current schema before serving anything;
     # a schema this version can't use stops the bridge here, loudly.
     from . import db as dblib

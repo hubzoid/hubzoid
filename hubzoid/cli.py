@@ -443,6 +443,15 @@ def run(
     br_port = bridge_port or settings.bridge_port
     from . import appmode, config_secrets
 
+    # A hub in a gateway's deployment runs as the gateway recorded (a bridge
+    # started on its own, `gateway --no-bridges`, may not share its
+    # environment). Settings that disagree stop it here, never silently.
+    conflicts = appmode.deployment_conflicts(hub)
+    if conflicts:
+        for problem in conflicts:
+            console.print(f"[red]{escape(problem)}[/red]")
+        raise typer.Exit(2)
+
     # The web experience: the Hubzoid web app (default) or, for one release, the
     # legacy Open WebUI chat app. Read after the hub's .env is loaded.
     legacy = appmode.is_legacy(hub)
