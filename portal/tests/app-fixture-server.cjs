@@ -389,7 +389,8 @@ function createApp(options = {}) {
     }
     if (lower.includes("report") || lower.includes("download")) {
       const prefix = conv.api_base || "";
-      say(`I wrote the report. Download it here: [quarterly-report.csv](${prefix}/artifacts/${conv.id}/quarterly-report.csv)`);
+      // As the real runtimes end a reply: a "Download <file>" footer link.
+      say(`I wrote the report.\n\n[Download quarterly-report.csv](${prefix}/artifacts/${conv.id}/quarterly-report.csv)`);
       return steps;
     }
     say(`Here's what I found about “${text.slice(0, 60)}”.\n\n- It's covered in the hub's knowledge.\n- Nothing needs to change today.\n\nAsk me for more detail on any point.`);
