@@ -26,10 +26,11 @@ read-only transaction). What moves into the operational store:
   (contract 6.4). Share links keep their ids, so ``/s/<id>`` keeps working.
 
 A dry run (the default) changes nothing, not even the target's schema.
-``--apply`` writes in two steps: access first (one transaction, with a backup
-per hub for ``hubzoid access rollback``), then everything else (one
-transaction). If the second step fails, the first is undone. Re-running is
-safe: rows are matched by id, changes made in Hubzoid since the previous
+``--apply`` writes in steps: groups, then access (one transaction, with a
+backup per hub for ``hubzoid access rollback``; it also records which
+accounts are available), then everything else (one transaction). If a step
+fails, the ones before it are undone, account availability included.
+Re-running is safe: rows are matched by id, changes made in Hubzoid since the previous
 import are kept, and what was deleted in Hubzoid is not brought back.
 
 Rehearse first. ``--rehearse <empty folder>`` copies a single hub (with its
@@ -2293,21 +2294,24 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
             path = access.hub.path / ".hubzoid" / "backups" / f"access-{time.time_ns()}.json"
             write_json(path, backup)
             report.backups.append(str(path))
-        access_written = False
-        groups_written = _write_groups(engine, plan.groups, report)
-        if convert or plan.people.identities:
-            try:
-                store.apply_migration([g for a in convert.values() for g in a.grants],
-                                      [x for a in convert.values() for x in a.attrs], sorted(convert),
-                                      replace=True, authoritative=True,
-                                      identities=plan.people.identities, carry_over_public=True,
-                                      actor=ACTOR)
-            except ValueError as exc:
-                if groups_written:
-                    _undo_groups(engine, plan.groups)
-                raise MigrationBlocked(f"The access step was refused: {exc}") from exc
-            access_written = True
+        # Any failure from here undoes every step already written: groups,
+        # then the access step (grants, attributes and authority from the
+        # snapshot; identities and account availability from what the access
+        # step reports it changed, also when no agent is converted).
+        groups_written = access_written = False
+        identities_before: dict | None = None
         try:
+            groups_written = _write_groups(engine, plan.groups, report)
+            if convert or plan.people.identities:
+                try:
+                    identities_before = store.apply_migration(
+                        [g for a in convert.values() for g in a.grants],
+                        [x for a in convert.values() for x in a.attrs], sorted(convert),
+                        replace=True, authoritative=True, identities=plan.people.identities,
+                        carry_over_public=True, actor=ACTOR)
+                except ValueError as exc:
+                    raise MigrationBlocked(f"The access step was refused: {exc}") from exc
+                access_written = True
             for key, access in convert.items():
                 want = set()
                 for subject, hub, permission in access.grants:
@@ -2348,9 +2352,11 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
                 except Exception:  # noqa: BLE001 - reported below with the access undo
                     log.exception("undoing the groups step failed")
                     report.warn("The migration failed and undoing the groups step also failed.")
-            if access_written and snapshot is not None:
+            if access_written:
                 try:
-                    store.restore(snapshot, actor=ACTOR + "-undo")
+                    if snapshot is not None:
+                        store.restore(snapshot, actor=ACTOR + "-undo")
+                    store.restore_identities(identities_before, actor=ACTOR + "-undo")
                     report.warn("The migration failed after the access step, so the access step was undone.")
                 except Exception:  # noqa: BLE001 - both failures are reported
                     log.exception("undoing the access step failed")

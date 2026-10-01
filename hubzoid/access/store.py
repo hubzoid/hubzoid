@@ -903,18 +903,23 @@ class GrantStore:
         actor: str = "migration",
         identities: Iterable[dict] = (),
         carry_over_public: bool = False,
-    ) -> None:
+    ) -> dict:
         """The migration cutover, in ONE transaction: (optionally) replace the
         target hubs' grants, insert the plan (with use_hub implication), set
         attributes + identity rows, set the PER-HUB authority markers, and bump
         the revision. Atomic — a crash rolls the whole thing back, and replace
         semantics mean no stale grant survives cutover. An everyone-signed-in
         grant in the plan needs `carry_over_public` (legacy access that was
-        demonstrably public)."""
+        demonstrably public).
+
+        Returns the identity rows and account availability it touched as they
+        were before, for `restore_identities` (`snapshot`/`restore` cover the
+        hubs' grants, attributes and authority, not identities)."""
         import time
 
         hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
         attrs = list(attrs)
+        identities = list(identities)
         if any(normalize(h) not in hubs for h, _, _, _ in attrs):
             raise ValueError("migration attributes outside target hubs")
         expanded: list[tuple[str, str, str]] = []
@@ -932,8 +937,12 @@ class GrantStore:
                 raise ValueError("migration grant outside target hubs")
             if subject != EVERYONE and "@" in subject:
                 emails.add(subject)
+        touched = sorted(
+            {s for s, _h, _p in expanded if s != EVERYONE and not is_group_subject(s)}
+            | emails | {normalize(i["email"]) for i in identities})
         with self._engine.begin() as conn:
             self._lock_hubs(conn, hubs)
+            before = self._identity_state(conn, touched)
             if replace:
                 for h in hubs:
                     self._audit(conn, actor, "replace_hub_grants", None, h, None)
@@ -990,6 +999,64 @@ class GrantStore:
                 for h in hubs:
                     self._meta_set(conn, f"casbin_authoritative:{h}", "1")
             self._bump_revision(conn)
+        self._refresh_if_stale()
+        return before
+
+    @staticmethod
+    def _identity_state(conn, subjects: list[str]) -> dict:
+        """Each subject's identity row (owui_id, pending) or None, and its
+        ``account_unavailable`` marker or None."""
+        rows: dict[str, dict] = {}
+        flags: dict[str, str] = {}
+        prefix = "account_unavailable:"
+        for start in range(0, len(subjects), 500):
+            chunk = subjects[start:start + 500]
+            for subject, owui_id, pending in conn.execute(
+                text("SELECT subject, owui_id, pending FROM hz_identities WHERE subject IN :s")
+                .bindparams(bindparam("s", expanding=True)), {"s": chunk}
+            ):
+                rows[subject] = {"owui_id": owui_id, "pending": int(pending or 0)}
+            for key, value in conn.execute(
+                text("SELECT k, v FROM hz_meta WHERE k IN :k")
+                .bindparams(bindparam("k", expanding=True)), {"k": [prefix + s for s in chunk]}
+            ):
+                flags[key[len(prefix):]] = value
+        return {"version": 1, "subjects": {
+            s: {"row": rows.get(s), "unavailable": flags.get(s)} for s in subjects}}
+
+    def restore_identities(self, state: dict, *, actor: str) -> None:
+        """Undo the identity part of `apply_migration`, given what it returned:
+        a row it created goes (unless a grant or group membership names the
+        subject again), the others get their Open WebUI account and pending
+        flag back, and every account's availability is what it was. One
+        transaction."""
+        subjects = (state or {}).get("subjects") or {}
+        if not subjects:
+            return
+        with self._engine.begin() as c:
+            for subject, before in sorted(subjects.items()):
+                row = before.get("row")
+                if row is None:
+                    c.execute(
+                        text(
+                            "DELETE FROM hz_identities WHERE subject=:s "
+                            "AND NOT EXISTS (SELECT 1 FROM hz_grants WHERE subject=:s) "
+                            "AND NOT EXISTS (SELECT 1 FROM hz_group_members WHERE email=:s)"
+                        ),
+                        {"s": subject},
+                    )
+                else:
+                    c.execute(
+                        text("UPDATE hz_identities SET owui_id=:o, pending=:p WHERE subject=:s"),
+                        {"o": row["owui_id"], "p": int(row["pending"]), "s": subject},
+                    )
+                key = "account_unavailable:" + subject
+                if before.get("unavailable") is None:
+                    c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": key})
+                else:
+                    self._meta_set(c, key, before["unavailable"])
+            self._audit(c, actor, "rollback_accounts", None, None, None)
+            self._bump_revision(c)
         self._refresh_if_stale()
 
     def grant_many(
