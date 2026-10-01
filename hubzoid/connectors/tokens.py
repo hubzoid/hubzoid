@@ -48,6 +48,7 @@ LEASE_SECONDS = 60    # longer than any refresh request (see _post_refresh)
 WAIT_SECONDS = 10     # how long a turn waits for another process's refresh
 _POLL = 0.2
 REVOKE_TIMEOUT = 5.0
+REVOKE_DEADLINE = 10.0  # both revocation requests together
 _REFRESH_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 _COLUMNS = ("user_id", "connector_id", "email", "token_enc", "expires_at", "status", "error",
@@ -413,9 +414,10 @@ def _post_refresh(token: dict):
         data["resource"] = token["resource"]
     data, headers = net.client_auth(token.get("client") or {}, data)
     try:
-        with net.client(timeout=_REFRESH_TIMEOUT) as c:
-            # Bounded well inside the lease, so no other process can take over
-            # while this request may still spend the refresh token.
+        # Bounded well inside the lease, headers and body, so no other process
+        # can take over while this request may still spend the refresh token.
+        with net.client(token.get("url"), timeout=_REFRESH_TIMEOUT,
+                        deadline=REFRESH_DEADLINE) as c:
             status, body = net.post_json(c, token["token_endpoint"], data=data, headers=headers,
                                          deadline=time.monotonic() + REFRESH_DEADLINE)
     except httpx.HTTPError as exc:
@@ -454,7 +456,8 @@ def revoke(token: dict) -> bool:
     done = False
     pairs = [("refresh_token", token.get("refresh_token")), ("access_token", token.get("access_token"))]
     try:
-        with net.client(timeout=httpx.Timeout(REVOKE_TIMEOUT, connect=REVOKE_TIMEOUT)) as c:
+        with net.client(token.get("url"), deadline=REVOKE_DEADLINE,
+                        timeout=httpx.Timeout(REVOKE_TIMEOUT, connect=REVOKE_TIMEOUT)) as c:
             for hint, value in pairs:
                 if not value:
                     continue

@@ -118,6 +118,23 @@ URIs are built only on a configured address or on localhost, never on the Host
 a request happens to carry. With sign-in off, the connection routes answer only
 requests addressed to this computer unless a public address is configured.
 
+The registered server names its own authorization server and endpoints, so
+Hubzoid limits where they may point. Public addresses are fine. A private,
+loopback or link-local address is used only on the registered server's own
+host (an internal MCP server and its own sign-in), anywhere on this computer
+when the server is on this computer, or on a host you list:
+
+```bash
+# an internal identity provider on another host (names or addresses, comma separated)
+HUBZOID_CONNECTOR_PRIVATE_HOSTS=sso.corp.example.com,10.20.0.15
+```
+
+Cloud metadata addresses (169.254.169.254 and the like) are never used, even
+when listed. Names are checked on the addresses they resolve to, and Hubzoid
+connects only to the addresses it checked. The Console test names a refused
+host. Each operation (discovery, a code exchange, a refresh) also has one
+overall time limit.
+
 Changing a connector's URL or sign-in method removes everyone's connection to
 it, so a token is never sent to a server other than the one that issued it.
 Removing a connector removes the connections too. Grants of its capability stay
