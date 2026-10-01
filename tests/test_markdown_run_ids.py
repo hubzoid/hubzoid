@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import uuid
 
 import pytest
 
@@ -79,9 +80,28 @@ _ENQUEUE = textwrap.dedent('''
 ''')
 
 
-def test_two_hubs_sharing_postgres_both_run_the_same_task_and_slot(postgres_url, tmp_path):
+@pytest.fixture
+def own_postgres(postgres_url):
+    """A database of its own on the session's PostgreSQL server: the shared one
+    keeps the state the migration tests expect."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    name = f"hz_run_ids_{uuid.uuid4().hex[:8]}"
+    admin = create_engine(postgres_url, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as c:
+            c.execute(text(f'CREATE DATABASE "{name}"'))
+        yield make_url(postgres_url).set(database=name).render_as_string(hide_password=False)
+        with admin.connect() as c:
+            c.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+    finally:
+        admin.dispose()
+
+
+def test_two_hubs_sharing_postgres_both_run_the_same_task_and_slot(own_postgres, tmp_path):
     env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "HUBZOID_DEPLOYMENT")}
-    env.update(HUBZOID_DBOS_DB=postgres_url, HUBZOID_OPERATIONAL_DB=postgres_url)
+    env.update(HUBZOID_DBOS_DB=own_postgres, HUBZOID_OPERATIONAL_DB=own_postgres)
     results = {}
     for name in ("alpha", "beta"):
         hub = tmp_path / name
