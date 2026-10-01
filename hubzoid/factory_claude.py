@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from . import _request_ctx
+from . import agent_errors
 from . import config_secrets
 from . import memory as memlib
 from . import reasoning as reasoninglib
@@ -626,6 +627,39 @@ class _ThinkStream:
         return ""
 
 
+class _StderrTail:
+    """The last lines the `claude` CLI wrote to stderr during one turn.
+
+    A run that fails before the CLI reports a result ends in a bare
+    `ProcessError` ("exit code 1"), and its cause (a usage limit, say) is only in
+    the CLI's stderr. The SDK pipes stderr only to a registered callback, so the
+    lines are also logged, where the inherited stderr used to show them."""
+
+    def __init__(self, keep: int = 40):
+        import collections
+
+        self._lines: collections.deque[str] = collections.deque(maxlen=keep)
+
+    def __call__(self, line: str) -> None:
+        line = (line or "").rstrip()
+        if line:
+            self._lines.append(line)
+            log.info("claude cli: %s", line)
+
+    def attach(self, options):
+        """`options` with this callback, unless it already has one (or is not
+        the SDK's options dataclass)."""
+        import dataclasses
+
+        if (not dataclasses.is_dataclass(options) or getattr(options, "stderr", None) is not None
+                or "stderr" not in {f.name for f in dataclasses.fields(options)}):
+            return options
+        return dataclasses.replace(options, stderr=self)
+
+    def text(self) -> str:
+        return "\n".join(self._lines)
+
+
 class ClaudeRuntime:
     """Thin async-iterator adapter around `claude_agent_sdk.query(...)`."""
 
@@ -725,7 +759,8 @@ class ClaudeRuntime:
     def stream(self, prompt: str) -> AsyncIterator[str]:
         """The 1.0.x text of one turn (the typed stream, rendered): answer text,
         `<think>` blocks, one tool line per call, a ⚠ line per tool error, the
-        download footer and `[agent error: ...]`."""
+        download footer and `[agent error: ...]` (or the plain sentence for a usage
+        limit, refused login or overload, see `agent_errors`)."""
         return run_events.as_text(self.stream_events(prompt))
 
     async def stream_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
@@ -781,8 +816,10 @@ class ClaudeRuntime:
             )
         mcp_config = None
         messages = None
+        stderr = _StderrTail()
+        error_status: int | None = None
         try:
-            mcp_config = PrivateMcpConfig(self._options_for_turn())
+            mcp_config = PrivateMcpConfig(stderr.attach(self._options_for_turn()))
             messages = query(prompt=qprompt, options=mcp_config.options)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
@@ -867,6 +904,7 @@ class ClaudeRuntime:
                             f"claude run ended with {getattr(message, 'subtype', 'error')}"
                             + (f": {detail}" if detail else "")
                         )
+                        error_status = getattr(message, "api_error_status", None)
         except Exception as exc:  # noqa: BLE001
             log.exception("claude stream failed")
             self.last_error = exc
@@ -874,8 +912,10 @@ class ClaudeRuntime:
             closing = tw.close()
             if closing:
                 yield run_events.ReasoningEnd(legacy=closing)
-            detail = f"{type(exc).__name__}: {exc}"
-            yield run_events.Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
+            # A usage limit, refused login or overload reads as a plain sentence;
+            # any other error as `[agent error: ...]` (see agent_errors).
+            yield agent_errors.notice(f"{type(exc).__name__}: {exc}", stderr=stderr.text(),
+                                      status=getattr(exc, "api_error_status", None))
             return
         finally:
             try:
@@ -893,8 +933,8 @@ class ClaudeRuntime:
             closing = tw.close()
             if closing:
                 yield run_events.ReasoningEnd(legacy=closing)
-            yield run_events.Notice(kind="error", text=str(self.last_error),
-                                    legacy=f"\n\n[agent error: {self.last_error}]")
+            yield agent_errors.notice(str(self.last_error), stderr=stderr.text(),
+                                      status=error_status)
             return
 
         # Close any thinking block left open (e.g. reasoning with no final text).

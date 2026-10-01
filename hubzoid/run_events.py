@@ -71,10 +71,14 @@ class Notice(RunEvent):
     """Text the runtime adds outside the model's answer.
 
     ``kind`` is 'artifacts' (download links the model did not repeat) or
-    'error' (the run failed; ``text`` explains)."""
+    'error' (the run failed; ``text`` explains). For an error that is one of the
+    plain sentences in ``hubzoid.agent_errors``, ``error_kind`` names its class
+    ('usage_limit', 'auth' or 'overloaded') and ``text`` is that sentence; it is
+    empty for any other error, whose ``text`` is the raw error."""
 
     kind: str
     text: str
+    error_kind: str = ""
 
 
 StreamItem = Union[str, RunEvent]

@@ -53,6 +53,13 @@ _current_usage: ContextVar[dict | None] = ContextVar("hubzoid_usage", default=No
 # would silently fail on a hub that turns tool display off.
 _current_tool_calls: ContextVar[list | None] = ContextVar("hubzoid_tool_calls", default=None)
 
+# How this request's agent run failed, if it did: {"kind", "reset_at"} (see
+# `hubzoid.agent_errors.notice`). Scheduled tasks and evals read it, because the
+# plain sentence a person sees for a usage limit carries no '[agent error:'
+# marker. A dict mutated in place, like artifacts, so the runtime's write is
+# visible from the caller's context.
+_current_failure: ContextVar[dict | None] = ContextVar("hubzoid_run_failure", default=None)
+
 
 # Set by the scheduled runner after resolving the account and its scratch path.
 # Context-local rather than a global allowlist: parallel jobs and chats cannot
@@ -145,6 +152,22 @@ def drain_usage() -> dict:
     return out
 
 
+def note_run_failure(kind: str, *, reset_at: str | None = None) -> None:
+    """Record that this request's run failed, and its class. No-op outside a scope."""
+    holder = _current_failure.get()
+    if holder is None:
+        return
+    holder.clear()
+    holder.update(kind=kind, reset_at=reset_at)
+
+
+def run_failure() -> dict | None:
+    """{"kind", "reset_at"} when this request's run failed (as recorded by the
+    runtime), else None."""
+    holder = _current_failure.get()
+    return dict(holder) if holder else None
+
+
 def record_tool_call(name: str, args: object | None = None) -> None:
     """Note that `name` was called, if a recorder is active. No-op otherwise.
 
@@ -175,13 +198,16 @@ def tool_call_recorder() -> Iterator[list]:
 
 @contextmanager
 def chat_scope(chat_id: str | None) -> Iterator[None]:
-    """Set the chat id (and fresh artifact + usage registries) for a `with` block."""
+    """Set the chat id (and fresh artifact, usage and failure registries) for a
+    `with` block."""
     token = _current_chat_id.set(chat_id)
     art_token = _current_artifacts.set([])
     usage_token = _current_usage.set({})
+    failure_token = _current_failure.set({})
     try:
         yield
     finally:
         _current_chat_id.reset(token)
         _current_artifacts.reset(art_token)
         _current_usage.reset(usage_token)
+        _current_failure.reset(failure_token)

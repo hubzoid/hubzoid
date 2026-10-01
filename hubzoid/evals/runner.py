@@ -64,10 +64,12 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     started = time.monotonic()
 
     raw = ""
+    failure = None
     try:
         with _request_ctx.tool_call_recorder() as calls, _request_ctx.chat_scope(_chat_id(case)):
             raw = await asyncio.wait_for(rt.run(case.prompt), timeout=case.timeout)
             result.tool_calls = [c.get("name", "?") for c in calls]
+            failure = _request_ctx.run_failure()
     except asyncio.TimeoutError:
         result.duration = time.monotonic() - started
         result.error = f"timed out after {case.timeout}s"
@@ -86,6 +88,11 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
         # assertion failure downstream.
         start = raw.index(_AGENT_ERROR_MARKER)
         result.error = raw[start:start + 200].strip()
+        return result
+    if failure is not None:
+        # A usage limit (or refused login, or overload) reads as a plain sentence
+        # with no marker; the runtime recorded the failure and its class instead.
+        result.error = f"agent error ({failure['kind']}): {result.response.strip()}"[:200]
         return result
 
     result.checks = assertions.run_free_checks(
