@@ -591,11 +591,17 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
                      task.max_rounds, f" (carry: {carry[:80]})" if carry else "")
             t0 = time.monotonic()
             round_status = "error"
+            failure = None
             try:
                 with _request_ctx.chat_scope(None):
                     try:
                         reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
-                        round_status = "error" if "[agent error:" in reply else "ok"
+                        # A usage limit (or refused login, or overload) reads as a
+                        # plain sentence without the marker; the runtime records
+                        # the failure in the request context instead.
+                        failure = _request_ctx.run_failure()
+                        failed = "[agent error:" in reply or failure is not None
+                        round_status = "error" if failed else "ok"
                     finally:
                         _record_round_usage(hub_dir, task, round_status, t0)
             except asyncio.TimeoutError:
@@ -616,14 +622,19 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             rlog.emit(event="round_end", round=round_no, status=status or "missing",
                       note=note, duration_s=dt)
 
-            if "[agent error:" in reply and status is None:
+            if round_status == "error" and status is None:
                 consecutive_errors += 1
-                log.error("schedule[%s] round %d agent error (%d consecutive)",
-                          task.name, round_no, consecutive_errors)
+                kind = (failure or {}).get("kind") or "other"
+                reset_at = (failure or {}).get("reset_at")
+                log.error("schedule[%s] round %d agent error: %s%s (%d consecutive)",
+                          task.name, round_no, kind,
+                          f", resets {reset_at}" if reset_at else "", consecutive_errors)
                 if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
-                    result.error = ("backend erroring repeatedly; aborting run "
-                                    f"after {consecutive_errors} bad rounds")
-                    rlog.emit(event="error", where="agent", error=result.error)
+                    result.error = (f"backend erroring repeatedly ({kind}"
+                                    + (f", resets {reset_at}" if reset_at else "")
+                                    + f"); aborting run after {consecutive_errors} bad rounds")
+                    rlog.emit(event="error", where="agent", error=result.error,
+                              error_kind=kind, reset_at=reset_at)
                     break
                 carry = "CONTINUE — previous round failed with a backend error"
                 continue

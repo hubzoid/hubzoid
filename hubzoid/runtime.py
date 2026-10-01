@@ -593,11 +593,15 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             with _request_ctx.chat_scope(None):
                 text = await run_events.answer_only(rt, prompt)
                 raw.update(_request_ctx.drain_usage())
+                failure = _request_ctx.run_failure() or {}
         finally:
             await rt.aclose()
         err = getattr(rt, "last_error", None)
         if err is not None:
-            raise AgentRunError(f"agent run failed: {type(err).__name__}: {err}") from err
+            # The class (usage_limit, auth, overloaded) when the runtime knows it.
+            kind = failure.get("kind")
+            kind = f" ({kind})" if kind and kind != "other" else ""
+            raise AgentRunError(f"agent run failed{kind}: {type(err).__name__}: {err}") from err
         return text
 
     def _run() -> str:

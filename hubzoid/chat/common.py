@@ -141,7 +141,7 @@ class ChatContext:
 
 
 def message_json(message: dict) -> dict:
-    return {
+    out = {
         "id": message["id"],
         "parent_id": message.get("parent_id"),
         "role": message.get("role"),
@@ -150,6 +150,12 @@ def message_json(message: dict) -> dict:
         "error": message.get("error"),
         "created_at": message.get("created_at"),
     }
+    # A failed reply whose error is a plain sentence (usage limit, refused
+    # login, overload) names its class, kept with the reply's usage summary.
+    usage = message.get("usage")
+    if message.get("status") == "error" and isinstance(usage, dict) and usage.get("error_kind"):
+        out["error_kind"] = usage["error_kind"]
+    return out
 
 
 def check_use_hub(hub_dir: Path, email: str) -> None:
