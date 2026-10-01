@@ -17,8 +17,12 @@ Rules held here:
     identities and one-time links (and their personal connection tokens, when
     ``hubzoid.connectors.tokens`` is installed).
   * ``updated_at`` moves on every change to the account row (not on sign-in
-    activity, ``last_login_at``). A session only starts if it hasn't moved
-    since the credential was read (``sessions.create_session``).
+    activity, ``last_login_at``): it is the account's version. A change that ends
+    sessions moves it first, then revokes them, in one transaction. A session
+    only starts if it hasn't moved since the credential was read
+    (``sessions.create_session``), and a person's own password change only
+    applies if it hasn't moved since their current password was read
+    (``set_password(expect_updated_at=...)``).
   * External identities migrated from Open WebUI, which recorded the provider
     but not the issuer, carry the placeholder issuer
     ``openwebui-migrated:<provider>`` until that provider next signs the person
@@ -62,6 +66,12 @@ _ID = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 class AccountExists(Exception):
     """Another account already uses this email (or id)."""
+
+
+class AccountChanged(Exception):
+    """The account changed (a reset, a role or status change, a block, a
+    deletion) since it was read, or the session making a change has ended, so
+    the change was not made."""
 
 
 class InvalidAccount(ValueError):
@@ -165,6 +175,20 @@ class UserStore:
         m = row._mapping
         return _public(row), (m["password_hash"] or None) if m["password_enabled"] else None
 
+    def password_state(self, user_id: str) -> tuple[str | None, float | None]:
+        """(stored hash, ``updated_at``) read together, for a person changing
+        their own password: the change applies only while the account is still
+        at that version (``set_password(expect_updated_at=...)``). The hash is
+        None as for ``password_hash``; both are None when the account is gone."""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                sa.select(users.c.password_hash, users.c.password_enabled, users.c.updated_at)
+                .where(users.c.id == str(user_id))
+            ).first()
+        if row is None:
+            return None, None
+        return (row[0] or None) if row[1] else None, row[2]
+
     def password_hash(self, user_id: str) -> str | None:
         """The stored hash, for verifying a sign-in only. None when the person
         has no password or signs in with an external provider only."""
@@ -221,22 +245,40 @@ class UserStore:
         assert created is not None
         return created
 
-    def _update(self, conn, user_id: str, **values) -> int:
+    def _update(self, conn, user_id: str, *where, **values) -> int:
         values["updated_at"] = time.time()
-        return conn.execute(users.update().where(users.c.id == str(user_id)).values(**values)).rowcount
+        return conn.execute(users.update().where(users.c.id == str(user_id), *where)
+                            .values(**values)).rowcount
 
     def set_password(self, user_id: str, password: str | None = None, *,
                      password_hash: str | None = None,
-                     except_token_hash: str | None = None) -> None:
+                     except_token_hash: str | None = None,
+                     expect_updated_at: float | None = None) -> None:
         """Set (or, with neither argument, clear) the password. Ends every
-        session except ``except_token_hash`` and cancels unused one-time links."""
+        session except ``except_token_hash`` and cancels unused one-time links.
+
+        ``expect_updated_at`` is for a person changing their own password: the
+        account's ``updated_at`` read with the password they just confirmed
+        (``password_state``). In the same transaction as the write, the account
+        must still be at that version and the session ``except_token_hash``
+        must still be live; otherwise nothing changes and AccountChanged is
+        raised. A reset, role change or block landing meanwhile is never undone."""
         stored = passwords.hash_password(password) if password is not None else password_hash
         now = time.time()
         with self.engine.begin() as conn:
-            done = self._update(conn, user_id, password_hash=stored or None,
+            where = () if expect_updated_at is None else (users.c.updated_at == expect_updated_at,)
+            done = self._update(conn, user_id, *where, password_hash=stored or None,
                                 **({"password_enabled": 1} if stored else {}))
             if not done:
+                if expect_updated_at is not None:
+                    raise AccountChanged()
                 raise KeyError(user_id)
+            if expect_updated_at is not None and except_token_hash:
+                live = conn.execute(sa.select(sessions.c.revoked_at).where(
+                    sessions.c.token_hash == except_token_hash,
+                    sessions.c.user_id == str(user_id))).first()
+                if live is None or live[0] is not None:
+                    raise AccountChanged()  # rolls the password back
             self._revoke(conn, user_id, now, except_token_hash)
             conn.execute(links.delete().where(links.c.user_id == str(user_id),
                                               links.c.used_at.is_(None)))
