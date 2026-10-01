@@ -41,7 +41,7 @@ import type { Conversation } from "../lib/types";
 import { describeError } from "../lib/errors";
 import { ShareDialog } from "./ShareDialog";
 import { toast } from "./toast";
-import { AgentAvatar, Button, ConfirmDialog, IconButton, Notice, Spinner, UserAvatar, Wordmark, cx } from "./ui";
+import { AgentAvatar, BrandMark, Button, ConfirmDialog, IconButton, Notice, Spinner, UserAvatar, cx } from "./ui";
 
 const GROUPS: { key: DateGroup; label: string }[] = [
   { key: "today", label: t.sidebar.today },
@@ -104,25 +104,7 @@ function Brand() {
       onClick={(e) => linkClick(e, "/")}
       className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 text-ink no-underline"
     >
-      {branding.logo_url ? (
-        <>
-          <img src={branding.logo_url} alt="" className="h-7 w-7 flex-none rounded-md object-contain" />
-          <span className="truncate text-[15px] font-semibold tracking-tight">{brandName}</span>
-        </>
-      ) : brandName === t.product ? (
-        <Wordmark className="text-[17px]" />
-      ) : (
-        <>
-          <span
-            aria-hidden
-            className="flex h-7 w-7 flex-none items-center justify-center rounded-md border border-line bg-raised font-mono text-[13px] font-semibold"
-          >
-            <span className="text-brand">/</span>
-            {brandName.slice(0, 1).toLowerCase()}
-          </span>
-          <span className="truncate text-[15px] font-semibold tracking-tight">{brandName}</span>
-        </>
-      )}
+      <BrandMark logoUrl={branding.logo_url} name={brandName} />
     </a>
   );
 }

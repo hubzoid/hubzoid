@@ -4,6 +4,7 @@
 import {
   forwardRef,
   useId,
+  useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -210,14 +211,22 @@ export function AgentAvatar({
   className?: string;
 }) {
   const radius = Math.round(size * 0.28);
-  if (src)
+  // Hubs often point avatars at their logo; a wide wordmark (or a broken
+  // image) reads better as initials than squeezed into a square.
+  const [unusable, setUnusable] = useState<string | null>(null);
+  if (src && unusable !== src)
     return (
       <img
         src={src}
         alt=""
         width={size}
         height={size}
-        className={cx("flex-none border border-line bg-raised object-cover", className)}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (img.naturalHeight && img.naturalWidth / img.naturalHeight > 1.6) setUnusable(src);
+        }}
+        onError={() => setUnusable(src)}
+        className={cx("flex-none border border-line bg-raised object-contain", className)}
         style={{ width: size, height: size, borderRadius: radius }}
       />
     );
@@ -256,6 +265,42 @@ export function Wordmark({ className }: { className?: string }) {
       </span>
       <span aria-hidden>{t.wordmark}</span>
     </span>
+  );
+}
+
+/**
+ * The deployment's mark: its logo (a square icon beside the name, or a
+ * wordmark on its own), the Hubzoid wordmark by default, or the name.
+ */
+export function BrandMark({ logoUrl, name }: { logoUrl?: string | null; name: string }) {
+  const [wordmark, setWordmark] = useState(false);
+  if (logoUrl)
+    return (
+      <>
+        <img
+          src={logoUrl}
+          alt={wordmark ? name : ""}
+          onLoad={(e) => {
+            const img = e.currentTarget;
+            setWordmark(!!img.naturalHeight && img.naturalWidth / img.naturalHeight > 2.2);
+          }}
+          className={cx("flex-none object-contain", wordmark ? "h-6 max-w-[170px]" : "h-7 w-7 rounded-md")}
+        />
+        {!wordmark && <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>}
+      </>
+    );
+  if (name === t.product) return <Wordmark className="text-[17px]" />;
+  return (
+    <>
+      <span
+        aria-hidden
+        className="flex h-7 w-7 flex-none items-center justify-center rounded-md border border-line bg-raised font-mono text-[13px] font-semibold text-ink"
+      >
+        <span className="text-brand">/</span>
+        {name.slice(0, 1).toLowerCase()}
+      </span>
+      <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>
+    </>
   );
 }
 

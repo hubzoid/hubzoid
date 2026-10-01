@@ -3,7 +3,7 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { useTheme, type ThemeMode } from "../lib/theme";
-import { Wordmark, cx } from "../components/ui";
+import { BrandMark, cx } from "../components/ui";
 
 export function ThemeSwitch({ className }: { className?: string }) {
   const { mode, setMode } = useTheme();
@@ -45,17 +45,8 @@ export function AuthLayout({ title, children }: { title: string; children: React
   return (
     <div className="flex min-h-dvh flex-col bg-canvas">
       <header className="flex items-center justify-between px-5 py-4 sm:px-8">
-        <span className="flex items-center gap-2.5">
-          {logo ? (
-            <>
-              <img src={logo} alt="" className="h-7 w-7 rounded-md object-contain" />
-              <span className="text-[15px] font-semibold tracking-tight text-ink">{app.brandName}</span>
-            </>
-          ) : app.brandName === t.product ? (
-            <Wordmark className="text-[18px]" />
-          ) : (
-            <span className="text-[15px] font-semibold tracking-tight text-ink">{app.brandName}</span>
-          )}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <BrandMark logoUrl={logo} name={app.brandName} />
         </span>
         <ThemeSwitch />
       </header>

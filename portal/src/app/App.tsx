@@ -3,7 +3,7 @@
 // (the chat thread with assistant-ui and markdown) load on demand.
 import "./app.css";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { WifiOff } from "lucide-react";
+import { AlertTriangle, WifiOff } from "lucide-react";
 import { t } from "./i18n/en";
 import { get, setUnauthorizedHandler } from "./lib/api";
 import { AppContext, type AgentsState, type AppContextValue } from "./lib/app-context";
@@ -211,20 +211,24 @@ export default function App() {
     navigate(`/c/${encodeURIComponent(conversation.id)}`, { replace: true });
   }, []);
 
-  if (bootError && !session)
+  if (bootError && !session) {
+    const offline = (bootError as { status?: number })?.status === 0;
     return (
       <main className="flex min-h-dvh items-center justify-center bg-bg">
         <StateMessage
-          icon={<WifiOff size={28} aria-hidden />}
-          title={t.errors.network}
+          icon={offline ? <WifiOff size={28} aria-hidden /> : <AlertTriangle size={28} aria-hidden />}
+          title={offline ? t.errors.network : t.errors.bootTitle}
           action={
             <Button variant="primary" onClick={() => void loadSession()}>
               {t.retry}
             </Button>
           }
-        />
+        >
+          {offline ? null : t.errors.boot}
+        </StateMessage>
       </main>
     );
+  }
   if (!session || !value) return <PageSpinner />;
 
   const wrap = (node: ReactNode) => (
