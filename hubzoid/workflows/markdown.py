@@ -1,5 +1,5 @@
 # Hubzoid workflows. Apache-2.0 licensed like the rest of the repository.
-"""Markdown schedule tasks (`<hub>/schedule/*.md`) and scheduled evals, run on DBOS.
+"""Markdown schedule tasks (`<hub>/schedule/*.md`) and evals, run on DBOS.
 
 This module is only the executor. *When* a task is due is unchanged and lives in
 `scheduling.py` / `scheduler.py`: cron in machine-local time, anchors in the
@@ -26,6 +26,15 @@ workflow id `md:<task>:<slot>@<hub>` carries the task name, so tasks added or
 edited while the hub runs work without re-registering, and the same slot can
 never be enqueued twice.
 
+Evals run here too: scheduled ones (`hz_eval_suite`, queued by the scheduler)
+and runs an administrator starts from the Console (`hz_eval_console`, queued
+by `hubzoid.portal_evals` through a DBOS client, so in a gateway the hub's own
+bridge runs it). A Console run is one step that calls
+`hubzoid.evals.run_and_save(..., trigger="console")`, which writes the results
+file the Console shows. Like the markdown `work` step it is never repeated:
+a run interrupted by a restart fails with that reason instead of paying for
+the model calls twice.
+
 Run ids are namespaced by the hub (its DBOS application name) because a workflow
 id is global in a DBOS system database: hubs sharing one PostgreSQL database
 used to collide on `md:<task>:<slot>` and `eval:<cases>:<slot>`, and the second
@@ -44,6 +53,10 @@ log = logging.getLogger("hubzoid.workflows")
 
 MD_WORKFLOW = "hz_markdown_task"
 EVAL_WORKFLOW = "hz_eval_suite"
+EVAL_CONSOLE_WORKFLOW = "hz_eval_console"
+# Every eval workflow: at most one of these runs at a time per hub (the
+# Console refuses a new run while one is queued or running).
+EVAL_WORKFLOWS = (EVAL_WORKFLOW, EVAL_CONSOLE_WORKFLOW)
 _FNS: dict = {}
 
 
@@ -73,6 +86,19 @@ def run_prefix(task_name: str) -> str:
 def eval_run_id(names: list[str], slot: str, hub_name: str | None = None) -> str:
     """`eval:<case,case>:<slot>@<hub>`: one scheduled eval suite run in one hub."""
     return f"eval:{','.join(sorted(names))}:{slot}@{hub_namespace(hub_name)}"
+
+
+def console_eval_run_id(hub_name: str, now: datetime | None = None) -> str:
+    """`evals:console:<time>-<random>@<hub>`: one eval run started from the Console."""
+    import secrets
+
+    stamp = (now or datetime.now()).strftime("%Y%m%dT%H%M%S")
+    return f"evals:console:{stamp}-{secrets.token_hex(3)}@{hub_namespace(hub_name)}"
+
+
+def queue_name(hub_name: str | None = None) -> str:
+    """The hub's markdown queue (markdown tasks and evals): one run at a time."""
+    return f"{hub_namespace(hub_name)}-md"
 
 
 def task_name_from_id(workflow_id: str) -> str | None:
@@ -207,8 +233,39 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
     def eval_suite(names: list[str], now_iso: str) -> dict:
         return run_evals(names, now_iso)
 
+    @DBOS.step(name="hz_eval_console_run")
+    def run_console_evals(run: str, names: list[str] | None, judge: bool) -> dict:
+        """The Console's eval run: the hub's cases (all enabled ones, or
+        `names`) through `hubzoid.evals.run_and_save`, which saves the results
+        file. The model calls are paid, so a step interrupted by a restart is
+        not run again."""
+        from .state import WorkflowState
+        from .. import db
+        from .. import evals as evals_lib
+
+        marker = WorkflowState(db.operational_engine(hub_dir), hub_name, "evals:console")
+        key = f"started:{run}"
+        if key in marker:
+            return {"interrupted": True}
+        marker[key] = "started"
+        path, suite = evals_lib.run_and_save(hub_dir, names, judge=judge, trigger="console")
+        marker[key] = Path(path).name
+        return {"stamp": Path(path).stem, "cases": len(suite.cases),
+                "passed": suite.passed, "failed": suite.failed}
+
+    @DBOS.workflow(name=EVAL_CONSOLE_WORKFLOW)
+    def eval_console(names: list[str] | None, judge: bool, requested_by: str) -> dict:
+        """Started from the Console by `requested_by` (a hub administrator).
+        A failing case is a result, not a failed run."""
+        outcome = run_console_evals(DBOS.workflow_id, names, judge)
+        if outcome.get("interrupted"):
+            raise RuntimeError("The eval run was interrupted by a restart and was not run "
+                               "again, so no model call was repeated. Start it again.")
+        return dict(outcome, requested_by=requested_by, judge=judge)
+
     _FNS["md_task"] = md_task
     _FNS["eval_suite"] = eval_suite
+    _FNS["eval_console"] = eval_console
 
 
 def enqueue_task(task_name: str, slot: str, claimed: list[str] | None = None,

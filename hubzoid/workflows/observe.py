@@ -8,6 +8,11 @@ the run's recorded identity step; a run whose account cannot be established is
 treated as private. A legacy service run acts for no person, so its detail stays
 visible to the hub's managers as before. Hub management or organization
 administration alone never reveals a person's run results.
+
+Eval runs (scheduled, or started from the Console) are the exception: their
+result is a pass and fail summary of the hub's own eval cases, which the hub's
+managers already see in full on the Console's Evals screen, so it is shown to
+them like a service run's.
 """
 
 from __future__ import annotations
@@ -55,6 +60,27 @@ def _run_owner(client, workflow_id: str) -> dict | None:
     except Exception:  # noqa: BLE001 — unknown owner: treated as private
         log.exception("workflows: could not read the identity of run %s", workflow_id)
         return None
+
+
+def _hub_level(workflow_name: str) -> bool:
+    """An eval run: its result is the hub's eval summary (see the docstring)."""
+    from . import markdown
+
+    return workflow_name in markdown.EVAL_WORKFLOWS
+
+
+def _name_filter(name):
+    """(DBOS workflow name filter, run id prefix) for a name the Console shows:
+    `md:<task>` is the markdown workflow with that task's id prefix, `evals`
+    every eval workflow, anything else a code workflow's own name."""
+    from . import markdown
+
+    if name and name.startswith("md:"):
+        # Markdown tasks share one DBOS workflow; the run id carries the task.
+        return markdown.MD_WORKFLOW, f"{name}:"
+    if name == "evals":
+        return list(markdown.EVAL_WORKFLOWS), None
+    return name, None
 
 
 def may_see_results(owner: dict | None, viewer: str | None) -> bool:
@@ -316,7 +342,7 @@ def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = No
     name = w.name
     if w.name == markdown.MD_WORKFLOW:
         name = f"md:{markdown.task_name_from_id(w.workflow_id) or '?'}"
-    elif w.name == markdown.EVAL_WORKFLOW:
+    elif w.name in markdown.EVAL_WORKFLOWS:
         name = "evals"
     return dict(
         hub=hub_name,
@@ -382,12 +408,7 @@ def runs(
     client = DBOSClient(
         system_database_url=url, application_name=app, retry_connection_errors=False
     )
-    prefix = None
-    if name and name.startswith("md:"):
-        # Markdown tasks share one DBOS workflow; the run id carries the task.
-        from . import markdown
-
-        name, prefix = markdown.MD_WORKFLOW, f"{name}:"
+    name, prefix = _name_filter(name)
     try:
         result = client.list_workflows(
             name=name,
@@ -407,7 +428,7 @@ def runs(
         for w in result:
             steps = client.list_workflow_steps(w.workflow_id) if run_id else None
             owner = _identity_of(steps) if run_id else _run_owner(client, w.workflow_id)
-            visible = trusted or may_see_results(owner, viewer)
+            visible = trusted or may_see_results(owner, viewer) or _hub_level(w.name)
             row = _run_row(hub_name, w, visible=visible, owner=owner)
             if run_id:
                 row["steps"] = [_step_row(x, visible) for x in steps]
@@ -461,9 +482,11 @@ def _query_source(url, members, *, name, run_id, statuses, start, end, limit,
     client = DBOSClient(
         system_database_url=url, application_name=apps[0], retry_connection_errors=False
     )
+    name, prefix = _name_filter(name)
     try:
         result = client.list_workflows(
             name=name,
+            workflow_id_prefix=prefix,
             workflow_ids=[run_id] if run_id else None,
             status=statuses,
             start_time=start,
@@ -480,8 +503,8 @@ def _query_source(url, members, *, name, run_id, statuses, start, end, limit,
             hub_name = app_to_hub.get(w.application_name) or single
             if hub_name is not None:
                 owner = _run_owner(client, w.workflow_id)
-                rows.append(_run_row(hub_name, w, visible=may_see_results(owner, viewer),
-                                     owner=owner))
+                visible = may_see_results(owner, viewer) or _hub_level(w.name)
+                rows.append(_run_row(hub_name, w, visible=visible, owner=owner))
         return rows
     finally:
         client.destroy()

@@ -3,9 +3,11 @@
 
 Called from the server lifespan (and the CLI). The hub's DBOS engine runs all
 scheduled work: markdown `schedule/*.md` tasks and scheduled evals (on whenever
-their files exist, as before) and code `workflows/*.py`. Laptop-safety for code
-workflows: they only fire when the deployment is marked — `HUBZOID_SCHEDULES=1`
-for a single `hubzoid run`, or automatically under `hubzoid gateway`.
+their files exist, as before) and code `workflows/*.py`. It also starts when
+the hub has eval cases, so an administrator can run them from the Console.
+Laptop-safety for code workflows: they only fire when the deployment is
+marked — `HUBZOID_SCHEDULES=1` for a single `hubzoid run`, or automatically
+under `hubzoid gateway`.
 
 This module never imports an agent runtime SDK; the LLM/agent seam
 (`context.configure`) is wired by the caller (server.py / cli.py).
@@ -51,6 +53,20 @@ def markdown_work(hub_dir, env: dict | None = None) -> bool:
     tasks, problems = load_tasks(Path(hub_dir))
     return bool(any(t.enabled for t in tasks) or problems
                 or evals_schedule.scheduled_cases(Path(hub_dir)))
+
+
+def eval_work(hub_dir, env: dict | None = None) -> bool:
+    """Whether the hub has eval cases (`<hub>/evals/*.md`) the Console can run.
+    The Console queues such a run on this hub's engine, so the engine starts
+    for them too. `HUBZOID_DISABLE_SCHEDULE=1` keeps it off, as for markdown
+    work; the Console then explains that evals can't start."""
+    env = env if env is not None else os.environ
+    if _truthy(env.get("HUBZOID_DISABLE_SCHEDULE")):
+        return False
+    from .._fs import resolve_bucket
+
+    root = resolve_bucket(Path(hub_dir), "evals")
+    return bool(root and any(not p.name.startswith(("_", ".")) for p in root.glob("*.md")))
 
 
 class Dispatcher:
@@ -139,14 +155,16 @@ class Dispatcher:
 
 async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
     """Start the hub's DBOS engine when there is scheduled work: markdown tasks
-    or scheduled evals (on whenever their files exist), or code workflows (when
-    schedules are enabled for this deployment). Starts the per-minute tick for
-    code workflows. Returns the Dispatcher (to stop() at shutdown) or None."""
+    or scheduled evals (on whenever their files exist), eval cases the Console
+    can run, or code workflows (when schedules are enabled for this
+    deployment). Starts the per-minute tick for code workflows. Returns the
+    Dispatcher (to stop() at shutdown) or None."""
     from ..access import store_for
 
     gs = store_for(hub_dir)
     code_on = schedules_enabled()
-    md_on = await asyncio.to_thread(markdown_work, hub_dir)
+    md_on = (await asyncio.to_thread(markdown_work, hub_dir)
+             or await asyncio.to_thread(eval_work, hub_dir))
     if not code_on and not md_on:
         gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=None)
         log.info(

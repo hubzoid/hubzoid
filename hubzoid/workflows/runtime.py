@@ -434,9 +434,12 @@ def launch() -> None:
         on_conflict="always_update",
     )
     # Markdown tasks keep their historical rule: one run at a time per hub, which
-    # also keeps git commits/pushes of different tasks from overlapping.
+    # also keeps git commits/pushes of different tasks from overlapping. Evals
+    # (scheduled, and started from the Console) share it.
+    from . import markdown
+
     _MD_QUEUE = _DBOS.register_queue(
-        f"{_app_name(_HUB_NAME)}-md", global_concurrency=1, on_conflict="always_update"
+        markdown.queue_name(_HUB_NAME), global_concurrency=1, on_conflict="always_update"
     )
     _cancel_runs_from_other_code()
     _LAUNCHED = True
@@ -492,21 +495,26 @@ def _cancel_runs_from_other_code() -> None:
 def _requeue_markdown(w) -> bool:
     """A markdown task or eval suite that was queued but never started under the
     previous code is queued again under the current code, so its slot is not
-    lost (the scheduler already stamped it as fired). One that was interrupted
-    mid-run is not repeated, as before DBOS.
+    lost (the scheduler already stamped it as fired). An eval run started from
+    the Console is queued without a code version (the Console may run in another
+    bridge), so it passes through here too when the hub's bridge starts after
+    it was queued. One that was interrupted mid-run is not repeated, as before
+    DBOS.
 
     The replacement's id is derived from the old run's, so queueing it again
     after a crash is a no-op. Returns False only when a replacement was needed
     and could not be queued: the old run must then stay as it is."""
     from . import markdown
 
-    if w.status != "ENQUEUED" or w.name not in (markdown.MD_WORKFLOW, markdown.EVAL_WORKFLOW):
+    fns = {markdown.MD_WORKFLOW: "md_task", markdown.EVAL_WORKFLOW: "eval_suite",
+           markdown.EVAL_CONSOLE_WORKFLOW: "eval_console"}
+    if w.status != "ENQUEUED" or w.name not in fns:
         return True
     try:
         args = list((w.input or {}).get("args") or [])
         from dbos import SetWorkflowID
 
-        fn = markdown._FNS["md_task" if w.name == markdown.MD_WORKFLOW else "eval_suite"]
+        fn = markdown._FNS[fns[w.name]]
         with SetWorkflowID(f"{w.workflow_id}:requeued"):
             _MD_QUEUE.enqueue(fn, *args)
         log.warning("workflows: re-queued %s under the current code", w.workflow_id)
