@@ -18,7 +18,12 @@ from hubzoid.migrations import SchemaError
 OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities", "hz_identity_attrs",
                "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
                "hz_access_decisions", "hz_change_requests", "hz_connect_states",
-               "hz_artifacts", "hz_artifact_shares", "hz_artifact_links", "hz_email_deliveries"}
+               "hz_artifacts", "hz_artifact_shares", "hz_artifact_links", "hz_email_deliveries",
+               # web app (op_0009 to op_0012): accounts, conversations, groups, connections
+               "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
+               "hz_conversations", "hz_messages", "hz_shares",
+               "hz_groups", "hz_group_members",
+               "hz_connectors", "hz_connector_tokens", "hz_connector_flows"}
 
 
 @pytest.fixture(autouse=True)
