@@ -108,6 +108,8 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
                 "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS",
                 "HUBZOID_CHANGE_REQUEST_TTL", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER"):
         monkeypatch.delenv(key, raising=False)
+    # An Open WebUI deployment: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     access._stores.clear()
     dirs = {}
     for name, perms in (("finance", ("ledger", "payroll")), ("ops", ("inventory",))):

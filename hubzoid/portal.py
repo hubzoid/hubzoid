@@ -141,6 +141,12 @@ class PasswordRequest(BaseModel):
     password: SecretStr
 
 
+class LinkPasswordRequest(BaseModel):
+    """Default mode: no password makes a one-time link to set one."""
+    model_config = ConfigDict(extra="forbid")
+    password: SecretStr | None = None
+
+
 class RoleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["user", "admin"]
@@ -853,9 +859,12 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def reset_password(subject: str, request: Request, body: Any = Body(None),
                        admin=Depends(require_admin)):
         _check_mutation(request, admin)
-        payload = _validated(PasswordRequest, body)
-        service.set_password(admin.actor(), subject, payload.password.get_secret_value())
-        return dict(ok=True, subject=normalize(subject))
+        payload = _validated(LinkPasswordRequest if service.links_mode() else PasswordRequest, body)
+        result = service.set_password(
+            admin.actor(), subject,
+            payload.password.get_secret_value() if payload.password else None)
+        # Default mode without a password: the one-time link, shown once.
+        return dict(ok=True, subject=normalize(subject), **(result or {}))
 
     @router.post("/accounts/{subject}/approve")
     @_denied

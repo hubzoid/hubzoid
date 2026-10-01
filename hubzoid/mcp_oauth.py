@@ -62,7 +62,16 @@ def validate_public_url(value):
 
 
 def account(hub_dir, *, email=None, account_id=None):
-    """Resolve only current, non-pending OWUI accounts; never trust token email."""
+    """Resolve only current, non-pending accounts; never trust token email.
+
+    Default mode: Hubzoid accounts (``auth.users.mcp_account``). Legacy mode:
+    Open WebUI accounts, read from its database."""
+    from . import appmode
+
+    if not appmode.is_legacy(hub_dir):
+        from .auth.users import mcp_account
+
+        return mcp_account(hub_dir, email=email, account_id=account_id)
     con = owui_db.connect_ro(hub_dir)
     if con is None:
         return None

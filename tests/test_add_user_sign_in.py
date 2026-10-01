@@ -18,6 +18,13 @@ from hubzoid.access import accounts as accountlib
 
 from tests.test_gateway_secrets import _clean, _gateway, _hubs, launched  # noqa: F401 — fixtures
 
+
+@pytest.fixture(autouse=True)
+def _open_webui_mode(monkeypatch):
+    """These tests cover Open WebUI accounts: the legacy UI mode (HUBZOID_UI=openwebui)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 GOOGLE = {"GOOGLE_CLIENT_ID": "1234-google-client-id.apps.example",
           "GOOGLE_CLIENT_SECRET": "google-client-secret-value"}
 
@@ -69,6 +76,8 @@ def test_gateway_records_flags_for_bridges_started_separately(tmp_path, launched
     assert not any(v in text for v in GOOGLE.values())
     # A bridge unit with none of the gateway's environment still sees them.
     os.environ.clear()
+    # Its UI mode: Open WebUI (until the gateway records the mode in the manifest).
+    os.environ["HUBZOID_UI"] = "openwebui"
     assert accountlib.sign_in_options(alpha) == {"password": True, "google": True}
 
 

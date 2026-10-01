@@ -38,6 +38,8 @@ def hub(tmp_path, monkeypatch):
         {"id": "gmail", "name": "Gmail", "url": "https://gmail-mcp.example.org/mcp"}])
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
+    # Open WebUI sessions: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
