@@ -102,7 +102,9 @@ yourself.
 - Passwords moved from Open WebUI (bcrypt) keep working and are rehashed with
   Argon2id at the person's next sign-in.
 - People change their own password on the **Account** page. That needs their
-  current password and ends their other sessions.
+  current password and ends their other sessions. A change is refused when an
+  administrator resets the password, changes the role or blocks the person
+  while it is being made, so it never undoes the administrator's action.
 - An administrator resets a password from **People → the person → Reset
   password**, or with `hubzoid admin reset-password <email>`. The current
   password stops working at once, the person's sessions end, and a one-time

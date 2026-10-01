@@ -364,3 +364,74 @@ def test_local_mode_accepts_configured_names(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_ALLOWED_ORIGINS", "https://hub.example.com")
     c = client(hub)
     assert c.get("/whoami", headers={"host": "hub.example.com"}).json()["email"] == "admin@localhost"
+
+
+# ---- changes racing an administrator's action (review findings) ------------------------
+
+def _live_sessions(hub) -> list[dict]:
+    return [s for s in rows(hub) if s["revoked_at"] is None]
+
+
+def _admin_reset(hub, user_id) -> str:
+    """An administrator's "Reset password" in the Console: the password stops
+    working, sessions end, and a one-time link is returned. Returns its token."""
+    from hubzoid.access.accounts import HubzoidAccounts
+
+    link = HubzoidAccounts(hub).reset_with_link(user_id, created_by="boss@example.com")["link"]
+    return link.split("token=", 1)[1]
+
+
+def test_a_password_change_racing_a_reset_does_not_undo_it(hub, monkeypatch):
+    """Someone holding the current password and a session starts a password
+    change; an administrator's reset lands while the current password is being
+    checked. The change must not overwrite the reset, keep its session or
+    cancel the administrator's link."""
+    from hubzoid.auth import links, passwords
+
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    real = passwords.verify_and_update
+    issued: list[str] = []
+
+    def verify_then_reset(password, stored):
+        result = real(password, stored)
+        if not issued:
+            issued.append(_admin_reset(hub, user["id"]))  # lands mid-request
+        return result
+
+    monkeypatch.setattr(passwords, "verify_and_update", verify_then_reset)
+    r = c.post("/api/auth/password", headers=ORIGIN,
+               json={"current_password": PASSWORD, "new_password": "the attacker's choice"})
+    monkeypatch.setattr(passwords, "verify_and_update", real)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "account_changed"
+    assert users.store(hub).password_hash(user["id"]) is None  # the reset stands
+    assert who(c) is None and _live_sessions(hub) == []
+    other = client(hub)
+    assert sign_in(other, password="the attacker's choice").status_code == 401
+    assert sign_in(other).status_code == 401
+    assert links.inspect(hub, issued[0])["valid"]  # the administrator's link still works
+
+
+def test_a_password_change_from_an_ended_session_is_refused(hub, monkeypatch):
+    """The session making the change is checked again when the change is
+    written: one ended meanwhile (signed out everywhere) changes nothing."""
+    from hubzoid.auth import passwords
+
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    real = passwords.verify_and_update
+
+    def verify_then_end_sessions(password, stored):
+        result = real(password, stored)
+        sessions.revoke_user(hub, user["id"])
+        return result
+
+    monkeypatch.setattr(passwords, "verify_and_update", verify_then_end_sessions)
+    r = c.post("/api/auth/password", headers=ORIGIN,
+               json={"current_password": PASSWORD, "new_password": "a brand new secret"})
+    monkeypatch.setattr(passwords, "verify_and_update", real)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "account_changed"
+    assert sign_in(client(hub)).status_code == 200  # the password did not change
+    assert sign_in(client(hub), password="a brand new secret").status_code == 401
