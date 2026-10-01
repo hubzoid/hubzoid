@@ -44,6 +44,10 @@ class Provider:
         self.codes: dict[str, dict] = {}
         self.fetches: list[str] = []
         self.refresh_token = "rt-1"
+        self.live_refresh: set[str] = set()  # refresh tokens not yet spent
+        self.revoked: list[str] = []
+        self.on_code = None      # called while a code exchange is answered
+        self.on_refresh = None   # called while a refresh is answered
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -70,9 +74,25 @@ class Provider:
                 info["client_secret"] = "dyn-secret"
             self.registered.append(info)
             return httpx.Response(201, json=info)
+        if url == f"{AS}/revoke":
+            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            self.revoked.append(form.get("token"))
+            self.live_refresh.discard(form.get("token"))
+            return httpx.Response(200)
         if url == f"{AS}/token":
             form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
             self.token_requests.append({"form": form, "auth": request.headers.get("authorization")})
+            if form.get("grant_type") == "refresh_token":
+                if self.on_refresh:
+                    self.on_refresh()
+                spent = form.get("refresh_token")
+                if spent not in self.live_refresh:
+                    return httpx.Response(400, json={"error": "invalid_grant"})
+                self.live_refresh.discard(spent)
+                fresh = spent + "-r"
+                self.live_refresh.add(fresh)
+                return httpx.Response(200, json={"access_token": "at-" + fresh, "token_type": "Bearer",
+                                                 "expires_in": 3600, "refresh_token": fresh})
             grant = self.codes.pop(form.get("code", ""), None)
             if grant is None:
                 return httpx.Response(400, json={"error": "invalid_grant"})
@@ -83,6 +103,9 @@ class Provider:
             body = {"access_token": "at-" + form["code"], "token_type": "Bearer", "expires_in": 3600}
             if self.refresh_token:
                 body["refresh_token"] = self.refresh_token
+                self.live_refresh.add(self.refresh_token)
+            if self.on_code:
+                self.on_code()
             return httpx.Response(200, json=body)
         return httpx.Response(404)
 
@@ -306,18 +329,131 @@ def test_a_refused_code_fails_cleanly(hub, provider):
     assert tokens.get(hub, OWNER.id, "mail") is None
 
 
-def test_a_new_authorization_without_a_refresh_token_keeps_the_old_one(hub, provider):
+def _expire(hub, user_id="local-owner", cid="mail"):
+    """Make the stored access token due for refresh, as time would."""
+    import time
+
+    from sqlalchemy import text
+
+    from hubzoid import connectors, secretbox
+
+    record = tokens.token_record(hub, user_id, cid)
+    record["expires_at"] = time.time() - 1
+    with connectors.engine(hub).begin() as conn:
+        conn.execute(text("UPDATE hz_connector_tokens SET token_enc = :t, expires_at = :e "
+                          "WHERE user_id = :u AND connector_id = :c"),
+                     {"t": secretbox.encrypt_json(hub, record), "e": record["expires_at"],
+                      "u": user_id, "c": cid})
+
+
+def _refreshes(provider) -> list[str]:
+    return [r["form"]["refresh_token"] for r in provider.token_requests
+            if r["form"].get("grant_type") == "refresh_token"]
+
+
+def test_a_new_authorization_never_inherits_the_previous_refresh_token(hub, provider):
+    """Review finding 3. A reconnect may sign in to a different remote account
+    at the same provider. Nothing shows the new authorization belongs to the
+    account the stored refresh token was issued to, so it is never carried
+    over: refreshing with it would act as the previous account."""
     add(hub, client_id="app")
-    finish(hub, provider.authorize(start(hub), "code-1"), iss=AS)
+    finish(hub, provider.authorize(start(hub), "code-1"), iss=AS)  # account A
     assert tokens.token_record(hub, OWNER.id, "mail")["refresh_token"] == "rt-1"
-    provider.refresh_token = None  # this provider issues it on the first consent only
+    provider.refresh_token = None  # account B's authorization comes without one
     finish(hub, provider.authorize(start(hub), "code-2"), iss=AS)
     record = tokens.token_record(hub, OWNER.id, "mail")
-    assert record["access_token"] == "at-code-2" and record["refresh_token"] == "rt-1"
-    # Another client's refresh token is never borrowed.
-    registry.update(hub, "mail", {"client_id": "other-app"}, actor="test")
+    assert record["access_token"] == "at-code-2" and record["refresh_token"] is None
+    # When B's access token expires, A's refresh token is never spent.
+    _expire(hub)
+    assert tokens.access_token_for(hub, OWNER.id, "mail") is None
+    conn = tokens.get(hub, OWNER.id, "mail")
+    assert conn.status == "expired" and conn.error == "no_refresh_token"
+    assert _refreshes(provider) == []
+
+
+def test_a_disconnect_during_the_code_exchange_is_not_undone(hub, provider):
+    """Review finding 4. The person disconnects while the provider is still
+    answering a (re)connect's code exchange. The disconnect wins: the tokens
+    that arrive afterwards are revoked and never saved."""
+    add(hub, client_id="app")
+    finish(hub, provider.authorize(start(hub), "code-1"), iss=AS)
+    answer = provider.authorize(start(hub), "code-2")  # reconnecting
+    provider.refresh_token = "rt-2"
+    disconnected = []
+    provider.on_code = lambda: disconnected.append(tokens.disconnect(hub, OWNER.id, "mail"))
+    with pytest.raises(oauth_flow.CallbackError) as err:
+        finish(hub, answer, iss=AS)
+    assert disconnected == [True]
+    assert err.value.code == "cancelled"
+    assert tokens.get(hub, OWNER.id, "mail") is None
+    import time
+
+    deadline = time.time() + 5
+    while time.time() < deadline and not {"at-code-2", "rt-2"} <= set(provider.revoked):
+        time.sleep(0.05)
+    assert {"at-code-1", "rt-1", "at-code-2", "rt-2"} <= set(provider.revoked)
+    # A new connect afterwards works as usual.
+    provider.on_code = None
     finish(hub, provider.authorize(start(hub), "code-3"), iss=AS)
-    assert tokens.token_record(hub, OWNER.id, "mail")["refresh_token"] is None
+    assert tokens.token_record(hub, OWNER.id, "mail")["access_token"] == "at-code-3"
+
+
+def test_a_reconnect_racing_a_refresh_never_keeps_the_spent_refresh_token(hub, provider,
+                                                                         monkeypatch):
+    """Review finding 5. Another bridge takes the refresh lease and spends the
+    stored refresh token while a reconnect is being saved. The saved record
+    must never hold the token being spent: the next refresh would replay it,
+    which a rotating provider answers by revoking the grant."""
+    import threading
+
+    from hubzoid import secretbox
+
+    add(hub, client_id="app")
+    finish(hub, provider.authorize(start(hub), "code-1"), iss=AS)
+    _expire(hub)
+    answer = provider.authorize(start(hub), "code-2")
+    provider.refresh_token = None  # the reconnect's grant carries no refresh token
+
+    spending, release = threading.Event(), threading.Event()
+
+    def hold():
+        spending.set()
+        assert release.wait(10)
+
+    provider.on_refresh = hold
+    bridge: list = []
+    armed = {"on": True}
+    main = threading.get_ident()
+    real_encrypt = secretbox.encrypt_json
+
+    def encrypt(*args, **kwargs):
+        # Just before the reconnect's write: the other bridge takes the lease
+        # and is spending rt-1 at the provider.
+        if armed["on"] and threading.get_ident() == main:
+            armed["on"] = False
+            t = threading.Thread(target=lambda: bridge.append(
+                tokens.access_token_for(hub, OWNER.id, "mail")))
+            t.start()
+            bridge.append(t)
+            assert spending.wait(10)
+        return real_encrypt(*args, **kwargs)
+
+    monkeypatch.setattr(secretbox, "encrypt_json", encrypt)
+    try:
+        finish(hub, answer, iss=AS)
+    finally:
+        release.set()
+        armed["on"] = False
+        for item in list(bridge):
+            if isinstance(item, threading.Thread):
+                item.join(10)
+    record = tokens.token_record(hub, OWNER.id, "mail")
+    assert record["access_token"] == "at-code-2"
+    assert record["refresh_token"] != "rt-1"  # never the token being spent
+    # The next refresh never replays rt-1.
+    _expire(hub)
+    tokens.access_token_for(hub, OWNER.id, "mail")
+    assert _refreshes(provider).count("rt-1") == 1
 
 
 def test_discovery_is_reused_briefly_for_repeated_connects(hub, provider):

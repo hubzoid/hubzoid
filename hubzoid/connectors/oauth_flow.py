@@ -11,11 +11,20 @@ survive restarts and work across bridges (state lives in the shared store).
     and client travel in an encrypted payload. Ten minutes to finish.
 
 ``callback(state, code, iss)``
-    Atomically consumes the flow (single use, replay refused), then checks it
+    Atomically claims the flow (single use, replay refused), then checks it
     belongs to the signed-in person and connector and has not expired, checks
     ``iss`` (RFC 9207) against the issuer discovered at start (required when the
     server advertises it, compared whenever present), exchanges the code with
     the verifier and stores the tokens encrypted (``tokens.store``).
+
+    The claimed flow row is this authorization's generation. It stays while the
+    code is exchanged and is deleted in the same transaction that saves the
+    tokens. Disconnecting, and resetting or removing the connector, delete the
+    person's flows first, claimed ones included, so a callback still in flight
+    finds its row gone: its tokens are revoked, never saved, and the
+    connection cannot come back after the disconnect returned. A new
+    authorization never keeps anything of an earlier one, not even a refresh
+    token: nothing shows it is for the same remote account.
 
 The redirect URI is ``{origin}/oauth/connectors/{id}/callback``. The ``mcp``
 SDK provides the models, PKCE generation and discovery helpers; its
@@ -47,6 +56,7 @@ from .discovery import Discovery, discover
 log = logging.getLogger("hubzoid.connectors")
 
 FLOW_SECONDS = 600
+CLAIM_SECONDS = 120  # a claimed flow outlives its code exchange (net.DEADLINE)
 MAX_OPEN_FLOWS = 20  # per person: older unfinished authorizations are dropped
 CALLBACK_PATH = "/oauth/connectors/{id}/callback"
 DISCOVERY_SECONDS = 60  # metadata reused for repeated connects (never secrets)
@@ -338,6 +348,8 @@ _ERRORS = {
     "authorization_failed": "The provider could not complete the sign-in.",
     "invalid_request": "The provider's answer was incomplete. Start connecting again.",
     "connector_changed": "This connector was changed or switched off while you were signing in.",
+    "cancelled": "This connection was disconnected while you were signing in, so the sign-in "
+                 "was cancelled. Connect again to use it.",
     "token_exchange_failed": "The provider did not issue access. Start connecting again.",
 }
 
@@ -347,18 +359,38 @@ def _fail(code: str, **ctx) -> CallbackError:
 
 
 def _consume(hub_dir, state: str):
-    """Take the flow for ``state`` exactly once: (row) or None."""
+    """Claim the flow for ``state`` exactly once: (row) or None.
+
+    The claimed row stays until the callback saves its tokens with it
+    (``tokens.store(flow=...)``) or fails (``_release``). Its expiry is pushed
+    past the code exchange so pruning in ``start`` never removes it mid-way;
+    the row returned carries the original expiry, which the callback checks."""
     digest = _digest(state)
+    now = time.time()
     with engine(hub_dir).begin() as conn:
         r = conn.execute(text(
             "SELECT user_id, connector_id, payload_enc, return_to, expires_at "
-            "FROM hz_connector_flows WHERE state = :s"), {"s": digest}).fetchone()
+            "FROM hz_connector_flows WHERE state = :s AND claimed_at IS NULL"),
+            {"s": digest}).fetchone()
         if not r:
             return None
-        res = conn.execute(text("DELETE FROM hz_connector_flows WHERE state = :s"), {"s": digest})
+        res = conn.execute(text(
+            "UPDATE hz_connector_flows SET claimed_at = :now, expires_at = :keep "
+            "WHERE state = :s AND claimed_at IS NULL"),
+            {"s": digest, "now": now, "keep": max(float(r[4]), now + CLAIM_SECONDS)})
         if res.rowcount != 1:
             return None
     return r
+
+
+def _release(hub_dir, state: str) -> None:
+    """Delete a claimed flow whose callback failed (no-op once saved)."""
+    try:
+        with engine(hub_dir).begin() as conn:
+            conn.execute(text("DELETE FROM hz_connector_flows WHERE state = :s"),
+                         {"s": _digest(state)})
+    except Exception:  # noqa: BLE001 — pruned at expiry anyway
+        log.debug("connectors: could not drop a finished flow", exc_info=True)
 
 
 def _exchange(hub_dir, connector_id: str, payload: dict, code: str, ctx: dict):
@@ -400,6 +432,16 @@ def callback(hub_dir, *, connector_id: str, user, state: str | None, code: str |
     row = _consume(hub_dir, state)
     if row is None:
         raise _fail("invalid_state", connector_id=connector_id)
+    try:
+        return _complete(hub_dir, row, _digest(state), connector_id=connector_id, user=user,
+                         code=code, iss=iss, error=error)
+    except BaseException:
+        _release(hub_dir, state)
+        raise
+
+
+def _complete(hub_dir, row, digest: str, *, connector_id: str, user, code: str | None,
+              iss: str | None, error: str | None) -> Completed:
     flow_user, flow_connector, payload_enc, return_to, expires_at = row
     try:
         payload = secretbox.decrypt_json(Path(hub_dir), payload_enc)
@@ -425,8 +467,7 @@ def callback(hub_dir, *, connector_id: str, user, state: str | None, code: str |
     if not code or len(code) > 4096:
         raise _fail("invalid_request", **ctx)
     connector = registry.get(hub_dir, connector_id)
-    if (connector is None or not connector.enabled or connector.auth_type != "oauth"
-            or connector.url != payload.get("connector_url")):
+    if not _unchanged(connector, payload.get("connector_url")):
         raise _fail("connector_changed", **ctx)
     token = _exchange(hub_dir, connector_id, payload, code, ctx)
     now = time.time()
@@ -444,15 +485,30 @@ def callback(hub_dir, *, connector_id: str, user, state: str | None, code: str |
     }
     # The exchange took a moment: if the connector was removed, switched off or
     # pointed elsewhere meanwhile, these tokens must not be kept or left live.
-    now_connector = registry.get(hub_dir, connector_id)
-    if (now_connector is None or not now_connector.enabled or now_connector.auth_type != "oauth"
-            or now_connector.url != connector.url):
+    if not _unchanged(registry.get(hub_dir, connector_id), connector.url):
         tokens.revoke_later(record)
         raise _fail("connector_changed", **ctx)
-    # Some providers issue a refresh token on the first consent only: a new
-    # authorization by the same client at the same issuer keeps the stored one.
-    tokens.store(hub_dir, user_id=user.id, email=user.email, connector_id=connector_id,
-                 token=record, now=now, inherit_refresh=(expected, client.get("client_id")))
+    # Saved only together with this flow's row: a disconnect (or a connector
+    # reset or removal) since the claim deleted it, and then the tokens are
+    # revoked instead. Only this authorization's tokens are kept, never a
+    # refresh token of an earlier one (it may belong to another account).
+    try:
+        tokens.store(hub_dir, user_id=user.id, email=user.email, connector_id=connector_id,
+                     token=record, now=now, flow=digest)
+    except ConnectorError as err:
+        tokens.revoke_later(record)  # not saved: never left live at the provider
+        if err.code != "cancelled":
+            raise
+        changed = not _unchanged(registry.get(hub_dir, connector_id), connector.url)
+        log.info("connectors: %s's sign-in to %s was cancelled while it finished",
+                 normalize(user.email), connector_id)
+        raise _fail("connector_changed" if changed else "cancelled", **ctx) from None
     log.info("connectors: %s connected %s", normalize(user.email), connector_id)
     return Completed(connector_id=connector_id, return_to=return_to,
                      journey_id=payload.get("journey_id"))
+
+
+def _unchanged(connector: registry.Connector | None, url: str | None) -> bool:
+    """Still a switched-on OAuth connector at ``url``."""
+    return (connector is not None and connector.enabled and connector.auth_type == "oauth"
+            and connector.url == url)

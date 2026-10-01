@@ -18,6 +18,13 @@ several turns, threads or processes want the same token at once:
 A refresh the provider rejects (``invalid_grant``: revoked, expired, or a
 replayed refresh token) marks the connection ``expired``: the person reconnects.
 A provider that cannot be reached marks it ``error`` and the next turn retries.
+A refresh request, headers and body, is bounded well inside the lease.
+
+A new authorization (``store``) replaces the record whole: no refresh token is
+kept from an earlier one, since nothing shows the person signed in to the same
+remote account again, and a refresh racing it simply loses (its tokens are
+dropped). A disconnect cancels the person's authorizations in flight before it
+deletes the connection, so none of them can save tokens afterwards.
 
 Status: ``ok`` | ``expired`` | ``error``. Tokens, codes and secrets never reach
 a log line.
@@ -120,56 +127,43 @@ def user_id_for(hub_dir, email: str | None) -> str | None:
 # Storage
 # ---------------------------------------------------------------------------
 def store(hub_dir, *, user_id: str, email: str, connector_id: str, token: dict,
-          now: float | None = None, inherit_refresh: tuple[str, str] | None = None) -> None:
-    """Save a new authorization (replacing any earlier one) as ``ok``.
+          now: float | None = None, flow: str | None = None) -> None:
+    """Save a new authorization as ``ok``, replacing any earlier one whole:
+    nothing of it is kept, not even a refresh token (a provider that sends one
+    on the first consent only leaves a reconnect without one, and the person
+    reconnects when its access token expires). A refresh in progress
+    elsewhere loses its compare-and-set and drops what it got.
 
-    ``inherit_refresh=(issuer, client_id)``: when ``token`` carries no refresh
-    token, keep the stored one if the same client got it from the same issuer
-    (some providers send a refresh token on the first consent only). A refresh
-    in progress is waited for first, so a token being spent is never kept.
+    ``flow``: the digest of the claimed authorization request these tokens
+    came from (``oauth_flow``). It is deleted in the same transaction and must
+    still exist: a disconnect, or a connector reset or removal, deleted it
+    meanwhile, and ConnectorError ``cancelled`` is raised with nothing saved.
     """
     now = time.time() if now is None else now
-    email = normalize(email)
-    eng = engine(hub_dir)
-    deadline = time.monotonic() + WAIT_SECONDS
-    for _ in range(50):
-        record = dict(token)
-        version = None
-        if inherit_refresh and not record.get("refresh_token"):
-            rec = _load(hub_dir, user_id, connector_id)
-            if rec is not None:
-                row, earlier = rec
-                lease = row.get("refresh_lock_until")
-                if lease and float(lease) > time.time() and time.monotonic() < deadline:
-                    time.sleep(_POLL)  # a refresh is spending it right now: wait for the result
-                    continue
-                version = row["version"]
-                issuer, client_id = inherit_refresh
-                if (earlier and earlier.get("refresh_token") and earlier.get("issuer") == issuer
-                        and (earlier.get("client") or {}).get("client_id") == client_id):
-                    record["refresh_token"] = earlier["refresh_token"]
-        exp = record.get("expires_at")
-        params = {"u": user_id, "c": connector_id, "email": email, "now": now,
-                  "t": secretbox.encrypt_json(Path(hub_dir), record),
-                  "e": float(exp) if exp is not None else None, "v": version}
-        with eng.begin() as conn:
-            res = conn.execute(text(
-                "UPDATE hz_connector_tokens SET email = :email, token_enc = :t, expires_at = :e, "
-                "status = 'ok', error = NULL, created_at = :now, updated_at = :now, "
-                "version = version + 1, refresh_lock_until = NULL "
-                "WHERE user_id = :u AND connector_id = :c"
-                + (" AND version = :v" if version is not None else "")), params)
-            if res.rowcount == 1:
-                return
-        if version is not None:
-            continue  # it changed since we read it: read it again
+    exp = token.get("expires_at")
+    params = {"u": user_id, "c": connector_id, "email": normalize(email), "now": now,
+              "t": secretbox.encrypt_json(Path(hub_dir), dict(token)),
+              "e": float(exp) if exp is not None else None, "f": flow}
+    for _ in range(10):
         try:
-            with eng.begin() as conn:
-                conn.execute(text(
-                    "INSERT INTO hz_connector_tokens (user_id, connector_id, email, token_enc, "
-                    "expires_at, status, error, created_at, updated_at, version, "
-                    "refresh_lock_until) VALUES (:u, :c, :email, :t, :e, 'ok', NULL, :now, :now, "
-                    "0, NULL)"), params)
+            with engine(hub_dir).begin() as conn:
+                if flow is not None:
+                    gone = conn.execute(text(
+                        "DELETE FROM hz_connector_flows WHERE state = :f AND user_id = :u "
+                        "AND connector_id = :c AND claimed_at IS NOT NULL"), params).rowcount
+                    if gone != 1:
+                        raise ConnectorError("cancelled", "This sign-in was cancelled.", 409)
+                res = conn.execute(text(
+                    "UPDATE hz_connector_tokens SET email = :email, token_enc = :t, "
+                    "expires_at = :e, status = 'ok', error = NULL, created_at = :now, "
+                    "updated_at = :now, version = version + 1, refresh_lock_until = NULL "
+                    "WHERE user_id = :u AND connector_id = :c"), params)
+                if res.rowcount != 1:
+                    conn.execute(text(
+                        "INSERT INTO hz_connector_tokens (user_id, connector_id, email, token_enc, "
+                        "expires_at, status, error, created_at, updated_at, version, "
+                        "refresh_lock_until) VALUES (:u, :c, :email, :t, :e, 'ok', NULL, :now, "
+                        ":now, 0, NULL)"), params)
             return
         except IntegrityError:
             continue  # someone inserted first: update theirs
@@ -520,14 +514,20 @@ def _delete(conn, user_id: str, connector_id: str, version: int | None) -> int:
 
 
 def disconnect(hub_dir, user_id: str, connector_id: str, *, revoke_tokens: bool = True) -> bool:
-    """Revoke at the provider when it offers revocation (best effort), then
-    delete the connection and any authorization in flight. True when a
+    """Cancel every authorization in flight, revoke at the provider when it
+    offers revocation (best effort), then delete the connection. True when a
     connection existed.
 
-    The connection is fenced first (the refresh lease), so the tokens revoked
-    are exactly the ones deleted: a refresh cannot rotate them in between. A
-    refresh already running is waited for briefly. If it is still running,
-    the row is deleted anyway and that refresh revokes what it gets."""
+    Authorizations go first, a callback exchanging its code right now
+    included: it can then no longer save tokens (``store(flow=...)``), and one
+    that saved them before is deleted below, so nothing comes back after this
+    returns. The connection is fenced (the refresh lease), so the tokens
+    revoked are exactly the ones deleted: a refresh cannot rotate them in
+    between. A refresh already running is waited for briefly. If it is still
+    running, the row is deleted anyway and that refresh revokes what it gets."""
+    with engine(hub_dir).begin() as conn:
+        conn.execute(text("DELETE FROM hz_connector_flows WHERE user_id = :u AND connector_id = :c"),
+                     {"u": user_id, "c": connector_id})
     removed = False
     deadline = time.monotonic() + WAIT_SECONDS
     while True:
@@ -551,9 +551,6 @@ def disconnect(hub_dir, user_id: str, connector_id: str, *, revoke_tokens: bool 
             break
         # Changed between reading and deleting (only possible without the
         # fence): read it again and revoke the newer tokens too.
-    with engine(hub_dir).begin() as conn:
-        conn.execute(text("DELETE FROM hz_connector_flows WHERE user_id = :u AND connector_id = :c"),
-                     {"u": user_id, "c": connector_id})
     return removed
 
 
@@ -562,6 +559,8 @@ def _drop(hub_dir, where: str, params: dict, *, revoke_tokens: bool) -> int:
     background. Each row is deleted by compare-and-set on its version, so the
     record revoked is the one deleted; a refresh that loses the race revokes
     its own new tokens (see ``_refresh``)."""
+    with engine(hub_dir).begin() as conn:  # authorizations in flight first (see disconnect)
+        conn.execute(text("DELETE FROM hz_connector_flows WHERE " + where), params)
     records: list[dict] = []
     removed = 0
     for attempt in range(4):
@@ -582,8 +581,6 @@ def _drop(hub_dir, where: str, params: dict, *, revoke_tokens: bool) -> int:
                     continue
                 if isinstance(value, dict):
                     records.append(value)
-    with engine(hub_dir).begin() as conn:
-        conn.execute(text("DELETE FROM hz_connector_flows WHERE " + where), params)
     if revoke_tokens:
         _revoke_later(*records)
     return removed
