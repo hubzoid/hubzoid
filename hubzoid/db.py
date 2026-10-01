@@ -90,7 +90,21 @@ def operational_engine(hub_dir, env=None) -> Engine:
     return _engine_for_url(operational_url(hub_dir, env))
 
 
+def sqlalchemy_url(url: str) -> str:
+    """The URL with an explicit driver for Hubzoid's own engines.
+
+    ``postgresql://`` and ``postgres://`` mean psycopg (version 3), which
+    Hubzoid installs. Without this, SQLAlchemy picks psycopg2, which only the
+    legacy Open WebUI extra brought in, so a 1.0.x ``DATABASE_URL`` would stop
+    working after the upgrade. Other URLs are returned unchanged."""
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def _engine_for_url(url: str) -> Engine:
+    url = sqlalchemy_url(url)
     eng = _engines.get(url)
     if eng is None:
         connect_args = {}
