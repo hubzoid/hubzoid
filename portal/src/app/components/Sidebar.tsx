@@ -171,7 +171,10 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     setDeleting(true);
     setDeleteError(null);
     try {
-      await deleteConversation(deleteTarget);
+      await deleteConversation({
+        id: deleteTarget.id,
+        api_base: deleteTarget.api_base ?? agentById(app.agents.list, deleteTarget.agent)?.api_base,
+      });
       toast(t.sidebar.deletedToast);
       if (deleteTarget.id === activeId) navigate("/", { replace: true });
       setDeleteTarget(null);

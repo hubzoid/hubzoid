@@ -334,7 +334,7 @@ function ChatView({
               requestedMissing={requestedMissing}
               isFollowing={following}
               onStopFollowed={stopFollowed}
-              onBranchSwitched={(id) => session.saveHead(id)}
+              onHeadChanged={(id) => session.saveHead(id)}
               notice={
                 !agentKnown && app.agents.status === "ready" ? (
                   <Notice tone="warning" className="mb-2">
