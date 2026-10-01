@@ -57,9 +57,10 @@ export async function errorFrom(response: Response): Promise<ApiError> {
   if (header && !Number.isNaN(Number(header))) retryAfter = Number(header);
   try {
     const data = await response.json();
+    // Only the contract's {"detail": {"code", "message"}} carries a sentence
+    // for people; a bare string ("Not Found") is framework boilerplate.
     const detail = data?.detail ?? data;
-    if (typeof detail === "string") message = detail;
-    else if (detail && typeof detail === "object") {
+    if (detail && typeof detail === "object") {
       if (typeof detail.code === "string") code = detail.code;
       if (typeof detail.message === "string") message = detail.message;
       const ra = detail.retry_after ?? data?.retry_after;

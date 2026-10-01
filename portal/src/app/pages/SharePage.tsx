@@ -10,7 +10,7 @@ import { describeError } from "../lib/errors";
 import { displayName, formatDate } from "../lib/format";
 import { linkClick, navigate, signInHref } from "../lib/router";
 import type { Agent, SharedConversation } from "../lib/types";
-import { AgentAvatar, Button, PageSpinner, StateMessage, Wordmark } from "../components/ui";
+import { AgentAvatar, BrandMark, Button, PageSpinner, StateMessage } from "../components/ui";
 import { toThreadMessages } from "../chat/convert";
 import { Thread } from "../chat/Thread";
 import { ThemeSwitch } from "./AuthLayout";
@@ -67,17 +67,8 @@ export default function SharePage({ shareId }: { shareId: string }) {
 
   const header = (
     <header className="flex h-14 flex-none items-center justify-between border-b border-line px-4 sm:px-6">
-      <a href="/" onClick={(e) => linkClick(e, "/")} className="flex items-center gap-2 no-underline">
-        {app.branding.logo_url ? (
-          <>
-            <img src={app.branding.logo_url} alt="" className="h-7 w-7 rounded-md object-contain" />
-            <span className="text-[15px] font-semibold text-ink">{app.brandName}</span>
-          </>
-        ) : app.brandName === t.product ? (
-          <Wordmark className="text-[17px]" />
-        ) : (
-          <span className="text-[15px] font-semibold text-ink">{app.brandName}</span>
-        )}
+      <a href="/" onClick={(e) => linkClick(e, "/")} className="flex min-w-0 items-center gap-2.5 no-underline">
+        <BrandMark logoUrl={app.branding.logo_url} name={app.brandName} />
       </a>
       <ThemeSwitch />
     </header>
