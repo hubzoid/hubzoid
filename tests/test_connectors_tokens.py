@@ -142,7 +142,10 @@ def test_a_token_is_only_used_for_the_server_that_issued_it(hub):
 
 
 def test_the_account_behind_an_email(hub, monkeypatch):
-    assert tokens.user_id_for(hub, f.OWNER) == UID  # sign-in off: the local owner
+    from hubzoid import auth
+
+    # sign-in off: the local owner (a real, stable account id since lane A)
+    assert tokens.user_id_for(hub, f.OWNER) == auth.local_owner(hub).id
     assert tokens.user_id_for(hub, "someone@example.org") is None
     f.accounts(monkeypatch, hub, {"alice@example.org": ("u-a", "user")})
     f.add_user(hub, "u-p", "pending@example.org", status="pending")

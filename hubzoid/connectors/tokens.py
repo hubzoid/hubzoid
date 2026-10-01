@@ -101,6 +101,12 @@ def user_id_for(hub_dir, email: str | None) -> str | None:
 
         owner = local_owner(Path(hub_dir))
         return owner.id if normalize(owner.email) == email else None
+    from ..auth.users import is_local_address
+
+    # The local owner exists only while sign-in is off: once it is on, that
+    # address never signs in (auth refuses it), so it owns no connections.
+    if is_local_address(email):
+        return None
     with engine(hub_dir).connect() as conn:
         row = conn.execute(text("SELECT id, status FROM hz_users WHERE lower(email) = :e"),
                            {"e": email}).fetchone()

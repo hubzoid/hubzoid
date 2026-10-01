@@ -395,9 +395,12 @@ def test_mutations_need_our_origin(client, agent):
 
 
 def test_hub_scoped_calls_on_another_hubs_conversation(app, client):
+    from hubzoid import auth
+
     store = app.state.chat.store
-    store.create_conversation(conv_id="c_otherhub1", owner_id="local-owner",
-                              owner_email="admin@localhost", hub="other-hub", agent="other-agent")
+    owner = auth.local_owner(app.state.chat.hub_dir)  # sign-in off: the real local owner
+    store.create_conversation(conv_id="c_otherhub1", owner_id=owner.id,
+                              owner_email=owner.email, hub="other-hub", agent="other-agent")
     store.insert_message(message_id="m_other0001", conversation_id="c_otherhub1", parent_id=None,
                          role="user", content=[{"type": "text", "text": "x"}], text="x")
     for method, path, kw in [
@@ -543,4 +546,5 @@ def test_an_unavailable_access_check_refuses(client, agent, monkeypatch):
     monkeypatch.setattr(access, "store_for", broken)
     r = _send(client, "c_down00001", "hi", agent, "m_user00001", "m_asst00001")
     assert r.status_code == 503 and r.json()["detail"]["code"] == "access_unavailable"
+    monkeypatch.undo()  # the store is back: nothing was created while it was down
     assert client.get("/api/conversations/c_down00001").status_code == 404
