@@ -798,15 +798,16 @@ def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port
     if inbound:
         # Inbound surfaces receive on a loopback port; only /webhooks/<hub> is
         # exposed (each POST is signature-, secret- or HMAC-verified first).
-        from .inbound.run import hub_slug, inbound_port
+        from .inbound.routing import hub_slug, inbound_port
 
         edge_routes.append({"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
                             "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"})
-    from .workflows.events import declarations
-    from .inbound.run import hub_slug
-    for name in declarations(hub):
+    from .workflows.events import route_declarations
+    from .inbound.routing import hub_slug
+    for name in route_declarations(hub):
         edge_routes.insert(0, {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}/{name}",
                                "upstream": f"http://127.0.0.1:{br_port}"})
+    edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(hub)])
     edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
     edge_cmd = [
         sys.executable, "-m", "uvicorn",
@@ -953,11 +954,17 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
                 # hub slug so the same public path scheme works under the gateway.
                 # Import here so a plain `hubzoid run` never pulls in the inbound
                 # stack (SQLAlchemy, etc.).
-                from .inbound.run import hub_slug, inbound_port
+                from .inbound.routing import hub_slug, inbound_port
                 edge_routes.append(
                     {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
                      "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
                 )
+            from .workflows.events import route_declarations
+            from .inbound.routing import hub_slug
+            for name in route_declarations(hub):
+                edge_routes.insert(0, {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}/{name}",
+                                       "upstream": f"http://127.0.0.1:{br_port}"})
+            edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(hub)])
             edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
             edge_cmd = [
                 sys.executable, "-m", "uvicorn",
@@ -1354,6 +1361,7 @@ def gateway(
         if gp.backends:
             bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
             gw_routes.append({"prefix": "/portal", "upstream": bridges[0], "fallbacks": bridges[1:]})
+        edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(b.hub_dir) for b in gp.backends])
         edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
         edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")
         # The edge locks only migrated model ACLs dynamically. Do not lock
@@ -1676,6 +1684,7 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
     edge_env["HUBZOID_EDGE_DEFAULT"] = bridges[0]
     edge_env["HUBZOID_EDGE_DEFAULT_FALLBACKS"] = json.dumps(bridges[1:])
     edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env, pub)
+    edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(b.hub_dir) for b in gp.backends])
     edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gp.edge_routes(web_app=True))
     edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")
     edge_cmd = [
@@ -2279,7 +2288,7 @@ def schedule_run(
                 return
             _wf.init(hub)
             _wf.load_workflows(hub)
-            _wf.launch()
+            _wf.launch(target=want)
             wf_names = {w.name for w in _wf.registry()}
             want = task_name.replace("-", "_")
             match = next((n for n in wf_names if n == task_name or n == want), None)
@@ -2359,7 +2368,7 @@ def schedule_run(
                 raise typer.Exit(1)
             return
         _wf.init(hub)
-        _wf.launch()
+        _wf.launch(target="md:"+task.name)
         handle = _md.enqueue_task(task.name, "manual-" + _dt.now().strftime("%Y%m%dT%H%M%S"),
                                   overrides=overrides)
         _audit_cli_start(hub, f"md:{task.name}", handle.get_workflow_id())
@@ -2517,6 +2526,35 @@ def schedule_status(
         for key in ("first_seen_iso", "last_fired_iso", "last_result", "last_run_log"):
             if entry.get(key):
                 console.print(f"  {key.removesuffix('_iso')}: {entry[key]}")
+
+
+@schedule_app.command("redrive")
+def schedule_redrive(
+    event_id: str = typer.Argument(..., help="Failed webhook event id (wh:...)."),
+    hub: Path = typer.Option(Path("."), "--hub", help="Hub directory."),
+) -> None:
+    """Retry a failed event after checking its external side effects."""
+    from .workflows.events import redrive
+    hub = hub.resolve()
+    try:
+        redrive(hub, hub.name, event_id)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    console.print("Event accepted for redrive; the live engine will dispatch it.")
+
+
+@schedule_app.command("deliveries")
+def schedule_deliveries(hub: Path = typer.Argument(Path("."))) -> None:
+    """Inspect event and alert delivery metadata without private payloads."""
+    from sqlalchemy import text
+    from .workflows.events import _engine
+    hub = hub.resolve()
+    with _engine(hub).connect() as conn:
+        for table in ('hz_workflow_events', 'hz_workflow_alerts'):
+            rows = conn.execute(text(f'SELECT id,state,attempt,error FROM {table} WHERE hub=:h ORDER BY created DESC LIMIT 50'), {'h':hub.name}).mappings()
+            for row in rows:
+                console.print(f"{row['id']} · {row['state']} · attempt {row['attempt']} · {row['error'] or ''}")
 
 
 app.add_typer(

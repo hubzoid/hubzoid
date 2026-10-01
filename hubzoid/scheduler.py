@@ -87,6 +87,7 @@ class Scheduler:
         self.hub_dir = Path(hub_dir).resolve()
         self.is_busy = is_busy
         self.tick_seconds = tick_seconds
+        self._on_dbos = dispatch_task is None   # waits while the hub engine is down
         self._dispatch_task = dispatch_task or _dbos_dispatch_task
         self._dispatch_evals = dispatch_evals or _dbos_dispatch_evals
         self._task_active = task_active or _dbos_task_active
@@ -162,6 +163,10 @@ class Scheduler:
         now = now or datetime.now()
         if _held(self.hub_dir):
             return []  # a backup is running; due tasks fire when it ends
+        if self._on_dbos:
+            from .workflows import runtime
+            if not runtime._LAUNCHED:
+                return []  # the engine waits for ownership; due tasks fire once it runs
         tasks, _problems = load_tasks(self.hub_dir)
         state = ScheduleState(self.hub_dir)
         paused = _paused(self.hub_dir)

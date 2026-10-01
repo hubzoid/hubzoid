@@ -246,7 +246,7 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
     if who:
         result.run_as = who
         try:
-            ident = await asyncio.to_thread(_resolve_identity, hub_dir, who, case)
+            ident = await asyncio.wait_for(asyncio.to_thread(_resolve_identity, hub_dir, who, case), timeout=case.timeout)
         except Exception as exc:  # noqa: BLE001 — no usable account: the case fails
             result.duration = time.monotonic() - started
             result.error = str(exc) or type(exc).__name__

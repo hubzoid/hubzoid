@@ -1,34 +1,9 @@
 # Hubzoid admin portal. Apache-2.0 licensed like the rest of the repository.
-"""Evals in the Console: a hub's cases, their results, and starting a run.
+"""Read-only eval cases, indexed history and account-private results.
 
-Routes, under `/portal/api` (registered by `portal.build_router`):
-
-  GET  /evals?hub=<key>               cases, each with its latest result, plus
-                                      the eval run in progress and the last one
-  GET  /evals/runs?hub=<key>          result files, newest first
-  GET  /evals/runs/{stamp}?hub=<key>  one result file: every case in full
-  POST /evals/run                     {hub, confirm, cases?, judge?}: start a run
-
-Who: the hub's administrators, the same gate as the hub's other Console
-screens (an organization administrator, or Manage access for that hub). A
-write must come from the Console's own origin unless an API key sent it.
-
-Results are the files `hubzoid.evals.report.save` writes,
-`<hub>/.hubzoid/evals/<stamp>.json`. Schema 1 and schema 2 files are both
-read: `SuiteResult.from_dict` gives the shared fields, the raw JSON the schema
-2 ones (trigger, run_as, tool calls with arguments, turns). A run id (the
-stamp) is the file name without `.json`, checked against a strict pattern
-before any path is built, so no request can name a file outside the folder.
-Secret-looking argument values are redacted again on the way out.
-
-Starting a run makes paid model calls (every case runs the agent, and a judged
-case adds a grading call), so the request must carry `confirm: true`. The run
-is queued as the `hz_eval_console` DBOS workflow on the hub's own engine
-(`workflows/markdown.py`), through a DBOS client on the hub's DBOS database:
-the database the Console already reads run history from. In a gateway the
-hub's own bridge picks it up, whichever bridge serves the Console. The run is
-durable, listed with the hub's other runs, and refused with 409 while another
-eval run of that hub (scheduled or from the Console) is queued or running.
+Routes live under /portal/api/evals. A gateway redirects file reads to the
+hub's own bridge; administration alone does not grant another account's results.
+CLI, CI and existing schedules are the only ways to start evals.
 """
 
 from __future__ import annotations
@@ -303,7 +278,7 @@ def register(router: APIRouter, hub_dir: Path, *, require_admin: Callable,
     from fastapi.responses import RedirectResponse
     from .evals import report, calls
     from . import deployment
-    from .inbound.run import hub_slug
+    from .inbound.routing import hub_slug
 
     def location(admin, hub, request):
         path = Path(require_hub(admin, hub))

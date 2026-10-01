@@ -37,6 +37,7 @@ def key_for(body, headers, spec):
     for name in DELIVERY_ID_HEADERS:
         if headers.get(name):
             return 'id:' + headers[name]
+    log.warning('Webhook has no usable sender event key; deduplicating by body hash')
     return 'body:' + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -44,7 +45,7 @@ def verify(raw, headers, name, spec):
     secret = os.environ.get('WEBHOOK_SECRET_' + name.upper().replace('-', '_'), '')
     if not secret:
         return False
-    carrier = headers.get(spec.get('header', 'X-Hook-Secret').lower(), '')
+    carrier = headers.get(spec.get('signature_header', spec.get('header', 'X-Hook-Secret')).lower(), '')
     if spec.get('verify', 'header') == 'header':
         return hmac.compare_digest(carrier.encode(), secret.encode())
     stamp = headers.get(spec['timestamp_header'].lower(), '')
@@ -61,12 +62,17 @@ def verify(raw, headers, name, spec):
 def build_router(hub_dir):
     router = APIRouter()
     limit = asyncio.Semaphore(16)
-    from ..inbound.run import hub_slug
+    from ..inbound.routing import hub_slug
     slug = hub_slug(hub_dir, os.environ)
 
     @router.post('/webhooks/' + slug + '/{name}')
     async def receive(name: str, request: Request):
-        specs = events.declarations(hub_dir)
+        try:
+            specs = events.declarations(hub_dir)
+        except Exception:
+            # Settings edited into an invalid state since start: the sender retries.
+            log.exception('Invalid workflow settings; webhook not accepted')
+            raise HTTPException(503, 'Workflow settings are invalid') from None
         spec = specs.get(name)
         if spec is None:
             raise HTTPException(404, 'Unknown webhook')
@@ -98,8 +104,9 @@ def build_router(hub_dir):
         key = key_for(body, request.headers, spec)
         payload = {'body': body, 'headers': {k: v for k, v in request.headers.items() if k in ('content-type', 'x-delivery-id', 'x-github-delivery')}}
         try:
-            async with limit:
-                eid = await asyncio.wait_for(asyncio.to_thread(events.admit, hub_dir, hub_dir.name, name, workflow, key, payload), 5)
+            async with asyncio.timeout(5):
+                async with limit:
+                    eid = await asyncio.to_thread(events.admit, hub_dir, hub_dir.name, name, workflow, key, payload)
         except ValueError:
             raise HTTPException(409, 'Event key content mismatch') from None
         except Exception:

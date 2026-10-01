@@ -81,6 +81,7 @@ class RunCtx:
     identity: dict | None = None      # RunIdentity.to_dict() captured at run start
     run_id: str = ""                  # the DBOS workflow id, when there is one
     event: dict | None = None
+    owner: Any = None
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -100,14 +101,22 @@ def _identity(ctx: RunCtx):
     return RunIdentity(ctx.subject or f"workflow:{ctx.workflow}", None, "legacy-service")
 
 
+def _owned(ctx: RunCtx) -> None:
+    """A process that lost the hub's engine stops before a side effect
+    (ownership.OwnershipLost, which leaves the run recoverable)."""
+    from . import runtime
+    owner = ctx.owner or runtime._OWNER
+    if owner is not None:
+        owner.assert_owned()
+
+
 def _recheck(ctx: RunCtx, what: str) -> None:
     """Before a protected operation: the run's account must still be usable."""
     from .identity import recheck
 
-    from . import runtime, deadlines
+    from . import deadlines
     deadlines.remaining()
-    if runtime._OWNER is not None:
-        runtime._OWNER.assert_owned()
+    _owned(ctx)
     recheck(ctx.hub_dir, ctx.hub, _identity(ctx), what=what)
 
 
@@ -262,6 +271,7 @@ class Hub:
                    "share_with": [p if isinstance(p, str) else dict(p) for p in share_with]}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
+        _owned(ctx)
         if _PUBLISH_STEP is not None:
             return _PUBLISH_STEP(*args)
         return publish_now(*args)
@@ -281,6 +291,7 @@ class Hub:
         request = {"subject": subject, "body": body, "artifacts": ids}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
+        _owned(ctx)
         result = _EMAIL_STEP(*args) if _EMAIL_STEP is not None else email_now(*args)
         if raise_on_failure and result["status"] not in ("accepted", "previewed"):
             raise EmailError(result)
@@ -313,10 +324,12 @@ class Hub:
                 "response_format": response_format, "schema": schema}
         ctx = _ctx()
         _recheck(ctx, "A model call")
-        if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
-            result = _LLM_STEP(spec, str(ctx.hub_dir), ctx.subject)
-        else:
-            result = _LLM(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
+        from .deadlines import scope
+        with scope(timeout=spec["timeout"]):
+            if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
+                result = _LLM_STEP(spec, str(ctx.hub_dir), ctx.subject)
+            else:
+                result = _LLM(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
         if response_format == "text":
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
@@ -397,7 +410,7 @@ hub = Hub()
 @contextmanager
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
-              identity: dict | None = None, run_id: str = "", event: dict | None = None) -> Iterator[None]:
+              identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -408,7 +421,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
     ctx = RunCtx(
         hub=hub, workflow=workflow, hub_dir=Path(hub_dir), engine=engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
-        identity=identity, run_id=run_id or "", event=event,
+        identity=identity, run_id=run_id or "", event=event, owner=owner,
     )
     token = _run.set(ctx)
     try:

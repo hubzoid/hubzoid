@@ -1005,7 +1005,10 @@ function step(name) {
       /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
     await page.getByRole("combobox", { name: "Action" }).click();
     await page.locator(".ant-select-item-option").filter({ hasText: "Started a workflow" }).click();
-    await page.waitForFunction(() => [...document.querySelectorAll("tbody tr")].every((tr) => (tr.textContent || "").includes("started")));
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll("tbody tr.ant-table-row")];
+      return rows.length > 0 && rows.every((tr) => (tr.textContent || "").includes("started"));
+    });
     assert.ok((await hash()).includes("action=run_start"), await hash());
     await go("/agents/finance/activity");
     await page.getByText("allowed").first().waitFor();

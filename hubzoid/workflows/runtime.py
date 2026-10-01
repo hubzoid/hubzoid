@@ -160,23 +160,46 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         _APP_VERSION = _workflow_code_version(_HUB_DIR, _app_name(_HUB_NAME))
         from .ownership import Owner
         _OWNER = Owner(_HUB_DIR, _HUB_NAME).acquire()
-        DBOS(
-            config={
-                "name": _app_name(_HUB_NAME),
-                "system_database_url": db.dbos_url(_HUB_DIR),
-                "application_version": _APP_VERSION,
-                "executor_id": "hub:" + _app_name(_HUB_NAME),
-                "max_executor_threads": int(_load_settings().get("max_executor_threads", 32)),
-            }
-        )
-        # Markdown schedule tasks and scheduled evals run on this same engine.
-        from . import markdown
+        lost_owner = _OWNER
+        _OWNER.on_lost(lambda _reason: _stop_after_owner_loss(lost_owner))
+        try:
+            DBOS(
+                config={
+                    "name": _app_name(_HUB_NAME),
+                    "system_database_url": db.dbos_url(_HUB_DIR),
+                    "application_version": _APP_VERSION,
+                    "executor_id": "hub:" + _app_name(_HUB_NAME),
+                    "max_executor_threads": int(_load_settings().get("max_executor_threads", 32)),
+                }
+            )
+            # Markdown schedule tasks and scheduled evals run on this same engine.
+            from . import markdown
 
-        markdown.register(DBOS, _HUB_DIR, _HUB_NAME)
-        from . import events
-        events.register(DBOS, _HUB_DIR, _HUB_NAME)
+            markdown.register(DBOS, _HUB_DIR, _HUB_NAME)
+            from . import events
+            events.register(DBOS, _HUB_DIR, _HUB_NAME)
+            from . import alerts
+            alerts.register(DBOS, _HUB_DIR)
+        except BaseException:
+            _OWNER.close()
+            _OWNER = None
+            raise
         _INITED = True
         log.info("workflows: DBOS initialised for hub %r", _HUB_NAME)
+
+
+def _stop_after_owner_loss(owner) -> None:
+    """Stop claiming work the moment ownership is lost, without touching chat.
+
+    `DBOS.destroy` (through `shutdown`) first stops the queue and scheduler
+    threads, so no further run is dequeued. Runs already claimed meet an
+    ownership guard and raise OwnershipLost, which DBOS does not record, so they
+    stay PENDING and the next owner's startup recovery queues them again. The
+    bridge's supervisor (boot.py) then retries ownership. Runs in a thread: the
+    caller may be a workflow thread that DBOS's teardown waits on. Bound to the
+    lost owner, so a late teardown never stops an engine that took over since."""
+    threading.Thread(target=shutdown, kwargs={"completion_timeout_sec": 0, "only_for": owner},
+                     daemon=True, name="hubzoid-owner-lost").start()
 
 
 def _require_init():
@@ -191,20 +214,8 @@ def _load_settings() -> dict:
     reads workflows/settings.yaml if present, else {}."""
     if _HUB_DIR is None:
         return {}
-    from .._fs import resolve_bucket
-    path = (resolve_bucket(_HUB_DIR, "workflows") or _HUB_DIR / "workflows") / "settings.yaml"
-    if not path.exists():
-        return {}
-    try:
-        import yaml
-
-        data = yaml.safe_load(path.read_text()) or {}
-        if not isinstance(data, dict):
-            raise ValueError("workflows/settings.yaml must be a mapping")
-        return data
-    except Exception:  # noqa: BLE001 — bad config never crashes a run
-        log.exception("workflows: could not read %s", path)
-        raise
+    from .events import settings
+    return settings(_HUB_DIR)
 
 
 def _identity_step():
@@ -264,6 +275,8 @@ def workflow(
 
     from .deadlines import seconds
     seconds(timeout)
+    from .events import validate_destinations
+    validate_destinations(alert_to)
 
     def deco(fn: Callable):
         name = fn.__name__
@@ -274,6 +287,10 @@ def workflow(
 
             next_after(schedule, timezone, datetime.now(utc_timezone.utc))
         identity_step = _identity_step()
+        # The owner this definition was loaded under. A later owner re-imports
+        # the module, so a run claimed by a process that lost ownership keeps
+        # failing its guard instead of reading a newer process-global owner.
+        owner = _OWNER
 
         @_DBOS.step(name="hz_deadline_" + name)
         def run_deadline():
@@ -284,14 +301,14 @@ def workflow(
 
         @_DBOS.workflow(name=name)
         def wrapped(hub_name: str | None = None, event: dict | None = None):
-            if _OWNER is not None:
-                _OWNER.assert_owned()
+            if owner is not None:
+                owner.assert_owned()
             hub_name = hub_name or _HUB_NAME
             identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
                                      f"workflow:{name}", f"Workflow {name!r}")
             from .deadlines import scope
             deadline = run_deadline()
-            with scope(absolute=deadline), context.run_scope(
+            with scope(absolute=deadline, check_exit=False), context.run_scope(
                 hub=hub_name,
                 workflow=name,
                 hub_dir=_HUB_DIR,
@@ -299,16 +316,12 @@ def workflow(
                 settings=_load_settings(),
                 identity=identity,
                 run_id=_DBOS.workflow_id or "",
-                event=event,
+                event=event, owner=owner,
             ):
-                try:
+                from .alerts import track_run
+                with track_run(_HUB_DIR, hub_name, name, _DBOS.workflow_id, deadline):
                     return fn()
-                except (
-                    Exception
-                ) as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
-                    if on_failure:
-                        _notify_failure(on_failure, name, exc)
-                    raise
+
 
         _REGISTRY[name] = WorkflowDef(
             name=name,
@@ -333,9 +346,30 @@ def step(fn: Callable | None = None, *, max_attempts: int = 1):
     _require_init()
 
     def wrap(f: Callable):
+        from functools import wraps
+        import inspect
+
+        def check():
+            from .deadlines import remaining
+            remaining()
+            ctx = context._run.get()
+            owner = (ctx.owner if ctx else None) or _OWNER
+            if owner is not None:
+                owner.assert_owned()
+
+        if inspect.iscoroutinefunction(f):
+            @wraps(f)
+            async def checked(*args, **kwargs):
+                check()
+                return await f(*args, **kwargs)
+        else:
+            @wraps(f)
+            def checked(*args, **kwargs):
+                check()
+                return f(*args, **kwargs)
         if max_attempts and max_attempts > 1:
-            return _DBOS.step(retries_allowed=True, max_attempts=max_attempts)(f)
-        return _DBOS.step()(f)
+            return _DBOS.step(retries_allowed=True, max_attempts=max_attempts)(checked)
+        return _DBOS.step()(checked)
 
     return wrap(fn) if fn is not None else wrap
 
@@ -408,23 +442,6 @@ def _wrap_seams_as_steps() -> None:
         context._JEV_STEP = _jev_step
 
 
-def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
-    """Best-effort on_failure notification: POST to a webhook URL. (There is no
-    built-in email transport; a URL or a hub-configured notifier is the path.)"""
-    payload = {"workflow": workflow_name, "hub": _HUB_NAME, "error": str(error)}
-    try:
-        if target.startswith(("http://", "https://")):
-            import httpx
-
-            httpx.post(target, json=payload, timeout=10.0)
-        else:
-            log.error(
-                "workflow %r failed (on_failure=%r): %s", workflow_name, target, error
-            )
-    except Exception:  # noqa: BLE001 — notification must never mask the failure
-        log.exception("workflows: on_failure notify failed for %r", workflow_name)
-
-
 def _step_key() -> str | None:
     """A key unique to the running step of the running workflow, stable across
     recovery (DBOS re-runs an interrupted step with the same id)."""
@@ -458,13 +475,16 @@ def _wrap_delivery_steps() -> None:
         context._EMAIL_STEP = _email_step
 
 
-def launch() -> None:
+def launch(*, target: str | None = None) -> None:
     global _LAUNCHED
     if _LAUNCHED:
         return
     global _QUEUE, _MD_QUEUE
     _wrap_seams_as_steps()
     _wrap_delivery_steps()
+    manual_queue = f"{_app_name(_HUB_NAME)}-manual-{target.replace(chr(58), chr(45))}" if target else None
+    if manual_queue:
+        _DBOS.listen_queues([manual_queue])
     _DBOS.launch()
     # DBOS 3 persists queue config in the system database, so queues are
     # registered once that exists.
@@ -491,9 +511,20 @@ def launch() -> None:
                 on_conflict="always_update")
         else:
             wf.queue = _QUEUE
-    _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-events", worker_concurrency=32,
+    _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-events",
                          on_conflict="always_update")
-    _cancel_runs_from_other_code()
+    _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-alerts", worker_concurrency=4,
+                         on_conflict="always_update")
+    if target:
+        selected = _DBOS.register_queue(manual_queue, global_concurrency=1,
+            partition_concurrency=1 if not target.startswith("md:") and _REGISTRY[target].concurrency_key else None,
+            on_conflict="always_update")
+        if target.startswith("md:"):
+            _MD_QUEUE = selected
+        else:
+            _REGISTRY[target].queue = selected
+    else:
+        _cancel_runs_from_other_code()
     _LAUNCHED = True
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
     # Publish this hub's workflow catalog to the shared store so the org portal
@@ -524,7 +555,7 @@ def _cancel_runs_from_other_code() -> None:
         stale = [
             w
             for w in _DBOS.list_workflows(
-                status=["PENDING", "ENQUEUED"], queue_name=[_QUEUE.name, _MD_QUEUE.name, *[w.queue.name for w in _REGISTRY.values() if w.queue]]
+                status=["PENDING", "ENQUEUED", "DELAYED"], application_name=_app_name(_HUB_NAME)
             )
             if w.app_version is not None and w.app_version != _APP_VERSION
         ]
@@ -576,7 +607,7 @@ def registry() -> list[WorkflowDef]:
     return list(_REGISTRY.values())
 
 
-def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
+def shutdown(*, completion_timeout_sec: float = 5.0, only_for=None) -> None:
     """Tear the DBOS engine down cleanly at bridge shutdown. In-flight runs get
     up to `completion_timeout_sec` to finish; anything still running stays
     recoverable in the system DB and resumes on the next launch (durability is
@@ -586,7 +617,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE, _OWNER
     global _APP_VERSION, _MD_QUEUE, _IDENTITY_STEP
     with _lock:
-        if not _INITED:
+        if not _INITED or (only_for is not None and _OWNER is not only_for):
             return
         workers = [t for t in threading.enumerate() if t.name.startswith("dbos-executor-")]
         try:
@@ -597,6 +628,10 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
         finally:
             if _OWNER is not None:
                 owner, _OWNER = _OWNER, None
+                try:
+                    owner.retire()
+                except Exception:  # noqa: BLE001 — the lease then lapses on its own
+                    log.exception("workflows: could not retire the owner lease")
                 alive = [t for t in workers if t.is_alive()]
                 if alive:
                     # DBOS.destroy does not join timed-out synchronous work.
@@ -636,21 +671,21 @@ def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
     same workflow never overlap while different workflows run side by side."""
     wf = _REGISTRY[name]
     if _OWNER is not None:
-        _OWNER.assert_owned()
-    from dbos import SetEnqueueOptions, SetWorkflowID
-    from contextlib import nullcontext
+        from .ownership import OwnershipLost
+        try:
+            _OWNER.assert_owned()
+        except OwnershipLost as exc:
+            # Callers here are operators and the dispatcher, not a run.
+            raise RuntimeError(str(exc)) from None
     import uuid
-
     key = f"{hub_name or _HUB_NAME}:{name}:{scheduled_at}" if scheduled_at else None
-    with (
-        SetWorkflowID(str(uuid.uuid5(uuid.NAMESPACE_URL, key)))
-        if key
-        else nullcontext()
-    ):
-        if _QUEUE is not None:
-            with SetEnqueueOptions(queue_partition_key=enqueue_options(wf).get("queue_partition_key")):
-                return (wf.queue or _QUEUE).enqueue(wf.wrapped, hub_name or _HUB_NAME)
-        return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
+    if _QUEUE is not None:
+        options = enqueue_options(wf)
+        options.update(workflow_name=name, attributes={"trigger": "schedule" if scheduled_at else "manual"})
+        if key:
+            options["workflow_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+        return _DBOS.enqueue_workflow_with_options(options, hub_name or _HUB_NAME)
+    return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
 
 
 def run_now(name: str, hub_name: str | None = None):
@@ -799,13 +834,15 @@ def load_workflows(hub_dir) -> int:
 
 def enqueue_options(wf, event=None):
     """One queue/partition policy for schedules, operator runs and events."""
-    options = {"queue_name": (wf.queue or _QUEUE).name}
+    dedicated = wf.concurrency is not None or bool(wf.concurrency_key)
+    queue_name = f"{_app_name(_HUB_NAME)}-wf" + (f"-{wf.name}" if dedicated else "")
+    options = {"queue_name": wf.queue.name if wf.queue is not None else queue_name}
     if wf.concurrency_key:
         from .webhooks import field
         import json
         value = field((event or {}).get("body", {}), wf.concurrency_key)
         options["queue_partition_key"] = json.dumps(value, sort_keys=True) if value is not None else "missing"
-    elif wf.queue is _QUEUE or wf.queue is None:
+    elif not dedicated:
         options["queue_partition_key"] = wf.name
     return options
 

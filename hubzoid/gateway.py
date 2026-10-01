@@ -118,8 +118,11 @@ class GatewayPlan:
                 "upstream": f"http://127.0.0.1:{b.bridge_port}",
                 "strip_prefix": base,
             })
+            routes.append({"prefix": base + "/portal/api",
+                           "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                           "strip_prefix": base})
             if web_app:
-                for part in ("/api", "/branding", "/portal/api"):
+                for part in ("/api", "/branding"):
                     routes.append({
                         "prefix": base + part,
                         "upstream": f"http://127.0.0.1:{b.bridge_port}",
@@ -143,8 +146,8 @@ class GatewayPlan:
             # global /webhooks meant only the first inbound hub could be reached).
             # No strip_prefix — the inbound app serves the full /webhooks/<slug>/...
             # path, matching the slug it derives from its own hub folder.
-            from .workflows.events import declarations
-            for name in declarations(b.hub_dir):
+            from .workflows.events import route_declarations
+            for name in route_declarations(b.hub_dir):
                 routes.append({"prefix": f"/webhooks/{b.slug}/{name}",
                                "upstream": f"http://127.0.0.1:{b.bridge_port}"})
             if b.inbound:

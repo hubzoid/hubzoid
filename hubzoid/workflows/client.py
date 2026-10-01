@@ -17,8 +17,8 @@ def enqueue_live(hub_dir, name, *, markdown=False, overrides=None):
     try:
         rid = ('md:' + name + ':manual-' if markdown else 'manual:') + uuid.uuid4().hex + '@' + _app_name(hub_dir.name)
         if markdown:
-            from .markdown import TASK_WORKFLOW
-            options = {'workflow_name': TASK_WORKFLOW, 'queue_name': _app_name(hub_dir.name)+'-md', 'workflow_id': rid}
+            from .markdown import MD_WORKFLOW
+            options = {'workflow_name': MD_WORKFLOW, 'queue_name': _app_name(hub_dir.name)+'-md', 'workflow_id': rid}
             # Matches markdown.enqueue_task's persisted argument contract.
             args = (name, [], dict(overrides or {}))
         else:
@@ -43,11 +43,11 @@ class LiveHandle:
     def get_result(self):
         try:
             while True:
-                status = self.client.get_workflow_status(self.get_workflow_id())
+                status = self.handle.get_status()
                 if status and status.status in ('SUCCESS', 'ERROR', 'CANCELLED', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED'):
                     return self.handle.get_result()
                 if not readiness(self.hub_dir, self.hub_dir.name):
-                    raise RuntimeError('Workflow owner stopped; the queued run remains durable. Inspect schedule status.')
+                    raise RuntimeError(f'Workflow owner stopped; run {self.get_workflow_id()} remains durable. Inspect schedule status.')
                 time.sleep(.25)
         finally:
             self.client.destroy()

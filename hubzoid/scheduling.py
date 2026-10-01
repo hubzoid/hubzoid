@@ -222,6 +222,7 @@ class ScheduledTask:
     run: list[str] | None = None                # plain-cron command; None = LLM task
     run_shell: bool = False                      # run[0] is a shell command line, not argv
     source_path: Path | None = None
+    alert_to: list[dict[str, str]] | None = None
     run_as: str | None = None                   # account email the run acts as
     publish_artifacts: bool = False              # offer the publish_artifact tool
     send_email: bool = False                     # offer the send_email tool (to the run's account)
@@ -330,6 +331,8 @@ def _parse_task(path: Path) -> ScheduledTask:
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError("`model:` must be a non-empty string (e.g. claude-local/opus)")
 
+    from .workflows.events import validate_destinations
+    validate_destinations(fm.get("alert_to"))
     run_as = fm.get("run_as")
     if run_as is not None:
         from .workflows.identity import validate_run_as
@@ -366,6 +369,7 @@ def _parse_task(path: Path) -> ScheduledTask:
         run_shell=run_shell,
         source_path=path,
         run_as=run_as,
+        alert_to=fm.get("alert_to"),
         publish_artifacts=publish_artifacts,
         send_email=send_email,
     )

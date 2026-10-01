@@ -208,12 +208,21 @@ def _http_error(resp, key: str) -> JevError:
                     retryable=code in _RETRYABLE or code >= 500)
 
 
+async def _post(body, key, timeout):
+    import asyncio
+    import httpx
+    async with asyncio.timeout(timeout):
+        async with httpx.AsyncClient(timeout=min(TIMEOUT_S, timeout)) as client:
+            return await client.post(URL, json=body, headers={"Authorization": f"Bearer {key}"})
+
+
 def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "workflow",
          chat_id: str | None = None) -> dict:
     """One decision request. `spec` holds `state`, `questions` and optionally
     `model` (default typesafe/jev-1.13). Returns the API's reply with its
     `answers` validated. Records one usage row (kind `jev`) per call, retries
     included, attributed to `subject` on `surface`."""
+    import asyncio
     import httpx
 
     from . import usage as usage_lib
@@ -243,9 +252,8 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
             err: JevError
             wait = float(attempt)
             try:
-                resp = httpx.post(URL, json=body, timeout=min(TIMEOUT_S, left),
-                                  headers={"Authorization": f"Bearer {key}"})
-            except httpx.TimeoutException:
+                resp = asyncio.run(_post(body, key, min(TIMEOUT_S, left)))
+            except (httpx.TimeoutException, TimeoutError):
                 err = JevError(f"Jev did not answer within {TIMEOUT_S:g}s", retryable=True)
             except httpx.HTTPError as exc:
                 err = JevError(f"could not reach OpenRouter ({type(exc).__name__})", retryable=True)

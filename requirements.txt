@@ -23,7 +23,7 @@ typer>=0.27,<1
 jinja2>=3.1.6,<4
 slack-bolt>=1.30,<2
 casbin>=1.43,<2
-dbos>=3.1,<4
+dbos==3.1.0
 croniter>=6.2,<7
 pwdlib[argon2,bcrypt]>=0.3.1,<0.4
 python-multipart>=0.0.32,<0.1

@@ -248,7 +248,7 @@ class OpenAIAgentsRuntime:
 
     def stream(self, prompt: str) -> AsyncIterator[str]:
         """The 1.0.x text of one turn (the typed stream, rendered)."""
-        return run_events.as_text(self.stream_events(prompt))
+        return run_events.as_text(self.stream_events(prompt), tool_mode=self._tool_mode)
 
     def _personal_servers(self) -> list:
         if self._hub_dir is None:
@@ -590,8 +590,8 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
 
     async def _go() -> str:
         rt = build(Path(hub_dir))
-        await rt.aopen()
         try:
+            await rt.aopen()
             with _request_ctx.chat_scope(None):
                 text = await run_events.answer_only(rt, prompt)
                 raw.update(_request_ctx.drain_usage())

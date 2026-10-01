@@ -100,12 +100,27 @@ def answer_text(item: StreamItem) -> str:
     return item if isinstance(item, str) else ""
 
 
-async def as_text(stream: AsyncIterator[StreamItem]) -> AsyncIterator[str]:
-    """Adapt a typed stream to the 1.0.x text stream."""
+async def as_text(stream: AsyncIterator[StreamItem], *, tool_mode=None) -> AsyncIterator[str]:
+    """Render native tool activity only at the legacy text boundary."""
+    from .tool_events import Status, ToolActivity
+    activity = ToolActivity(tool_mode) if tool_mode is not None else None
     async for item in stream:
-        text = text_of(item)
-        if text:
-            yield text
+        if activity is not None and isinstance(item, ToolCall):
+            for chunk in activity.started(item.id, item.name, item.args):
+                yield chunk
+        elif activity is not None and isinstance(item, ToolResult):
+            for chunk in activity.finished(item.id, error=not item.ok):
+                yield chunk
+        else:
+            if activity is not None and ((isinstance(item, Notice) and item.kind == "error") or (isinstance(item, str) and bool(item))):
+                for chunk in activity.flush():
+                    yield chunk
+            text = text_of(item)
+            if isinstance(text, Status) or text:
+                yield activity.text(text) if activity else text
+    if activity is not None:
+        for chunk in activity.flush():
+            yield chunk
 
 
 def stream_items(runtime: Any, prompt: str) -> AsyncIterator[StreamItem]:

@@ -32,7 +32,7 @@ def remaining(default=None):
 
 
 @contextmanager
-def scope(timeout=None, *, absolute=None):
+def scope(timeout=None, *, absolute=None, check_exit=True):
     parent = _deadline.get()
     deadline = absolute if absolute is not None else time.time()+seconds(timeout) if timeout is not None else parent
     if parent is not None and deadline is not None:
@@ -41,6 +41,7 @@ def scope(timeout=None, *, absolute=None):
     try:
         remaining()
         yield
-        remaining()
+        if check_exit:
+            remaining()
     finally:
         _deadline.reset(token)

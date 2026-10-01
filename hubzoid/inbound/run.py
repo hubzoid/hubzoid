@@ -21,35 +21,7 @@ from .webhook import webhook_config_from_env
 
 log = logging.getLogger("hubzoid.inbound")
 
-DEFAULT_INBOUND_PORT = 8100
-
-
-def inbound_port(env=None) -> int:
-    env = env if env is not None else os.environ
-    try:
-        return int((env.get("HUBZOID_INBOUND_PORT") or "").strip() or DEFAULT_INBOUND_PORT)
-    except ValueError:
-        return DEFAULT_INBOUND_PORT
-
-
-def _slugify(text: str) -> str:
-    out = "".join(c if c.isalnum() else "-" for c in str(text).strip().lower())
-    while "--" in out:
-        out = out.replace("--", "-")
-    return out.strip("-") or "hub"
-
-
-def hub_slug(hub_dir, env=None) -> str:
-    """The URL slug this hub's webhooks are namespaced under: ``HUBZOID_HUB_SLUG``
-    if the operator pinned one, else the slugified folder name.
-
-    The gateway edge and this inbound app must agree on the slug or the route
-    404s. Both apply this same rule, so distinct folder names need no config; set
-    ``HUBZOID_HUB_SLUG`` only when the gateway had to de-dup a slug collision
-    (two hubs with the same folder basename)."""
-    env = env if env is not None else os.environ
-    pinned = (env.get("HUBZOID_HUB_SLUG") or "").strip()
-    return _slugify(pinned) if pinned else _slugify(Path(hub_dir).name)
+from .routing import DEFAULT_INBOUND_PORT, inbound_port, _slugify, hub_slug
 
 
 def build_app_for_hub(hub_dir, env=None):

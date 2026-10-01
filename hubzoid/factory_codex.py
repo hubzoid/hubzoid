@@ -159,7 +159,7 @@ class CodexRuntime:
 
     def stream(self, prompt):
         """The 1.0.x text of one turn (the typed stream, rendered)."""
-        return run_events.as_text(self.stream_events(prompt))
+        return run_events.as_text(self.stream_events(prompt), tool_mode=self.tool_mode)
 
     async def stream_events(self, prompt):
         """Run one turn as a typed stream (see `hubzoid.run_events`). When the
@@ -390,7 +390,7 @@ class CodexRuntime:
                         yield display
                     try:
                         result = await tool.on_invoke_tool(ctx, args_json)
-                        success = True
+                        success = not tool_events.failed_output(result)
                     except Exception:
                         result, success = _TOOL_FAILED, False
                         log.exception("Codex tool %s failed", name)

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import runtime
+from .ownership import OwnershipLost
 
 log = logging.getLogger("hubzoid.workflows")
 
@@ -66,12 +67,17 @@ class Dispatcher:
         self._n = 0
         self._heartbeat_task = None
         self._events_task = None
+        self._alerts_task = None
+        self.owner = None
+        self.lost = asyncio.Event()   # set when this engine's ownership is lost
 
     def prepare(self) -> int:
         """Init DBOS over the hub DB, load the code workflows, launch. Returns
         the number of code workflows. A broken workflow module disables code
         workflows for this boot but never the markdown tasks."""
         runtime.init(self.hub_dir, hub_name=self.hub_name)
+        self.owner = runtime._OWNER
+        self.hub_name = runtime._HUB_NAME
         if self.code:
             try:
                 runtime.load_workflows(self.hub_dir)
@@ -82,30 +88,42 @@ class Dispatcher:
         self._n = len(runtime.registry())
         return self._n
 
-    async def _heartbeat(self):
+    async def _every(self, seconds: float, fn, what: str):
+        """Run `fn` in a thread every `seconds`. A failure is logged and retried;
+        a lost ownership ends the loop, and the supervisor stops the engine."""
         while True:
+            if getattr(self.owner, "lost", False):
+                self.lost.set()
+                return
             try:
-                ready = runtime.ready_record()
-                await asyncio.to_thread(runtime._OWNER.heartbeat, ready)
-                from ..access import store_for
-                await asyncio.to_thread(store_for(self.hub_dir).set_runtime_health,
-                    self.hub_dir.name, heartbeat=datetime.now(timezone.utc).isoformat(), enabled=True)
+                await asyncio.to_thread(fn)
             except asyncio.CancelledError:
                 raise
+            except OwnershipLost:
+                self.lost.set()
+                return
             except Exception:
-                log.exception("workflows: ownership heartbeat failed; admission closed")
-            await asyncio.sleep(15)
+                log.exception("workflows: %s failed; will retry", what)
+            await asyncio.sleep(seconds)
 
-    async def _events(self):
+    def _beat(self):
+        self.owner.heartbeat(runtime.ready_record())
+        from ..access import store_for
+        store_for(self.hub_dir).set_runtime_health(
+            self.hub_dir.name, heartbeat=datetime.now(timezone.utc).isoformat(), enabled=True)
+
+    def _heartbeat(self):
+        return self._every(15, self._beat, "ownership heartbeat (admission closed)")
+
+    def _alerts(self):
+        from . import alerts
+        return self._every(30, lambda: alerts.reconcile(self.hub_dir, self.hub_name),
+                           "alert reconciliation")
+
+    def _events(self):
         from . import events
-        while True:
-            try:
-                await asyncio.to_thread(events.reconcile, self.hub_dir, self.hub_dir.name)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("workflows: event reconciliation failed; will retry")
-            await asyncio.sleep(1)
+        return self._every(1, lambda: events.reconcile(self.hub_dir, self.hub_dir.name),
+                           "event reconciliation")
 
     async def _loop(self) -> None:
         while True:
@@ -134,7 +152,7 @@ class Dispatcher:
                     self.hub_dir.name,
                     heartbeat=now.isoformat(),
                     enabled=True,
-                    error=error,
+                    error=error or self.load_error,
                 )
             except Exception:  # a transient health write must not kill dispatch
                 log.exception("workflows: could not record dispatcher health")
@@ -146,6 +164,13 @@ class Dispatcher:
             log.info("workflows: dispatcher started (%d workflow(s))", self._n)
 
     async def stop(self) -> None:
+        if self._alerts_task is not None:
+            self._alerts_task.cancel()
+            try:
+                await self._alerts_task
+            except asyncio.CancelledError:
+                pass
+            self._alerts_task = None
         if self._events_task is not None:
             self._events_task.cancel()
             try:
@@ -178,16 +203,78 @@ class Dispatcher:
         await asyncio.to_thread(runtime.shutdown)
 
 
-async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
+OWNER_RETRY_SECONDS = 15
+
+
+class EngineSupervisor:
+    """The bridge's handle on its workflow engine. While another process owns
+    the hub (a CLI run, or a previous owner's lease), and after this one loses
+    ownership, the engine is retried every OWNER_RETRY_SECONDS; chat never
+    waits for it."""
+
+    def __init__(self, hub_dir, hub_name, dispatcher=None):
+        self.hub_dir, self.hub_name = Path(hub_dir), hub_name
+        self.dispatcher = dispatcher
+        self._attempt = None
+        self.task = asyncio.create_task(self._run())
+
+    async def _run(self):
+        from ..access import store_for
+        while True:
+            if self.dispatcher is not None:
+                await self.dispatcher.lost.wait()
+                lost, self.dispatcher = self.dispatcher, None
+                await lost.stop()
+                await asyncio.to_thread(store_for(self.hub_dir).set_runtime_health,
+                    self.hub_dir.name, enabled=True,
+                    error="Workflow engine ownership was lost; retrying. Chat is unaffected.")
+            await asyncio.sleep(OWNER_RETRY_SECONDS)
+            # A start in progress is never abandoned half way: stop() waits for it.
+            self._attempt = asyncio.ensure_future(_start_engine(self.hub_dir, self.hub_name))
+            disp, busy = await asyncio.shield(self._attempt)
+            self._attempt = None
+            self.dispatcher = disp
+            if disp is None and not busy:
+                return   # off for a reason a retry cannot fix; health says why
+
+    async def stop(self):
+        self.task.cancel()
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+        if self._attempt is not None:
+            disp, _ = await self._attempt
+            self.dispatcher = self.dispatcher or disp
+        if self.dispatcher is not None:
+            await self.dispatcher.stop()
+
+
+async def start(hub_dir, hub_name: str | None = None):
     """Start the hub's DBOS engine when there is scheduled work: markdown tasks
     or scheduled evals (on whenever their files exist), or code workflows (when
-    schedules are enabled for this deployment). Starts the per-minute tick for
-    code workflows. Returns the Dispatcher (to stop() at shutdown) or None."""
+    schedules are enabled for this deployment, or a webhook declares one).
+    Starts the per-minute tick for code workflows. Returns an EngineSupervisor
+    (to stop() at shutdown), or None when the engine stays off."""
+    disp, busy = await _start_engine(hub_dir, hub_name)
+    if disp is None and not busy:
+        return None
+    return EngineSupervisor(hub_dir, hub_name, disp)
+
+
+async def _start_engine(hub_dir, hub_name):
+    """(dispatcher, owner_busy). Never raises: chat must start regardless."""
     from ..access import store_for
+    from .ownership import OwnerBusy
 
     gs = store_for(hub_dir)
     from .events import declarations
-    webhook_on = bool(declarations(hub_dir))
+    try:
+        webhook_on = bool(declarations(hub_dir))
+    except Exception as exc:
+        gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=f"{type(exc).__name__}: invalid workflow settings; check logs")
+        log.exception("workflows: invalid configuration; chat remains available")
+        return None, False
     code_on = schedules_enabled()
     md_on = await asyncio.to_thread(markdown_work, hub_dir)
     if not code_on and not md_on and not webhook_on:
@@ -195,21 +282,34 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
         log.info(
             "workflows: schedules idle (set HUBZOID_SCHEDULES=1 to enable on this box)"
         )
-        return None
+        return None, False
     disp = Dispatcher(hub_dir, hub_name, code=code_on or webhook_on)
     try:
         n = await asyncio.to_thread(disp.prepare)
     except Exception as exc:  # the engine failed to start; chat still works
+        if isinstance(exc, OwnerBusy):
+            gs.set_runtime_health(Path(hub_dir).name, enabled=True,
+                                  error='Waiting for the current workflow owner to release the hub')
+            log.warning('workflows: %s; retrying without interrupting chat', exc)
+            return None, True
         await asyncio.to_thread(runtime.shutdown)
         gs.set_runtime_health(
             Path(hub_dir).name, enabled=False, error=f"{type(exc).__name__}: {exc}"
         )
         log.exception("workflows: engine failed to start; scheduled work off this boot")
-        return None
+        return None, False
     if n == 0 and not md_on:
         await disp.stop()
+        if disp.load_error:
+            # A webhook-only hub whose module failed: keep the error, so the
+            # edge health check and its alert report it.
+            gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=disp.load_error)
         log.info("workflows: none defined under <hub>/workflows/")
-        return None
+        return None, False
+    disp.owner = disp.owner or runtime._OWNER
+    if hasattr(disp.owner, "on_lost"):
+        loop = asyncio.get_running_loop()
+        disp.owner.on_lost(lambda _reason: loop.call_soon_threadsafe(disp.lost.set))
     now = datetime.now(timezone.utc)
     # Record (but never back-fill) any scheduled code-workflow slots that would
     # have fired while the previous dispatcher was down, so the operator sees the
@@ -244,9 +344,14 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
         missed_log=runtime.missed_log(prior, downtime["missed"] if downtime else 0, now),
         heartbeat=now.isoformat(),
     )
-    await asyncio.to_thread(runtime._OWNER.heartbeat, runtime.ready_record())
+    try:
+        await asyncio.to_thread(disp.owner.heartbeat, runtime.ready_record())
+    except OwnershipLost:
+        await disp.stop()
+        return None, True
     disp._heartbeat_task = asyncio.create_task(disp._heartbeat())
     disp._events_task = asyncio.create_task(disp._events())
+    disp._alerts_task = asyncio.create_task(disp._alerts())
     if code_on and n:
         disp.start_loop()
-    return disp
+    return disp, False

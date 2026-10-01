@@ -661,6 +661,7 @@ export type EvalToolCall = {
 };
 
 export type EvalCaseResult = {
+  private?: boolean;
   name: string;
   tags: string[];
   passed: boolean;

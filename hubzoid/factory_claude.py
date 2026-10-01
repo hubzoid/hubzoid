@@ -589,35 +589,40 @@ class _ThinkStream:
     arrives, so the dead reasoning gap shows activity.
 
     mode:
-      - 'full'      -> stream the model's summarized reasoning text verbatim.
-      - 'indicator' -> emit a single placeholder line per block (panel + timer,
-                       no reasoning content exposed).
-    A new block opens for each reasoning burst (e.g. after a tool call), which
-    Open WebUI renders as separate panels.
+      - 'full'      -> stream the model's summarized reasoning text verbatim,
+                       one panel per reasoning burst.
+      - 'indicator' -> no reasoning content is exposed. The first burst,
+                       before anything is shown, is an empty block: the chat
+                       app's own "Thinking…" line and timer, then "Thought
+                       for N seconds". A later burst (between tool rounds)
+                       is the status line `tool_events.THINKING` instead, so
+                       tool rows are not broken up by empty panels.
     """
-
-    _PLACEHOLDER = "_Thinking…_"
 
     def __init__(self, mode: str):
         self.mode = mode  # 'indicator' | 'full' (never 'off' — no deltas then)
         self._open = False
-        self._placeholder_done = False
+        self._shown_any = False
+        self._status_on = False
 
     def thinking(self, text: str) -> str:
+        if self.mode == "indicator" and self._shown_any:
+            if self._status_on:
+                return ""
+            self._status_on = True
+            return tool_events.Status(tool_events.THINKING)
         out = ""
         if not self._open:
             out += "<think>\n"
             self._open = True
-            self._placeholder_done = False
         if self.mode == "full":
             out += text
-        elif not self._placeholder_done:
-            out += self._PLACEHOLDER
-            self._placeholder_done = True
         return out
 
     def visible(self, text: str) -> str:
         """Return `text` for display, closing any open thinking block first."""
+        self._shown_any = True
+        self._status_on = False
         return self.close() + text
 
     def close(self) -> str:
@@ -761,7 +766,7 @@ class ClaudeRuntime:
         `<think>` blocks, one tool line per call, a ⚠ line per tool error, the
         download footer and `[agent error: ...]` (or the plain sentence for a usage
         limit, refused login or overload, see `agent_errors`)."""
-        return run_events.as_text(self.stream_events(prompt))
+        return run_events.as_text(self.stream_events(prompt), tool_mode=self._tool_mode)
 
     async def stream_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
         """Yield answer text and typed run events as they arrive.
@@ -840,7 +845,7 @@ class ClaudeRuntime:
                             if text:
                                 streamed_any = True
                                 shown.append(text)
-                                closing = tw.close()
+                                closing = tw.visible("")
                                 if closing:
                                     yield run_events.ReasoningEnd(legacy=closing)
                                 reasoning_signalled = False
@@ -867,7 +872,7 @@ class ClaudeRuntime:
                             # A shown tool line closes the thinking block
                             # first; with SHOW_TOOLS=off the block stays open.
                             if line:
-                                closing = tw.close()
+                                closing = tw.visible("")
                                 if closing:
                                     yield run_events.ReasoningEnd(legacy=closing)
                             reasoning_signalled = False

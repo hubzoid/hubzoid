@@ -138,7 +138,9 @@ def build_app() -> FastAPI:
         app.state.workflows = wf_dispatcher
         from .workflows import runtime as _wf_runtime
         sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
-        if _wf_runtime._LAUNCHED:
+        if _wf_runtime._LAUNCHED or wf_dispatcher is not None:
+            # Also while the engine waits for ownership: a slot that cannot be
+            # queued yet is not stamped, so it fires once the engine is back.
             sched.start()   # no-op when <hub>/schedule/ is empty or disabled
         elif wf_boot.markdown_work(hub_dir):
             log.error("scheduled markdown tasks are not running: the workflow engine "

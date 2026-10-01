@@ -87,10 +87,40 @@ def task_name_from_id(workflow_id: str) -> str | None:
     return rest.rsplit(":", 1)[0] if ":" in rest else rest
 
 
+def slot_from_id(workflow_id: str) -> str | None:
+    """The slot part of `md:<task>:<slot>@<hub>[:requeued...]`: a schedule slot
+    (`20260101T0900`), `manual-...` (CLI, Console, live owner) or `events-...`
+    (a legacy markdown webhook task)."""
+    if not workflow_id.startswith("md:"):
+        return None
+    rest = workflow_id[3:]
+    while rest.endswith(":requeued"):
+        rest = rest[: -len(":requeued")]
+    if ":" not in rest:
+        return None
+    return rest.rsplit(":", 1)[1].split("@", 1)[0]
+
+
+def is_scheduled_slot(slot: str | None) -> bool:
+    """Whether a run's slot is a cron slot, the only kind a schedule pause counts."""
+    import re
+
+    return bool(slot and re.fullmatch(r"\d{8}T\d{4}", slot))
+
+
 def register(DBOS, hub_dir: Path, hub_name: str) -> None:
     """Register the markdown-task and eval-suite workflows (called by init)."""
     from .. import schedule_runner as runner
     from .. import scheduling as sch
+    from . import runtime
+
+    owner = runtime._OWNER   # the engine owner these definitions belong to
+
+    def _guard():
+        # Before each side effect: a process that lost ownership stops here,
+        # and the run stays recoverable (ownership.OwnershipLost).
+        if owner is not None:
+            owner.assert_owned()
 
     def _task(task_name: str, overrides: dict):
         tasks, _ = sch.load_tasks(hub_dir)
@@ -162,6 +192,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
 
     @DBOS.workflow(name=MD_WORKFLOW)
     def md_task(task_name: str, claimed: list[str], overrides: dict) -> dict:
+        _guard()
         run = DBOS.workflow_id
         started = datetime.now().isoformat(timespec="seconds")
         try:
@@ -171,21 +202,25 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
                        "run_log": None}
             finish(task_name, outcome, claimed, started)
             raise   # the IdentityError itself: its fix is shown to the hub's managers
+        _guard()
         outcome = work(task_name, overrides, run, claimed, identity)
         if outcome["result"] == "done":
             task = _task(task_name, overrides)
             if task.commit:
                 try:
+                    _guard()
                     sha = commit(task_name, overrides, outcome["summary"], started)
                     outcome["commit_sha"] = sha
                     # Push only this run's commit: with nothing committed, a
                     # push would publish whatever else is unpushed locally.
                     if task.push and sha:
+                        _guard()
                         push()
                         outcome["pushed"] = True
                 except Exception as exc:  # noqa: BLE001 — a git failure fails the run
                     outcome["result"] = "error"
                     outcome["error"] = f"{type(exc).__name__}: {exc}"
+        _guard()
         finish(task_name, outcome, claimed, started)
         if outcome["result"] == "error":
             raise RuntimeError(outcome.get("error") or "scheduled task failed")
@@ -205,6 +240,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
 
     @DBOS.workflow(name=EVAL_WORKFLOW)
     def eval_suite(names: list[str], now_iso: str) -> dict:
+        _guard()
         result = run_evals(names, now_iso)
         if result.get("failed"):
             raise RuntimeError("Eval suite failed")

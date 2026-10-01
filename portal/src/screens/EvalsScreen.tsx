@@ -362,7 +362,7 @@ function RunsTable({ hub, runs }: { hub: Hub; runs: EvalRunSummary[] }) {
       size="middle"
       dataSource={runs}
       scroll={{ x: 720 }}
-      pagination={{ pageSize: 20, hideOnSinglePage: true, showSizeChanger: false }}
+      pagination={false}
       locale={{
         emptyText: (
           <Empty
@@ -497,6 +497,7 @@ function RunDrawer({ hub, stamp }: { hub: Hub; stamp: string }) {
 }
 
 function CaseResult({ result: c }: { result: EvalCaseResult }) {
+  if (c.private) return <Alert type="info" showIcon title="Private result" description="Details are visible only to the account this evaluation ran as. The verdict remains visible." />;
   const multi = (c.turns?.length ?? 0) > 1;
   return (
     <div className="eval-case">

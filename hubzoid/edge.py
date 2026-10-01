@@ -424,6 +424,7 @@ def build_edge_app(
     public_scheme: str = "",
     web_app: bool | None = None,
     default_fallbacks: tuple[str, ...] | list[str] = (),
+    workflow_hubs: tuple[str, ...] | list[str] = (),
 ) -> Starlette:
     """A Starlette reverse proxy: `routes` go to their bridge, the rest to the
     default upstream (Open WebUI in the legacy mode, a bridge in the web app mode).
@@ -467,12 +468,28 @@ def build_edge_app(
             follow_redirects=False,
             cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
         )
+        monitor_task = None
+        app.state.workflow_health = {str(h): False for h in workflow_hubs}
+        if workflow_hubs:
+            from .workflows.monitor import poll
+            monitor_task = asyncio.create_task(poll(workflow_hubs, app.state.workflow_health))
         try:
             yield
         finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        if request.url.path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
+            from starlette.responses import JSONResponse
+            states = getattr(request.app.state, 'workflow_health', {})
+            healthy = bool(states) and all(states.values())
+            return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
         if _has_dot_segment(request.url.path):
             return Response("Bad request", status_code=400)
         if web_app and _is_bridge_internal(request.url.path):
@@ -736,7 +753,7 @@ def _factory() -> Starlette:
         for r in spec
     ]
     public_scheme = os.environ.get("HUBZOID_EDGE_PUBLIC_SCHEME", "").strip().lower()
-    kwargs = {}
+    kwargs = {"workflow_hubs": json.loads(os.environ.get("HUBZOID_EDGE_WORKFLOW_HUBS", "[]"))}
     raw_fallbacks = os.environ.get("HUBZOID_EDGE_DEFAULT_FALLBACKS", "").strip()
     if raw_fallbacks:
         try:
