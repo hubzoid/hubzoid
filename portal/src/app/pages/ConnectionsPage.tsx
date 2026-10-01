@@ -30,13 +30,25 @@ const badge: Record<Kind, { text: string; className: string }> = {
   blocked: { text: t.connections.notAllowed, className: "bg-sunken text-mute" },
 };
 
-export default function ConnectionsPage({ connected }: { connected: string | null }) {
+export default function ConnectionsPage({
+  connected,
+  connector,
+  error: callbackError,
+}: {
+  connected: string | null;
+  connector: string | null;
+  error: string | null;
+}) {
   const [items, setItems] = useState<Connection[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Connection | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [justConnected, setJustConnected] = useState<string | null>(connected);
+  // ?connector=<id>&error=<code>: the provider or the server turned it down.
+  const [failed, setFailed] = useState<{ id: string; code: string } | null>(
+    callbackError ? { id: connector || "", code: callbackError } : null,
+  );
 
   const load = useCallback(async () => {
     setError(null);
@@ -52,10 +64,10 @@ export default function ConnectionsPage({ connected }: { connected: string | nul
     void load();
   }, [load]);
 
-  // ?connected=<id> is a one-time success note from the OAuth callback.
+  // ?connected= and ?error= are one-time notes from the OAuth callback.
   useEffect(() => {
-    if (connected) navigate("/account/connections", { replace: true });
-  }, [connected]);
+    if (connected || callbackError) navigate("/account/connections", { replace: true });
+  }, [connected, callbackError]);
 
   const connect = async (c: Connection) => {
     setBusy(c.connector_id);
@@ -90,6 +102,7 @@ export default function ConnectionsPage({ connected }: { connected: string | nul
   };
 
   const connectedName = justConnected ? items?.find((c) => c.connector_id === justConnected)?.name ?? justConnected : null;
+  const failedName = failed ? (items?.find((c) => c.connector_id === failed.id)?.name ?? (failed.id || t.connections.title)) : null;
 
   return (
     <SettingsFrame title={t.connections.title} current="/account/connections">
@@ -97,6 +110,11 @@ export default function ConnectionsPage({ connected }: { connected: string | nul
       {connectedName && (
         <Notice tone="success" className="mb-6" onDismiss={() => setJustConnected(null)}>
           {t.connections.connectedToast(connectedName)}
+        </Notice>
+      )}
+      {failed && failedName && (
+        <Notice tone="error" className="mb-6" onDismiss={() => setFailed(null)}>
+          {t.connections.failed(failedName, failed.code)}
         </Notice>
       )}
       {error ? (

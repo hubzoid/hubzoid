@@ -221,16 +221,15 @@ function ChatView({
   const [agent, setAgent] = useState<Agent>(initialAgent);
   const [conversation, setConversation] = useState<Conversation | null>(detail?.conversation ?? null);
   const [title, setTitle] = useState<string | null>(detail?.conversation.title ?? null);
-  const titleSeen = useRef(!!detail?.conversation.title);
+  // A new chat is named from its first message at once; the generated title
+  // can arrive after the reply, so the list is checked again a few times.
+  const titleChecks = useRef(detail?.conversation.title ? 2 : 0);
 
   // A title the server generated after the reply (seen through the list) wins.
   const listItems = useConversations().items;
   const listTitle = conversation ? (listItems.find((c) => c.id === conversation.id)?.title ?? null) : null;
   useEffect(() => {
-    if (listTitle && listTitle !== title) {
-      titleSeen.current = true;
-      setTitle(listTitle);
-    }
+    if (listTitle && listTitle !== title) setTitle(listTitle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listTitle]);
 
@@ -254,7 +253,6 @@ function ChatView({
           onConversationCreated(c, pageKey);
         },
         onTitle: (id, next) => {
-          titleSeen.current = true;
           setTitle(next);
           patchLocal(id, { title: next });
         },
@@ -267,13 +265,9 @@ function ChatView({
             id,
             updated_at: Date.now() / 1000,
           });
-          // No title in the stream: the server names chats shortly after the
-          // first reply, so look again in a moment.
-          if (!titleSeen.current) {
-            for (const delay of [1500, 6000])
-              setTimeout(() => {
-                if (!titleSeen.current) void loadConversations(undefined, undefined, true);
-              }, delay);
+          if (titleChecks.current < 2) {
+            titleChecks.current++;
+            for (const delay of [2500, 8000]) setTimeout(() => void loadConversations(undefined, undefined, true), delay);
           }
         },
         onUnauthorized: () => navigate(`/auth?redirect=${encodeURIComponent(location.pathname)}`, { replace: true }),
