@@ -441,7 +441,9 @@ def test_oauth_callback_queries_never_reach_the_access_log(hub):
         record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1,
                                    '%s - "%s %s HTTP/%s" %d',
                                    ("127.0.0.1:5", "GET", path, "1.1", 302), None)
-        assert access.filters[-1].filter(record)
+        # Every filter, in order, as the logger applies them (other modules,
+        # such as hubzoid.auth.logredact, may have installed theirs after ours).
+        assert all(flt.filter(record) for flt in list(access.filters))
         return record.getMessage()
 
     shown = line("/oauth/connectors/gmail/callback?code=SECRET-CODE&state=SECRET-STATE")
