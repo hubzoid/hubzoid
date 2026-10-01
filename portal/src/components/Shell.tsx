@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
-import type { Me } from "../api";
+import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users, UsersRound } from "lucide-react";
+import type { Me, MeGroups } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "groups";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -56,6 +56,15 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
+const groupsItem = { key: "groups", icon: <UsersRound size={18} />, label: <a href={href("/groups")}>Groups</a> };
+
+/** Groups are organization-wide: organization administrators see them, and
+ *  only where they exist (the Hubzoid web app, not the legacy Open WebUI mode). */
+function navItems(me: Me) {
+  return me.org_admin && (me as MeGroups).groups === true
+    ? [items[0], items[1], groupsItem, items[2]]
+    : items;
+}
 
 function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {
   return (
@@ -101,7 +110,7 @@ function Sidebar({
     <>
       <Wordmark isDark={isDark} />
       <div className="eyebrow sidebar-label">Workspace</div>
-      <Menu mode="inline" selectedKeys={[area]} items={items} onClick={onNavigate} />
+      <Menu mode="inline" selectedKeys={[area]} items={navItems(me)} onClick={onNavigate} />
       <div className="sidebar-footer">
         <ThemeToggle mode={mode} setMode={setMode} />
         <a href="/">Open chat ↗</a>

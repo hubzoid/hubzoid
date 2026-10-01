@@ -871,3 +871,24 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   .ant-drawer-close { min-width: 40px; min-height: 40px; }
   .stat-hint { width: 32px; height: 32px; }
 }
+
+/* ---- groups ------------------------------------------------------------------ */
+
+.group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-access {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--subtle-border);
+}
+
+.group-access:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}

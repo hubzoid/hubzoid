@@ -328,3 +328,110 @@ export function query(
   const s = q.toString();
   return s ? "?" + s : "";
 }
+
+// ---- groups (web app mode; contract 6.7) ------------------------------------
+
+/** `/me` in the web app mode also says whether groups exist (false in the
+ *  legacy Open WebUI mode, where the routes are not mounted). */
+export type MeGroups = Me & { groups?: boolean };
+
+/** Group fields on an access row: a group grantee (`kind: "group"`), and for a
+ *  person, the capabilities they hold through groups (permission → group names). */
+export type AccessRowGroups = AccessRow & {
+  group_id?: string;
+  members?: number;
+  via_groups?: Record<string, string[]>;
+};
+
+export type GroupSummary = {
+  id: string;
+  /** The grant subject: `group:<id>`. */
+  subject: string;
+  name: string;
+  description: string;
+  source: string;
+  created_by: string | null;
+  created_at: number | null;
+  updated_at: number | null;
+  member_count: number;
+  grant_count: number;
+};
+
+export type GroupMember = {
+  email: string;
+  display: string | null;
+  /** Hubzoid account status: "active", "pending", "none" (no account yet), or
+   *  null when accounts could not be read. */
+  account: string | null;
+  blocked: boolean;
+  added_at: number | null;
+  added_by: string | null;
+};
+
+export type GroupDetail = GroupSummary & {
+  members: GroupMember[];
+  access: { hub: string; hub_name: string; permissions: string[] }[];
+};
+
+/**
+ * A group request. The group routes answer errors as
+ * `{"detail": {"code", "message"}}`; this also reads the Console's older
+ * `{"detail": "<message>", "code"}` shape. Supports PATCH and 204 answers.
+ */
+export async function groupRequest<T>(
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch("/portal/api" + path, {
+      credentials: "include",
+      signal,
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(e instanceof Error && e.message ? e.message : "Network error", 0);
+  }
+  if (!response.ok) {
+    let message = `${response.status} — Request failed`;
+    let code: string | undefined;
+    let data: Record<string, unknown> | undefined;
+    try {
+      data = await response.json();
+      const detail = data?.detail as unknown;
+      if (typeof detail === "string") message = detail;
+      else if (detail && typeof detail === "object") {
+        const d = detail as { message?: unknown; code?: unknown };
+        if (typeof d.message === "string") message = d.message;
+        if (typeof d.code === "string") code = d.code;
+      }
+      if (!code && typeof data?.code === "string") code = data.code;
+    } catch {
+      /* use status */
+    }
+    throw new ApiError(message, response.status, code, data && typeof data === "object" ? data : undefined);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json();
+}
+
+export const groupsApi = {
+  list: (signal?: AbortSignal) =>
+    groupRequest<{ groups: GroupSummary[] }>("GET", "/groups", undefined, signal),
+  get: (id: string, signal?: AbortSignal) =>
+    groupRequest<{ group: GroupDetail }>("GET", `/groups/${encodeURIComponent(id)}`, undefined, signal),
+  create: (body: { name: string; description?: string | null; emails?: string[] }) =>
+    groupRequest<{ group: GroupDetail }>("POST", "/groups", body),
+  update: (id: string, body: { name?: string; description?: string | null }) =>
+    groupRequest<{ group: GroupDetail }>("PATCH", `/groups/${encodeURIComponent(id)}`, body),
+  remove: (id: string) => groupRequest<void>("DELETE", `/groups/${encodeURIComponent(id)}`),
+  addMembers: (id: string, emails: string[]) =>
+    groupRequest<{ group: GroupDetail; added: string[] }>(
+      "POST", `/groups/${encodeURIComponent(id)}/members`, { emails }),
+  removeMember: (id: string, email: string) =>
+    groupRequest<void>("DELETE", `/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`),
+};

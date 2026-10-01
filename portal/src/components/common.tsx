@@ -10,13 +10,14 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ShieldCheck, Sparkle, Workflow } from "lucide-react";
+import { ShieldCheck, Sparkle, Users, Workflow } from "lucide-react";
 import type { Permission } from "../api";
 import {
   accountStatus,
   capabilityLabel,
   formatTime,
   initials,
+  isGroup,
   isService,
   personName,
   relativeTime,
@@ -152,11 +153,14 @@ export function CapabilityTag({
   permission,
   catalog,
   via,
+  groups,
 }: {
   permission: string;
   catalog?: Catalog | null;
   /** How the capability is held when it is not a direct grant. */
-  via?: "inherited" | "public";
+  via?: "inherited" | "public" | "group";
+  /** With `via="group"`: the groups it is held through. */
+  groups?: string[];
 }) {
   const meta: Permission | undefined = catalog?.[permission];
   const label = capabilityLabel(permission, catalog);
@@ -169,10 +173,16 @@ export function CapabilityTag({
       ? "Held through organization administrator rights; change it under People."
       : via === "public"
         ? "Held because this agent is open to everyone signed in."
-        : "",
+        : via === "group"
+          ? `Held through the group${(groups ?? []).length === 1 ? "" : "s"} ${(groups ?? []).join(", ")}; change it in the group’s access or membership.`
+          : "",
   ]
     .filter(Boolean)
     .join(" ");
+  const viaGroup =
+    via === "group" && groups?.length
+      ? ` · via ${groups[0]}${groups.length > 1 ? ` +${groups.length - 1}` : ""}`
+      : "";
   return (
     <Tooltip title={hint || undefined}>
       <Tag
@@ -181,7 +191,7 @@ export function CapabilityTag({
         style={{ marginInlineEnd: 0 }}
       >
         {label}
-        {via === "inherited" ? " · inherited" : via === "public" ? " · everyone" : ""}
+        {via === "inherited" ? " · inherited" : via === "public" ? " · everyone" : viaGroup}
         {meta?.obsolete ? " · no longer available" : ""}
       </Tag>
     </Tooltip>
@@ -199,6 +209,8 @@ export function PersonAvatar({
 }) {
   if (isService(subject))
     return <Avatar size={size} shape="square" className="hz-avatar service" icon={<Workflow size={16} />} />;
+  if (isGroup(subject))
+    return <Avatar size={size} shape="square" className="hz-avatar group" icon={<Users size={16} aria-hidden />} />;
   return (
     <Avatar size={size} className={`hz-avatar${subject === EVERYONE ? " everyone" : ""}`}>
       {initials(subject, display)}
