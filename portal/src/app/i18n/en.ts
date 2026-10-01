@@ -287,6 +287,7 @@ export const en = {
     uploaded: "Uploaded",
     uploadError: "Upload failed",
     imagePreview: (name: string) => `Preview of ${name}`,
+    loadImage: (host: string) => `Load image from ${host}`,
     file: "File",
     you: "You",
     assistantLabel: (name: string) => `${name} said`,
