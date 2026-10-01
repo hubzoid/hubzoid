@@ -29,6 +29,9 @@ export const en = {
   errors: {
     network: "Can't reach Hubzoid. Check your connection and try again.",
     generic: "Something went wrong. Try again in a moment.",
+    crashTitle: "This page stopped working",
+    crash: "Reload to try again. Your chats are saved.",
+    reload: "Reload",
     server: "Hubzoid had a problem handling that. Try again in a moment.",
     sessionExpired: "Your session ended. Sign in again to continue.",
     forbidden: "You don't have access to this.",
