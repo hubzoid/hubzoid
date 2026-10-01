@@ -1417,6 +1417,29 @@ function step(name) {
     await touchCtx.close();
     await page.setViewportSize({ width: 1440, height: 950 });
 
+    // ---- sign out --------------------------------------------------------------------------
+    step("Sign out ends Open WebUI's session in the legacy mode, the Hubzoid web app's in the default mode");
+    const signOuts = [];
+    await context.route(`${ORIGIN}/api/v1/auths/signout`, (route) => {
+      signOuts.push(`openwebui ${route.request().method()}`);
+      return route.fulfill({ json: { status: true, redirect_url: "/auth" } });
+    });
+    await context.route(`${ORIGIN}/api/auth/logout`, (route) => {
+      signOuts.push(`hubzoid ${route.request().method()}`);
+      return route.fulfill({ status: 204 });
+    });
+    await context.route(`${ORIGIN}/auth`, (route) => route.fulfill({ body: "<title>Sign in</title>", contentType: "text/html" }));
+    await go("/people");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL(`${ORIGIN}/auth`);
+    const legacySignIn = state.signIn;
+    state.signIn = { ...legacySignIn, links: true }; // /me in the default mode: Hubzoid accounts
+    await go("/people");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL(`${ORIGIN}/auth`);
+    assert.deepEqual(signOuts, ["openwebui POST", "hubzoid POST"]);
+    state.signIn = legacySignIn;
+
     // ---- ordinary user -----------------------------------------------------------------------
     step("An ordinary user is turned away without seeing any administration UI");
     state.role = "user";
