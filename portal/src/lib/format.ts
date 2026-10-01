@@ -418,6 +418,13 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
       return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
     case "run_cancel":
       return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName)] };
+    // An administrator started an eval run from the Console (paid model calls).
+    case "evals_run":
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" started an eval run in "), agent(hubName)],
+        detail: row.permission ? `Run ${row.permission}. Eval runs make model calls.` : "Eval runs make model calls.",
+      };
     case "account_unavailable":
       return {
         tone: "negative",

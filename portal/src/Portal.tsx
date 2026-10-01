@@ -19,7 +19,7 @@ const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => (
 const ConnectorsScreen = lazy(() => import("./screens/ConnectorsScreen").then((m) => ({ default: m.ConnectorsScreen })));
 const GroupsScreen = lazy(() => import("./screens/groups/GroupsScreen").then((m) => ({ default: m.GroupsScreen })));
 
-const TABS: AgentTab[] = ["access", "runs", "activity"];
+const TABS: AgentTab[] = ["access", "runs", "evals", "activity"];
 
 export default function Portal() {
   const { mode, setMode, isDark } = useThemeMode();
@@ -127,7 +127,7 @@ function Router({
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Runs & schedules and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Access, Runs & schedules, Evals and Activity, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />
