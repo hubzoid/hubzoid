@@ -334,7 +334,7 @@ def test_delete_removes_messages_shares_and_files(hub, client, agent):
     _send(client, "c_delete001", "make an artifact", agent, "m_user00001", "m_asst00001",
           files=(f["file_id"],))
     client.post("/api/conversations/c_delete001/share", headers=ORIGIN)
-    folder = memory.chat_root(hub, "c_delete001")
+    folder = memory.chat_root(hub, "web-c_delete001")
     assert (folder / "uploads" / "notes.txt").is_file()
     assert (folder / "artifacts" / "scripted-report.md").is_file()
     r = client.delete("/api/conversations/c_delete001", headers=ORIGIN)
@@ -517,7 +517,7 @@ def test_a_refused_first_message_leaves_no_conversation(client, agent):
     assert client.get("/api/conversations").json()["items"] == []
     from hubzoid import memory
 
-    assert not memory.chat_root(client.app.state.chat.hub_dir, "c_refused01").exists()
+    assert not memory.chat_root(client.app.state.chat.hub_dir, "web-c_refused01").exists()
     # an id conflict is found before the conversation is made, too
     _send(client, "c_taken0001", "hi", agent, "m_taken0001", "m_taken0002")
     r = _send(client, "c_refused02", "hi", agent, "m_taken0001", "m_fresh0001")

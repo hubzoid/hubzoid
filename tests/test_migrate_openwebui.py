@@ -905,6 +905,30 @@ def test_a_different_file_with_the_same_name_is_kept_apart(gateway):
     assert (folder / "report.pdf").read_bytes().startswith(b"a later")  # untouched
 
 
+def test_imported_files_are_where_the_web_app_looks(gateway):
+    """The web app finds an imported conversation's files in the folder the
+    import copied them to (``chat.store.chat_key``: the Open WebUI chat id)."""
+    from hubzoid.chat import files as chat_files
+    from hubzoid.chat import store as chat_store
+
+    assert _run(gateway, apply=True).applied
+    engine = gateway.engine()
+    try:
+        conv = chat_store.ConversationStore(engine).get_conversation(gateway.chat("files"))
+    finally:
+        engine.dispose()
+    assert conv["source"] == "migrated"
+    key = chat_store.chat_key(conv)
+    assert key == gateway.chat("files")
+    parts = json.loads(gateway.rows("SELECT content FROM hz_messages WHERE id=:i",
+                                    i=gateway.msg("c2u1"))[0]["content"])
+    found = {p.get("name") or p["file_id"]: chat_files.file_part(gateway.hubs["finance"], key, p["file_id"])
+             for p in parts if p["type"] in ("file", "image")}
+    assert found["notes.txt"] is not None and found["report.pdf"] is not None
+    assert found["missing.docx"] is None                    # reported missing by the import
+    assert all(v is not None for k, v in found.items() if k != "missing.docx")
+
+
 def test_history_only_in_the_chat_message_table(gateway):
     """Open WebUI 0.9+ also writes each message to chat_message. When a chat's
     own history is empty, the messages come from there."""

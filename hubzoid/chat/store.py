@@ -12,6 +12,16 @@ the old one, a regeneration a new assistant message beside the old reply.
 path from the root to it. Ids are client-generated (see ``valid_message_id``)
 and globally unique, so an id already used in another conversation is refused.
 
+A conversation's files (uploads, the agent's artifacts) live in the hub folder
+under ``.hubzoid/chats/<key>/``, ``chat_key`` below, which is also the chat
+scope of its runs. That folder tree is shared with every other surface (Open
+WebUI chats of the legacy mode, Slack, Telegram, WhatsApp), so a conversation
+started here uses ``web-<id>``: an id the browser chose never names another
+surface's chat. A conversation imported from Open WebUI keeps its id, the
+folder ``hubzoid migrate openwebui`` copied its files to. Web conversation ids
+are unique ignoring case (index ``hz_conversations_web_id``), so two of them
+never share a folder on a case-insensitive file system.
+
 Everything here is synchronous (callers in the event loop use a thread).
 """
 from __future__ import annotations
@@ -29,6 +39,8 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
+
+from .. import memory as memlib
 
 metadata = sa.MetaData()
 
@@ -77,10 +89,17 @@ shares = sa.Table(
 
 # Client-generated ids (contract 6.2).
 MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
-# A conversation id also names the per-chat folder (``memory.chat_root``), whose
-# sanitiser trims leading and trailing ``-`` and ``_``, so those must be letters
-# or digits for the folder, download links and tools to agree on one name.
-CONVERSATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{6,62}[A-Za-z0-9]$")
+# A conversation id also names the per-chat folder, ``web-<id>`` (``chat_key``).
+# Download links pass that name through ``memory.sanitize_chat_id``, which trims
+# leading and trailing ``-`` and ``_`` and keeps 64 characters, so the id starts
+# and ends with a letter or digit and has at most 60 characters: the folder,
+# download links and tools then agree on one name.
+CONVERSATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{6,58}[A-Za-z0-9]$")
+
+# ``source`` of a conversation imported by ``hubzoid migrate openwebui``.
+MIGRATED = "migrated"
+# The per-chat folder of a conversation started in the web app is this plus its id.
+WEB_PREFIX = "web-"
 
 STATUSES = ("complete", "running", "cancelled", "error")
 DEFAULT_PAGE = 50
@@ -111,6 +130,17 @@ def valid_message_id(value: Any) -> bool:
 
 def valid_conversation_id(value: Any) -> bool:
     return isinstance(value, str) and bool(CONVERSATION_ID.fullmatch(value))
+
+
+def chat_key(conv: dict) -> str:
+    """The conversation's per-chat folder under ``.hubzoid/chats/`` and the
+    chat scope of its runs: ``web-<id>`` for a conversation started in the web
+    app, the Open WebUI id for an imported one (the folder the import copied
+    its files to, named as ``hubzoid migrate openwebui`` names it)."""
+    conv_id = str(conv["id"])
+    if conv.get("source") == MIGRATED:
+        return memlib.sanitize_chat_id(conv_id) or conv_id
+    return WEB_PREFIX + conv_id
 
 
 def new_id(prefix: str) -> str:
@@ -191,6 +221,17 @@ class ConversationStore:
         with self.engine.connect() as conn:
             row = conn.execute(conversations.select().where(conversations.c.id == conv_id)).first()
         return _conversation(row) if row else None
+
+    def conversation_for_chat_key(self, key: str) -> dict | None:
+        """The conversation whose per-chat folder is ``key`` (the reverse of
+        ``chat_key``, exact, case included), or None."""
+        ids = [key[len(WEB_PREFIX):]] if key.startswith(WEB_PREFIX) else []
+        ids.append(key)
+        for conv_id in ids:
+            conv = self.get_conversation(conv_id) if conv_id else None
+            if conv is not None and chat_key(conv) == key:
+                return conv
+        return None
 
     def owned_conversation(self, conv_id: str, owner_id: str) -> dict | None:
         """The conversation when ``owner_id`` owns it, else None (never tells

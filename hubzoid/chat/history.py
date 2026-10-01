@@ -8,8 +8,8 @@ OpenAI-compatible one. Assistant messages contribute their answer text only
 its block, as the notes ``server._attachment_note`` writes: an image becomes
 ``[Image: name]``, which ``hubzoid.vision_inject`` shows to the model, and any
 other file points the agent at ``read_upload``. Files live in the
-conversation's uploads folder (``memory.chat_upload_dir``), which is the
-turn's chat scope.
+conversation's uploads folder (``memory.chat_upload_dir`` of its
+``store.chat_key``), whose folder is the turn's chat scope.
 """
 from __future__ import annotations
 
@@ -36,8 +36,9 @@ def attachment_note(name: str, size: int, mime: str, target: Path, *, image: boo
     return note.replace("application/octet-stream", mime, 1)
 
 
-def user_text(hub_dir: Path, conversation_id: str, content: list) -> str:
-    upload_dir = memlib.chat_upload_dir(Path(hub_dir), conversation_id)
+def user_text(hub_dir: Path, key: str, content: list) -> str:
+    """A user message as prompt text; ``key`` is the conversation's ``store.chat_key``."""
+    upload_dir = memlib.chat_upload_dir(Path(hub_dir), key)
     notes: list[str] = []
     texts: list[str] = []
     for part in content or []:
@@ -61,8 +62,9 @@ def assistant_text(content: list) -> str:
                    if isinstance(p, dict) and p.get("type") == "text")
 
 
-def build_prompt(hub_dir: Path, conversation_id: str, branch: list[dict]) -> str:
-    """The flattened prompt for a branch of stored messages (root first)."""
+def build_prompt(hub_dir: Path, key: str, branch: list[dict]) -> str:
+    """The flattened prompt for a branch of stored messages (root first) of the
+    conversation whose ``store.chat_key`` is ``key``."""
     from .. import server
 
     turns: list[dict] = []
@@ -70,7 +72,7 @@ def build_prompt(hub_dir: Path, conversation_id: str, branch: list[dict]) -> str
         role = message.get("role")
         if role == "user":
             turns.append({"role": "user",
-                          "content": user_text(hub_dir, conversation_id, message.get("content"))})
+                          "content": user_text(hub_dir, key, message.get("content"))})
         elif role == "assistant":
             turns.append({"role": "assistant", "content": assistant_text(message.get("content"))})
     return server._flatten_messages(turns)

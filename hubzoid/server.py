@@ -780,7 +780,10 @@ def _require_safe_chat_id(raw: str) -> str:
 
 def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
     """True when the signed-in person (web app session) owns the conversation
-    whose files live under this chat id. Any failure is a no."""
+    whose files live under this chat id (its ``chat.store.chat_key``: ``web-<id>``,
+    or the Open WebUI id of an imported one). Another surface's chat (Slack,
+    Telegram, WhatsApp, a legacy Open WebUI chat) is never a conversation's,
+    even when a conversation has the same id. Any failure is a no."""
     try:
         from . import auth
         from .chat import store as chat_store
@@ -788,7 +791,7 @@ def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
         user = auth.current_user(request, hub_dir)
         if user is None:
             return False
-        conv = chat_store.for_hub(hub_dir).get_conversation(chat_id)
+        conv = chat_store.for_hub(hub_dir).conversation_for_chat_key(chat_id)
         return (conv is not None and conv["owner_id"] == user.id
                 and conv["hub"] == Path(hub_dir).name.lower())
     except Exception:  # noqa: BLE001 — fall back to the token and key checks
