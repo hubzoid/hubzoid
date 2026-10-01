@@ -46,7 +46,22 @@ def _is_person(subject: str) -> bool:
 
 
 def _directory_accounts(hub_dir: Path) -> set[str] | None:
-    """Normalized emails of every login account, or None when unreadable."""
+    """Normalized emails of every login account, or None when unreadable.
+    Default mode reads Hubzoid's own accounts; legacy mode, Open WebUI's."""
+    from .. import appmode
+
+    if not appmode.is_legacy(hub_dir):
+        try:
+            from ..auth import users
+
+            people = users.list_users(hub_dir)
+        except Exception:  # noqa: BLE001 — unknown, never 0
+            log.warning("account count: account store unreadable")
+            return None
+        # The local owner is not a person once sign-in is on.
+        local = not appmode.auth_enabled(hub_dir)
+        return {normalize(u["email"]) for u in people
+                if _is_person(normalize(u["email"])) and (local or u["source"] != "local")}
     con = owui_db.connect_ro(hub_dir)
     if con is None:
         return None

@@ -9,6 +9,12 @@ from hubzoid import deployment, portal, webui
 from hubzoid.edge import build_edge_app, EdgeRoute
 
 
+@pytest.fixture(autouse=True)
+def _open_webui_mode(monkeypatch):
+    """These tests cover Open WebUI accounts: the legacy UI mode (HUBZOID_UI=openwebui)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 def test_task_header_is_only_added_to_owned_loopback_connections():
     config = {'1': {'headers': {'Existing': 'kept'}}}
     result = webui._local_task_headers(config, {'OPENAI_API_BASE_URLS': 'http://127.0.0.1:8000/v1;https://provider.example/v1'})
