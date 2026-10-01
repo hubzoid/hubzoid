@@ -240,6 +240,7 @@ export const en = {
     unknown: "Unknown agent",
     unavailable:
       "This chat's agent isn't available to you anymore. You can still read the conversation.",
+    requestedUnavailable: (name: string) => `The agent in that link isn't available to you, so this chat uses ${name}.`,
   },
 
   chat: {
