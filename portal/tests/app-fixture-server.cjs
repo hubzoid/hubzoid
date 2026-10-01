@@ -103,8 +103,8 @@ function seed() {
     ],
     sessions: new Map(),
     links: new Map([
-      ["set-token-valid-0001", { email: "sam@example.com", purpose: "set", used: false }],
-      ["reset-token-valid-001", { email: "ada@example.com", purpose: "reset", used: false }],
+      ["set-token-valid-0001", { email: "sam@example.com", purpose: "set_password", used: false }],
+      ["reset-token-valid-001", { email: "ada@example.com", purpose: "reset_password", used: false }],
     ]),
     conversations: new Map(),
     messages: new Map(),
@@ -363,6 +363,13 @@ function createApp(options = {}) {
       say("I couldn't reach the CRM, so I can't list open renewals right now. Try again in a few minutes.");
       return steps;
     }
+    if (lower.includes("research")) {
+      // A tool from a personal connection, named as the runtimes name MCP tools.
+      steps.push({ kind: "tool", id: "call_" + rid("", 8), name: "mcp__my_research__list_knowledge", args: { topic: "pricing" }, delay: 100 });
+      steps.push({ kind: "tool-ok", delay: 300 });
+      say("Your research notes list three pricing studies from this year.");
+      return steps;
+    }
     if (lower.includes("tool")) {
       steps.push({ kind: "tool", id: "call_" + rid("", 8), name: "read_knowledge", args: { path: "knowledge/pricing.md" }, delay: 100 });
       steps.push({ kind: "tool-ok", delay: 500 });
@@ -389,7 +396,8 @@ function createApp(options = {}) {
     }
     if (lower.includes("report") || lower.includes("download")) {
       const prefix = conv.api_base || "";
-      say(`I wrote the report. Download it here: [quarterly-report.csv](${prefix}/artifacts/${conv.id}/quarterly-report.csv)`);
+      // As the real runtimes end a reply: a "Download <file>" footer link.
+      say(`I wrote the report.\n\n[Download quarterly-report.csv](${prefix}/artifacts/${conv.id}/quarterly-report.csv)`);
       return steps;
     }
     say(`Here's what I found about “${text.slice(0, 60)}”.\n\n- It's covered in the hub's knowledge.\n- Nothing needs to change today.\n\nAsk me for more detail on any point.`);
@@ -968,6 +976,16 @@ function createApp(options = {}) {
         }
         res.writeHead(302, { location: `/account/connections?connected=${encodeURIComponent(m[1])}` });
         return res.end();
+      }
+      if (url.pathname === "/mcp/oauth/consent") {
+        // The hosted MCP server's consent page: a server page outside the chat
+        // app that sends a signed-out person to sign in and back.
+        if (!currentUser(req)) {
+          res.writeHead(303, { location: `/auth?redirect=${encodeURIComponent(url.pathname + url.search)}` });
+          return res.end();
+        }
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        return res.end(`<!doctype html><meta charset="utf-8"><title>Connect</title><h1>Allow Claude to use Hubzoid Guide?</h1>`);
       }
       if (url.pathname.startsWith("/branding/")) {
         // The hub's branding folder (public: the sign-in page shows it too).
