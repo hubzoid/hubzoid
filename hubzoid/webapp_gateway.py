@@ -32,7 +32,8 @@ the prefix stripped and ``X-Forwarded-Prefix: /b/<slug>``; a bridge seeing its
 own prefix serves its own hub's branding.
 
 Access decisions fail closed: a store or manifest error answers 503, never a
-wider list.
+wider list. Database and file work runs in the threadpool, so a slow read
+(a busy SQLite file) never stalls the bridge's other requests.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from . import auth
 from .access.identity import normalize
@@ -256,9 +258,9 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
 
     @app.get("/api/agents")
     async def list_agents(request: Request):
-        user = auth.require_user(request, hub_dir)
+        user = await run_in_threadpool(auth.require_user, request, hub_dir)
         try:
-            agents = agents_for(hub_dir, user.email, model_label=model_label)
+            agents = await run_in_threadpool(agents_for, hub_dir, user.email, model_label=model_label)
         except Exception:  # noqa: BLE001 — fail closed
             log.exception("webapp: access check failed")
             raise HTTPException(503, detail={"code": "access_unavailable",
@@ -266,43 +268,52 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         return JSONResponse({"agents": agents,
                              "default_agent": agents[0]["id"] if agents else None})
 
-    @app.get("/api/branding")
-    async def branding(request: Request):
+    def branding_payload(request: Request) -> dict:
         try:
             scope = branding_scope(hub_dir, request, model_label=model_label)
         except Exception:  # noqa: BLE001 — chrome falls back to the product name
             log.exception("webapp: branding unavailable")
-            return JSONResponse({"name": "Hubzoid", "logo_url": None, "favicon_url": None,
-                                 "custom_css_url": None})
+            return {"name": "Hubzoid", "logo_url": None, "favicon_url": None,
+                    "custom_css_url": None}
         folder = scope.folder
         logo = _find(folder, _LOGO_CANDIDATES) if folder else None
         favicon = _find(folder, _FAVICON_CANDIDATES) if folder else None
         css = _find(folder, ("custom.css",)) if folder else None
         base = scope.url_base
-        return JSONResponse({
+        return {
             "name": scope.name,
             "logo_url": f"{base}/branding/{logo}" if logo else None,
             "favicon_url": f"{base}/branding/{favicon}" if favicon else None,
             "custom_css_url": f"{base}/branding/{css}" if css else None,
-        })
+        }
+
+    @app.get("/api/branding")
+    async def branding(request: Request):
+        return JSONResponse(await run_in_threadpool(branding_payload, request))
+
+    def branding_path(filename: str, request: Request) -> Path | None:
+        try:
+            scope = branding_scope(hub_dir, request, model_label=model_label)
+        except Exception:  # noqa: BLE001
+            log.exception("webapp: branding unavailable")
+            return None
+        if scope.folder is None:
+            return None
+        base = scope.folder.resolve()
+        real = _find(base, (filename.lower(),))
+        if real is None:
+            return None
+        target = (base / real).resolve()
+        if base not in target.parents or not target.is_file():
+            return None
+        return target
 
     @app.get("/branding/{filename}")
     async def branding_file(filename: str, request: Request):
         if not filename or filename.startswith("."):
             raise HTTPException(404, "not found")
-        try:
-            scope = branding_scope(hub_dir, request, model_label=model_label)
-        except Exception:  # noqa: BLE001
-            log.exception("webapp: branding unavailable")
-            raise HTTPException(404, "not found")
-        if scope.folder is None:
-            raise HTTPException(404, "not found")
-        base = scope.folder.resolve()
-        real = _find(base, (filename.lower(),))
-        if real is None:
-            raise HTTPException(404, "not found")
-        target = (base / real).resolve()
-        if base not in target.parents or not target.is_file():
+        target = await run_in_threadpool(branding_path, filename, request)
+        if target is None:
             raise HTTPException(404, "not found")
         return FileResponse(str(target), headers={"Cache-Control": "public, max-age=300"})
 
@@ -370,57 +381,63 @@ def _mount_groups(app: FastAPI, hub_dir: Path) -> None:
 
         return wrapper
 
+    # Every service call reads or writes the store: run it in the threadpool.
+    def call(fn, *args, **kwargs):
+        return run_in_threadpool(fn, *args, **kwargs)
+
     @app.get("/portal/api/groups")
     @refused
     async def list_groups(request: Request):
-        return JSONResponse({"groups": service.list(actor(request))})
+        who = await call(actor, request)
+        return JSONResponse({"groups": await call(service.list, who)})
 
     @app.post("/portal/api/groups")
     @refused
     async def create_group(request: Request):
-        who = actor(request)
+        who = await call(actor, request)
         same_origin(request)
         payload = await body(request, CreateBody)
-        group = service.create(who, name=payload.name, description=payload.description,
-                               emails=payload.emails)
+        group = await call(service.create, who, name=payload.name,
+                           description=payload.description, emails=payload.emails)
         return JSONResponse({"group": group}, status_code=201)
 
     @app.get("/portal/api/groups/{group_id}")
     @refused
     async def get_group(group_id: str, request: Request):
-        return JSONResponse({"group": service.get(actor(request), group_id)})
+        who = await call(actor, request)
+        return JSONResponse({"group": await call(service.get, who, group_id)})
 
     @app.patch("/portal/api/groups/{group_id}")
     @refused
     async def update_group(group_id: str, request: Request):
-        who = actor(request)
+        who = await call(actor, request)
         same_origin(request)
         payload = await body(request, UpdateBody)
         description = payload.description if "description" in payload.model_fields_set else UNSET
-        group = service.update(who, group_id, name=payload.name, description=description)
+        group = await call(service.update, who, group_id, name=payload.name, description=description)
         return JSONResponse({"group": group})
 
     @app.delete("/portal/api/groups/{group_id}")
     @refused
     async def delete_group(group_id: str, request: Request):
-        who = actor(request)
+        who = await call(actor, request)
         same_origin(request)
-        service.delete(who, group_id)
+        await call(service.delete, who, group_id)
         return Response(status_code=204)
 
     @app.post("/portal/api/groups/{group_id}/members")
     @refused
     async def add_members(group_id: str, request: Request):
-        who = actor(request)
+        who = await call(actor, request)
         same_origin(request)
         payload = await body(request, MembersBody)
-        group = service.add_members(who, group_id, payload.emails)
+        group = await call(service.add_members, who, group_id, payload.emails)
         return JSONResponse({"group": group, "added": group.pop("added", [])})
 
     @app.delete("/portal/api/groups/{group_id}/members/{email}")
     @refused
     async def remove_member(group_id: str, email: str, request: Request):
-        who = actor(request)
+        who = await call(actor, request)
         same_origin(request)
-        service.remove_member(who, group_id, email)
+        await call(service.remove_member, who, group_id, email)
         return Response(status_code=204)
