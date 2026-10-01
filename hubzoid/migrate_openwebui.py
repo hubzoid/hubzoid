@@ -752,7 +752,7 @@ class People:
     action: dict[str, str] = field(default_factory=dict)         # insert | update | same | keep
     email_of: dict[str, str] = field(default_factory=dict)       # account id -> email in Hubzoid
     identity_rows: list[dict] = field(default_factory=list)      # hz_user_identities inserts
-    inactive_new: set[str] = field(default_factory=set)          # emails suspended on insert
+    to_block: set[str] = field(default_factory=set)              # emails this run blocks
     inactive: set[str] = field(default_factory=set)              # deactivated in Open WebUI
     raw_pending: set[str] = field(default_factory=set)           # pending in Open WebUI
     identities: list[dict] = field(default_factory=list)         # for GrantStore.apply_migration
@@ -876,8 +876,15 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
             report.skip("users", "access store bound to another account", uid)
             people.skipped_ids.add(uid)
             continue
-        if action == "insert" and email in people.inactive:
-            people.inactive_new.add(email)
+        reactivated = False
+        if email in people.inactive:
+            # Deactivated in Open WebUI: blocked, on a re-run too (deactivated
+            # since). Only an administrator's reactivation in the Console
+            # (suspended:<email> = "0") outlives it.
+            block = target.meta.get("suspended:" + final_email)
+            if action == "insert" or block is None:
+                people.to_block.add(final_email)
+            reactivated = action != "insert" and block == "0"
         people.action[uid] = action
         people.rows[uid] = row
         people.email_of[uid] = final_email
@@ -889,7 +896,11 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
         if row["status"] == "pending":
             report.bump("users", "pending")
         report.bump("users", "with_password" if row.get("password_hash") else "without_password")
-        if email in people.inactive:
+        if reactivated:
+            report.bump("users", "deactivated_in_open_webui_reactivated_in_hubzoid")
+            report.note("Some people deactivated in Open WebUI were reactivated in the Console. "
+                        "They stay active; block them in the Console if they should not be.")
+        elif email in people.inactive:
             report.bump("users", "deactivated_in_open_webui_blocked")
         if service and email == service:
             report.note("The gateway's service account (HUBZOID_GATEWAY_ADMIN_EMAIL) was imported "
@@ -2069,7 +2080,7 @@ class Writer:
                    "VALUES (:provider, :issuer, :subject, :user_id, :email, :created_at)", people.identity_rows)
         self._many("UPDATE hz_identities SET display=:d WHERE subject=:s AND (display IS NULL OR display='')",
                    [dict(s=e, d=n) for e, n in sorted(people.display.items()) if n])
-        for email in sorted(people.inactive_new):
+        for email in sorted(people.to_block):
             self.conn.execute(text(_UPSERT_META), {"k": "suspended:" + email, "v": "1"})
             self.store.write_audit(self.conn, ACTOR, "suspend", subject=email, hub="*", surface="migration")
         self.report.bump("users", "imported", len(inserts))
