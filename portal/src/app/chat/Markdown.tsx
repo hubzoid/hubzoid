@@ -53,7 +53,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 function CodeHeader({ language, code }: CodeHeaderProps) {
   return (
     <div className="hz-code-head">
-      <span>{language && language !== "unknown" ? language : "text"}</span>
+      <span>{language && language !== "unknown" ? language : t.chat.plainText}</span>
       <CopyButton text={code} label={t.chat.copyCode} />
     </div>
   );
@@ -128,7 +128,7 @@ function Table(props: ComponentPropsWithoutRef<"table"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   void _node;
   return (
-    <div className="hz-table-wrap" tabIndex={0} role="region" aria-label="Table">
+    <div className="hz-table-wrap" tabIndex={0} role="region" aria-label={t.chat.table}>
       <table {...rest} />
     </div>
   );

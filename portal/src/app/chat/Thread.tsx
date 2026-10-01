@@ -1,7 +1,7 @@
 // The conversation itself, built from assistant-ui primitives: messages with
 // their parts, branch picker, copy, edit and regenerate, the composer with
 // attachments, and the empty state with the agent picker and suggestions.
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -47,7 +47,6 @@ export type ThreadProps = {
   onStopFollowed?: () => void;
   isFollowing?: boolean;
   onBranchSwitched?: (headId: string | undefined) => void;
-  countAttachmentsRef?: { current: () => number };
   composerDisabledReason?: string | null;
   notice?: ReactNode;
 };
@@ -63,7 +62,6 @@ export function Thread(props: ThreadProps) {
   const { agent, readOnly } = props;
   const aui = useAui();
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
-  const lastStatus = useRef<string | null>(null);
 
   // Screen readers hear when a reply starts and how it ended.
   useAuiEvent({ scope: "*", event: "thread.runStart" }, () => announce(t.chat.responding));
@@ -83,17 +81,9 @@ export function Thread(props: ThreadProps) {
     toast(event.message || t.errors.generic, "error");
   });
 
-  useEffect(() => {
-    if (props.countAttachmentsRef)
-      props.countAttachmentsRef.current = () => aui.thread().composer().getState().attachments.length;
-  }, [aui, props.countAttachmentsRef]);
-
-  useEffect(() => {
-    lastStatus.current = null;
-  }, [agent.id]);
-
   const body = (
     <ThreadPrimitive.Viewport
+      autoScroll={!isEmpty}
       className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
       data-testid="thread-viewport"
     >
@@ -119,6 +109,7 @@ export function Thread(props: ThreadProps) {
       {!readOnly && (
         <ThreadPrimitive.ViewportFooter className="sticky bottom-0 z-10 mt-auto bg-gradient-to-t from-bg from-70% to-transparent px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
           <div className="relative mx-auto w-full max-w-[780px]">
+            {!isEmpty && (
             <ThreadPrimitive.ScrollToBottom asChild>
               <button
                 type="button"
@@ -128,6 +119,7 @@ export function Thread(props: ThreadProps) {
                 <ArrowDown size={16} aria-hidden />
               </button>
             </ThreadPrimitive.ScrollToBottom>
+            )}
             {props.notice}
             <Composer {...props} />
           </div>
@@ -182,7 +174,7 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
         </Notice>
       )}
       {picking && (
-        <section aria-labelledby="hz-pick-agent" className="mb-10">
+        <section aria-labelledby="hz-pick-agent" className="mb-8 sm:mb-10">
           <h2 id="hz-pick-agent" className="hz-eyebrow m-0 mb-3">
             {t.agents.choose}
           </h2>
@@ -208,18 +200,25 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
                   }}
                   tabIndex={selected ? 0 : -1}
                   className={cx(
-                    "flex items-start gap-3 rounded-xl border p-3.5 text-left transition-colors",
+                    "flex items-start gap-3 rounded-xl border p-3 text-left transition-colors sm:p-3.5",
                     selected ? "border-accent bg-accent-soft/60" : "border-line bg-raised hover:bg-hover",
                   )}
                 >
-                  <AgentAvatar name={a.name} src={a.avatar_url} size={36} />
+                  <span className="hidden sm:block">
+                    <AgentAvatar name={a.name} src={a.avatar_url} size={36} />
+                  </span>
+                  <span className="sm:hidden">
+                    <AgentAvatar name={a.name} src={a.avatar_url} size={28} />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
                       <span className="truncate text-[14.5px] font-semibold text-ink">{displayName(a.name)}</span>
                       {selected && <Check size={15} aria-hidden className="flex-none text-accent-text" />}
                     </span>
                     {a.description && (
-                      <span className="mt-0.5 line-clamp-2 block text-[13px] leading-snug text-mute">{a.description}</span>
+                      <span className="mt-0.5 line-clamp-1 text-[13px] leading-snug text-mute sm:line-clamp-2">
+                        {a.description}
+                      </span>
                     )}
                   </span>
                 </button>
@@ -230,7 +229,7 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
       )}
       <div className="flex flex-col items-center text-center">
         <AgentAvatar name={agent.name} src={agent.avatar_url} size={52} />
-        <h1 className="m-0 mt-4 text-[26px] font-semibold tracking-tight text-ink sm:text-[28px]">
+        <h1 className="m-0 mt-4 text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
           {t.agents.greeting(name)}
         </h1>
         {agent.description && !picking && (
@@ -238,7 +237,7 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
         )}
       </div>
       {suggestions.length > 0 && (
-        <section aria-label={t.agents.suggestions} className="mt-8 grid gap-2.5 sm:grid-cols-2">
+        <section aria-label={t.agents.suggestions} className="mt-6 grid gap-2 sm:mt-8 sm:grid-cols-2 sm:gap-2.5">
           {suggestions.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send asChild>
               <button
@@ -268,7 +267,9 @@ function BranchPicker() {
         </IconButton>
       </BranchPickerPrimitive.Previous>
       <span className="min-w-[2.6rem] text-center tabular-nums" data-testid="branch-count">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
+        <BranchPickerPrimitive.Number />
+        {t.chat.branchSeparator}
+        <BranchPickerPrimitive.Count />
       </span>
       <BranchPickerPrimitive.Next asChild>
         <IconButton label={t.chat.next} className="!h-7 !w-7">

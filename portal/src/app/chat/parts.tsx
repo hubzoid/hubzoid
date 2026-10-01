@@ -196,6 +196,14 @@ function useAttachmentUrl(attachment: Attachment): string | null {
   return null;
 }
 
+/** "PDF", "CSV", "TXT": the extension reads better than a MIME subtype. */
+function fileKind(name: string, mime?: string): string {
+  const ext = /\.([a-z0-9]{1,6})$/i.exec(name)?.[1];
+  if (ext) return ext.toUpperCase();
+  const sub = mime?.split("/").pop();
+  return sub && sub.length <= 8 ? sub.toUpperCase() : "";
+}
+
 /** A file or image inside a sent message. */
 export function MessageAttachment({ attachment }: { attachment: Attachment }) {
   const url = useAttachmentUrl(attachment);
@@ -221,7 +229,7 @@ export function MessageAttachment({ attachment }: { attachment: Attachment }) {
       <span className="min-w-0">
         <span className="block truncate text-[13.5px] font-medium text-ink">{attachment.name}</span>
         <span className="block text-xs text-mute">
-          {[ref?.mime?.split("/").pop()?.toUpperCase(), ref?.size ? formatBytes(ref.size) : ""].filter(Boolean).join(" · ") ||
+          {[fileKind(attachment.name, ref?.mime), ref?.size ? formatBytes(ref.size) : ""].filter(Boolean).join(" · ") ||
             t.chat.file}
         </span>
       </span>

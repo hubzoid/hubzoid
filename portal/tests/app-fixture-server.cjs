@@ -312,9 +312,6 @@ function createApp(options = {}) {
     }
     return out;
   }
-  function agentFor(hub) {
-    return AGENTS.find((a) => a.hub === hub);
-  }
   function visibleAgents(user) {
     if (state.flags.no_agents) return [];
     if (state.flags.one_agent) return [AGENTS[0]];

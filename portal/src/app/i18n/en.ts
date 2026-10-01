@@ -5,6 +5,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export const en = {
   product: "Hubzoid",
+  wordmark: "hubzoid",
   loading: "Loading…",
   skipToContent: "Skip to content",
   close: "Close",
@@ -242,6 +243,9 @@ export const en = {
     previous: "Previous version",
     next: "Next version",
     version: (n: number, total: number) => `${n} of ${total}`,
+    branchSeparator: " / ",
+    table: "Table",
+    plainText: "text",
     scrollDown: "Scroll to the latest message",
     runError: "The agent couldn't finish this reply.",
     runErrorDetail: (message: string) => `The agent couldn't finish this reply: ${message}`,
