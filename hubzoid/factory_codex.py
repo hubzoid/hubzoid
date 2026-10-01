@@ -361,6 +361,9 @@ class CodexRuntime:
                                                      message=None if success else run_events.TOOL_FAILED)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
+                if tool is not None:
+                    # For an eval's result preview; a no-op in chat.
+                    _request_ctx.record_tool_result(call_id, result)
                 await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})
                 if typed and finished is not None:
                     yield finished

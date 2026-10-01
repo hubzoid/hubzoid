@@ -347,6 +347,8 @@ class OpenAIAgentsRuntime:
                     elif item.type == "tool_call_output_item":
                         call_id = _openai_call_id(item)
                         failed = _openai_tool_failed(item)
+                        # For an eval's result preview; a no-op in chat.
+                        _request_ctx.record_tool_result(call_id, getattr(item, "output", None))
                         yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
                                          message=run_events.TOOL_FAILED if failed else None)
             # Surface final token usage for the usage envelope (best-effort).

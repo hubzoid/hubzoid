@@ -844,6 +844,8 @@ class ClaudeRuntime:
                         if isinstance(block, ToolResultBlock):
                             tid = getattr(block, "tool_use_id", "") or ""
                             tool_name = tool_use_names.get(tid, "tool")
+                            # For an eval's result preview; a no-op in chat.
+                            _request_ctx.record_tool_result(tid, getattr(block, "content", None))
                             if not bool(getattr(block, "is_error", False)):
                                 yield run_events.ToolResult(id=tid, name=tool_name, ok=True)
                                 continue

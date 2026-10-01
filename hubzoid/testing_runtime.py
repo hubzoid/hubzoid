@@ -8,7 +8,9 @@ A reply is chosen by keywords (whole words, any case) in the latest user
 message. Keywords combine; the parts run in this order:
 
   think     reasoning first (full text, an indicator or nothing, per SHOW_THINKING)
-  tool      one tool call (``read_knowledge``) that succeeds
+  tool      one tool call (``read_knowledge``) that succeeds. It names the hub
+            knowledge file whose name appears in the request (``scripted``
+            when none does) and records the start of that file as its result
   fail      one tool call (``grep_data``) that fails
   artifact  one ``write_artifact`` call that saves a small file in the chat's
             artifact folder and registers its link, so the download footer shows
@@ -16,6 +18,8 @@ message. Keywords combine; the parts run in this order:
   slow      about 40 text chunks over about 20 seconds (for cancellation);
             ``HUBZOID_TEST_SLOW_SECONDS`` changes the duration
   error     some text, then the run fails
+  recall    the reply quotes the previous user message of the conversation
+            (the flattened history), so a follow-up turn depends on an earlier one
 
 With none of them, the reply is short markdown that quotes the request and lists
 any attached files. Usage (token counts from word counts, zero cost) is recorded
@@ -41,7 +45,7 @@ log = logging.getLogger("hubzoid.testing_runtime")
 
 MODEL_PREFIX = "hubzoid-test/"
 ENV_FLAG = "HUBZOID_TEST_RUNTIME"
-KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error")
+KEYWORDS = ("think", "tool", "fail", "artifact", "markdown", "slow", "error", "recall")
 
 _WORD = re.compile(r"[A-Za-z]+")
 _NOTE = re.compile(r"^\[(?:Image|User attached file): ([^\](]+?)\s*(?:\(|\])", re.MULTILINE)
@@ -77,6 +81,39 @@ def latest_request(prompt: str) -> str:
     whole prompt when it has none."""
     marker = "[user]\n"
     return prompt.rsplit(marker, 1)[-1] if marker in prompt else prompt
+
+
+def previous_request(prompt: str) -> str | None:
+    """The user message before the latest one in a flattened prompt, or None."""
+    blocks = (prompt or "").split("[user]\n")
+    if len(blocks) < 3:
+        return None
+    return blocks[-2].split("\n\n[assistant]\n", 1)[0].strip() or None
+
+
+def _knowledge_named(hub_dir: Path, request: str) -> tuple[str, str] | None:
+    """(name, text) of the hub knowledge file whose name appears first in the
+    request, or None."""
+    from ._fs import resolve_bucket
+
+    root = resolve_bucket(Path(hub_dir), "knowledge")
+    if root is None:
+        return None
+    low = (request or "").lower()
+    found: list[tuple[int, str, Path]] = []
+    for path in root.glob("*.md"):
+        match = re.search(r"(?<![\w-])" + re.escape(path.stem.lower()) + r"(?![\w-])", low)
+        if match:
+            found.append((match.start(), path.stem, path))
+    if not found:
+        return None
+    _, name, path = min(found)
+    from . import frontmatter
+
+    try:
+        return name, frontmatter.read(path)[1].strip()
+    except (OSError, ValueError):
+        return name, ""
 
 
 def _without_notes(text: str) -> str:
@@ -173,11 +210,13 @@ class ScriptedRuntime:
                 yield ReasoningEnd(legacy=closing)
 
         if "tool" in words:
-            args = {"name": "scripted"}
+            named = _knowledge_named(self.hub_dir, request)
+            args = {"name": named[0] if named else "scripted"}
             _request_ctx.record_tool_call("read_knowledge", args)
             yield ToolCall(id="call_tool", name="read_knowledge", args=args,
                            legacy=tool_events.format_call("read_knowledge", args, mode=self._tool_mode))
             await asyncio.sleep(0.01)
+            _request_ctx.record_tool_result("call_tool", named[1] if named else "Scripted knowledge.")
             yield ToolResult(id="call_tool", name="read_knowledge", ok=True)
 
         if "fail" in words:
@@ -186,6 +225,7 @@ class ScriptedRuntime:
             yield ToolCall(id="call_fail", name="grep_data", args=args,
                            legacy=tool_events.format_call("grep_data", args, mode=self._tool_mode))
             await asyncio.sleep(0.01)
+            _request_ctx.record_tool_result("call_fail", "Scripted failure: no data file matches.")
             yield ToolResult(id="call_fail", name="grep_data", ok=False,
                              message=run_events.TOOL_FAILED,
                              legacy=tool_events.format_error("grep_data"))
@@ -214,7 +254,12 @@ class ScriptedRuntime:
                 yield text(f"Chunk {n}. ")
                 await asyncio.sleep(total / 40)
         else:
-            body = _MARKDOWN_REPLY if "markdown" in words else self._default_reply(request)
+            if "markdown" in words:
+                body = _MARKDOWN_REPLY
+            elif "recall" in words:
+                body = self._recall_reply(prompt)
+            else:
+                body = self._default_reply(request)
             for piece in _chunks(body):
                 yield text(piece)
                 await asyncio.sleep(0)
@@ -232,6 +277,13 @@ class ScriptedRuntime:
         if files:
             reply += "\n\nAttached: " + ", ".join(f"`{name.strip()}`" for name in files) + "."
         return reply
+
+    def _recall_reply(self, prompt: str) -> str:
+        earlier = previous_request(prompt)
+        if earlier is None:
+            return "There is nothing earlier in this conversation to recall."
+        return (f"Earlier you said: “{_quote(earlier)}”\n\n"
+                "This is a **scripted** reply from the Hubzoid test runtime.")
 
     def _write_artifact(self, request: str) -> None:
         """Save a small file the way ``write_artifact`` does: in this chat's
