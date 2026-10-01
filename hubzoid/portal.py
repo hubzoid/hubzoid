@@ -54,6 +54,7 @@ from .access.store import (
     ORG,
     USE_HUB,
     EVERYONE,
+    group_id_of,
 )
 
 log = logging.getLogger("hubzoid.portal")
@@ -334,6 +335,14 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
     return "active"
 
 
+def _subject_kind(subject: str) -> str:
+    if subject.startswith("workflow:"):
+        return "service"
+    if group_id_of(subject) is not None:
+        return "group"
+    return "person"
+
+
 def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
     identity = identity if identity is not None else (gs.identity(subject) or {})
     flags = _account_flags(gs, subject)
@@ -433,6 +442,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         if brief:  # the chat sidebar link only needs to know the Console opens
             return out
+        # Groups (the Groups screen, group grantees) exist in the web app mode.
+        from . import appmode
+
+        out["groups"] = not appmode.is_legacy(hub_dir)
         from .access import accounts as accountlib
 
         actor = admin.actor()
@@ -480,10 +493,22 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     ):
         require_hub(admin, hub)
         gs = store_for(hub_dir)
-        # One consistent read of (revision, every grant): the returned revision
-        # describes exactly the rows below, so the editor's concurrency guard is
-        # not defeated by new rows arriving under an old revision (or the reverse).
-        revision, all_grants = gs.access_snapshot()
+        # One consistent read of (revision, every grant, every group): the
+        # returned revision describes exactly the rows below, so the editor's
+        # concurrency guard is not defeated by new rows arriving under an old
+        # revision (or the reverse).
+        revision, all_grants, groups = gs.access_snapshot_with_groups()
+        # Access held through groups here: a group's grants in this hub (never
+        # Manage access), and each member's groups.
+        group_perms: dict[str, set[str]] = {}
+        for subject, domain, perm in all_grants:
+            gid = group_id_of(subject)
+            if gid is not None and domain == hub and perm != MANAGE_ACCESS:
+                group_perms.setdefault(gid, set()).add(perm)
+        member_of: dict[str, list[str]] = {}
+        for gid, g in groups.items():
+            for email in g["members"]:
+                member_of.setdefault(email, []).append(gid)
         rows = {}
         for subject, domain, perm in all_grants:
             if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
@@ -493,23 +518,43 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                         subject=subject,
                         perms=[],
                         inherited=[],
-                        kind="service" if subject.startswith("workflow:") else "person",
+                        kind=_subject_kind(subject),
                     ),
                 )
                 row["perms" if domain == hub else "inherited"].append(perm)
+        # Everyone who can use this agent through a group is listed too, so the
+        # list answers "who has access", with the group named on each capability.
+        for gid, perms in group_perms.items():
+            for email in groups.get(gid, {}).get("members", ()):
+                rows.setdefault(email, dict(subject=email, perms=[], inherited=[], kind="person"))
+
+        def via_groups(subject: str) -> dict[str, list[str]]:
+            out: dict[str, list[str]] = {}
+            for gid in member_of.get(subject, ()):
+                for perm in group_perms.get(gid, ()):
+                    out.setdefault(perm, []).append(groups[gid]["name"])
+            return {p: sorted(names) for p, names in out.items()}
 
         def effective_for(subject: str) -> list[str]:
             # Mirrors GrantStore.permissions_for over the same snapshot: direct +
-            # org-wide + public wildcard. Suspended subjects hold nothing.
-            return sorted(
-                {
-                    p
-                    for (s, h, p) in all_grants
-                    if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
-                }
-            )
+            # org-wide + public wildcard + groups. Suspended subjects hold nothing.
+            held = {
+                p
+                for (s, h, p) in all_grants
+                if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
+            }
+            return sorted(held | set(via_groups(subject)))
 
         for subject, row in rows.items():
+            gid = group_id_of(subject)
+            if gid is not None:
+                # A group: its own grants, its name and size. Never blocked.
+                group = groups.get(gid)
+                row.update(display=group["name"] if group else "Deleted group", group_id=gid,
+                           members=len(group["members"]) if group else 0, status="group",
+                           suspended=False, account_unavailable=False, blocked=False,
+                           center=None, effective=sorted(set(row["perms"])))
+                continue
             row["center"] = gs.get_attr(hub, subject, "center")
             identity = gs.identity(subject) or {}
             row["display"] = identity.get("display") or subject
@@ -519,6 +564,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             # suspension OR an unavailable chat account) holds nothing, though its
             # direct grants are preserved separately in `perms`.
             row["effective"] = [] if state["blocked"] else effective_for(subject)
+            held_via = {} if state["blocked"] else via_groups(subject)
+            if held_via:
+                row["via_groups"] = held_via
         result = [
             r
             for r in rows.values()
@@ -535,6 +583,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         public_reliant = 0
         if public:
             direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
+            # Entry through a group is not reliance on "everyone signed in".
+            direct |= {email for email, gids in member_of.items()
+                       if any(USE_HUB in group_perms.get(g, ()) for g in gids)}
             for ident in gs.identities():
                 subject = ident["subject"]
                 if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE

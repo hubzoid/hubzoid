@@ -50,6 +50,9 @@ Rules (checked on every write, from the store, never from the caller):
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
+  * A group (`group:<id>`, see `hubzoid.groups`) is given access like a person,
+    by organization administrators only, and only agent access: never Manage
+    access. The group must exist.
   * Store or directory errors deny (fail closed).
 """
 from __future__ import annotations
@@ -78,6 +81,8 @@ from .store import (
     USE_HUB,
     LastAdminError,
     RevisionConflict,
+    group_id_of,
+    is_group_subject,
 )
 
 log = logging.getLogger("hubzoid.access")
@@ -348,6 +353,8 @@ class AccessService:
             raise Denied(422, "invalid_subject", "a person or service is required")
         if any(a not in ("grant", "revoke") for a, _ in ops):
             raise Denied(422, "invalid_action", "Each change must grant or revoke")
+        if is_group_subject(subject):
+            self._check_group(scope, subject, hub, ops)
         if hub == ORG:
             if not scope.org_admin or subject == EVERYONE or any(
                 p != MANAGE_ACCESS for _, p in ops
@@ -383,13 +390,35 @@ class AccessService:
                              "Only organization admins may remove access for everyone signed in")
         if not scope.org_admin:
             self._check_delegate(actor, scope, subject, hub, ops)
-        if any(a == "grant" for a, _ in ops):
+        if any(a == "grant" for a, _ in ops) and not is_group_subject(subject):
             flags = _account_flags(gs, subject)
             if flags["suspended"]:
                 raise Denied(409, "blocked", "This person is blocked, so they can't be given access.")
             if flags["account_unavailable"] and not new_account:
                 raise Denied(409, "unavailable", UNAVAILABLE_MSG)
         return ops
+
+    def _check_group(self, scope: Scope, subject: str, hub: str,
+                     ops: list[tuple[str, str]]) -> None:
+        """A group grantee: organization administrators only, agent access
+        only, and the group must exist (checked again inside the write)."""
+        if not scope.org_admin:
+            raise Denied(403, "forbidden",
+                         "Only organization administrators can give access to a group.")
+        if hub == ORG or any(p == MANAGE_ACCESS for _, p in ops):
+            raise Denied(422, "group_admin",
+                         "A group can't hold Manage access. Give it to people individually.")
+        gid = group_id_of(subject)
+        try:
+            exists = gid is not None and self.store.group(gid) is not None
+        except Denied:
+            raise
+        except Exception:  # noqa: BLE001 — fail closed
+            log.exception("access service: group lookup failed")
+            raise Denied(503, "store_unavailable",
+                         "Access data is unavailable. Try again shortly.")
+        if not exists:
+            raise Denied(404, "unknown_group", "This group doesn't exist. It may have been deleted.")
 
     def _check_delegate(self, actor: Actor, scope: Scope, subject: str, hub: str,
                         ops: list[tuple[str, str]]) -> None:

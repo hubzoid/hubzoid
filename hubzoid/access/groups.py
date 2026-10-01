@@ -4,8 +4,15 @@
 A person can be granted a group in more than one store, and which stores are
 consulted depends on the surface. This function is the single, readable rule:
 
-  * Open WebUI groups (``webui.db``) — the admin-managed store. Consulted on any
-    surface that forwards a verified email.
+  * Hubzoid groups (``hz_groups``, the Console's Groups screen) — the
+    admin-managed store in the web app mode (``HUBZOID_UI`` unset or
+    ``hubzoid``). Their NAMES take the place Open WebUI group names had: an
+    agent whose access is not yet managed in the Console still reads a group
+    name as the restricted-tool permission it confers. A blocked person has
+    none.
+  * Open WebUI groups (``webui.db``) — the admin-managed store in the legacy
+    Open WebUI mode (``HUBZOID_UI=openwebui``). Consulted on any surface that
+    forwards a verified email.
   * Roster groups (``identity/access.{csv,py}``) — the hub-owned store, keyed by
     email. ADDITIVE, never a gate: an email absent from the roster contributes
     nothing, so OWUI-only users are never locked out. This is what unifies the
@@ -38,13 +45,29 @@ def effective_groups(hub_dir, *, email, surface="owui", header_groups=None):
     groups: "set[str]" = set()
 
     if email and hub_dir is not None:
-        groups |= set(owui_groups.resolve_groups(hub_dir, email))
+        groups |= _admin_groups(hub_dir, email)
         roster = roster_for(hub_dir)
         if roster is not None:
             groups |= set(roster.groups_for_email(email))
 
     groups |= _header_set(header_groups)
     return groups
+
+
+def _admin_groups(hub_dir, email) -> "set[str]":
+    """The administrator-managed groups: Hubzoid groups in the web app mode,
+    Open WebUI groups in the legacy mode. Empty on any failure."""
+    from ..appmode import is_legacy
+
+    try:
+        legacy = is_legacy(hub_dir)
+    except Exception:  # noqa: BLE001 — unknown mode: no admin groups (deny)
+        return set()
+    if legacy:
+        return set(owui_groups.resolve_groups(hub_dir, email))
+    from ..groups import names_for
+
+    return names_for(hub_dir, email)
 
 
 def _header_set(header_groups) -> "set[str]":
