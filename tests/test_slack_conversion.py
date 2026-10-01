@@ -324,3 +324,15 @@ def test_truncate_for_slack_respects_custom_limit():
     assert "truncated" in out
     # Most of the body should be original content.
     assert out.startswith("x" * 50)
+
+
+
+def test_strip_tool_calls_removes_the_chat_apps_tool_blocks():
+    """Slack never shows the web UI's tool-call blocks (tool_events.ToolActivity)."""
+    from hubzoid import tool_events
+    from hubzoid.slack.conversion import strip_tool_calls
+
+    act = tool_events.ToolActivity("compact")
+    act.started("c1", "check_program", {"event_id": 1556})
+    block = "".join(act.finished("c1", error=True))
+    assert strip_tool_calls(f"Before{block}After").replace("\n", "") == "BeforeAfter"

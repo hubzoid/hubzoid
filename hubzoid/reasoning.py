@@ -62,9 +62,11 @@ def normalize_thinking(raw: str | None) -> str:
 
 # How tool-call activity is surfaced in the chat stream. Independent of
 # SHOW_THINKING; mirrors its off|x|y shape:
-#   compact -> a collapsible <details> dropdown per call (web folds it; the
-#              Slack adapter strips it). Short label visible, args on expand.
-#              Default — keeps provenance without burying the answer.
+#   compact -> the chat app's own tool-call rows (`tool_events.ToolActivity`):
+#              a status line while a call runs, a ✓/✗ row when it finishes,
+#              folded into one "Explored …" line (Slack and the messaging
+#              surfaces strip them). Default — keeps provenance without
+#              burying the answer.
 #   full    -> the legacy inline `> ↳ **tool** \`args\`` blockquote on every
 #              surface (verbose; useful for debugging).
 #   off     -> emit nothing.
