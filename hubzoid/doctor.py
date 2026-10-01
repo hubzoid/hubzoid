@@ -225,7 +225,7 @@ def _schema(hub: Path) -> list[Check]:
         if _sqlite_missing(url):
             out.append(Check(check_id, "info", "Not created yet; created at first start"))
             continue
-        engine = create_engine(url)
+        engine = create_engine(db.sqlalchemy_url(url))
         try:
             cur, head = migrations.current(engine, store), migrations.head(store)
         except Exception as exc:  # noqa: BLE001
@@ -293,7 +293,12 @@ def _web_app_signin(hub: Path | None) -> Check:
         return Check("auth.chat_signin", "info",
                      "Sign-in is off: local mode, whoever opens the web app is the hub's owner "
                      "(admin@localhost). Fine on this machine.", {"mode": "local"})
-    accounts = upgrade.hubzoid_accounts(hub) if hub is not None else 0
+    try:
+        accounts = upgrade.hubzoid_accounts(hub) if hub is not None else 0
+    except upgrade.AccountsUnreadable as exc:
+        return Check("auth.chat_signin", "warn",
+                     f"Sign-in is on, but the Hubzoid accounts could not be read ({exc}). "
+                     "See the db.operational check.", {"mode": "accounts", "accounts": None})
     bootstrap = any((os.environ.get(k) or "").strip()
                     for k in ("HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL"))
     detail = {"mode": "accounts", "accounts": accounts, "first_admin_configured": bootstrap}
@@ -360,10 +365,23 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
     from . import upgrade
 
     found = upgrade.openwebui_accounts(hub)
-    if found is None or upgrade.hubzoid_accounts(hub):
+    if found is None:
         return None
     where, people = found
     detail = {"where": where, "openwebui_accounts": people}
+    try:
+        if upgrade.hubzoid_accounts(hub):
+            return None
+    except upgrade.AccountsUnreadable as exc:
+        # Unknown, not zero: say so rather than send a moved install back to
+        # the migration. `hubzoid run` stops in this case with sign-in on.
+        detail["hubzoid_accounts"] = None
+        unread = f"Open WebUI has {people} account(s) ({where}) and the Hubzoid accounts could not be read ({exc})"
+        if auth_on:
+            return Check("ui.openwebui_data", "fail",
+                         f"{unread}: hubzoid run stops until the operational database can be read", detail)
+        return Check("ui.openwebui_data", "warn",
+                     f"{unread}: whether its chats were imported is unknown", detail)
     if auth_on:
         return Check("ui.openwebui_data", "fail",
                      f"Open WebUI has {people} account(s) ({where}) and Hubzoid has none: hubzoid run "
@@ -470,7 +488,7 @@ def _store_checks(hub: Path) -> list[Check]:
         return []
     if _sqlite_missing(url):
         return []
-    engine = create_engine(url)
+    engine = create_engine(db.sqlalchemy_url(url))
     out: list[Check | None] = []
     try:
         if not inspect(engine).has_table("hz_meta"):

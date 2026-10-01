@@ -290,7 +290,10 @@ class _Store:
     def __init__(self, url: str):
         from sqlalchemy import create_engine, inspect
 
-        self.engine = create_engine(url)
+        from . import db
+
+        # postgresql:// means psycopg (3), as for every engine of Hubzoid's own.
+        self.engine = create_engine(db.sqlalchemy_url(url))
         self.ok = inspect(self.engine).has_table("hz_meta")
 
     def put(self, key: str, value: dict) -> None:
