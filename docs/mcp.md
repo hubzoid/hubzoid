@@ -188,10 +188,16 @@ failure goes to the same place with `?error=<code>`.
   connected with OAuth.
 - An access token without an expiry is not checked between turns. If the
   provider revokes it, the person reconnects.
-- The registered server names its own authorization server. Hubzoid refuses
-  endpoints on this computer or at link-local, unspecified, multicast or
-  reserved addresses, but does not resolve names, so register only servers you
-  trust (an internal identity provider on a private network is fine).
+- Through an outbound proxy from the environment (`HTTPS_PROXY`), the proxy
+  makes the connection: Hubzoid checks the addresses a name resolves to on
+  this computer, and leaves a name it cannot resolve to the proxy's own rules.
+- A new authorization never keeps the refresh token of an earlier one, since
+  nothing shows it is for the same remote account. A provider that issues a
+  refresh token on the first consent only leaves a reconnect without one: the
+  connection then expires with its access token. Disconnect, then connect, to
+  grant it again.
+- Disconnecting cancels a sign-in that is still finishing: its tokens are
+  revoked, not saved.
 - Provider-specific authorization parameters (for example Google's
   `access_type=offline`) cannot be configured yet.
 
