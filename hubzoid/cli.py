@@ -2,7 +2,7 @@
 
 Commands:
   hubzoid init [PATH]              Scaffold a hub from the bundled template.
-  hubzoid run [PATH]               Start FastAPI bridge + edge + Open WebUI for a hub.
+  hubzoid run [PATH]               Start a hub: bridge + web app on one port (Open WebUI in legacy mode).
   hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges.
   hubzoid schedule ...             Inspect / manually fire <hub>/schedule/*.md tasks.
   hubzoid slack run [PATH]         Start the Slack adapter (Socket Mode).
@@ -21,6 +21,7 @@ import base64
 import importlib.resources as resources
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from . import __version__
 from . import settings as settingslib
@@ -131,6 +133,80 @@ def _choose_initial_model() -> str | None:
         console.print("Choose one of the listed numbers.")
 
 
+DEFAULT_TEMPLATE = "operations"
+
+# Hosted model providers `hubzoid init` sets up from a pasted key: (name, the
+# .env setting, default model, key prefix). The models match the commented
+# stanzas in the starter .env.
+_KEY_PROVIDERS = (
+    ("OpenRouter", "OPENROUTER_API_KEY", "openrouter/anthropic/claude-haiku-4.5", "sk-or-"),
+    ("Anthropic", "ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5", "sk-ant-"),
+    ("OpenAI", "OPENAI_API_KEY", "openai/gpt-4o-mini", "sk-"),
+)
+# One line, nothing a .env file would read as a comment, quote or second value.
+_KEY_SHAPE = re.compile(r"^[A-Za-z0-9_.\-]{20,512}$")
+
+
+def _provider_for_key(key: str):
+    """The provider a key belongs to, by its prefix: an entry of
+    _KEY_PROVIDERS, "subscription" for a Claude subscription token, or None."""
+    if key.startswith("sk-ant-oat"):
+        return "subscription"
+    for provider in _KEY_PROVIDERS:
+        if key.startswith(provider[3]):
+            return provider
+    return None
+
+
+def _prompt_for_key() -> tuple[str, str, str, str] | None:
+    """Offer to save a hosted model key when no Claude or Codex CLI is signed in.
+    Returns (provider name, .env setting, key, model), or None to skip. Called
+    only in an interactive session; the key is never echoed or logged."""
+    console.print(
+        "\nNo signed-in Claude Code or Codex CLI was found, so this hub needs a model.\n"
+        "Paste an OpenRouter, Anthropic or OpenAI API key to save it in the hub's .env\n"
+        "(readable only by you), or press Enter to skip and set one later."
+    )
+    for _attempt in range(3):
+        key = typer.prompt("API key", default="", show_default=False, hide_input=True).strip()
+        if not key:
+            return None
+        if not _KEY_SHAPE.match(key):
+            console.print("That does not look like an API key. Paste the whole key, or press Enter to skip.")
+            continue
+        provider = _provider_for_key(key)
+        if provider == "subscription":
+            console.print("That is a Claude subscription token (from `claude setup-token`), not an API key. "
+                          "It works with the claude CLI: keep MODEL=claude-local and set "
+                          "CLAUDE_CODE_OAUTH_TOKEN in .env. Paste an API key, or press Enter to skip.")
+            continue
+        if provider is None:
+            console.print("Which provider is this key for?")
+            for i, entry in enumerate(_KEY_PROVIDERS, 1):
+                console.print(f"  {i}. {entry[0]}")
+            choice = typer.prompt("Provider", default=1, type=int)
+            if not 1 <= choice <= len(_KEY_PROVIDERS):
+                console.print("Choose one of the listed numbers.")
+                continue
+            provider = _KEY_PROVIDERS[choice - 1]
+        name, setting, model_id, _prefix = provider
+        return name, setting, key, model_id
+    return None
+
+
+def _interactive() -> bool:
+    """A person at a terminal, who can answer a prompt."""
+    return sys.stdin.isatty()
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write a file only its owner can read, from the first byte (it holds keys)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    path.chmod(0o600)  # an existing file keeps its mode through O_TRUNC
+
+
 @app.command()
 def init(
     name: Path = typer.Argument(
@@ -138,13 +214,15 @@ def init(
         help="Name of the new hub folder. Created under the current directory. Default: demo-hub.",
     ),
     template: str = typer.Option(
-        "minimal",
+        DEFAULT_TEMPLATE,
         "--template", "-t",
-        help="Which bundled template to use. 'minimal' (default) scaffolds a tiny, "
-        "runnable hub with one example of each file type. 'demo' scaffolds the full "
-        "guided tour with a Hubzoid Guide agent, four teaching skills, and six "
-        "knowledge pages. 'watchtower' scaffolds a workflow-first sample: a scheduled "
-        "check on bundled sample metrics that explains threshold breaches.",
+        help="Which bundled template to use. 'operations' (default): an operations "
+        "assistant for a fictional home-goods shop, with policy files, a stock export, "
+        "a stock_check tool and three suggested prompts. 'minimal': a tiny, runnable hub "
+        "with one example of each file type. 'demo': the guided tour with a Hubzoid Guide "
+        "agent, four teaching skills and six knowledge pages. 'watchtower': a "
+        "workflow-first sample, a scheduled check on bundled sample metrics that explains "
+        "threshold breaches.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
     model: str | None = typer.Option(None, "--model", help="Model for a new hub, e.g. codex-local, claude-local or a provider model id."),
@@ -159,8 +237,12 @@ def init(
       $ hubzoid init sales-agent
       → writes ./sales-agent/... only. Parent files are left alone.
 
-    Get the full guided tour instead:
+    A tiny hub with one example of each file type, or the guided tour:
+      $ hubzoid init my-hub --template minimal
       $ hubzoid init my-hub --template demo
+
+    In a terminal with no signed-in Claude Code or Codex CLI, init offers to
+    save an OpenRouter, Anthropic or OpenAI key in the hub's .env.
 
     The result is a multi-hub agents repo built one hub at a time.
     """
@@ -212,25 +294,40 @@ def init(
     # 2. Write .env from a Python constant (not part of the template tree
     # because .env is gitignored). Same skip rules as template files.
     env_dst = hub_dir / ".env"
+    selected_model = None
+    saved_key = None
     if env_dst.exists() and not force:
         skipped.append(env_dst)
     else:
         import secrets as _secrets
 
-        selected_model = model or (_choose_initial_model() if fresh_hub and sys.stdin.isatty() else None)
+        selected_model = model
+        if not model and fresh_hub and _interactive():
+            # A person at a terminal: use a signed-in Claude Code or Codex CLI,
+            # else offer to save a hosted provider key.
+            selected_model = _choose_initial_model()
+            if selected_model is None:
+                saved_key = _prompt_for_key()
+                if saved_key:
+                    selected_model = saved_key[3]
+        # Not a terminal (scripts, CI, image builds): never prompt. The .env keeps
+        # MODEL=claude-local and the commented provider stanzas below it, as
+        # before; choose another model with --model or by editing the .env.
         starter = _STARTER_ENV
         if selected_model:
             if any(c in selected_model for c in "\n\r#"):
                 raise typer.BadParameter("Model must be a single model identifier.")
-            starter = starter.replace("MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)", f"MODEL={selected_model}")
-        env_dst.write_text(
-            starter.replace(
-                "# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees",
-                f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated, first one is what Open WebUI sees",
-            )
-        )
-        env_dst.chmod(0o600)  # it holds a live bridge key
+            model_line = f"MODEL={selected_model}"
+            if saved_key:
+                model_line += f"\n{saved_key[1]}={saved_key[2]}"
+            starter = starter.replace(_STARTER_MODEL_LINE, model_line)
+        _write_private(env_dst, starter.replace(
+            _STARTER_BRIDGE_KEY_LINE,
+            f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated keys for the /v1 API",
+        ))
         written.append(env_dst)
+        if saved_key:
+            console.print(f"Saved the {saved_key[0]} key in {env_dst} (MODEL={selected_model}).")
 
     # 3. If the parent looks fresh and we are scaffolding a sub-folder, drop
     # the agents-repo wrapper files. Never overwrite existing ones, with or
@@ -262,12 +359,18 @@ def init(
             console.print(f"  + {p.name}")
 
     console.print("\nNext:")
-    console.print(f"  1. Configure the model in {hub_dir / '.env'} (local runtime uses the service account’s CLI login).")
-    console.print(f"  2. hubzoid run {shlex.quote(str(hub_dir))}")
-    if template == "minimal":
+    step = 1
+    if not selected_model:
+        console.print(f"  {step}. Check the model in {escape(str(env_dst))}: MODEL=claude-local uses a "
+                      "signed-in `claude` CLI. Without one, set an OpenRouter, Anthropic or OpenAI key there.")
+        step += 1
+    console.print(f"  {step}. hubzoid run {escape(shlex.quote(str(hub_dir)))}   (opens the web app in your browser)")
+    if template == DEFAULT_TEMPLATE:
         console.print(
-            "\n[dim]Want the guided tour instead? "
-            f"hubzoid init {hub_dir.name} --template demo --force[/dim]"
+            "\n[dim]Kestrel & Oak is a fictional shop. Try a suggested prompt, such as "
+            "\"What should we reorder today, and what could run out first?\"\n"
+            "Other templates: --template minimal (one example of each file type), "
+            "--template demo (a guided tour of Hubzoid).[/dim]"
         )
 
 
@@ -277,10 +380,11 @@ def init(
 @app.command()
 def run(
     hub: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
-    port: int = typer.Option(None, "--port", help="Open WebUI port. Default: 3080 (or PORT env)."),
-    bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port. Default: 8000 (or BRIDGE_PORT env)."),
-    host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the UI binds to (or HUBZOID_HOST env). Use 0.0.0.0 to expose on LAN; the bridge always stays on 127.0.0.1."),
-    no_ui: bool = typer.Option(False, "--no-ui", help="Skip Open WebUI; bridge only."),
+    port: int = typer.Option(None, "--port", help="Public port: the web app, downloads and MCP. Default: 3080 (or PORT env)."),
+    bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
+    host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public port binds to (or HUBZOID_HOST env). 0.0.0.0 exposes it on the network, which needs sign-in (HUBZOID_AUTH=true). The bridge always stays on 127.0.0.1."),
+    no_ui: bool = typer.Option(False, "--no-ui", help="Bridge only, on 127.0.0.1: no public port (and no Open WebUI in legacy mode)."),
+    no_open: bool = typer.Option(False, "--no-open", help="Do not open the web app in a browser. It opens only from a terminal, on a loopback host."),
     slack: bool = typer.Option(
         False,
         "--slack", "-s",
@@ -307,7 +411,13 @@ def run(
         "/webhooks/<hub>/<name> via the edge. Soft-skips if unconfigured.",
     ),
 ) -> None:
-    """Start the bridge (+ Open WebUI) for a hub."""
+    """Start a hub: the bridge, and the Hubzoid web app on one public port.
+
+    Sign-in is off by default (local mode: you are the hub's owner), so the
+    public port stays on this machine. Turn sign-in on with HUBZOID_AUTH=true
+    before binding another interface. HUBZOID_UI=openwebui runs the legacy Open
+    WebUI chat app instead (pip install "hubzoid\\[openwebui]").
+    """
     hub = hub.resolve()
     if not hub.is_dir():
         console.print(f"[red]Hub directory not found:[/red] {hub}")
@@ -331,9 +441,21 @@ def run(
     settings = _load_settings(hub)
     ui_port = port or settings.ui_port
     br_port = bridge_port or settings.bridge_port
-    from . import config_secrets
+    from . import appmode, config_secrets
 
-    if not no_ui:
+    # The web experience: the Hubzoid web app (default) or, for one release, the
+    # legacy Open WebUI chat app. Read after the hub's .env is loaded.
+    legacy = appmode.is_legacy(hub)
+    auth_on = appmode.auth_enabled(hub)
+    if legacy:
+        if not no_ui:
+            _require_openwebui()
+    else:
+        if not no_ui:
+            _refuse_unauthenticated_network(hub, host, auth_on)
+        _check_openwebui_upgrade(hub, auth_on)
+
+    if legacy and not no_ui:
         os.environ["OWUI_INTERNAL_URL"] = f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}"
 
     # 1. Start the bridge in a subprocess. We pass HUBZOID_HUB_DIR via env so
@@ -347,201 +469,485 @@ def run(
     # to 8000). The OTel normalize intercept and the HUBZOID_PUBLIC_URL artifact
     # fallback both need settings.bridge_port to match the actual bind.
     bridge_env["BRIDGE_PORT"] = str(br_port)
+    mcp_url = None
+    if not legacy and not no_ui:
+        # Links the bridge writes (downloads) go through the public port people
+        # open, not the bridge's own loopback port.
+        bridge_env.update(_origin_defaults(os.environ, host, ui_port))
+        # Hosted MCP is on by default where its OAuth can work: a local run, or an
+        # https public URL. A key set in the hub's .env or the environment wins.
+        mcp_env = _mcp_defaults(os.environ, _public_origin(host, ui_port))
+        bridge_env.update(mcp_env)
+        if settingslib.truthy(bridge_env.get("MCP_SERVER")):
+            mcp_url = (bridge_env.get("MCP_PUBLIC_URL") or "").strip() or None
     bridge_cmd = [
         sys.executable, "-m", "uvicorn",
         "hubzoid.server:build_app", "--factory",
         "--host", "127.0.0.1", "--port", str(br_port),
         "--log-level", settings.log_level,
     ]
-    console.print(f"[cyan]→ bridge[/cyan]  http://127.0.0.1:{br_port}  (hub: {hub.name})")
-    bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env)
-
-    # 2. Wait for the bridge to come up before starting Open WebUI.
-    if not _wait_for(f"http://127.0.0.1:{br_port}/healthz", timeout=60):
-        console.print("[red]bridge failed to come up[/red]")
-        bridge_proc.terminate()
-        raise typer.Exit(1)
-    console.print("[green]→ bridge[/green]  ready")
-
-    ui_proc = None
-    edge_proc = None
-    if not no_ui:
-        try:
-            from . import branding, webui
-            from .loaders import agents as agents_loader
-
-            # Apply per-hub branding into every OWUI static dir
-            # (frontend/ and static/, see branding.static_dirs). No-op
-            # when <hub>/branding/ is absent or empty.
-            for sd in branding.static_dirs():
-                branding.apply(hub, sd)
-
-            # Pull suggestions from the main agent's frontmatter so the
-            # empty-chat screen has quick-start buttons.
-            try:
-                main_agent = agents_loader.load_main(hub)
-                suggestions = list(main_agent.spec.suggestions)
-                main_name = main_agent.spec.name
-            except Exception:
-                suggestions = []
-                main_name = _read_main_agent_name(hub)
-
-            # Display-name cascade: the agent's name: from AGENTS.md wins,
-            # then the operator's WEBUI_NAME, then "Hubzoid" (final fallback
-            # so it never reads as bare "Open WebUI" to a customer). Anchoring
-            # on the agent name keeps the login page, the sidebar, and the
-            # chat-center model label all showing the same hub name.
-            resolved_webui_name = (
-                main_name
-                or settings.webui_name
-                or "Hubzoid"
-            )
-
-            # The edge router (hubzoid/edge.py) binds the PUBLIC port and
-            # routes /artifacts -> bridge, everything else -> Open WebUI, so
-            # artifact download links work behind a single exposed port (the
-            # report-download fix; the bridge port need not be exposed). When
-            # the edge is on, OWUI moves to a loopback internal port and the
-            # edge takes the public bind. Opt out with HUBZOID_DISABLE_EDGE=1.
-            edge_enabled = os.environ.get("HUBZOID_DISABLE_EDGE", "").lower() not in ("1", "true", "yes")
-            owui_port = _owui_internal_port(ui_port) if edge_enabled else ui_port
-            owui_host = "127.0.0.1" if edge_enabled else host
-
-            ui_proc = webui.start(
-                hub_dir=hub,
-                bridge_port=br_port,
-                ui_port=owui_port,
-                ui_host=owui_host,
-                api_key=settings.first_api_key,
-                model_label=settings.model_label or main_name,
-                webui_name=resolved_webui_name,
-                suggestions=suggestions,
-                # The deployment layer only: never the hub secret or
-                # restricted/.env (config_secrets.deployment_view).
-                base_env=config_secrets.deployment_view(os.environ),
-            )
-            log_path = getattr(ui_proc, "_log_path", None)
-            console.print("[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
-            if log_path:
-                console.print(f"            log: {log_path}")
-
-            # Wait for OWUI on its (now possibly internal) bind before fronting it.
-            owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
-            owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
-
-            probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-            display_url = f"http://{host}:{ui_port}"
-            if edge_enabled:
-                # Start the public-facing edge router in front of bridge + OWUI.
-                edge_env = config_secrets.deployment_view(os.environ)
-                edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
-                edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
-                edge_routes = [
-                    {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"},
-                    # The admin portal (SPA + JSON API) is served by the bridge;
-                    # expose it through the one public port like /artifacts.
-                    {"prefix": "/portal", "upstream": f"http://127.0.0.1:{br_port}"},
-                ]
-                if settings.mcp_server:
-                    # The hosted MCP surface is the one other bridge path that
-                    # is public by design (per-user OWUI api-key auth; /v1
-                    # stays loopback-only).
-                    edge_routes.append(
-                        {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
-                    )
-                if settings.mcp_server:
-                    for prefix in ("/.well-known/oauth-protected-resource/mcp",
-                                   "/.well-known/oauth-authorization-server/mcp/oauth"):
-                        edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
-                if whatsapp or telegram or webhook:
-                    # Inbound surfaces receive on a loopback inbound port; only
-                    # /webhooks/<hub> is exposed publicly (each POST is signature-,
-                    # secret-, or HMAC-verified before anything runs). Namespaced by
-                    # hub slug so the same public path scheme works under the gateway.
-                    # Import here so a plain `hubzoid run` never pulls in the inbound
-                    # stack (SQLAlchemy, etc.).
-                    from .inbound.run import hub_slug, inbound_port
-                    edge_routes.append(
-                        {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
-                         "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
-                    )
-                edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
-                edge_cmd = [
-                    sys.executable, "-m", "uvicorn",
-                    "hubzoid.edge:_factory", "--factory",
-                    "--host", host, "--port", str(ui_port),
-                    "--log-level", settings.log_level,
-                ]
-                edge_paths = "/artifacts + /mcp" if settings.mcp_server else "/artifacts"
-                console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  ({edge_paths} → bridge :{br_port}, else → owui :{owui_port})")
-                edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
-                edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
-                if owui_ready and edge_ready and edge_proc.poll() is None:
-                    console.print(f"[green]→ webui [/green]  ready    {display_url}")
-                else:
-                    console.print(f"[yellow]→ webui [/yellow]  did not become ready in time; check log above. URL: {display_url}")
-            else:
-                if owui_ready:
-                    console.print(f"[green]→ webui [/green]  ready    {display_url}")
-                else:
-                    console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
-        except FileNotFoundError as exc:
-            console.print(f"[yellow]{exc}[/yellow]")
-            console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
-
-    # Optional: spawn the Slack adapter as a third child. Soft-warn if the
-    # operator asked for --slack but the .env is missing the tokens — the
-    # bridge + UI keep running either way.
-    slack_proc = None
-    if slack:
-        from .slack.env import should_start_slack
-        ok, warn = should_start_slack(want_slack=True, env=os.environ)
-        if not ok:
-            console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
-        else:
-            slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
-            slack_proc = subprocess.Popen(slack_cmd, env=bridge_env)
-            console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
-
-    # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
-    # shared child. It reads WHATSAPP_*/TELEGRAM_*/WEBHOOK_INBOUND_* from .env and
-    # serves whichever are configured; the edge already routes /webhooks/<hub> to
-    # it. Soft-warn per surface.
-    inbound_proc = None
-    if whatsapp or telegram or webhook:
-        from .inbound.env import (
-            missing_telegram_vars,
-            missing_webhook_vars,
-            missing_whatsapp_vars,
-        )
-        if whatsapp and missing_whatsapp_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
-        if telegram and missing_telegram_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
-        if webhook and missing_webhook_vars(os.environ):
-            console.print(f"[yellow]→ inbound[/yellow]  webhook skipped: missing {', '.join(missing_webhook_vars(os.environ))}")
-        start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
-        start_tg = telegram and not missing_telegram_vars(os.environ)
-        start_wh = webhook and not missing_webhook_vars(os.environ)
-        if start_wa or start_tg or start_wh:
-            inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
-            inbound_proc = subprocess.Popen(inbound_cmd, env=bridge_env)
-            surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
-            console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
-
     def _shutdown(signum, frame):  # noqa: ARG001
         console.print("\n[cyan]shutting down...[/cyan]")
         # Unwind Popen.wait before waiting for children in finally. Waiting
         # inside the signal handler can re-enter Popen's non-reentrant lock.
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-    # Block on the bridge process; its exit ends the CLI.
+    # Every child is stopped however run ends, including Ctrl-C or SIGTERM
+    # while the others are still starting.
+    children: list = []
+    previous = (signal.signal(signal.SIGINT, _shutdown), signal.signal(signal.SIGTERM, _shutdown))
     try:
+        console.print(f"[cyan]→ bridge[/cyan]  http://127.0.0.1:{br_port}  (hub: {hub.name})")
+        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env)
+        children.append(bridge_proc)
+
+        # 2. Wait for the bridge to come up before starting the public port.
+        if not _wait_for_bridge(bridge_proc, f"http://127.0.0.1:{br_port}/healthz"):
+            console.print("[red]bridge failed to come up[/red]")
+            raise typer.Exit(1)
+        console.print("[green]→ bridge[/green]  ready")
+
+        if not no_ui and legacy:
+            _start_openwebui(hub, settings, host=host, ui_port=ui_port, br_port=br_port,
+                             inbound=bool(whatsapp or telegram or webhook), started=children)
+        elif not no_ui:
+            edge_proc = _start_web_app_edge(
+                hub, settings, host=host, ui_port=ui_port, br_port=br_port,
+                inbound=bool(whatsapp or telegram or webhook), started=children)
+            if edge_proc is None:
+                raise typer.Exit(1)
+            url = appmode.public_url() or _local_url(host, ui_port)
+            mode = "sign-in on" if auth_on else "local mode, sign-in off"
+            # One line each, never wrapped, so the URL and the command copy cleanly
+            # from any terminal or log viewer.
+            console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(url)}  [dim]({mode})[/dim]",
+                          soft_wrap=True)
+            if mcp_url:
+                console.print(f"  [dim]Connect Claude Code:[/dim] claude mcp add --transport http "
+                              f"{escape(_mcp_client_name(hub))} {escape(mcp_url)}", soft_wrap=True)
+            if not appmode.public_url() and not appmode.is_loopback_host(host):
+                console.print("  [dim]Set HUBZOID_PUBLIC_URL to the address people open, so download "
+                              "links and sign-in redirects use it.[/dim]")
+            if _should_open_browser(host, no_open):
+                _open_browser(url)
+
+        # Optional: spawn the Slack adapter as a third child. Soft-warn if the
+        # operator asked for --slack but the .env is missing the tokens — the
+        # bridge + UI keep running either way.
+        if slack:
+            from .slack.env import should_start_slack
+            ok, warn = should_start_slack(want_slack=True, env=os.environ)
+            if not ok:
+                console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
+            else:
+                slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
+                children.append(subprocess.Popen(slack_cmd, env=bridge_env))
+                console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
+
+        # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
+        # shared child. It reads WHATSAPP_*/TELEGRAM_*/WEBHOOK_INBOUND_* from .env and
+        # serves whichever are configured; the edge already routes /webhooks/<hub> to
+        # it. Soft-warn per surface.
+        if whatsapp or telegram or webhook:
+            from .inbound.env import (
+                missing_telegram_vars,
+                missing_webhook_vars,
+                missing_whatsapp_vars,
+            )
+            if whatsapp and missing_whatsapp_vars(os.environ):
+                console.print(f"[yellow]→ inbound[/yellow]  whatsapp skipped: missing {', '.join(missing_whatsapp_vars(os.environ))}")
+            if telegram and missing_telegram_vars(os.environ):
+                console.print(f"[yellow]→ inbound[/yellow]  telegram skipped: missing {', '.join(missing_telegram_vars(os.environ))}")
+            if webhook and missing_webhook_vars(os.environ):
+                console.print(f"[yellow]→ inbound[/yellow]  webhook skipped: missing {', '.join(missing_webhook_vars(os.environ))}")
+            start_wa = whatsapp and not missing_whatsapp_vars(os.environ)
+            start_tg = telegram and not missing_telegram_vars(os.environ)
+            start_wh = webhook and not missing_webhook_vars(os.environ)
+            if start_wa or start_tg or start_wh:
+                inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
+                children.append(subprocess.Popen(inbound_cmd, env=bridge_env))
+                surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
+                console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
+
+        # Block on the bridge process; its exit ends the CLI.
         bridge_proc.wait()
     finally:
-        _stop_processes((edge_proc, ui_proc, slack_proc, inbound_proc, bridge_proc))
+        # The public side first, the bridge last (it holds the databases).
+        _stop_processes(children[::-1])
+        signal.signal(signal.SIGINT, previous[0])
+        signal.signal(signal.SIGTERM, previous[1])
+
+
+# ---------------------------------------------------------------------------
+# run: helpers for the Hubzoid web app (default mode)
+# ---------------------------------------------------------------------------
+def _wait_for_bridge(proc, url: str, timeout: float = 180.0) -> bool:
+    """Wait for the bridge's health check. Stops at once if the bridge exits,
+    and is patient otherwise: a first start on a slow or busy machine creates
+    databases and loads the agent runtime."""
+    deadline = time.monotonic() + timeout
+    noted = False
+    started = time.monotonic()
+    while time.monotonic() < deadline:
+        if _wait_for(url, timeout=5.0):
+            return True
+        if proc.poll() is not None:
+            return False
+        if not noted and time.monotonic() - started > 20:
+            console.print("[dim]→ bridge  still starting (the first start creates the databases)[/dim]")
+            noted = True
+    return False
+
+
+_MCP_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}  # as mcp_oauth.validate_public_url
+
+
+def _in_container() -> bool:
+    return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+
+def _url_host(host: str) -> str:
+    """`host` as it appears in a URL: a wildcard bind becomes 127.0.0.1 (this
+    machine's address for it), and an IPv6 literal gets brackets."""
+    h = (host or "").strip() or "0.0.0.0"
+    if h in ("0.0.0.0", "::"):
+        h = "127.0.0.1"
+    return f"[{h}]" if ":" in h and not h.startswith("[") else h
+
+
+def _local_url(host: str, port: int) -> str:
+    return f"http://{_url_host(host)}:{port}"
+
+
+def _public_origin(host: str, port: int) -> str:
+    """Where browsers and MCP clients reach this hub: the configured public URL's
+    origin, else this machine's own address for a loopback bind. Empty when the
+    port is bound to the network with no public URL configured (unknown)."""
+    from . import appmode
+
+    configured = appmode.public_url()
+    if configured:
+        return appmode.normalize_origin(configured)
+    return _local_url(host, port) if appmode.is_loopback_host(host) else ""
+
+
+def _origin_defaults(env, host: str, port: int) -> dict[str, str]:
+    """HUBZOID_PUBLIC_URL and HUBZOID_ALLOWED_ORIGINS for the bridge when no
+    public URL is configured and the web app is on this machine.
+
+    The bridge builds download links from HUBZOID_PUBLIC_URL, falling back to
+    its own loopback port. Setting it to the public port's address sends links
+    through the edge, as people open the page. The other local spelling
+    (localhost or 127.0.0.1) stays an allowed origin, so a page opened either
+    way may send changes. A configured public URL, or a network bind (whose
+    address only the operator knows), is left alone."""
+    from . import appmode
+
+    if appmode.public_url(env) or not appmode.is_loopback_host(host):
+        return {}
+    origin = _local_url(host, port)
+    allowed = [o.strip() for o in (env.get("HUBZOID_ALLOWED_ORIGINS") or "").split(",") if o.strip()]
+    for spelling in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+        if spelling != origin and spelling not in allowed:
+            allowed.append(spelling)
+    return {"HUBZOID_PUBLIC_URL": origin, "HUBZOID_ALLOWED_ORIGINS": ",".join(allowed)}
+
+
+def _mcp_defaults(env, origin: str) -> dict[str, str]:
+    """MCP_SERVER and MCP_PUBLIC_URL to add to the bridge's environment.
+
+    Hosted MCP signs people in with OAuth, which needs an https public URL or a
+    loopback one. So MCP is on by default when the public origin is either, at
+    `<origin>/mcp`. A key already set (the hub's .env, a secret or the process
+    environment, even when empty) is explicit and wins: the bridge re-reads the
+    hub's .env, so run and bridge agree."""
+    from urllib.parse import urlsplit
+
+    out: dict[str, str] = {}
+    parts = urlsplit(origin) if origin else None
+    usable = bool(parts) and (parts.scheme == "https" or (
+        parts.scheme == "http" and parts.hostname in _MCP_LOOPBACK_HOSTS))
+    if "MCP_SERVER" not in env and usable:
+        out["MCP_SERVER"] = "true"
+    on = settingslib.truthy(out.get("MCP_SERVER", env.get("MCP_SERVER")))
+    if on and usable and not (env.get("MCP_PUBLIC_URL") or "").strip():
+        out["MCP_PUBLIC_URL"] = origin.rstrip("/") + "/mcp"
+    return out
+
+
+def _mcp_client_name(hub: Path) -> str:
+    name = _read_main_agent_name(hub)
+    return _slugify(hub.name) if name == "agent" else name
+
+
+def _require_openwebui() -> None:
+    """Legacy mode needs the `openwebui` extra. Checked before anything starts."""
+    from . import webui
+
+    if webui.is_available():
+        return
+    console.print(
+        "[red]HUBZOID_UI=openwebui runs the legacy Open WebUI chat app, which is not installed.[/red]\n"
+        "Install it (legacy mode, available for this release):\n"
+        '  pip install "hubzoid\\[openwebui]"\n'
+        "or remove HUBZOID_UI from the hub's .env to use the Hubzoid web app."
+    )
+    if _in_container():
+        console.print("In Docker, build the image with --build-arg WITH_OPENWEBUI=true.")
+    raise typer.Exit(1)
+
+
+def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None:
+    """Local mode (sign-in off) makes every visitor the hub's owner, so its
+    public port stays on loopback unless the operator explicitly accepts the risk."""
+    from . import appmode
+
+    if auth_on or appmode.is_loopback_host(host):
+        return
+    if settingslib.truthy(os.environ.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
+        console.print(f"[yellow]Sign-in is off and the web app listens on {escape(host)}: anyone who can "
+                      "reach this port acts as the hub's owner "
+                      "(HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true).[/yellow]")
+        return
+    console.print(
+        f"[red]Sign-in is off, so listening on {escape(host)} (--host or HUBZOID_HOST) would let "
+        "anyone who can reach this port use the hub as its owner.[/red]\n"
+        f"Turn sign-in on: set HUBZOID_AUTH=true in {escape(str(hub / '.env'))} and create the first\n"
+        "administrator with HUBZOID_ADMIN_EMAIL and HUBZOID_ADMIN_PASSWORD (see `hubzoid admin --help`).\n"
+        "Or keep the web app on this machine: --host 127.0.0.1.\n"
+        "To run without sign-in on a network you trust: HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true."
+    )
+    if _in_container():
+        console.print("In Docker, to try it without sign-in, publish the port on this machine only "
+                      "(-p 127.0.0.1:3080:3080) and set HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true.")
+    raise typer.Exit(2)
+
+
+def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
+    """Upgrading from 1.0.x: an Open WebUI install with no Hubzoid accounts yet.
+
+    With sign-in on, starting would lock everyone out, so stop with the two ways
+    forward. In local mode there is nothing to sign in to; say that the old
+    chats can be imported."""
+    from . import upgrade
+
+    found = upgrade.openwebui_accounts(hub)
+    if found is None or upgrade.hubzoid_accounts(hub):
+        return
+    where, people = found
+    quoted = escape(shlex.quote(str(hub)))
+    if not auth_on:
+        console.print(f"[dim]Chats from Open WebUI ({escape(where)}) can be imported: "
+                      f"hubzoid migrate openwebui {quoted} (back up first)[/dim]")
+        return
+    console.print(
+        f"[red]This hub has an Open WebUI database with {people} account(s) ({escape(where)}), "
+        "but no Hubzoid accounts yet.[/red]\n"
+        "Hubzoid now has its own web app and sign-in. Choose one:\n"
+        f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {quoted}\n"
+        "     Do a dry run first (see `hubzoid migrate openwebui --help`), then back up\n"
+        f"     (hubzoid backup {quoted}), stop the hub, and apply.\n"
+        "  2. Keep Open WebUI for this release: pip install \"hubzoid\\[openwebui]\" and set\n"
+        f"     HUBZOID_UI=openwebui in {escape(str(hub / '.env'))}"
+    )
+    raise typer.Exit(1)
+
+
+def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port: int,
+                        inbound: bool, started: list):
+    """The public port for the Hubzoid web app: every path goes to the bridge,
+    `/webhooks/<hub>` to the inbound process. Returns the edge process (also
+    added to `started`), or None when it could not start (the reason is printed)."""
+    from . import appmode, config_secrets
+
+    edge_env = config_secrets.deployment_view(os.environ)
+    edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{br_port}"
+    edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
+    # The edge serves the web app, so it runs none of its Open WebUI rewrites.
+    edge_env["HUBZOID_UI"] = appmode.UI_HUBZOID
+    edge_routes = []
+    if inbound:
+        # Inbound surfaces receive on a loopback port; only /webhooks/<hub> is
+        # exposed (each POST is signature-, secret- or HMAC-verified first).
+        from .inbound.run import hub_slug, inbound_port
+
+        edge_routes.append({"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
+                            "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"})
+    edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
+    edge_cmd = [
+        sys.executable, "-m", "uvicorn",
+        "hubzoid.edge:_factory", "--factory",
+        "--host", host, "--port", str(ui_port),
+        "--log-level", settings.log_level,
+    ]
+    edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+    started.append(edge_proc)
+    probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host.strip("[]")
+    probe = f"[{probe}]" if ":" in probe else probe
+    ready = _wait_for(f"http://{probe}:{ui_port}/healthz", timeout=30)
+    if edge_proc.poll() is not None:
+        console.print(f"[red]The web app could not open port {ui_port} on {escape(host)}. Is another "
+                      "program using it? Choose another with --port.[/red]")
+        return None
+    if not ready:
+        console.print(f"[yellow]→ web app[/yellow]  not answering yet on port {ui_port}; "
+                      "check the log above")
+    return edge_proc
+
+
+def _should_open_browser(host: str, no_open: bool) -> bool:
+    """Open the web app only for a person at this machine: a terminal, a loopback
+    bind, and a graphical session (a console browser would take over the terminal)."""
+    from . import appmode
+
+    if no_open is not False or not sys.stdout.isatty() or not appmode.is_loopback_host(host):
+        return False
+    if os.environ.get("BROWSER"):
+        return True
+    if sys.platform in ("darwin", "win32"):
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _open_browser(url: str) -> None:
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - opening a browser is a convenience only
+        pass
+
+
+def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: int,
+                     inbound: bool, started: list):
+    """Legacy mode (HUBZOID_UI=openwebui): Open WebUI behind the edge, exactly as
+    in 1.0.x. Each process is added to `started` as soon as it runs."""
+    from . import config_secrets
+
+    try:
+        from . import branding, webui
+        from .loaders import agents as agents_loader
+
+        # Apply per-hub branding into every OWUI static dir
+        # (frontend/ and static/, see branding.static_dirs). No-op
+        # when <hub>/branding/ is absent or empty.
+        for sd in branding.static_dirs():
+            branding.apply(hub, sd)
+
+        # Pull suggestions from the main agent's frontmatter so the
+        # empty-chat screen has quick-start buttons.
+        try:
+            main_agent = agents_loader.load_main(hub)
+            suggestions = list(main_agent.spec.suggestions)
+            main_name = main_agent.spec.name
+        except Exception:
+            suggestions = []
+            main_name = _read_main_agent_name(hub)
+
+        # Display-name cascade: the agent's name: from AGENTS.md wins,
+        # then the operator's WEBUI_NAME, then "Hubzoid" (final fallback
+        # so it never reads as bare "Open WebUI" to a customer). Anchoring
+        # on the agent name keeps the login page, the sidebar, and the
+        # chat-center model label all showing the same hub name.
+        resolved_webui_name = (
+            main_name
+            or settings.webui_name
+            or "Hubzoid"
+        )
+
+        # The edge router (hubzoid/edge.py) binds the PUBLIC port and
+        # routes /artifacts -> bridge, everything else -> Open WebUI, so
+        # artifact download links work behind a single exposed port (the
+        # report-download fix; the bridge port need not be exposed). When
+        # the edge is on, OWUI moves to a loopback internal port and the
+        # edge takes the public bind. Opt out with HUBZOID_DISABLE_EDGE=1.
+        edge_enabled = os.environ.get("HUBZOID_DISABLE_EDGE", "").lower() not in ("1", "true", "yes")
+        owui_port = _owui_internal_port(ui_port) if edge_enabled else ui_port
+        owui_host = "127.0.0.1" if edge_enabled else host
+
+        ui_proc = webui.start(
+            hub_dir=hub,
+            bridge_port=br_port,
+            ui_port=owui_port,
+            ui_host=owui_host,
+            api_key=settings.first_api_key,
+            model_label=settings.model_label or main_name,
+            webui_name=resolved_webui_name,
+            suggestions=suggestions,
+            # The deployment layer only: never the hub secret or
+            # restricted/.env (config_secrets.deployment_view).
+            base_env=config_secrets.deployment_view(os.environ),
+        )
+        started.append(ui_proc)
+        log_path = getattr(ui_proc, "_log_path", None)
+        console.print("[cyan]→ webui [/cyan]  starting (Open WebUI; local embedding model is off, so boot is quick)")
+        if log_path:
+            console.print(f"            log: {log_path}")
+
+        # Wait for OWUI on its (now possibly internal) bind before fronting it.
+        owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
+        owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
+
+        probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        display_url = f"http://{host}:{ui_port}"
+        if edge_enabled:
+            # Start the public-facing edge router in front of bridge + OWUI.
+            edge_env = config_secrets.deployment_view(os.environ)
+            edge_env["HUBZOID_EDGE_DEFAULT"] = f"http://127.0.0.1:{owui_port}"
+            edge_env["HUBZOID_EDGE_PUBLIC_SCHEME"] = _public_scheme(edge_env)
+            edge_routes = [
+                {"prefix": "/artifacts", "upstream": f"http://127.0.0.1:{br_port}"},
+                # The admin portal (SPA + JSON API) is served by the bridge;
+                # expose it through the one public port like /artifacts.
+                {"prefix": "/portal", "upstream": f"http://127.0.0.1:{br_port}"},
+            ]
+            if settings.mcp_server:
+                # The hosted MCP surface is the one other bridge path that
+                # is public by design (per-user OWUI api-key auth; /v1
+                # stays loopback-only).
+                edge_routes.append(
+                    {"prefix": "/mcp", "upstream": f"http://127.0.0.1:{br_port}"}
+                )
+            if settings.mcp_server:
+                for prefix in ("/.well-known/oauth-protected-resource/mcp",
+                               "/.well-known/oauth-authorization-server/mcp/oauth"):
+                    edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
+            if inbound:
+                # Inbound surfaces receive on a loopback inbound port; only
+                # /webhooks/<hub> is exposed publicly (each POST is signature-,
+                # secret-, or HMAC-verified before anything runs). Namespaced by
+                # hub slug so the same public path scheme works under the gateway.
+                # Import here so a plain `hubzoid run` never pulls in the inbound
+                # stack (SQLAlchemy, etc.).
+                from .inbound.run import hub_slug, inbound_port
+                edge_routes.append(
+                    {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
+                     "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"}
+                )
+            edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
+            edge_cmd = [
+                sys.executable, "-m", "uvicorn",
+                "hubzoid.edge:_factory", "--factory",
+                "--host", host, "--port", str(ui_port),
+                "--log-level", settings.log_level,
+            ]
+            edge_paths = "/artifacts + /mcp" if settings.mcp_server else "/artifacts"
+            console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  ({edge_paths} → bridge :{br_port}, else → owui :{owui_port})")
+            edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+            started.append(edge_proc)
+            edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
+            if owui_ready and edge_ready and edge_proc.poll() is None:
+                console.print(f"[green]→ webui [/green]  ready    {display_url}")
+            else:
+                console.print(f"[yellow]→ webui [/yellow]  did not become ready in time; check log above. URL: {display_url}")
+        else:
+            if owui_ready:
+                console.print(f"[green]→ webui [/green]  ready    {display_url}")
+            else:
+                console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
 
 
 # ---------------------------------------------------------------------------
@@ -2456,16 +2862,21 @@ def version() -> None:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-_STARTER_ENV = """\
-# demo-hub configuration. This file is git-ignored.
-#
-# The default below uses your installed `claude` CLI and Pro/Max subscription
-# for inference. No API key needed. Requires `claude login` already done.
-#
-# To use a hosted provider instead, comment out MODEL=claude-local and
-# uncomment one of the alternative stanzas. Set the matching API key.
+_STARTER_MODEL_LINE = "MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)"
+_STARTER_BRIDGE_KEY_LINE = "# BRIDGE_API_KEYS=dev           # comma-separated keys for the OpenAI-compatible /v1 API"
 
-MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)
+_STARTER_ENV = """\
+# Hub configuration. This file is git-ignored and can hold keys: keep it private.
+#
+# --- Model -----------------------------------------------------------------
+# The default uses your installed `claude` CLI and Pro/Max subscription for
+# inference. No API key needed. Requires `claude login` already done.
+#
+# No `claude login` here? Use a hosted provider: comment out MODEL=claude-local,
+# uncomment one stanza below and set its key. (`hubzoid init` in a terminal
+# offers to do this for you.)
+
+""" + _STARTER_MODEL_LINE + """
 # MODEL=codex-local            # Codex CLI login; see docs/providers.md for supported version
 # MODEL=codex-local/<model-id> # optional Codex model pin
 # MODEL=claude-local/sonnet     # explicit; same as bare `claude-local`
@@ -2474,7 +2885,7 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 
 # Headless / server (no interactive `claude login` on the box): paste a
 # subscription token minted with `claude setup-token`. It is NOT an API key
-# and is NOT billed per-token — usage draws on your Pro/Max subscription.
+# and is NOT billed per token: usage draws on your Pro/Max subscription.
 # The `claude` CLI reads it automatically. See docs/DEPLOYING.md §5b.
 # CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 
@@ -2485,77 +2896,56 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # (allow fallbacks). Otherwise OpenRouter splits calls across Anthropic /
 # Vertex / Bedrock and prompt cache hits get fragmented.
 
+# --- Anthropic --------------------------------------------------------------
+# ANTHROPIC_API_KEY=
+# MODEL=anthropic/claude-haiku-4-5
+
+# --- OpenAI -----------------------------------------------------------------
+# OPENAI_API_KEY=
+# MODEL=openai/gpt-4o-mini
+
 # --- Jev decisions (hub.call_jev and the call_jev chat tool, experimental) --
 # A dedicated OpenRouter key used only for Jev. OPENROUTER_API_KEY above is
 # never used for Jev, and the chat model never uses this key. The chat tool
 # stays off until the jev capability is granted in the Console.
 # JEV_OPENROUTER_API_KEY=
 
-# --- OpenAI -----------------------------------------------------------------
-# OPENAI_API_KEY=
-# MODEL=openai/gpt-4o-mini
+# --- Web app and sign-in ----------------------------------------------------
+# `hubzoid run` serves the web app, file downloads and MCP on one port.
+# Sign-in is off by default (local mode): whoever opens the page is the hub's
+# owner, so the port stays on this machine (127.0.0.1). Turn sign-in on before
+# exposing it with --host 0.0.0.0 or behind a proxy.
+# HUBZOID_AUTH=true                    # people sign in with Hubzoid accounts
+# HUBZOID_PUBLIC_URL=https://hub.example.com  # the address people open; needed
+                                       # behind a proxy and for Google sign-in
+# HUBZOID_ADMIN_EMAIL=you@example.com  # bootstraps the first administrator;
+# HUBZOID_ADMIN_PASSWORD=              # remove both lines after the first start
+# ENABLE_SIGNUP=false                  # people cannot create their own accounts
+# The 1.0 names WEBUI_AUTH, WEBUI_URL and WEBUI_ADMIN_EMAIL/_PASSWORD still work.
 
-# --- Anthropic --------------------------------------------------------------
-# ANTHROPIC_API_KEY=
-# MODEL=anthropic/claude-haiku-4-5
+# Google sign-in (with sign-in on). Accounts are created by administrators;
+# Google sign-in attaches to the account with the same email.
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+# OAUTH_ALLOWED_DOMAINS=your-company.com
+# Authorized redirect URI in Google Console: <HUBZOID_PUBLIC_URL>/oauth/google/callback
 
-# --- Branding / UI ---------------------------------------------------------
-# WEBUI_NAME=                   # Login page, sidebar, and chat title. Leave
-                                # blank to use the agent's `name:` from
-                                # AGENTS.md, so all three read the same hub
-                                # name. Set this only to override with a
-                                # different display brand. Final fallback when
-                                # neither is set: "Hubzoid".
-# Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
-# RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
-# DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
-# HUBZOID_KEEP_OWUI_SUFFIX=True # keep Open WebUI branding even with files in ./branding/
-                                # (required above 50 users in 30 days without an
-                                # Open WebUI enterprise license)
-# ENABLE_ADMIN_CHAT_ACCESS=true # let admins open other users' chats (default: off)
-# ENABLE_ADMIN_EXPORT=true      # let admins export chats (default: off)
+# Hosted MCP (Claude Code, Cursor and other MCP clients use this hub's tools and
+# knowledge). On by default for a local run and for an https HUBZOID_PUBLIC_URL;
+# `hubzoid run` prints the `claude mcp add` line.
+# MCP_SERVER=false
 
-# --- Bridge / UI knobs (all optional) --------------------------------------
-# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees
+# Logo and browser tab icon: put logo.svg (or logo.png) and favicon.svg in ./branding/.
+
+# --- Bridge and ports (all optional) ---------------------------------------
+""" + _STARTER_BRIDGE_KEY_LINE + """
 # MODEL_LABEL=                  # what /v1/models reports; blank = derived from AGENTS.md name
-# PORT=3080                     # Open WebUI port
-# BRIDGE_PORT=8000              # FastAPI bridge port
-# HUBZOID_PUBLIC_URL=           # public base URL for the bridge — used to build
-                                # download links emitted by write_artifact. Set
-                                # this when behind a reverse proxy or on a
-                                # different host than the user's browser.
-                                # Default: http://127.0.0.1:<BRIDGE_PORT>
-                                # Example: https://hub.example.com
+# PORT=3080                     # public port: web app, downloads, MCP
+# BRIDGE_PORT=8000              # FastAPI bridge port, always on 127.0.0.1
 # HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
 # HUBZOID_DISABLE_HTTP_GET=true # remove http_get from the tool registry entirely
 # HUBZOID_DISABLE_WEB_SEARCH=true  # remove web_search from the tool registry entirely
-
-# --- Auth (default: off, single user) --------------------------------------
-# Uncomment ONE block below to require login. Full walkthrough + Google /
-# Microsoft / GitHub / OIDC / LDAP details: docs/auth.md.
-
-# Mode B: email + password, admin invites users.
-# WEBUI_AUTH=true
-# ENABLE_SIGNUP=false
-# DEFAULT_USER_ROLE=user
-# WEBUI_SECRET_KEY=               # openssl rand -hex 32
-# WEBUI_URL=https://your.host     # required behind a reverse proxy
-# WEBUI_ADMIN_EMAIL=you@you.com   # one-shot: seeds first admin on a fresh DB
-# WEBUI_ADMIN_PASSWORD=           # one-shot: delete both ADMIN lines after first boot
-
-# Mode C: Google SSO (use alongside Mode B's lines above). Sign-up stays closed:
-# create accounts in the Admin Console (Add user), and Google sign-in attaches to
-# them by email.
-# OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
-# OAUTH_ALLOWED_DOMAINS=your-company.com
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
-# Authorized redirect URI in Google Console: <WEBUI_URL>/oauth/google/callback
-
-# Opt-in: let users curate per-user memories in OWUI's UI; OWUI injects the
-# top matches into the agent's system prompt on every chat. Off by default
-# because OWUI flags this feature as Beta and storage format may change.
-# ENABLE_MEMORY=true
 
 # --- Workflows: who they run as, reports and email ------------------------
 # Scheduled workflows and schedule/*.md tasks run as an ordinary account. A
@@ -2580,11 +2970,16 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
 # SLACK_APP_TOKEN=xapp-...        # App-Level Token, scope connections:write
 
-# --- Strip flags (advanced) -----------------------------------------------
-# Hubzoid sets ~24 Open WebUI flags by default to strip platform surfaces
-# (code interpreter, community sharing, etc.). To override any, just add the
-# line here. See https://github.com/hubzoid/hubzoid/blob/main/docs/branding.md
-# for the full list and what each does.
+# --- Legacy: the Open WebUI chat app (this release only) -------------------
+# HUBZOID_UI=openwebui           # needs: pip install "hubzoid[openwebui]"
+# In legacy mode, Open WebUI's own settings apply, for example:
+# WEBUI_AUTH=true                # Open WebUI sign-in
+# WEBUI_SECRET_KEY=              # required with WEBUI_AUTH: openssl rand -hex 32
+# WEBUI_NAME=                    # display name; blank = the agent's name
+# ENABLE_MEMORY=true             # Open WebUI's per-user memories (Beta)
+# HUBZOID_KEEP_OWUI_SUFFIX=True  # keep Open WebUI branding with files in ./branding/
+# Hubzoid sets about 24 Open WebUI flags to strip platform surfaces; add any of
+# them here to override. See docs/branding.md.
 """
 
 
@@ -2635,7 +3030,9 @@ def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, 
         "# Hubzoid\n"
         ".env\n"
         "output/\n"
+        ".hubzoid/\n"
         ".openwebui-data/\n"
+        ".webui_secret_key\n"
         "\n"
         "# Python\n"
         "__pycache__/\n"
@@ -2680,11 +3077,12 @@ def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, 
     }
 
 
-def _template_root(name: str = "minimal") -> Path | None:
+def _template_root(name: str = DEFAULT_TEMPLATE) -> Path | None:
     """Return the on-disk path of a bundled template, or None.
 
-    Templates live at `hubzoid/templates/<name>/`. The two shipped today
-    are `minimal` (the runnable starter) and `demo` (the guided tour).
+    Templates live at `hubzoid/templates/<name>/`: `operations` (the default
+    example), `minimal` (one example per file type), `demo` (the guided tour)
+    and `watchtower` (workflow-first).
     """
     try:
         root = resources.files("hubzoid") / "templates" / name

@@ -53,12 +53,13 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/` | The installable Python package. |
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
-| `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
+| `hubzoid/templates/operations/` | Default `hubzoid init` template: an operations assistant for a fictional shop (knowledge, a stock CSV, the `stock_check` tool, suggested prompts). |
+| `hubzoid/templates/minimal/` | One worked example per file type, runnable immediately. `--template minimal`. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
-| `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |
+| `edge.py` | Reverse-proxy bound to the public port: every path→bridge (and `/webhooks/<hub>`→inbound) for the web app; `/artifacts`, `/portal`, `/mcp`→bridge, else→Open WebUI in legacy mode. |
 | `gateway.py` | Plans one shared Open WebUI over many hub bridges (`hubzoid gateway`). |
 | `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
@@ -80,9 +81,11 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 - Pre-shipped tools must scope writes to `<hub>/output/<session>/`. Reads
   may go anywhere under the hub directory. No filesystem access outside the
   hub root.
-- Open WebUI is a required dep but is invoked as a subprocess; the package
-  must not `import open_webui` at module load (keeps cold-start fast and lets
-  the bridge run headless via `--no-ui`).
+- Open WebUI is the optional `openwebui` extra (legacy mode,
+  `HUBZOID_UI=openwebui`), invoked as a subprocess. Nothing may `import
+  open_webui` at module load or on the default path; tests block the import
+  to keep it that way. `import hubzoid` itself stays light too: the agent SDKs
+  load only where an agent runs (the bridge), never in the CLI or the edge.
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
   execution backends (today: OpenAI Agents SDK Claude Agent SDK and Codex app-server). A
   single hub folder must produce identical manual-testing surface across

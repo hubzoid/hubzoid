@@ -1,8 +1,8 @@
-"""Release check: the installed package works and serves the Console.
+"""Release check: the installed package works and serves the web app and Console.
 
 Run with the Python of a fresh venv that installed the built wheel (not the
-source tree). Scaffolds a hub, builds the bridge app and requests the Console
-page and one of its assets.
+source tree). Scaffolds a hub, builds the bridge app and requests the web app
+page, the Console page and one of its assets.
 
     python .github/scripts/verify_install.py [expected-version]
 """
@@ -48,6 +48,10 @@ def main() -> int:
     from hubzoid.server import build_app
 
     client = TestClient(build_app())
+    app_page = client.get("/")
+    if app_page.status_code != 200 or "<title>" not in app_page.text:
+        print(f"Web app page failed: {app_page.status_code}")
+        return 1
     page = client.get("/portal/")
     if page.status_code != 200 or "<title>" not in page.text:
         print(f"Console page failed: {page.status_code}")
@@ -56,7 +60,7 @@ def main() -> int:
     if not asset or client.get(asset.group(1)).status_code != 200:
         print("Console asset missing")
         return 1
-    print(f"ok: hubzoid {have} installed, Console served")
+    print(f"ok: hubzoid {have} installed, web app and Console served")
     return 0
 
 

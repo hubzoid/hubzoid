@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Kestrel and Oak">
+  <rect width="64" height="64" rx="14" fill="#1F5F5B"/>
+  <path d="M22 16v32M22 34l18-18M29 28l14 20" fill="none" stroke="#F4EFE6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

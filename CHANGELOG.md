@@ -3,6 +3,70 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.1.0]
+
+Not released yet. These notes cover packaging, `hubzoid run`, `hubzoid init`,
+Docker and CI. The web app notes are added as its parts land.
+
+### Install and run
+- `pip install hubzoid` no longer installs Open WebUI (or PyTorch): a cold
+  install is about 135 packages and 0.5 GB instead of about 285 and 2.1 GB.
+  The Open WebUI chat app stays available for this release as legacy mode:
+  `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`.
+- New required dependencies for the web app: pwdlib (argon2 and bcrypt),
+  Authlib, itsdangerous and python-multipart. The shared packages Open WebUI
+  used to pin exactly (openai, mcp, aiohttp, FastAPI, pydantic and others)
+  keep those release lines in the core install for this release.
+- `hubzoid run` serves the Hubzoid web app, file downloads and MCP on one
+  port, prints one ready line with the URL and opens it in the browser from a
+  terminal (`--no-open` to skip). Sign-in is off by default (local mode), and
+  then the port stays on loopback: a network `--host` needs
+  `HUBZOID_AUTH=true`, or `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` on a
+  network you trust.
+- Hosted MCP is on by default for a local run and for an https
+  `HUBZOID_PUBLIC_URL`, and `hubzoid run` prints the `claude mcp add` line.
+  `MCP_SERVER` and `MCP_PUBLIC_URL` set in the hub's `.env` still win.
+- `hubzoid init` scaffolds an operations assistant for a fictional shop by
+  default (`--template minimal` keeps the 1.0 starter), and in a terminal
+  without a signed-in Claude Code or Codex CLI it offers to save an
+  OpenRouter, Anthropic or OpenAI key.
+- `hubzoid doctor` reports the web app mode, sign-in, the deployment key (by
+  fingerprint), the `openwebui` extra in legacy mode, an Open WebUI install
+  not yet moved, and the local-mode loopback guard.
+- The Docker image no longer carries ffmpeg, PyAV build tools or PyTorch.
+  `--build-arg WITH_OPENWEBUI=true` builds the legacy image. The compose file
+  turns sign-in on, since its port is reachable from other machines.
+- Every package under `hubzoid/` ships: packages are discovered instead of
+  listed by hand, and a test fails when a directory of Python modules would not
+  ship.
+
+### Upgrading from 1.0.x
+- With sign-in on, a hub whose Open WebUI database has accounts and whose
+  Hubzoid web app has none does not start: move the accounts, or keep Open
+  WebUI for this release. In local mode `hubzoid run` only notes that the old
+  chats can be imported.
+- To move: do a dry run of `hubzoid migrate openwebui <hub>` first (see its
+  `--help`), back up with `hubzoid backup <hub>`, stop the hub or gateway, then
+  apply the migration.
+- To rehearse a gateway on a copy, copy each hub's `AGENTS.md`, `restricted/`
+  and `identity/` along with the data: access, restricted tools and identity
+  mapping read them.
+
+### Development
+- Pull requests and pushes to `main` run fast checks again
+  (`.github/workflows/tests.yml`): unit tests on SQLite without Open WebUI,
+  browsers, live models or Docker, and the web app lint. Publishing a release
+  still runs the full validation, now with the `openwebui` extra installed.
+
+### Fixes
+- Hubs sharing one PostgreSQL workflow database no longer collide on markdown
+  schedule tasks and scheduled evals. Run ids now name the hub
+  (`md:<task>:<slot>@<hub>`), so two hubs with the same task and slot both run.
+  Runs queued under the earlier ids are still listed, re-queued and cancelled.
+- Backups leave the deployment key (`secret.key`) out unless secrets are
+  requested, and restoring in place keeps the current key and link secret.
+- `.webui_secret_key` is no longer tracked in the repository.
+
 ## [1.0.3]
 
 - Fix README images and documentation links on PyPI with absolute URLs.

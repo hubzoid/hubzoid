@@ -1,0 +1,50 @@
+name: tests
+
+# Fast checks for every pull request and every push to main: the Python unit
+# tests on SQLite without Open WebUI, browsers, live models or Docker, and the
+# web app's lint. They hold no secrets and publish nothing. The release
+# pipeline (ci.yml) still runs the full validation when a release is published.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the core package and test tools (no Open WebUI)
+        run: pip install -e '.[dev]'
+      - name: Every module compiles
+        run: python -m compileall -q hubzoid
+      - name: Unit tests (SQLite; no browsers, live models or Docker)
+        run: pytest -q --no-header -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'
+
+  web-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Lint the web app and Console
+        working-directory: portal
+        run: npm ci && npm run lint

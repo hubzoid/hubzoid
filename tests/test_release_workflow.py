@@ -69,12 +69,38 @@ def test_missing_changelog_prevents_new_release(tmp_path):
     assert "release create" not in calls
 
 
-def test_only_publishing_a_release_triggers_ci():
-    workflows = list((ROOT / ".github/workflows").glob("*.y*ml"))
-    assert workflows == [ROOT / ".github/workflows/ci.yml"]
+def test_only_publishing_a_release_triggers_the_release_pipeline():
+    workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/tests.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
-    config = yaml.load(workflows[0].read_text(), Loader=yaml.BaseLoader)
+    config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert config["on"] == {"release": {"types": ["published"]}}
+
+
+def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
+    path = ROOT / ".github/workflows/tests.yml"
+    text = path.read_text()
+    config = yaml.load(text, Loader=yaml.BaseLoader)
+    assert set(config["on"]) == {"pull_request", "push"}
+    assert config["permissions"] == {"contents": "read"}
+    for forbidden in ("secrets.", "id-token", "pypi", "docker/", "packages: write", "environment:"):
+        assert forbidden not in text, forbidden
+    runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
+    assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
+    assert "not e2e and not e2e_llm and not e2e_ui and not e2e_browser" in runs
+    assert "npm run lint" in runs
+    assert "playwright install" not in runs and "docker" not in runs
+    assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
+
+
+def test_release_validation_covers_legacy_mode_and_a_core_only_install():
+    steps = {s.get("name"): s.get("run", "") for s in WORKFLOW["jobs"]["validate"]["steps"]}
+    assert ".[dev,openwebui]" in steps["Full test suite (legacy Open WebUI mode included)"]
+    clean = steps["Clean install of the wheel works and serves the Console"]
+    assert "pip install dist/*.whl" in clean and 'import open_webui"' in clean
+    smoke = next(s["run"] for s in WORKFLOW["jobs"]["image"]["steps"] if s.get("name") == "Check the image starts")
+    assert 'test "$refused" = 2' in smoke and "HUBZOID_AUTH=true" in smoke
+    assert "/healthz" in smoke and 'import open_webui"' in smoke
 
 
 def test_all_release_checks_gate_publishing_and_publish_jobs_retry_independently():
