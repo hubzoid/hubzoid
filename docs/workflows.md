@@ -288,6 +288,11 @@ under **Hubzoid tools → Workflows**:
   start or pause another one.
 - `HUBZOID_WORKFLOW_TOOLS=false` in a hub's `.env` removes them from that
   agent. The Console then shows the capabilities as disabled.
+- On an agent whose access is still managed in the chat app (not yet migrated
+  to the Console), these capabilities are granted the legacy way, like
+  restricted tools: membership in an Open WebUI group named `workflows_view`
+  or `workflows_manage`. Nobody has them until an administrator creates that
+  group. The access tools work only on Console-managed agents.
 
 Workflows can't be created or edited from chat. Write them in `workflows/` or
 `schedule/` as described above.

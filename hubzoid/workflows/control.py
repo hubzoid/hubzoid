@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -55,11 +56,13 @@ class Target:
     task: str | None = None  # the markdown task name
 
 
-def resolve(hub_dir, name: str) -> Target:
+def resolve(hub_dir, name: str, *, prefer: str = "markdown") -> Target:
     """A task or workflow name as a person or the CLI writes it (`md:x`, `x`,
     hyphens or underscores for a code workflow) to its stored form. `md:x` is
-    always the markdown task. A bare name is the code workflow when one has
-    it (listings show markdown tasks as `md:<task>`), else the markdown task."""
+    always the markdown task. A bare name that matches both a markdown task
+    and a code workflow goes to `prefer`: "markdown" for the CLI (as it always
+    has, and as `schedule run` still resolves), "code" for the agent tools,
+    whose listing shows markdown tasks as `md:<task>`."""
     from .. import scheduling as sch
 
     hub_dir = Path(hub_dir)
@@ -67,14 +70,20 @@ def resolve(hub_dir, name: str) -> Target:
     explicit_md = raw.startswith("md:")
     bare = raw[3:] if explicit_md else raw
     if bare:
-        if not explicit_md:
+        task = None
+        tasks, _ = sch.load_tasks(hub_dir)
+        if any(t.name == bare for t in tasks):
+            task = Target(f"md:{bare}", "markdown", bare)
+        if explicit_md or (task is not None and prefer != "code"):
+            if task is not None:
+                return task
+        else:
             want = bare.replace("-", "_")
             for w in observe.definitions(hub_dir):
                 if w["name"] in (bare, want):
                     return Target(w["name"], "code")
-        tasks, _ = sch.load_tasks(hub_dir)
-        if any(t.name == bare for t in tasks):
-            return Target(f"md:{bare}", "markdown", bare)
+            if task is not None:
+                return task
     raise ControlError(f"There is no workflow or scheduled task named {raw!r} in this agent.",
                        "unknown")
 
@@ -107,7 +116,8 @@ def overview(hub_dir, *, viewer: str | None) -> list[dict]:
 
 
 def history(hub_dir, *, viewer: str | None, workflow: str | None = None,
-            run_id: str | None = None, status=None, limit: int = 10) -> list[dict]:
+            run_id: str | None = None, status=None, limit: int = 10,
+            prefer: str = "markdown") -> list[dict]:
     """Recent runs, newest first, or one run with its steps (`run_id`). Output
     and error text only when `viewer` is the account the run acted as."""
     hub_dir = Path(hub_dir)
@@ -116,7 +126,7 @@ def history(hub_dir, *, viewer: str | None, workflow: str | None = None,
     except (TypeError, ValueError):
         limit = 10
     limit = max(1, min(MAX_RUNS, limit))
-    name = resolve(hub_dir, workflow).name if workflow else None
+    name = resolve(hub_dir, workflow, prefer=prefer).name if workflow else None
     if isinstance(status, str) and status.strip().lower() == "queued":
         status = "ENQUEUED"  # the listings say "queued"
     try:
@@ -207,7 +217,7 @@ def _audit(hub_dir: Path, action: str, target: str, **fields) -> None:
 
 
 def start_now(hub_dir, name: str, *, actor: str, surface: str,
-              request_id: str | None = None) -> dict:
+              request_id: str | None = None, prefer: str = "markdown") -> dict:
     """Queue one run of a workflow or markdown task now, on this process's
     engine. Returns {run_id, workflow, kind, runs_as, already_running}. When
     a run is already queued or running, returns that one and records nothing."""
@@ -215,7 +225,7 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
     from . import markdown, runtime
 
     hub_dir = Path(hub_dir)
-    target = resolve(hub_dir, name)
+    target = resolve(hub_dir, name, prefer=prefer)
     if not _engine_here(hub_dir):
         raise ControlError(
             "The workflow engine isn't running in this agent, so runs can't be started here. "
@@ -233,7 +243,9 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
         if active:
             return dict(out, run_id=active[0], already_running=True)
         if target.kind == "markdown":
-            slot = "manual-" + datetime.now().strftime("%Y%m%dT%H%M%S")
+            # Unique per start: a second start in the same second, after a
+            # short run finished, must not reuse (and silently not run) the id.
+            slot = f"manual-{datetime.now():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
             handle = markdown.enqueue_task(target.task, slot)
         else:
             handle = runtime.start(target.name)
@@ -245,13 +257,13 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
 
 
 def set_paused(hub_dir, name: str, paused: bool, *, actor: str, surface: str,
-               request_id: str | None = None) -> dict:
+               request_id: str | None = None, prefer: str = "markdown") -> dict:
     """Pause or resume a schedule. Returns {workflow, paused, changed}; the
     audit row is written either way."""
     from ..access import store_for
 
     hub_dir = Path(hub_dir)
-    target = resolve(hub_dir, name)
+    target = resolve(hub_dir, name, prefer=prefer)
     gs = store_for(hub_dir)
     changed = (target.name in gs.paused_workflows(hub_dir.name)) != bool(paused)
     gs.set_workflow_paused(hub_dir.name, target.name, bool(paused), actor=actor,

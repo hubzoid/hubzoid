@@ -275,7 +275,7 @@ def make(ctx) -> list:
         try:
             rows = await call(control.history, hub_dir, viewer=actor,
                               workflow=workflow.strip() or None, run_id=run_id.strip() or None,
-                              status=status.strip() or None, limit=limit)
+                              status=status.strip() or None, limit=limit, prefer="code")
         except control.ControlError as exc:
             return f"[not available: {exc.message}]"
         except Exception:  # noqa: BLE001
@@ -307,7 +307,7 @@ def make(ctx) -> list:
             return f"[not started: {why}]"
         try:
             out = await call(control.start_now, hub_dir, name, actor=actor, surface=surface,
-                             request_id=get_chat_id())
+                             request_id=get_chat_id(), prefer="code")
         except control.ControlError as exc:
             return f"[not started: {exc.message}]"
         except Exception:  # noqa: BLE001
@@ -339,7 +339,7 @@ def make(ctx) -> list:
             return f"[not available: {why}]"
         try:
             out = await call(control.set_paused, hub_dir, name, True, actor=actor,
-                             surface=surface, request_id=get_chat_id())
+                             surface=surface, request_id=get_chat_id(), prefer="code")
         except control.ControlError as exc:
             return f"[not available: {exc.message}]"
         except Exception:  # noqa: BLE001
@@ -368,7 +368,7 @@ def make(ctx) -> list:
             return f"[not available: {why}]"
         try:
             out = await call(control.set_paused, hub_dir, name, False, actor=actor,
-                             surface=surface, request_id=get_chat_id())
+                             surface=surface, request_id=get_chat_id(), prefer="code")
         except control.ControlError as exc:
             return f"[not available: {exc.message}]"
         except Exception:  # noqa: BLE001

@@ -294,7 +294,9 @@ def make(ctx) -> list:
         if not view.get("known", True):
             # Not someone this delegate manages: no account detail, only what
             # everyone signed in gets in the agents they manage.
-            public = [h["hub"] for h in held]
+            public = [h["hub"] for h in held
+                      if any(c["permission"] == "use_hub" and "everyone" in c["sources"]
+                             for c in h["capabilities"])]
             if not public:
                 return f"{subject} has no access in the agents you manage."
             return (f"{subject} has no access of their own in the agents you manage. "

@@ -430,10 +430,13 @@ class AccessService:
             hidden = dict(suspended=None, account_unavailable=None, blocked=None, status=None)
             entries = []
             for key in hubs:
-                sources = _sources(all_grants, subject, key)
+                # Only what everyone signed in gets: never this person's own
+                # (e.g. organization) grants, which the delegate may not see.
+                public = {p: ["everyone"] for p, src in _sources(all_grants, subject, key).items()
+                          if "everyone" in src}
                 entries.append(dict(
                     hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
-                    capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],
+                    capabilities=[dict(permission=p, sources=s) for p, s in public.items()],
                     effective=None,
                 ))
             return dict(subject=subject, display=None,
