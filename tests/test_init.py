@@ -74,9 +74,26 @@ def test_fresh_when_only_the_target_hub_exists(tmp_path):
 # ---------------------------------------------------------------------------
 # Init: default name + hub folder content
 # ---------------------------------------------------------------------------
-def test_init_default_creates_minimal_hub(tmp_path):
-    """Default `hubzoid init` ships the minimal template: one worked example per surface."""
+def test_init_default_creates_the_operations_hub(tmp_path):
+    """Default `hubzoid init` ships the operations example: a fictional shop's
+    assistant with knowledge, a stock export, a tool and suggested prompts."""
     res = _run_init(tmp_path)
+    assert res.exit_code == 0, res.output
+    hub = tmp_path / "demo-hub"
+    for rel in ("AGENTS.md", ".env", "README.md", "knowledge/suppliers.md",
+                "knowledge/returns-policy.md", "raw_data/inventory.csv",
+                "tools_local/inventory.py", "skills/reorder-plan.md", "evals/reorder-uses-the-data.md",
+                "schedule/monday-reorder.md", "connectors/.mcp.json", "branding/logo.svg"):
+        assert (hub / rel).is_file(), rel
+    assert "fictional" in (hub / "AGENTS.md").read_text()
+    # The minimal template's examples are not part of it.
+    assert not (hub / "skills" / "hello.md").exists()
+    assert "Try a suggested prompt" in res.output
+
+
+def test_init_template_minimal_is_one_example_per_file_type(tmp_path):
+    """`--template minimal` keeps the 1.0 default: one worked example per surface."""
+    res = _run_init(tmp_path, "demo-hub", "--template", "minimal")
     assert res.exit_code == 0, res.output
     hub = tmp_path / "demo-hub"
     assert (hub / "AGENTS.md").is_file()
@@ -251,3 +268,116 @@ def test_first_runtime_selection(monkeypatch):
     monkeypatch.setattr(cli, "_available_local_models", lambda: ["claude-local", "codex-local"])
     monkeypatch.setattr(cli.typer, "prompt", lambda *a, **kw: 2)
     assert cli._choose_initial_model() == "codex-local"
+
+
+# ---------------------------------------------------------------------------
+# A model for a new hub: a signed-in CLI, a pasted key, or the default
+# ---------------------------------------------------------------------------
+def _interactive(monkeypatch, *, local=(), answers=()):
+    """A terminal session: `local` signed-in CLIs, `answers` typed at prompts."""
+    import hubzoid.cli as cli
+
+    replies = list(answers)
+    asked = []
+
+    def prompt(text, **kw):
+        asked.append((text, kw))
+        return replies.pop(0)
+
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    monkeypatch.setattr(cli, "_available_local_models", lambda: list(local))
+    monkeypatch.setattr(cli.typer, "prompt", prompt)
+    return asked
+
+
+def _env(hub):
+    return (hub / ".env").read_text()
+
+
+@pytest.mark.parametrize("key,setting,model", [
+    ("sk-or-v1-" + "a" * 40, "OPENROUTER_API_KEY", "openrouter/anthropic/claude-haiku-4.5"),
+    ("sk-ant-api03-" + "b" * 40, "ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
+    ("sk-proj-" + "c" * 40, "OPENAI_API_KEY", "openai/gpt-4o-mini"),
+])
+def test_a_pasted_key_is_saved_for_its_provider(tmp_path, monkeypatch, key, setting, model):
+    asked = _interactive(monkeypatch, answers=[key])
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    env = _env(tmp_path / "hub")
+    assert f"\nMODEL={model}\n{setting}={key}\n" in env
+    assert "\nMODEL=claude-local" not in env
+    assert ((tmp_path / "hub" / ".env").stat().st_mode & 0o777) == 0o600
+    assert key not in res.output                      # never echoed
+    assert asked[0][1].get("hide_input") is True
+    assert "Check the model" not in res.output
+
+
+def test_an_unrecognised_key_asks_for_the_provider(tmp_path, monkeypatch):
+    _interactive(monkeypatch, answers=["xk-" + "d" * 40, 2])
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    assert "\nMODEL=anthropic/claude-haiku-4-5\nANTHROPIC_API_KEY=xk-" in _env(tmp_path / "hub")
+
+
+def test_a_subscription_token_or_malformed_key_is_refused(tmp_path, monkeypatch):
+    _interactive(monkeypatch, answers=["sk-ant-oat01-" + "e" * 40, "not a key # x", ""])
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    out = " ".join(res.output.split())
+    assert "subscription token" in out and "does not look like an API key" in out
+    env = _env(tmp_path / "hub")
+    assert "\nMODEL=claude-local" in env and "e" * 40 not in env and "not a key" not in env
+
+
+def test_skipping_keeps_the_default_model(tmp_path, monkeypatch):
+    _interactive(monkeypatch, answers=[""])
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    assert "\nMODEL=claude-local" in _env(tmp_path / "hub")
+    assert "Check the model" in res.output
+
+
+def test_a_signed_in_cli_needs_no_key(tmp_path, monkeypatch):
+    asked = _interactive(monkeypatch, local=["claude-local"])
+    res = _run_init(tmp_path, "hub")
+    assert res.exit_code == 0, res.output
+    assert asked == []
+    assert "\nMODEL=claude-local\n" in _env(tmp_path / "hub")
+
+
+def test_an_explicit_model_is_never_prompted_for(tmp_path, monkeypatch):
+    asked = _interactive(monkeypatch)
+    res = _run_init(tmp_path, "hub", "--model", "openai/gpt-4o-mini")
+    assert res.exit_code == 0, res.output
+    assert asked == [] and "\nMODEL=openai/gpt-4o-mini\n" in _env(tmp_path / "hub")
+
+
+def test_non_interactive_init_neither_probes_nor_prompts(tmp_path, monkeypatch):
+    import hubzoid.cli as cli
+
+    monkeypatch.setattr(cli, "_available_local_models", lambda: pytest.fail("probed"))
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: pytest.fail("prompted"))
+    res = _run_init(tmp_path, "hub")       # CliRunner's stdin is not a terminal
+    assert res.exit_code == 0, res.output
+    assert "\nMODEL=claude-local" in _env(tmp_path / "hub")
+    assert "hubzoid init` in a terminal" in _env(tmp_path / "hub")
+
+
+def test_starter_env_describes_the_web_app():
+    from hubzoid.cli import _STARTER_ENV
+
+    for needle in ("HUBZOID_AUTH=true", "HUBZOID_PUBLIC_URL", "HUBZOID_ADMIN_EMAIL",
+                   "/oauth/google/callback", "MCP_SERVER", 'pip install "hubzoid[openwebui]"',
+                   "HUBZOID_UI=openwebui"):
+        assert needle in _STARTER_ENV, needle
+    assert "first one is what Open WebUI sees" not in _STARTER_ENV
+
+
+def test_private_files_are_never_readable_by_others(tmp_path):
+    from hubzoid.cli import _write_private
+
+    path = tmp_path / ".env"
+    path.write_text("old")
+    path.chmod(0o644)
+    _write_private(path, "KEY=value\n")
+    assert path.read_text() == "KEY=value\n" and (path.stat().st_mode & 0o777) == 0o600

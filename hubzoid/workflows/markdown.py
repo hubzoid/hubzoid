@@ -22,9 +22,16 @@ A run is split into checkpointed steps:
   4. finish - record the result; archive the webhook events the run handled.
 
 All tasks share one registered DBOS workflow (`hz_markdown_task`); the run's
-workflow id `md:<task>:<slot>` carries the task name, so tasks added or edited
-while the hub runs work without re-registering, and the same slot can never be
-enqueued twice.
+workflow id `md:<task>:<slot>@<hub>` carries the task name, so tasks added or
+edited while the hub runs work without re-registering, and the same slot can
+never be enqueued twice.
+
+Run ids are namespaced by the hub (its DBOS application name) because a workflow
+id is global in a DBOS system database: hubs sharing one PostgreSQL database
+used to collide on `md:<task>:<slot>` and `eval:<cases>:<slot>`, and the second
+hub silently got the first hub's run and result. Ids written before the
+namespace (`md:<task>:<slot>`) are still read, so runs queued or running across
+an upgrade are listed, re-queued and cancelled as before.
 """
 from __future__ import annotations
 
@@ -40,13 +47,38 @@ EVAL_WORKFLOW = "hz_eval_suite"
 _FNS: dict = {}
 
 
-def run_id(task_name: str, slot: str) -> str:
-    return f"md:{task_name}:{slot}"
+def hub_namespace(hub_name: str | None = None) -> str:
+    """The hub's part of a run id: its DBOS application name (lowercase letters,
+    digits and hyphens, unique per hub name). Defaults to the hub this process's
+    workflow engine was initialised for."""
+    from . import runtime
+
+    name = hub_name or runtime._HUB_NAME
+    if not name:
+        raise RuntimeError("workflows.init(hub_dir) must run before markdown work is queued")
+    return runtime._app_name(name)
+
+
+def run_id(task_name: str, slot: str, hub_name: str | None = None) -> str:
+    """`md:<task>:<slot>@<hub>`: one run of a task for one slot in one hub."""
+    return f"md:{task_name}:{slot}@{hub_namespace(hub_name)}"
+
+
+def run_prefix(task_name: str) -> str:
+    """The id prefix every run of a task shares, namespaced or not. Lists scope
+    it to this hub by DBOS application."""
+    return f"md:{task_name}:"
+
+
+def eval_run_id(names: list[str], slot: str, hub_name: str | None = None) -> str:
+    """`eval:<case,case>:<slot>@<hub>`: one scheduled eval suite run in one hub."""
+    return f"eval:{','.join(sorted(names))}:{slot}@{hub_namespace(hub_name)}"
 
 
 def task_name_from_id(workflow_id: str) -> str | None:
-    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>`,
-    plus `:requeued` for each time a code change re-queued it."""
+    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>@<hub>`
+    (or `md:<task>:<slot>` before hub namespaces), plus `:requeued` for each time a
+    code change re-queued it."""
     if not workflow_id.startswith("md:"):
         return None
     rest = workflow_id[3:]
@@ -193,11 +225,13 @@ def enqueue_task(task_name: str, slot: str, claimed: list[str] | None = None,
 
 
 def active_runs(task_name: str) -> list[str]:
-    """Ids of this task's runs that are queued or running."""
+    """Ids of this task's runs that are queued or running, in this hub. The
+    prefix matches ids from before hub namespaces too; DBOS scopes the list to
+    this hub's application."""
     from dbos import DBOS
 
     return [w.workflow_id for w in DBOS.list_workflows(
-        workflow_id_prefix=run_id(task_name, ""), status=["PENDING", "ENQUEUED"],
+        workflow_id_prefix=run_prefix(task_name), status=["PENDING", "ENQUEUED"],
         load_input=False, load_output=False)]
 
 
@@ -207,5 +241,5 @@ def enqueue_evals(names: list[str], now: datetime):
     from . import runtime
 
     slot = now.strftime("%Y%m%dT%H%M")
-    with SetWorkflowID(f"eval:{','.join(sorted(names))}:{slot}"):
+    with SetWorkflowID(eval_run_id(names, slot)):
         return runtime._MD_QUEUE.enqueue(_FNS["eval_suite"], list(names), now.isoformat())

@@ -3,10 +3,11 @@
 #   HUB_PATH=/path/to/your/hub POSTGRES_PASSWORD=<letters and digits> \
 #     docker compose -f docker/docker-compose.yml -f docker/docker-compose.postgres.yml up -d
 #
-# Hubzoid's tables, the workflow engine's (schema `dbos`) and Open WebUI's all
-# go into one PostgreSQL database, each upgraded by its owner at start. Uploads
-# and hub runtime files still live in the mounted hub folder. The database port
-# is not published. Back it up with pg_dump (docs/BACKUP.md).
+# Hubzoid's tables (accounts, conversations, access) and the workflow engine's
+# (schema `dbos`) go into one PostgreSQL database, each upgraded by its owner at
+# start; in legacy mode Open WebUI's tables join them. Uploads and hub runtime
+# files still live in the mounted hub folder. The database port is not
+# published. Back it up with pg_dump (docs/BACKUP.md).
 
 services:
   db:

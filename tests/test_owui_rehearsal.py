@@ -5,9 +5,12 @@ Uses synthetic users in a fresh private database, not a customer database.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
+
+import pytest
 
 SCRIPT = r"""
 import asyncio, json, sys
@@ -66,6 +69,8 @@ asyncio.run(main())
 """
 
 
+@pytest.mark.skipif(importlib.util.find_spec("open_webui") is None,
+                    reason="needs the openwebui extra (legacy Open WebUI mode)")
 def test_real_owui_schema_migration_and_rollback(tmp_path):
     env = {
         k: v
