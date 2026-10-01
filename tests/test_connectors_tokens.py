@@ -356,3 +356,97 @@ def test_dropping_a_connector_revokes_in_the_background(hub, fake):
     while len(fake.revoked) < 4 and time.time() < deadline:
         time.sleep(0.05)
     assert sorted(r["form"]["token"] for r in fake.revoked) == ["at-1", "at-b", "rt-1", "rt-b"]
+
+
+def test_a_deleted_account_loses_every_connection(hub, fake):
+    save(hub, expires_at=time.time() + 3600)
+    tokens.store(hub, user_id=UID, email=f.OWNER, connector_id="cal",
+                 token=record(access_token="at-c", refresh_token="rt-c"))
+    tokens.store(hub, user_id="u-2", email="b@example.org", connector_id=CID, token=record())
+    assert tokens.drop_user(hub, UID) == 2
+    assert tokens.for_user(hub, UID) == [] and len(tokens.for_user(hub, "u-2")) == 1
+    assert tokens.drop_user(hub, "") == 0
+
+
+# ---------------------------------------------------------------------------
+# Races between a refresh and a new authorization, a disconnect or a slow server
+# ---------------------------------------------------------------------------
+def test_a_refresh_that_loses_to_a_new_authorization_does_not_revoke(hub, fake):
+    """At many providers revoking any token of a grant revokes the whole grant,
+    including the person's brand new authorization."""
+    save(hub)
+    fake.before = lambda: save(hub, access_token="at-new", refresh_token="rt-new",
+                               expires_at=time.time() + 3600)
+    assert tokens.access_token_for(hub, UID, CID) == "at-new"
+    time.sleep(0.3)
+    assert fake.revoked == []
+    assert tokens.token_record(hub, UID, CID)["refresh_token"] == "rt-new"
+
+
+def test_a_refresh_that_loses_to_a_disconnect_revokes_its_new_tokens(hub, fake):
+    save(hub)
+
+    def removed():
+        with connectors.engine(hub).begin() as conn:
+            conn.execute(text("DELETE FROM hz_connector_tokens"))
+
+    fake.before = removed
+    assert tokens.access_token_for(hub, UID, CID) is None
+    deadline = time.time() + 5
+    while len(fake.revoked) < 2 and time.time() < deadline:
+        time.sleep(0.05)
+    assert sorted(r["form"]["token"] for r in fake.revoked) == ["at-2", "rt-2"]
+    assert tokens.get(hub, UID, CID) is None
+
+
+def test_disconnect_waits_for_a_refresh_and_revokes_what_it_deletes(hub, fake):
+    save(hub, expires_at=time.time() + 3600)
+    with connectors.engine(hub).begin() as conn:  # another process is refreshing
+        conn.execute(text("UPDATE hz_connector_tokens SET refresh_lock_until = :t"),
+                     {"t": time.time() + 30})
+    timer = threading.Timer(0.5, write_elsewhere, args=(hub,))
+    timer.start()
+    try:
+        assert tokens.disconnect(hub, UID, CID) is True
+    finally:
+        timer.join()
+    assert [r["form"]["token"] for r in fake.revoked] == ["rt-other", "at-other"]
+    assert tokens.get(hub, UID, CID) is None
+
+
+def test_a_new_authorization_keeps_a_refresh_token_only_once_it_is_settled(hub, fake):
+    save(hub, issuer="https://as.example.org")
+    with connectors.engine(hub).begin() as conn:  # a refresh is spending rt-1 right now
+        conn.execute(text("UPDATE hz_connector_tokens SET refresh_lock_until = :t"),
+                     {"t": time.time() + 30})
+    timer = threading.Timer(0.5, write_elsewhere, args=(hub,))
+    timer.start()
+    try:
+        tokens.store(hub, user_id=UID, email=f.OWNER, connector_id=CID,
+                     token=record(access_token="at-new", refresh_token=None),
+                     inherit_refresh=("https://as.example.org", "cid"))
+    finally:
+        timer.join()
+    stored = tokens.token_record(hub, UID, CID)
+    assert stored["access_token"] == "at-new" and stored["refresh_token"] == "rt-other"
+    # Another client's or issuer's refresh token is never kept.
+    tokens.store(hub, user_id=UID, email=f.OWNER, connector_id=CID,
+                 token=record(access_token="at-3", refresh_token=None),
+                 inherit_refresh=("https://as.example.org", "another-client"))
+    assert tokens.token_record(hub, UID, CID)["refresh_token"] is None
+
+
+def test_a_refresh_request_cannot_outlive_its_lease(hub, monkeypatch):
+    monkeypatch.setattr(tokens, "REFRESH_DEADLINE", 0.5)
+
+    def trickle():
+        yield b'{"access_token": "at-slow", '
+        time.sleep(1.0)
+        yield b'"token_type": "Bearer"}'
+
+    monkeypatch.setattr(net, "_transport", httpx.MockTransport(
+        lambda request: httpx.Response(200, content=trickle())))
+    save(hub)
+    assert tokens.access_token_for(hub, UID, CID) is None
+    conn = tokens.get(hub, UID, CID)
+    assert conn.status == "error" and conn.error == "refresh_unavailable:ReadTimeout"

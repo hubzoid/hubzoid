@@ -42,11 +42,13 @@ from . import http as net
 
 log = logging.getLogger("hubzoid.connectors")
 
-SKEW = 60            # refresh this many seconds before the access token expires
-LEASE_SECONDS = 30   # longer than one refresh request can take
-WAIT_SECONDS = 10    # how long a turn waits for another process's refresh
+SKEW = 60             # refresh this many seconds before the access token expires
+REFRESH_DEADLINE = 20  # a refresh request gets this long to answer, start to finish
+LEASE_SECONDS = 60    # longer than any refresh request (see _post_refresh)
+WAIT_SECONDS = 10     # how long a turn waits for another process's refresh
 _POLL = 0.2
 REVOKE_TIMEOUT = 5.0
+_REFRESH_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 _COLUMNS = ("user_id", "connector_id", "email", "token_enc", "expires_at", "status", "error",
             "created_at", "updated_at", "version", "refresh_lock_until")
@@ -111,23 +113,49 @@ def user_id_for(hub_dir, email: str | None) -> str | None:
 # Storage
 # ---------------------------------------------------------------------------
 def store(hub_dir, *, user_id: str, email: str, connector_id: str, token: dict,
-          now: float | None = None) -> None:
-    """Save a new authorization (replacing any earlier one) as ``ok``."""
+          now: float | None = None, inherit_refresh: tuple[str, str] | None = None) -> None:
+    """Save a new authorization (replacing any earlier one) as ``ok``.
+
+    ``inherit_refresh=(issuer, client_id)``: when ``token`` carries no refresh
+    token, keep the stored one if the same client got it from the same issuer
+    (some providers send a refresh token on the first consent only). A refresh
+    in progress is waited for first, so a token being spent is never kept.
+    """
     now = time.time() if now is None else now
-    enc = secretbox.encrypt_json(Path(hub_dir), token)
-    exp = token.get("expires_at")
-    params = {"u": user_id, "c": connector_id, "email": normalize(email), "t": enc,
-              "e": float(exp) if exp else None, "now": now}
+    email = normalize(email)
     eng = engine(hub_dir)
-    for _ in range(3):
+    deadline = time.monotonic() + WAIT_SECONDS
+    for _ in range(50):
+        record = dict(token)
+        version = None
+        if inherit_refresh and not record.get("refresh_token"):
+            rec = _load(hub_dir, user_id, connector_id)
+            if rec is not None:
+                row, earlier = rec
+                lease = row.get("refresh_lock_until")
+                if lease and float(lease) > time.time() and time.monotonic() < deadline:
+                    time.sleep(_POLL)  # a refresh is spending it right now: wait for the result
+                    continue
+                version = row["version"]
+                issuer, client_id = inherit_refresh
+                if (earlier and earlier.get("refresh_token") and earlier.get("issuer") == issuer
+                        and (earlier.get("client") or {}).get("client_id") == client_id):
+                    record["refresh_token"] = earlier["refresh_token"]
+        exp = record.get("expires_at")
+        params = {"u": user_id, "c": connector_id, "email": email, "now": now,
+                  "t": secretbox.encrypt_json(Path(hub_dir), record),
+                  "e": float(exp) if exp is not None else None, "v": version}
         with eng.begin() as conn:
             res = conn.execute(text(
                 "UPDATE hz_connector_tokens SET email = :email, token_enc = :t, expires_at = :e, "
                 "status = 'ok', error = NULL, created_at = :now, updated_at = :now, "
                 "version = version + 1, refresh_lock_until = NULL "
-                "WHERE user_id = :u AND connector_id = :c"), params)
+                "WHERE user_id = :u AND connector_id = :c"
+                + (" AND version = :v" if version is not None else "")), params)
             if res.rowcount == 1:
                 return
+        if version is not None:
+            continue  # it changed since we read it: read it again
         try:
             with eng.begin() as conn:
                 conn.execute(text(
@@ -325,13 +353,20 @@ def _refresh(hub_dir, user_id: str, connector_id: str, *, url: str | None) -> st
         time.sleep(_POLL)
 
     version = row["version"]
-    outcome, result = _post_refresh(token)
+    try:
+        outcome, result = _post_refresh(token)
+    except Exception:
+        # Never leave the lease held: others would wait for nothing.
+        _finish(hub_dir, user_id, connector_id, version, status="error",
+                error="refresh_failed", bump=False)
+        raise
     if outcome == "ok":
         now = time.time()
         fresh = dict(token)
         fresh["access_token"] = result.access_token
         fresh["token_type"] = result.token_type
-        fresh["expires_at"] = now + int(result.expires_in) if result.expires_in else None
+        fresh["expires_at"] = (now + int(result.expires_in) if result.expires_in is not None
+                               else None)
         if result.refresh_token:
             fresh["refresh_token"] = result.refresh_token  # a rotating provider
         if result.scope:
@@ -339,9 +374,12 @@ def _refresh(hub_dir, user_id: str, connector_id: str, *, url: str | None) -> st
         if _finish(hub_dir, user_id, connector_id, version, status="ok", error=None, token=fresh):
             log.info("connectors: refreshed %s's %s connection", row["email"], connector_id)
             return fresh["access_token"]
-        # The person reconnected or disconnected meanwhile: their newer state
-        # wins, and the tokens just issued are not kept anywhere.
-        _revoke_later(fresh)
+        # The connection changed while we refreshed. Removed (disconnected, or
+        # the connector deleted): these tokens must not live on, so revoke
+        # them. Replaced by a new authorization: just drop them, because at
+        # many providers revoking any token of a grant revokes the new one too.
+        if get(hub_dir, user_id, connector_id) is None:
+            _revoke_later(fresh)
         return _current(hub_dir, user_id, connector_id, url)
     if outcome == "rejected":
         if result == "invalid_client":
@@ -369,8 +407,11 @@ def _post_refresh(token: dict):
         data["resource"] = token["resource"]
     data, headers = net.client_auth(token.get("client") or {}, data)
     try:
-        with net.client() as c:
-            status, body = net.post_json(c, token["token_endpoint"], data=data, headers=headers)
+        with net.client(timeout=_REFRESH_TIMEOUT) as c:
+            # Bounded well inside the lease, so no other process can take over
+            # while this request may still spend the refresh token.
+            status, body = net.post_json(c, token["token_endpoint"], data=data, headers=headers,
+                                         deadline=time.monotonic() + REFRESH_DEADLINE)
     except httpx.HTTPError as exc:
         return "unavailable", type(exc).__name__
     if status == 200 and body:
@@ -442,43 +483,112 @@ def _revoke_later(*records: dict) -> None:
     threading.Thread(target=run, name="hubzoid-connector-revoke", daemon=True).start()
 
 
+def revoke_later(record: dict) -> None:
+    """Revoke a token record in the background (best effort, never raises)."""
+    _revoke_later(record)
+
+
+def _fence(hub_dir, user_id: str, connector_id: str, version: int, now: float) -> bool:
+    """Hold the refresh lease (whatever the status) so no refresh starts or
+    finishes while the connection is being removed."""
+    with engine(hub_dir).begin() as conn:
+        res = conn.execute(text(
+            "UPDATE hz_connector_tokens SET refresh_lock_until = :until "
+            "WHERE user_id = :u AND connector_id = :c AND version = :v "
+            "AND (refresh_lock_until IS NULL OR refresh_lock_until < :now)"),
+            {"until": now + LEASE_SECONDS, "u": user_id, "c": connector_id, "v": version,
+             "now": now})
+    return res.rowcount == 1
+
+
+def _delete(conn, user_id: str, connector_id: str, version: int | None) -> int:
+    sql = "DELETE FROM hz_connector_tokens WHERE user_id = :u AND connector_id = :c"
+    params = {"u": user_id, "c": connector_id}
+    if version is not None:
+        sql += " AND version = :v"
+        params["v"] = version
+    return conn.execute(text(sql), params).rowcount
+
+
 def disconnect(hub_dir, user_id: str, connector_id: str, *, revoke_tokens: bool = True) -> bool:
     """Revoke at the provider when it offers revocation (best effort), then
     delete the connection and any authorization in flight. True when a
-    connection existed."""
-    rec = _load(hub_dir, user_id, connector_id)
-    if rec is not None and revoke_tokens and rec[1]:
-        try:
-            revoke(rec[1])
-        except Exception:  # noqa: BLE001 — never block a disconnect on the provider
-            log.debug("connectors: revocation failed", exc_info=True)
+    connection existed.
+
+    The connection is fenced first (the refresh lease), so the tokens revoked
+    are exactly the ones deleted: a refresh cannot rotate them in between. A
+    refresh already running is waited for briefly. If it is still running,
+    the row is deleted anyway and that refresh revokes what it gets."""
+    removed = False
+    deadline = time.monotonic() + WAIT_SECONDS
+    while True:
+        rec = _load(hub_dir, user_id, connector_id)
+        if rec is None:
+            break
+        row, token = rec
+        fenced = _fence(hub_dir, user_id, connector_id, row["version"], time.time())
+        if not fenced and time.monotonic() < deadline:
+            time.sleep(_POLL)
+            continue
+        if revoke_tokens and token:
+            try:
+                revoke(token)
+            except Exception:  # noqa: BLE001 — never block a disconnect on the provider
+                log.debug("connectors: revocation failed", exc_info=True)
+        with engine(hub_dir).begin() as conn:
+            count = _delete(conn, user_id, connector_id, row["version"] if fenced else None)
+        if count:
+            removed = True
+            break
+        # Changed between reading and deleting (only possible without the
+        # fence): read it again and revoke the newer tokens too.
     with engine(hub_dir).begin() as conn:
-        res = conn.execute(text("DELETE FROM hz_connector_tokens WHERE user_id = :u "
-                                "AND connector_id = :c"), {"u": user_id, "c": connector_id})
         conn.execute(text("DELETE FROM hz_connector_flows WHERE user_id = :u AND connector_id = :c"),
                      {"u": user_id, "c": connector_id})
-    return res.rowcount > 0
+    return removed
+
+
+def _drop(hub_dir, where: str, params: dict, *, revoke_tokens: bool) -> int:
+    """Delete every connection matching ``where`` and revoke them in the
+    background. Each row is deleted by compare-and-set on its version, so the
+    record revoked is the one deleted; a refresh that loses the race revokes
+    its own new tokens (see ``_refresh``)."""
+    records: list[dict] = []
+    removed = 0
+    for attempt in range(4):
+        with engine(hub_dir).connect() as conn:
+            rows = conn.execute(text("SELECT user_id, connector_id, version, token_enc "
+                                     "FROM hz_connector_tokens WHERE " + where), params).fetchall()
+        if not rows:
+            break
+        last = attempt == 3
+        with engine(hub_dir).begin() as conn:
+            for user_id, connector_id, version, enc in rows:
+                if not _delete(conn, user_id, connector_id, None if last else version):
+                    continue
+                removed += 1
+                try:
+                    value = secretbox.decrypt_json(Path(hub_dir), enc)
+                except (secretbox.SecretKeyError, ValueError):
+                    continue
+                if isinstance(value, dict):
+                    records.append(value)
+    with engine(hub_dir).begin() as conn:
+        conn.execute(text("DELETE FROM hz_connector_flows WHERE " + where), params)
+    if revoke_tokens:
+        _revoke_later(*records)
+    return removed
 
 
 def drop_connector(hub_dir, connector_id: str, *, revoke_tokens: bool = True) -> int:
     """Delete every person's connection to ``connector_id`` (the connector was
     removed or now points elsewhere). Revocation runs in the background."""
-    with engine(hub_dir).connect() as conn:
-        rows = conn.execute(text("SELECT token_enc FROM hz_connector_tokens "
-                                 "WHERE connector_id = :c"), {"c": connector_id}).fetchall()
-    records = []
-    for (enc,) in rows:
-        try:
-            value = secretbox.decrypt_json(Path(hub_dir), enc)
-        except (secretbox.SecretKeyError, ValueError):
-            continue
-        if isinstance(value, dict):
-            records.append(value)
-    with engine(hub_dir).begin() as conn:
-        res = conn.execute(text("DELETE FROM hz_connector_tokens WHERE connector_id = :c"),
-                           {"c": connector_id})
-        conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :c"),
-                     {"c": connector_id})
-    if revoke_tokens:
-        _revoke_later(*records)
-    return res.rowcount
+    return _drop(hub_dir, "connector_id = :c", {"c": connector_id}, revoke_tokens=revoke_tokens)
+
+
+def drop_user(hub_dir, user_id: str, *, revoke_tokens: bool = True) -> int:
+    """Delete every connection of one account (it was deleted), revoking at
+    the providers in the background. Returns how many were removed."""
+    if not user_id:
+        return 0
+    return _drop(hub_dir, "user_id = :u", {"u": user_id}, revoke_tokens=revoke_tokens)

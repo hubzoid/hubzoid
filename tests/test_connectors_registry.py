@@ -373,3 +373,77 @@ def test_registry_errors_are_connector_errors(hub):
     assert err.value.code == "invalid_request" and err.value.status == 422
     assert registry.get(hub, "../etc") is None
     assert registry.delete(hub, "../etc", actor="test") is False
+
+
+def test_the_web_app_mounts_the_routes_before_the_console_files(hub):
+    """webapp.mount runs before portal.mount_portal, whose static files at
+    /portal would otherwise answer /portal/api/connectors."""
+    from fastapi import FastAPI
+
+    from hubzoid import portal, webapp
+
+    app = FastAPI()
+    webapp.mount(app, hub)
+    portal.mount_portal(app, hub)
+    c = f.client_for(app, APP)
+    r = c.get("/portal/api/connectors")
+    assert r.status_code == 200 and r.json() == {"connectors": []}
+    r = c.get("/oauth/connectors/gmail/callback?state=x&code=y")
+    assert r.status_code == 302 and r.headers["location"].endswith("error=invalid_state")
+    assert c.get("/api/connections").json() == []
+
+
+def test_a_body_that_is_not_json_gets_the_api_error_shape(tc):
+    r = tc.post("/portal/api/connectors", content=b"{not json", headers={
+        **SAME, "content-type": "application/json"})
+    assert r.status_code == 422 and detail(r)["code"] == "invalid_request"
+    r = tc.post("/portal/api/connectors", headers=SAME)
+    assert r.status_code == 422 and detail(r)["code"] == "invalid_request"
+
+
+def test_sign_in_off_answers_only_requests_to_this_machine(hub, monkeypatch):
+    """Every request is the owner when sign-in is off, so a page using DNS
+    rebinding (Host: its own name) must not reach these routes."""
+    rebound = f.client_for(f.app_for(hub), "http://rebind.example:3599")
+    evil = {"origin": "http://rebind.example:3599"}
+    for r in (rebound.get("/portal/api/connectors"), rebound.get("/api/connections"),
+              rebound.post("/portal/api/connectors", json=body(), headers=evil),
+              rebound.post("/api/connections/gmail/connect", json={}, headers=evil)):
+        assert r.status_code == 403 and detail(r)["code"] == "untrusted_host"
+    assert registry.list_all(hub) == []
+    # An operator who configured the public address may use it.
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "http://rebind.example:3599")
+    assert rebound.get("/portal/api/connectors").status_code == 200
+
+
+def test_a_connect_needs_a_trusted_redirect_origin(hub, monkeypatch):
+    """Sign-in on but no public address configured: a redirect URI is never
+    built on a Host someone sent."""
+    f.accounts(monkeypatch, hub, {ALICE: ("u-a", "user")})
+    registry.create(hub, body(), actor="test")
+    c = f.client_for(f.app_for(hub), "https://hub.example.org")
+    r = c.post("/api/connections/gmail/connect", json={},
+               headers={"origin": "https://hub.example.org", "x-test-user": ALICE})
+    assert r.status_code == 409 and detail(r)["code"] == "public_url_required"
+
+
+def test_oauth_callback_queries_never_reach_the_access_log(hub):
+    import logging
+
+    from hubzoid.connectors import routes
+
+    routes.mount(__import__("fastapi").FastAPI(), hub)
+    routes.mount(__import__("fastapi").FastAPI(), hub)  # installed once
+    access = logging.getLogger("uvicorn.access")
+    assert sum(isinstance(x, routes.RedactOAuthQuery) for x in access.filters) == 1
+
+    def line(path):
+        record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1,
+                                   '%s - "%s %s HTTP/%s" %d',
+                                   ("127.0.0.1:5", "GET", path, "1.1", 302), None)
+        assert access.filters[-1].filter(record)
+        return record.getMessage()
+
+    shown = line("/oauth/connectors/gmail/callback?code=SECRET-CODE&state=SECRET-STATE")
+    assert "SECRET" not in shown and "/oauth/connectors/gmail/callback?[redacted]" in shown
+    assert "/api/connections?x=1" in line("/api/connections?x=1")

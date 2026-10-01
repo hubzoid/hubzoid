@@ -23,15 +23,17 @@ same-origin request (``access.session.require_same_origin``).
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from ..access.identity import normalize
 from . import ConnectorError, oauth_flow, per_user, registry, tokens
+from . import http as net
 
 log = logging.getLogger("hubzoid.connectors")
 
@@ -52,6 +54,18 @@ def _redirect(target: str) -> RedirectResponse:
     return RedirectResponse(target, status_code=302, headers=_REDIRECT_HEADERS)
 
 
+async def json_body(request: Request) -> Any:
+    """The request's JSON (None when empty), refused in the API's own error
+    shape when it is not JSON."""
+    raw = await request.body()
+    if not raw.strip():
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise _error(422, "invalid_request", "Send the request body as JSON.") from None
+
+
 def build_router(hub_dir: Path) -> APIRouter:
     hub_dir = Path(hub_dir)
     router = APIRouter()
@@ -69,9 +83,23 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise _error(403, "cross_origin",
                          "This request must come from this site's own pages.") from None
 
+    def trusted_host(request: Request) -> None:
+        """Sign-in off means every request is the owner. Then only answer
+        requests addressed to this machine (unless an operator configured the
+        public address), so a web page using DNS rebinding cannot act as the
+        owner through a visitor's browser."""
+        from .. import appmode
+
+        if appmode.auth_enabled(hub_dir) or appmode.allowed_origins():
+            return
+        if not net.is_loopback_url(oauth_flow.request_origin(request)):
+            raise _error(403, "untrusted_host", "Open Hubzoid at its local address, or set "
+                                                "HUBZOID_PUBLIC_URL to the address people use.")
+
     def person(request: Request):
         from ..auth import require_user
 
+        trusted_host(request)
         return require_user(request, hub_dir)
 
     def admin(request: Request):
@@ -82,6 +110,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         from ..access.service import AccessService, Actor, Denied
         from ..auth import LOCAL_OWNER_EMAIL, require_admin
 
+        trusted_host(request)
         user = require_admin(request, hub_dir)
         if not appmode.auth_enabled(hub_dir) and normalize(user.email) == LOCAL_OWNER_EMAIL:
             return user
@@ -108,32 +137,32 @@ def build_router(hub_dir: Path) -> APIRouter:
     @router.get("/portal/api/connectors")
     def list_connectors(request: Request):
         admin(request)
-        origin = oauth_flow.origin_for(request)
+        origin = oauth_flow.origin_for(request, strict=False)
         counts = tokens.counts(hub_dir)
         return JSONResponse({"connectors": [entry(c, origin, counts)
                                             for c in registry.list_all(hub_dir)]},
                             headers=_NO_STORE)
 
     @router.post("/portal/api/connectors")
-    def create_connector(request: Request, body: Any = Body(None)):
+    def create_connector(request: Request, body: Any = Depends(json_body)):
         user = admin(request)
         same_origin(request)
         try:
             c = registry.create(hub_dir, body, actor=user.email)
         except ConnectorError as err:
             _raise(err)
-        return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request), {})},
-                            status_code=201, headers=_NO_STORE)
+        return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request, strict=False),
+                                                {})}, status_code=201, headers=_NO_STORE)
 
     @router.patch("/portal/api/connectors/{connector_id}")
-    def update_connector(connector_id: str, request: Request, body: Any = Body(None)):
+    def update_connector(connector_id: str, request: Request, body: Any = Depends(json_body)):
         user = admin(request)
         same_origin(request)
         try:
             c, _reset = registry.update(hub_dir, connector_id, body, actor=user.email)
         except ConnectorError as err:
             _raise(err)
-        return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request),
+        return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request, strict=False),
                                                 tokens.counts(hub_dir))}, headers=_NO_STORE)
 
     @router.delete("/portal/api/connectors/{connector_id}", status_code=204)
@@ -151,7 +180,8 @@ def build_router(hub_dir: Path) -> APIRouter:
         c = registry.get(hub_dir, connector_id)
         if c is None:
             raise _error(404, "not_found", "No connector has this ID.")
-        return JSONResponse(_test(hub_dir, c, oauth_flow.origin_for(request)), headers=_NO_STORE)
+        return JSONResponse(_test(hub_dir, c, oauth_flow.origin_for(request, strict=False)),
+                            headers=_NO_STORE)
 
     # ---- People: their own connections -----------------------------------------
     @router.get("/api/connections")
@@ -172,7 +202,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         return JSONResponse(out, headers=_NO_STORE)
 
     @router.post("/api/connections/{connector_id}/connect")
-    def connect(connector_id: str, request: Request, body: Any = Body(None)):
+    def connect(connector_id: str, request: Request, body: Any = Depends(json_body)):
         user = person(request)
         same_origin(request)
         if body is not None and not isinstance(body, dict):
@@ -306,5 +336,27 @@ def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:
     return result
 
 
+class RedactOAuthQuery(logging.Filter):
+    """uvicorn's access log prints each request's path with its query string.
+    The query of an OAuth callback (``/oauth/...``) carries a one-time code and
+    the state: it is replaced before the line is written."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if (isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str)
+                and args[2].startswith("/oauth/") and "?" in args[2]):
+            record.args = (*args[:2], args[2].split("?", 1)[0] + "?[redacted]", *args[3:])
+        return True
+
+
+def redact_oauth_callback_logs() -> None:
+    """Install ``RedactOAuthQuery`` on uvicorn's access log, once per process.
+    The edge logs the same paths and can call this too."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactOAuthQuery) for f in access.filters):
+        access.addFilter(RedactOAuthQuery())
+
+
 def mount(app, hub_dir, **ctx) -> None:  # noqa: ARG001 — webapp passes runtime context
+    redact_oauth_callback_logs()
     app.include_router(build_router(Path(hub_dir)))

@@ -92,13 +92,13 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
     try:
         user_id = tokens.user_id_for(hub_dir, identity.user)
         connections = tokens.for_user(hub_dir, user_id) if user_id else []
+        connections = [c for c in connections if c.status != "expired"]
+        if not connections:
+            return []
+        by_id = {c.id: c for c in registry.list_all(hub_dir) if c.enabled}
     except Exception:  # noqa: BLE001 — a store problem must never break chat
         log.warning("connectors: personal connections unavailable this turn", exc_info=True)
         return []
-    connections = [c for c in connections if c.status != "expired"]
-    if not connections:
-        return []
-    by_id = {c.id: c for c in registry.list_all(hub_dir) if c.enabled}
     connections = [c for c in connections if c.connector_id in by_id]
     if not connections or _blocked(hub_dir, identity.user):
         return []

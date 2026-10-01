@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import ValidationError
@@ -29,6 +30,15 @@ from . import ConnectorError
 from . import http as net
 
 log = logging.getLogger("hubzoid.connectors")
+
+
+def _shown(url: str) -> str:
+    """A URL for a log line: no query or fragment, which may carry a key."""
+    try:
+        parts = urlsplit(url)
+        return f"{parts.scheme}://{parts.netloc}{parts.path}"
+    except ValueError:
+        return "<invalid URL>"
 
 
 @dataclass
@@ -132,7 +142,7 @@ def probe(c: httpx.Client, url: str) -> Probe:
                 result.scope = extract_scope_from_www_auth(r)
             session = r.headers.get("mcp-session-id")
     except httpx.HTTPError as exc:
-        log.info("connectors: %s did not answer (%s)", url, type(exc).__name__)
+        log.info("connectors: %s did not answer (%s)", _shown(url), type(exc).__name__)
         raise ConnectorError("unreachable", "The server could not be reached. Check the URL "
                                             "and that the server is running.", 502) from None
     if session:
@@ -156,7 +166,7 @@ def _resource_metadata(c: httpx.Client, url: str, pr: Probe):
         try:
             candidate = net.check_url(candidate, what="The resource metadata URL", base=url)
         except ConnectorError:
-            log.info("connectors: ignoring resource metadata URL %s (URL rule)", candidate)
+            log.info("connectors: ignoring resource metadata URL %s (URL rule)", _shown(candidate))
             continue
         try:
             status, raw = net.get_json(c, candidate)
@@ -167,7 +177,7 @@ def _resource_metadata(c: httpx.Client, url: str, pr: Probe):
         try:
             prm = ProtectedResourceMetadata.model_validate(raw)
         except ValidationError:
-            log.info("connectors: invalid resource metadata at %s", candidate)
+            log.info("connectors: invalid resource metadata at %s", _shown(candidate))
             continue
         published = raw.get("resource") if isinstance(raw.get("resource"), str) else str(prm.resource)
         if not check_resource_allowed(requested_resource=resource_url_from_server_url(url),
@@ -202,7 +212,7 @@ def _authorization_metadata(c: httpx.Client, url: str, as_url: str | None):
         try:
             meta = OAuthMetadata.model_validate(raw)
         except ValidationError:
-            log.info("connectors: invalid authorization server metadata at %s", candidate)
+            log.info("connectors: invalid authorization server metadata at %s", _shown(candidate))
             continue
         issuer = raw.get("issuer") if isinstance(raw.get("issuer"), str) else str(meta.issuer)
         # RFC 8414 section 3.3: the issuer must be the identifier the metadata
@@ -211,7 +221,8 @@ def _authorization_metadata(c: httpx.Client, url: str, as_url: str | None):
             if issuer.rstrip("/") != as_url.rstrip("/"):
                 raise ConnectorError("issuer_mismatch", "The authorization server's metadata "
                                      "names a different issuer than it was found under.", 502)
-        elif net.origin(issuer) != net.origin(url):
+        elif issuer.rstrip("/") != net.origin(url):
+            # Found at the server's own origin, so the issuer is that origin.
             raise ConnectorError("issuer_mismatch", "The authorization server's metadata "
                                  "names a different issuer than this server.", 502)
         return raw, meta
