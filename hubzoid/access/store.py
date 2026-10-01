@@ -1376,7 +1376,12 @@ class GrantStore:
             )
 
     def suspend(self, subject: str, *, actor: str, suspended=True,
-                surface: str | None = None, request_id: str | None = None) -> None:
+                surface: str | None = None, request_id: str | None = None,
+                in_transaction=None) -> None:
+        """Block (or, with ``suspended=False``, reactivate) a subject.
+        ``in_transaction(conn)``, when given, runs in the same transaction once
+        the marker is written, so work that must commit with the block (ending
+        the person's sessions, ``access.service``) commits or fails with it."""
         subject = normalize(subject)
         if not subject or subject == EVERYONE or is_group_subject(subject):
             raise ValueError("a person or service is required")
@@ -1403,6 +1408,8 @@ class GrantStore:
                 request_id,
             )
             self._bump_revision(conn)
+            if in_transaction is not None:
+                in_transaction(conn)
         self._refresh_if_stale()
 
     def reconcile_accounts(self, people: list[dict]) -> None:

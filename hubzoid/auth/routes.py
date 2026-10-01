@@ -367,7 +367,10 @@ def build_router(hub_dir: Path) -> APIRouter:
             user = users.get(hub_dir, used["user_id"])
             if user is None:
                 raise error(410, "link_invalid", "This account no longer exists.")
-            response = complete(request, user, method="link")
+            # The session starts only on the version the link wrote: a reset,
+            # role change or block since then moved it, so none starts.
+            response = complete(request, {**user, "updated_at": used["updated_at"]},
+                                method="link")
         except SQLAlchemyError:
             raise _unavailable()
         response.headers.update(_LINK_HEADERS)
@@ -388,7 +391,10 @@ def build_router(hub_dir: Path) -> APIRouter:
         ip = sessionlib.client_ip(request)
         try:
             st = users.store(hub_dir)
-            stored = st.password_hash(user.id)
+            # The version read with the hash: the change applies only if the
+            # account hasn't changed (a reset, role change or block) and this
+            # session hasn't ended while the current password was checked.
+            stored, version = st.password_state(user.id)
             if not stored:
                 raise error(409, "no_password", "This account has no password to change. "
                                                 "Sign in the way you usually do.")
@@ -403,7 +409,11 @@ def build_router(hub_dir: Path) -> APIRouter:
                 raise error(401, "invalid_credentials", "Your current password is not right.")
             ratelimit.record_success(hub_dir, ip=ip, email=user.email)
             st.set_password(user.id, f["new_password"],
-                            except_token_hash=sessionlib.digest(sessionlib.current_token(request)))
+                            except_token_hash=sessionlib.digest(sessionlib.current_token(request)),
+                            expect_updated_at=version)
+        except users.AccountChanged:
+            raise error(409, "account_changed", "Your account changed while you were changing "
+                                                "your password. Reload the page and try again.")
         except SQLAlchemyError:
             raise _unavailable()
         _audit(hub_dir, user.email, "password_changed", subject=user.email)
