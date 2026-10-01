@@ -950,6 +950,7 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
 @dataclass
 class GroupPlan:
     members: dict[str, set[str]] = field(default_factory=dict)       # gid -> emails in Open WebUI
+    resulting: dict[str, set[str]] = field(default_factory=dict)     # gid -> emails in Hubzoid after apply
     inserts: list[dict] = field(default_factory=list)
     add_members: list[dict] = field(default_factory=list)
     remove_members: list[tuple[str, str]] = field(default_factory=list)
@@ -1001,6 +1002,9 @@ def plan_groups(groups: dict[str, dict], memberships: dict[str, dict[str, float 
         else:
             report.bump("groups", "already_present")
         plan.available.add(gid)
+        # Hubzoid keeps the members it has (added in the Console, say), so
+        # access is planned and checked against these, not Open WebUI's.
+        resulting = set(in_hubzoid[gid])
         for uid, joined_at in sorted(joined.items()):
             email = people.email_of.get(uid)
             if not email:
@@ -1014,13 +1018,16 @@ def plan_groups(groups: dict[str, dict], memberships: dict[str, dict[str, float 
                 continue
             plan.add_members.append(dict(group_id=gid, email=email, added_by=ACTOR,
                                          added_at=joined_at or created))
+            resulting.add(email)
             report.bump("groups", "members_to_import")
         if existing is not None and prev:
             # Members this migration added earlier and Open WebUI no longer has.
             for email, row in sorted(in_hubzoid[gid].items()):
                 if row.get("added_by") == ACTOR and email not in emails:
                     plan.remove_members.append((gid, email))
+                    resulting.discard(email)
                     report.bump("groups", "members_removed_in_open_webui")
+        plan.resulting[gid] = resulting
     return plan
 
 
@@ -1070,10 +1077,16 @@ def store_resolves_groups() -> bool:
         engine.dispose()
 
 
+_FUTURE = "__future_signed_in__"  # the matrix row of someone Open WebUI did not know
+
+
 def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPlan,
            people: People) -> dict[str, list[dict]]:
     """Every expected decision, allowed and denied, against a clean candidate
-    store holding what apply would write. Returns the differences per hub."""
+    store holding what apply would write: the grants, and each group with the
+    members it has after apply (Hubzoid keeps members Open WebUI lacks). A
+    member Open WebUI did not know is checked as anyone signed in, who had
+    an account there and nothing else. Returns the differences per hub."""
     from .access.store import GrantStore
 
     engine = create_engine("sqlite://")
@@ -1084,7 +1097,7 @@ def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPla
             for gid in sorted(groups.available):
                 conn.execute(text("INSERT INTO hz_groups (id, name, source, created_at, updated_at) "
                                   "VALUES (:i, :i, 'migrated', :t, :t)"), {"i": gid, "t": now})
-                for email in sorted(groups.members.get(gid, ())):
+                for email in sorted(groups.resulting.get(gid, ())):
                     conn.execute(text("INSERT INTO hz_group_members (group_id, email, added_at) "
                                       "VALUES (:g, :e, :t)"), {"g": gid, "e": email, "t": now})
             for email in sorted(people.inactive):
@@ -1094,10 +1107,17 @@ def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPla
         flat = [g for key in hubs for g in grants.get(key, [])]
         candidate.apply_migration(flat, [], list(hubs), replace=True, authoritative=True,
                                   identities=identities, carry_over_public=True, actor="verify")
+        members = set().union(*(groups.resulting.get(gid, set()) for gid in groups.available))
         out: dict[str, list[dict]] = {}
         for key, access in hubs.items():
+            expected = list(access.expected)
+            anyone = {p: False for _s, _h, p, _a in expected}
+            anyone.update({p: a for s, _h, p, a in expected if s == _FUTURE})
+            known = {s for s, _h, _p, _a in expected}
+            expected += [(email, key, permission, allowed) for email in sorted(members - known)
+                         for permission, allowed in sorted(anyone.items())]
             diffs = []
-            for subject, hub, permission, allowed in access.expected:
+            for subject, hub, permission, allowed in expected:
                 actual = candidate.can(subject, hub, permission)
                 if actual != allowed:
                     diffs.append(dict(subject=subject, permission=permission, expected=allowed, actual=actual))
@@ -1112,15 +1132,20 @@ def group_grants(access: HubAccess, public: bool, groups: GroupPlan, group_names
     """Group grants where they keep the legacy matrix, per-person grants elsewhere.
 
     Starts from the per-person plan and moves coverage onto groups. A
-    visibility group takes over its members' ``use_hub``. A group named after a
-    capability takes over its members' grant of it only when every member may
-    open the hub, because a capability grant also opens the hub. Returns the
-    grants and the capabilities that stay per person."""
+    visibility group takes over its members' ``use_hub``, and a group named
+    after a capability its members' grant of it, only when every member the
+    group has after apply holds that grant in the per-person plan: a member
+    Hubzoid keeps (added in the Console) or one who may not open the hub
+    would otherwise gain access, as a capability grant also opens the hub.
+    Returns the grants and the permissions that stay per person."""
     from .access.store import EVERYONE, USE_HUB
 
     key = access.hub.key
     person = [g for g in access.person_grants if g[1] == key]
-    entry = {s for s, _h, _p in person if s != EVERYONE}
+    holders: dict[str, set[str]] = defaultdict(set)
+    for subject, _h, permission in person:
+        if subject != EVERYONE:
+            holders[permission].add(subject)
     grants: list[tuple[str, str, str]] = []
     covered: dict[str, set[str]] = defaultdict(set)
     per_person: set[str] = set()
@@ -1134,14 +1159,18 @@ def group_grants(access: HubAccess, public: bool, groups: GroupPlan, group_names
         grants.append((EVERYONE, key, USE_HUB))
     else:
         for gid in visibility:
-            grants.append((f"group:{gid}", key, USE_HUB))
-            covered[USE_HUB] |= groups.members.get(gid, set())
+            members = groups.resulting.get(gid, set())
+            if members <= holders[USE_HUB]:
+                grants.append((f"group:{gid}", key, USE_HUB))
+                covered[USE_HUB] |= members
+            else:
+                per_person.add(USE_HUB)
     for permission in sorted({p for _s, _h, p, _a in access.expected if p != USE_HUB}):
         named = sorted(g for g in groups.available
                        if (group_names.get(g) or "").strip().lower() == permission)
         for gid in named:
-            members = groups.members.get(gid, set())
-            if public or members <= entry:
+            members = groups.resulting.get(gid, set())
+            if members <= holders[permission]:
                 grants.append((f"group:{gid}", key, permission))
                 covered[permission] |= members
             else:
@@ -1249,8 +1278,9 @@ def plan_access(setup: Setup, source_engine: Engine, target: TargetState, people
         if per_person[key]:
             access.summary["per_person_capabilities"] = per_person[key]
             access.summary["notes"] = [
-                "per-person grants for " + ", ".join(per_person[key]) + ": the group with that "
-                "name includes people who cannot open this agent"]
+                "per-person grants for " + ", ".join(per_person[key]) + ": a group that gave it "
+                "in Open WebUI has members who may not have it here (who cannot open this "
+                "agent, or members only Hubzoid has)"]
         if not access.grants:
             report.note(f"{key}: nobody could use this agent in Open WebUI, so it is locked until "
                         "someone is granted access in the Console.")
