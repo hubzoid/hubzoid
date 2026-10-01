@@ -171,6 +171,10 @@ def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None
         try:
             status, resp = net.post_json(c, disc.registration_endpoint, json_body=body)
         except httpx.HTTPError as exc:
+            host = net.refused_host(exc)
+            if host is not None:
+                raise ConnectorError("private_address", net.refusal(
+                    "The registration endpoint", host), 502) from None
             raise ConnectorError("unreachable", "The authorization server could not be reached "
                                  "to register Hubzoid.", 502) from exc
         if status in (200, 201) and resp:
@@ -237,7 +241,7 @@ def start(hub_dir, connector: registry.Connector | None, user, *, origin: str,
     if return_to is not None and safe_return_to(return_to) is None:
         raise ConnectorError("invalid_return_to", "return_to must be a path on this site.", 422)
     redirect = redirect_uri(origin, connector.id)
-    with net.client() as c:
+    with net.client(connector.url) as c:
         disc = _discover(connector.url, c)
         scope = connector.scopes or disc.default_scope()
         client = client_for(hub_dir, connector, disc, redirect, scope, c)
@@ -367,11 +371,11 @@ def _exchange(hub_dir, connector_id: str, payload: dict, code: str, ctx: dict):
     client = payload.get("client") or {}
     data, headers = net.client_auth(client, data)
     try:
-        with net.client() as c:
+        with net.client(payload.get("connector_url")) as c:
             status, body = net.post_json(c, payload["token_endpoint"], data=data, headers=headers)
     except httpx.HTTPError as exc:
-        log.warning("connectors: token endpoint for %s unreachable (%s)", connector_id,
-                    type(exc).__name__)
+        reason = "address rule" if net.refused_host(exc) else type(exc).__name__
+        log.warning("connectors: token endpoint for %s unreachable (%s)", connector_id, reason)
         raise _fail("token_exchange_failed", **ctx) from None
     if status != 200 or not body:
         err = net.oauth_error(body)

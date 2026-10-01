@@ -176,7 +176,8 @@ def test_a_server_without_resource_metadata_gets_no_resource_parameter(provider)
     assert d.resource is None and any("resource parameter" in n for n in d.notes)
 
 
-def test_urls_follow_the_https_rule():
+def test_urls_follow_the_https_rule(monkeypatch):
+    monkeypatch.delenv(net.PRIVATE_HOSTS_ENV, raising=False)
     for bad in ("http://example.org/mcp", "https://u:p@example.org/mcp", "ftp://example.org",
                 "https://example.org/mcp#x", "", None, "https:///nohost"):
         with pytest.raises(ConnectorError):
@@ -193,8 +194,14 @@ def test_urls_follow_the_https_rule():
                 "https://0.0.0.0/token", "https://api.localhost/token", "https://[fe80::1]/t"):
         with pytest.raises(ConnectorError) as err:
             net.check_url(bad, base="https://example.org/mcp")
-        assert "local or reserved" in err.value.message, bad
-    # A private network address can be an internal identity provider.
+        assert err.value.code == "private_address", bad
+        assert "may not send Hubzoid" in err.value.message or "metadata" in err.value.message
+    # A private network address (an internal identity provider) needs the
+    # administrator's allowlist (review finding 1); a name is checked on the
+    # addresses it resolves to, when connecting.
+    with pytest.raises(ConnectorError):
+        net.check_url("https://10.0.0.5/token", base="https://example.org/mcp")
+    monkeypatch.setenv(net.PRIVATE_HOSTS_ENV, "10.0.0.5")
     assert net.check_url("https://10.0.0.5/token", base="https://example.org/mcp")
     assert net.check_url("https://sso.internal/token", base="https://example.org/mcp")
 
