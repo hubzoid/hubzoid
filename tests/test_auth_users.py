@@ -123,6 +123,38 @@ def test_password_role_and_status_changes_end_sessions(store):
     assert store.get(uid)["role"] == "admin"
 
 
+def test_a_password_change_applies_only_at_the_version_it_read(store):
+    """A person's own change checks, in its write, that the account is still at
+    the version read with the confirmed password and that the session making
+    it is still live: an administrator's reset meanwhile is never undone."""
+    user = store.create(email="v@example.com", password="first password")
+    uid = user["id"]
+    _session(store, uid, "a" * 64)
+    stored, version = store.password_state(uid)
+    assert passwords.verify("first password", stored) and version == user["updated_at"]
+    store.set_password(uid, None)  # an administrator's reset lands in between
+    with pytest.raises(users.AccountChanged):
+        store.set_password(uid, "attacker password", except_token_hash="a" * 64,
+                           expect_updated_at=version)
+    assert store.password_hash(uid) is None
+    # At the current version, but from a session the reset ended.
+    _, version = store.password_state(uid)
+    with pytest.raises(users.AccountChanged):
+        store.set_password(uid, "attacker password", except_token_hash="a" * 64,
+                           expect_updated_at=version)
+    assert store.password_hash(uid) is None and store.password_state(uid)[1] == version
+    # A live session at the current version: applied, other sessions end.
+    _session(store, uid, "c" * 64)
+    _session(store, uid, "d" * 64)
+    store.set_password(uid, "second password", except_token_hash="c" * 64,
+                       expect_updated_at=version)
+    assert passwords.verify("second password", store.password_hash(uid))
+    assert _live(store, uid) == ["c" * 64]
+    assert store.password_state("missing") == (None, None)
+    with pytest.raises(users.AccountChanged):
+        store.set_password("missing", "any password", expect_updated_at=version)
+
+
 def test_clearing_a_password_and_renaming(store):
     user = store.create(email="d@example.com", password="some password")
     store.set_password(user["id"], None)

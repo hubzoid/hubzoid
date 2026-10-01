@@ -364,3 +364,171 @@ def test_local_mode_accepts_configured_names(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_ALLOWED_ORIGINS", "https://hub.example.com")
     c = client(hub)
     assert c.get("/whoami", headers={"host": "hub.example.com"}).json()["email"] == "admin@localhost"
+
+
+# ---- changes racing an administrator's action (review findings) ------------------------
+
+def _live_sessions(hub) -> list[dict]:
+    return [s for s in rows(hub) if s["revoked_at"] is None]
+
+
+def _admin_reset(hub, user_id) -> str:
+    """An administrator's "Reset password" in the Console: the password stops
+    working, sessions end, and a one-time link is returned. Returns its token."""
+    from hubzoid.access.accounts import HubzoidAccounts
+
+    link = HubzoidAccounts(hub).reset_with_link(user_id, created_by="boss@example.com")["link"]
+    return link.split("token=", 1)[1]
+
+
+def test_a_password_change_racing_a_reset_does_not_undo_it(hub, monkeypatch):
+    """Someone holding the current password and a session starts a password
+    change; an administrator's reset lands while the current password is being
+    checked. The change must not overwrite the reset, keep its session or
+    cancel the administrator's link."""
+    from hubzoid.auth import links, passwords
+
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    real = passwords.verify_and_update
+    issued: list[str] = []
+
+    def verify_then_reset(password, stored):
+        result = real(password, stored)
+        if not issued:
+            issued.append(_admin_reset(hub, user["id"]))  # lands mid-request
+        return result
+
+    monkeypatch.setattr(passwords, "verify_and_update", verify_then_reset)
+    r = c.post("/api/auth/password", headers=ORIGIN,
+               json={"current_password": PASSWORD, "new_password": "the attacker's choice"})
+    monkeypatch.setattr(passwords, "verify_and_update", real)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "account_changed"
+    assert users.store(hub).password_hash(user["id"]) is None  # the reset stands
+    assert who(c) is None and _live_sessions(hub) == []
+    other = client(hub)
+    assert sign_in(other, password="the attacker's choice").status_code == 401
+    assert sign_in(other).status_code == 401
+    assert links.inspect(hub, issued[0])["valid"]  # the administrator's link still works
+
+
+def test_a_password_change_from_an_ended_session_is_refused(hub, monkeypatch):
+    """The session making the change is checked again when the change is
+    written: one ended meanwhile (signed out everywhere) changes nothing."""
+    from hubzoid.auth import passwords
+
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    real = passwords.verify_and_update
+
+    def verify_then_end_sessions(password, stored):
+        result = real(password, stored)
+        sessions.revoke_user(hub, user["id"])
+        return result
+
+    monkeypatch.setattr(passwords, "verify_and_update", verify_then_end_sessions)
+    r = c.post("/api/auth/password", headers=ORIGIN,
+               json={"current_password": PASSWORD, "new_password": "a brand new secret"})
+    monkeypatch.setattr(passwords, "verify_and_update", real)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "account_changed"
+    assert sign_in(client(hub)).status_code == 200  # the password did not change
+    assert sign_in(client(hub), password="a brand new secret").status_code == 401
+
+
+def test_a_link_used_just_before_a_reset_starts_no_session(hub, monkeypatch):
+    """A stolen link is used, then an administrator resets the password before
+    the link's session starts: no session may start on the reset account."""
+    from hubzoid.auth import links
+
+    user = users.create(hub, email="ana@example.com", name="Ana")  # no password yet
+    users.sync_identity(hub, user)
+    token, _ = links.create(hub, user["id"])
+    real = links.consume
+
+    def consume_then_reset(*args, **kwargs):
+        used = real(*args, **kwargs)
+        _admin_reset(hub, used["user_id"])  # lands before the session is created
+        return used
+
+    monkeypatch.setattr(links, "consume", consume_then_reset)
+    c = client(hub)
+    r = c.post(f"/api/auth/link/{token}", json={"password": "stolen link password"},
+               headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "sign_in_changed"
+    assert "hz_session" not in r.headers.get("set-cookie", "")
+    assert who(c) is None and _live_sessions(hub) == []
+    assert users.store(hub).password_hash(user["id"]) is None
+
+
+def test_a_used_link_reports_the_account_version_it_wrote(hub):
+    from hubzoid.auth import links
+
+    user = person(hub)
+    token, _ = links.create(hub, user["id"], purpose="reset_password")
+    used = links.consume(hub, token, password="a fresh password")
+    assert used["updated_at"] == users.get(hub, user["id"])["updated_at"] > user["updated_at"]
+
+
+def test_a_sign_in_racing_a_block_is_not_revived_by_reactivation(hub, monkeypatch):
+    """A sign-in passes the block check, then an administrator blocks the
+    person before the session is written. That sign-in must not leave a
+    session that works again once the block is lifted."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService, Actor
+
+    store_for(hub).bootstrap(["boss@example.com"])
+    person(hub)
+    c = client(hub)
+    service = AccessService(hub)
+    boss = Actor("boss@example.com", "console", "session")
+    real = sessions.create_session
+    blocked: list[bool] = []
+
+    def block_then_create(*args, **kwargs):
+        if not blocked:
+            blocked.append(service.set_blocked(boss, "ana@example.com", True))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sessions, "create_session", block_then_create)
+    r = sign_in(c)
+    monkeypatch.setattr(sessions, "create_session", real)
+    assert blocked == [True]
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "sign_in_changed"
+    service.set_blocked(boss, "ana@example.com", False)
+    assert who(c) is None and _live_sessions(hub) == []
+    assert sign_in(c).status_code == 200  # signing in again works
+
+
+def test_blocking_moves_the_account_and_ends_sessions_in_one_transaction(hub, monkeypatch):
+    """The block, the account's new version and the ended sessions commit
+    together: if ending the sessions fails, the person is not left blocked
+    with sessions that would come back when the block is lifted."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService, Actor
+
+    gs = store_for(hub)
+    gs.bootstrap(["boss@example.com"])
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    service = AccessService(hub)
+    boss = Actor("boss@example.com", "console", "session")
+    before = users.get(hub, user["id"])["updated_at"]
+
+    real = users.UserStore.__dict__["_revoke"]
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("sessions could not be ended")
+
+    monkeypatch.setattr(users.UserStore, "_revoke", staticmethod(broken))
+    with pytest.raises(RuntimeError):
+        service.set_blocked(boss, "ana@example.com", True)
+    monkeypatch.setattr(users.UserStore, "_revoke", real)
+    assert not gs.is_suspended("ana@example.com")  # rolled back with the failure
+    assert users.get(hub, user["id"])["updated_at"] == before
+    assert who(c) == "ana@example.com"
+    assert service.set_blocked(boss, "ana@example.com", True)
+    assert users.get(hub, user["id"])["updated_at"] > before
+    assert _live_sessions(hub) == []
