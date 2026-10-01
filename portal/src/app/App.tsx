@@ -274,7 +274,8 @@ export default function App() {
       />
     );
   else if (route.name === "account") page = <AccountPage />;
-  else if (route.name === "connections") page = <ConnectionsPage connected={route.connected} />;
+  else if (route.name === "connections")
+    page = <ConnectionsPage connected={route.connected} connector={route.connector} error={route.error} />;
   else page = <NotFoundPage />;
 
   const activeId = route.name === "conversation" ? route.id : null;

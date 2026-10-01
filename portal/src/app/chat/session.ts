@@ -23,6 +23,8 @@ import { attachmentFromFile, fileRefOf, toThreadMessage } from "./convert";
 import { MessageAccumulator, readEventStream } from "./stream";
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const RUN_IN_PROGRESS_RETRIES = 4;
+const RUN_IN_PROGRESS_WAIT_MS = 900;
 export const MAX_FILES_PER_MESSAGE = 10;
 const POLL_MS = 1500;
 
@@ -238,6 +240,22 @@ export class ChatSession {
     return content;
   }
 
+  /**
+   * The parent for a new message: the newest reply before it that the server
+   * stored. The server only accepts a new message after an assistant message
+   * (or none, for the first); a reply that failed before the server saw it
+   * exists only on this page and is skipped.
+   */
+  private parentFor(messages: readonly ThreadMessage[]): string | null {
+    for (let i = messages.length - 2; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role !== "assistant") continue;
+      const id = this.ids.toServer(message.id);
+      if (this.ids.isPersisted(id)) return id;
+    }
+    return null;
+  }
+
   private async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
     const { messages, abortSignal } = options;
     const user = messages.at(-1);
@@ -257,12 +275,12 @@ export class ChatSession {
     const localReplyId = options.unstable_assistantMessageId ?? randomId("local_", 8);
     const userId = this.ids.toServer(user.id);
     const replyId = this.ids.toServer(localReplyId);
-    const previous = messages.length >= 2 ? messages[messages.length - 2] : undefined;
+    // A stored user message is a regeneration: the reply goes under it.
     const regenerate = this.ids.isPersisted(userId);
     const body = {
       conversation_id: conversationId,
       agent: this.agent.id,
-      parent_id: regenerate ? userId : previous ? this.ids.toServer(previous.id) : null,
+      parent_id: regenerate ? userId : this.parentFor(messages),
       ...(regenerate ? {} : { message: { id: userId, content: this.userContent(user) } }),
       assistant_message_id: replyId,
     };
@@ -280,24 +298,41 @@ export class ChatSession {
     let announcedTitle: string | null = null;
     let settled = false; // the server confirmed the run started
     try {
-      let response: Response;
-      try {
-        response = await fetch(hubUrl(this.apiBase, "/api/chat"), {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify(body),
-          signal: abortSignal,
-        });
-      } catch (error) {
-        if (abortSignal.aborted || isAbort(error)) return;
-        yield { status: errorStatus(t.errors.network) };
-        return;
+      let response: Response | null = null;
+      let failure: ApiError | null = null;
+      for (let attempt = 0; attempt <= RUN_IN_PROGRESS_RETRIES; attempt++) {
+        try {
+          response = await fetch(hubUrl(this.apiBase, "/api/chat"), {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", accept: "text/event-stream" },
+            body: JSON.stringify(body),
+            signal: abortSignal,
+          });
+        } catch (error) {
+          if (abortSignal.aborted || isAbort(error)) return;
+          yield { status: errorStatus(t.errors.network) };
+          return;
+        }
+        if (response.ok && response.body) break;
+        failure = await errorFrom(response);
+        response = null;
+        // One reply per conversation at a time: a reply that was just stopped
+        // (or is running in another tab) may still be finishing. Wait briefly.
+        if (failure.code !== "run_in_progress" || attempt === RUN_IN_PROGRESS_RETRIES) break;
+        try {
+          await sleep(RUN_IN_PROGRESS_WAIT_MS, abortSignal);
+        } catch {
+          return;
+        }
       }
-      if (!response.ok || !response.body) {
-        const error = await errorFrom(response);
-        if (response.status === 401) this.events.onUnauthorized();
-        yield { status: errorStatus(describeError(error, t.chat.runError)) };
+      if (!response || !response.body) {
+        if (failure?.status === 401) this.events.onUnauthorized();
+        yield {
+          status: errorStatus(
+            failure?.code === "run_in_progress" ? t.chat.runInProgress : describeError(failure, t.chat.runError),
+          ),
+        };
         return;
       }
 
@@ -327,7 +362,7 @@ export class ChatSession {
         // The connection closed before the end. The run keeps going on the
         // server, so follow it there instead of reporting a failure.
         if (streamBroke || acc.started) {
-          yield* this.follow(this.ids.toServer(localReplyId), abortSignal, acc);
+          yield* this.follow(this.ids.toServer(localReplyId), userId, abortSignal, acc);
           return;
         }
         yield { status: errorStatus(t.chat.runError) };
@@ -355,10 +390,16 @@ export class ChatSession {
   /** Follow a run on the server after the stream dropped. */
   private async *follow(
     replyId: string,
+    userId: string,
     signal: AbortSignal,
     acc: MessageAccumulator,
   ): AsyncGenerator<ChatModelRunResult, void> {
     for await (const status of pollRun(this.apiBase, replyId, signal)) {
+      if (status.message) {
+        // The server has the exchange even if the stream broke before "start".
+        this.ids.markPersisted(userId);
+        this.ids.markPersisted(replyId);
+      }
       const message = status.message ? toThreadMessage(status.message, this.convertContext) : null;
       const content = message && message.role === "assistant" ? message.content : acc.snapshot();
       if (status.status === "running") {

@@ -77,7 +77,7 @@ export type Route =
   | { name: "signin"; redirect: string; error: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
-  | { name: "connections"; connected: string | null }
+  | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
 
 export function parseRoute(path: string, search: URLSearchParams): Route {
@@ -101,7 +101,12 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
     if (parts[1] === "connections" && parts.length === 2)
-      return { name: "connections", connected: search.get("connected") };
+      return {
+        name: "connections",
+        connected: search.get("connected"),
+        connector: search.get("connector"),
+        error: search.get("error"),
+      };
   }
   return { name: "not-found" };
 }

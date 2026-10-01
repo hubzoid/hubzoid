@@ -205,6 +205,22 @@ export const en = {
     notAllowedHelp: "Ask an administrator for access to use this connection.",
     since: (when: string) => `Connected ${when}`,
     connectedToast: (name: string) => `Connected to ${name}.`,
+    failed: (name: string, code: string) => {
+      switch (code) {
+        case "access_denied":
+        case "cancelled":
+          return `Connecting ${name} was cancelled. Connect again when you're ready.`;
+        case "expired":
+        case "invalid_state":
+        case "state_mismatch":
+          return `That attempt to connect ${name} expired. Try again.`;
+        case "forbidden":
+        case "not_allowed":
+          return `You don't have access to ${name}. Ask an administrator.`;
+        default:
+          return `Connecting ${name} didn't work. Try again, and if it keeps failing, ask an administrator.`;
+      }
+    },
     disconnectedToast: (name: string) => `Disconnected from ${name}.`,
     disconnectTitle: (name: string) => `Disconnect ${name}?`,
     disconnectBody: "Agents won't be able to use this account for you until you connect it again.",
@@ -254,6 +270,7 @@ export const en = {
     plainText: "text",
     scrollDown: "Scroll to the latest message",
     runError: "The agent couldn't finish this reply.",
+    runInProgress: "Another reply is still being written in this chat. Wait for it to finish, then send again.",
     runErrorDetail: (message: string) => `The agent couldn't finish this reply: ${message}`,
     loadError: "Couldn't open this chat.",
     notFound: "This chat doesn't exist or was deleted.",

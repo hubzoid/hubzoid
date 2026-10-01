@@ -612,6 +612,11 @@ function chartPng(width = 160, height = 100) {
       await page.getByTestId("connection-notion").getByRole("button", { name: "Disconnect Notion" }).click();
       await page.getByRole("alertdialog", { name: "Disconnect Notion?" }).getByRole("button", { name: "Disconnect" }).click();
       await page.getByTestId("connection-notion").getByText("Not connected").waitFor();
+      await page.getByTestId("connection-notion").getByRole("button", { name: "Connect Notion" }).click();
+      await page.getByRole("link", { name: "Deny" }).click();
+      await page.waitForURL(`${BASE}/account/connections`);
+      await page.getByText("Connecting Notion was cancelled. Connect again when you're ready.").waitFor();
+      await page.getByTestId("connection-notion").getByText("Not connected").waitFor();
     });
 
     // ---- keyboard ----------------------------------------------------------------------
@@ -741,6 +746,36 @@ function chartPng(width = 160, height = 100) {
       await send("Try once more");
       await lastAssistant().getByText("The agent is unavailable right now. Try again in a minute.", { exact: false }).waitFor();
       await fetch(`${BASE}/__fixture/flag/chat_fail/false`);
+
+      step("After replies that never reached the server, the next message still goes through");
+      await send("Back online?");
+      await lastAssistant().getByText("Back online?", { exact: false }).waitFor();
+      await waitIdle();
+      const recovered = decodeURIComponent(page.url().split("/c/")[1]);
+      const stored = [...fixture.state.messages.values()].filter((m) => m.conversation_id === recovered);
+      assert.equal(stored.length, 2, "only the exchange the server saw is stored");
+      assert.equal(stored.find((m) => m.role === "user").parent_id, null);
+
+      step("One reply at a time: a second tab is asked to wait, in plain words");
+      const otherTab = await context.newPage();
+      watch(otherTab);
+      await otherTab.goto(`${BASE}/c/c_adapricing01`);
+      await otherTab.getByRole("textbox", { name: /^Message / }).waitFor();
+      await page.goto(`${BASE}/c/c_adapricing01`);
+      await settled();
+      await send("give me a slow answer");
+      await lastAssistant().getByText("Step 2 of the long answer.", { exact: false }).waitFor();
+      await otherTab.getByRole("textbox", { name: /^Message / }).fill("Are you there?");
+      await otherTab.getByRole("textbox", { name: /^Message / }).press("Enter");
+      await otherTab
+        .locator('[data-role="assistant"]')
+        .last()
+        .getByText("Another reply is still being written in this chat. Wait for it to finish, then send again.", { exact: false })
+        .waitFor();
+      assert.ok(requests().filter((r) => r.path === "/api/chat").length >= 2);
+      await page.getByRole("button", { name: "Stop response" }).click();
+      await lastAssistant().getByTestId("stopped").waitFor();
+      await otherTab.close();
 
       step("A page that fails to load (say, after an update) offers Reload instead of a blank screen");
       const before = errors.length;

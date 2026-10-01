@@ -301,7 +301,7 @@ function createApp(options = {}) {
     content: m.content,
     status: m.status,
     created_at: m.created_at,
-    ...(m.error ? { error: m.error } : {}),
+    error: m.error || null,
   });
   const messagesOf = (cid) => [...state.messages.values()].filter((m) => m.conversation_id === cid).sort((a, b) => a.created_at - b.created_at);
   function branchTo(headId) {
@@ -408,8 +408,12 @@ function createApp(options = {}) {
     let reasoningPart = null;
     let toolPart = null;
     let counter = 0;
+    // Keep-alive comments, as the real server sends every 15 s.
+    if (run.res && !run.res.writableEnded) run.res.write(": keep-alive\n\n");
     writeEvent(run, { type: "start", messageId: message.id, messageMetadata: { conversationId: conv.id } });
+    if (run.firstTitle) writeEvent(run, { type: "data-title", data: { title: run.firstTitle }, transient: true });
     writeEvent(run, { type: "start-step" });
+    let lastPing = Date.now();
     const closeText = () => {
       if (textPart) writeEvent(run, { type: "text-end", id: textPart.sid });
       textPart = null;
@@ -419,6 +423,10 @@ function createApp(options = {}) {
         if (run.cancelled) break;
         await sleep(step.delay || 0);
         if (run.cancelled) break;
+        if (Date.now() - lastPing > 2000 && run.res && !run.res.writableEnded) {
+          run.res.write(": keep-alive\n\n");
+          lastPing = Date.now();
+        }
         if (step.kind === "text") {
           if (!textPart) {
             textPart = { type: "text", text: "", sid: `t${++counter}` };
@@ -465,7 +473,11 @@ function createApp(options = {}) {
       else if (message.status === "running") message.status = "complete";
       for (const p of message.content) delete p.sid;
       conv.updated_at = now();
-      if (run.title) writeEvent(run, { type: "data-title", data: { title: run.title }, transient: true });
+      if (run.title) {
+        // The generated title arrives after the first one.
+        conv.title = run.title;
+        writeEvent(run, { type: "data-title", data: { title: run.title }, transient: true });
+      }
       writeEvent(run, { type: "finish-step" });
       writeEvent(run, { type: "finish", messageMetadata: { status: message.status } });
       if (run.res && !run.res.writableEnded) {
@@ -492,6 +504,8 @@ function createApp(options = {}) {
     if (conv.owner_id !== user.id) throw fail(403, "forbidden", "You don't have access to this conversation.");
     if (conv.hub !== hub) throw fail(409, "wrong_hub", "This conversation lives on another hub.");
     if (state.flags.chat_fail) throw fail(503, "unavailable", "The agent is unavailable right now. Try again in a minute.");
+    if ([...state.runs.values()].some((r) => r.conv.id === cid && !r.done))
+      throw fail(409, "run_in_progress", "A reply is already being written in this conversation.");
     const replyId = body.assistant_message_id || rid("m_", 18);
     if (!ID.test(replyId)) throw fail(400, "bad_id", "assistant_message_id is malformed.");
     let userMessage;
@@ -500,7 +514,11 @@ function createApp(options = {}) {
       if (!ID.test(m.id || "")) throw fail(400, "bad_id", "The message id is malformed.");
       const existing = state.messages.get(m.id);
       if (existing && existing.conversation_id !== cid) throw fail(409, "id_conflict", "That message id belongs to another conversation.");
-      if (body.parent_id && !state.messages.has(body.parent_id)) throw fail(400, "bad_parent", "parent_id doesn't exist.");
+      if (body.parent_id) {
+        const parent = state.messages.get(body.parent_id);
+        if (!parent || parent.conversation_id !== cid) throw fail(400, "bad_parent", "parent_id doesn't exist.");
+        if (parent.role !== "assistant") throw fail(400, "bad_parent", "A new message must follow an assistant message.");
+      }
       const files = (m.content || []).filter((p) => p.type === "file");
       if (files.length > 10) throw fail(400, "too_many_files", "You can attach up to 10 files to one message.");
       for (const f of files) if (!state.files.has(f.file_id)) throw fail(400, "unknown_file", `The file ${f.name} wasn't uploaded to this conversation.`);
@@ -531,10 +549,12 @@ function createApp(options = {}) {
     const text = userMessage.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
     const files = userMessage.content.filter((p) => p.type === "file" || p.type === "image");
     let title = null;
+    let firstTitle = null;
     if (!conv.title) {
-      conv.title = text.slice(0, 40) || "New chat";
+      // Named from the first message at once; the generated title follows.
+      firstTitle = text.replace(/\s+/g, " ").trim().slice(0, 40) || "New chat";
+      conv.title = firstTitle;
       title = titleFrom(text);
-      conv.title = title;
     }
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -542,7 +562,7 @@ function createApp(options = {}) {
       connection: "keep-alive",
       "x-vercel-ai-ui-message-stream": "v1",
     });
-    const run = { message: reply, conv, res, cancelled: false, done: false, steps: script(text, conv, files), title };
+    const run = { message: reply, conv, res, cancelled: false, done: false, steps: script(text, conv, files), title, firstTitle };
     state.runs.set(replyId, run);
     req.on("close", () => {
       run.res = null; // the run keeps going, like the real server task
@@ -723,7 +743,11 @@ function createApp(options = {}) {
       if (!agent) throw fail(400, "unknown_agent", "That agent doesn't exist.");
       if (agent.hub !== hub) throw fail(409, "wrong_hub", "This agent lives on another hub.");
       const id = body.id && ID.test(body.id) ? body.id : rid("c_", 18);
-      if (state.conversations.has(id)) throw fail(409, "conflict", "That conversation id is taken.");
+      const existing = state.conversations.get(id);
+      if (existing) {
+        if (existing.owner_id !== user.id) throw fail(409, "conflict", "That conversation id is taken.");
+        return send(res, 200, { conversation: convOut(existing) });
+      }
       const conv = { id, owner_id: user.id, title: null, title_source: "pending", agent: agent.id, hub: agent.hub, api_base: agent.api_base, archived: false, created_at: now(), updated_at: now(), head_id: null };
       state.conversations.set(id, conv);
       return send(res, 201, { conversation: convOut(conv) });
@@ -796,7 +820,7 @@ function createApp(options = {}) {
             messages: branchTo(conv.head_id).map(msgOut),
           },
         });
-        return send(res, existing ? 200 : 201, { share_id: shareId, url: `/s/${shareId}` });
+        return send(res, 200, { share_id: shareId, url: `/s/${shareId}` });
       }
       if (method === "DELETE") {
         if (existing) state.shares.delete(existing[0]);
@@ -898,7 +922,8 @@ function createApp(options = {}) {
           return res.end(
             `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Authorize</title>` +
               `<body style="font:15px system-ui;padding:40px"><h1>Authorize Hubzoid</h1><p>Allow Hubzoid to use your ${a} account?</p>` +
-              `<a id="allow" href="/oauth/connectors/${a}/callback?state=${flow}&code=ok">Allow</a></body>`,
+              `<a id="allow" href="/oauth/connectors/${a}/callback?state=${flow}&code=ok">Allow</a> · ` +
+              `<a id="deny" href="/oauth/connectors/${a}/callback?state=${flow}&error=access_denied">Deny</a></body>`,
           );
         }
         if (command === "google") {
@@ -930,6 +955,12 @@ function createApp(options = {}) {
       }
       let m;
       if ((m = /^\/oauth\/connectors\/([^/]+)\/callback$/.exec(url.pathname))) {
+        if (url.searchParams.get("error")) {
+          res.writeHead(302, {
+            location: `/account/connections?connector=${encodeURIComponent(m[1])}&error=${encodeURIComponent(url.searchParams.get("error"))}`,
+          });
+          return res.end();
+        }
         const flow = state.flows.get(url.searchParams.get("state"));
         if (flow) {
           state.tokens.set(`${flow.user}:${flow.connector}`, { connected_at: now(), status: "active" });
