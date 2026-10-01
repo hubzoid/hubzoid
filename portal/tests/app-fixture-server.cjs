@@ -20,8 +20,9 @@
 //   /__fixture/reset                 fresh data
 //   /__fixture/state                 recorded requests and store (JSON)
 //   /__fixture/flag/<name>/<value>   no_agents, signup, chat_fail, upload_slow,
-//                                    one_agent (true | false)
+//                                    one_agent, branded (true | false)
 //   /__fixture/mode/<local|accounts> switch sign-in mode
+//   /__fixture/expire                end every session (as a revocation would)
 "use strict";
 
 const http = require("node:http");
@@ -92,7 +93,7 @@ const AGENTS = [
 function seed() {
   const s = {
     mode: process.env.HZ_FIXTURE_MODE === "local" ? "local" : "accounts",
-    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false },
+    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false, branded: false },
     users: [
       { id: "u_ada00001", email: "ada@example.com", name: "Ada Okafor", role: "admin", password: PASSWORD, status: "active" },
       { id: "u_sam00001", email: "sam@example.com", name: "Sam Rivera", role: "user", password: PASSWORD, status: "active" },
@@ -661,7 +662,13 @@ function createApp(options = {}) {
       return send(res, 200, { agents, default_agent: agents[0]?.id ?? null });
     }
     if (pathname === "/api/branding" && method === "GET")
-      return send(res, 200, { name: "Hubzoid", logo_url: null, favicon_url: null, custom_css_url: null });
+      return send(
+        res,
+        200,
+        state.flags.branded
+          ? { name: "Acme Support", logo_url: "/branding/logo.svg", favicon_url: "/branding/favicon.svg", custom_css_url: "/branding/custom.css" }
+          : { name: "Hubzoid", logo_url: null, favicon_url: null, custom_css_url: null },
+      );
 
     // ---- 6.6 personal connections ----
     if (pathname === "/api/connections" && method === "GET") {
@@ -862,6 +869,10 @@ function createApp(options = {}) {
           state.mode = mode;
           return send(res, 200, { ok: true });
         }
+        if (command === "expire") {
+          state.sessions.clear();
+          return send(res, 200, { ok: true });
+        }
         if (command === "mode" && ["local", "accounts"].includes(a)) {
           state.mode = a;
           return send(res, 200, { ok: true, mode: a });
@@ -926,6 +937,18 @@ function createApp(options = {}) {
         }
         res.writeHead(302, { location: `/account/connections?connected=${encodeURIComponent(m[1])}` });
         return res.end();
+      }
+      if (url.pathname.startsWith("/branding/")) {
+        // The hub's branding folder (public: the sign-in page shows it too).
+        const files = {
+          "logo.svg": ["image/svg+xml", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1f6f5c"/><path d="M9 22l7-13 7 13h-4l-3-6-3 6z" fill="#fff"/></svg>`],
+          "favicon.svg": ["image/svg+xml", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1f6f5c"/></svg>`],
+          "custom.css": ["text/css", `/* Acme Support */\n:root { --acme-brand: #1f6f5c; }\n`],
+        };
+        const file = files[url.pathname.slice("/branding/".length)];
+        if (!file) return send(res, 404, { detail: "not found" });
+        res.writeHead(200, { "content-type": file[0], "cache-control": "no-store" });
+        return res.end(file[1]);
       }
       if (url.pathname.startsWith("/portal/api/")) {
         const endpoint = url.pathname.slice("/portal/api".length);

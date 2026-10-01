@@ -424,10 +424,22 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   );
 }
 
+/** Files on the message being edited go with the new version unless removed. */
+function EditAttachments() {
+  const count = useAuiState((s) => s.composer.attachments.length);
+  if (!count) return null;
+  return (
+    <div className="flex gap-2 overflow-x-auto px-1 pb-2 pt-1">
+      <ComposerPrimitive.Attachments>{({ attachment }) => <ComposerAttachment attachment={attachment} />}</ComposerPrimitive.Attachments>
+    </div>
+  );
+}
+
 function EditComposer() {
   return (
     <MessagePrimitive.Root className="flex justify-end py-3" data-role="user-editing">
       <ComposerPrimitive.Root className="w-full max-w-[min(90%,640px)] rounded-2xl border border-accent/60 bg-raised p-2">
+        <EditAttachments />
         <ComposerPrimitive.Input
           autoFocus
           submitMode="enter"

@@ -47,7 +47,20 @@ export function fileRefOf(attachment: { content?: readonly unknown[] }): (FileRe
 }
 
 function partsOf(content: ServerMessage["content"]): ServerPart[] {
-  if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
+  if (typeof content === "string") {
+    // The store keeps parts as JSON text; accept it unparsed as well.
+    const trimmed = content.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed) && parsed.every((p) => p && typeof p === "object" && typeof p.type === "string"))
+          return parsed;
+      } catch {
+        /* plain text that happens to look like JSON */
+      }
+    }
+    return content ? [{ type: "text", text: content }] : [];
+  }
   return Array.isArray(content) ? content : [];
 }
 

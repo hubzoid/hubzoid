@@ -61,7 +61,8 @@ export const en = {
     passwordHint: "At least 8 characters.",
     noMethods:
       "Sign-in isn't set up on this server yet. Ask the person who runs Hubzoid for your team.",
-    missingFields: "Enter your email and password.",
+    missingEmail: "Enter your email address.",
+    missingPassword: "Enter your password.",
     missingName: "Enter your name.",
     invalidEmail: "Enter a valid email address.",
     passwordTooShort: "Use at least 8 characters for your password.",

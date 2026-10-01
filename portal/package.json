@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node tests/journey.cjs"
+    "test": "node tests/journey.cjs",
+    "test:app": "node tests/app-journey.cjs",
+    "fixture:app": "node tests/app-fixture-server.cjs"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.22",
