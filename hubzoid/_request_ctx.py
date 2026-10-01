@@ -59,6 +59,13 @@ _current_tool_calls: ContextVar[list | None] = ContextVar("hubzoid_tool_calls", 
 # marker. A dict mutated in place, like artifacts, so the runtime's write is
 # visible from the caller's context.
 _current_failure: ContextVar[dict | None] = ContextVar("hubzoid_run_failure", default=None)
+# What each tool call returned, by the runtime's call id, recorded ONLY when the
+# eval runner listens (`tool_result_recorder`). The same single is-None check
+# on the chat path as `record_tool_call`. Only the start of the payload is kept
+# (`RESULT_KEEP_CHARS`): the runner needs a short preview, never the data.
+_current_tool_results: ContextVar[dict | None] = ContextVar("hubzoid_tool_results", default=None)
+
+RESULT_KEEP_CHARS = 2000
 
 
 # Set by the scheduled runner after resolving the account and its scratch path.
@@ -179,6 +186,58 @@ def record_tool_call(name: str, args: object | None = None) -> None:
     if items is None:
         return
     items.append({"name": name, "args": args})
+
+
+def record_tool_result(call_id: object, output: object) -> None:
+    """Note what tool call `call_id` returned, if a result recorder is active.
+    No-op otherwise. Mutates the recorder's dict in place, like
+    `record_tool_call`, so the entry survives the SDK's context copies."""
+    results = _current_tool_results.get()
+    if results is None:
+        return
+    results[str(call_id or "")] = _result_text(output)
+
+
+def _result_text(output: object, limit: int = RESULT_KEEP_CHARS) -> str:
+    """The start of a tool result as text. Runtimes hand over a string, a list of
+    content blocks ({"type": "text", "text": ...} or objects with `.text`), or
+    any JSON-able value."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output[:limit]
+    if isinstance(output, (list, tuple)):
+        parts: list[str] = []
+        size = 0
+        for block in output:
+            text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+            if not isinstance(text, str):
+                continue
+            parts.append(text)
+            size += len(text)
+            if size >= limit:
+                break
+        if parts:
+            return "\n".join(parts)[:limit]
+    try:
+        import json
+
+        return json.dumps(output, default=str, ensure_ascii=False)[:limit]
+    except (TypeError, ValueError):
+        return str(output)[:limit]
+
+
+@contextmanager
+def tool_result_recorder() -> Iterator[dict]:
+    """Record what each tool call returned inside the block, as
+    {call id: start of the result text}. Used by the eval runner for result
+    previews and failure details; outside such a block nothing is recorded."""
+    results: dict = {}
+    token = _current_tool_results.set(results)
+    try:
+        yield results
+    finally:
+        _current_tool_results.reset(token)
 
 
 @contextmanager
