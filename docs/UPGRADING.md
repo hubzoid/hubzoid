@@ -1,5 +1,215 @@
-# Upgrading to 1.0.1 from 0.9.x
+# Upgrading
 
+- [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
+- [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Upgrading to 1.1 from 1.0.x
+
+Hubzoid 1.1 replaces Open WebUI with the Hubzoid web app: Hubzoid's own
+accounts and sign-in, chat, conversation history, personal MCP connections and
+groups, for one hub or a gateway. Open WebUI stays available for this release
+as a legacy mode. Hub files (`AGENTS.md`, skills, knowledge, `schedule/`,
+`workflows/`) need no changes. The [release notes](release-notes/1.1.0.md)
+summarize the release and its known limits.
+
+Choose one path before you start:
+
+- **Move to the web app** (the default). Run `hubzoid migrate openwebui` to
+  move accounts, groups, access, conversations and share links. Steps below.
+- **Keep Open WebUI for this release.** Install the extra and set the legacy
+  mode, and everything works as in 1.0.x:
+
+  ```bash
+  pip install -U "hubzoid[openwebui]"
+  # in each hub's .env, or the gateway's environment:
+  HUBZOID_UI=openwebui
+  ```
+
+  With Docker, build with `--build-arg WITH_OPENWEBUI=true`. Legacy mode is
+  planned to go in the next minor release, so plan the move.
+
+### What changes
+
+| Change | What you do |
+|---|---|
+| `pip install hubzoid` no longer installs Open WebUI or PyTorch. Upgrading an existing environment leaves the installed Open WebUI in place, but it is not used unless `HUBZOID_UI=openwebui`. | Nothing, unless you keep the legacy mode (above). |
+| `hubzoid run` and `hubzoid gateway` serve the Hubzoid web app by default. | Follow the steps below. |
+| With sign-in on (`HUBZOID_AUTH=true`, or the 1.0 name `WEBUI_AUTH=true`), a hub or gateway whose Open WebUI database has accounts and whose Hubzoid store has none stops at start and prints the two ways forward. In local mode `hubzoid run` only prints that the old chats can be imported. | Migrate, or keep the legacy mode. |
+| Hubzoid owns sign-in. Existing passwords keep working. Google, Microsoft and OpenID Connect use the same variable names and callback paths as Open WebUI, so existing provider registrations keep working. `WEBUI_SECRET_KEY` is not used in the default mode. | Everyone signs in once after the move: sessions do not move. See [authentication](auth.md). |
+| Hosted MCP accepts only OAuth credentials issued by Hubzoid after sign-in and consent. Open WebUI API keys no longer authenticate `/mcp`. `MCP_PUBLIC_URL` is required with `MCP_SERVER=true`. | Reconnect each MCP client ([below](#mcp-clients-move-from-api-keys-to-oauth)). |
+| Personal MCP connections are run by Hubzoid. Connections made in Open WebUI are not moved. | An organization administrator registers each server under **Console → Connectors**, then each person connects again on **Account → Connections**. See [MCP connectors](mcp.md#personal-connections-default-ui-mode). |
+| Groups are Hubzoid groups, managed under **Console → Groups**. Open WebUI groups are moved by the migration. | Check group membership after the move. |
+| New secret: the deployment key (`HUBZOID_SECRET_KEY`, or the `secret.key` file created on first use) encrypts personal connection tokens and signs identity between Hubzoid processes. Backups leave it out unless asked. | Back it up separately ([backup](BACKUP.md)). |
+| A local `hubzoid run` refuses a network `--host` without sign-in. | Turn sign-in on, or set `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` on a network you trust. |
+| Download links in the web app expire after 7 days by default (`HUBZOID_ARTIFACT_LINK_TTL`, `0` for never). The owner of a conversation can always download its files while signed in. | Nothing. Legacy mode keeps links that never expire. |
+| `hub.call_agent` returns only the agent's answer. Tool lines, reasoning, download footers and error markers no longer appear in workflow data. | Check workflows that parsed those lines. |
+| Markdown task and scheduled eval run ids name the hub (`md:<task>:<slot>@<hub>`). Runs queued under the old ids are still listed, re-queued and cancelled. | Nothing. |
+| The Docker image is slim (no ffmpeg, PyAV build tools or PyTorch). The compose file turns sign-in on. | For the legacy mode, build with `--build-arg WITH_OPENWEBUI=true` (`HUBZOID_WITH_OPENWEBUI=true` with compose). See [deployment](DEPLOYING.md). |
+
+### Move a hub to the web app
+
+1. **Install** the new version in the same environment:
+   ```bash
+   pip install -U hubzoid
+   ```
+2. **Dry run** the migration. It only reads Open WebUI and changes nothing:
+   ```bash
+   hubzoid migrate openwebui ./my-hub
+   ```
+   The report counts people, external sign-in links, groups, conversations,
+   messages, attachments and share links, shows each hub's access plan and
+   lists anything blocking. It never prints message content or emails.
+   `--verbose` adds the ids of skipped items, `--json` prints the report as
+   JSON. The command exits 2 when something blocks the migration. Useful
+   options:
+   - `--model-alias OLD=AGENT` imports conversations of an old model id into
+     an agent of this deployment.
+   - `--grants people` gives per-person grants instead of group grants.
+   - `--owui-db URL` reads another Open WebUI database (SQLAlchemy URL).
+   - `--rehearse <empty folder>` copies a standalone hub and migrates the copy
+     (SQLite only). The original is only read.
+3. **Back up**, with the deployment still on 1.0.x data:
+   ```bash
+   hubzoid backup ./my-hub --out pre-1.1.tar.gz
+   ```
+   For PostgreSQL, also `pg_dump` ([backup](BACKUP.md)). Keep a protected
+   copy of each `.env`.
+4. **Stop** the hub (or the gateway and every bridge). A running bridge waits
+   on the database while the migration writes.
+5. **Apply**:
+   ```bash
+   hubzoid migrate openwebui ./my-hub --apply
+   ```
+   It writes in steps: groups, then access (with a backup per hub under
+   `<hub>/.hubzoid/backups/` for `hubzoid access rollback`, checked against
+   the access Open WebUI gave), then accounts, conversations and shares. If a
+   later step fails, the earlier ones are undone. Running it again is safe:
+   rows are matched by id, changes made in Hubzoid since are kept, and what
+   was deleted in Hubzoid is not brought back.
+6. **Start** in the default mode: `hubzoid run my-hub`. Remove `HUBZOID_UI`
+   from the hub's `.env` if it was set.
+7. **Check**: sign in as an ordinary user, open a moved conversation, use an
+   agent with a restricted tool, open the Console (People, Groups, Agents),
+   and run `hubzoid doctor my-hub`.
+
+### What moves and what does not
+
+Moved:
+
+- **People**, with their id, email, name, role and approval state. Password
+  hashes move as they are, so nobody resets a password. Google, Microsoft and
+  OpenID Connect links move. Accounts deactivated in Open WebUI are imported
+  but blocked.
+- **Groups** with their members, by email.
+- **Access.** A hub whose access Open WebUI still decided becomes managed in
+  the Console. Its groups become group grants wherever that keeps exactly who
+  may use what (people who are denied included). Otherwise those capabilities
+  get per-person grants. Hubs already managed in the Console keep their grants.
+- **Conversations**, with their ids, owners, branches, current branch, titles,
+  archive state and attachments. Tool lines, tool errors and reasoning written
+  by 1.0.x become proper message parts. Files only in Open WebUI's storage are
+  copied into the hub's chat folders.
+- **Share links**, with their ids, so `/s/<id>` keeps working.
+
+Not moved: sessions (everyone signs in once), Open WebUI API keys, personal
+MCP connections and their tokens, folders (flattened), tags, pins, ratings and
+feedback, notes, channels, Open WebUI knowledge and memories, and per-chat
+parameters. GitHub and Feishu sign-in links are not imported, because the web
+app does not offer those providers.
+
+Also note:
+
+- **Share links** open for any signed-in person of the deployment. A share
+  that Open WebUI kept private or restricted becomes readable by everyone
+  signed in. The report warns when such shares exist.
+- **Tool arguments** in moved conversations are the short previews 1.0.x
+  stored. Full arguments were never kept.
+- **`admin@localhost`** from Open WebUI's sign-in-off mode is imported
+  without its well-known password. It stays the local owner.
+- **An email clash** (a Hubzoid account with the same email but another id)
+  blocks the migration. Nothing is merged.
+- **Microsoft links** without a tenant GUID in `MICROSOFT_CLIENT_TENANT_ID`,
+  and OpenID Connect links without a discovery URL in `OPENID_PROVIDER_URL`,
+  carry a placeholder issuer until the person signs in again.
+- **Open WebUI API keys.** In this release, while the old Open WebUI database
+  is still in place (`<hub>/.openwebui-data/webui.db`, or Open WebUI's tables
+  in `DATABASE_URL`), the Console's management API still accepts that
+  database's API keys (`Authorization: Bearer sk-...`) for their owners.
+  Delete API keys you no longer need in Open WebUI before you migrate.
+
+### The first sign-in after the move
+
+Everyone signs in again at `/auth`, with the same password or the same Google,
+Microsoft or OpenID Connect account. A person whose account was waiting for
+approval in Open WebUI still waits. Administrators keep the Administrator
+role. If the deployment used sign-in off, nothing changes: you are the local
+owner.
+
+### MCP clients move from API keys to OAuth
+
+1. Remove the old configuration that sent an API key, for example
+   `claude mcp remove hubzoid --scope user`. This does not delete the key.
+2. Make sure the hub's `.env` has `MCP_SERVER=true` and `MCP_PUBLIC_URL` set
+   to the exact public address of the endpoint: `https://hub.example.com/mcp`,
+   or `https://hub.example.com/b/<slug>/mcp` for a gateway hub. A local
+   `hubzoid run` sets both for you.
+3. Add the server without a header and authenticate:
+   ```bash
+   claude mcp add --transport http --scope user hubzoid https://hub.example.com/mcp
+   ```
+   In Claude Code, run `/mcp`, sign in to Hubzoid in the browser if asked, and
+   choose **Allow connection**.
+
+Clients that can only send a fixed `Authorization` header cannot connect any
+more. See [hosted MCP](mcp-server.md).
+
+### A gateway
+
+Do the same steps with the gateway: dry run, back up, stop the gateway and
+every bridge, apply, start. Pass any hub of the gateway or its data folder
+(the one holding `deployment.json`):
+
+```bash
+hubzoid migrate openwebui ./gateway-data            # dry run
+hubzoid backup ./sales --out pre-1.1.tar.gz        # a hub in a gateway backs up the whole gateway
+hubzoid migrate openwebui ./gateway-data --apply
+hubzoid gateway ./sales ./support --data-dir ./gateway-data
+```
+
+Set `HUBZOID_AUTH` once in the gateway's environment. A hub `.env` that sets a
+different `HUBZOID_UI`, `HUBZOID_AUTH` or `HUBZOID_SECRET_KEY` stops the
+gateway, and so do hubs that disagree on `WEBUI_AUTH` when `HUBZOID_AUTH` is
+not set.
+
+Rehearse on a copy first. `--rehearse` does not handle a gateway, so make the
+copy from a backup:
+
+1. `hubzoid backup ./sales --out state.tar.gz`
+2. `hubzoid restore state.tar.gz --move /srv/hubs=/srv/rehearsal` (the old
+   folder, then a scratch folder).
+3. Copy each hub's content into the restored hub folders: `AGENTS.md`,
+   `restricted/` and `identity/` (backups leave hub content to git, and the
+   access plan reads them).
+4. Run `hubzoid migrate openwebui` on the restored copy, first as a dry run,
+   then with `--apply`, and check the result before migrating the real
+   gateway.
+
+### Going back
+
+Stop everything and restore the pre-upgrade backup, then install the previous
+version:
+
+```bash
+hubzoid restore pre-1.1.tar.gz
+pip install "hubzoid==<previous version>"
+```
+
+The migration never changes Open WebUI's data, so the legacy mode
+(`hubzoid[openwebui]` with `HUBZOID_UI=openwebui`) is also a way back on 1.1.
+Changes made in the web app after the move stay in Hubzoid's store and do not
+appear in Open WebUI.
+
+## Upgrading to 1.0.1 from 0.9.x
 This release changes security defaults, moves markdown schedules onto the
 workflow engine, runs scheduled work as ordinary accounts, adds the Admin
 Console, versions Hubzoid's own database tables and changes the Docker image.
@@ -11,7 +221,7 @@ limits.
 **Before you start:** on Python 3.12, workflows (markdown schedules and code
 workflows) need SQLite 3.42 or newer, or PostgreSQL. Step 5 shows how to check.
 
-## What changes, and what to do
+### What changes, and what to do
 
 | Change | What you do |
 |---|---|
@@ -43,7 +253,7 @@ workflows) need SQLite 3.42 or newer, or PostgreSQL. Step 5 shows how to check.
 | Docker: the image's entrypoint is `hubzoid` with the default command `run /hub`, and it runs as an unprivileged user. The old Compose image ran as root. | If you passed arguments after the image name, pass the whole command now, for example `run /hub --slack`. On Linux, make the mounted hub folder writable by the container user ([DEPLOYING.md](DEPLOYING.md#path-b-docker)). |
 | Hubzoid's own code is licensed under Apache-2.0. 0.9.x was MIT. Dependencies keep their own licences. | Nothing to run. If you redistribute Hubzoid, keep [LICENSE](../LICENSE) and [NOTICE](../NOTICE) with it. See [LICENSING.md](../LICENSING.md). |
 
-## Steps
+### Steps
 
 Before changing configuration, keep a protected copy of the current environment
 files with the rollback materials. The default backup excludes secrets and `.env`.
@@ -93,7 +303,7 @@ files with the rollback materials. The default backup excludes secrets and `.env
    file the agent makes, open the Console (Agents, per-agent Runs & schedules, Activity), and run
    `hubzoid doctor <hub>` again.
 
-## Going back
+### Going back
 
 Stop everything. Restore with the new version still installed (older versions
 have no `restore` command), then reinstall the previous version and start:
@@ -126,7 +336,7 @@ cannot confirm that all writers have stopped, restore to a separate location wit
 `--move` as described in [BACKUP.md](BACKUP.md). The current standalone and gateway
 supervisors wait for their child services during normal shutdown.
 
-## First sign-in and usage after the upgrade
+### First sign-in and usage after the upgrade
 
 The configured, verified owner now receives initial administration and hub entry
 once. Existing hubs are not automatically migrated to managed access. Record the
@@ -142,7 +352,7 @@ New workflow scaffolds are manual and model-free. Existing schedules are unchang
 Chat usage now uses the forwarded chat ID; local Open WebUI background task types
 are recorded separately from user messages. Historical usage is not rewritten.
 
-## Only if you ran a pre-release build of 1.0.1
+### Only if you ran a pre-release build of 1.0.1
 
 Skip this section if you are upgrading from 0.9.x. Those releases had no
 workflow engine and no code workflows, so there is no run history or queued run
@@ -168,7 +378,7 @@ If you ran a pre-release build of 1.0.1, also note:
   deployment needs that history and the new version cannot read it, treat the
   rollout as failed and go back. Deleting the old database is not a migration.
 
-## Workflows run as people; artifacts and email
+### Workflows run as people; artifacts and email
 
 Scheduled work now acts as an ordinary account, and can publish private
 artifacts (reports, PDFs, CSVs and other files) and email its owner ([workflow-identity.md](workflow-identity.md),

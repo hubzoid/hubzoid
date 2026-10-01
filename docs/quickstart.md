@@ -1,16 +1,17 @@
 # Quickstart
 
-Start with Python 3.11 or 3.12 in a virtual environment. Interactive setup detects
-authenticated Claude or Codex CLIs and saves your choice. Without a selection,
-`MODEL=claude-local` remains the default and needs a signed-in Claude CLI. For
-Codex prerequisites or an API provider, see [providers.md](providers.md).
-Open WebUI and the Python runtime adapters are installed with Hubzoid.
+Start with Python 3.11 or 3.12 in a virtual environment. With
+[uv](https://docs.astral.sh/uv/):
 
-**Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
-schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
-Check with the same Python the hub uses:
-`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
-`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install hubzoid
+hubzoid init my-hub
+hubzoid run my-hub
+```
+
+Or with pip:
 
 ```bash
 python3.12 -m venv .venv
@@ -20,30 +21,79 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-Open [localhost:3080](http://localhost:3080). Select the agent and say
-“Say hello using the hello skill.” The default template is a minimal assistant,
-with one worked example of a skill, knowledge file, custom tool and sub-agent.
-For the interactive framework tour, use `hubzoid init guided-hub --template demo`.
+`pip install hubzoid` installs the Hubzoid web app and the Python runtime
+adapters. It no longer installs Open WebUI (see [upgrading](UPGRADING.md)).
 
-The first local session uses Open WebUI's `admin@localhost` account. Hubzoid
-provisions this verified owner once with Console administration and entry to the
-hub. New hubs use managed permissions immediately. A later login never restores
-revoked permissions. There is no second password or separate Console sign-in.
-This local mode must not be exposed as a shared deployment.
+**Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
+schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
+Check with the same Python the hub uses:
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+
+## What `init` and `run` do
+
+`hubzoid init my-hub` creates the hub folder and, in a fresh parent folder, an
+agents-repo wrapper (`requirements.txt`, `.gitignore`, `README.md`). The
+default template is an operations assistant for Kestrel & Oak, a fictional
+home-goods shop: five policy files, a stock export, a `stock_check` tool and
+three suggested prompts. Other templates: `--template minimal` (one example of
+each file type), `--template demo` (a guided tour) and `--template watchtower`
+(a workflow-first sample).
+
+For the model, init uses a signed-in Claude Code or Codex CLI when it finds
+one (it asks when it finds both). Otherwise, in a terminal, it offers to save
+an OpenRouter, Anthropic or OpenAI API key in `my-hub/.env`, which is created
+readable only by you. Without a terminal it asks nothing and the hub keeps
+`MODEL=claude-local`. See [providers](providers.md).
+
+`hubzoid run my-hub` starts the hub's bridge and the web app on one public
+port (3080 by default, `--port` to change it) and prints one ready line:
+
+```text
+✓ Hubzoid is ready: http://127.0.0.1:3080  (local mode, sign-in off)
+  Connect Claude Code: claude mcp add --transport http kestrel-oak-ops http://127.0.0.1:3080/mcp
+```
+
+From a terminal it opens the page in your browser (`--no-open` to skip). Pick
+a suggested prompt such as "What should we reorder today, and what could run
+out first?". The agent answers from the hub's files and its `stock_check`
+tool, and you see each tool step as it runs.
+
+## Local mode
+
+Sign-in is off by default. You are the hub's owner, `admin@localhost`, an
+administrator, and the public port listens on `127.0.0.1` only. `hubzoid run
+--host 0.0.0.0` stops with an explanation until you turn sign-in on. Local mode
+must not be exposed as a shared deployment.
+
+Open **Admin Console** from the account menu (or `/portal/`) for Agents,
+People, Groups, Activity and Connectors. Usage totals sit above the agent
+cards. Runs and schedules live inside each agent. A new deployment starts with
+empty usage and run history.
+
+## Connect Claude Code
+
+Hosted MCP is on for a local run. Paste the line `hubzoid run` printed:
+
+```bash
+claude mcp add --transport http kestrel-oak-ops http://127.0.0.1:3080/mcp
+```
+
+In Claude Code, run `/mcp`, choose the hub and authenticate. Your browser opens
+Hubzoid's consent page. Choose **Allow connection** and return to Claude Code.
+The hub's tools and knowledge are then available there under your access. See
+[hosted MCP](mcp-server.md).
 
 ## Make it useful
 
 1. Edit `my-hub/AGENTS.md` to describe a real task and the expected result.
-2. Add a small reference file under `knowledge/` and ask a question about it.
+   Its `suggestions:` become the buttons on the empty chat screen.
+2. Replace the files in `knowledge/` with your own and ask about them.
 3. Add tools only when the agent needs to act. Put permission-sensitive tools
-   under `restricted/` and grant their capabilities through the Console.
+   under `restricted/` and grant their capabilities in the Console.
 4. Run `hubzoid doctor my-hub`, restart after configuration changes, and try
    the same task again. Add an [eval](evals.md) for behaviour you rely on.
-
-Open `/portal/` for Agents, People and Activity. Usage totals sit above the
-agent cards; runs and schedules live inside each agent. New deployments
-start with empty usage and run history. Send a chat or run a workflow before
-expecting results there.
+5. Put your logo in `branding/` ([branding](branding.md)).
 
 ## First workflow
 
@@ -59,6 +109,43 @@ Open **Console → Agents → your agent → Runs & schedules** to inspect its r
 and steps. The scaffold is manual. Scheduling is a separate, deliberate choice.
 See [workflows.md](workflows.md) for scheduling, retries and recovery.
 
+## Share with a team
+
+Turn sign-in on and create the first administrator:
+
+```bash
+# in my-hub/.env
+HUBZOID_AUTH=true
+HUBZOID_PUBLIC_URL=https://hub.example.com   # the address people open
+
+hubzoid admin create you@example.com my-hub --owner
+hubzoid run my-hub
+```
+
+`hubzoid admin create` prints a one-time sign-in link. Open it, set a password,
+and you are signed in as an Administrator with access to the hub. Add
+teammates under **People → Add user** in the Admin Console: choose their
+access, then share the one-time sign-in link it gives you. Nothing is emailed.
+With Google, Microsoft or an OpenID Connect provider configured, people can
+sign in with it instead ([authentication](auth.md)).
+
+For several agents behind one address, run them as a gateway, with sign-in set
+once in the gateway's environment:
+
+```bash
+export HUBZOID_AUTH=true
+export HUBZOID_ADMIN_EMAIL=you@example.com
+export HUBZOID_ADMIN_PASSWORD='a-strong-password'
+hubzoid gateway ./sales ./support --data-dir ./gateway-data
+```
+
+On the first start the gateway creates that administrator. Sign in with that
+email and password. One sign-in covers every agent a person may use.
+
+Before going live, read [administration](ADMINISTRATION.md),
+[authentication](auth.md) and [deployment](DEPLOYING.md): a public deployment
+needs a TLS proxy and `HUBZOID_PUBLIC_URL`.
+
 ## Run this checkout
 
 A development branch can be ahead of the package on PyPI. To exercise its code:
@@ -73,47 +160,20 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-Checkout-specific tests use this source installation. Installing from PyPI tests
-the published version instead.
+The web app and the Console are served from the built bundle in
+`hubzoid/portal_dist`. After changing anything in `portal/`, rebuild it with
+`cd portal && npm ci && npm run build`. Checkout-specific tests use this source
+installation. Installing from PyPI tests the published version instead.
 
 ## Troubleshooting
 
-- **No reply:** verify the CLI login or provider key and model in `.env`.
-- **No agent available:** the chat shows why. A blocked account is told so; an
-  account with no agent is told to ask an administrator, who grants **Use this
-  agent** or an agent capability that implies entry. Organization-wide admin
-  rights alone do not grant chat.
-- **Console forbidden:** use the owner's account, or ask that owner for
-  **Manage access**. A direct agent grant includes basic chat; organization-wide
-  admin rights alone do not grant chat or restricted tools.
-- **Connection unavailable:** verify the bridge process and logs. Restart after
-  changing bridge credentials so the chat app receives current wiring.
+- **No reply:** check the CLI login, or the provider key and `MODEL`, in `.env`.
+- **"You don't have access to an agent yet":** with sign-in on, an
+  administrator grants **Use this agent** (or a capability that includes it)
+  in the Console. Organization-wide admin rights alone do not grant chat.
+- **The Console says you can't manage access:** use an Administrator account,
+  or ask one for **Manage access** on the agent.
+- **`hubzoid run` refuses `--host 0.0.0.0`:** that is local mode protecting
+  you. Turn sign-in on first ([authentication](auth.md)).
+- **The port is busy:** `hubzoid run my-hub --port 3090`.
 - **Configuration issue:** `hubzoid doctor my-hub` reports loader and setup errors.
-
-## Share with a team
-
-The local session above has no sign-in. To give teammates their own accounts,
-run the agents behind a gateway with sign-in on and an Open WebUI service
-account:
-
-```bash
-export WEBUI_AUTH=true
-export WEBUI_SECRET_KEY='a-long-random-value'
-export HUBZOID_GATEWAY_ADMIN_EMAIL=you@example.com
-export HUBZOID_GATEWAY_ADMIN_PASSWORD='a-strong-password'
-hubzoid gateway ./my-hub --data-dir ./gateway-data
-```
-
-Sign in with that email and password, open the **Admin Console** from the chat
-sidebar, and add teammates with **Add user** on an agent's Access tab (or on
-People): it creates their account with its access in one step, then you share
-the sign-in details yourself. Existing users get access with **Edit access**. With Google sign-in and
-`OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true` configured, **Google sign-in only** creates
-an account with no password to share ([auth.md](auth.md)). Public sign-up stays closed. On a gateway set up this way, Open WebUI's
-own user list is hidden, so accounts are managed in one place: its Users section
-opens on Groups, or on Settings once every agent is managed in the Console, and
-Evaluations and Functions stay in the Admin Panel. Set
-`HUBZOID_HIDE_OWUI_USERS=false` to keep Open WebUI's user list.
-
-Before going live, read [administration](ADMINISTRATION.md),
-[authentication](auth.md), and [deployment](DEPLOYING.md).

@@ -5,58 +5,177 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [1.1.0]
 
-Not released yet. These notes cover packaging, `hubzoid run`, `hubzoid init`,
-Docker and CI. The web app notes are added as its parts land.
+Hubzoid 1.1 replaces Open WebUI with the Hubzoid web app. Upgrading from
+1.0.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first. The
+[release notes](docs/release-notes/1.1.0.md) summarize the release, its
+upgrade requirements and its known limits.
+
+### Web app
+- `hubzoid run` and `hubzoid gateway` serve the Hubzoid web app on the public
+  port: chat at `/`, the Admin Console at `/portal/`, sign-in at `/auth`, one
+  bundle and one sign-in for both. No Open WebUI process runs.
+- Conversations with history, search, rename, archive and delete. Replies
+  stream with their tool steps (running, done, failed, stopped) and
+  reasoning, can be stopped, edited and resent, regenerated with branches and
+  copied. Attachments by picker, drag and drop or paste, images previewed.
+  Markdown with tables and highlighted code, and download chips for files the
+  agent makes. Read-only share links for signed-in people of the deployment.
+- An agent picker with suggestions from `AGENTS.md`, an account page (name,
+  password, theme), a connections page, light and dark themes, a phone layout,
+  keyboard access and screen reader announcements. Administrators reach the
+  Console from the account menu.
+- Branding from the hub's `branding/` folder: name, logo, favicon and an
+  optional `custom.css`. A gateway uses its own branding and `--name`.
+
+### Sign-in and accounts
+- Hubzoid owns accounts in its operational store. Sign-in is off by default
+  (local mode: the local owner `admin@localhost`, on loopback only).
+  `HUBZOID_AUTH=true` turns it on. The 1.0 names `WEBUI_AUTH`, `WEBUI_URL`,
+  `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` still work.
+- Passwords (Argon2id, 8 to 1024 characters), Google, Microsoft (Entra ID) and
+  one standard OpenID Connect provider, with Open WebUI's variable names and
+  callback paths. Authorization code flow with PKCE, state and nonce, and ID
+  tokens checked against the provider's keys. Links to an existing account by
+  email only for a verified email with `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
+  `OAUTH_ALLOWED_DOMAINS` applies to every provider.
+- Self sign-up (`ENABLE_SIGNUP`, `ENABLE_OAUTH_SIGNUP`) is off by default and
+  waits for an administrator's approval.
+- One-time sign-in links (72 hours, `HUBZOID_LINK_HOURS`, single use) for new
+  accounts and password resets, from the Console's People screen and from
+  `hubzoid admin`. Nothing is emailed.
+- Sessions: an opaque cookie (`hz_session`) stored as a digest, 30 days at
+  most (`HUBZOID_SESSION_DAYS`) and 7 idle days (`HUBZOID_SESSION_IDLE_DAYS`).
+  Password, role and status changes, blocks and deletion end sessions.
+- Rate limits per client address and per email: 10 failures in 15 minutes
+  (`HUBZOID_AUTH_MAX_FAILURES`) lock for 15 minutes, shared by every bridge.
+- `HUBZOID_PUBLIC_URL` and `HUBZOID_ALLOWED_ORIGINS` name the addresses people
+  use. Changes from a browser must come from one of them.
+- New `hubzoid admin create | reset-password | list | set-role` for the
+  server's operator. `--owner` gives the owner's access on every hub.
+- The first administrator can come from `HUBZOID_ADMIN_EMAIL` and
+  `HUBZOID_ADMIN_PASSWORD` on a deployment with no accounts.
+- Sign-in events appear in the Console's Activity.
+
+### Chat backend
+- Runtimes emit typed run events (text, tool calls and results, reasoning,
+  notices). The OpenAI-compatible `/v1` output is byte for byte the 1.0.x
+  text, checked against recorded output of every runtime.
+- Replies run in a server task that outlives the page: closing the browser
+  does not stop a reply, Stop does. A reloaded page follows a running reply.
+  One reply per conversation at a time.
+- Titles from one model call (the hub's model, or `HUBZOID_TITLE_MODEL`),
+  recorded as background usage.
+- Limits: `HUBZOID_MAX_UPLOAD_BYTES` (25 MiB per file) and
+  `HUBZOID_MAX_FILES_PER_MESSAGE` (10).
+- Download links in the web app expire after 7 days by default
+  (`HUBZOID_ARTIFACT_LINK_TTL`, `0` for never), and the signed-in owner of a
+  conversation can always download its files. Legacy mode is unchanged.
+- Workflows: `hub.call_agent` returns only the agent's answer. Tool lines,
+  reasoning, download footers and error markers no longer appear in workflow
+  data or reports.
+- `MODEL=hubzoid-test/<script>` with `HUBZOID_TEST_RUNTIME=1` runs a scripted,
+  model-free runtime for tests.
+
+### Personal MCP connections
+- Organization administrators register remote MCP servers under **Console →
+  Connectors**. Each person connects their own account on **Account →
+  Connections** through Hubzoid's OAuth flow (discovery, dynamic client
+  registration or a client registered in advance, PKCE, resource indicators).
+  Tokens are encrypted with the deployment key and refreshed before they
+  expire, one refresh at a time across the deployment.
+- Every chat turn and workflow run on every runtime reaches the person's
+  servers with their token. `connector_<id>` gates use on Console-managed
+  hubs. The connection journey (`HUBZOID_CONNECT_JOURNEY`) works with these
+  connectors.
+
+### Groups
+- **Console → Groups**: create groups, add and remove members, and see each
+  group's access. Groups can be given agent access and capabilities in the
+  access editor (never Manage access). Grants name `group:<id>`.
+- Group grants apply on every surface that knows the person's email. With
+  `SLACK_IDENTITY_MAPPING=true`, Slack senders map to their Hubzoid account and
+  its groups.
+
+### Gateway
+- `hubzoid gateway` runs one bridge per hub and one edge, with no Open WebUI.
+  Bridges share the operational store, so one sign-in covers every agent a
+  person may use. Hub-scoped calls go to `/b/<slug>/api`.
+- Sign-in is set once in the gateway's environment. A hub `.env` that sets a
+  different `HUBZOID_UI`, `HUBZOID_AUTH` or `HUBZOID_SECRET_KEY` stops the
+  gateway.
+- The deployment key (`secret.key` next to the manifest, or
+  `HUBZOID_SECRET_KEY`) is created before the bridges start and its
+  fingerprint printed.
+- The bridge trusts identity headers in the default mode only with a signed
+  assertion from another Hubzoid process (the Slack adapter, the inbound
+  process). The edge answers 404 for the bridge's `/v1`, `/uploads` and
+  `/otel`.
+
+### Hosted MCP
+- OAuth only. Clients connect with Hubzoid-issued OAuth credentials after
+  sign-in and consent (`hub:access` scope, access tokens up to 10 minutes,
+  refresh tokens and grants up to 30 days, revocable at
+  `/mcp/oauth/connections`). Open WebUI API keys no longer authenticate
+  `/mcp`. `MCP_PUBLIC_URL` is required with `MCP_SERVER=true`.
+- On by default for a local `hubzoid run` and for an https
+  `HUBZOID_PUBLIC_URL`. `hubzoid run` prints the `claude mcp add` line.
+  `MCP_SERVER` and `MCP_PUBLIC_URL` set in the hub's `.env` still win.
+
+### Moving from Open WebUI
+- New `hubzoid migrate openwebui [PATH]` moves people (passwords included),
+  external sign-in links, groups, access, conversations with branches and
+  attachments, and share links. Open WebUI is only read. The default is a dry
+  run. `--apply` writes in steps and undoes them on failure. Re-runs are safe.
+  Options: `--owui-db`, `--json`, `--verbose`, `--rehearse`,
+  `--model-alias OLD=AGENT`, `--grants auto|people`.
+- With sign-in on, a hub or gateway with Open WebUI accounts and no Hubzoid
+  accounts does not start until it is moved or put in legacy mode.
 
 ### Install and run
-- `pip install hubzoid` no longer installs Open WebUI (or PyTorch): a cold
-  install is about 135 packages and 0.5 GB instead of about 285 and 2.1 GB.
-  The Open WebUI chat app stays available for this release as legacy mode:
+- `pip install hubzoid` no longer installs Open WebUI or PyTorch. Measured on
+  macOS arm64 with Python 3.12.6 and fresh caches, on a machine shared with
+  other work (load average 14 to 21 on 8 cores): a cold `uv` install took
+  53 s for 136 packages and a 511 MB environment, a cold `pip` install 202 s
+  for 137 packages and 646 MB. The legacy `hubzoid[openwebui]` took 355 s for
+  285 packages and 2.1 GB with `uv`.
+- Open WebUI stays available for this release as legacy mode:
   `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`.
-- New required dependencies for the web app: pwdlib (argon2 and bcrypt),
-  Authlib, itsdangerous and python-multipart. The shared packages Open WebUI
-  used to pin exactly (openai, mcp, aiohttp, FastAPI, pydantic and others)
-  keep those release lines in the core install for this release.
-- `hubzoid run` serves the Hubzoid web app, file downloads and MCP on one
-  port, prints one ready line with the URL and opens it in the browser from a
-  terminal (`--no-open` to skip). Sign-in is off by default (local mode), and
-  then the port stays on loopback: a network `--host` needs
-  `HUBZOID_AUTH=true`, or `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` on a
-  network you trust.
-- Hosted MCP is on by default for a local run and for an https
-  `HUBZOID_PUBLIC_URL`, and `hubzoid run` prints the `claude mcp add` line.
-  `MCP_SERVER` and `MCP_PUBLIC_URL` set in the hub's `.env` still win.
+- New required dependencies: pwdlib (argon2 and bcrypt), Authlib,
+  itsdangerous and python-multipart. The shared packages Open WebUI used to
+  pin exactly (openai, mcp, FastAPI, pydantic and others) keep those release
+  lines in the core install for this release. aiohttp is left to LiteLLM, so
+  Mac installs get wheels.
+- `hubzoid run` serves the web app, file downloads and MCP on one port, prints
+  one ready line with the URL and opens it in a browser from a terminal
+  (`--no-open` to skip). With sign-in off a network `--host` is refused unless
+  `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`. Measured from the installed
+  wheel at load average 12 to 19, the page answered 20 s after a first start
+  and 10.5 to 11.2 s after later starts.
 - `hubzoid init` scaffolds an operations assistant for a fictional shop by
   default (`--template minimal` keeps the 1.0 starter), and in a terminal
   without a signed-in Claude Code or Codex CLI it offers to save an
   OpenRouter, Anthropic or OpenAI key.
-- `hubzoid doctor` reports the web app mode, sign-in, the deployment key (by
-  fingerprint), the `openwebui` extra in legacy mode, an Open WebUI install
-  not yet moved, and the local-mode loopback guard.
+- `hubzoid doctor` reports the web app mode (`ui.mode`), sign-in
+  (`auth.chat_signin`), the deployment key by fingerprint (`deployment.key`),
+  the `openwebui` extra in legacy mode (`ui.openwebui_extra`), an Open WebUI
+  install not yet moved (`ui.openwebui_data`) and the local-mode loopback
+  guard (`exposure.local_mode`).
 - The Docker image no longer carries ffmpeg, PyAV build tools or PyTorch.
   `--build-arg WITH_OPENWEBUI=true` builds the legacy image. The compose file
   turns sign-in on, since its port is reachable from other machines.
+- `import hubzoid` no longer loads the agent SDKs, so the CLI and the edge
+  start faster.
 - Every package under `hubzoid/` ships: packages are discovered instead of
   listed by hand, and a test fails when a directory of Python modules would not
   ship.
-
-### Upgrading from 1.0.x
-- With sign-in on, a hub whose Open WebUI database has accounts and whose
-  Hubzoid web app has none does not start: move the accounts, or keep Open
-  WebUI for this release. In local mode `hubzoid run` only notes that the old
-  chats can be imported.
-- To move: do a dry run of `hubzoid migrate openwebui <hub>` first (see its
-  `--help`), back up with `hubzoid backup <hub>`, stop the hub or gateway, then
-  apply the migration.
-- To rehearse a gateway on a copy, copy each hub's `AGENTS.md`, `restricted/`
-  and `identity/` along with the data: access, restricted tools and identity
-  mapping read them.
 
 ### Development
 - Pull requests and pushes to `main` run fast checks again
   (`.github/workflows/tests.yml`): unit tests on SQLite without Open WebUI,
   browsers, live models or Docker, and the web app lint. Publishing a release
   still runs the full validation, now with the `openwebui` extra installed.
+- A hygiene test keeps key files, local paths and unapproved customer names
+  out of the tracked tree.
 
 ### Fixes
 - Hubs sharing one PostgreSQL workflow database no longer collide on markdown
@@ -66,6 +185,20 @@ Docker and CI. The web app notes are added as its parts land.
 - Backups leave the deployment key (`secret.key`) out unless secrets are
   requested, and restoring in place keeps the current key and link secret.
 - `.webui_secret_key` is no longer tracked in the repository.
+
+### Known limits
+- Per-address sign-in limits depend on `X-Forwarded-For` from a TLS proxy.
+  Without one, a client can send its own. Per-email limits always apply.
+- A reloaded page follows a running reply by polling. There is no stream
+  resume.
+- Personal connections need a provider with dynamic client registration or a
+  client registered in advance. `private_key_jwt` and provider-specific
+  authorization parameters are not supported.
+- Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
+  LDAP and trusted proxy headers are legacy-mode only.
+- `hubzoid backup` of a gateway started in this release's web app mode does not
+  find the gateway's data folder. See the release notes.
+- The release notes list the remaining limits.
 
 ## [1.0.3]
 
