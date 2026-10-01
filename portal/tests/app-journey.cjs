@@ -861,6 +861,7 @@ function chartPng(width = 160, height = 100) {
       assert.equal(await lp.getByRole("button", { name: "Sign out" }).count(), 0);
       await lp.goto(`${LOCAL_BASE}/auth`);
       await lp.waitForURL(`${LOCAL_BASE}/`);
+      await lp.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
       await shot(lp, "app-25-local-mode");
       step("The Console still loads from /portal/ in the same bundle");
       await lp.goto(`${LOCAL_BASE}/portal/`);
