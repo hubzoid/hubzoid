@@ -452,6 +452,38 @@ function chartPng(width = 160, height = 100) {
         await page.waitForTimeout(50);
       }
 
+      step("A new chat still being created when New chat is pressed never takes over the next chat");
+      // The first upload creates the conversation. Hold that request, start
+      // another chat and write in it, then let the first creation finish.
+      await page.goto(`${BASE}/`);
+      await settled();
+      let releaseCreation;
+      const creationHeld = new Promise((resolve) => (releaseCreation = resolve));
+      const isCreation = (r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/conversations";
+      await page.route("**/api/conversations", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        await creationHeld;
+        await route.continue();
+      });
+      const creation = page.waitForRequest(isCreation);
+      const early = page.waitForEvent("filechooser");
+      await page.getByRole("button", { name: "Attach files" }).click();
+      await (await early).setFiles([{ name: "early.txt", mimeType: "text/plain", buffer: Buffer.from("early") }]);
+      const createdId = (await creation).postDataJSON().id;
+      await page.getByRole("navigation", { name: "Conversations" }).getByRole("button", { name: "New chat" }).click();
+      await settled();
+      await composer().fill("A draft for the next chat");
+      const created = page.waitForResponse((r) => isCreation(r.request()));
+      releaseCreation();
+      await created;
+      // The created chat joins the list; the page on screen stays the new draft.
+      await page.getByRole("navigation", { name: "Conversations" }).locator(`a[href="/c/${encodeURIComponent(createdId)}"]`).waitFor();
+      await page.waitForTimeout(300);
+      assert.equal(new URL(page.url()).pathname, "/", "still on the new chat");
+      assert.equal(await composer().inputValue(), "A draft for the next chat");
+      await page.unroute("**/api/conversations");
+      await composer().fill("");
+
       step("Hub-scoped calls go to the agent's own bridge (api_base), everything else to the deployment");
       const hubMark = requests().length;
       await page.goto(`${BASE}/?agent=finance`);
