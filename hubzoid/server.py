@@ -393,6 +393,8 @@ def build_app() -> FastAPI:
     from .artifacts import web as artifacts_web
 
     app.include_router(artifacts_web.build_router(hub_dir))
+    from .workflows.webhooks import build_router as workflow_webhooks
+    app.include_router(workflow_webhooks(hub_dir))
 
     # The Hubzoid web app (default UI mode): sign-in, conversations, personal
     # connections, agents and the page shell. Registered before the portal's

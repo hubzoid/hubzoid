@@ -521,9 +521,10 @@ class AccessService:
         hubs = [self._readable(scope, hub)] if hub else list(scope.hubs)
         names = {h["key"]: h.get("name") or h["key"] for h in self._hubs()}
         gs = self.store
-        revision, all_grants = gs.access_snapshot()
+        revision, all_grants, groups = gs.access_snapshot_with_groups()
+        memberships = {"group:" + gid for gid, group in groups.items() if subject in group["members"]}
         managed = set(scope.hubs)
-        known = scope.org_admin or any(s == subject and h in managed for s, h, _p in all_grants)
+        known = scope.org_admin or any((s == subject or s in memberships) and h in managed for s, h, _p in all_grants)
         if not known:
             hidden = dict(suspended=None, account_unavailable=None, blocked=None, status=None)
             entries = []
@@ -546,6 +547,9 @@ class AccessService:
         entries = []
         for key in hubs:
             sources = _sources(all_grants, subject, key)
+            for member, domain, permission in all_grants:
+                if member in memberships and domain == key and permission != MANAGE_ACCESS:
+                    sources.setdefault(permission, []).append(member)
             entries.append(dict(
                 hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
                 capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],

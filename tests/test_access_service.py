@@ -17,6 +17,7 @@ from hubzoid import deployment
 import hubzoid.access as access
 from hubzoid.access.accounts import OwuiAccounts
 from hubzoid.access.service import AccessService, Actor, Denied
+from hubzoid.access.store import group_subject
 
 ROOT = "root@x.org"
 DELEGATE = "dele@x.org"
@@ -456,3 +457,21 @@ def test_person_access_never_shows_an_outsiders_own_grants(dep):
     view = svc.person_access(actor(DELEGATE), "boss@x.org")
     assert view["known"] is False and view["organization_admin"] is None
     assert all(h["capabilities"] == [] for h in view["hubs"])
+
+
+def test_person_access_includes_native_group_grants(dep):
+    """Explain access agrees with enforcement and the hub list for group members."""
+    member = "group-only@x.org"
+    group = dep.gs.create_group("Reviewers", actor=ROOT, emails=[member])
+    dep.gs.grant(group_subject(group["id"]), "finance", "use_hub", actor=ROOT)
+
+    assert dep.gs.can(member, "finance", "use_hub")
+    listing = dep.svc.hub_access(actor(ROOT), "finance")
+    assert any(row["subject"] == member and "use_hub" in row["effective"]
+               for row in listing["rows"])
+    for manager in (ROOT, DELEGATE):
+        detail = dep.svc.person_access(actor(manager), member, "finance")
+        assert detail["known"] is True
+        assert "use_hub" in detail["hubs"][0]["effective"]
+        assert any(cap["permission"] == "use_hub"
+                   for cap in detail["hubs"][0]["capabilities"])

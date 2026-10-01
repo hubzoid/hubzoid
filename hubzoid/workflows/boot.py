@@ -65,6 +65,7 @@ class Dispatcher:
         self._last = datetime.now(timezone.utc)
         self._n = 0
         self._heartbeat_task = None
+        self._events_task = None
 
     def prepare(self) -> int:
         """Init DBOS over the hub DB, load the code workflows, launch. Returns
@@ -84,7 +85,7 @@ class Dispatcher:
     async def _heartbeat(self):
         while True:
             try:
-                ready = {"version": runtime._APP_VERSION, "workflows": [w.name for w in runtime.registry()], "definitions": {w.name: {"queue": runtime._QUEUE.name, "manual_partition": w.name} for w in runtime.registry()}}
+                ready = runtime.ready_record()
                 await asyncio.to_thread(runtime._OWNER.heartbeat, ready)
                 from ..access import store_for
                 await asyncio.to_thread(store_for(self.hub_dir).set_runtime_health,
@@ -94,6 +95,17 @@ class Dispatcher:
             except Exception:
                 log.exception("workflows: ownership heartbeat failed; admission closed")
             await asyncio.sleep(15)
+
+    async def _events(self):
+        from . import events
+        while True:
+            try:
+                await asyncio.to_thread(events.reconcile, self.hub_dir, self.hub_dir.name)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("workflows: event reconciliation failed; will retry")
+            await asyncio.sleep(1)
 
     async def _loop(self) -> None:
         while True:
@@ -134,6 +146,13 @@ class Dispatcher:
             log.info("workflows: dispatcher started (%d workflow(s))", self._n)
 
     async def stop(self) -> None:
+        if self._events_task is not None:
+            self._events_task.cancel()
+            try:
+                await self._events_task
+            except asyncio.CancelledError:
+                pass
+            self._events_task = None
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
             try:
@@ -167,15 +186,17 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
     from ..access import store_for
 
     gs = store_for(hub_dir)
+    from .events import declarations
+    webhook_on = bool(declarations(hub_dir))
     code_on = schedules_enabled()
     md_on = await asyncio.to_thread(markdown_work, hub_dir)
-    if not code_on and not md_on:
+    if not code_on and not md_on and not webhook_on:
         gs.set_runtime_health(Path(hub_dir).name, enabled=False, error=None)
         log.info(
             "workflows: schedules idle (set HUBZOID_SCHEDULES=1 to enable on this box)"
         )
         return None
-    disp = Dispatcher(hub_dir, hub_name, code=code_on)
+    disp = Dispatcher(hub_dir, hub_name, code=code_on or webhook_on)
     try:
         n = await asyncio.to_thread(disp.prepare)
     except Exception as exc:  # the engine failed to start; chat still works
@@ -223,8 +244,9 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
         missed_log=runtime.missed_log(prior, downtime["missed"] if downtime else 0, now),
         heartbeat=now.isoformat(),
     )
-    await asyncio.to_thread(runtime._OWNER.heartbeat, {"version": runtime._APP_VERSION, "definitions": {w.name: {"queue": runtime._QUEUE.name, "manual_partition": w.name} for w in runtime.registry()}})
+    await asyncio.to_thread(runtime._OWNER.heartbeat, runtime.ready_record())
     disp._heartbeat_task = asyncio.create_task(disp._heartbeat())
+    disp._events_task = asyncio.create_task(disp._events())
     if code_on and n:
         disp.start_loop()
     return disp

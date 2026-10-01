@@ -802,6 +802,11 @@ def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port
 
         edge_routes.append({"prefix": f"/webhooks/{hub_slug(hub, os.environ)}",
                             "upstream": f"http://127.0.0.1:{inbound_port(os.environ)}"})
+    from .workflows.events import declarations
+    from .inbound.run import hub_slug
+    for name in declarations(hub):
+        edge_routes.insert(0, {"prefix": f"/webhooks/{hub_slug(hub, os.environ)}/{name}",
+                               "upstream": f"http://127.0.0.1:{br_port}"})
     edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(edge_routes)
     edge_cmd = [
         sys.executable, "-m", "uvicorn",
