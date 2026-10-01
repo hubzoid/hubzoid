@@ -215,7 +215,7 @@ function chartPng(width = 160, height = 100) {
     await page.getByRole("button", { name: "Stop response" }).waitFor();
     await page.waitForURL(/\/c\/[^/]+$/);
     await waitIdle();
-    const firstId = decodeURIComponent(page.url().split("/c/")[1]);
+    let firstId = decodeURIComponent(page.url().split("/c/")[1]);
     assert.match(firstId, ID);
     await lastAssistant().getByText(/covered in the hub's knowledge|./).first().waitFor();
     await onlyFixture("chat request body", async () => {
@@ -426,6 +426,55 @@ function chartPng(width = 160, height = 100) {
 
     // ---- sidebar ---------------------------------------------------------------------
     const sidebar = page.getByRole("navigation", { name: "Conversations" });
+    if (!fixture) {
+      // Against a real server, only touch the chat this run created.
+      step("Rename, search, share, archive, restore and delete the chat this run created");
+      const row = sidebar.locator(`li:has(a[href="/c/${encodeURIComponent(firstId)}"])`);
+      await row.waitFor();
+      const stamp = `Journey check ${Date.now().toString(36)}`;
+      await row.getByRole("button", { name: /^Options for / }).click();
+      await page.getByRole("menuitem", { name: "Rename" }).click();
+      await sidebar.getByRole("textbox", { name: "Chat title" }).fill(stamp);
+      await sidebar.getByRole("textbox", { name: "Chat title" }).press("Enter");
+      await sidebar.getByRole("link", { name: stamp }).waitFor();
+      await sidebar.getByRole("searchbox", { name: "Search chats" }).fill(stamp);
+      await sidebar.getByRole("link", { name: stamp }).waitFor();
+      await sidebar.getByRole("button", { name: "Clear search" }).click();
+      await page.goto(`${BASE}/c/${encodeURIComponent(firstId)}`);
+      await settled();
+      await page.getByRole("button", { name: "Share", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Share chat" });
+      await dialog.getByRole("button", { name: "Create link" }).click();
+      const link = await dialog.getByRole("textbox", { name: "Share link" }).inputValue();
+      const viewer = await context.newPage();
+      watch(viewer);
+      await viewer.goto(link);
+      await viewer.getByRole("heading", { name: stamp, level: 1 }).waitFor();
+      await viewer.close();
+      await dialog.getByRole("button", { name: "Turn off link" }).click();
+      await page.keyboard.press("Escape");
+      await sidebar.getByRole("link", { name: stamp }).waitFor();
+      const again = sidebar.locator(`li:has(a[href="/c/${encodeURIComponent(firstId)}"])`);
+      await again.getByRole("button", { name: /^Options for / }).click();
+      await page.getByRole("menuitem", { name: "Archive" }).click();
+      await sidebar.getByRole("link", { name: stamp }).waitFor({ state: "detached" });
+      await sidebar.getByRole("button", { name: "Archived chats" }).click();
+      await sidebar.getByRole("link", { name: stamp }).waitFor();
+      await sidebar.locator(`li:has(a[href="/c/${encodeURIComponent(firstId)}"])`).getByRole("button", { name: /^Options for / }).click();
+      await page.getByRole("menuitem", { name: "Restore" }).click();
+      await sidebar.getByRole("button", { name: "Back to chats" }).click();
+      await sidebar.locator(`li:has(a[href="/c/${encodeURIComponent(firstId)}"])`).getByRole("button", { name: /^Options for / }).click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+      await page.getByRole("alertdialog").getByRole("button", { name: "Delete chat" }).click();
+      await sidebar.getByRole("link", { name: stamp }).waitFor({ state: "detached" });
+      // Later steps need a chat: start a fresh one.
+      await page.goto(`${BASE}/`);
+      await settled();
+      await send("Hello again");
+      await page.waitForURL(/\/c\//);
+      await waitIdle();
+      firstId = decodeURIComponent(page.url().split("/c/")[1]);
+    }
     await onlyFixture("sidebar", async () => {
       step("Conversations are grouped by date, rename inline, and search as you type");
       await page.goto(`${BASE}/`);
@@ -595,7 +644,9 @@ function chartPng(width = 160, height = 100) {
 
     // ---- dark mode -------------------------------------------------------------------
     step("Dark mode from the account menu, remembered, and following the system when asked");
-    await page.goto(`${BASE}/c/${fixture ? "c_adapricing01" : decodeURIComponent(page.url().split("/c/")[1])}`);
+    // A chat with a tool call on the fixture; the one this run started elsewhere.
+    const someChat = fixture ? "c_adapricing01" : firstId;
+    await page.goto(`${BASE}/c/${encodeURIComponent(someChat)}`);
     await settled();
     await page.getByRole("button", { name: /^Account menu/ }).click();
     await page.getByRole("menuitemradio", { name: "Dark" }).click();
@@ -627,7 +678,8 @@ function chartPng(width = 160, height = 100) {
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.emulateMedia({ colorScheme: "light" });
     await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
-    await page.goto(`${BASE}/c/${fixture ? "c_adapricing01" : ""}`);
+    await page.goto(`${BASE}/c/${encodeURIComponent(someChat)}`);
+    await composer().waitFor();
     await axe(page, "conversation (light)");
 
     // ---- phone -------------------------------------------------------------------------
