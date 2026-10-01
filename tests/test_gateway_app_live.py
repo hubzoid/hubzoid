@@ -9,6 +9,7 @@ branding comes from the gateway folder and each hub's own under /b/<slug>,
 and the bridge's internal API stays off the public port."""
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import socket
@@ -25,6 +26,8 @@ from hubzoid.access.store import GrantStore, group_subject
 REPO = Path(__file__).resolve().parents[1]
 EDGE, SALES, SUPPORT = 3691, 3692, 3693
 OWNER = "admin@localhost"
+# Generous: these hosts often run several test suites at once.
+TIMEOUT = 60
 
 
 def _free(port: int) -> bool:
@@ -102,75 +105,90 @@ def live(tmp_path_factory):
             time.sleep(0.5)
 
 
+@contextlib.contextmanager
+def _diagnose(live):
+    """On failure, show what the gateway and its bridges logged."""
+    try:
+        yield
+    except (AssertionError, httpx.HTTPError) as exc:
+        tail = (live["root"] / "gateway.log").read_text(errors="replace")[-4000:]
+        raise AssertionError(f"{exc!r}\n--- gateway log (tail) ---\n{tail}") from exc
+
+
 def _agents(base: str, path: str = "/api/agents") -> list[str]:
-    r = httpx.get(base + path, timeout=10)
+    r = httpx.get(base + path, timeout=TIMEOUT)
     assert r.status_code == 200, r.text
     return [a["id"] for a in r.json()["agents"]]
 
 
 def test_agents_across_the_gateway_follow_one_shared_store(live):
-    base, store = live["base"], live["store"]
-    body = httpx.get(base + "/api/agents", timeout=10).json()
-    assert [(a["id"], a["api_base"]) for a in body["agents"]] == [("sales", "/b/sales")]
-    assert body["agents"][0]["avatar_url"] == "/b/sales/branding/logo.png"
-    # The same answer from the other hub's bridge, through its own prefix.
-    assert _agents(base, "/b/support/api/agents") == ["sales"]
-    # A group membership written here applies on every bridge at once.
-    g = store.create_group("Support desk", actor="test", emails=[OWNER])
-    store.grant(group_subject(g["id"]), "support", "use_hub", actor="test")
-    assert _agents(base) == ["sales", "support"]
-    assert _agents(base, "/b/sales/api/agents") == ["sales", "support"]
-    store.remove_group_member(g["id"], OWNER, actor="test")
-    assert _agents(base, "/b/support/api/agents") == ["sales"]
+    with _diagnose(live):
+        base, store = live["base"], live["store"]
+        body = httpx.get(base + "/api/agents", timeout=TIMEOUT).json()
+        assert [(a["id"], a["api_base"]) for a in body["agents"]] == [("sales", "/b/sales")]
+        assert body["agents"][0]["avatar_url"] == "/b/sales/branding/logo.png"
+        # The same answer from the other hub's bridge, through its own prefix.
+        assert _agents(base, "/b/support/api/agents") == ["sales"]
+        # A group membership written here applies on every bridge at once.
+        g = store.create_group("Support desk", actor="test", emails=[OWNER])
+        store.grant(group_subject(g["id"]), "support", "use_hub", actor="test")
+        assert _agents(base) == ["sales", "support"]
+        assert _agents(base, "/b/sales/api/agents") == ["sales", "support"]
+        store.remove_group_member(g["id"], OWNER, actor="test")
+        assert _agents(base, "/b/support/api/agents") == ["sales"]
 
 
 def test_groups_api_through_the_edge(live):
-    base = live["base"]
-    origin = {"Origin": base}
-    r = httpx.post(base + "/portal/api/groups", json={"name": "Night shift", "emails": ["ops@example.org"]},
-                   headers=origin, timeout=10)
-    assert r.status_code == 201, r.text
-    gid = r.json()["group"]["id"]
-    # The other bridge reads the same store (asked directly, on loopback).
-    other = httpx.get(f"http://127.0.0.1:{SUPPORT}/portal/api/groups", timeout=10).json()["groups"]
-    assert gid in [g["id"] for g in other]
-    r = httpx.post(base + "/portal/api/groups", json={"name": "Evil"},
-                   headers={"Origin": "https://evil.example"}, timeout=10)
-    assert r.status_code == 403 and r.json()["detail"]["code"] == "cross_origin"
-    assert httpx.delete(base + f"/portal/api/groups/{gid}", headers=origin, timeout=10).status_code == 204
+    with _diagnose(live):
+        base = live["base"]
+        origin = {"Origin": base}
+        r = httpx.post(base + "/portal/api/groups", json={"name": "Night shift", "emails": ["ops@example.org"]},
+                       headers=origin, timeout=TIMEOUT)
+        assert r.status_code == 201, r.text
+        gid = r.json()["group"]["id"]
+        # The other bridge reads the same store (asked directly, on loopback).
+        other = httpx.get(f"http://127.0.0.1:{SUPPORT}/portal/api/groups", timeout=TIMEOUT).json()["groups"]
+        assert gid in [g["id"] for g in other]
+        r = httpx.post(base + "/portal/api/groups", json={"name": "Evil"},
+                       headers={"Origin": "https://evil.example"}, timeout=TIMEOUT)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "cross_origin"
+        assert httpx.delete(base + f"/portal/api/groups/{gid}", headers=origin, timeout=TIMEOUT).status_code == 204
 
 
 def test_branding_through_the_edge(live):
-    base = live["base"]
-    assert httpx.get(base + "/api/branding", timeout=10).json() == {
-        "name": "Acme", "logo_url": "/branding/logo.svg", "favicon_url": "/branding/logo.svg",
-        "custom_css_url": None}
-    assert httpx.get(base + "/branding/logo.svg", timeout=10).content == b"<svg>acme</svg>"
-    assert httpx.get(base + "/b/sales/branding/logo.png", timeout=10).content == b"sales-logo"
-    hub = httpx.get(base + "/b/sales/api/branding", timeout=10).json()
-    assert hub["name"] == "sales" and hub["logo_url"] == "/b/sales/branding/logo.png"
-    assert httpx.get(base + "/b/support/branding/logo.png", timeout=10).status_code == 404
+    with _diagnose(live):
+        base = live["base"]
+        assert httpx.get(base + "/api/branding", timeout=TIMEOUT).json() == {
+            "name": "Acme", "logo_url": "/branding/logo.svg", "favicon_url": "/branding/logo.svg",
+            "custom_css_url": None}
+        assert httpx.get(base + "/branding/logo.svg", timeout=TIMEOUT).content == b"<svg>acme</svg>"
+        assert httpx.get(base + "/b/sales/branding/logo.png", timeout=TIMEOUT).content == b"sales-logo"
+        hub = httpx.get(base + "/b/sales/api/branding", timeout=TIMEOUT).json()
+        assert hub["name"] == "sales" and hub["logo_url"] == "/b/sales/branding/logo.png"
+        assert httpx.get(base + "/b/support/branding/logo.png", timeout=TIMEOUT).status_code == 404
 
 
 def test_the_bridge_api_stays_on_loopback(live):
-    base = live["base"]
-    r = httpx.post(base + "/v1/chat/completions", timeout=10,
-                   headers={"Authorization": "Bearer k-sales-0123456789",
-                            "X-OpenWebUI-User-Email": OWNER},
-                   json={"model": "sales", "messages": [{"role": "user", "content": "hi"}]})
-    assert r.status_code == 404
-    assert httpx.get(base + "/v1/models", timeout=10).status_code == 404
-    # On loopback the bridge still answers its own callers.
-    r = httpx.get(f"http://127.0.0.1:{SALES}/v1/models", timeout=10,
-                  headers={"Authorization": "Bearer k-sales-0123456789"})
-    assert r.status_code == 200 and r.json()["data"][0]["id"] == "sales"
+    with _diagnose(live):
+        base = live["base"]
+        r = httpx.post(base + "/v1/chat/completions", timeout=TIMEOUT,
+                       headers={"Authorization": "Bearer k-sales-0123456789",
+                                "X-OpenWebUI-User-Email": OWNER},
+                       json={"model": "sales", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 404
+        assert httpx.get(base + "/v1/models", timeout=TIMEOUT).status_code == 404
+        # On loopback the bridge still answers its own callers.
+        r = httpx.get(f"http://127.0.0.1:{SALES}/v1/models", timeout=TIMEOUT,
+                      headers={"Authorization": "Bearer k-sales-0123456789"})
+        assert r.status_code == 200 and r.json()["data"][0]["id"] == "sales"
 
 
 def test_the_manifest_and_key_describe_the_deployment(live):
-    import json
+    with _diagnose(live):
+        import json
 
-    gw = live["gw"]
-    manifest = json.loads((gw / "deployment.json").read_text())
-    assert manifest["ui_mode"] == "hubzoid" and manifest["auth"] is False
-    assert [h["slug"] for h in manifest["hubs"]] == ["sales", "support"]
-    assert (gw / "secret.key").is_file()
+        gw = live["gw"]
+        manifest = json.loads((gw / "deployment.json").read_text())
+        assert manifest["ui_mode"] == "hubzoid" and manifest["auth"] is False
+        assert [h["slug"] for h in manifest["hubs"]] == ["sales", "support"]
+        assert (gw / "secret.key").is_file()
