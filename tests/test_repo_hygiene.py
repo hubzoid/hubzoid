@@ -29,7 +29,8 @@ _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
 # for the implementation lanes. The integrator owns that file and strips it
 # before a release, so it is the one file excused from the path check.
 _LOCAL_PATH_EXCUSED = {"docs/design/hubzoid-app.md"}
-_LOCAL_PATH = re.compile(r"/Users/[A-Za-z0-9._-]+/|~/Desktop/|C:\\\\Users\\\\")
+# Built from parts so this file does not match itself.
+_LOCAL_PATH = re.compile("/Users/[A-Za-z0-9._-]+/|" + "~" + "/Desktop/|" + "C:" + r"\\Users\\")
 
 _BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".woff", ".woff2",
                     ".ttf", ".otf", ".pdf", ".zip", ".gz", ".db", ".sqlite"}
