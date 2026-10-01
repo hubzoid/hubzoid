@@ -203,7 +203,8 @@ function chartPng(width = 160, height = 100) {
       await page.goto(`${BASE}/?models=it-ops`);
       await page.getByRole("heading", { name: "What can IT Ops help with?" }).waitFor();
       await page.goto(`${BASE}/?agent=nobody`);
-      await page.getByText(/isn't available to you anymore/).waitFor();
+      // The last agent used (IT Ops, just above) takes its place.
+      await page.getByText("The agent in that link isn't available to you, so this chat uses IT Ops.").waitFor();
       await page.getByRole("radio", { name: /Hubzoid Guide/ }).click();
       await page.getByRole("heading", { name: "What can Hubzoid Guide help with?" }).waitFor();
       await page.getByRole("button", { name: "What is Hubzoid?" }).waitFor();

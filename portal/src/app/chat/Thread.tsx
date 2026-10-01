@@ -172,7 +172,7 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
     <div className="mx-auto flex w-full max-w-[780px] flex-1 flex-col justify-center px-4 py-10 sm:px-6">
       {requestedMissing && (
         <Notice tone="warning" className="mb-6">
-          {t.agents.unavailable}
+          {t.agents.requestedUnavailable(name)}
         </Notice>
       )}
       {picking && (
