@@ -12,6 +12,8 @@ from hubzoid import portal
 
 
 def test_mount_serves_api_and_static(tmp_path, monkeypatch):
+    # The Open WebUI session check: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     eng = db.engine_for(tmp_path)  # real per-hub sqlite under tmp
     access._stores.clear()
 
