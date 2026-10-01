@@ -7,7 +7,8 @@ is ever returned.
   * openwebui_database(hub)  where the hub's Open WebUI database is, resolved as
                              hubzoid.access.owui_db resolves it
   * openwebui_accounts(hub)  (where, number of accounts) when it has any
-  * hubzoid_accounts(hub)    accounts in the Hubzoid web app (hz_users)
+  * hubzoid_accounts(hub)    accounts in the Hubzoid web app (hz_users), or
+                             AccountsUnreadable when the store cannot be read
 
 This module deliberately does not import hubzoid.access: that package loads the
 agent SDKs, which would add seconds to every `hubzoid run`.
@@ -78,22 +79,34 @@ def openwebui_accounts(hub: Path) -> tuple[str, int] | None:
     return (where, int(people)) if people else None
 
 
+class AccountsUnreadable(RuntimeError):
+    """The operational store is configured but its accounts could not be read.
+    The message is the error's type name only, never a database URL."""
+
+
 def hubzoid_accounts(hub: Path) -> int:
-    """Accounts in the Hubzoid web app (hz_users): 0 before the first start, and
-    0 when the operational store cannot be read (the bridge reports that)."""
+    """Accounts in the Hubzoid web app (hz_users): 0 before the first start and
+    while the store has no accounts table yet.
+
+    Raises AccountsUnreadable when the operational store cannot be read
+    (unreachable, misconfigured, not a database), so that is never taken for a
+    store with no accounts: the upgrade guard would then send a migrated
+    deployment back to the migration."""
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.pool import NullPool
 
     from . import db
 
     try:
-        url = db.operational_url(hub)
+        # postgresql:// means psycopg (3), which Hubzoid installs, as for
+        # every engine of Hubzoid's own (hubzoid.db).
+        url = db.sqlalchemy_url(db.operational_url(hub))
         if url.startswith("sqlite") and not Path(url.split(":///", 1)[-1]).exists():
             return 0
         args = {} if url.startswith("sqlite") else {"connect_timeout": 5}
         engine = create_engine(url, poolclass=NullPool, connect_args=args, hide_parameters=True)
-    except Exception:  # noqa: BLE001 - misconfigured or no driver: reported when the bridge starts
-        return 0
+    except Exception as exc:  # noqa: BLE001 - misconfigured, or no driver
+        raise AccountsUnreadable(type(exc).__name__) from None
     try:
         if not inspect(engine).has_table("hz_users"):
             return 0
@@ -103,7 +116,7 @@ def hubzoid_accounts(hub: Path) -> int:
             return int(conn.execute(text(
                 "SELECT COUNT(*) FROM hz_users WHERE lower(email) NOT LIKE '%@localhost' "
                 "AND lower(email) NOT LIKE '%.localhost'")).scalar() or 0)
-    except Exception:  # noqa: BLE001 - unreachable store: the bridge reports it
-        return 0
+    except Exception as exc:  # noqa: BLE001 - unreachable or unreadable
+        raise AccountsUnreadable(type(exc).__name__) from None
     finally:
         engine.dispose()
