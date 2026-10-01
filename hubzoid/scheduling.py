@@ -228,6 +228,7 @@ class ScheduledTask:
     state_rel: str | None = None                 # per-person scratch, set per run
     run_identity: dict | None = None             # RunIdentity.to_dict(), set per run
     run_id: str | None = None                    # the DBOS run id, set per run
+    on_failure: str | None = None                # URL that gets a POST when a run fails
 
     @property
     def is_script(self) -> bool:
@@ -342,6 +343,8 @@ def _parse_task(path: Path) -> ScheduledTask:
             raise ValueError(f"`{key}:` must be true or false")
         return v
 
+    on_failure = _parse_on_failure(fm.get("on_failure"))
+
     publish_artifacts = _flag("publish_artifacts")
     send_email = _flag("send_email")
     if (publish_artifacts or send_email) and run is not None:
@@ -368,6 +371,7 @@ def _parse_task(path: Path) -> ScheduledTask:
         run_as=run_as,
         publish_artifacts=publish_artifacts,
         send_email=send_email,
+        on_failure=on_failure,
     )
 
 
@@ -399,6 +403,17 @@ def _parse_on_webhook(raw: Any) -> str | None:
             raise ValueError("`on_webhook:` is empty — name the webhook endpoint (or use `true`)")
         return name
     raise ValueError("`on_webhook:` must be a webhook endpoint name, or `true` for the default")
+
+
+def _parse_on_failure(raw: Any) -> str | None:
+    """`on_failure:` is an http(s) URL that gets a JSON POST when a run fails
+    (see `workflows.runtime._notify_failure`). Absent: the hub's default
+    (HUBZOID_WORKFLOW_ON_FAILURE), if any."""
+    if raw is None:
+        return None
+    if isinstance(raw, str) and raw.strip().startswith(("http://", "https://")):
+        return raw.strip()
+    raise ValueError("`on_failure:` must be an http(s) URL that receives a POST when a run fails")
 
 
 def _parse_run(raw: Any) -> tuple[list[str] | None, bool]:

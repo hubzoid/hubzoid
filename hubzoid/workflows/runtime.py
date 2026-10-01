@@ -9,7 +9,21 @@ Boot order (server lifespan or CLI):
     init(hub_dir)              # construct the DBOS singleton over the hub DB
     load_workflows(hub_dir)    # import workflows/<name>/*.py (applies @workflow)
     launch()                   # DBOS.launch()
-    # then a per-minute dispatcher calls tick() to fire due workflows
+    # then a per-minute dispatcher calls tick() to fire due workflows,
+    # and a webhook poller calls dispatch_webhooks() for `on_webhook` ones
+
+A workflow with `on_webhook="<name>"` also runs once per verified delivery on
+that generic webhook: the receiver (`inbound/webhook.py`) stores each delivery
+in the hub's inbox, `dispatch_webhooks` starts one run per delivery under the id
+`wh:<workflow>:<delivery>@<hub>` (so a delivery seen twice, by two polls or two
+processes, still runs once) with the delivery as its input (`hub.events`), and
+archives the delivery once every workflow listening on that webhook has
+finished its run. A failed run is not repeated: its steps retry as their
+`max_attempts` allow, like any run.
+
+A failed run of any kind (code workflow, markdown task, scheduled eval suite)
+POSTs a short JSON summary to its `on_failure` URL, or to the hub's
+HUBZOID_WORKFLOW_ON_FAILURE when it has none (`_notify_failure`).
 
 Durability is at-least-once, not exactly-once: a completed step is resumed from
 its checkpoint on restart; an interrupted step can re-run, so side effects must
@@ -20,6 +34,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 import threading
 from dataclasses import dataclass
@@ -54,6 +69,7 @@ class WorkflowDef:
     timezone: str | None
     on_failure: str | None
     run_as: str | None = None
+    on_webhook: str | None = None
 
 
 _REGISTRY: "dict[str, WorkflowDef]" = {}
@@ -219,11 +235,21 @@ def workflow(
     timezone: str | None = None,
     on_failure: str | None = None,
     run_as: str | None = None,
+    on_webhook: str | bool | None = None,
 ):
-    """Declare a scheduled durable workflow. The wrapped run binds the per-run
-    `hub` proxy and takes only the hub name (never secrets). Retries are a
-    per-`@step` concern (`@step(max_attempts=N)`), not a workflow-level knob;
-    agent calls retry only with `agent_max_attempts` in workflows/settings.yaml.
+    """Declare a durable workflow, run on a schedule, by a webhook, or by hand.
+    The wrapped run binds the per-run `hub` proxy and takes only the hub name,
+    the webhook deliveries it handles and what started it (never secrets).
+    Retries are a per-`@step` concern (`@step(max_attempts=N)`), not a
+    workflow-level knob; agent calls retry only with `agent_max_attempts` in
+    workflows/settings.yaml.
+
+    `on_webhook` names a generic webhook (`WEBHOOK_INBOUND_NAME`; `True` is the
+    default name `webhook`): each verified delivery starts one run that reads
+    it from `hub.events`. It combines with a schedule.
+
+    `on_failure` is a URL that gets a POST when a run fails; without it, the
+    hub's HUBZOID_WORKFLOW_ON_FAILURE.
 
     `run_as` names the account the run acts as (see `workflows.identity`);
     without it, the hub or deployment HUBZOID_WORKFLOW_USER, then the setup
@@ -233,6 +259,10 @@ def workflow(
         from .identity import validate_run_as
 
         run_as = validate_run_as(run_as)
+    if on_webhook is not None:
+        from ..scheduling import _parse_on_webhook
+
+        on_webhook = _parse_on_webhook(on_webhook)
 
     def deco(fn: Callable):
         name = fn.__name__
@@ -245,27 +275,31 @@ def workflow(
         identity_step = _identity_step()
 
         @_DBOS.workflow(name=name)
-        def wrapped(hub_name: str | None = None):
+        def wrapped(hub_name: str | None = None, events: list | None = None,
+                    trigger: str | None = None):
             hub_name = hub_name or _HUB_NAME
-            identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
-                                     f"workflow:{name}", f"Workflow {name!r}")
-            with context.run_scope(
-                hub=hub_name,
-                workflow=name,
-                hub_dir=_HUB_DIR,
-                engine=_ENGINE,
-                settings=_load_settings(),
-                identity=identity,
-                run_id=_DBOS.workflow_id or "",
-            ):
-                try:
+            run_id = _DBOS.workflow_id or ""
+            trigger = trigger or run_trigger(run_id) or "manual"
+            try:
+                identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
+                                         f"workflow:{name}", f"Workflow {name!r}")
+                with context.run_scope(
+                    hub=hub_name,
+                    workflow=name,
+                    hub_dir=_HUB_DIR,
+                    engine=_ENGINE,
+                    settings=_load_settings(),
+                    identity=identity,
+                    run_id=run_id,
+                    events=events or (),
+                    trigger=trigger,
+                ):
                     return fn()
-                except (
-                    Exception
-                ) as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
-                    if on_failure:
-                        _notify_failure(on_failure, name, exc)
-                    raise
+            except Exception as exc:  # noqa: BLE001 — notify then re-raise so DBOS marks it failed
+                _notify_failure(on_failure, name, exc, run_id=run_id, trigger=trigger,
+                                kind="workflow",
+                                webhook=on_webhook if trigger == "webhook" else None)
+                raise
 
         _REGISTRY[name] = WorkflowDef(
             name=name,
@@ -275,8 +309,10 @@ def workflow(
             timezone=timezone,
             on_failure=on_failure,
             run_as=run_as,
+            on_webhook=on_webhook,
         )
-        log.info("workflows: registered %r (schedule=%r)", name, schedule)
+        log.info("workflows: registered %r (schedule=%r, on_webhook=%r)", name, schedule,
+                 on_webhook)
         return wrapped
 
     return deco
@@ -364,19 +400,86 @@ def _wrap_seams_as_steps() -> None:
         context._JEV_STEP = _jev_step
 
 
-def _notify_failure(target: str, workflow_name: str, error: Exception) -> None:
-    """Best-effort on_failure notification: POST to a webhook URL. (There is no
-    built-in email transport; a URL or a hub-configured notifier is the path.)"""
-    payload = {"workflow": workflow_name, "hub": _HUB_NAME, "error": str(error)}
-    try:
-        if target.startswith(("http://", "https://")):
-            import httpx
+ON_FAILURE_ENV = "HUBZOID_WORKFLOW_ON_FAILURE"
+ON_FAILURE_SECRET_ENV = "HUBZOID_WORKFLOW_ON_FAILURE_SECRET"
+# The header Hubzoid's own generic webhook verifies in HMAC mode, so one hub can
+# receive another's failure notices on its webhook.
+SIGNATURE_HEADER = "X-Signature-256"
+_ERROR_CHARS = 500
 
-            httpx.post(target, json=payload, timeout=10.0)
-        else:
-            log.error(
-                "workflow %r failed (on_failure=%r): %s", workflow_name, target, error
-            )
+
+def _hub_setting(key: str) -> str | None:
+    """A hub-level setting, read the way HUBZOID_WORKFLOW_USER is: the hub's
+    files and secrets (a hub secret over `<hub>/.env`), then the deployment's
+    environment. An unreadable secret falls back to the environment here: this
+    only ever serves a best-effort notification."""
+    if _HUB_DIR is not None:
+        try:
+            from .. import config_secrets as cs
+
+            value, _layer = cs.resolve_key(_HUB_DIR, key)
+            if value:
+                return value
+        except Exception:  # noqa: BLE001
+            log.warning("workflows: could not read %s from the hub configuration", key,
+                        exc_info=True)
+    return (os.environ.get(key) or "").strip() or None
+
+
+def _notify_failure(target: str | None, workflow_name: str, error: BaseException, *,
+                    run_id: str = "", trigger: str = "", kind: str = "workflow",
+                    webhook: str | None = None) -> None:
+    """Best-effort failure notification: POST a JSON summary to a URL.
+
+    `target` is the run's own `on_failure`; without one, the hub's
+    HUBZOID_WORKFLOW_ON_FAILURE; with neither, nothing is sent. The body:
+    `hub`, `kind` (workflow, markdown or evals), `workflow` (the name the run
+    list shows: a function name, `md:<task>` or `evals`), `run_id`, `trigger`
+    (schedule, webhook or manual, plus `webhook`: its name), `error` (the
+    message, at most 500 characters), `error_type` and `failed_at`. With
+    HUBZOID_WORKFLOW_ON_FAILURE_SECRET set, `X-Signature-256: sha256=<hex>`
+    carries HMAC-SHA256(secret, body). `X-Delivery-Id` is the run id, so a
+    receiver can drop a repeat. A target that is not a URL is only logged.
+    (There is no built-in email transport.) Never raises: the run's own
+    failure is what DBOS records."""
+    try:
+        target = (target or _hub_setting(ON_FAILURE_ENV) or "").strip()
+        if not target:
+            return
+        if not target.startswith(("http://", "https://")):
+            log.error("workflow %r failed (on_failure=%r): %s", workflow_name, target, error)
+            return
+        import hashlib
+        import hmac
+        import json
+        from datetime import datetime as _dt
+
+        import httpx
+
+        payload = {
+            "hub": _HUB_NAME,
+            "kind": kind,
+            "workflow": workflow_name,
+            "run_id": run_id,
+            "trigger": trigger or "manual",
+            "error": " ".join(str(error).split())[:_ERROR_CHARS],
+            "error_type": type(error).__name__,
+            "failed_at": _dt.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        if webhook:
+            payload["webhook"] = webhook
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "User-Agent": "hubzoid-workflows"}
+        if run_id:
+            headers["X-Delivery-Id"] = run_id
+        secret = _hub_setting(ON_FAILURE_SECRET_ENV)
+        if secret:
+            digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+            headers[SIGNATURE_HEADER] = f"sha256={digest}"
+        response = httpx.post(target, content=body, headers=headers, timeout=10.0)
+        if response.status_code >= 400:
+            log.warning("workflows: on_failure notice for %r got HTTP %s", workflow_name,
+                        response.status_code)
     except Exception:  # noqa: BLE001 — notification must never mask the failure
         log.exception("workflows: on_failure notify failed for %r", workflow_name)
 

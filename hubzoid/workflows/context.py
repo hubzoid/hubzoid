@@ -21,6 +21,10 @@ resolved from the active run's context:
     hub.call_jev(state, questions) typed decisions with probabilities (Jev via
                                  OpenRouter; experimental), checkpointed
     hub.user.id / .email / .attrs / .can("perm")   the account the run acts as
+    hub.events                   the webhook deliveries this run handles (one
+                                 for a run started by `on_webhook`, else [])
+    hub.trigger                  what started the run: "schedule", "webhook"
+                                 or "manual"
 
 Secrets are read INSIDE the run (from env) and never passed as workflow/step
 arguments, so DBOS never checkpoints them.
@@ -80,6 +84,8 @@ class RunCtx:
     subject: str = ""                 # the Casbin subject this run acts as
     identity: dict | None = None      # RunIdentity.to_dict() captured at run start
     run_id: str = ""                  # the DBOS workflow id, when there is one
+    events: tuple = ()                # webhook deliveries this run handles
+    trigger: str = ""                 # "schedule" | "webhook" | "manual"
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -217,6 +223,23 @@ class Hub:
     @property
     def user(self) -> HubUser:
         return HubUser(_ctx())
+
+    @property
+    def events(self) -> list[dict]:
+        """The webhook deliveries this run handles, as a list (like the event
+        files a markdown task is given). A run started by `on_webhook` handles
+        exactly one; a scheduled or manual run gets []. Each is the delivery as
+        the webhook stored it: {"id", "name", "received_at", "content_type",
+        "query", "body"}, `body` being the parsed JSON (or the raw text).
+        `id` is unique per delivery: use it to make side effects idempotent."""
+        import copy
+
+        return copy.deepcopy(list(_ctx().events))
+
+    @property
+    def trigger(self) -> str:
+        """What started this run: "schedule", "webhook" or "manual"."""
+        return _ctx().trigger or "manual"
 
     @property
     def run_dir(self) -> Path:
@@ -381,7 +404,8 @@ hub = Hub()
 @contextmanager
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
-              identity: dict | None = None, run_id: str = "") -> Iterator[None]:
+              identity: dict | None = None, run_id: str = "",
+              events=(), trigger: str = "") -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -393,6 +417,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         hub=hub, workflow=workflow, hub_dir=Path(hub_dir), engine=engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
         identity=identity, run_id=run_id or "",
+        events=tuple(events or ()), trigger=trigger or "",
     )
     token = _run.set(ctx)
     try:
