@@ -23,7 +23,8 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
                "hz_conversations", "hz_messages", "hz_shares",
                "hz_groups", "hz_group_members",
-               "hz_connectors", "hz_connector_tokens", "hz_connector_flows"}
+               "hz_connectors", "hz_connector_tokens", "hz_connector_flows",
+               "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts"}
 
 
 @pytest.fixture(autouse=True)

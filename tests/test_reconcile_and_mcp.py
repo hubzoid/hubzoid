@@ -61,6 +61,7 @@ def test_sync_skips_failing_projection(store):
 
 
 def test_mcp_verifier_gates_on_use_hub(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     hub_dir = tmp_path
     (hub_dir).mkdir(exist_ok=True)
     eng = create_engine(f"sqlite:///{tmp_path / 'hub.db'}")

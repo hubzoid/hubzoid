@@ -137,6 +137,14 @@ print('RECOVERED', flush=True)
         first.kill()
         first.communicate(timeout=10)
         gate.touch()
+        # A dropped session frees the advisory lock at once, but the killed
+        # owner's lease still runs: no new owner starts until it lapses.
+        early = subprocess.run([sys.executable, "-c", script, str(tmp_path)], env=env,
+                               capture_output=True, text=True, timeout=45)
+        assert early.returncode != 0 and "lease ends in" in early.stderr
+        with create_engine(postgres_url).begin() as conn:
+            conn.execute(text("UPDATE hz_workflow_owner SET expires=0 WHERE hub=:h"),
+                         {"h": tmp_path.name})
         second = subprocess.run(
             [sys.executable, "-c", script, str(tmp_path)],
             env=env,
@@ -151,6 +159,97 @@ print('RECOVERED', flush=True)
         if first.poll() is None:
             first.kill()
         first.communicate()
+
+
+_LOSS_SCRIPT = """import asyncio, os, sys, time
+from pathlib import Path
+from sqlalchemy import text
+from hubzoid.workflows import boot, runtime
+hub = Path(sys.argv[1])
+boot.OWNER_RETRY_SECONDS = 1
+
+def statuses(ids):
+    from dbos import DBOS
+    return {w.workflow_id: w.status for w in DBOS.list_workflows(workflow_ids=ids, load_input=False, load_output=False)}
+
+async def main():
+    sup = await boot.start(hub)
+    first = sup.dispatcher
+    pid = first.owner.lock.execute(text('SELECT pg_backend_pid()')).scalar()
+    first.owner.lock.commit()
+    ids = [(await asyncio.to_thread(runtime.start, 'slow')).get_workflow_id() for _ in range(5)]
+    (hub / 'ids').write_text('\\n'.join(ids))
+    print('PID', pid, flush=True)
+    await asyncio.wait_for(first.lost.wait(), 30)
+    print('LOST', flush=True)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if sup.dispatcher is not None and runtime._LAUNCHED:
+            done = await asyncio.to_thread(statuses, ids)
+            if all(v == 'SUCCESS' for v in done.values()) and len(done) == 5:
+                print('ALL_DONE', flush=True)
+                break
+            assert 'ERROR' not in done.values(), done
+        await asyncio.sleep(0.2)
+    else:
+        print('TIMED_OUT', flush=True)
+    await sup.stop()
+
+asyncio.run(main())
+"""
+
+
+def test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable(postgres_url, tmp_path):
+    """The lock session dies mid-run: no run is failed at an ownership guard,
+    the backlog is not drained, and the bridge regains ownership and finishes
+    every run once. The process (chat) stays up throughout."""
+    import os
+    import sys
+    import time
+
+    effects, started, gate = (tmp_path / n for n in ("effects", "started", "gate"))
+    workflow = tmp_path / "workflows" / "slow"
+    workflow.mkdir(parents=True)
+    (workflow / "main.py").write_text(f"""import time
+from pathlib import Path
+from hubzoid import workflow, step
+@step()
+def mark():
+    with open({str(effects)!r}, 'a') as f: f.write('done\\n')
+@workflow(concurrency=1)
+def slow():
+    Path({str(started)!r}).touch()
+    while not Path({str(gate)!r}).exists(): time.sleep(0.05)
+    mark()
+""")
+    env = {k: v for k, v in os.environ.items() if k not in ("HUBZOID_DEPLOYMENT", "DATABASE_URL")}
+    env.update(HUBZOID_DBOS_DB=postgres_url, HUBZOID_OPERATIONAL_DB=postgres_url,
+               HUBZOID_SCHEDULES="1")
+    proc = subprocess.Popen([sys.executable, "-c", _LOSS_SCRIPT, str(tmp_path)], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        pid = None
+        until = time.monotonic() + 60
+        while pid is None or not started.exists():
+            assert proc.poll() is None, proc.communicate()
+            assert time.monotonic() < until, "first run did not start"
+            if pid is None:
+                line = proc.stdout.readline()
+                if line.startswith("PID "):
+                    pid = int(line.split()[1])
+            else:
+                time.sleep(0.05)
+        with create_engine(postgres_url).begin() as conn:
+            assert conn.execute(text("SELECT pg_terminate_backend(:p)"), {"p": pid}).scalar()
+        gate.touch()   # the in-flight run now reaches its guarded step
+        out, err = proc.communicate(timeout=120)
+        assert proc.returncode == 0, out + err[-4000:]
+        assert "LOST" in out and "ALL_DONE" in out, out + err[-4000:]
+        assert effects.read_text() == "done\n" * 5
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
 
 
 def test_postgres_access_history_retains_timestamp_precision(postgres_url):

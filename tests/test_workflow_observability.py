@@ -208,6 +208,9 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
     monkeypatch.setattr(boot.Dispatcher, "prepare", lambda self: 1)
     monkeypatch.setattr(boot.Dispatcher, "start_loop", lambda self: None)
+    ready_records = []
+    monkeypatch.setattr(runtime, "_OWNER", SimpleNamespace(heartbeat=ready_records.append))
+    monkeypatch.setattr(runtime, "ready_record", lambda: {"version": "fixture"})
     monkeypatch.setattr(
         runtime,
         "_REGISTRY",
@@ -221,3 +224,4 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
     down = health["downtime"]
     assert down["missed"] in (10, 11)  # 11 only if a minute turns during the call
     assert health["missed_log"] == [[down["until"], down["missed"]]]
+    assert ready_records and all(record == {"version": "fixture"} for record in ready_records)

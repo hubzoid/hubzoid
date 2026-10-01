@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, text
 from typer.testing import CliRunner
 
 from hubzoid.workflows import control
+from hubzoid.workflows.runtime import _app_name
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="uses process groups")
 
@@ -177,7 +178,7 @@ def test_start_queues_one_run_and_returns_the_active_one(hub, env, tmp_path):
     ])
     md, md_again, code, code_again, md_cancel, code_cancel = out
     assert md["kind"] == "markdown" and md["workflow"] == "md:daily"
-    assert md["run_id"].startswith("md:daily:manual-") and md["run_id"].endswith("@alpha")
+    assert md["run_id"].startswith("md:daily:manual-") and md["run_id"].endswith("@" + _app_name("alpha"))
     assert md["already_running"] is False and md["runs_as"] == "carol@x.org"
     assert md_again == dict(md, already_running=True)
     assert code["kind"] == "code" and code["workflow"] == "nightly_sync"
@@ -203,8 +204,6 @@ def test_start_queues_one_run_and_returns_the_active_one(hub, env, tmp_path):
     from dbos import DBOSClient
 
     from hubzoid import db
-    from hubzoid.workflows.runtime import _app_name
-
     client = DBOSClient(system_database_url=db.dbos_url(hub), application_name=_app_name(hub.name))
     try:
         assert client.retrieve_workflow(md["run_id"]).get_status().status == "CANCELLED"
@@ -318,6 +317,7 @@ def test_overview_and_history_without_runs(hub, monkeypatch):
 
 def test_cancel_is_scoped_to_this_hub_and_refuses_finished_runs(tmp_path, env):
     from hubzoid import cli
+    from hubzoid.workflows import markdown
 
     alpha, beta = _hub(tmp_path, "alpha"), _hub(tmp_path, "beta")
     _task(alpha, "quick", 'schedule: "0 3 * * *"\nrun: "true"')
@@ -329,7 +329,8 @@ def test_cancel_is_scoped_to_this_hub_and_refuses_finished_runs(tmp_path, env):
     try:
         assert proc.stdout.readline().startswith("QUEUED"), proc.stderr.read()[-3000:] \
             if proc.poll() is not None else "not queued"
-        queued, done = "md:daily:s2@alpha", "md:quick:q1@alpha"
+        queued = markdown.run_id("daily", "s2", alpha.name)
+        done = markdown.run_id("quick", "q1", alpha.name)
 
         # beta shares the database but can't see, let alone cancel, alpha's run.
         with pytest.raises(control.ControlError) as e:
@@ -418,6 +419,6 @@ def test_each_manual_start_is_a_new_run_even_within_a_second(hub, env, tmp_path)
                                code=False)
     assert first["already_running"] is False and second["already_running"] is False
     assert first["run_id"] != second["run_id"]
-    assert re.fullmatch(r"md:quick:manual-\d{8}T\d{6}-[0-9a-f]{6}@alpha", second["run_id"])
+    assert re.fullmatch(r"md:quick:manual-\d{8}T\d{6}-[0-9a-f]{6}@" + _app_name("alpha"), second["run_id"])
     assert [r["subject"] for r in _audit(tmp_path) if r["action"] == "run_start"] == [
         first["run_id"], second["run_id"]]

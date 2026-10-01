@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from agents import function_tool
 
-from hubzoid import _request_ctx
-from hubzoid.factory_codex import CodexRuntime
+from hubzoid import _request_ctx, run_events
+from hubzoid.factory_codex import CodexRuntime, _typed_exchange
 
 
 class Process:
@@ -322,7 +322,12 @@ async def test_compact_tools_show_a_status_then_a_finished_block():
     ))
     rt = CodexRuntime(name="demo", instructions="", registry={"lookup": lookup, "broken": broken},
                       tool_mode="compact")
-    parts = [x async for x in rt._exchange(proc, "hi", "/tmp/empty", {})]
+    token = _typed_exchange.set(True)
+    try:
+        parts = [x async for x in run_events.as_text(
+            rt._exchange(proc, "hi", "/tmp/empty", {}), tool_mode="compact")]
+    finally:
+        _typed_exchange.reset(token)
     statuses = [p.description for p in parts if isinstance(p, Status)]
     assert statuses == ["Running lookup…", None, "Running broken…", None]
     text = "".join(parts)

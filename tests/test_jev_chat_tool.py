@@ -17,7 +17,7 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, text
 
-from hubzoid import _request_ctx
+from hubzoid import _request_ctx, jev
 from hubzoid.access import Identity, identity_scope, store_for
 from hubzoid.tools import call_jev as jev_tool
 
@@ -50,14 +50,14 @@ def jev_http(monkeypatch):
     """A fake Decisions API answering whatever it is asked. Returns the requests."""
     sent = []
 
-    def fake_post(url, json=None, timeout=None, headers=None):
-        sent.append({"url": url, "body": json, "auth": headers.get("Authorization")})
+    async def fake_post(body, key, timeout):
+        sent.append({"url": jev.URL, "body": body, "auth": f"Bearer {key}"})
         return httpx.Response(200, json={
             "id": f"gen-dec-{len(sent)}", "model": "typesafe/jev-1.13-20260917", "provider": "TypeSafe",
-            "answers": {n: _answer(q) for n, q in json["questions"].items()},
+            "answers": {n: _answer(q) for n, q in body["questions"].items()},
             "usage": {"input_tokens": 300, "output_tokens": 20, "cost": 0.0000126}})
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     return sent
 
 
@@ -303,12 +303,12 @@ def test_failures_are_readable_and_never_show_the_key(hub, monkeypatch, caplog, 
     replies = {"401": httpx.Response(401, json={"error": {"code": 401, "message": f"User not found. {KEY}"}}),
                "empty": httpx.Response(200, json={"answers": {}})}
 
-    def fake_post(url, json=None, timeout=None, headers=None):
+    async def fake_post(body, key, timeout):
         if setup == "boom":
             raise KeyError("upstream")
         return replies[setup]
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     raw = args if isinstance(args, str) else json.dumps(args)
     out = _call_as_allowed(hub, raw)
     assert out.startswith(f"[{TOOL} failed: ") and expected in out

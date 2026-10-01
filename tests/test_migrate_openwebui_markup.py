@@ -68,10 +68,11 @@ def test_error_matches_a_short_name():
 def test_think_blocks_indicator_and_full():
     indicator = _ThinkStream("indicator")
     text = indicator.thinking("secret") + indicator.visible("Answer one.")
-    text += indicator.thinking("more") + indicator.close()
+    later = indicator.thinking("more")
+    assert isinstance(later, tool_events.Status) and later.description == tool_events.THINKING
+    text += later + indicator.close()
     parts = _parts(text)
-    assert parts == [{"type": "reasoning", "text": ""}, {"type": "text", "text": "Answer one."},
-                     {"type": "reasoning", "text": ""}]
+    assert parts == [{"type": "reasoning", "text": ""}, {"type": "text", "text": "Answer one."}]
     full = _ThinkStream("full")
     parts = _parts(full.thinking("Step one. ") + full.thinking("Step two.") + full.visible("Done."))
     assert parts == [{"type": "reasoning", "text": "Step one. Step two."}, {"type": "text", "text": "Done."}]

@@ -248,6 +248,7 @@ def test_mcp_entry_group(owui_store, monkeypatch):
     from hubzoid import mcp_server
     from tests.test_mcp_server import _mk_hub, _call, _rpc
 
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     root, engine = owui_store
     hub = _mk_hub(root)
     monkeypatch.setenv("MCP_ACCESS_GROUP", "clickup")

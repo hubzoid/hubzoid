@@ -3,9 +3,12 @@ the ``AccountDirectory`` protocol, the access service handing out one-time
 sign-in links, and the Console API on Hubzoid sessions."""
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
+from agents.tool_context import ToolContext
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -13,8 +16,10 @@ from sqlalchemy import text
 from hubzoid import portal
 from hubzoid.access import accounts as accountlib
 from hubzoid.access import store_for
+from hubzoid.access import Identity, identity_scope
 from hubzoid.access.service import AccessService, Actor, Denied
 from hubzoid.auth import links, passwords, routes, sessions, users
+from hubzoid.tools import access_admin
 
 ENV = (
     "HUBZOID_UI", "WEBUI_AUTH", "HUBZOID_PUBLIC_URL", "WEBUI_URL", "HUBZOID_ALLOWED_ORIGINS",
@@ -321,6 +326,37 @@ def test_confirming_a_proposed_account_returns_a_link_that_is_not_stored(hub, ow
         stored = conn.execute(text("SELECT result FROM hz_change_requests WHERE id=:i"),
                               {"i": proposed["id"]}).scalar()
     assert token not in stored and json.loads(stored)["subject"] == "p@example.com"
+
+
+def test_admin_chat_tools_use_native_accounts_and_confirmation(hub, owner, monkeypatch):
+    """Default-mode tools read Hubzoid accounts and only propose a new one."""
+    monkeypatch.delenv("HUBZOID_MANAGEMENT_TOOLS", raising=False)
+    gs = store_for(hub)
+    gs.set_authoritative(True, hub="sales")
+    gs.grant(OWNER, "sales", "access_tools", actor="test")
+    tools = {tool.name: tool for tool in access_admin.make(SimpleNamespace(hub_dir=hub))}
+
+    def invoke(name: str, args: dict) -> str:
+        raw = json.dumps(args)
+        tool = tools[name]
+        ctx = ToolContext(context=None, tool_name=name, tool_call_id="test", tool_arguments=raw)
+        return asyncio.run(tool.on_invoke_tool(ctx, raw))
+
+    with identity_scope(Identity.make(OWNER, surface="web")):
+        assert all(tool.is_enabled() for tool in tools.values())
+        assert "sales" in invoke("my_management_scope", {})
+        proposal = invoke("propose_new_account", {
+            "email": "new-from-tool@example.com", "name": "New Person", "hub": "sales",
+        })
+        assert proposal.startswith("Proposed, not applied."), proposal
+        assert users.find_by_email(hub, "new-from-tool@example.com") is None
+        request_id = proposal.split("/confirm/", 1)[1].split()[0]
+        view = AccessService(hub).get_request(actor(), request_id)
+        out = AccessService(hub).confirm(actor(), request_id, plan_hash=view["plan_hash"])
+        assert out["status"] == "confirmed" and out["link"].startswith("/auth/set-password?")
+        assert users.find_by_email(hub, "new-from-tool@example.com") is not None
+        listed = invoke("who_has_access", {"hub": "sales"})
+        assert "New Person <new-from-tool@example.com>" in listed
 
 
 # ---- the Console API on Hubzoid sessions ---------------------------------------------------

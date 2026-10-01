@@ -1,12 +1,13 @@
 """The Jev adapter (`hubzoid/jev.py`): the request and the answers follow the
 documented Decisions API contract, only the dedicated JEV_OPENROUTER_API_KEY is
 used, and every failure is a clear error, never an empty answer. No network:
-`httpx.post` is replaced. Live calls are in tests/e2e/test_jev_e2e.py.
+the async transport is replaced. Live calls are in tests/e2e/test_jev_e2e.py.
 """
 from __future__ import annotations
 
 import json
 import logging
+import asyncio
 
 import httpx
 import pytest
@@ -62,23 +63,52 @@ def _rows(tmp_path):
 
 
 def _serve(monkeypatch, *replies):
-    """Replace httpx.post with a queue of replies (a Response, a dict for a 200,
+    """Replace Jev's async transport with a queue of replies (a Response, a dict for a 200,
     or an exception to raise). Returns the list of requests made."""
     sent, queue = [], list(replies)
 
-    def fake_post(url, json=None, timeout=None, headers=None):
-        sent.append({"url": url, "body": json, "headers": headers, "timeout": timeout})
+    async def fake_post(body, key, timeout):
+        sent.append({"url": jev.URL, "body": body,
+                     "headers": {"Authorization": f"Bearer {key}"}, "timeout": timeout})
         item = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(item, BaseException):
             raise item
         return item if isinstance(item, httpx.Response) else httpx.Response(200, json=item)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     return sent
 
 
 def _reply_for(questions: dict) -> dict:
     return {**REPLY, "answers": {k: REPLY["answers"][k] for k in questions}}
+
+
+def test_transport_cancels_a_slow_response_and_closes_client(monkeypatch):
+    events = []
+
+    class SlowClient:
+        def __init__(self, *, timeout):
+            assert timeout == 0.02
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            events.append("closed")
+
+        async def post(self, url, *, json, headers):
+            assert url == jev.URL
+            assert headers == {"Authorization": f"Bearer {KEY}"}
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                events.append("cancelled")
+                raise
+
+    monkeypatch.setattr(httpx, "AsyncClient", SlowClient)
+    with pytest.raises(TimeoutError):
+        asyncio.run(jev._post({"model": jev.DEFAULT_MODEL}, KEY, 0.02))
+    assert events == ["cancelled", "closed"]
 
 
 # --- the request and the answers ---------------------------------------------

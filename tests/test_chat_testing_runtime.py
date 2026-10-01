@@ -100,7 +100,7 @@ def test_indicator_and_off_thinking(hub, monkeypatch):
     rt = runtime.build(hub)  # SHOW_THINKING default: indicator
     items, _ = _items(rt, "[user]\nthink")
     deltas = [i for i in items if isinstance(i, ReasoningDelta)]
-    assert deltas == [ReasoningDelta(text="", legacy="<think>\n_Thinking…_")]
+    assert deltas == [ReasoningDelta(text="", legacy="<think>\n")]
     monkeypatch.setenv("SHOW_THINKING", "off")
     rt = runtime.build(hub)
     items, _ = _items(rt, "[user]\nthink")

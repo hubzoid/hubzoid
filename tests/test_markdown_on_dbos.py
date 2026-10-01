@@ -449,12 +449,14 @@ def test_two_hubs_sharing_one_database_each_run_their_own_task(tmp_path, request
             f"{name} never executed its own task"
         out, ids = results[name]
         assert isinstance(out, dict) and out["result"] == "done", out
-        assert f"md:daily:20260927T0300@{name}" in ids
+        assert any(i.startswith(f"md:daily:20260927T0300@hz-{name}-") for i in ids)
+    assert results["alpha"][1] != results["beta"][1]
 
 
 def test_run_ids_are_namespaced_by_hub():
     from hubzoid.workflows import markdown
 
-    assert markdown.run_id("daily", "s1", "Alpha") == "md:daily:s1@alpha"
-    assert markdown.eval_run_id(["b", "a"], "s1", "alpha") == "eval:a,b:s1@alpha"
+    assert markdown.run_id("daily", "s1", "Alpha").startswith("md:daily:s1@hz-alpha-")
+    assert markdown.eval_run_id(["b", "a"], "s1", "alpha").startswith("eval:a,b:s1@hz-alpha-")
+    assert markdown.hub_namespace("Alpha") != markdown.hub_namespace("alpha")
     assert markdown.task_name_from_id(markdown.run_id("daily", "s1", "alpha")) == "daily"

@@ -1,10 +1,10 @@
 """Typed run events.
 
 Every runtime's ``stream_events`` carries the structure the web app renders
-(tool calls and results, reasoning, notices), and its ``legacy`` text is exactly
-what 1.0.x printed: ``stream()`` and the rendered typed stream both match the
-text recorded from the unmodified runtimes (tests/fixtures/run_events_legacy.json)
-for every scenario and every SHOW_TOOLS / SHOW_THINKING mode.
+(tool calls and results, reasoning, notices). The text boundary renders tool
+activity from those events; ``stream()`` and the adapted typed stream match the
+recorded text (tests/fixtures/run_events_legacy.json) for every scenario and
+every SHOW_TOOLS / SHOW_THINKING mode.
 
 ``run_once`` (a workflow's ``hub.call_agent``) keeps only the answer.
 """
@@ -24,7 +24,6 @@ from hubzoid.run_events import (
     RunEvent,
     ToolCall,
     ToolResult,
-    text_of,
 )
 from tests import run_event_scenarios as scenarios
 
@@ -49,7 +48,15 @@ def test_stream_text_is_unchanged(case, monkeypatch, tmp_path):
 def test_typed_stream_renders_the_same_text(case, monkeypatch, tmp_path):
     items = scenarios.run_case(monkeypatch, tmp_path, *case, typed=True)
     assert all(isinstance(item, (str, RunEvent)) for item in items)
-    assert "".join(text_of(item) for item in items) == GOLDEN[scenarios.golden_key(*case)]
+    async def typed_items():
+        for item in items:
+            yield item
+
+    async def rendered():
+        return "".join([chunk async for chunk in run_events.as_text(
+            typed_items(), tool_mode=case[2])])
+
+    assert asyncio.run(rendered()) == GOLDEN[scenarios.golden_key(*case)]
 
 
 def test_as_text_drops_empty_items():
@@ -166,7 +173,7 @@ def test_claude_indicator_mode_hides_reasoning_text(monkeypatch):
     items = scenarios.run_claude(monkeypatch, "think_then_text", tool_mode="compact",
                                  thinking_mode="indicator", typed=True)
     assert items == [
-        ReasoningDelta(text="", legacy="<think>\n_Thinking…_"),
+        ReasoningDelta(text="", legacy="<think>\n"),
         ReasoningEnd(legacy="\n</think>\n"),
         "Answer",
     ]

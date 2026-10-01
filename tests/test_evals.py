@@ -457,7 +457,7 @@ def test_prune_keeps_the_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(report, "KEEP_RUNS", 3)
     for i in range(6):
         report.save(hub, _suite(a=True), stamp=f"2026010{i}_000000")
-    assert len(list(report.runs_dir(hub).glob("*.json"))) == 3
+    assert len([p for p in report.runs_dir(hub).glob("*.json") if p.name != "index.json"]) == 3
 
 
 def test_load_runs_skips_a_corrupt_file(tmp_path):
