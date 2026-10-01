@@ -2,16 +2,21 @@
 OAuth client authentication.
 
 URL rule (connector URLs and every endpoint discovered from them): HTTPS, or
-plain HTTP to a loopback host for local development. A discovered endpoint may
-use loopback HTTP only when the connector itself is on loopback, so a remote
-server cannot point Hubzoid at services on its own machine. Redirects are never
-followed: metadata and token endpoints must answer directly.
+plain HTTP to a loopback host for local development. An endpoint discovered
+from a remote server (its metadata, its 401 challenge) may not point at this
+machine or at link-local, unspecified, multicast or reserved addresses (cloud
+metadata services live there), unless the connector itself is on loopback.
+Names are not resolved: a server registered by an administrator is trusted to
+name its own authorization server, including one on a private network.
+Redirects are never followed: metadata and token endpoints answer directly.
 """
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import re
+import time
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -50,6 +55,21 @@ def is_loopback_url(url: str) -> bool:
         return False
 
 
+def _local_or_reserved(host: str) -> bool:
+    """This machine by name, or a literal address no remote endpoint has."""
+    name = host.strip("[]").lower().rstrip(".")
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return (ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast
+            or ip.is_reserved)
+
+
 def check_url(url, *, what: str = "The server URL", base: str | None = None) -> str:
     """``url`` stripped, or ConnectorError ``invalid_url``.
 
@@ -73,6 +93,9 @@ def check_url(url, *, what: str = "The server URL", base: str | None = None) -> 
         raise ConnectorError("invalid_url", f"{what} must not contain a user name or password.", 422)
     if parts.fragment:
         raise ConnectorError("invalid_url", f"{what} must not contain a fragment (#).", 422)
+    if base is not None and not is_loopback_url(base) and _local_or_reserved(host):
+        raise ConnectorError("invalid_url", f"{what} points at a local or reserved address, "
+                                            "which a remote server may not send Hubzoid to.", 422)
     if parts.scheme == "http":
         local = appmode.is_loopback_host(host)
         if not local or (base is not None and not is_loopback_url(base)):
@@ -86,11 +109,15 @@ def origin(url: str) -> str:
     return appmode.normalize_origin(url)
 
 
-def read_json(response: httpx.Response) -> dict | None:
-    """The JSON object in a (streamed) response, at most MAX_JSON_BYTES, else None."""
+def read_json(response: httpx.Response, deadline: float | None = None) -> dict | None:
+    """The JSON object in a (streamed) response, at most MAX_JSON_BYTES, else
+    None. ``deadline`` (``time.monotonic()``) bounds the whole read: a server
+    trickling bytes cannot hold the request open past it."""
     size = 0
     chunks: list[bytes] = []
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() > deadline:
+            raise httpx.ReadTimeout("response took too long", request=response.request)
         size += len(chunk)
         if size > MAX_JSON_BYTES:
             return None
@@ -111,7 +138,7 @@ def get_json(c: httpx.Client, url: str, headers: dict | None = None) -> tuple[in
 
 
 def post_json(c: httpx.Client, url: str, *, data: dict | None = None, json_body: dict | None = None,
-              headers: dict | None = None) -> tuple[int, dict | None]:
+              headers: dict | None = None, deadline: float | None = None) -> tuple[int, dict | None]:
     """POST a form (``data``) or JSON body; (status, JSON object or None)."""
     kwargs: dict = {"headers": {"Accept": "application/json", **(headers or {})}}
     if json_body is not None:
@@ -119,7 +146,9 @@ def post_json(c: httpx.Client, url: str, *, data: dict | None = None, json_body:
     else:
         kwargs["data"] = data or {}
     with c.stream("POST", url, **kwargs) as r:
-        return r.status_code, read_json(r)
+        if deadline is not None and time.monotonic() > deadline:
+            raise httpx.ReadTimeout("response took too long", request=r.request)
+        return r.status_code, read_json(r, deadline)
 
 
 def oauth_error(body: dict | None) -> str:

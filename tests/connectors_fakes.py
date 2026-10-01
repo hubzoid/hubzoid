@@ -38,8 +38,10 @@ def clean_env(monkeypatch) -> None:
     for name in _ENV:
         monkeypatch.delenv(name, raising=False)
     import hubzoid.access as access
+    from hubzoid.connectors import oauth_flow
 
     access._stores.clear()
+    oauth_flow.forget_discovery()
 
 
 def make_hub(root: Path, name: str) -> Path:

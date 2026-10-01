@@ -24,9 +24,11 @@ what a multi-user web server needs, so the rest is here.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,7 +49,10 @@ log = logging.getLogger("hubzoid.connectors")
 FLOW_SECONDS = 600
 MAX_OPEN_FLOWS = 20  # per person: older unfinished authorizations are dropped
 CALLBACK_PATH = "/oauth/connectors/{id}/callback"
+DISCOVERY_SECONDS = 60  # metadata reused for repeated connects (never secrets)
 _AUTH_ORDER = ("none", "client_secret_basic", "client_secret_post")
+_discovered: dict[str, tuple[float, Discovery]] = {}
+_discovered_lock = threading.Lock()
 
 
 class CallbackError(ConnectorError):
@@ -77,20 +82,34 @@ def redirect_uri(origin: str, connector_id: str) -> str:
     return origin.rstrip("/") + CALLBACK_PATH.format(id=connector_id)
 
 
-def origin_for(request) -> str:
-    """The origin redirect URIs are built on: the request's own origin when it
-    is one this deployment serves (``HUBZOID_PUBLIC_URL`` and
-    ``HUBZOID_ALLOWED_ORIGINS``), else the primary public origin. With nothing
-    configured (local mode), the request's origin."""
+def request_origin(request) -> str:
+    """The origin the browser used, as the edge forwards it (Host and
+    X-Forwarded-Proto)."""
     from .. import appmode
 
     proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
     scheme = proto if proto in ("http", "https") else request.url.scheme
     host = request.headers.get("host") or request.url.netloc
-    own = appmode.normalize_origin(f"{scheme}://{host}")
+    return appmode.normalize_origin(f"{scheme}://{host}")
+
+
+def origin_for(request, *, strict: bool = True) -> str:
+    """The origin redirect URIs are built on: the request's own origin when it
+    is one this deployment serves (``HUBZOID_PUBLIC_URL`` and
+    ``HUBZOID_ALLOWED_ORIGINS``), else the primary public origin.
+
+    With nothing configured, only a loopback origin is trusted: a Host header
+    is chosen by whoever sends the request, so a redirect URI is never built on
+    another one. ``strict=False`` answers anyway (for display)."""
+    from .. import appmode
+
+    own = request_origin(request)
     allowed = appmode.allowed_origins()
     if allowed:
         return own if own in allowed else allowed[0]
+    if strict and not net.is_loopback_url(own):
+        raise ConnectorError("public_url_required", "Set HUBZOID_PUBLIC_URL to the address "
+                             "people use for Hubzoid, then try again.", 409)
     return own
 
 
@@ -172,8 +191,8 @@ def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None
         failure = net.oauth_error(resp) if resp else f"http_{status}"
         if status != 400:
             break
-    log.warning("connectors: dynamic client registration at %s failed (%s)",
-                disc.registration_endpoint, failure)
+    log.warning("connectors: dynamic client registration for %s failed (%s)",
+                disc.issuer, failure)
     raise ConnectorError("registration_failed", "The server refused to register Hubzoid as a "
                          f"client ({failure}). An administrator can register Hubzoid with the "
                          "provider and enter its client ID on the connector.", 502)
@@ -207,6 +226,7 @@ def start(hub_dir, connector: registry.Connector | None, user, *, origin: str,
           return_to: str | None = None, journey_id: str | None = None) -> str:
     """Begin an authorization for ``user`` (an ``AuthUser``). Returns the
     provider URL the browser goes to. Raises ConnectorError."""
+    _require_account(user)
     if connector is None:
         raise ConnectorError("not_found", "No connector has this ID.", 404)
     if not connector.enabled:
@@ -218,7 +238,7 @@ def start(hub_dir, connector: registry.Connector | None, user, *, origin: str,
         raise ConnectorError("invalid_return_to", "return_to must be a path on this site.", 422)
     redirect = redirect_uri(origin, connector.id)
     with net.client() as c:
-        disc = discover(connector.url, c=c)
+        disc = _discover(connector.url, c)
         scope = connector.scopes or disc.default_scope()
         client = client_for(hub_dir, connector, disc, redirect, scope, c)
 
@@ -260,8 +280,38 @@ def start(hub_dir, connector: registry.Connector | None, user, *, origin: str,
     return authorize_url
 
 
+def _discover(url: str, c: httpx.Client) -> Discovery:
+    """Discovery for a connect, reused for a minute: one person retrying, or
+    several people connecting at once, do not each fetch every document."""
+    now = time.monotonic()
+    with _discovered_lock:
+        hit = _discovered.get(url)
+        if hit and now - hit[0] < DISCOVERY_SECONDS:
+            return copy.copy(hit[1])
+    found = discover(url, c=c)
+    with _discovered_lock:
+        _discovered[url] = (now, copy.copy(found))
+    return found
+
+
+def forget_discovery(url: str | None = None) -> None:
+    """Drop cached discovery (all, or one server's), for tests and URL changes."""
+    with _discovered_lock:
+        if url is None:
+            _discovered.clear()
+        else:
+            _discovered.pop(url, None)
+
+
+def _require_account(user) -> None:
+    """Every flow and connection is keyed by the account id: never by nothing."""
+    if not getattr(user, "id", None) or not getattr(user, "email", None):
+        raise ConnectorError("unauthenticated", "Sign in to continue.", 401)
+
+
 def connect_without_auth(hub_dir, connector: registry.Connector, user) -> None:
     """Turn on a connector that needs no sign-in for ``user``."""
+    _require_account(user)
     if not connector.enabled:
         raise ConnectorError("disabled", f"{connector.name} is switched off. Ask your "
                              "administrator.", 409)
@@ -340,6 +390,7 @@ def callback(hub_dir, *, connector_id: str, user, state: str | None, code: str |
              iss: str | None = None, error: str | None = None) -> Completed:
     """Finish an authorization for the signed-in ``user``. Raises CallbackError
     (never a secret in it); the flow is consumed either way."""
+    _require_account(user)
     if not state or len(state) > 256:
         raise _fail("invalid_state", connector_id=connector_id)
     row = _consume(hub_dir, state)
@@ -375,19 +426,29 @@ def callback(hub_dir, *, connector_id: str, user, state: str | None, code: str |
         raise _fail("connector_changed", **ctx)
     token = _exchange(hub_dir, connector_id, payload, code, ctx)
     now = time.time()
+    client = payload.get("client") or {}
     record = {
         "v": 1, "kind": "oauth",
         "access_token": token.access_token, "refresh_token": token.refresh_token,
         "token_type": token.token_type, "scope": token.scope or payload.get("scope"),
-        "expires_at": now + int(token.expires_in) if token.expires_in else None,
+        "expires_at": now + int(token.expires_in) if token.expires_in is not None else None,
         "token_endpoint": payload["token_endpoint"],
         "revocation_endpoint": payload.get("revocation_endpoint"),
         "resource": payload.get("resource"), "issuer": expected,
-        "client": payload.get("client") or {}, "redirect_uri": payload["redirect_uri"],
+        "client": client, "redirect_uri": payload["redirect_uri"],
         "url": connector.url,
     }
+    # The exchange took a moment: if the connector was removed, switched off or
+    # pointed elsewhere meanwhile, these tokens must not be kept or left live.
+    now_connector = registry.get(hub_dir, connector_id)
+    if (now_connector is None or not now_connector.enabled or now_connector.auth_type != "oauth"
+            or now_connector.url != connector.url):
+        tokens.revoke_later(record)
+        raise _fail("connector_changed", **ctx)
+    # Some providers issue a refresh token on the first consent only: a new
+    # authorization by the same client at the same issuer keeps the stored one.
     tokens.store(hub_dir, user_id=user.id, email=user.email, connector_id=connector_id,
-                 token=record, now=now)
+                 token=record, now=now, inherit_refresh=(expected, client.get("client_id")))
     log.info("connectors: %s connected %s", normalize(user.email), connector_id)
     return Completed(connector_id=connector_id, return_to=return_to,
                      journey_id=payload.get("journey_id"))

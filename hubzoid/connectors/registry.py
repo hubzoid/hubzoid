@@ -232,7 +232,14 @@ def client_secret(hub_dir, cid: str) -> str | None:
                          {"id": cid}).fetchone()
     if not r or not r[0]:
         return None
-    return secretbox.decrypt_text(Path(hub_dir), r[0])
+    try:
+        return secretbox.decrypt_text(Path(hub_dir), r[0])
+    except secretbox.SecretKeyError:
+        log.error("connectors: the client secret of %s cannot be decrypted with the deployment "
+                  "key", cid)
+        raise ConnectorError("secret_unreadable", "This connector's client secret cannot be read "
+                             "with this deployment's key. An administrator can enter it again.",
+                             500) from None
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +447,9 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
         log.info("connectors: %s changed %s (%s)", normalize(actor), cid,
                  ", ".join(sorted(k for k in changes if k != "updated_at")))
     if reset:
-        from . import tokens
+        from . import oauth_flow, tokens
 
+        oauth_flow.forget_discovery(row["url"])
         dropped = tokens.drop_connector(hub_dir, cid)
         if dropped:
             log.info("connectors: %s now points elsewhere; %d connection(s) removed", cid, dropped)

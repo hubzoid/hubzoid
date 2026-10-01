@@ -416,3 +416,54 @@ def test_a_refused_journey_ends_failed_at_once(hub, tc, server, browser, monkeyp
     assert store.get(hub, jid)["status"] == "failed"
     done = tc.get(f"/portal/connect/{jid}/done")
     assert "was not connected" in done.text
+
+
+_CONSUMER = """
+import sys, time
+from pathlib import Path
+from hubzoid.connectors import oauth_flow
+hub, state, me, gate = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+oauth_flow._consume(hub, "warm-up-" + me.name)  # imports and opens the database first
+me.touch()
+while not gate.exists():
+    time.sleep(0.005)
+try:
+    print("WON" if oauth_flow._consume(hub, state) else "LOST")
+except Exception as exc:
+    print("ERROR", type(exc).__name__, exc)
+"""
+
+
+def test_authorizations_are_consumed_once_by_concurrent_processes_on_sqlite(hub, tmp_path):
+    """Several bridges share one SQLite file: concurrent callbacks never fail
+    with a lock error, and a state is taken exactly once."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from hubzoid.connectors import oauth_flow
+
+    states = [f"distinct-state-{i}" for i in range(4)] + ["shared-state"] * 4
+    with connectors.engine(hub).begin() as conn:
+        for state in sorted(set(states)):
+            conn.execute(text(
+                "INSERT INTO hz_connector_flows (state, user_id, connector_id, payload_enc, "
+                "return_to, created_at, expires_at) VALUES (:s, 'u', 'c', 'x', NULL, 0, :e)"),
+                {"s": oauth_flow._digest(state), "e": time.time() + 600})
+    gate = tmp_path / "go"
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    procs = [subprocess.Popen([sys.executable, "-c", _CONSUMER, str(hub), state,
+                               str(tmp_path / f"ready-{i}"), str(gate)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+             for i, state in enumerate(states)]
+    deadline = time.time() + 120
+    while not all((tmp_path / f"ready-{i}").exists() for i in range(len(states))):
+        assert time.time() < deadline and all(p.poll() is None for p in procs), \
+            [p.communicate()[1][-400:] for p in procs if p.poll() is not None]
+        time.sleep(0.05)
+    gate.touch()
+    outs = [p.communicate(timeout=120)[0].strip() for p in procs]
+    assert not [o for o in outs if not o.startswith(("WON", "LOST"))], outs
+    assert outs[:4] == ["WON"] * 4
+    assert sorted(outs[4:]) == ["LOST", "LOST", "LOST", "WON"]
