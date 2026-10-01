@@ -406,3 +406,73 @@ def test_access_logs_never_hold_link_tokens_or_oauth_codes(hub):
     assert logredact.redact("/oauth/google/callback?code=C0DE&state=S7") == \
         "/oauth/google/callback?code=[redacted]&state=[redacted]"
     assert logredact.redact("/c/abc?q=1") == "/c/abc?q=1"
+
+
+def test_the_local_owner_never_signs_in_with_a_password(hub):
+    """Open WebUI created admin@localhost with the password "admin"; with
+    sign-in on, that account must not open with it (nor with a link)."""
+    import bcrypt
+
+    owner = users.create(hub, email="admin@localhost", role="admin", source="migrated",
+                         password_hash=bcrypt.hashpw(b"admin", bcrypt.gensalt(4)).decode())
+    c = client(hub)
+    r = sign_in(c, email="admin@localhost", password="admin")
+    assert r.status_code == 401 and r.json()["detail"]["code"] == "invalid_credentials"
+    with pytest.raises(ValueError):
+        links.create(hub, owner["id"])
+    assert users.ensure_local_owner(hub)["id"] == owner["id"]  # the same account, never a second
+
+
+def test_a_rehash_moves_updated_at_and_the_sign_in_goes_ahead(hub):
+    import bcrypt
+
+    legacy = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
+    user = users.create(hub, email="old2@example.com", password_hash=legacy, source="migrated")
+    assert sign_in(client(hub), email="old2@example.com").status_code == 200
+    assert users.get(hub, user["id"])["updated_at"] > user["updated_at"]
+
+
+def test_current_user_is_thread_safe(hub, monkeypatch):
+    """Chat runs resolve the person from worker threads."""
+    import threading
+
+    from fastapi import Request as StarletteRequest
+
+    person(hub)
+    token = sessions.create_session(hub, users.find_by_email(hub, "ana@example.com"),
+                                    method="password")
+    from hubzoid.auth import current_user
+
+    def make(cookie):
+        headers = [(b"host", b"localhost")]
+        if cookie:
+            headers.append((b"cookie", f"hz_session={cookie}".encode()))
+        return StarletteRequest({"type": "http", "method": "GET", "path": "/", "headers": headers,
+                                 "query_string": b"", "server": ("127.0.0.1", 3080)})
+
+    seen, errors = [], []
+
+    def work(mode):
+        try:
+            for _ in range(5):
+                user = current_user(make(token if mode == "accounts" else None), hub)
+                seen.append((mode, user.email if user else None))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=("accounts",)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    monkeypatch.delenv("HUBZOID_AUTH")
+    sessions.reset_cache()
+    threads = [threading.Thread(target=work, args=("local",)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert {e for m, e in seen if m == "accounts"} == {"ana@example.com"}
+    assert {e for m, e in seen if m == "local"} == {"admin@localhost"}
+    assert len(users.list_users(hub)) == 2  # one local owner, however many threads raced
