@@ -2,7 +2,7 @@
 // people to /auth, and lays out the sidebar and the current page. Heavy pages
 // (the chat thread with assistant-ui and markdown) load on demand.
 import "./app.css";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, WifiOff } from "lucide-react";
 import { t } from "./i18n/en";
 import { get, setUnauthorizedHandler } from "./lib/api";
@@ -201,9 +201,17 @@ export default function App() {
         : `c:${route.id}`
       : newKey;
 
+  // The chat on screen. A creation can finish after the person pressed New
+  // chat or left: only the page that asked for it moves to the new URL.
+  const activeChatKey = useRef<string | null>(null);
+  const onScreenKey = route.name === "new" || route.name === "conversation" ? chatKey : null;
+  useEffect(() => {
+    activeChatKey.current = onScreenKey;
+  }, [onScreenKey]);
+
   const onConversationCreated = useCallback((conversation: Conversation, key: string) => {
     upsertConversation(conversation);
-    // Only the page on screen moves to the new URL.
+    if (key !== activeChatKey.current) return;
     const path = window.location.pathname;
     const onScreen = path === "/" || path.startsWith("/new");
     if (!onScreen) return;
