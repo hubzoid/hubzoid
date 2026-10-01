@@ -552,8 +552,13 @@ def provision_owner(hub_dir: Path, email: str) -> list[str]:
         return done
     for h in hubs:
         path = Path(h["path"])
-        if store_for(path).provision_owner(
-                email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()):
+        gs = store_for(path)
+        # Cheap read first: provisioning takes the store's write lock, and it
+        # runs at every verified request of the owner, as in 1.0.x.
+        with gs.engine.connect() as conn:
+            if gs._meta_get(conn, "initial_owner:" + str(h["key"]).strip().lower()):  # noqa: SLF001
+                continue
+        if gs.provision_owner(email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()):
             done.append(h["key"])
     return done
 

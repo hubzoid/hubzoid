@@ -379,10 +379,15 @@ def test_google_consumer_addresses_when_allowed(google, idp, monkeypatch):
     assert sign_in(client(google), provider="google").headers["location"] == "/c/abc"
 
 
-def test_google_issuer_without_scheme_is_accepted(google, idp):
-    existing(google)
+def test_google_issuer_without_scheme_is_the_same_identity(google, idp):
+    user = existing(google)
+    idp.claims = {"sub": "g9", "email": "ana@example.com", "email_verified": True}
     idp.token_overrides = {"iss": "accounts.google.com"}
     assert sign_in(client(google), provider="google").headers["location"] == "/c/abc"
+    idp.token_overrides = {}
+    assert sign_in(client(google), provider="google").headers["location"] == "/c/abc"
+    rows = users.store(google).identities_for(user["id"])
+    assert [(r["issuer"], r["subject"]) for r in rows] == [(idp.issuer, "g9")]
 
 
 def test_microsoft_multi_tenant_issuer(hub, monkeypatch):
