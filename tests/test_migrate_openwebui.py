@@ -961,3 +961,19 @@ def test_older_open_webui_layouts(tmp_path, clean_env):
     store = dep.store()
     assert store.can("grace@example.com", "old", "ledger") and not store.can("hal@example.com", "old", "ledger")
     assert store.can("hal@example.com", "old", "use_hub")
+
+
+def test_an_unwritable_uploads_folder_is_reported_not_fatal(gateway):
+    folder = gateway.hubs["finance"] / ".hubzoid" / "chats" / gateway.chat("files") / "uploads"
+    folder.chmod(0o500)
+    try:
+        report = _run(gateway, apply=True)
+    finally:
+        folder.chmod(0o700)
+    assert report.applied
+    assert report.counts["files"]["could_not_be_written"] == 2   # the copied PDF and the inline image
+    assert any("could not be written" in w for w in report.warnings)
+    assert not list(folder.glob(".migrating-*"))
+    parts = json.loads(gateway.rows("SELECT content FROM hz_messages WHERE id=:i",
+                                    i=gateway.msg("c2u1"))[0]["content"])
+    assert {p.get("name") for p in parts} >= {"report.pdf", "notes.txt", "missing.docx"}

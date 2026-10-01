@@ -149,6 +149,11 @@ def _safe_name(raw: Any) -> str:
     return "" if name in ("", ".", "..") else name
 
 
+def _scrub(message: str) -> str:
+    """An error text without credentials in any URL it quotes."""
+    return re.sub(r"(\w+://)[^/@\s]*@", r"\1***@", message)
+
+
 def _redact(url: Any) -> str:
     try:
         return (url if isinstance(url, URL) else make_url(str(url))).render_as_string(hide_password=True)
@@ -1174,7 +1179,7 @@ def plan_access(setup: Setup, source_engine: Engine, target: TargetState, people
             access.summary = {"state": "blocked", "detail": reason}
             continue
         except Exception as exc:  # noqa: BLE001 - reported, never guessed
-            report.block(f"Access for {hub.key} could not be read ({type(exc).__name__}: {exc}).")
+            report.block(f"Access for {hub.key} could not be read ({type(exc).__name__}: {_scrub(str(exc))}).")
             access.blocked = True
             access.summary = {"state": "blocked", "detail": type(exc).__name__}
             continue
@@ -1513,15 +1518,21 @@ class Attachments:
         from . import uploads as uploads_lib
 
         folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / f".{name}.migrating"
-        if payload is not None:
-            tmp.write_bytes(payload)
-        else:
-            shutil.copyfile(source, tmp)
-        with open(tmp, "rb") as fh:
-            head = fh.read(4096)
-        size = tmp.stat().st_size
-        tmp.replace(folder / name)
+        target = (folder / name).resolve()
+        if target.parent != folder.resolve():
+            raise OSError("attachment name leaves the uploads folder")
+        tmp = folder / f".migrating-{hashlib.sha256(name.encode()).hexdigest()[:16]}"
+        try:
+            if payload is not None:
+                tmp.write_bytes(payload)
+            else:
+                shutil.copyfile(source, tmp)
+            with open(tmp, "rb") as fh:
+                head = fh.read(4096)
+            size = tmp.stat().st_size
+            tmp.replace(target)
+        finally:
+            tmp.unlink(missing_ok=True)
         (folder / f"{name}{uploads_lib.SIDECAR_SUFFIX}").write_text(
             json.dumps({"mime": mime, "size": size, "kind": uploads_lib.classify(mime, head)}),
             encoding="utf-8")
@@ -1579,7 +1590,8 @@ class Attachments:
             elif source_size is not None:
                 if target.is_file():  # a different file with the same name (another turn)
                     stem, dot, ext = safe.rpartition(".")
-                    tag = file_id[:8] or hashlib.sha256(payload or b"").hexdigest()[:8]
+                    tag = re.sub(r"[^A-Za-z0-9_-]", "", file_id)[:8] or \
+                        hashlib.sha256(payload or b"").hexdigest()[:8]
                     stored = f"{stem} ({tag}).{ext}" if dot and stem else f"{safe} ({tag})"
                     target = folder / stored
                 if target.is_file():
@@ -1587,7 +1599,14 @@ class Attachments:
                 else:
                     outcome = "extracted_inline_image" if payload is not None else "copied_from_open_webui"
                     if self.apply:
-                        self._write(folder, stored, payload, source_path, mime)
+                        try:
+                            self._write(folder, stored, payload, source_path, mime)
+                        except OSError as exc:
+                            outcome = "could_not_be_written"
+                            self.report.warn("Some attachments could not be written into their chat's "
+                                             f"uploads folder ({type(exc).__name__}); the messages keep "
+                                             "their names. Check the hub folder's permissions and run "
+                                             "the migration again.")
             size: Any = entry.get("size") or meta.get("size")
             if target.is_file():
                 size = target.stat().st_size
