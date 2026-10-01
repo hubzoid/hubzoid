@@ -37,11 +37,17 @@ available for this release only, as a legacy mode.
 - **Upgrade guard.** In the default mode with sign-in on, a hub or gateway
   that has Open WebUI accounts and no Hubzoid accounts stops at start and
   explains the two ways forward: `hubzoid migrate openwebui`, or legacy mode.
-  In local mode it prints a notice that old chats can be imported.
+  In local mode it prints a notice that old chats can be imported. The local
+  owner that local mode creates is not counted as a Hubzoid account, and a
+  gateway started in the web app keeps its manifest's record of where Open
+  WebUI's database is, so the guard and the migration still find it.
 
 A gateway records the mode, sign-in and allowed origins in its deployment
 manifest, so bridges started on their own (`gateway --no-bridges`) behave the
-same as the ones it launches.
+same as the ones it launches. For a hub registered in the manifest, the
+recorded mode and the recorded sign-in of a web app deployment win over the
+hub `.env` and the bridge's environment, and a bridge whose settings disagree
+refuses to start (`appmode.deployment_conflicts`).
 
 ## 2. Processes and routing
 

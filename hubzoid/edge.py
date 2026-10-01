@@ -13,6 +13,12 @@ never keeping cookies between visitors and asserting the public scheme. The
 bridge's internal API (`/v1`, `/uploads`, `/otel`) stays loopback-only, as in
 1.0.x: the edge answers 404 for it.
 
+In both modes an upstream receives exactly the path the edge checked: the
+decoded path is encoded again, so `%25` escapes are never decoded twice
+(`/%256ftel/...` reaches a bridge as `/%6ftel/...`, not `/otel/...`). With
+fallback upstreams, only a small request body is held in memory for a retry on
+the next upstream; a larger one streams to the first.
+
 Legacy Open WebUI mode (`HUBZOID_UI=openwebui`) is 1.0.x, unchanged:
 
 The reverse proxy / load balancer in front of a hub points at ONE port
@@ -70,6 +76,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 from pathlib import Path
 from dataclasses import dataclass
 from http.cookiejar import CookieJar, DefaultCookiePolicy
@@ -107,6 +114,16 @@ _IDENTITY_PREFIXES = ("x-hubzoid-", "x-openwebui-")
 _BRIDGE_INTERNAL = ("/v1", "/uploads", "/otel")
 _FORWARDED_PREFIX = "x-forwarded-prefix"
 
+# What a path may carry unescaped (RFC 3986 pchar and "/"). Everything else,
+# "%" included, is percent-encoded on the way to an upstream.
+_PATH_SAFE = "/:@!$&'()*+,;="
+
+# With fallback upstreams (a gateway's other bridges), a body of up to this
+# many bytes is held so a refused connection can be retried on the next one. A
+# longer body streams to the first upstream only: the edge never buffers a
+# request without bound, before any sign-in or endpoint limit has run.
+_RETRY_BODY_LIMIT = 64 * 1024
+
 
 def web_app_mode(env) -> bool:
     """True unless the deployment runs the legacy Open WebUI mode: HUBZOID_UI,
@@ -120,6 +137,43 @@ def web_app_mode(env) -> bool:
         except (OSError, ValueError):
             raw = ""
     return not appmode.is_legacy(env={"HUBZOID_UI": raw})
+
+
+def _upstream_path(path: str) -> str:
+    """`path` as the edge checked it (decoded) encoded for the upstream URL, so
+    the upstream's one decoding gives back exactly that path. Forwarding the
+    decoded path as it was let an escaped escape be decoded twice:
+    `/%256ftel/v1/traces` passed the checks as `/%6ftel/v1/traces` and reached
+    the bridge as `/otel/v1/traces`."""
+    return quote(path, safe=_PATH_SAFE)
+
+
+async def _retry_body(request: Request):
+    """(content, retryable) for a request that may be retried on a fallback.
+
+    A body of at most `_RETRY_BODY_LIMIT` bytes is read whole (a refused
+    connection delivered nothing, so it can be sent again). A longer one,
+    declared or found while reading a chunked body, is forwarded as a stream of
+    what was read followed by the rest, to one upstream only."""
+    declared = request.headers.get("content-length", "").strip()
+    stream = request.stream()
+    if declared.isdigit() and int(declared) > _RETRY_BODY_LIMIT:
+        return stream, False
+    held: list[bytes] = []
+    size = 0
+    async for chunk in stream:
+        held.append(chunk)
+        size += len(chunk)
+        if size > _RETRY_BODY_LIMIT:
+            return _chain(held, stream), False
+    return b"".join(held), True
+
+
+async def _chain(held: list[bytes], rest):
+    for chunk in held:
+        yield chunk
+    async for chunk in rest:
+        yield chunk
 
 
 def _is_bridge_internal(path: str) -> bool:
@@ -492,13 +546,18 @@ def build_edge_app(
             prefix = matched.strip_prefix if matched is not None and matched.strip_prefix else ""
 
         client: httpx.AsyncClient = request.app.state.client
-        # With fallbacks, buffer the (small) body so a refused connection can be
-        # retried on the next bridge. A refused connection delivered nothing.
-        content = await request.body() if len(bases) > 1 else request.stream()
+        # With fallbacks, hold a small body so a refused connection can be
+        # retried on the next bridge. A larger body goes to the first only.
+        if len(bases) > 1:
+            content, retryable = await _retry_body(request)
+            if not retryable:
+                bases = bases[:1]
+        else:
+            content = request.stream()
         for i, base in enumerate(bases):
             upstream_req = client.build_request(
                 request.method,
-                base + fwd_path + query,
+                base + _upstream_path(fwd_path) + query,
                 headers=_request_headers(request, public_scheme, forwarded_prefix=prefix),
                 content=content,
             )
@@ -588,7 +647,7 @@ def build_edge_app(
         if _has_dot_segment(websocket.url.path):
             await websocket.close(code=1008)
             return
-        target = owui_ws_base + websocket.url.path
+        target = owui_ws_base + _upstream_path(websocket.url.path)
         if websocket.url.query:
             target += "?" + websocket.url.query
         await websocket.accept()
