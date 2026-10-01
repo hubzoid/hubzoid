@@ -187,8 +187,7 @@ class ScriptedRuntime:
                            legacy=tool_events.format_call("grep_data", args, mode=self._tool_mode))
             await asyncio.sleep(0.01)
             yield ToolResult(id="call_fail", name="grep_data", ok=False,
-                             message="The tool did not complete. The agent may retry or ask for "
-                                     "more information.",
+                             message=run_events.TOOL_FAILED,
                              legacy=tool_events.format_error("grep_data"))
 
         if "artifact" in words:

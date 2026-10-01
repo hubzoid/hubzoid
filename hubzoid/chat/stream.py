@@ -24,6 +24,7 @@ import copy
 import json
 from typing import Any
 
+from .. import run_events
 from ..run_events import Notice, ReasoningDelta, ReasoningEnd, ToolCall, ToolResult
 
 HEADERS = {
@@ -35,7 +36,7 @@ DONE = b"data: [DONE]\n\n"
 # An SSE comment: ignored by parsers, keeps proxies from closing an idle stream.
 KEEPALIVE = b": keep-alive\n\n"
 
-TOOL_FAILED = "The tool did not complete. The agent may retry or ask for more information."
+TOOL_FAILED = run_events.TOOL_FAILED
 _STOPPED = "Stopped before this step finished."
 _RUN_FAILED = "The run failed before this step finished."
 

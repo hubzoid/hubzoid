@@ -79,6 +79,10 @@ class Notice(RunEvent):
 
 StreamItem = Union[str, RunEvent]
 
+# What a failed tool call says in chat. The error itself goes to the model and
+# the server log, never to the person (1.0.x showed the same sentence).
+TOOL_FAILED = "The tool did not complete. The agent may retry or ask for more information."
+
 
 def text_of(item: StreamItem) -> str:
     """The 1.0.x text rendering of one stream item."""

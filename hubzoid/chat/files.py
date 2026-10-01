@@ -34,7 +34,9 @@ from .history import RASTER_IMAGES
 # Multipart framing around the one file (boundaries, part headers, small fields).
 _MULTIPART_SLACK = 64 * 1024
 _NAME_MAX = 120
-_FORBIDDEN_CHARS = set('\\/:*?"<>|')
+# Reserved on some file systems, plus the brackets that frame the attachment
+# notes the agent reads ([Image: name], [User attached file: ...]).
+_FORBIDDEN_CHARS = set('\\/:*?"<>|[]')
 _ACTIVE_MARKERS = ("html", "xml", "javascript", "ecmascript", "svg")
 
 

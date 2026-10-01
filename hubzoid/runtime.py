@@ -348,7 +348,7 @@ class OpenAIAgentsRuntime:
                         call_id = _openai_call_id(item)
                         failed = _openai_tool_failed(item)
                         yield ToolResult(id=call_id, name=called.get(call_id, "tool"), ok=not failed,
-                                         message=_TOOL_FAILED if failed else None)
+                                         message=run_events.TOOL_FAILED if failed else None)
             # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.
@@ -482,10 +482,6 @@ class _Failure:
     def __init__(self, exc: BaseException):
         self.exc = exc
 
-
-# The short text a failed tool shows in the web app. The error itself goes to
-# the model and the server log, never to the chat.
-_TOOL_FAILED = "The tool did not complete. The agent may retry or ask for more information."
 
 # The Agents SDK turns a tool exception into this text for the model (its
 # default `failure_error_function`); that is how a failed call shows in the run.
