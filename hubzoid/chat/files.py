@@ -112,7 +112,7 @@ def stored_file(hub_dir: Path, conversation_id: str, file_id: str) -> Path | Non
         return None
     if uploads_lib.is_sidecar(file_id):
         return None
-    base = upload_dir(hub_dir, conversation_id)
+    base = memlib.chat_root(Path(hub_dir), conversation_id) / "uploads"   # never created here
     target = base / file_id
     try:
         resolved = target.resolve()

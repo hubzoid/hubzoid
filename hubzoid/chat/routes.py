@@ -123,6 +123,13 @@ def _message_parts(ctx: ChatContext, conv_id: str, message: dict) -> list[dict]:
     return parts
 
 
+def _search_text(parts: list[dict]) -> str:
+    """The plain text stored for search: the words, then attachment names."""
+    words = [p["text"] for p in parts if p.get("type") == "text"]
+    names = [p.get("name") or p.get("file_id") for p in parts if p.get("type") in ("file", "image")]
+    return "\n\n".join(words + ([" ".join(names)] if names else []))
+
+
 def _first_words(parts: list[dict]) -> str:
     text = " ".join(p["text"] for p in parts if p.get("type") == "text").strip()
     if text:
@@ -284,6 +291,11 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
                 raise error(404, "agent_not_found", "That agent is not served here.")
             if message is None or parent_id is not None:
                 raise error(400, "invalid_parent", "A new conversation starts with a message.")
+            # A message that will be refused must not leave an empty conversation.
+            await db(_message_parts, ctx, conv_id, message)
+            for mid in (message["id"], assistant_id):
+                if await db(store.get_message, mid) is not None:
+                    raise error(409, "id_conflict", "That message id is already in use.")
             try:
                 conv = await db(store.create_conversation, conv_id=conv_id, owner_id=user.id,
                                 owner_email=user.email, hub=ctx.hub, agent=agent)
@@ -354,6 +366,8 @@ async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str
     when this message set it, and the text to title from when a title is due."""
     store = ctx.store
     conv_id = conv["id"]
+    if await db(store.get_message, assistant_id) is not None:
+        raise error(409, "id_conflict", "That reply id is already in use.")
     if parent_id is not None:
         parent = await db(store.get_message, parent_id)
         if parent is None or parent["conversation_id"] != conv_id:
@@ -374,7 +388,7 @@ async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str
             user_id = existing["id"]
         else:
             parts = await db(_message_parts, ctx, conv_id, message)
-            text = "\n\n".join(p["text"] for p in parts if p.get("type") == "text")
+            text = _search_text(parts)
             try:
                 await db(store.insert_message, message_id=message["id"], conversation_id=conv_id,
                          parent_id=parent_id, role="user", content=parts, text=text)

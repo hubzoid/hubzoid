@@ -279,3 +279,26 @@ async def test_shutdown_stops_and_saves_replies(hub, monkeypatch):
         await runs.shutdown(timeout=5)
         await asyncio.wait_for(task, timeout=5)
     assert app.state.chat.store.get_message("m_asst00001")["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_idle_streams_send_keepalives_and_leaving_unsubscribes(monkeypatch):
+    from types import SimpleNamespace
+
+    from hubzoid.chat import runs as runs_mod
+    from hubzoid.chat.stream import MessageBuilder
+
+    monkeypatch.setattr(runs_mod, "KEEPALIVE_SECONDS", 0.05)
+    manager = runs_mod.RunManager(SimpleNamespace())
+    run = runs_mod.Run(message_id="m_idle00001", conversation_id="c_idle00001", owner_id="u",
+                       email="e", builder=MessageBuilder("m_idle00001", "c_idle00001"),
+                       loop=asyncio.get_running_loop(), started=0.0)
+    manager._publish(run, run.builder.start())
+    body = manager.sse(run)
+    first = await body.__anext__()
+    assert first.startswith(b'data: {"type":"start"')
+    assert await body.__anext__() == b'data: {"type":"start-step"}\n\n'
+    assert await body.__anext__() == b": keep-alive\n\n"
+    assert len(run.subscribers) == 1
+    await body.aclose()                     # the browser went away
+    assert not run.subscribers and run.status == "running"
