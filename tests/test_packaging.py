@@ -112,7 +112,7 @@ def test_the_core_install_keeps_open_webuis_release_lines():
     0.17 on every run), so each keeps the release line of Open WebUI's pin, and
     that pin is the floor."""
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
-    owui_pins = {"openai": "2.29.0", "mcp": "1.27.2", "aiohttp": "3.13.5", "tiktoken": "0.13",
+    owui_pins = {"openai": "2.29.0", "mcp": "1.27.2", "tiktoken": "0.13",
                  "fastapi": "0.136.3", "uvicorn": "0.51", "httpx": "0.28.1", "pydantic": "2.13.4",
                  "cryptography": "48", "pypdf": "6.7.5", "pillow": "12.2", "sqlalchemy": "2.0.50",
                  "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2"}
@@ -126,6 +126,9 @@ def test_the_core_install_keeps_open_webuis_release_lines():
         if name == "sqlalchemy":
             cap = "<2.1"
         assert cap in spec, (name, spec)
+    # aiohttp is the one exception: a cap below 3.14.2 forces litellm 1.95.0,
+    # which has no macOS wheels, so every Mac install would compile Rust.
+    assert "aiohttp" not in core
     # The reviewed lock agrees with the floors.
     pins = _pins("requirements.lock")
     assert pins["openai"] == "2.29.0" and pins["mcp"] == "1.27.2" and pins["aiohttp"] == "3.13.5"

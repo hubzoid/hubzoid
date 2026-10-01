@@ -9,9 +9,7 @@ aiofile==3.12.3
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.13.5
-    # via
-    #   hubzoid (pyproject.toml)
-    #   litellm
+    # via litellm
 aiosignal==1.4.0
     # via aiohttp
 alembic==1.18.4

@@ -18,7 +18,6 @@ aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.13.5
     # via
-    #   hubzoid (pyproject.toml)
     #   kubernetes
     #   litellm
     #   open-webui
