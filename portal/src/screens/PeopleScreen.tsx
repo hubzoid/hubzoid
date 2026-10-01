@@ -16,7 +16,17 @@ import {
   Typography,
 } from "antd";
 import { MoreHorizontal, RefreshCw, Search, UserPlus } from "lucide-react";
-import { ApiError, request, query, type Hub, type Me, type Overview, type Person } from "../api";
+import {
+  ApiError,
+  request,
+  query,
+  type Hub,
+  type Me,
+  type Overview,
+  type Person,
+  type SignInLink,
+  usesSignInLinks,
+} from "../api";
 import { errorText, useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { href, hrefWith, navigate, personHref, useHashQuery } from "../hooks/useRoute";
@@ -34,7 +44,7 @@ import {
   relativeTime,
 } from "../lib/format";
 import { orderCapabilities } from "./access/plan";
-import { AccountDrawer, OneTimePassword, PasswordField } from "./people/AccountDrawer";
+import { AccountDrawer, OneTimeLink, OneTimePassword, PasswordField } from "./people/AccountDrawer";
 import { passwordProblem } from "./people/password";
 
 const { Text, Title, Paragraph } = Typography;
@@ -415,6 +425,9 @@ function PersonDrawer({
   const [panel, setPanel] = useState<"" | "password" | "delete">("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState("");
+  // Hubzoid accounts: a reset gives a one-time link instead of a password.
+  const links = usesSignInLinks(me);
+  const [shownLink, setShownLink] = useState<SignInLink | null>(null);
   const [touched, setTouched] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -436,6 +449,7 @@ function PersonDrawer({
     setPanel("");
     setPassword("");
     setShown("");
+    setShownLink(null);
     setTyped("");
     navigate("/people");
   }
@@ -497,6 +511,25 @@ function PersonDrawer({
       setShown(password);
       setPassword("");
       setTouched(false);
+    }
+  }
+
+  /** Hubzoid accounts: the current password stops working, their sessions
+   *  end, and a one-time link lets them set a new one. */
+  async function resetWithLink() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<SignInLink>(path + "/password", {});
+      setShownLink(result);
+      message.success(`Password reset for ${name}. They were signed out everywhere.`);
+      info.reload();
+      data.reload();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -618,6 +651,7 @@ function PersonDrawer({
                             onClick={() => {
                               setPanel(panel === "password" ? "" : "password");
                               setShown("");
+                              setShownLink(null);
                             }}
                           >
                             Reset password
@@ -629,7 +663,34 @@ function PersonDrawer({
             ]}
           />
 
-          {panel === "password" && (
+          {panel === "password" && links && (
+            <div className="agent-access">
+              {shownLink ? (
+                shownLink.link ? (
+                  <OneTimeLink link={shownLink.link} expiresAt={shownLink.expires_at} />
+                ) : (
+                  <Alert type="warning" showIcon title="The sign-in link couldn’t be made. Try again." />
+                )
+              ) : (
+                <>
+                  <Paragraph style={{ margin: 0 }}>
+                    Their current password stops working and they are signed out everywhere. You get a one-time
+                    sign-in link to share with them, so they can set a new password.
+                  </Paragraph>
+                  <Space wrap>
+                    <Button type="primary" loading={busy} onClick={() => void resetWithLink()}>
+                      Reset and create sign-in link
+                    </Button>
+                    <Button disabled={busy} onClick={() => setPanel("")}>
+                      Cancel
+                    </Button>
+                  </Space>
+                </>
+              )}
+            </div>
+          )}
+
+          {panel === "password" && !links && (
             <div className="agent-access">
               {shown ? (
                 <OneTimePassword password={shown} />

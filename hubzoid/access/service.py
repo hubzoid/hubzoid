@@ -33,7 +33,10 @@ Rules (checked on every write, from the store, never from the caller):
     told, and is offered only when the chat app links Google sign-in to an
     existing account by email (`accounts.sign_in_options`). How an account was
     created is recorded (`sign_in:<email>` metadata) so the Console shows a
-    Google-only account's password as managed through Google.
+    Google-only account's password as managed through Google. In the default
+    (Hubzoid) mode the Console sets no password: a new account and a password
+    reset return a one-time sign-in link (`links_mode`), and a Google sign-in
+    only account has no password at all.
   * Creating an account and granting its initial access touch two systems
     that cannot commit together. The account is never deleted to fake a
     rollback: if access fails after the account exists, the result says so
@@ -172,6 +175,17 @@ def check_password(password: str | None) -> str:
     return password
 
 
+def check_hubzoid_password(password: str | None) -> str:
+    """Default mode's password rule (``hubzoid.auth.passwords``: 8 to 1024
+    characters, hashed with Argon2id). The message never repeats the password."""
+    from ..auth import passwords
+
+    try:
+        return passwords.check(password)
+    except passwords.PasswordRejected as exc:
+        raise Denied(422, "invalid_password", exc.message)
+
+
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -209,7 +223,8 @@ class AccessService:
                          "Access data is unavailable. Try again shortly.")
 
     def accounts(self):
-        """The account directory (Open WebUI admin API as the service account)."""
+        """The account directory: Hubzoid's own accounts in default mode, the
+        Open WebUI admin API as the service account in legacy mode."""
         if self._accounts_override is not None:
             return self._accounts_override
         from . import accounts as accountlib
@@ -218,6 +233,22 @@ class AccessService:
             return accountlib.for_deployment(self.hub_dir)
         except accountlib.AccountError as exc:
             raise Denied(exc.status, exc.code, exc.message)
+
+    def links_mode(self) -> bool:
+        """True when new accounts and password resets get a one-time sign-in
+        link instead of a password typed in the Console: the directory in use
+        says so (``HubzoidAccounts``, the default mode). Open WebUI's directory
+        (legacy mode) takes passwords."""
+        if self._accounts_override is not None:
+            return bool(getattr(self._accounts_override, "links", False))
+        from .. import appmode
+
+        if appmode.is_legacy(self.hub_dir):
+            return False
+        try:
+            return bool(getattr(self.accounts(), "links", False))
+        except Denied:
+            return False
 
     def _hubs(self) -> list[dict]:
         try:
@@ -489,8 +520,27 @@ class AccessService:
                            surface=actor.surface)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
+            if suspended:
+                self._end_sessions(subject)
             self._project_visibility()
         return changed
+
+    def _end_sessions(self, subject: str) -> None:
+        """Default mode: a blocked person's sessions end for good, so lifting
+        the block never brings an old sign-in (or a stolen cookie) back. Open
+        WebUI keeps its own sessions in legacy mode."""
+        from .. import appmode
+
+        if appmode.is_legacy(self.hub_dir):
+            return
+        try:
+            from ..auth import users
+
+            account = users.find_by_email(self.hub_dir, subject)
+            if account is not None:
+                users.store(self.hub_dir).revoke_sessions(account["id"])
+        except Exception:  # noqa: BLE001 — the block stands; a blocked session is refused anyway
+            log.warning("block: sessions could not be ended now; they are refused while blocked")
 
     def _project_visibility(self) -> None:
         """Mirror access to the chat app's agent picker now, not at the next
@@ -511,6 +561,19 @@ class AccessService:
     def refresh_accounts(self, actor: Actor) -> int:
         """Re-read the chat app's account directory (organization administrators)."""
         self.require_org_admin(actor)
+        if self.links_mode():
+            directory_rows = getattr(self.accounts(), "directory", None)
+            try:
+                rows = directory_rows() if callable(directory_rows) else []
+                self.store.reconcile_accounts(
+                    [dict(id=r["owui_id"], email=r["email"], name=r["display"], role=r["role"])
+                     for r in rows]
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("account directory refresh failed")
+                raise Denied(503, "accounts_unavailable",
+                             "Account refresh failed. Try again shortly.")
+            return len(rows)
         from .owui import directory
 
         try:
@@ -581,16 +644,33 @@ class AccessService:
 
         return accountlib.sign_in_options(self.hub_dir)
 
-    def _new_password(self, email: str, password: str | None, sign_in: str) -> str:
+    def _new_password(self, email: str, password: str | None, sign_in: str) -> str | None:
         """The password to create the account with, checked before anything is
-        created. Google sign-in only: a random one nobody is told."""
+        created. Google sign-in only: a random one nobody is told.
+
+        Default mode (``links_mode``): None unless the caller chose a password,
+        because the person sets their own through a one-time link; a Google
+        sign-in only account has no password at all."""
+        links = self.links_mode()
         if sign_in == "password":
+            if links:
+                return check_hubzoid_password(password) if password else None
             return check_password(password)
         if sign_in != "google":
             raise Denied(422, "invalid_sign_in", "Choose how they sign in.")
         if password:
             raise Denied(422, "invalid_request",
                          "An account that signs in with Google has no password to set.")
+        self._check_google(email)
+        if links:
+            return None
+        from .accounts import unusable_password
+
+        return unusable_password()
+
+    def _check_google(self, email: str) -> None:
+        """Google sign-in only is offered when Google attaches to an existing
+        account by email here, for the domains it accepts."""
         options = self.sign_in_options()
         if not options.get("google"):
             raise Denied(409, "google_unavailable",
@@ -601,9 +681,6 @@ class AccessService:
             allowed = ", ".join(d for d in domains if d) or "no domains"
             raise Denied(422, "google_domain",
                          f"Google sign-in here accepts only these domains: {allowed}.")
-        from .accounts import unusable_password
-
-        return unusable_password()
 
     def create_account(self, actor: Actor, *, email: str, name: str, password: str | None = None,
                        grants: list[tuple[str, str]], sign_in: str = "password",
@@ -616,21 +693,32 @@ class AccessService:
         in one store transaction. If that fails the account still exists: it is
         bound on its own when possible and the refusal says the account was
         created without access (`partial`), so a retry grants access to it
-        instead of creating it again."""
+        instead of creating it again.
+
+        Default mode (``links_mode``): a password account created without a
+        password comes with a one-time sign-in link, in the result as
+        ``link`` and ``expires_at`` (also on a `partial` refusal, since the
+        account exists). A Google sign-in only account has no password."""
         email = normalize(email)
         if not _EMAIL.match(email) or len(email) > 320:
             raise Denied(422, "invalid_email", "Enter a valid email address.")
         name = (name or "").strip()
         if not name or len(name) > 200:
             raise Denied(422, "invalid_name", "Enter the person's name.")
+        links = self.links_mode()
         secret = self._new_password(email, password, sign_in)
+        wants_link = links and sign_in == "password" and not secret
         by_hub = self._group_grants(grants)
         scope, replace = self._check_new_account(actor, email, by_hub)
         directory = self.accounts()
         from .accounts import AccountError
 
         try:
-            created = directory.create(email=email, name=name, password=secret, role="user")
+            if links:
+                created = directory.create(email=email, name=name, password=secret, role="user",
+                                           password_enabled=sign_in == "password")
+            else:
+                created = directory.create(email=email, name=name, password=secret, role="user")
         except AccountError as exc:
             if exc.code == "account_exists":
                 # Nothing is written: their account, password and access stay as they are.
@@ -663,17 +751,32 @@ class AccessService:
                 reason = "Access could not be saved."
             bound = self._bind_only(actor, email, created, name, replace=replace,
                                     request_id=request_id)
+            link = self._sign_in_link(directory, created, actor) if wants_link else {}
             raise Denied(
                 502, "partial",
                 f"The account for {email} was created, but access was not granted. {reason} "
                 "Try again to grant access; the account won't be created twice.",
-                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason),
+                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason,
+                           **link),
             )
         self._project_visibility()
+        link = self._sign_in_link(directory, created, actor) if wants_link else {}
         return dict(
             subject=email, owui_id=created["id"], name=name, role="user", sign_in=sign_in,
-            grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision,
+            grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision, **link,
         )
+
+    def _sign_in_link(self, directory, created: dict, actor: Actor) -> dict:
+        """The one-time link for a new account (default mode), or a note saying
+        it could not be made. The account exists either way; Reset password
+        makes a new link."""
+        try:
+            return directory.issue_link(created["id"], purpose="set_password",
+                                        created_by=actor.subject)
+        except Exception:  # noqa: BLE001 — never undo the account over the link
+            log.warning("account create: the sign-in link could not be made")
+            return dict(link=None, link_error="The account was created, but its sign-in link "
+                                              "could not be made. Use Reset password to make one.")
 
     def _bind_with_grants(self, actor: Actor, email: str, created: dict, name: str,
                           by_hub: dict[str, set[str]], *, replace: bool,
@@ -750,11 +853,15 @@ class AccessService:
         identity = gs.identity(email) or {}
         replace = False
         if identity.get("owui_id"):
-            if identity.get("pending"):
+            # Default mode: an identity still bound to an account that no longer
+            # exists (removed outside the Console, or never migrated) is the
+            # same case as an unavailable one.
+            gone = self.links_mode() and self._account_gone(identity["owui_id"])
+            if identity.get("pending") and not gone:
                 raise Denied(409, "account_exists",
                              "This person already signed up and is awaiting approval. "
                              "Approve the account instead.")
-            if not flags["account_unavailable"]:
+            if not flags["account_unavailable"] and not gone:
                 raise Denied(409, "account_exists", EXISTS_MSG, extra=dict(subject=email))
             if not scope.org_admin:
                 raise Denied(409, "account_replaced",
@@ -781,6 +888,15 @@ class AccessService:
             self._check_ops(actor, scope, email, hub, [("grant", p) for p in sorted(perms)],
                             new_account=True)
         return scope, replace
+
+    def _account_gone(self, account_id: str) -> bool:
+        """Whether the directory no longer has this account (default mode)."""
+        from .accounts import AccountError
+
+        try:
+            return self.accounts().get(account_id) is None
+        except (AccountError, Denied):
+            return False  # unknown: treat the binding as current (the safer refusal)
 
     def _record_sign_in(self, email: str, sign_in: str) -> None:
         """Remember how the Console created this account, so a Google-only
@@ -871,8 +987,11 @@ class AccessService:
         implicitly), and "pending" while the account awaits approval."""
         identity = self._account_target(actor, subject)
         account = self._live_account(self.accounts(), identity)
+        # Hubzoid's own directory says how the account signs in; for Open WebUI
+        # it is what the Console recorded when it created the account.
+        sign_in = account.get("sign_in") or self._sign_in_of(identity["subject"])
         return dict(subject=identity["subject"], name=account.get("name"),
-                    role=account.get("role"), sign_in=self._sign_in_of(identity["subject"]),
+                    role=account.get("role"), sign_in=sign_in,
                     **_role_view(self._console_admin(identity["subject"]), account.get("role")))
 
     def _console_admin(self, subject: str) -> bool:
@@ -887,17 +1006,46 @@ class AccessService:
             return None
         return value if value in ("password", "google") else None
 
-    def set_password(self, actor: Actor, subject: str, password: str) -> None:
+    def set_password(self, actor: Actor, subject: str, password: str | None = None) -> dict | None:
+        """Reset a person's password (organization administrators).
+
+        Legacy mode: set the password the administrator typed; returns None.
+
+        Default mode (``links_mode``): without a password, the current one stops
+        working, their sessions end, and the result is a one-time link for them
+        to set a new one, ``{"link", "expires_at"}``. With a password, it is set
+        and their sessions end; the result is ``{}``."""
         identity = self._account_target(actor, subject)
         if self._sign_in_of(identity["subject"]) == "google":
             raise Denied(409, "google_managed",
                          "This user signs in with Google, so their password is managed "
                          "through Google.")
+        if self.links_mode():
+            return self._reset_with_link(actor, identity, password)
         check_password(password)
         directory = self.accounts()
         self._live_account(directory, identity)
         self._directory_call(directory.update, identity["owui_id"], password=password)
         self._audit(actor, "account_password_reset", subject=identity["subject"], hub=ORG)
+        return None
+
+    def _reset_with_link(self, actor: Actor, identity: dict, password: str | None) -> dict:
+        if password:
+            check_hubzoid_password(password)
+        directory = self.accounts()
+        account = self._live_account(directory, identity)
+        if account.get("sign_in") == "google":
+            raise Denied(409, "google_managed",
+                         "This user signs in with Google, so their password is managed "
+                         "through Google.")
+        if password:
+            self._directory_call(directory.update, identity["owui_id"], password=password)
+            result: dict = {}
+        else:
+            result = self._directory_call(directory.reset_with_link, identity["owui_id"],
+                                          created_by=actor.subject)
+        self._audit(actor, "account_password_reset", subject=identity["subject"], hub=ORG)
+        return result
 
     def approve_account(self, actor: Actor, subject: str) -> None:
         identity = self._account_target(actor, subject)
@@ -1235,6 +1383,9 @@ class AccessService:
         if plan["kind"] == "access":
             view["current"] = sorted(
                 p for (s, h, p) in self.store.list_grants(row["hub"]) if s == plan["subject"])
+        elif self.links_mode():
+            # Default mode: confirming needs no password; the result is a link.
+            view["sign_in_link"] = True
         view["problem"] = None
         if row["status"] == "pending":
             try:
@@ -1264,7 +1415,12 @@ class AccessService:
                          "This request doesn't match what you reviewed. Reload it and review again.")
         plan = json.loads(row["plan"])
         if plan["kind"] == "account":
-            check_password(password)
+            if not self.links_mode():
+                check_password(password)
+            elif password:
+                # Default mode: the confirming administrator may set the
+                # password; without one the result carries a sign-in link.
+                check_hubzoid_password(password)
         gs = self.store
         with gs.engine.begin() as conn:
             claimed = conn.execute(
@@ -1277,12 +1433,15 @@ class AccessService:
         # Grants carry the surface the change was proposed from, and the request id.
         applier = Actor(subject=normalize(actor.subject), surface=row["surface"] or actor.surface,
                         via=actor.via)
+        link: dict = {}
         try:
             if plan["kind"] == "account":
                 outcome = self.create_account(
                     applier, email=plan["email"], name=plan["name"], password=password,
                     grants=[(plan["hub"], p) for p in plan["grant"]], request_id=row["id"])
                 result = dict(subject=outcome["subject"], grants=outcome["grants"])
+                # Shown once to the confirming administrator; never stored.
+                link = {k: outcome[k] for k in ("link", "expires_at", "link_error") if k in outcome}
             else:
                 revision = self.apply_access_change(
                     applier, plan["subject"], plan["hub"],
@@ -1302,7 +1461,7 @@ class AccessService:
                 raise
             raise Denied(503, "failed", message)
         self._finish(row, "confirmed", actor, _canonical(result), "change_confirmed")
-        return dict(id=row["id"], status="confirmed", result=result)
+        return dict(id=row["id"], status="confirmed", result=result, **link)
 
     def _unclaim(self, row: dict) -> None:
         with self.store.engine.begin() as conn:

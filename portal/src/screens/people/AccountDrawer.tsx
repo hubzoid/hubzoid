@@ -11,20 +11,22 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { Copy, KeyRound } from "lucide-react";
+import { Copy, KeyRound, Link2 } from "lucide-react";
 import {
   type ApiError,
   request,
-  type AccountCreated,
+  type AccountCreatedWithLink,
   type AccountGranted,
   type Hub,
   type Me,
   type SignIn,
   type SignInOptions,
+  shareableLink,
+  usesSignInLinks,
 } from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { MANAGE_ACCESS, USE_HUB, capabilityLabel, groupCapabilities, isGrantable } from "../../lib/format";
+import { MANAGE_ACCESS, USE_HUB, capabilityLabel, formatTime, groupCapabilities, isGrantable } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
 import { CapabilityGroup } from "../access/AccessParts";
 import { generatePassword, passwordProblem } from "./password";
@@ -97,6 +99,38 @@ export function OneTimePassword({ password }: { password: string }) {
   );
 }
 
+/** Shows a one-time sign-in link once, with Copy and when it expires. The
+ *  caller drops it when closing; the server keeps only a digest. */
+export function OneTimeLink({ link, expiresAt }: { link: string; expiresAt?: number }) {
+  const { message } = App.useApp();
+  const url = shareableLink(link);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      message.success("Sign-in link copied.");
+    } catch {
+      message.warning("Couldn’t copy. Select the link and copy it yourself.");
+    }
+  }
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor="one-time-link">
+        One-time sign-in link
+      </label>
+      <Space.Compact style={{ width: "100%" }}>
+        <Input id="one-time-link" readOnly value={url} className="identity" onFocus={(e) => e.target.select()} />
+        <Button icon={<Copy size={16} />} onClick={() => void copy()}>
+          Copy sign-in link
+        </Button>
+      </Space.Compact>
+      <Text type="secondary" className="field-help">
+        Share it with them directly. It works once{expiresAt ? `, until ${formatTime(expiresAt)}` : ""}, and lets them
+        set their own password. It won’t be shown again.
+      </Text>
+    </div>
+  );
+}
+
 /**
  * How a new user signs in: a password (typed or generated), or "Google
  * sign-in only" beside it. Google is offered only when the chat app attaches a
@@ -111,6 +145,7 @@ export function NewUserSignIn({
   onPassword,
   touched,
   id,
+  links,
 }: {
   signIn: SignIn;
   onSignIn: (v: SignIn) => void;
@@ -119,11 +154,13 @@ export function NewUserSignIn({
   onPassword: (v: string) => void;
   touched?: boolean;
   id: string;
+  /** Hubzoid accounts: they set their own password with a one-time link. */
+  links?: boolean;
 }) {
   const available = !!options?.google;
   const google = available && signIn === "google";
   const domains = options?.google_domains?.filter(Boolean) ?? [];
-  const problem = touched && !google ? passwordProblem(password) : null;
+  const problem = touched && !google && !links ? passwordProblem(password) : null;
   const choice = (
     <Checkbox
       checked={google}
@@ -142,7 +179,13 @@ export function NewUserSignIn({
         {available ? (
           choice
         ) : (
-          <Tooltip title="Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true.">
+          <Tooltip
+            title={
+              links
+                ? "Needs Google sign-in set up here, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
+                : "Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
+            }
+          >
             <span>{choice}</span>
           </Tooltip>
         )}
@@ -151,6 +194,11 @@ export function NewUserSignIn({
         <Text type="secondary" className="field-help">
           They sign in with Google using this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No
           password is set that anyone knows.
+        </Text>
+      ) : links ? (
+        <Text type="secondary" className="field-help" id={id}>
+          <Link2 size={14} style={{ verticalAlign: "-2px" }} /> They set their own password with a one-time sign-in
+          link. You copy the link after saving and share it with them.
         </Text>
       ) : (
         <>
@@ -184,10 +232,17 @@ export function SignInDetails({
   email,
   password,
   signIn,
+  link,
+  expiresAt,
+  linkError,
 }: {
   email: string;
   password: string;
   signIn: SignIn;
+  /** Hubzoid accounts: the one-time link to set their password. */
+  link?: string | null;
+  expiresAt?: number;
+  linkError?: string;
 }) {
   const { message } = App.useApp();
   const chat = `${window.location.origin}/`;
@@ -197,6 +252,25 @@ export function SignInDetails({
         They sign in at <Text className="identity">{chat}</Text> with Google as{" "}
         <Text className="identity">{email}</Text>. There is no password to share.
       </Paragraph>
+    );
+  if (link || linkError || (!password && link !== undefined))
+    return (
+      <>
+        <Paragraph style={{ margin: 0 }}>
+          They open the link, set a password and are signed in. Afterwards they sign in at{" "}
+          <Text className="identity">{chat}</Text> as <Text className="identity">{email}</Text>.
+        </Paragraph>
+        {link ? (
+          <OneTimeLink link={link} expiresAt={expiresAt} />
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            title="The sign-in link couldn’t be made"
+            description={linkError || "Open their details and use Reset password to make a new link."}
+          />
+        )}
+      </>
     );
   async function copyAll() {
     try {
@@ -253,13 +327,15 @@ export function AccountDrawer({
   const [failure, setFailure] = useState<ApiError | null>(null);
   // A retry of "grant access" that failed, shown under the outcome it retried.
   const [retryError, setRetryError] = useState<ApiError | null>(null);
-  const [created, setCreated] = useState<AccountCreated | null>(null);
+  const [created, setCreated] = useState<AccountCreatedWithLink | null>(null);
   // The previous attempt's outcome was unknown: a duplicate now may be that attempt.
   const [afterUncertain, setAfterUncertain] = useState(false);
 
   const grantable = me.grantable ?? {};
   const options = me.sign_in;
   const google = signIn === "google" && !!options?.google;
+  // Hubzoid accounts: no password is set here; they get a one-time link.
+  const links = usesSignInLinks(me);
   // Agents this viewer manages, in the Console's order. Legacy agents are
   // listed but take no grants here: their access is still in the chat app.
   const managed = hubs.filter((h) => h.key in grantable);
@@ -276,7 +352,7 @@ export function AccountDrawer({
     [selected],
   );
   const needsGrant = !me.org_admin && grants.length === 0;
-  const invalid = !!(emailIssue || nameProblem || (!google && passwordProblem(password)) || needsGrant);
+  const invalid = !!(emailIssue || nameProblem || (!google && !links && passwordProblem(password)) || needsGrant);
   // Unsaved input exists only before saving; after a result there is nothing to lose.
   const dirty =
     (step === "edit" || step === "review") && (!!email || !!name || !!password || grants.length > 0);
@@ -327,11 +403,11 @@ export function AccountDrawer({
     setBusy(true);
     setRetryError(null);
     try {
-      const result = await request<AccountCreated>("/accounts", {
+      const result = await request<AccountCreatedWithLink>("/accounts", {
         email: subject,
         name: name.trim(),
         sign_in: google ? "google" : "password",
-        ...(google ? {} : { password }),
+        ...(google || links ? {} : { password }),
         grants,
       });
       setCreated(result);
@@ -359,8 +435,15 @@ export function AccountDrawer({
     setRetryError(null);
     try {
       const result = await request<AccountGranted>("/accounts/grant", { email: subject, grants });
-      // The account was made here, with the password still on screen.
-      setCreated({ ok: true, subject, name: name.trim(), grants: result.grants, sign_in: google ? "google" : "password" });
+      // The account was made here, with the password (or its link) still on screen.
+      setCreated({
+        ok: true,
+        subject,
+        name: name.trim(),
+        grants: result.grants,
+        sign_in: google ? "google" : "password",
+        ...partialLink(failure),
+      });
       setStep("done");
     } catch (e) {
       const err = asApiError(e);
@@ -516,6 +599,7 @@ export function AccountDrawer({
               password={password}
               onPassword={setPassword}
               touched={touched}
+              links={links}
             />
 
             <div className="section">
@@ -647,7 +731,9 @@ export function AccountDrawer({
                 <li>
                   {google
                     ? "Normal user role, signs in with Google using this email"
-                    : "Normal user role, signs in with this email and the password you set"}
+                    : links
+                      ? "Normal user role, sets their own password with a one-time sign-in link"
+                      : "Normal user role, signs in with this email and the password you set"}
                 </li>
               </ul>
             </div>
@@ -674,8 +760,16 @@ export function AccountDrawer({
               <Alert
                 type="info"
                 showIcon
-                title="The password is shown once after the account is created"
-                description="Copy it then and share it with them directly."
+                title={
+                  links
+                    ? "The sign-in link is shown once after the account is created"
+                    : "The password is shown once after the account is created"
+                }
+                description={
+                  links
+                    ? "Copy it then and share it with them directly. It works once and expires after 72 hours."
+                    : "Copy it then and share it with them directly."
+                }
               />
             )}
           </div>
@@ -689,7 +783,12 @@ export function AccountDrawer({
               title={`${created.name} can now sign in as ${created.subject}`}
               description={accessLine(created.grants)}
             />
-            <SignInDetails email={created.subject} password={password} signIn={created.sign_in ?? signIn} />
+            <SignInDetails
+              email={created.subject}
+              password={password}
+              signIn={created.sign_in ?? signIn}
+              {...linkProps(created, links)}
+            />
             <a href={personHref(created.subject)} onClick={finish}>
               Open their details
             </a>
@@ -704,7 +803,7 @@ export function AccountDrawer({
               title="This user already exists"
               description="Nothing was changed. Edit their access from their details."
             />
-            {afterUncertain && !google && (
+            {afterUncertain && !google && !links && (
               <>
                 <Paragraph style={{ margin: 0 }}>
                   It may be the account your earlier attempt created. If so, it signs in with the password you set:
@@ -712,13 +811,24 @@ export function AccountDrawer({
                 <OneTimePassword password={password} />
               </>
             )}
+            {afterUncertain && !google && links && (
+              <Paragraph style={{ margin: 0 }}>
+                It may be the account your earlier attempt created. Open their details and use Reset password to
+                make a sign-in link for them.
+              </Paragraph>
+            )}
           </>
         )}
 
         {step === "partial" && failure && (
           <>
             <Alert type="warning" showIcon title="The account was created, but access wasn’t granted" description={partialDetail(failure)} />
-            <SignInDetails email={subject} password={password} signIn={google ? "google" : "password"} />
+            <SignInDetails
+              email={subject}
+              password={password}
+              signIn={google ? "google" : "password"}
+              {...linkProps(partialLink(failure), links)}
+            />
           </>
         )}
 
@@ -734,4 +844,23 @@ export function AccountDrawer({
       </div>
     </Drawer>
   );
+}
+
+/** The one-time link a partial create still made (the account exists). */
+function partialLink(failure: ApiError | null) {
+  const data = failure?.data ?? {};
+  return {
+    ...(typeof data.link === "string" || data.link === null ? { link: data.link as string | null } : {}),
+    ...(typeof data.expires_at === "number" ? { expires_at: data.expires_at } : {}),
+    ...(typeof data.link_error === "string" ? { link_error: data.link_error } : {}),
+  };
+}
+
+/** SignInDetails props for a created account in link mode. */
+function linkProps(
+  result: { link?: string | null; expires_at?: number; link_error?: string },
+  links: boolean,
+) {
+  if (!links) return {};
+  return { link: result.link ?? null, expiresAt: result.expires_at, linkError: result.link_error };
 }

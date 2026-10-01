@@ -112,6 +112,8 @@ def _clean_mcp_env(monkeypatch):
     monkeypatch.delenv("MCP_SERVER", raising=False)
     monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
     monkeypatch.setenv("MCP_PUBLIC_URL", "https://hub.example/mcp")
+    # MCP OAuth grants here belong to Open WebUI accounts: the legacy UI mode.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @pytest.fixture

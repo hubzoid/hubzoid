@@ -1,4 +1,9 @@
-"""Small member-facing consent and connection pages; login stays in Open WebUI."""
+"""Small member-facing consent and connection pages.
+
+Who is signed in comes from ``access.session.verified_email``: the Hubzoid
+session in the default mode (the local owner when sign-in is off), the Open
+WebUI session in the legacy mode. Signing in happens on the web app's
+``/auth`` page (Open WebUI's in legacy mode), which returns here afterwards."""
 
 from __future__ import annotations
 
@@ -13,6 +18,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, PlainTextRespons
 from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 
+from . import appmode
 from .access import session
 from .mcp_oauth_store import digest
 
@@ -44,7 +50,7 @@ def browser_routes(provider):
         return account(provider.hub_dir, email=email) if email else None
 
     def login(path):
-        # Fixed local return URL; no client-supplied redirect becomes an OWUI target.
+        # Fixed local return URL; no client-supplied redirect becomes a sign-in target.
         return RedirectResponse(
             "/auth?redirect=" + quote(path, safe=""), status_code=303, headers=HEADERS
         )
@@ -125,9 +131,10 @@ def browser_routes(provider):
             ),
         }
         if request.method == "GET":
+            through = " through Open WebUI" if appmode.is_legacy(provider.hub_dir) else ""
             csrf = csrf_form(who, "consent:" + ticket)
             body = f"""<p><strong>{escape(client.client_name or 'MCP assistant')}</strong> wants to connect to <strong>{escape(provider.hub_dir.name)}</strong>.</p>
-<p>Signed in as <strong>{escape(who['email'])}</strong> through Open WebUI.</p><p>This allows the assistant to read hub context and run tools, including actions, using your current hub permissions. It cannot grant itself additional permissions.</p>
+<p>Signed in as <strong>{escape(who['email'])}</strong>{through}.</p><p>This allows the assistant to read hub context and run tools, including actions, using your current hub permissions. It cannot grant itself additional permissions.</p>
 <p><small>The application name is supplied by the client and is not verified. Continue only if you started this connection.</small></p><p>Return address: <code>{escape(str(params['redirect_uri']))}</code></p><p>Connection lasts up to 30 days. You can revoke it at any time.</p>
 <form method="post"><input type="hidden" name="csrf" value="{csrf}"><button name="decision" value="allow">Allow connection</button><button class="secondary" name="decision" value="deny">Cancel</button></form>"""
             response = page("Connect your assistant", body)

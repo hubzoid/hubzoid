@@ -36,6 +36,12 @@ from tests.test_access_service import (  # noqa: F401 — shared fixture and hel
 PASSWORD = "Correct-Horse-7-battery"
 
 
+@pytest.fixture(autouse=True)
+def _open_webui_mode(monkeypatch):
+    """These tests cover Open WebUI accounts: the legacy UI mode (HUBZOID_UI=openwebui)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 def _adapter(fake):
     return OwuiAccounts("http://owui.internal", SERVICE, "svc-secret",
                         transport=httpx.MockTransport(fake))

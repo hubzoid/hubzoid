@@ -31,6 +31,9 @@ def setup(tmp_path, monkeypatch):
     db = tmp_path / "owui.db"
     _mk_owui_db(db)
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    # Open WebUI accounts: the legacy UI mode (test_auth_session_dispatch
+    # covers MCP consent on Hubzoid accounts).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     monkeypatch.setenv("MCP_SERVER", "true")
     monkeypatch.delenv("MCP_AUTH_MODE", raising=False)
     monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
