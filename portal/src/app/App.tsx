@@ -13,7 +13,8 @@ import { navigate, parseRoute, signInHref, useLocation, type Route } from "./lib
 import { applyTheme, useTheme } from "./lib/theme";
 import type { AgentsResponse, Branding, Conversation, Session, SessionUser } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
-import { LiveRegion, Toaster } from "./components/toast";
+import { announce, LiveRegion, Toaster } from "./components/toast";
+import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { Button, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
 
 applyTheme();
@@ -150,6 +151,14 @@ export default function App() {
     navigate(agentId ? `/?agent=${encodeURIComponent(agentId)}` : "/");
   }, []);
 
+  // Screen readers hear the new page's name after an in-app navigation.
+  const [firstPath] = useState(location.path);
+  useEffect(() => {
+    if (location.path === firstPath) return;
+    const timer = setTimeout(() => announce(document.title.split(" · ")[0]), 350);
+    return () => clearTimeout(timer);
+  }, [location.path, firstPath]);
+
   // Ctrl+Shift+O (Cmd+Shift+O on a Mac) starts a new chat, as in other chat apps.
   useEffect(() => {
     if (!authenticated) return;
@@ -221,7 +230,7 @@ export default function App() {
   const wrap = (node: ReactNode) => (
     <AppContext.Provider value={value}>
       <TooltipProvider delayDuration={400}>
-        {node}
+        <PageErrorBoundary resetKey={location.path}>{node}</PageErrorBoundary>
         <Toaster />
         <LiveRegion />
       </TooltipProvider>
@@ -277,7 +286,9 @@ export default function App() {
       <div className="flex h-dvh w-full overflow-hidden bg-bg text-ink">
         <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
-          <Suspense fallback={<PageSpinner />}>{page}</Suspense>
+          <PageErrorBoundary resetKey={location.href}>
+            <Suspense fallback={<PageSpinner />}>{page}</Suspense>
+          </PageErrorBoundary>
         </main>
       </div>
     </>,

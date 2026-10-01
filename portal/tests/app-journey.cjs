@@ -742,6 +742,21 @@ function chartPng(width = 160, height = 100) {
       await lastAssistant().getByText("The agent is unavailable right now. Try again in a minute.", { exact: false }).waitFor();
       await fetch(`${BASE}/__fixture/flag/chat_fail/false`);
 
+      step("A page that fails to load (say, after an update) offers Reload instead of a blank screen");
+      const before = errors.length;
+      await page.goto(`${BASE}/`);
+      await settled();
+      await context.route(/\/assets\/ConnectionsPage-[^/]+\.js$/, (route) => route.abort("failed"));
+      await page.getByRole("button", { name: /^Account menu/ }).click();
+      await page.getByRole("menuitem", { name: "Connections" }).click();
+      await page.getByRole("heading", { name: "This page stopped working" }).waitFor();
+      await page.getByRole("navigation", { name: "Conversations" }).waitFor();
+      await shot(page, "app-23b-page-error");
+      await context.unroute(/\/assets\/ConnectionsPage-[^/]+\.js$/);
+      await page.getByRole("button", { name: "Reload" }).click();
+      await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
+      errors.splice(before); // the failed chunk is logged on purpose
+
       step("Someone with no agents is told how to get access");
       await fetch(`${BASE}/__fixture/flag/no_agents/true`);
       await page.goto(`${BASE}/`);
