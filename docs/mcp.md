@@ -86,7 +86,101 @@ credentials in the process list. Limits:
 - A secret written into a stdio server's `args` is still visible in that
   server's own process arguments. Pass secrets to stdio servers in `env`.
 
+## Personal connections (default UI mode)
+
+In the default UI mode (`HUBZOID_UI` unset or `hubzoid`) Hubzoid runs personal
+MCP connections itself: no Open WebUI and no `OWUI_NATIVE_MCP` switch. Each
+person connects their own account to a remote MCP server, and every chat turn
+and workflow run reaches that server as them. The legacy Open WebUI mode below
+is unchanged.
+
+### Register a server (organization administrators, in the Console)
+
+**Console, Connectors, Add connector**:
+
+- **Name** and **ID**. The ID is a short slug such as `gmail`. It is also the
+  capability `connector_<id>` and cannot be changed later.
+- **Server URL**: the MCP endpoint. HTTPS is required. Plain HTTP is accepted
+  only on this computer (`localhost`, `127.0.0.1`, `::1`) for development.
+- **Sign-in**: *Each person signs in (OAuth)*, or *No sign-in* for a server
+  that needs no account (people still turn it on for themselves).
+- Optional: a **client ID** and **client secret** registered with the provider
+  in advance, **scopes**, and **allowed tools**.
+
+**Test** reads the server's metadata and changes nothing. It shows the
+authorization server, whether Hubzoid can register itself, and the redirect URI
+to register with a provider that needs a client created in advance:
+`<public origin>/oauth/connectors/<id>/callback`.
+
+Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
+whenever people reach Hubzoid at an address other than this computer. Redirect
+URIs are built only on a configured address or on localhost, never on the Host
+a request happens to carry. With sign-in off, the connection routes answer only
+requests addressed to this computer unless a public address is configured.
+
+Changing a connector's URL or sign-in method removes everyone's connection to
+it, so a token is never sent to a server other than the one that issued it.
+Removing a connector removes the connections too. Grants of its capability stay
+listed as no longer available until you remove them.
+
+### Connect (each person)
+
+From the web app's connections page, or from a link the agent sends with the
+connection journey (below). The HTTP API behind it:
+
+| Call | Result |
+|---|---|
+| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed` |
+| `POST /api/connections/<id>/connect` | `{authorize_url}`; the browser goes there |
+| `DELETE /api/connections/<id>` | revokes at the provider when it can, then removes the connection |
+
+After the provider's consent page the browser returns to
+`/oauth/connectors/<id>/callback`, which sends it on to the page the connect
+call named (`return_to`) or to `/account/connections?connected=<id>`. A
+failure goes to the same place with `?error=<code>`.
+
+### How it works
+
+- **Discovery**: the server's 401 challenge and RFC 9728 protected resource
+  metadata, then RFC 8414 (or OpenID) authorization server metadata, with the
+  issuer checked against where it was found.
+- **Client**: the pre-registered one, else Hubzoid registers itself (RFC 7591)
+  once per redirect URI and reuses that client for everyone.
+- **Authorization**: PKCE S256, the RFC 8707 `resource` indicator when the
+  server publishes resource metadata, and RFC 9207 `iss` checked. The request
+  is bound to the signed-in account, single use, and valid for 10 minutes.
+  Only a digest of its `state` is stored.
+- **Tokens** are encrypted with the deployment key (`HUBZOID_SECRET_KEY` or the
+  key file, see `hubzoid/secretbox.py`). They are refreshed 60 seconds before
+  they expire, one refresh per connection at a time across every process of
+  the deployment, so a rotating refresh token is never spent twice. A refresh
+  the provider refuses marks the connection **expired** and the person
+  reconnects. A provider that cannot be reached marks it **error** and the next
+  turn tries again.
+- **Per turn**, the same rules as the legacy mode: restricted surfaces only,
+  `connector_<id>` on a managed hub, the allowed tools, never a server that
+  would replace a hub MCP server. In Claude the tools are named
+  `mcp__my_<id>__<tool>`.
+
+### Limits
+
+- A provider that offers neither dynamic client registration nor a client
+  registered in advance with `client_secret_basic`, `client_secret_post` or no
+  secret (PKCE) cannot be connected. `private_key_jwt` is not supported.
+- A server that publishes no OAuth authorization server metadata cannot be
+  connected with OAuth.
+- An access token without an expiry is not checked between turns. If the
+  provider revokes it, the person reconnects.
+- The registered server names its own authorization server. Hubzoid refuses
+  endpoints on this computer or at link-local, unspecified, multicast or
+  reserved addresses, but does not resolve names, so register only servers you
+  trust (an internal identity provider on a private network is fine).
+- Provider-specific authorization parameters (for example Google's
+  `access_type=offline`) cannot be configured yet.
+
 ## Per-user MCP via Open WebUI (native OAuth)
+
+Legacy Open WebUI mode only (`HUBZOID_UI=openwebui`).
 
 The `.mcp.json` connectors above are hub-wide: one credential shared by every
 user. For tools where each user must act as **themselves** (their own Jira,
@@ -219,10 +313,15 @@ example "connect my Gmail") in web chat or WhatsApp. The agent sends a
 personal link. The person approves access in the browser, a Hubzoid page shows
 the verified result, and WhatsApp gets a confirmation.
 
-The journey uses Open WebUI native MCP only: an app is connectable when an
-OAuth 2.1 MCP server is registered for it in OWUI. The optional Composio
-integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is unchanged and is not part of
-the journey.
+In the default UI mode an app is connectable when a switched-on connector has
+that ID (see [personal connections](#personal-connections-default-ui-mode)):
+the link page uses the Hubzoid sign-in, **Continue** starts Hubzoid's own
+authorization, and the provider returns straight to the done page. A refused
+authorization ends the journey as not connected at once. In the legacy mode the
+journey uses Open WebUI native MCP, as described in the rest of this section:
+an app is connectable when an OAuth 2.1 MCP server is registered for it in
+OWUI. The optional Composio integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is
+unchanged and is not part of the journey.
 
 ### Turn it on
 
