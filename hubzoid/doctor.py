@@ -532,6 +532,19 @@ def _scheduler(hub: Path, engine) -> Check | None:
     return Check("scheduler.health", "ok", "Scheduled work is not held or paused", detail)
 
 
+def _legacy_management_flag() -> Check | None:
+    """`HUBZOID_MANAGEMENT_TOOLS=true` still gives every manager the access tools
+    without the `access_tools` grant (1.0.x behaviour, this release only)."""
+    from .settings import truthy
+
+    if not truthy(os.environ.get("HUBZOID_MANAGEMENT_TOOLS")):
+        return None
+    return Check("tools.legacy_management_flag", "warn",
+                 "HUBZOID_MANAGEMENT_TOOLS=true gives every manager the access tools without a "
+                 "grant. It is deprecated: grant \"Manage access from chat\" (access_tools) in "
+                 "the Console to the managers who use them, then remove the setting.")
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -557,6 +570,9 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if google:
             checks.append(google)
         checks.append(_exposure())
+        legacy = _legacy_management_flag()
+        if legacy:
+            checks.append(legacy)
         try:
             checks.append(_model(hub))
         except Exception as exc:  # noqa: BLE001

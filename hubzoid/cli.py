@@ -2275,7 +2275,9 @@ def schedule_run(
             if match:
                 console.print(f"[cyan]→ running workflow {match}[/cyan]")
                 try:
-                    result = _wf.run_now(match)
+                    handle = _wf.start(match)
+                    _audit_cli_start(hub, match, handle.get_workflow_id())
+                    result = handle.get_result()
                 except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
                     console.print(f"[red]✗ workflow {match} failed: {type(run_exc).__name__}: {run_exc}[/red]")
                     console.print("[dim]The failed run is in `hubzoid schedule status` and the Console's Runs page.[/dim]")
@@ -2341,6 +2343,7 @@ def schedule_run(
         _wf.launch()
         handle = _md.enqueue_task(task.name, "manual-" + _dt.now().strftime("%Y%m%dT%H%M%S"),
                                   overrides=overrides)
+        _audit_cli_start(hub, f"md:{task.name}", handle.get_workflow_id())
         try:
             outcome = handle.get_result()
         except Exception as exc:  # noqa: BLE001 — the run failed; report it
@@ -2359,6 +2362,20 @@ def schedule_run(
         raise typer.Exit(1)
 
 
+def _audit_cli_start(hub: Path, name: str, run_id: str) -> None:
+    """Record a manual run in the access audit (`run_start`, surface `cli`), as
+    the agent tools do. A failed write is logged; the run goes ahead."""
+    import logging
+
+    try:
+        from .access import store_for
+
+        store_for(hub).audit_run_control(hub.name, "run_start", name, actor=_operator(),
+                                         surface="cli", subject=run_id)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("hubzoid.cli").exception("could not audit the manual run of %s", name)
+
+
 def _operator() -> str:
     """Who ran a control command: the server account, recorded in the audit.
     Run controls act with the authority of whoever can run commands here."""
@@ -2368,23 +2385,22 @@ def _operator() -> str:
     return f"cli:{getpass.getuser()}@{socket.gethostname()}"
 
 
+def _no_such_target(hub: Path, name: str) -> None:
+    """Say the name matches nothing here and exit 2 (never returns)."""
+    shown = name[3:] if name.startswith("md:") else name
+    console.print(f"[red]no task or workflow {shown!r} under {hub}[/red]")
+    raise typer.Exit(2)
+
+
 def _schedule_target(hub: Path, name: str) -> str:
     """Resolve a task or workflow name to its stored form (`md:<task>` for a
     markdown task, the function name for a code workflow)."""
-    from . import scheduling as sch
-    from .workflows.observe import definitions
+    from .workflows import control
 
-    if name.startswith("md:"):
-        name = name[3:]
-    tasks, _ = sch.load_tasks(hub)
-    if any(t.name == name for t in tasks):
-        return f"md:{name}"
-    want = name.replace("-", "_")
-    for w in definitions(hub):
-        if w["name"] in (name, want):
-            return w["name"]
-    console.print(f"[red]no task or workflow {name!r} under {hub}[/red]")
-    raise typer.Exit(2)
+    try:
+        return control.resolve(hub, name).name
+    except control.ControlError:
+        _no_such_target(hub, name)
 
 
 @schedule_app.command("pause")
@@ -2395,12 +2411,14 @@ def schedule_pause(
     """Stop scheduled runs of one task or workflow until resumed. Runs already
     queued or running are not stopped (use `cancel`); manual runs still work.
     Recorded in the access audit."""
-    from .access import store_for
+    from .workflows import control
 
     hub = hub.resolve()
-    target = _schedule_target(hub, name)
-    store_for(hub).set_workflow_paused(hub.name, target, True, actor=_operator())
-    console.print(f"[yellow]paused[/yellow] {target} in {hub.name}. "
+    try:
+        done = control.set_paused(hub, name, True, actor=_operator(), surface="cli")
+    except control.ControlError:
+        _no_such_target(hub, name)
+    console.print(f"[yellow]paused[/yellow] {done['workflow']} in {hub.name}. "
                   f"Resume with: hubzoid schedule resume {hub} {name}")
 
 
@@ -2411,12 +2429,14 @@ def schedule_resume(
 ) -> None:
     """Resume scheduled runs. A markdown task that became due while paused runs
     once (the same catch-up as after downtime); code workflows don't back-fill."""
-    from .access import store_for
+    from .workflows import control
 
     hub = hub.resolve()
-    target = _schedule_target(hub, name)
-    store_for(hub).set_workflow_paused(hub.name, target, False, actor=_operator())
-    console.print(f"[green]resumed[/green] {target} in {hub.name}")
+    try:
+        done = control.set_paused(hub, name, False, actor=_operator(), surface="cli")
+    except control.ControlError:
+        _no_such_target(hub, name)
+    console.print(f"[green]resumed[/green] {done['workflow']} in {hub.name}")
 
 
 @schedule_app.command("cancel")
@@ -2427,24 +2447,18 @@ def schedule_cancel(
     """Cancel a queued or running run. Best effort: a run stops at its next
     step boundary, and work already done (a sent message, a git push, a script's
     effects) is not undone. Recorded in the access audit."""
-    from dbos import DBOSClient
-
-    from . import db
-    from .access import store_for
-    from .workflows.runtime import _app_name
+    from .workflows import control
 
     hub = hub.resolve()
-    client = DBOSClient(system_database_url=db.dbos_url(hub),
-                        application_name=_app_name(hub.name))
     try:
-        status = client.retrieve_workflow(run_id).get_status()
-        if status.status not in ("PENDING", "ENQUEUED"):
-            console.print(f"[yellow]{run_id} is already {status.status}; nothing to cancel[/yellow]")
+        control.cancel(hub, run_id, actor=_operator(), surface="cli")
+    except control.ControlError as exc:
+        if exc.code == "finished":
+            console.print(f"[yellow]{run_id} is already {exc.status}; nothing to cancel[/yellow]")
             return
-        client.cancel_workflow(run_id)
-    finally:
-        client.destroy()
-    store_for(hub).audit_run_control(hub.name, "run_cancel", run_id, actor=_operator())
+        console.print(f"[red]no run {run_id!r} in {hub.name}. "
+                      f"List runs with: hubzoid schedule status {hub}[/red]")
+        raise typer.Exit(1)
     console.print(f"[yellow]cancel requested[/yellow] for {run_id} (stops at its next step)")
 
 

@@ -209,6 +209,53 @@ def test_tools_list_hides_restricted_for_nonmember(tmp_path, monkeypatch):
     assert "read_knowledge" in names
 
 
+def _with_gated_builtin(monkeypatch, permission):
+    """A built-in tool wrapped by the access guard (like the capability tools)."""
+    from agents.tool import FunctionTool
+
+    from hubzoid import tools as toolpkg
+    from hubzoid.access.guard import guard_tool
+
+    real = toolpkg.make_all
+
+    def make_all(ctx):
+        out = real(ctx)
+
+        async def run(_ctx, _raw):
+            return "gated ran"
+
+        ft = FunctionTool(name="gated_builtin", description="A gated built-in.",
+                          params_json_schema={"type": "object", "properties": {},
+                                              "additionalProperties": True},
+                          on_invoke_tool=run, strict_json_schema=False)
+        out["gated_builtin"] = guard_tool(ft, permission, ctx.hub_dir)
+        return out
+
+    monkeypatch.setattr(toolpkg, "make_all", make_all)
+
+
+def test_tools_list_hides_gated_builtin_without_the_grant(tmp_path, monkeypatch):
+    hub = _mk_hub(tmp_path)
+    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # no groups
+    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    _with_gated_builtin(monkeypatch, "clickup")
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
+    assert "gated_builtin" not in names
+    assert "read_knowledge" in names
+
+
+def test_tools_list_shows_gated_builtin_to_holders(hub, monkeypatch):
+    _with_gated_builtin(monkeypatch, "clickup")  # alice is in the clickup group
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
+    assert "gated_builtin" in names
+
+
 def test_tools_call_reads_knowledge(mcp_app):
     result = _result(_call(
         mcp_app, _rpc("tools/call", {"name": "read_knowledge", "arguments": {"name": "widgets"}})

@@ -224,7 +224,7 @@ organization-wide `manage_access`.
 
 ### Change requests
 
-Proposed by the agent tools (`HUBZOID_MANAGEMENT_TOOLS`). Only the proposer can
+Proposed by the agent's access tools (the `access_tools` capability). Only the proposer can
 read, confirm or reject one. Anyone else gets 404.
 
 | Method and path | Body | Notes |

@@ -62,6 +62,7 @@ function createFixture() {
     catalogs: {
       finance: [
         perm("curator", "Save shared knowledge", "Use remember to create or replace shared agent knowledge."),
+        ...agentTools(),
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
         perm("ledger", "Read ledger", "View accounting entries and balances."),
@@ -71,6 +72,8 @@ function createFixture() {
       support: [
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
+        // Workflow tools switched off for this agent (HUBZOID_WORKFLOW_TOOLS=false).
+        ...agentTools({ status: "Disabled for this hub", available: false }),
         perm("tickets", "Work tickets", "Read and update helpdesk tickets."),
         perm("refunds", "Issue refunds", "Refund customer payments.", true),
       ],
@@ -130,6 +133,8 @@ function createFixture() {
     audit: [
       row(NOW - 2 * HOUR, "aisha.rahman@example.org", "grant", "priya.natarajan@example.org", "finance", "ledger"),
       row(NOW - 2 * HOUR + 1, "aisha.rahman@example.org", "grant", "priya.natarajan@example.org", "finance", USE_HUB),
+      // A run started with an agent tool: the workflow in permission, the run id as subject.
+      row(NOW - 3 * HOUR, "aisha.rahman@example.org", "run_start", "mc-2026-10-01", "finance", "monthly_close", "mcp"),
       row(NOW - 5 * HOUR, "admin@example.org", "suspend", "tomas.herrera@example.org", ORG, null),
       row(NOW - 26 * HOUR, "admin@example.org", "grant", EVERYONE, "support", USE_HUB),
       row(NOW - 3 * 24 * HOUR, "bootstrap", "grant", "admin@example.org", ORG, MANAGE_ACCESS),
@@ -877,9 +882,27 @@ function perm(permission, label, description, sensitive = false, extra = {}) {
   const group =
     permission === USE_HUB ? "hub" : permission === MANAGE_ACCESS ? "admin" : permission === "curator" ? "tools" : "restricted";
   return {
-    permission, label, description, sensitive, group, surfaces: [], status: "", available: true,
+    permission, label, description, sensitive, group, section: "", surfaces: [], status: "", available: true,
     default: "grant", delegate_grantable: permission !== MANAGE_ACCESS, obsolete: false, ...extra,
   };
+}
+// The agent tools in Hubzoid tools, in the server's order (unsectioned rows,
+// then the Workflows section, then Access control; by id inside each).
+// `workflows` overrides the workflow rows, e.g. a hub with the family off.
+function agentTools(workflows = {}) {
+  const tools = { group: "tools", surfaces: ["chat", "mcp"] };
+  return [
+    // Registration order inside a section (capabilities.catalog), not the id.
+    perm("workflows_view", "See workflows and runs",
+      "List this agent's workflows and schedules and check recent runs.",
+      false, { ...tools, section: "workflows", ...workflows }),
+    perm("workflows_manage", "Run and control workflows",
+      "Start a workflow now, pause or resume its schedule, and cancel a run. Runs act as the workflow's own account.",
+      true, { ...tools, section: "workflows", ...workflows }),
+    perm("access_tools", "Manage access from chat",
+      "See and propose access changes in the agents this person manages. Has an effect only for people who manage access. Every change is confirmed in the Console.",
+      true, { ...tools, section: "access", delegate_grantable: false }),
+  ];
 }
 // A granted id that is no longer in the catalogue (capabilities._obsolete).
 function obsoletePerm(permission) {
@@ -889,8 +912,8 @@ function obsoletePerm(permission) {
 }
 // Grantable: current and not included with Use this agent (service._grantable).
 const grantable = (p) => !!p && !p.obsolete && p.default !== "included";
-function row(ts, actor, action, subject, hub, permission) {
-  return { ts, actor, action, subject, hub, permission };
+function row(ts, actor, action, subject, hub, permission, surface = null) {
+  return { ts, actor, action, subject, hub, permission, surface };
 }
 function wf(hub, name, schedule, timezone) {
   return { hub, name, schedule, timezone, error: null, source: `workflows/${name}/main.py` };

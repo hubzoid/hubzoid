@@ -536,6 +536,24 @@ function step(name) {
     await tools.focus();
     await page.keyboard.press("Enter");
     assert.equal(await tools.getAttribute("aria-expanded"), "true");
+    // Agent tools sit under sub-headings inside Hubzoid tools: unsectioned rows
+    // first (whatever the catalogue order), then Workflows, then Access control.
+    const toolsPanel = await controlled(tools);
+    assert.deepEqual(
+      await toolsPanel.getByRole("heading", { level: 4 }).allTextContents(),
+      ["Workflows", "Access control"],
+      "Hubzoid tools shows its two sub-sections in order",
+    );
+    assert.deepEqual(
+      await toolsPanel.locator(".capability").evaluateAll((nodes) => nodes.map((n) => n.dataset.permission)),
+      ["curator", "jev", "email_me", "workflows_view", "workflows_manage", "access_tools"],
+    );
+    const workflowsSection = toolsPanel.getByRole("group", { name: "Workflows", exact: true });
+    await workflowsSection.getByRole("checkbox", { name: /See workflows and runs/ }).waitFor();
+    await workflowsSection.getByRole("checkbox", { name: /Run and control workflows/ }).waitFor();
+    await toolsPanel.getByRole("group", { name: "Access control", exact: true })
+      .getByRole("checkbox", { name: /Manage access from chat/ }).waitFor();
+    await drawer().screenshot({ path: path.join(shots, "hubzoid-portal-capability-sections.png") });
     const jevBox = drawer().getByRole("checkbox", { name: /Ask Jev for decisions/ });
     assert.equal(await jevBox.isDisabled(), false, "an unconfigured capability can still be granted");
     await drawer().getByText("Jev key missing", { exact: true }).waitFor();
@@ -980,6 +998,17 @@ function step(name) {
     await change.getByText("allowed", { exact: true }).waitFor();
     // The saves made earlier in this run are recorded with the viewer as actor.
     await page.getByRole("row").filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
+    // A run control from an agent tool says who, which workflow, where from, and the run.
+    const started = page.getByRole("row").filter({ hasText: "started the monthly_close workflow" });
+    await started.getByText("Aisha Rahman").waitFor();
+    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
+      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
+    await page.getByRole("combobox", { name: "Action" }).click();
+    await page.locator(".ant-select-item-option").filter({ hasText: "Started a workflow" }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll("tbody tr")].every((tr) => (tr.textContent || "").includes("started")));
+    assert.ok((await hash()).includes("action=run_start"), await hash());
+    await go("/agents/finance/activity");
+    await page.getByText("allowed").first().waitFor();
     // antd Segmented hides the radio input; click the visible label.
     await page.locator(".ant-segmented-item-label", { hasText: "Tool decisions" }).click();
     const denied = page.getByRole("row").filter({ hasText: "payroll_run" });
@@ -1281,6 +1310,13 @@ function step(name) {
     await expand("Restricted tools");
     assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isDisabled(), true);
     await drawer().locator('[data-permission="payroll"]').getByText("Outside your access").waitFor();
+    // Manage access from chat is for organization administrators to give.
+    await expand("Hubzoid tools");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage access from chat/ }).isDisabled(), true);
+    await drawer().getByRole("group", { name: "Access control", exact: true })
+      .locator('[data-permission="access_tools"]').getByText("Admins only", { exact: true }).waitFor();
+    await drawer().locator('[data-permission="workflows_manage"]').getByText("Outside your access").waitFor();
+    await group("Hubzoid tools").click(); // closed again, so "Manage access" below is unambiguous
     await expand("Administration");
     assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true, "never an administrator");
     // Refused by the server as well, whatever the page allows.
@@ -1307,6 +1343,14 @@ function step(name) {
     await drawer().locator(".capability-row").filter({ hasText: "Run payroll" }).getByText("Outside your access").waitFor();
     await group("Restricted tools").click();
     assert.equal(await headerText("Restricted tools"), "Restricted tools", "nothing selected yet");
+    // The same sub-sections appear when creating an account.
+    await expand("Hubzoid tools");
+    const newTools = await controlled(group("Hubzoid tools"));
+    assert.deepEqual(await newTools.getByRole("heading", { level: 4 }).allTextContents(), ["Workflows", "Access control"]);
+    await newTools.getByRole("group", { name: "Workflows", exact: true }).getByRole("checkbox", { name: /See workflows and runs/ }).waitFor();
+    await newTools.getByRole("group", { name: "Access control", exact: true })
+      .locator(".capability-row").filter({ hasText: "Manage access from chat" }).getByText("Admins only").waitFor();
+    await group("Hubzoid tools").click();
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
     await drawer().getByRole("textbox", { name: "Email address" }).fill("new.person@addusers.local");
     await drawer().getByRole("textbox", { name: "Name" }).fill("New Person");

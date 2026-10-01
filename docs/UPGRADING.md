@@ -212,6 +212,18 @@ Changes made in the web app after the move stay in Hubzoid's store and do not
 appear in Open WebUI.
 
 ## Upgrading to 1.0.1 from 0.9.x
+
+> **From 1.0.x to the next release.** Nothing changes until someone grants the
+> new capabilities. New agent tools for workflows (`workflows_view`,
+> `workflows_manage`) and access (`access_tools`) appear in the Console under
+> **Hubzoid tools**, unticked for everyone. `HUBZOID_MANAGEMENT_TOOLS=true`
+> keeps its 1.0.x meaning for this release, with a deprecation warning: grant
+> `access_tools` to the managers who use the access tools, then remove the
+> setting. MCP clients now list only the gated tools the connected person may
+> use. Markdown task and scheduled eval runs get hub-specific ids
+> (`md:<task>:<slot>@<hub>`), so hubs sharing one PostgreSQL database no longer
+> skip each other's work. Runs queued before the upgrade keep their old ids.
+
 This release changes security defaults, moves markdown schedules onto the
 workflow engine, runs scheduled work as ordinary accounts, adds the Admin
 Console, versions Hubzoid's own database tables and changes the Docker image.

@@ -245,31 +245,54 @@ def _make_tool(ft, hub_dir: Path):
     return t
 
 
-def _build_list_filter(hub_dir: Path, permissions: dict[str, str]):
-    """Middleware hiding restricted tools from callers who may not use them.
+def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
+                       registry: dict | None = None):
+    """Middleware hiding gated tools from callers who may not use them.
+
+    Two kinds: restricted tools (`permissions`, by name) and built-in tools
+    whose `is_enabled` carries a `hubzoid_permission` marker (the capability
+    tools and the management tools), asked through `guard.visible` under the
+    caller's identity, exactly as the Claude and Codex runtimes ask per turn.
 
     Purely cosmetic scoping (no leaked names/schemas, no wasted client turns)
-    — the enforcement wall is the guard wrapped around each restricted
-    tool's invoke, which fails closed and audits regardless of listing.
+    — the enforcement wall is the guard wrapped around each tool's invoke,
+    which fails closed and audits regardless of listing.
     """
     from fastmcp.server.middleware import Middleware
 
-    from .access.guard import _allowed_surfaces, decide
+    from .access.guard import _allowed_surfaces, decide, visible_map
+
+    gated = {
+        name: ft for name, ft in (registry or {}).items()
+        if name not in permissions
+        and getattr(getattr(ft, "is_enabled", None), "hubzoid_permission", None) is not None
+    }
 
     class _AccessListFilter(Middleware):
         async def on_list_tools(self, context, call_next):
             tools = await call_next(context)
-            if not permissions:
+            if not permissions and not gated:
                 return tools
             ident = _mcp_identity(hub_dir)
             surfaces = _allowed_surfaces()
             # Use the SAME authoritative/fail-closed decision as invocation, so a
             # user with a direct Casbin grant sees the tool (and a legacy-only
             # user after cutover does not see one that would fail on invoke).
-            return [
-                t for t in tools
-                if decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
-            ]
+            shown = []
+            with access.identity_scope(ident):
+                try:
+                    vis = visible_map({t.name: gated[t.name] for t in tools if t.name in gated})
+                except Exception:  # noqa: BLE001 — hide on doubt; invoke still decides
+                    log.exception("mcp: visibility check failed")
+                    vis = {}
+                for t in tools:
+                    if t.name in gated:
+                        ok = vis.get(t.name, False)
+                    else:
+                        ok = decide(hub_dir, ident, permissions.get(t.name, ""), surfaces)[0]
+                    if ok:
+                        shown.append(t)
+            return shown
 
     return _AccessListFilter()
 
@@ -333,7 +356,7 @@ def build_mcp_app(
         name=_agent_name(hub_dir),
         instructions=_instructions(hub_dir),
         auth=auth,
-        middleware=[_build_list_filter(hub_dir, permissions)],
+        middleware=[_build_list_filter(hub_dir, permissions, registry)],
     )
     for ft in registry.values():
         mcp.add_tool(_make_tool(ft, hub_dir))

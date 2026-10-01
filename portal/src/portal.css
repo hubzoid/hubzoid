@@ -824,6 +824,12 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .review-agent { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .access-review .review-list { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .capability-group-chevron { transition: none; } }
+/* Sub-headings inside a group (Hubzoid tools › Workflows, Access control):
+   quieter than the group title, and they never toggle. Consecutive sections
+   get the same divider the rows use. */
+.capability-section { min-width: 0; }
+.capability-section + .capability-section { border-top: 1px solid var(--subtle-border); }
+.capability-section-title { margin: 0; padding: 14px 0 2px; font-size: 11px; font-weight: 600; line-height: 16px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); overflow-wrap: anywhere; }
 
 /* Add user → Initial access nests Agent → Group → Permission: each level is
    indented under a light guide line. (The access editor's groups aren't

@@ -99,14 +99,19 @@ def _named(hub_dir: Path, permission: str) -> str:
     return f"'{permission}'"
 
 
-def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
+def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
+               surfaces: "frozenset[str] | None" = None) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
     The original is left untouched (`dataclasses.replace` copies it). The
     decision is read from the per-request identity at call time, so one guarded
     instance built at boot serves every user correctly.
+
+    `surfaces` replaces the restricted-tool surface policy for this tool (a
+    tool family with its own rule, e.g. the management tools'
+    `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
     """
-    surfaces = _allowed_surfaces()
+    surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 
@@ -140,6 +145,9 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
         return allowed
 
     _is_enabled.hubzoid_permission = permission
+    # Tools sharing a permission and surface rule share one decision per turn
+    # (`visible_map`).
+    _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
 
 
@@ -152,6 +160,26 @@ def visible(ft) -> bool:
     if getattr(check, "hubzoid_permission", None) is None:
         return True
     return bool(check())
+
+
+def visible_map(tools: dict) -> dict[str, bool]:
+    """`visible` for a whole registry at once ({name: shown}), for runtimes
+    that filter the tool list every turn. Each distinct check runs once: tools
+    guarded by the same permission and surface rule (`hubzoid_key`), or
+    sharing one `is_enabled` (the management tools), get one decision. Called
+    per turn, so a grant or revocation shows on the next turn."""
+    decided: dict = {}
+    out: dict[str, bool] = {}
+    for name, ft in tools.items():
+        check = getattr(ft, "is_enabled", True)
+        if getattr(check, "hubzoid_permission", None) is None:
+            out[name] = True
+            continue
+        key = getattr(check, "hubzoid_key", None) or ("fn", id(check))
+        if key not in decided:
+            decided[key] = bool(check())
+        out[name] = decided[key]
+    return out
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

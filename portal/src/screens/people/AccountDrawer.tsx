@@ -26,9 +26,9 @@ import {
 } from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { MANAGE_ACCESS, USE_HUB, capabilityLabel, formatTime, groupCapabilities, isGrantable } from "../../lib/format";
+import { MANAGE_ACCESS, USE_HUB, capabilityLabel, formatTime, groupCapabilities, isGrantable, splitSections } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
-import { CapabilityGroup } from "../access/AccessParts";
+import { CapabilityGroup, CapabilitySection } from "../access/AccessParts";
 import { generatePassword, passwordProblem } from "./password";
 import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "./accountRules";
 
@@ -652,62 +652,68 @@ export function AccountDrawer({
                               unconfigured={perms.filter((p) => chosen.includes(p) && catalog[p]?.available === false).length}
                               problems={0}
                             >
-                              {perms.map((p) => {
-                                const outside = !allowed.has(p);
-                                // Held, but only organization administrators may give it.
-                                const adminOnly =
-                                  outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
-                                const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
-                                return (
-                                  <div className="capability-row" key={p}>
-                                    <Checkbox
-                                      checked={chosen.includes(p)}
-                                      disabled={outside || required}
-                                      onChange={(e) =>
-                                        setSelected({
-                                          ...selected,
-                                          [hub.key]: toggle(chosen, p, e.target.checked),
-                                        })
-                                      }
-                                    >
-                                      <span className="capability-title">
-                                        <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
-                                        {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
-                                        {catalog[p]?.available === false && (
-                                          <Text type="warning" className="capability-status">
-                                            {catalog[p].status || "Not configured"}
+                              {/* Sub-headings (Workflows, Access control) only group
+                                  rows for reading; counts stay with the group. */}
+                              {splitSections(g.items).map((s) => (
+                                <CapabilitySection key={s.key} id={`new-user-${hub.key}-${g.key}-${s.key}`} title={s.title}>
+                                  {orderCapabilities(s.items.map((i) => i.permission), Object.keys(catalog)).map((p) => {
+                                    const outside = !allowed.has(p);
+                                    // Held, but only organization administrators may give it.
+                                    const adminOnly =
+                                      outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
+                                    const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
+                                    return (
+                                      <div className="capability-row" key={p}>
+                                        <Checkbox
+                                          checked={chosen.includes(p)}
+                                          disabled={outside || required}
+                                          onChange={(e) =>
+                                            setSelected({
+                                              ...selected,
+                                              [hub.key]: toggle(chosen, p, e.target.checked),
+                                            })
+                                          }
+                                        >
+                                          <span className="capability-title">
+                                            <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
+                                            {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
+                                            {catalog[p]?.available === false && (
+                                              <Text type="warning" className="capability-status">
+                                                {catalog[p].status || "Not configured"}
+                                              </Text>
+                                            )}
+                                          </span>
+                                        </Checkbox>
+                                        {catalog[p]?.description && (
+                                          <Tooltip title={catalog[p].description}>
+                                            <Text type="secondary" className="capability-state" aria-label={catalog[p].description}>
+                                              ⓘ
+                                            </Text>
+                                          </Tooltip>
+                                        )}
+                                        {outside && (
+                                          <Tooltip
+                                            title={
+                                              adminOnly
+                                                ? "Only organization administrators can grant this."
+                                                : "You can only give capabilities you hold in this agent yourself."
+                                            }
+                                          >
+                                            <Text type="secondary" className="capability-state">
+                                              {adminOnly ? "Admins only" : "Outside your access"}
+                                            </Text>
+                                          </Tooltip>
+                                        )}
+                                        {required && (
+                                          <Text type="warning" className="capability-state">
+                                            Required
                                           </Text>
                                         )}
-                                      </span>
-                                    </Checkbox>
-                                    {catalog[p]?.description && (
-                                      <Tooltip title={catalog[p].description}>
-                                        <Text type="secondary" className="capability-state" aria-label={catalog[p].description}>
-                                          ⓘ
-                                        </Text>
-                                      </Tooltip>
-                                    )}
-                                    {outside && (
-                                      <Tooltip
-                                        title={
-                                          adminOnly
-                                            ? "Only organization administrators can grant this."
-                                            : "You can only give capabilities you hold in this agent yourself."
-                                        }
-                                      >
-                                        <Text type="secondary" className="capability-state">
-                                          {adminOnly ? "Admins only" : "Outside your access"}
-                                        </Text>
-                                      </Tooltip>
-                                    )}
-                                    {required && (
-                                      <Text type="warning" className="capability-state">
-                                        Required
-                                      </Text>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                                      </div>
+                                    );
+                                  })}
+                                </CapabilitySection>
+                              ))}
                             </CapabilityGroup>
                           );
                         })}

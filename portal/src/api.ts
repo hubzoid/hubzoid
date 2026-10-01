@@ -31,6 +31,9 @@ export type Permission = {
   // catalogue still renders (grouped by id instead).
   /** hub | tools | restricted | workflows | admin | obsolete */
   group?: string;
+  /** Optional sub-heading inside the group: "" | workflows | access. The
+   *  server lists unsectioned rows first; an unknown key renders unsectioned. */
+  section?: string;
   /** Where it acts, implemented surfaces only: chat, mcp, workflow. */
   surfaces?: string[];
   /** Short configuration status, e.g. "Jev key missing"; empty when ready. */

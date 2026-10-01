@@ -289,8 +289,9 @@ class CodexRuntime:
         await send({"method": "initialized", "params": {}})
         # Gated tools this caller may not use are left out, the same decision
         # the access guard makes at call time (Codex does not consult is_enabled).
-        from .access.guard import visible
-        shown = {n: t for n, t in registry.items() if visible(t)}
+        from .access.guard import visible_map
+        vis = visible_map(registry)
+        shown = {n: t for n, t in registry.items() if vis[n]}
         params = {"cwd": cwd, "ephemeral": True, "environments": [],
                   "selectedCapabilityRoots": [], "runtimeWorkspaceRoots": [],
                   "approvalPolicy": "never", "sandbox": "read-only",

@@ -415,7 +415,46 @@ def test_run_ids_name_their_task_even_when_requeued():
     from hubzoid.workflows.markdown import task_name_from_id
 
     assert task_name_from_id("md:sync:20260925T0300") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300@finance") == "sync"
+    assert task_name_from_id("md:sync:20260925T0300@finance:requeued") == "sync"
     assert task_name_from_id("md:sync:20260925T0300:requeued") == "sync"
     assert task_name_from_id("md:sync:20260925T0300:requeued:requeued") == "sync"
     assert task_name_from_id("md:alerts:events-20260925T0300-abcdef0123456789") == "alerts"
     assert task_name_from_id("wf-123") is None
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "postgres"])
+def test_two_hubs_sharing_one_database_each_run_their_own_task(tmp_path, request, engine):
+    """DBOS workflow ids are global in a shared system database. Two hubs with
+    the same task and slot are two runs: each executes its own task and gets
+    its own result (launch review finding 3)."""
+    env = dict(os.environ)
+    for key in ("DATABASE_URL", "HUBZOID_DEPLOYMENT"):
+        env.pop(key, None)
+    if engine == "postgres":
+        url = request.getfixturevalue("postgres_url")
+        env["HUBZOID_OPERATIONAL_DB"] = env["HUBZOID_DBOS_DB"] = url
+    else:
+        env["HUBZOID_OPERATIONAL_DB"] = f"sqlite:///{tmp_path / 'ops.db'}"
+        env["HUBZOID_DBOS_DB"] = f"sqlite:///{tmp_path / 'shared-dbos.db'}"
+    results = {}
+    for name in ("alpha", "beta"):
+        hub = tmp_path / name
+        (hub / "schedule").mkdir(parents=True)
+        (hub / "AGENTS.md").write_text("---\nname: h\ndescription: d\n---\nbody")
+        _task(hub, "daily", f'run: "echo {name} > effect.txt"\nschedule: "0 3 * * *"')
+        results[name] = _run(hub, env, "daily", "20260927T0300")
+    for name in ("alpha", "beta"):
+        assert (tmp_path / name / "effect.txt").read_text().strip() == name, \
+            f"{name} never executed its own task"
+        out, ids = results[name]
+        assert isinstance(out, dict) and out["result"] == "done", out
+        assert f"md:daily:20260927T0300@{name}" in ids
+
+
+def test_run_ids_are_namespaced_by_hub():
+    from hubzoid.workflows import markdown
+
+    assert markdown.run_id("daily", "s1", "Alpha") == "md:daily:s1@alpha"
+    assert markdown.eval_run_id(["b", "a"], "s1", "alpha") == "eval:a,b:s1@alpha"
+    assert markdown.task_name_from_id(markdown.run_id("daily", "s1", "alpha")) == "daily"
