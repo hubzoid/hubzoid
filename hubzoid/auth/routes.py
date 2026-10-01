@@ -108,8 +108,17 @@ def _fields(body: Any, **limits: int) -> dict[str, str]:
 
 
 def _branding_name(hub_dir: Path) -> str:
-    """The name the sign-in page shows: the gateway's name (``WEBUI_NAME``) or,
-    for a single hub, its main agent's name, as the chat title was in 1.0.x."""
+    """The name the sign-in page shows: the same name as ``/api/branding`` (the
+    gateway's name from its manifest, or a single hub's main agent), falling back
+    to ``WEBUI_NAME`` and then "Hubzoid"."""
+    try:
+        from ..webapp_gateway import branding_scope
+
+        scoped = (branding_scope(Path(hub_dir), None).name or "").strip()
+        if scoped:
+            return scoped
+    except Exception:  # noqa: BLE001 - fall back to the older rule below
+        pass
     from .. import deployment
 
     try:
