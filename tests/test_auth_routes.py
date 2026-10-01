@@ -342,6 +342,8 @@ def test_sign_in_records_activity_without_secrets(hub):
     ("//evil.example.com", "/"), ("https://evil.example.com/x", "/"), ("/\\evil.example.com", "/"),
     ("javascript:alert(1)", "/"), ("c/abc", "/"), ("/ok\r\nSet-Cookie: x=1", "/"),
     ("/%2F%2Fevil.example.com", "/%2F%2Fevil.example.com"),
+    ("/\t/evil.example.com", "/"), ("/\n/evil.example.com", "/"), ("\t//evil.example.com", "/"),
+    ("/\t\\evil.example.com", "/"), ("/c/a\x00b", "/"), ("/c/a\x7fb", "/"),
 ])
 def test_safe_redirect(value, expected):
     assert oidc.safe_redirect(value) == expected

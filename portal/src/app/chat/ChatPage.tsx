@@ -236,6 +236,17 @@ function ChatView({
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
 
+  // Whether this page is still on screen. A page that has gone (New chat was
+  // pressed while its conversation was being created, or the person moved on)
+  // never moves the page on screen.
+  const onScreen = useRef(true);
+  useEffect(() => {
+    onScreen.current = true;
+    return () => {
+      onScreen.current = false;
+    };
+  }, []);
+
   const [session] = useState(() => {
     const repo = detail
       ? toRepository(detail.messages ?? [], detail.head_id, {
@@ -250,7 +261,9 @@ function ChatView({
       events: {
         onConversationCreated: (c) => {
           setConversation(c);
-          onConversationCreated(c, pageKey);
+          // It exists now, so it joins the list either way.
+          if (onScreen.current) onConversationCreated(c, pageKey);
+          else upsertConversation(c);
         },
         onTitle: (id, next) => {
           setTitle(next);
@@ -270,7 +283,9 @@ function ChatView({
             for (const delay of [2500, 8000]) setTimeout(() => void loadConversations(undefined, undefined, true), delay);
           }
         },
-        onUnauthorized: () => navigate(`/auth?redirect=${encodeURIComponent(location.pathname)}`, { replace: true }),
+        onUnauthorized: () => {
+          if (onScreen.current) navigate(`/auth?redirect=${encodeURIComponent(location.pathname)}`, { replace: true });
+        },
       },
     });
     return s;
