@@ -94,7 +94,10 @@ function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { nod
   delete (rest as { node?: unknown }).node;
   if (isArtifactHref(href)) {
     const name = fileNameFromUrl(href!);
-    const label = typeof children === "string" && children.trim() ? children : name;
+    // The agent's download footer reads "Download <file>"; the chip already says
+    // download (its icon and its accessible name), so it shows the file alone.
+    const text = typeof children === "string" ? children.trim().replace(/^download\s+/i, "") : "";
+    const label = text || name;
     return (
       <a
         href={href}
@@ -102,7 +105,7 @@ function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { nod
         rel="noopener"
         download={name}
         className="!no-underline inline-flex max-w-full items-center gap-2 rounded-lg border border-line bg-raised px-2.5 py-1.5 align-middle text-[14px] font-medium !text-ink hover:border-accent/50 hover:bg-hover"
-        aria-label={t.chat.download(typeof label === "string" ? label : name)}
+        aria-label={t.chat.download(label)}
       >
         <FileText size={15} aria-hidden className="flex-none text-accent-text" />
         <span className="truncate">{label}</span>

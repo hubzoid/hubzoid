@@ -286,6 +286,7 @@ function chartPng(width = 160, height = 100) {
       await waitIdle();
       const link = lastAssistant().getByRole("link", { name: "Download quarterly-report.csv" });
       assert.equal(await link.getAttribute("href"), `/artifacts/${firstId}/quarterly-report.csv`);
+      assert.equal((await link.innerText()).trim(), "quarterly-report.csv", "the chip names the file once");
 
       step("A run error reads as a sentence and offers Try again");
       await send("cause an error please");
