@@ -49,13 +49,19 @@ def upgrade() -> None:
         # 'ok' | 'expired' | 'error'
         sa.Column("status", sa.String(16), nullable=False, server_default="ok"),
         sa.Column("error", sa.Text),
+        # when this authorization was made (a refresh keeps it)
         sa.Column("created_at", sa.Float, nullable=False),
         sa.Column("updated_at", sa.Float, nullable=False),
+        # bumped on every write: refreshes compare-and-set on it across processes
+        sa.Column("version", sa.Integer, nullable=False, server_default="0"),
+        # a refresh in progress somewhere holds this lease until the given time
+        sa.Column("refresh_lock_until", sa.Float),
     )
     op.create_index("hz_connector_tokens_connector", "hz_connector_tokens", ["connector_id"])
 
     op.create_table(
         "hz_connector_flows",
+        # SHA-256 (hex) of the OAuth state; the state itself is never stored
         sa.Column("state", sa.String(128), primary_key=True),
         sa.Column("user_id", sa.String(64), nullable=False),
         sa.Column("connector_id", sa.String(64), nullable=False),
@@ -65,6 +71,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.Float, nullable=False),
         sa.Column("expires_at", sa.Float, nullable=False),
     )
+    op.create_index("hz_connector_flows_expires", "hz_connector_flows", ["expires_at"])
 
 
 def downgrade() -> None:

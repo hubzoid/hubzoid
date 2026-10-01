@@ -155,7 +155,17 @@ def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> 
     ``reserved`` are server keys that must not be replaced (defaults to the
     hub's own MCP server keys). Empty on every refusal path, never raises for
     a missing DB, key or row.
+
+    In the default UI mode Hubzoid owns personal connections, so this answers
+    from ``hubzoid.connectors`` instead (same shape, same rules). Only the
+    legacy Open WebUI mode reads Open WebUI's connections below.
     """
+    from . import appmode
+
+    if not appmode.is_legacy(hub_dir):
+        from .connectors.per_user import per_user_servers as hubzoid_servers
+
+        return hubzoid_servers(hub_dir, identity, reserved=reserved)
     if not enabled() or identity is None or getattr(identity, "is_anonymous", True):
         return []
     # A personal token follows the same surface rule as restricted tools: a
