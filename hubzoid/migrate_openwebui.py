@@ -31,6 +31,13 @@ per hub for ``hubzoid access rollback``), then everything else (one
 transaction). If the second step fails, the first is undone. Re-running is
 safe: rows are matched by id, changes made in Hubzoid since the previous
 import are kept, and what was deleted in Hubzoid is not brought back.
+
+Rehearse first. ``--rehearse <empty folder>`` copies a single hub (with its
+Open WebUI data and operational store) and migrates the copy. For a gateway:
+``hubzoid backup <hub> -o state.tar.gz``, then ``hubzoid restore state.tar.gz
+--move <old folder>=<scratch folder>``, then copy each hub's content
+(``AGENTS.md``, ``restricted/``, ``identity/``; backups leave it to git) into
+the restored hub folders, and run this command on the restored copy.
 """
 from __future__ import annotations
 
@@ -2314,8 +2321,9 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
     if setup.kind != "hub":
         raise MigrationBlocked(
             "--rehearse copies a single hub. For a gateway, rehearse on a restored copy: "
-            "hubzoid backup <hub> archive.tar.gz, then hubzoid restore archive.tar.gz --move "
-            "<old folder>=<scratch folder>, then run this command on the copy.")
+            "hubzoid backup <hub> -o state.tar.gz, then hubzoid restore state.tar.gz --move "
+            "<old folder>=<scratch folder>, copy each hub's content (AGENTS.md, restricted/, "
+            "identity/) into the restored hub folders, then run this command on the copy.")
     if setup.source_url.get_backend_name() != "sqlite":
         raise MigrationBlocked("--rehearse needs the Open WebUI database in SQLite. For PostgreSQL, "
                                "restore a dump into a scratch database and pass --owui-db.")
