@@ -374,3 +374,11 @@ def test_explain_access_never_describes_an_outsider(dep, monkeypatch):
 def test_explain_access_hub_is_optional_in_the_schema(dep, monkeypatch):
     tools = _tools(dep, monkeypatch)
     assert tools["explain_access"].params_json_schema.get("required") == ["person"]
+
+
+def test_explain_access_does_not_call_a_private_agent_public(dep, monkeypatch):
+    dep.gs.grant("boss@x.org", "*", "manage_access", actor="test")
+    tools = _granted(dep, monkeypatch, DELEGATE)
+    with identity_scope(Identity.make(DELEGATE, surface="owui")):
+        out = _invoke(tools["explain_access"], {"person": "boss@x.org"})
+    assert out == "boss@x.org has no access in the agents you manage."

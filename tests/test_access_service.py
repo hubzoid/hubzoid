@@ -444,3 +444,13 @@ def test_person_access_hides_people_outside_a_delegates_agents(dep):
     gs.grant("carol@x.org", "finance", "use_hub", actor="test")
     seen = svc.person_access(actor(DELEGATE), "carol@x.org")
     assert seen["known"] is True and seen["display"] == "Carol Secret"
+
+
+def test_person_access_never_shows_an_outsiders_own_grants(dep):
+    """An organization administrator with no grant in a delegate's agents is
+    an outsider to that delegate: none of their own grants are listed."""
+    gs, svc = dep.gs, dep.svc
+    gs.grant("boss@x.org", "*", "manage_access", actor="test")
+    view = svc.person_access(actor(DELEGATE), "boss@x.org")
+    assert view["known"] is False and view["organization_admin"] is None
+    assert all(h["capabilities"] == [] for h in view["hubs"])

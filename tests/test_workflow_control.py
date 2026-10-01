@@ -59,6 +59,12 @@ _ENGINE = textwrap.dedent('''
             elif op == "cancel":
                 run = out[args[0]]["run_id"]
                 out.append(control.cancel(hub, run, actor="ann@x.org", surface="mcp"))
+            elif op == "wait":
+                try:
+                    runtime._DBOS.retrieve_workflow(out[args[0]]["run_id"]).get_result()
+                except Exception:
+                    pass
+                out.append(None)
             elif op == "hold":
                 store_for(hub).set_schedule_hold("backup", 60, actor="test")
                 out.append(None)
@@ -379,11 +385,15 @@ def test_markdown_starts_refused_for_webhook_tasks_and_the_kill_switch(hub, monk
     assert e.value.code == "broken" and "HUBZOID_DISABLE_SCHEDULE" in e.value.message
 
 
-def test_bare_name_prefers_the_code_workflow_md_prefix_the_task(hub):
+def test_a_bare_name_shared_by_both_kinds(hub):
+    """The CLI keeps its markdown-first rule (as `schedule run` resolves); the
+    tools prefer the code workflow, since their listing shows `md:<task>`."""
     _task(hub, "nightly_sync", 'schedule: "0 3 * * *"\nrun: "true"')
-    assert control.resolve(hub, "nightly_sync") == control.Target("nightly_sync", "code")
-    assert control.resolve(hub, "md:nightly_sync") == control.Target(
-        "md:nightly_sync", "markdown", "nightly_sync")
+    md = control.Target("md:nightly_sync", "markdown", "nightly_sync")
+    assert control.resolve(hub, "nightly_sync") == md
+    assert control.resolve(hub, "nightly_sync", prefer="code") == control.Target("nightly_sync", "code")
+    assert control.resolve(hub, "md:nightly_sync", prefer="code") == md
+    assert control.resolve(hub, "nightly-sync", prefer="markdown") == control.Target("nightly_sync", "code")
 
 
 def test_history_keeps_legacy_service_runs_private_and_reads_queued(hub, monkeypatch):
@@ -396,3 +406,18 @@ def test_history_keeps_legacy_service_runs_private_and_reads_queued(hub, monkeyp
     legacy = {"source": "legacy-service", "subject": "workflow:x"}
     assert observe.may_see_results(legacy, "ann@x.org") is True  # the Console's managers
     assert observe.may_see_results(legacy, "ann@x.org", legacy_visible=False) is False
+
+
+def test_each_manual_start_is_a_new_run_even_within_a_second(hub, env, tmp_path):
+    """A start right after a short run finished must run again, not reuse the
+    finished run's id (DBOS would dedupe it and nothing would run)."""
+    import re
+
+    _task(hub, "quick", 'schedule: "0 3 * * *"\nrun: "true"\nrun_as: carol@x.org')
+    first, _, second = _engine(hub, env, [["start", "quick"], ["wait", 0], ["start", "quick"]],
+                               code=False)
+    assert first["already_running"] is False and second["already_running"] is False
+    assert first["run_id"] != second["run_id"]
+    assert re.fullmatch(r"md:quick:manual-\d{8}T\d{6}-[0-9a-f]{6}@alpha", second["run_id"])
+    assert [r["subject"] for r in _audit(tmp_path) if r["action"] == "run_start"] == [
+        first["run_id"], second["run_id"]]
