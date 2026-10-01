@@ -728,14 +728,34 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
 
     With sign-in on, starting would lock everyone out, so stop with the two ways
     forward. In local mode there is nothing to sign in to; say that the old
-    chats can be imported."""
+    chats can be imported. Hubzoid accounts that cannot be read are not zero
+    accounts: with sign-in on, stop and say why instead."""
     from . import upgrade
 
     found = upgrade.openwebui_accounts(hub)
-    if found is None or upgrade.hubzoid_accounts(hub):
+    if found is None:
         return
     where, people = found
     quoted = escape(shlex.quote(str(hub)))
+    try:
+        if upgrade.hubzoid_accounts(hub):
+            return
+    except upgrade.AccountsUnreadable as exc:
+        reason = escape(str(exc))
+        if not auth_on:  # nothing to lock out: the bridge reports the store
+            console.print(f"[yellow]The Hubzoid accounts could not be read ({reason}), so this start "
+                          f"cannot tell whether chats from Open WebUI ({escape(where)}) were imported. "
+                          f"`hubzoid doctor {quoted}` shows the cause.[/yellow]")
+            return
+        console.print(
+            f"[red]This hub has an Open WebUI database with {people} account(s) ({escape(where)}), "
+            f"and the Hubzoid accounts could not be read ({reason}).[/red]\n"
+            "Starting with sign-in on could lock everyone out, so the start stops here.\n"
+            "Check the operational database (HUBZOID_OPERATIONAL_DB, or DATABASE_URL in "
+            f"{escape(str(hub / '.env'))}).\n"
+            f"`hubzoid doctor {quoted}` shows the cause. Then start again."
+        )
+        raise typer.Exit(1)
     if not auth_on:
         console.print(f"[dim]Chats from Open WebUI ({escape(where)}) can be imported: "
                       f"hubzoid migrate openwebui {quoted} (back up first)[/dim]")
