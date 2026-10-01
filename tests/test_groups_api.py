@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 import hubzoid.access as access
 import hubzoid.db as db
@@ -148,6 +148,23 @@ def test_validation_and_conflicts(client):
     assert r.status_code == 409 and _code(r) == "name_taken"
     assert client.get("/portal/api/groups/g_missing").status_code == 404
     assert client.patch("/portal/api/groups/g_missing", json={"name": "Z"}).status_code == 404
+
+
+def test_group_detail_shows_each_members_account(client):
+    gs = client.gs
+    with gs.engine.begin() as conn:
+        conn.execute(text("INSERT INTO hz_users (id, email, name, role, status, source, created_at, "
+                          "updated_at) VALUES ('u1', 'ann@example.org', 'Ann Lee', 'user', 'active', "
+                          "'admin', 0, 0), ('u2', 'pat@example.org', NULL, 'user', 'pending', 'signup', 0, 0)"))
+    gid = client.post("/portal/api/groups", json={
+        "name": "Ops", "emails": ["ann@example.org", "pat@example.org", "carl@example.org"]}).json()["group"]["id"]
+    gs.suspend("carl@example.org", actor="test")   # blocking also leaves groups
+    client.post(f"/portal/api/groups/{gid}/members", json={"emails": ["dee@example.org"]})
+    members = {m["email"]: m for m in client.get(f"/portal/api/groups/{gid}").json()["group"]["members"]}
+    assert set(members) == {"ann@example.org", "pat@example.org", "dee@example.org"}
+    assert (members["ann@example.org"]["display"], members["ann@example.org"]["account"]) == ("Ann Lee", "active")
+    assert members["pat@example.org"]["account"] == "pending"
+    assert members["dee@example.org"]["account"] == "none" and members["dee@example.org"]["blocked"] is False
 
 
 def test_blocked_people_are_not_added(client):

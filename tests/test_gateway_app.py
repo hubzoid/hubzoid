@@ -495,3 +495,30 @@ def test_mode_detection(tmp_path, monkeypatch):
     edge._factory()
     assert seen["default_fallbacks"] == ("http://b",)
     assert os.environ.get("HUBZOID_UI") is None
+
+
+def test_api_base_for_each_hub(deployment_hubs, tmp_path):
+    sales, support, _gw, _gs = deployment_hubs
+    assert webapp_gateway.api_base_for(sales) == "/b/sales"
+    assert webapp_gateway.api_base_for(support) == "/b/support"
+    solo = _hub(tmp_path / "solo-root", "solo", 3611)
+    assert webapp_gateway.api_base_for(solo) == ""
+
+
+def test_edge_redacts_oauth_callback_logs_when_connections_provide_it(monkeypatch):
+    from hubzoid.connectors import routes as connector_routes
+
+    monkeypatch.setenv("HUBZOID_EDGE_DEFAULT", "http://a")
+    monkeypatch.setattr(edge, "build_edge_app", lambda **kw: "app")
+    calls = []
+    monkeypatch.setattr(connector_routes, "redact_oauth_callback_logs",
+                        lambda: calls.append("redacted"), raising=False)
+    assert edge._factory() == "app" and calls == ["redacted"]
+
+    def boom():
+        raise RuntimeError("no logging config")
+
+    monkeypatch.setattr(connector_routes, "redact_oauth_callback_logs", boom, raising=False)
+    assert edge._factory() == "app"            # never stops the front door
+    monkeypatch.delattr(connector_routes, "redact_oauth_callback_logs")
+    assert edge._factory() == "app"            # a build without connections

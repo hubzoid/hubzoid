@@ -58,6 +58,9 @@ MANAGE_ACCESS = "manage_access"
 WORKFLOW_DEFAULT_KEY = "workflow_default_user"
 # A grant subject naming a group: `group:<id>` (see hz_groups).
 GROUP_PREFIX = "group:"
+#: Grants may name `group:<id>` and `can` resolves them for every member.
+#: Also on `GrantStore.supports_group_grants`, for callers that probe.
+SUPPORTS_GROUP_GRANTS = True
 # Group ids: generated `g_<hex>`, or an id carried over by a migration. Lowercase,
 # because every subject is compared through `normalize`.
 _GROUP_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -190,6 +193,9 @@ class GrantStore:
     """The access store for one deployment's database (one hub, or the shared
     gateway DB). Cheap to construct; holds a Casbin enforcer kept fresh against
     `hz_policy_revision`."""
+
+    #: See SUPPORTS_GROUP_GRANTS.
+    supports_group_grants = True
 
     def __init__(self, engine: Engine):
         self._engine = engine
@@ -1626,6 +1632,26 @@ class GrantStore:
         out["members"] = members
         out["member_count"] = len(members)
         out["grants"] = grants
+        return out
+
+    def people_states(self, subjects: Iterable[str]) -> dict[str, dict]:
+        """{subject: {"display", "blocked"}} for many people in two reads (the
+        Groups screen's member list). `blocked` is `is_suspended`."""
+        subjects = sorted({normalize(s) for s in subjects if normalize(s)})
+        out = {s: {"display": None, "blocked": False} for s in subjects}
+        if not subjects:
+            return out
+        keys = [p + s for s in subjects for p in ("suspended:", "account_unavailable:")]
+        with self._engine.connect() as conn:
+            for subject, display in conn.execute(text(
+                    "SELECT subject, display FROM hz_identities WHERE subject IN :subs"
+            ).bindparams(bindparam("subs", expanding=True)), {"subs": subjects}).fetchall():
+                out[subject]["display"] = display
+            for key, value in conn.execute(text(
+                    "SELECT k, v FROM hz_meta WHERE k IN :keys"
+            ).bindparams(bindparam("keys", expanding=True)), {"keys": keys}).fetchall():
+                if value == "1":
+                    out[key.split(":", 1)[1]]["blocked"] = True
         return out
 
     def groups_for(self, email: str) -> list[dict]:
