@@ -92,6 +92,9 @@ BRIDGE_DEPLOYMENT_KEYS = frozenset({
     "WEBUI_URL",
     "OWUI_NATIVE_MCP",
     "HUBZOID_OTEL_ENDPOINT",
+    # The deployment key (hubzoid.secretbox): every bridge of a deployment must
+    # share it (encrypted connection tokens, signed identity assertions).
+    "HUBZOID_SECRET_KEY",
 })
 
 # Blanked in agent child processes (the `claude` CLI and the stdio MCP servers
@@ -116,6 +119,7 @@ AWS_CREDENTIAL_KEYS = frozenset({
 SERVICE_SECRET_KEYS = frozenset({
     "BRIDGE_API_KEYS",
     "HUBZOID_ARTIFACT_SECRET",
+    "HUBZOID_SECRET_KEY",
     "HUBZOID_GATEWAY_ADMIN_PASSWORD",
     "WEBUI_SECRET_KEY",
     "DATABASE_URL",

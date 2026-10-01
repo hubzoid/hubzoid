@@ -116,6 +116,7 @@ def stream_reply(
     surface: str = "slack",
     http_client: httpx.Client | None = None,
     timeout: float | None = None,
+    hub_dir: Path | None = None,
 ) -> None:
     """POST to the bridge's /chat/completions with stream=true; forward content deltas.
 
@@ -132,6 +133,10 @@ def stream_reply(
     includes everyone's text — NEVER safe for restricted tools). The access
     guard gates on this: an operator may add `slack-dm` to
     HUBZOID_RESTRICTED_SURFACES but must never add `slack-channel`.
+    `hub_dir` (the hub this bridge serves) lets the identity be signed: in the
+    web app mode the bridge trusts identity headers only with a valid
+    `X-Hubzoid-Assertion` (hubzoid.assertions); without `hub_dir` none is
+    attached and the bridge treats the call as anonymous.
     Raises on HTTP error.
     """
     client = http_client or httpx.Client(timeout=timeout)
@@ -143,9 +148,15 @@ def stream_reply(
     # own terms (restricted tools stay off unless the operator opts the surface
     # in via HUBZOID_RESTRICTED_SURFACES). When identity mapping is on, forward
     # the sender's verified email so the bridge resolves their OWUI groups.
-    headers = {"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": surface}
-    if user_email:
-        headers["X-OpenWebUI-User-Email"] = user_email
+    if hub_dir is not None:
+        from ..assertions import identity_headers
+
+        headers = {"Authorization": f"Bearer {api_key}",
+                   **identity_headers(hub_dir, surface=surface, email=user_email)}
+    else:
+        headers = {"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": surface}
+        if user_email:
+            headers["X-OpenWebUI-User-Email"] = user_email
     try:
         with client.stream(
             "POST",
@@ -235,7 +246,10 @@ def build_app(
 
     `identity_mapping` (SLACK_IDENTITY_MAPPING): when true, resolve each
     sender's verified Slack profile email and forward it to the bridge so the
-    caller's Open WebUI groups apply. Needs the `users:read.email` scope.
+    caller's groups apply: their Open WebUI groups in the legacy mode, their
+    Hubzoid account and its groups in the web app mode (an email without an
+    active account is sent as nobody; see hubzoid.channel_identity). Needs the
+    `users:read.email` scope.
     """
     app = App(
         token=bot_token,
@@ -268,7 +282,7 @@ def build_app(
         if not identity_mapping or not user_id:
             return None
         if user_id in email_cache:
-            return email_cache[user_id]
+            return _as_account(email_cache[user_id])
         email = _lookup_email(client, user_id)
         # Only memoize a SUCCESSFUL lookup. `_lookup_email` returns None on a
         # transient failure too (rate-limit, network blip); caching that would
@@ -276,7 +290,18 @@ def build_app(
         # with genuinely no email is re-looked-up each turn (rare, cheap).
         if email is not None:
             email_cache[user_id] = email
-        return email
+        return _as_account(email)
+
+    def _as_account(email: str | None) -> str | None:
+        """The verified Slack email as the bridge should see it: unchanged in
+        the legacy mode; the sender's Hubzoid account (or nobody) in the web
+        app mode. Looked up on every turn, never cached, so blocking someone
+        or removing their account takes effect at once."""
+        if email is None:
+            return None
+        from ..channel_identity import account_email
+
+        return account_email(hub_dir, email)
 
     def _gather_messages(client, context, channel: str, thread_ts: str) -> tuple[list[dict[str, str]], str]:
         """Common path: fetch history, download any Slack files, build messages.
@@ -373,6 +398,7 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                hub_dir=hub_dir,
                 user_email=_sender_email(client, payload.get("user")),
                 surface="slack-dm",   # assistant sidebar: 1:1 with the bot
             )
@@ -409,6 +435,7 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                hub_dir=hub_dir,
                 user_email=_sender_email(client, event.get("user")),
                 # Channel / group thread: MANY authors flattened into one prompt,
                 # answered under the @mentioner's identity. Never restricted-safe.
@@ -459,6 +486,7 @@ def build_app(
                 messages=msgs,
                 on_delta=writer.feed,
                 chat_id=chat_id,
+                hub_dir=hub_dir,
                 user_email=_sender_email(client, event.get("user")),
                 surface="slack-dm",   # 1:1 direct message
             )
