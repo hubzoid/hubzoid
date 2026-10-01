@@ -61,9 +61,14 @@ def sync_owui(hub_dir) -> dict:
     """
     import time
     from .. import deployment
+    from ..appmode import is_legacy
     from . import store_for
     from .owui import client_for, users
 
+    if not is_legacy(hub_dir):
+        # The web app mode has no Open WebUI picker to mirror: each request is
+        # decided by the bridge and /api/agents.
+        return {"state": "direct"}
     store = store_for(hub_dir)
     targets = [h for h in deployment.hubs(hub_dir) if store.is_authoritative(h["key"])]
     if not targets:
@@ -112,8 +117,10 @@ def sync_status(hub_dir) -> dict:
     from . import store_for
 
     from .. import deployment
-    if not deployment.read(hub_dir):
-        return {"state": "direct"}
+    from ..appmode import is_legacy
+
+    if not deployment.read(hub_dir) or not is_legacy(hub_dir):
+        return {"state": "direct"}   # no Open WebUI picker to mirror
     gs = store_for(hub_dir)
     return gs.metadata("visibility_sync", {"state": "not-run"})
 
