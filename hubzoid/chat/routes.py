@@ -36,7 +36,8 @@ from . import titles
 from .common import ChatContext, api_bases, db, error, message_json, not_found
 from .history import build_prompt
 from .runs import RunManager
-from .store import IdConflict, StoreError, new_id, valid_conversation_id, valid_message_id
+from .store import (IdConflict, StoreError, chat_key, new_id, valid_conversation_id,
+                    valid_message_id)
 from .stream import HEADERS
 
 log = logging.getLogger("hubzoid.chat")
@@ -66,10 +67,11 @@ def _store_error(exc: StoreError):
     return error(409 if isinstance(exc, IdConflict) else 400, exc.code, exc.message)
 
 
-def _remove_chat_dir(hub_dir: Path, conv_id: str) -> None:
-    """Delete the conversation's files folder, only ever inside the hub's chats folder."""
+def _remove_chat_dir(hub_dir: Path, key: str) -> None:
+    """Delete the conversation's files folder (its ``store.chat_key``), only
+    ever inside the hub's chats folder."""
     base = (Path(hub_dir) / memlib.CHATS_DIRNAME).resolve()
-    target = memlib.chat_root(Path(hub_dir), conv_id)
+    target = memlib.chat_root(Path(hub_dir), key)
     if not target.exists():
         return
     resolved = target.resolve()
@@ -79,9 +81,10 @@ def _remove_chat_dir(hub_dir: Path, conv_id: str) -> None:
     shutil.rmtree(resolved, ignore_errors=True)
 
 
-def _message_parts(ctx: ChatContext, conv_id: str, message: dict) -> list[dict]:
+def _message_parts(ctx: ChatContext, key: str, message: dict) -> list[dict]:
     """Validate a new user message's parts; files come from the server's own
-    upload records. Raises HTTPException."""
+    upload records in the conversation's folder (its ``store.chat_key``).
+    Raises HTTPException."""
     raw = message.get("content")
     if isinstance(raw, str):
         raw = [{"type": "text", "text": raw}]
@@ -109,7 +112,7 @@ def _message_parts(ctx: ChatContext, conv_id: str, message: dict) -> list[dict]:
             if len(seen_files) > _max_files():
                 raise error(400, "too_many_files",
                             f"Attach at most {_max_files()} files to one message.")
-            stored = files_mod.file_part(ctx.hub_dir, conv_id, file_id)
+            stored = files_mod.file_part(ctx.hub_dir, key, file_id)
             if stored is None:
                 raise error(400, "file_not_found",
                             f"The attached file {file_id!r} was not found. Upload it again.")
@@ -255,7 +258,7 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             except asyncio.TimeoutError:
                 log.warning("chat: reply %s did not stop before delete", live.message_id)
         await db(store.delete_conversation, conv_id)
-        await db(_remove_chat_dir, hub_dir, conv_id)
+        await db(_remove_chat_dir, hub_dir, chat_key(conv))
         return Response(status_code=204)
 
     # -- chat --------------------------------------------------------------------
@@ -292,7 +295,7 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             if message is None or parent_id is not None:
                 raise error(400, "invalid_parent", "A new conversation starts with a message.")
             # A message that will be refused must not leave an empty conversation.
-            await db(_message_parts, ctx, conv_id, message)
+            await db(_message_parts, ctx, chat_key({"id": conv_id, "source": "web"}), message)
             for mid in (message["id"], assistant_id):
                 if await db(store.get_message, mid) is not None:
                     raise error(409, "id_conflict", "That message id is already in use.")
@@ -311,8 +314,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
                         "A reply is still being written. Stop it or wait for it to finish.")
         try:
             prepared = await _prepare_turn(ctx, conv, body, parent_id, message, assistant_id)
-            run = ctx.runs.start(conversation_id=conv_id, message_id=assistant_id,
-                                 prompt=prepared["prompt"], user=user, title=prepared["title"])
+            run = ctx.runs.start(conversation_id=conv_id, chat_key=chat_key(conv),
+                                 message_id=assistant_id, prompt=prepared["prompt"], user=user,
+                                 title=prepared["title"])
         except BaseException:
             ctx.runs.release(conv_id)
             raise
@@ -366,6 +370,7 @@ async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str
     when this message set it, and the text to title from when a title is due."""
     store = ctx.store
     conv_id = conv["id"]
+    key = chat_key(conv)
     if await db(store.get_message, assistant_id) is not None:
         raise error(409, "id_conflict", "That reply id is already in use.")
     if parent_id is not None:
@@ -387,7 +392,7 @@ async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str
                 raise error(409, "id_conflict", "That message id is already in use.")
             user_id = existing["id"]
         else:
-            parts = await db(_message_parts, ctx, conv_id, message)
+            parts = await db(_message_parts, ctx, key, message)
             text = _search_text(parts)
             try:
                 await db(store.insert_message, message_id=message["id"], conversation_id=conv_id,
@@ -410,7 +415,7 @@ async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str
         raise _store_error(exc)
     await db(store.touch, conv_id, head_id=assistant_id)
     branch = await db(store.branch, conv_id, user_id)
-    prompt = await db(build_prompt, ctx.hub_dir, conv_id, branch)
+    prompt = await db(build_prompt, ctx.hub_dir, key, branch)
     return {"prompt": prompt, "title": title, "title_from": title_from}
 
 

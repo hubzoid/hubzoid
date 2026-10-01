@@ -65,6 +65,23 @@ def test_messages_tree_branch_and_latest_leaf(store):
         "m_user0001", "m_asst0001", "m_user0002", "m_user0002b"]
 
 
+def test_conversation_ids_are_unique_ignoring_case(store):
+    """A web conversation's folder is web-<id>: on a case-insensitive file
+    system c_Mixed and c_mixed would share it, so the second is refused."""
+    _conv(store, conv_id="c_Mixed0001")
+    for variant in ("c_mixed0001", "C_MIXED0001"):
+        with pytest.raises(IdConflict):
+            _conv(store, conv_id=variant, owner="u_ben")
+        assert store.get_conversation(variant) is None
+    # An Open WebUI conversation keeps its own folder (its id, not web-<id>),
+    # so it never collides with a web one, and an import never fails on one.
+    owui = "3f2a8b1c-0d4e-4f5a-9b6c-7d8e9f0a1b2c"
+    _conv(store, conv_id=owui.upper(), owner="u_ben")
+    _conv(store, conv_id=owui, source="migrated")
+    assert store.get_conversation(owui)["source"] == "migrated"
+    assert store.get_conversation(owui.upper())["source"] == "web"
+
+
 def test_message_ids_are_unique_across_conversations(store):
     _conv(store)
     _conv(store, conv_id="c_second001")
@@ -180,6 +197,9 @@ def test_id_rules():
     # the per-chat folder name drops leading/trailing '-' and '_'
     assert not store_mod.valid_conversation_id("c_abcdef1_")
     assert not store_mod.valid_conversation_id("-abcdefgh")
+    # web-<id> names the folder and stays within its 64 characters
+    assert store_mod.valid_conversation_id("c" * 60)
+    assert not store_mod.valid_conversation_id("c" * 61)
     for _ in range(50):
         cid, mid = store_mod.new_id("c_"), store_mod.new_id("m_")
         assert store_mod.valid_conversation_id(cid) and store_mod.valid_message_id(mid)

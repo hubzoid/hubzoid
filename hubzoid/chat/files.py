@@ -4,8 +4,9 @@
   GET  /api/conversations/{id}/files/{file_id}  the file (the conversation's owner only)
 
 Files are written with ``uploads.write_with_meta`` into the conversation's own
-uploads folder (``memory.chat_upload_dir``), the same store ``read_upload`` and
-image vision read, so the agent sees them with no copy. ``file_id`` is the
+uploads folder (``memory.chat_upload_dir`` of its ``store.chat_key``, the chat
+scope of its runs), the same store ``read_upload`` and image vision read, so the
+agent sees them with no copy. ``file_id`` is the
 stored file name: the uploaded name made safe and unique in the folder, which is
 also the name the agent is told.
 
@@ -30,6 +31,7 @@ from .. import memory as memlib
 from .. import uploads as uploads_lib
 from .common import ChatContext, db, error, not_found
 from .history import RASTER_IMAGES
+from .store import chat_key
 
 # Multipart framing around the one file (boundaries, part headers, small fields).
 _MULTIPART_SLACK = 64 * 1024
@@ -104,17 +106,19 @@ def _mime(content_type: str | None, name: str) -> str:
     return mime
 
 
-def upload_dir(hub_dir: Path, conversation_id: str) -> Path:
-    return memlib.chat_upload_dir(Path(hub_dir), conversation_id)
+def upload_dir(hub_dir: Path, key: str) -> Path:
+    """The uploads folder of the conversation whose ``store.chat_key`` is ``key``."""
+    return memlib.chat_upload_dir(Path(hub_dir), key)
 
 
-def stored_file(hub_dir: Path, conversation_id: str, file_id: str) -> Path | None:
-    """The stored file for ``file_id`` in this conversation, or None."""
+def stored_file(hub_dir: Path, key: str, file_id: str) -> Path | None:
+    """The stored file for ``file_id`` in the conversation whose
+    ``store.chat_key`` is ``key``, or None."""
     if not isinstance(file_id, str) or not file_id or safe_upload_name(file_id) != file_id:
         return None
     if uploads_lib.is_sidecar(file_id):
         return None
-    base = memlib.chat_root(Path(hub_dir), conversation_id) / "uploads"   # never created here
+    base = memlib.chat_root(Path(hub_dir), key) / "uploads"   # never created here
     target = base / file_id
     try:
         resolved = target.resolve()
@@ -125,10 +129,10 @@ def stored_file(hub_dir: Path, conversation_id: str, file_id: str) -> Path | Non
     return target
 
 
-def file_part(hub_dir: Path, conversation_id: str, file_id: str) -> dict | None:
+def file_part(hub_dir: Path, key: str, file_id: str) -> dict | None:
     """The stored content part for an uploaded file (from the server's own
     metadata, never the client's), or None when there is no such file."""
-    target = stored_file(hub_dir, conversation_id, file_id)
+    target = stored_file(hub_dir, key, file_id)
     if target is None:
         return None
     meta = uploads_lib.read_meta(target.parent, file_id) or {}
@@ -140,8 +144,8 @@ def file_part(hub_dir: Path, conversation_id: str, file_id: str) -> dict | None:
     return {"type": kind_of(mime), "file_id": file_id, "name": file_id, "mime": mime, "size": size}
 
 
-def _save(hub_dir: Path, conversation_id: str, name: str, payload: bytes, mime: str) -> str:
-    folder = upload_dir(hub_dir, conversation_id)
+def _save(hub_dir: Path, key: str, name: str, payload: bytes, mime: str) -> str:
+    folder = upload_dir(hub_dir, key)
     final = reserve_name(folder, name)
     try:
         uploads_lib.write_with_meta(folder, final, payload, mime=mime)
@@ -212,7 +216,7 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
             mime = _mime(item.content_type, name)
         finally:
             await form.close()
-        stored = await db(_save, ctx.hub_dir, conv["id"], name, payload, mime)
+        stored = await db(_save, ctx.hub_dir, chat_key(conv), name, payload, mime)
         return JSONResponse(status_code=201, content={
             "file_id": stored, "name": stored, "size": len(payload), "mime": mime,
             "kind": kind_of(mime)})
@@ -222,10 +226,11 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
         user = await ctx.user(request)
         conv = await ctx.owned(user, conv_id)
         ctx.this_hub(conv)
-        part = await db(file_part, ctx.hub_dir, conv["id"], file_id)
+        key = chat_key(conv)
+        part = await db(file_part, ctx.hub_dir, key, file_id)
         if part is None:
             raise not_found("file")
-        target = stored_file(ctx.hub_dir, conv["id"], file_id)
+        target = stored_file(ctx.hub_dir, key, file_id)
         if target is None:
             raise not_found("file")
         mime = part["mime"]
