@@ -3235,44 +3235,62 @@ def eval_run(
     model: str = typer.Option(None, "--model", help="Override the model under test for this run."),
     compare: bool = typer.Option(False, "--compare", help="Also diff against the previous run."),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print the summary and failures."),
+    details: bool = typer.Option(False, "--details", help="Under each case, one line per tool call: its key arguments, ok or failed, and time."),
+    run_as: str = typer.Option(None, "--run-as", help="Run cases as this account (an email), with the workflow identity rules. A case's own run_as wins. Grants nothing."),
 ) -> None:
     """Run the hub's eval cases. Exits non-zero if any fail — that is the CI gate.
 
     Cases run through the hub's own runtime, so they see the same model, tools,
     MCP servers and access guard that real chat traffic does. Free checks
-    (substrings, tool calls) run first; a case with a `## Criteria` section is
-    then graded by a model, but only if the free checks passed.
+    (substrings, tool calls and their arguments) run first; a case with a
+    `## Criteria` section is then graded by a model, but only if the free
+    checks passed.
     """
+    import os
+
     from .evals import judge as judge_lib
     from .evals import report as report_lib
-    from .evals import runner as runner_lib
+    from .evals import suite as suite_lib
+    from .evals.cases import EvalCaseError
 
     hub = hub.resolve()
+    try:
+        run_as = suite_lib.check_run_as(run_as)
+    except EvalCaseError as exc:
+        console.print(f"[red]--run-as: {escape(str(exc))}[/red]")
+        raise typer.Exit(2) from exc
     selected = _load_cases(hub, tag, case)
 
     judged = [c for c in selected if c.is_judged]
-    judge_fn = None
-    if judged and not no_judge:
-        judge_fn = judge_lib.make_judge(hub, model=judge_model)
-
     console.print(f"[cyan]{len(selected)} case(s)[/cyan] · {hub.name}")
-    if judge_fn is not None:
-        console.print(f"[dim]judge: {judge_lib.describe(hub, judge_model)}[/dim]")
+    if judged and not no_judge:
+        console.print(f"[dim]judge: {escape(judge_lib.describe(hub, judge_model))}[/dim]")
     elif judged:
         console.print(f"[dim]judge: off — {len(judged)} case(s) will run free checks only[/dim]")
+    if run_as:
+        console.print(f"[dim]run as: {escape(run_as)} (a case's own run_as wins)[/dim]")
 
     def _progress(result) -> None:
         if quiet and result.passed:
             return
         mark = "[green]✓[/green]" if result.passed else "[red]✗[/red]"
-        console.print(f"  {mark} {result.name}"
-                      + (f"  [dim]{result.reason}[/dim]" if result.reason else ""))
+        console.print(f"  {mark} {escape(result.name)}"
+                      + (f"  [dim]{escape(result.reason)}[/dim]" if result.reason else ""))
+        if details:
+            for line in report_lib.detail_lines(result):
+                console.print(f"    [dim]{escape(line)}[/dim]", soft_wrap=True)
 
-    suite = runner_lib.run_suite(
-        hub, selected, judge_fn=judge_fn, on_case=_progress, model=model)
-
+    # CI systems set CI=true; the trigger is recorded in the results file.
+    trigger = "ci" if (os.environ.get("CI") or "").strip().lower() in ("1", "true", "yes") else "cli"
     previous = report_lib.load_runs(hub, limit=1)
-    path = report_lib.save(hub, suite)
+    try:
+        path, suite = suite_lib.run_and_save(
+            hub, [c.name for c in selected], judge=not no_judge, run_as=run_as,
+            trigger=trigger, model=model, judge_model=judge_model,
+            on_case=_progress, push=False)
+    except EvalCaseError as exc:      # a case file changed under us
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(2) from exc
 
     console.print()
     report_lib.render_table(console, suite)
@@ -3327,8 +3345,12 @@ def eval_list(
 
     for c in found:
         bits = []
+        if c.turns:
+            bits.append(f"{len(c.turns)} turns")
         if c.expect_tools:
             bits.append(f"expects {', '.join(c.expect_tools)}")
+        if c.expect_tool_args:
+            bits.append(f"checks arguments of {', '.join(c.expect_tool_args)}")
         if c.forbid_tools:
             bits.append(f"forbids {', '.join(c.forbid_tools)}")
         if c.contains:
@@ -3336,6 +3358,8 @@ def eval_list(
         if c.not_contains:
             bits.append(f"not_contains {len(c.not_contains)}")
         bits.append("judged" if c.is_judged else "free only")
+        if c.run_as:
+            bits.append(f"runs as {c.run_as}")
         if c.tags:
             bits.append(f"tags: {', '.join(c.tags)}")
         if not c.enabled:
@@ -3369,6 +3393,8 @@ def eval_status(
                   f"  ·  {suite.finished_at or suite.started_at}")
     console.print(f"[dim]model: {suite.model or '?'}"
                   + (f" · judge: {suite.judge_model}" if suite.judge_model else "")
+                  + (f" · trigger: {suite.trigger}" if suite.trigger else "")
+                  + (f" · run as: {suite.run_as}" if suite.run_as else "")
                   + "[/dim]")
     for c in suite.cases:
         if not c.passed:
@@ -3388,6 +3414,7 @@ def eval_explain(
     """
     from .evals import cases as cases_lib
     from .evals import report as report_lib
+    from .evals.calls import describe as calls_describe
 
     hub = hub.resolve()
     suite = report_lib.latest(hub)
@@ -3410,15 +3437,32 @@ def eval_explain(
         console.print(f"[dim]case file:  {case.source_path}[/dim]")
     console.print(f"[dim]hub spec:   {hub / 'AGENTS.md'}[/dim]")
 
-    if case is not None:
-        console.print("\n[cyan]prompt[/cyan]")
-        console.print(case.prompt)
+    if result.run_as:
+        console.print(f"[dim]ran as:     {escape(result.run_as)}[/dim]")
 
-    console.print("\n[cyan]response[/cyan]")
-    console.print(result.response or "[dim](empty)[/dim]")
+    if result.turns is not None:
+        for n, turn in enumerate(result.turns, start=1):
+            console.print(f"\n[cyan]turn {n}[/cyan]")
+            console.print(escape(turn.prompt))
+            console.print(f"[cyan]reply {n}[/cyan]")
+            console.print(escape(turn.response) or "[dim](empty)[/dim]")
+    else:
+        if case is not None:
+            console.print("\n[cyan]prompt[/cyan]")
+            console.print(case.prompt)
+
+        console.print("\n[cyan]response[/cyan]")
+        console.print(result.response or "[dim](empty)[/dim]")
 
     console.print("\n[cyan]tools called[/cyan]")
-    console.print(", ".join(result.tool_calls) or "[dim](none)[/dim]")
+    if not result.tools:
+        console.print(", ".join(result.tool_calls) or "[dim](none)[/dim]")
+    for call in result.tools:
+        console.print("  " + escape(calls_describe(call, turn=result.turns is not None)),
+                      soft_wrap=True)
+        if call.preview:
+            console.print("    [dim]returned: " + escape(" ".join(call.preview.split())[:200])
+                          + "[/dim]", soft_wrap=True)
 
     console.print("\n[cyan]checks[/cyan]")
     if result.error:

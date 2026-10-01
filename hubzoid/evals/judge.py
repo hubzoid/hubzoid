@@ -6,7 +6,10 @@ four things:
   1. the hub's `AGENTS.md` — what this agent was told to be,
   2. the case's `## Criteria` — what this particular answer must do,
   3. the answer itself, with display chrome already stripped,
-  4. **which tools actually ran**, as observed ground truth.
+  4. **which tools actually ran**, as observed ground truth: each call with
+     its arguments, whether it failed, and the start of what it returned
+     when the runtime recorded it. For a multi-turn case the judge also sees
+     the earlier turns of the conversation and grades the final reply.
 
 That last one is not optional. Criteria routinely say "cites the policy file"
 or "reports what the tool returned", and without the observed tool list the
@@ -63,6 +66,11 @@ _MAX_SPEC_CHARS = 20_000
 # judge call, not an unbounded one.
 _MAX_RESPONSE_CHARS = 20_000
 
+# The tool-call section (arguments and result previews) and the earlier turns
+# of a conversation are bounded the same way.
+_MAX_CALLS_CHARS = 12_000
+_MAX_HISTORY_CHARS = 20_000
+
 _SYSTEM = """\
 You are grading a single response produced by an AI agent. You are not the \
 agent and you must not answer its question.
@@ -72,8 +80,10 @@ criteria this particular answer must satisfy, the tools it actually called, and 
 the answer it gave.
 
 The tool lists are observed ground truth, recorded by the runtime. Treat them \
-as fact. Never speculate about whether a tool ran or exists: do not claim an \
-answer fabricated a tool result when that tool appears in the called list, and \
+as fact. The called list shows each call's arguments, whether it failed, and \
+the start of what it returned when that was recorded. Never speculate about \
+whether a tool ran or exists: do not claim an answer fabricated a tool result \
+when that tool appears in the called list, and \
 do not call a capability invented when it appears in the list of tools this hub \
 has.
 
@@ -141,21 +151,72 @@ def available_tools(rt) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))
 
 
+def _call_lines(tools: list) -> str:
+    """One line per call: name, JSON arguments, outcome, result preview."""
+    multi = len({getattr(t, "turn", 1) for t in tools}) > 1
+    lines: list[str] = []
+    size = 0
+    for t in tools:
+        line = t.name
+        if t.args:
+            line += " " + json.dumps(t.args, ensure_ascii=False, default=str)
+        if t.ok is True:
+            line += " -> ok"
+        elif t.ok is False:
+            line += " -> failed" + (f": {t.error}" if t.error else "")
+        if t.preview:
+            line += "\n    returned: " + " ".join(t.preview.split())
+        if multi:
+            line = f"turn {t.turn}: {line}"
+        size += len(line)
+        if size > _MAX_CALLS_CHARS:
+            lines.append(f"[... {len(tools) - len(lines)} more calls truncated for judging]")
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _history(case, turns) -> tuple[str, str]:
+    """(earlier conversation, final question) of a multi-turn case."""
+    prompts = list(getattr(case, "turns", None) or [])
+    replies = [t.response for t in turns or []]
+    blocks = []
+    for i, text in enumerate(prompts[:-1]):
+        blocks.append(f"[user]\n{text.strip()}")
+        if i < len(replies):
+            blocks.append(f"[assistant]\n{replies[i].strip()}")
+    return _clip("\n\n".join(blocks), _MAX_HISTORY_CHARS), prompts[-1].strip()
+
+
 def build_prompt(spec: str, case, response: str,
                  tool_calls: list[str] | None = None,
-                 tools_available: list[str] | None = None) -> str:
+                 tools_available: list[str] | None = None,
+                 *, tools: list | None = None, turns: list | None = None) -> str:
     """The judge's user message. Delimited sections, so a prompt-injection
-    attempt inside the *response* reads as data rather than instruction."""
+    attempt inside the *response* reads as data rather than instruction.
+
+    `tools` (call records) replaces the bare `tool_calls` names with each
+    call's arguments, outcome and result preview. For a multi-turn case
+    (`case.turns`), the earlier turns (with the agent's replies from `turns`)
+    come first and the question is the final turn."""
     parts = []
     if spec.strip():
         parts.append(f"<agent_instructions>\n{spec.strip()}\n</agent_instructions>")
-    parts.append(f"<question>\n{case.prompt.strip()}\n</question>")
+    if getattr(case, "turns", None) and len(case.turns) > 1:
+        earlier, question = _history(case, turns)
+        parts.append(f"<earlier_conversation>\n{earlier}\n</earlier_conversation>")
+        parts.append(f"<question>\n{question}\n</question>")
+    else:
+        parts.append(f"<question>\n{case.prompt.strip()}\n</question>")
     parts.append(f"<criteria>\n{(case.criteria or '').strip()}\n</criteria>")
     if tools_available:
         parts.append("<tools_this_hub_has>\n"
                      + ", ".join(tools_available)
                      + "\n</tools_this_hub_has>")
-    called = ", ".join(dict.fromkeys(tool_calls or [])) or "(none)"
+    if tools:
+        called = _call_lines(tools)
+    else:
+        called = ", ".join(dict.fromkeys(tool_calls or [])) or "(none)"
     parts.append(f"<tools_actually_called>\n{called}\n</tools_actually_called>")
     parts.append(f"<answer>\n{_clip(response, _MAX_RESPONSE_CHARS).strip()}\n</answer>")
     parts.append('Grade the answer. Reply with JSON only: {"score": <1-10>, "reasoning": "..."}')
@@ -268,8 +329,11 @@ def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):
 
     async def judge_fn(case, response: str,
                        tool_calls: list[str] | None = None,
-                       tools_available: list[str] | None = None) -> JudgeResult:
-        prompt = build_prompt(spec, case, response, tool_calls, tools_available)
+                       tools_available: list[str] | None = None,
+                       *, tools: list | None = None,
+                       turns: list | None = None) -> JudgeResult:
+        prompt = build_prompt(spec, case, response, tool_calls, tools_available,
+                              tools=tools, turns=turns)
         try:
             reply = await ask(model_id, prompt)
         except Exception as exc:  # noqa: BLE001 — a broken judge is not a failed hub
@@ -285,6 +349,7 @@ def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):
         return JudgeResult(score=score, threshold=case.threshold,
                            reasoning=reasoning, model=model_id)
 
+    judge_fn.model_id = model_id      # recorded as the suite's judge_model
     return judge_fn
 
 

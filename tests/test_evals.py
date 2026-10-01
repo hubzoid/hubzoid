@@ -423,7 +423,7 @@ def test_json_is_valid_and_carries_the_schema(tmp_path):
     hub.mkdir()
     path = report.save(hub, _suite(a=True))
     data = json.loads(path.read_text())
-    assert data["schema"] == 1 and data["passed"] == 1
+    assert data["schema"] == 2 and data["passed"] == 1
 
 
 def test_compare_reports_only_what_moved():

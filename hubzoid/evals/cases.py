@@ -34,6 +34,17 @@ learn":
 
 A body with no `##` headings at all is taken as the prompt, so the smallest
 possible case file is a single line of text.
+
+Optional additions (1.1):
+
+    run_as: someone@example.com    # run as this account (workflow identity
+                                   # rules: a usable account, grants nothing)
+    expect_tool_args:              # a call of the tool with these arguments
+      read_knowledge: {name: refund-policy}
+
+A multi-turn case uses `## Turn 1`, `## Turn 2`, ... (any heading starting
+with "Turn") instead of `## Prompt`. The turns run as one conversation;
+`contains` / `not_contains` and the judge look at the final reply.
 """
 from __future__ import annotations
 
@@ -62,6 +73,9 @@ DEFAULT_THRESHOLD = 7
 _HEADING_RE = re.compile(r"^#{1,6}\s*(.+?)\s*$", re.MULTILINE)
 
 _PROMPT_KEYS = {"prompt", "input", "ask"}
+# "Turn 1", "Turn 2: follow-up", "turn one". A whole word, so a heading such
+# as "Turnaround" in an existing case is not mistaken for a turn.
+_TURN_RE = re.compile(r"^turn\b")
 _CRITERIA_KEYS = {"criteria", "rubric", "expect", "expected"}
 
 # Frontmatter keys we understand. Anything else is a typo worth reporting —
@@ -70,6 +84,7 @@ _CRITERIA_KEYS = {"criteria", "rubric", "expect", "expected"}
 _KNOWN_KEYS = {
     "schedule", "tags", "expect_tools", "forbid_tools", "contains",
     "not_contains", "timeout", "threshold", "enabled",
+    "run_as", "expect_tool_args",
 }
 
 
@@ -80,7 +95,7 @@ class EvalCaseError(ValueError):
 @dataclass
 class EvalCase:
     name: str                                  # filename stem = the case id
-    prompt: str
+    prompt: str                                # the first turn's text for multi-turn
     criteria: str | None = None                # present => judged
     tags: list[str] = field(default_factory=list)
     expect_tools: list[str] = field(default_factory=list)
@@ -93,6 +108,18 @@ class EvalCase:
     cron: CronExpr | None = None
     enabled: bool = True
     source_path: Path | None = None
+    turns: list[str] = field(default_factory=list)       # empty: single prompt
+    run_as: str | None = None                  # account email, validated syntax
+    expect_tool_args: dict = field(default_factory=dict)  # tool -> {arg: expected}
+
+    @property
+    def is_multi_turn(self) -> bool:
+        return bool(self.turns)
+
+    @property
+    def prompts(self) -> list[str]:
+        """What the person says, in order: the turns, or the one prompt."""
+        return list(self.turns) if self.turns else [self.prompt]
 
     @property
     def is_judged(self) -> bool:
@@ -138,20 +165,23 @@ def _as_int(value: Any, *, key: str, where: str, lo: int, hi: int, default: int)
     return n
 
 
-def _split_body(body: str) -> tuple[str, str | None]:
-    """Return (prompt, criteria) from a case body.
+def _split_body(body: str, *, where: str = "case") -> tuple[str, str | None, list[str]]:
+    """Return (prompt, criteria, turns) from a case body.
 
     With no headings the whole body is the prompt — the one-line case. With
     headings, text before the first recognised heading is ignored (it reads as
-    a note to the human), and only `Prompt` / `Criteria` sections are used.
+    a note to the human), and only `Prompt` / `Criteria` / `Turn ...` sections
+    are used. For a multi-turn case `prompt` is the first turn's text.
     """
     headings = list(_HEADING_RE.finditer(body))
     if not headings:
-        return body.strip(), None
+        return body.strip(), None, []
 
     sections: dict[str, str] = {}
+    turns: list[tuple[str, str]] = []
     for i, match in enumerate(headings):
-        title = match.group(1).strip().lower().rstrip(":")
+        raw_title = match.group(1).strip()
+        title = raw_title.lower().rstrip(":")
         start = match.end()
         end = headings[i + 1].start() if i + 1 < len(headings) else len(body)
         text = body[start:end].strip()
@@ -159,6 +189,20 @@ def _split_body(body: str) -> tuple[str, str | None]:
             sections.setdefault("prompt", text)
         elif title in _CRITERIA_KEYS:
             sections.setdefault("criteria", text)
+        elif _TURN_RE.match(title):
+            turns.append((raw_title, text))
+
+    if turns:
+        if "prompt" in sections:
+            raise EvalCaseError(
+                f"{where}: has both a '## Prompt' section and '## Turn' sections. "
+                "Use '## Prompt' for one question, or '## Turn 1', '## Turn 2', ... "
+                "for a conversation, not both.")
+        empty = [title for title, text in turns if not text]
+        if empty:
+            raise EvalCaseError(f"{where}: '{empty[0]}' has no text")
+        texts = [text for _, text in turns]
+        return texts[0], sections.get("criteria"), texts
 
     if "prompt" not in sections:
         if "criteria" in sections:
@@ -166,12 +210,47 @@ def _split_body(body: str) -> tuple[str, str | None]:
             # body is the prompt" here would quietly send the *rubric* to the
             # agent as the question, and the case would look like it ran. Make
             # the author fix it.
-            return "", sections["criteria"]
+            return "", sections["criteria"], []
         # No recognised section at all — the author used markdown headings
         # inside a heading-free case. Take the whole body as the prompt rather
         # than failing over a formatting preference.
-        return body.strip(), None
-    return sections["prompt"], sections.get("criteria")
+        return body.strip(), None, []
+    return sections["prompt"], sections.get("criteria"), []
+
+
+def _run_as(value: Any, *, where: str) -> str | None:
+    """`run_as:` is an account email, checked for syntax here and resolved
+    against the hub's accounts when the case runs (workflow identity rules)."""
+    if value is None:
+        return None
+    from ..workflows.identity import validate_run_as
+
+    try:
+        return validate_run_as(value)
+    except ValueError as exc:
+        raise EvalCaseError(f"{where}: {exc}") from exc
+
+
+def _expect_tool_args(value: Any, *, where: str) -> dict:
+    """`expect_tool_args:` maps a tool name to the arguments one of its calls
+    must have: {read_knowledge: {name: refund-policy}}."""
+    if value is None:
+        return {}
+    shape = ("expect_tool_args must map a tool name to its expected arguments, "
+             "for example {read_knowledge: {name: refund-policy}}")
+    if not isinstance(value, dict):
+        raise EvalCaseError(f"{where}: {shape}")
+    out: dict[str, dict] = {}
+    for tool, expected in value.items():
+        if not isinstance(tool, str) or not tool.strip():
+            raise EvalCaseError(f"{where}: {shape}")
+        if not isinstance(expected, dict) or not expected:
+            raise EvalCaseError(f"{where}: expect_tool_args.{tool}: {shape}")
+        for arg in expected:
+            if not isinstance(arg, str) or not arg.strip():
+                raise EvalCaseError(f"{where}: expect_tool_args.{tool}: argument names must be text")
+        out[tool.strip()] = dict(expected)
+    return out
 
 
 def parse(path: Path) -> EvalCase:
@@ -193,7 +272,7 @@ def parse(path: Path) -> EvalCase:
             f"Known keys: {', '.join(sorted(_KNOWN_KEYS))}"
         )
 
-    prompt, criteria = _split_body(body)
+    prompt, criteria, turns = _split_body(body, where=where)
     if not prompt.strip():
         raise EvalCaseError(f"{where}: no prompt — add a '## Prompt' section (or plain body text)")
 
@@ -222,6 +301,9 @@ def parse(path: Path) -> EvalCase:
         cron=cron,
         enabled=bool(meta.get("enabled", True)),
         source_path=path,
+        turns=turns,
+        run_as=_run_as(meta.get("run_as"), where=where),
+        expect_tool_args=_expect_tool_args(meta.get("expect_tool_args"), where=where),
     )
 
 

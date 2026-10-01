@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from . import calls as calls_lib
 from .results import CaseResult, SuiteResult
 
 log = logging.getLogger("hubzoid.evals")
@@ -38,6 +39,10 @@ def save(hub_dir: Path, suite: SuiteResult, *, stamp: str | None = None) -> Path
     d.mkdir(parents=True, exist_ok=True)
     stamp = stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
     path = d / f"{stamp}.json"
+    n = 1
+    while path.exists():         # two triggers in the same second: keep both
+        n += 1
+        path = d / f"{stamp}_{n}.json"
     path.write_text(json.dumps(suite.to_dict(), indent=2), encoding="utf-8")
     _prune(d)
     return path
@@ -133,8 +138,24 @@ def _judge_cell(c: CaseResult) -> str:
     return f"[{colour}]{c.judge.score}/10[/{colour}]"
 
 
+def detail_lines(c: CaseResult) -> list[str]:
+    """`--details`: who the case ran as, then one line per tool call, e.g.
+    `read_knowledge name=refund-policy  ok  120 ms` (prefixed with its turn
+    in a multi-turn case). Plain text: escape it before printing with markup."""
+    lines: list[str] = []
+    if c.run_as:
+        lines.append(f"run as {c.run_as}")
+    if not c.tools:
+        lines.append("(no tool calls)")
+    multi = c.turns is not None
+    for call in c.tools:
+        lines.append(calls_lib.describe(call, turn=multi))
+    return lines
+
+
 def render_table(console, suite: SuiteResult) -> None:
     """The primary surface for manual and CI runs."""
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(box=None, pad_edge=False)
@@ -145,8 +166,8 @@ def render_table(console, suite: SuiteResult) -> None:
     table.add_column("reason", style="dim", overflow="fold")
 
     for c in suite.cases:
-        table.add_row(c.name, _verdict_cell(c), _judge_cell(c),
-                      f"{c.duration:.1f}s", c.reason)
+        table.add_row(escape(c.name), _verdict_cell(c), _judge_cell(c),
+                      f"{c.duration:.1f}s", escape(c.reason))
     console.print(table)
 
     total = len(suite.cases)
