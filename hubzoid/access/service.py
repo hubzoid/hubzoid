@@ -544,32 +544,37 @@ class AccessService:
         before = _account_flags(gs, subject)
         changed = suspended or before["suspended"]
         if changed:
+            end_sessions = self._session_ender(subject) if suspended else None
             try:
                 gs.suspend(subject, actor=actor.subject, suspended=suspended,
-                           surface=actor.surface)
+                           surface=actor.surface, in_transaction=end_sessions)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
-            if suspended:
-                self._end_sessions(subject)
             self._project_visibility()
         return changed
 
-    def _end_sessions(self, subject: str) -> None:
-        """Default mode: a blocked person's sessions end for good, so lifting
-        the block never brings an old sign-in (or a stolen cookie) back. Open
-        WebUI keeps its own sessions in legacy mode."""
+    def _session_ender(self, subject: str):
+        """Default mode: what ends a blocked person's sessions for good, run in
+        the block's own transaction (``GrantStore.suspend``): the account's
+        version moves, then every session is revoked
+        (``UserStore.end_sessions_in``). A sign-in racing the block then either
+        starts no session or has the one it started revoked, and lifting the
+        block never brings an old sign-in (or a stolen cookie) back. Without
+        the account store nothing is blocked (fail closed: the administrator
+        retries). Open WebUI keeps its own sessions in legacy mode: None."""
         from .. import appmode
 
         if appmode.is_legacy(self.hub_dir):
-            return
+            return None
         try:
             from ..auth import users
 
-            account = users.find_by_email(self.hub_dir, subject)
-            if account is not None:
-                users.store(self.hub_dir).revoke_sessions(account["id"])
-        except Exception:  # noqa: BLE001 — the block stands; a blocked session is refused anyway
-            log.warning("block: sessions could not be ended now; they are refused while blocked")
+            accounts = users.store(self.hub_dir)
+        except Exception:  # noqa: BLE001
+            log.exception("block: account store unavailable")
+            raise Denied(503, "store_unavailable",
+                         "Accounts are unavailable right now. Try again shortly.")
+        return lambda conn: accounts.end_sessions_in(conn, subject)
 
     def _project_visibility(self) -> None:
         """Mirror access to the chat app's agent picker now, not at the next

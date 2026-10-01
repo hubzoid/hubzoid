@@ -469,3 +469,66 @@ def test_a_used_link_reports_the_account_version_it_wrote(hub):
     token, _ = links.create(hub, user["id"], purpose="reset_password")
     used = links.consume(hub, token, password="a fresh password")
     assert used["updated_at"] == users.get(hub, user["id"])["updated_at"] > user["updated_at"]
+
+
+def test_a_sign_in_racing_a_block_is_not_revived_by_reactivation(hub, monkeypatch):
+    """A sign-in passes the block check, then an administrator blocks the
+    person before the session is written. That sign-in must not leave a
+    session that works again once the block is lifted."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService, Actor
+
+    store_for(hub).bootstrap(["boss@example.com"])
+    person(hub)
+    c = client(hub)
+    service = AccessService(hub)
+    boss = Actor("boss@example.com", "console", "session")
+    real = sessions.create_session
+    blocked: list[bool] = []
+
+    def block_then_create(*args, **kwargs):
+        if not blocked:
+            blocked.append(service.set_blocked(boss, "ana@example.com", True))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sessions, "create_session", block_then_create)
+    r = sign_in(c)
+    monkeypatch.setattr(sessions, "create_session", real)
+    assert blocked == [True]
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "sign_in_changed"
+    service.set_blocked(boss, "ana@example.com", False)
+    assert who(c) is None and _live_sessions(hub) == []
+    assert sign_in(c).status_code == 200  # signing in again works
+
+
+def test_blocking_moves_the_account_and_ends_sessions_in_one_transaction(hub, monkeypatch):
+    """The block, the account's new version and the ended sessions commit
+    together: if ending the sessions fails, the person is not left blocked
+    with sessions that would come back when the block is lifted."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService, Actor
+
+    gs = store_for(hub)
+    gs.bootstrap(["boss@example.com"])
+    user = person(hub)
+    c = client(hub)
+    sign_in(c)
+    service = AccessService(hub)
+    boss = Actor("boss@example.com", "console", "session")
+    before = users.get(hub, user["id"])["updated_at"]
+
+    real = users.UserStore.__dict__["_revoke"]
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("sessions could not be ended")
+
+    monkeypatch.setattr(users.UserStore, "_revoke", staticmethod(broken))
+    with pytest.raises(RuntimeError):
+        service.set_blocked(boss, "ana@example.com", True)
+    monkeypatch.setattr(users.UserStore, "_revoke", real)
+    assert not gs.is_suspended("ana@example.com")  # rolled back with the failure
+    assert users.get(hub, user["id"])["updated_at"] == before
+    assert who(c) == "ana@example.com"
+    assert service.set_blocked(boss, "ana@example.com", True)
+    assert users.get(hub, user["id"])["updated_at"] > before
+    assert _live_sessions(hub) == []

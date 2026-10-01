@@ -17,7 +17,8 @@ Rules held here:
     identities and one-time links (and their personal connection tokens, when
     ``hubzoid.connectors.tokens`` is installed).
   * ``updated_at`` moves on every change to the account row (not on sign-in
-    activity, ``last_login_at``): it is the account's version. A change that ends
+    activity, ``last_login_at``) and when the person is blocked
+    (``end_sessions_in``): it is the account's version. A change that ends
     sessions moves it first, then revokes them, in one transaction. A session
     only starts if it hasn't moved since the credential was read
     (``sessions.create_session``), and a person's own password change only
@@ -371,6 +372,21 @@ class UserStore:
     def revoke_sessions(self, user_id: str, *, except_token_hash: str | None = None) -> int:
         with self.engine.begin() as conn:
             return self._revoke(conn, user_id, time.time(), except_token_hash)
+
+    def end_sessions_in(self, conn, email: str) -> int:
+        """For a block written in ``conn``'s transaction (``access.service``):
+        move the account's ``updated_at``, then end all its sessions, in that
+        same transaction. A sign-in racing the block either sees the account
+        changed and starts no session (``sessions.create_session``), or started
+        one before, which this revokes; lifting the block brings neither back.
+        Returns the sessions ended (0 when no account has this email)."""
+        now = time.time()
+        row = conn.execute(sa.select(users.c.id).where(
+            users.c.email == normalize_email(email))).first()
+        if row is None:
+            return 0
+        conn.execute(users.update().where(users.c.id == row[0]).values(updated_at=now))
+        return self._revoke(conn, row[0], now)
 
     # ---- external sign-in identities --------------------------------------------
 
