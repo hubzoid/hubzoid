@@ -219,6 +219,8 @@ def test_mcp_transport_group_and_oauth_revocation(owui_store, monkeypatch):
     from hubzoid import mcp_server
     from tests.test_mcp_server import _mk_hub, _call, _rpc, _result
 
+    # Open WebUI API keys and Open WebUI groups: the legacy mode.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     root, engine = owui_store
     hub = _mk_hub(root)
     monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
