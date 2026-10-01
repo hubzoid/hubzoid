@@ -1,9 +1,11 @@
 # Hubzoid admin portal. Apache-2.0 licensed like the rest of the repository.
 """The admin portal: a read-mostly JSON API + a static React SPA.
 
-Agents, per-agent access/runs/activity, and deployment people/activity views.
-Access and account-policy changes are authorized server-side; workflow views
-inspect the state already held by the access store, DBOS and the audit log.
+Agents, per-agent access/runs/evals/activity, and deployment people/activity
+views. Access and account-policy changes are authorized server-side; workflow
+views inspect the state already held by the access store, DBOS and the audit
+log. A hub's evals (`portal_evals.py`) are read from its results files and
+started as a DBOS workflow on the hub's own engine.
 Served by the bridge's FastAPI at `/portal`; the JSON API is under
 `/portal/api`.
 
@@ -1127,6 +1129,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             visibility=sync_status(hub_dir),
         )
 
+    # A hub's evals: its cases, results and starting a run (portal_evals.py).
+    from . import portal_evals
+
+    portal_evals.register(router, hub_dir, require_admin=require_admin,
+                          require_hub=require_hub, check_mutation=_check_mutation)
     return router
 
 
