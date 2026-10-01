@@ -183,21 +183,19 @@ class GroupService:
         if group is None:
             raise GroupRefused(404, "not_found", "This group doesn't exist.")
         out = self._summary(group)
-        accounts = self._accounts([m["email"] for m in group["members"]])
+        emails = [m["email"] for m in group["members"]]
+        accounts = self._accounts(emails)
+        states = self._call(gs.people_states, emails)
         members = []
         for m in group["members"]:
             email = m["email"]
-            try:
-                identity = gs.identity(email) or {}
-                blocked = gs.is_suspended(email)
-            except Exception:  # noqa: BLE001
-                raise GroupRefused(503, "store_unavailable", "Access data is unavailable. Try again shortly.")
-            account = accounts.get(email)
+            state = states.get(email) or {"display": None, "blocked": False}
+            account = (accounts or {}).get(email)
             members.append({
                 "email": email,
-                "display": (account or {}).get("name") or identity.get("display") or None,
+                "display": (account or {}).get("name") or state["display"] or None,
                 "account": (account or {}).get("status") or ("none" if accounts is not None else None),
-                "blocked": blocked,
+                "blocked": state["blocked"],
                 "added_at": m.get("added_at"),
                 "added_by": m.get("added_by"),
             })
@@ -250,11 +248,8 @@ class GroupService:
     def _refuse_blocked(self, emails: list[str]) -> None:
         """A blocked person (or one whose account is unavailable) is not given
         access through a group, as they are not given it directly."""
-        gs = self.store
-        try:
-            blocked = [e for e in emails if gs.is_suspended(e)]
-        except Exception:  # noqa: BLE001 — fail closed
-            raise GroupRefused(503, "store_unavailable", "Access data is unavailable. Try again shortly.")
+        states = self._call(self.store.people_states, emails)
+        blocked = [e for e in emails if states.get(e, {}).get("blocked")]
         if blocked:
             who = ", ".join(blocked[:3]) + ("…" if len(blocked) > 3 else "")
             raise GroupRefused(409, "blocked",

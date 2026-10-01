@@ -88,6 +88,15 @@ def own_entry(hub_dir: Path, manifest: dict) -> dict | None:
     return None
 
 
+def api_base_for(hub_dir: Path) -> str:
+    """Where the chat app calls this hub's hub-scoped routes: "" for a
+    standalone hub, "/b/<slug>" in a gateway (the manifest's `slug`, or the
+    slugified folder name for a manifest written before slugs were recorded).
+    Raises when a manifest exists but can't be used."""
+    entry = own_entry(Path(hub_dir), _manifest(Path(hub_dir)))
+    return f"/b/{_hub_slug(entry)}" if entry is not None else ""
+
+
 def _find(folder: Path, candidates: tuple[str, ...]) -> str | None:
     """The real file name of the first candidate present (case-insensitive)."""
     try:

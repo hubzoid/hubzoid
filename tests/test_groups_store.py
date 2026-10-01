@@ -339,3 +339,47 @@ def test_postgres_a_grant_never_outlives_a_concurrent_delete(pg_store):
         assert a.group(g["id"]) is None
         assert not any(s == group_subject(g["id"]) for s, _h, _p in a.list_grants())
         assert not a.can("ann@example.org", HUB, "crm_read")
+
+
+# ---------------------------------------------------------------------------
+# what a migration (lane F) relies on
+# ---------------------------------------------------------------------------
+def test_group_grant_support_is_detectable_and_resolves_both_ways(gs):
+    from hubzoid.access import store as store_mod
+
+    assert store_mod.SUPPORTS_GROUP_GRANTS is True
+    assert GrantStore.supports_group_grants is True and gs.supports_group_grants is True
+    g = gs.create_group("Night shift", actor="migration", source="migrated",
+                        group_id="7C9E6679-7425-40de-944b-e07fc1f90ae7", emails=["ann@example.org"])
+    assert g["id"] == "7c9e6679-7425-40de-944b-e07fc1f90ae7" and g["source"] == "migrated"
+    subject = group_subject(g["id"])
+    gs.apply_migration([(subject, HUB, "crm_read")], [], [HUB])
+    # The group subject itself, and every member through it.
+    assert gs.can(subject, HUB, "crm_read") and gs.can(subject, HUB, USE_HUB)
+    assert gs.can("ann@example.org", HUB, "crm_read")
+    assert not gs.can(subject, HUB, MANAGE_ACCESS)
+
+
+def test_no_identity_row_for_a_group_on_any_write_path(gs):
+    g = gs.create_group("Ops", actor=ADMIN)
+    subject = group_subject(g["id"])
+    gs.grant(subject, HUB, USE_HUB, actor=ADMIN)
+    gs.grant_many([(subject, HUB, "crm_read")])
+    gs.apply_migration([(subject, HUB, "crm_write")], [], [HUB], replace=False)
+    gs.apply_changes(subject, HUB, [("grant", "crm_export")])
+    assert gs.identity(subject) is None
+    assert subject not in {i["subject"] for i in gs.identities()}
+
+
+def test_memberships_written_outside_the_store_apply_once_the_revision_moves(gs):
+    """A bulk import may write hz_group_members itself; like every access
+    write it must bump the policy revision (apply_migration does)."""
+    g = gs.create_group("Imported", actor=ADMIN)
+    gs.grant(group_subject(g["id"]), HUB, "crm_read", actor=ADMIN)
+    with gs.engine.begin() as conn:
+        conn.execute(text("INSERT INTO hz_group_members (group_id, email, added_at) "
+                          "VALUES (:g, 'zed@example.org', 0)"), {"g": g["id"]})
+    assert not gs.can("zed@example.org", HUB, "crm_read")   # not until the revision moves
+    with gs.engine.begin() as conn:
+        conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
+    assert gs.can("zed@example.org", HUB, "crm_read")

@@ -617,6 +617,23 @@ def build_edge_app(
     return app
 
 
+def _redact_oauth_callback_logs() -> None:
+    """The edge's access log sees the same OAuth callback addresses as the
+    bridge (their query strings carry one-time codes). Use the connections
+    module's redaction when this build has it; never fail to start over it."""
+    try:
+        from .connectors import routes as connector_routes
+    except ImportError:
+        return
+    redact = getattr(connector_routes, "redact_oauth_callback_logs", None)
+    if redact is None:
+        return
+    try:
+        redact()
+    except Exception:  # noqa: BLE001 — logging hygiene must not stop the front door
+        log.warning("edge: could not install OAuth callback log redaction", exc_info=True)
+
+
 def _factory() -> Starlette:
     """uvicorn factory: ``uvicorn hubzoid.edge:_factory --factory``.
 
@@ -637,6 +654,7 @@ def _factory() -> Starlette:
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
         raise RuntimeError("edge factory needs HUBZOID_EDGE_DEFAULT in the environment.")
+    _redact_oauth_callback_logs()
     raw = os.environ.get("HUBZOID_EDGE_ROUTES", "[]")
     try:
         spec = json.loads(raw)
