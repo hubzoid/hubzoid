@@ -4,12 +4,15 @@
    installs, everywhere Hubzoid opens it: the upgrade guard, `hubzoid doctor`
    and `hubzoid backup`. A store that cannot be read is never taken for one
    with no accounts.
+3. Backups keep files people attached whose names look like credential or
+   temporary files. Only the real credential and temporary files stay out.
 """
 from __future__ import annotations
 
 import io
 import sqlite3
 import sys
+import tarfile
 import uuid
 from pathlib import Path
 
@@ -212,3 +215,93 @@ def test_doctor_reports_unreadable_accounts(tmp_path, monkeypatch):
     signin = doc._web_app_signin(hub)
     assert signin.status == "warn" and "could not be read (DatabaseError)" in signin.summary
     assert "no Hubzoid account yet" not in signin.summary
+
+
+# ---------------------------------------------------------------------------
+# 3. Attachments named like credential or temporary files are backed up
+# ---------------------------------------------------------------------------
+_LOOKALIKES = ("secret.key", "artifact_secret", "report.tmp", "draft.part", "notes-journal",
+               "data-wal", "data-shm")
+
+
+def _rels(archive: Path) -> set[str]:
+    with tarfile.open(archive) as t:
+        return {n.split("/", 1)[1] for n in t.getnames() if "/" in n}
+
+
+def _deployment_with_lookalikes(tmp_path: Path) -> Path:
+    from hubzoid import _signing, secretbox
+
+    hub = _hub(tmp_path / "live")
+    uploads = hub / ".hubzoid" / "chats" / "c1" / "uploads"
+    uploads.mkdir(parents=True)
+    for name in _LOOKALIKES:
+        (uploads / name).write_text(f"attached {name}")
+    (hub / "output" / "s1").mkdir(parents=True)
+    (hub / "output" / "s1" / "export.tmp").write_text("agent output")
+    owui = hub / ".openwebui-data" / "uploads"
+    owui.mkdir(parents=True)
+    (owui / "f1_report.tmp").write_text("attached in Open WebUI")
+    # The real credential and temporary files.
+    _signing._secret(hub)  # .hubzoid/artifact_secret
+    secretbox.keys(hub)    # .hubzoid/secret.key
+    (hub / ".hubzoid" / "deployment.123.tmp").write_text("{}")
+    (hub / "output" / "s1" / ".export.pdf.123.tmp").write_text("half an artifact")
+    return hub
+
+
+def test_backup_keeps_attachments_named_like_secrets_or_temporary_files(tmp_path):
+    hub = _deployment_with_lookalikes(tmp_path)
+    live = sqlite3.connect(hub / ".hubzoid" / "extra.db")  # a live WAL database
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("CREATE TABLE t (x)")
+    live.execute("INSERT INTO t VALUES (1)")
+    live.commit()
+    try:
+        assert (hub / ".hubzoid" / "extra.db-wal").exists()
+        bk.backup(hub, tmp_path / "b.tar.gz", wait=0)
+    finally:
+        live.close()
+    rels = _rels(tmp_path / "b.tar.gz")
+    for name in _LOOKALIKES:
+        assert f"chats/c1/uploads/{name}" in rels, name
+    assert "s1/export.tmp" in rels and "uploads/f1_report.tmp" in rels
+    # Still left out: credentials, Hubzoid's temporary files, SQLite sidecars.
+    assert {"secret.key", "artifact_secret", "deployment.123.tmp", "s1/.export.pdf.123.tmp",
+            "extra.db-wal", "extra.db-shm"}.isdisjoint(rels)
+    assert "extra.db" in rels
+
+    new = tmp_path / "elsewhere"
+    bk.restore(tmp_path / "b.tar.gz", [(str(tmp_path / "live"), str(new))])
+    uploads = new / "hub" / ".hubzoid" / "chats" / "c1" / "uploads"
+    for name in _LOOKALIKES:
+        assert (uploads / name).read_text() == f"attached {name}"
+
+
+def test_secrets_mode_adds_credentials_and_still_leaves_temporary_files_out(tmp_path):
+    hub = _deployment_with_lookalikes(tmp_path)
+    bk.backup(hub, tmp_path / "s.tar.gz", wait=0, include_secrets=True)
+    rels = _rels(tmp_path / "s.tar.gz")
+    assert {"secret.key", "artifact_secret", "chats/c1/uploads/report.tmp"} <= rels
+    assert "deployment.123.tmp" not in rels
+
+
+def test_restore_carries_over_only_the_real_credential_files(tmp_path):
+    hub = _deployment_with_lookalikes(tmp_path)
+    key = (hub / ".hubzoid" / "secret.key").read_bytes()
+    bk.backup(hub, tmp_path / "b.tar.gz", wait=0)
+    later = hub / ".hubzoid" / "chats" / "c2" / "uploads"  # attached after the backup
+    later.mkdir(parents=True)
+    (later / "secret.key").write_text("attached later")
+    bk.restore(tmp_path / "b.tar.gz")  # in place
+    assert (hub / ".hubzoid" / "secret.key").read_bytes() == key
+    assert not (hub / ".hubzoid" / "chats" / "c2").exists()
+
+
+def test_an_archive_written_inside_a_saved_folder_leaves_itself_out(tmp_path):
+    hub = _hub(tmp_path)
+    (hub / "output").mkdir()
+    (hub / "output" / "report.txt").write_text("report")
+    bk.backup(hub, hub / "output" / "b.tar.gz", wait=0)
+    rels = _rels(hub / "output" / "b.tar.gz")
+    assert "report.txt" in rels and not any(r.startswith("b.tar.gz") for r in rels)

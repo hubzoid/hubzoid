@@ -16,7 +16,11 @@ Not in the archive:
     `secret.key`, `.webui_secret_key`) and the database passwords in the
     gateway's `deployment.json` (saved as `***`), unless asked for with
     `include_secrets`. The deployment key is backed up separately from the data
-    it protects (see hubzoid.secretbox).
+    it protects (see hubzoid.secretbox). Only those locations hold secrets: a
+    chat attachment or an agent's file with one of those names is data, and is
+    saved like any other.
+  - temporary files (Hubzoid's half-written `.tmp` files) and SQLite journals
+    beside a database, which the database's copy already includes.
 
 A backup holds new scheduled runs and waits for running ones to finish. Chat
 keeps working throughout. Due runs fire when the hold ends.
@@ -50,7 +54,8 @@ INDEX = "hubzoid-backup.json"
 STATE_DIRS = (".hubzoid", ".inbound", "logs", "output")
 UI_DIR = ".openwebui-data"
 SECRET_FILES = {".env", "artifact_secret", "secret.key", ".webui_secret_key", ".admin_token"}
-_SKIP_SUFFIXES = ("-wal", "-shm", "-journal", ".tmp", ".part")
+_TEMP_SUFFIXES = (".tmp", ".part")
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 # Enough to cover a long copy. The hold is cleared when the backup ends, and
 # expires on its own if the backup process dies.
@@ -178,17 +183,42 @@ def _is_sqlite(path: Path) -> bool:
         return False
 
 
+def _people_files(rel: Path, root: Root) -> bool:
+    """Under a folder of files that people attached or the agent made: a
+    conversation's folder (`.hubzoid/chats/<id>/`), the agent's `output`, and
+    Open WebUI's `uploads`. Their names are chosen by people and the agent."""
+    first = rel.parts[:1]
+    if root.kind == "ui":
+        return first == ("uploads",)
+    return root.path.name == "output" or (root.path.name == ".hubzoid" and first == ("chats",))
+
+
+def _credential(rel: Path, root: Root) -> bool:
+    """A credential file where Hubzoid and Open WebUI keep one: the top of a
+    hub's `.hubzoid` (the link secret, the deployment key) or of a chat UI or
+    gateway data folder (the deployment key next to the manifest, `.env`,
+    Open WebUI's key files). The same name anywhere else is data."""
+    return (rel.name in SECRET_FILES and len(rel.parts) == 1
+            and (root.kind == "ui" or root.path.name == ".hubzoid"))
+
+
 def _skip(rel: Path, root: Root, include_secrets: bool) -> bool:
     name = rel.name
-    if name.endswith(_SKIP_SUFFIXES) or name.startswith(".hubzoid-restore-"):
-        return True
-    if name in SECRET_FILES and not include_secrets:
-        return True
-    parts = rel.parts
-    if "__pycache__" in parts:
+    if name.startswith(".hubzoid-restore-") or "__pycache__" in rel.parts:
         return True
     # Open WebUI's model cache is large and rebuilt on demand.
-    return root.kind == "ui" and parts[:1] == ("cache",)
+    if root.kind == "ui" and rel.parts[:1] == ("cache",):
+        return True
+    # Half-written files from Hubzoid's atomic writes. Among people's files only
+    # hidden ones are Hubzoid's (an artifact being written): uploaded names
+    # never start with a dot.
+    if name.endswith(_TEMP_SUFFIXES) and (name.startswith(".") or not _people_files(rel, root)):
+        return True
+    # A journal beside a SQLite database: the database's copy includes it.
+    if name.endswith(_SQLITE_SIDECARS) and _is_sqlite(
+            (root.path / rel).with_name(name.rsplit("-", 1)[0])):
+        return True
+    return not include_secrets and _credential(rel, root)
 
 
 def _without_passwords(path: Path) -> bytes | None:
@@ -368,7 +398,8 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
 def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
     from . import __version__
 
-    exclude = {out}
+    part = out.with_name(out.name + ".part")
+    exclude = {out, part}  # never the archive itself, wherever it is written
     index = {
         "format": FORMAT,
         "hubzoid": __version__,
@@ -380,7 +411,6 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
         "secrets": include_secrets,
         "redacted": [],  # files saved with their database passwords as ***
     }
-    part = out.with_name(out.name + ".part")
     # Chat UI databases hold password hashes and connection keys: owner-only.
     private = lambda path, flags: os.open(path, flags, 0o600)  # noqa: E731
     try:
@@ -591,7 +621,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
                         os.replace(stale, Path(str(aside) + side))
             shutil.move(str(src), str(target))
             if aside is not None and root["kind"] != "file":
-                _keep_secrets(aside, target)
+                _keep_secrets(aside, target, Root(root["id"], Path(root["path"]), root["kind"]))
             say(f"Restored {target}")
 
     if any(a != b for a, b in moves):
@@ -603,18 +633,19 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
             "redacted": [str(p) for p in redacted if p.is_file()]}
 
 
-def _keep_secrets(previous: Path, restored: Path) -> None:
-    """Copy secret files the archive did not hold (a backup made without
+def _keep_secrets(previous: Path, restored: Path, root: Root) -> None:
+    """Copy credential files the archive did not hold (a backup made without
     secrets) from the directory the restore replaced. Restoring data must not
-    swap the deployment key or the artifact link secret for new ones."""
+    swap the deployment key or the artifact link secret for new ones. Only the
+    credential locations (`_credential`): a chat attachment of the same name
+    is data, and is not carried over."""
     if not previous.is_dir():
         return
-    for path in previous.rglob("*"):
-        if path.name not in SECRET_FILES or path.is_symlink() or not path.is_file():
+    for path in previous.iterdir():
+        if not _credential(Path(path.name), root) or path.is_symlink() or not path.is_file():
             continue
-        dest = restored / path.relative_to(previous)
+        dest = restored / path.name
         if not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)
 
 
