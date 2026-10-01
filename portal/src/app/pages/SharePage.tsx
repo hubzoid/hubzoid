@@ -7,7 +7,7 @@ import { t } from "../i18n/en";
 import { ApiError, enc, get } from "../lib/api";
 import { agentById, useApp } from "../lib/app-context";
 import { describeError } from "../lib/errors";
-import { displayName, formatDate } from "../lib/format";
+import { displayName, formatDate, pageTitle } from "../lib/format";
 import { linkClick, navigate, signInHref } from "../lib/router";
 import type { Agent, SharedConversation } from "../lib/types";
 import { AgentAvatar, BrandMark, Button, PageSpinner, StateMessage } from "../components/ui";
@@ -62,7 +62,7 @@ export default function SharePage({ shareId }: { shareId: string }) {
 
   const title = share?.title?.trim() || t.sidebar.untitled;
   useEffect(() => {
-    document.title = `${share ? title : t.share.title} · ${app.brandName}`;
+    document.title = pageTitle(share ? title : t.share.title, app.brandName);
   }, [share, title, app.brandName]);
 
   const header = (

@@ -19,7 +19,7 @@ import {
   useConversations,
 } from "../lib/conversations";
 import { describeError } from "../lib/errors";
-import { displayName } from "../lib/format";
+import { displayName, pageTitle } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Agent, Conversation, ConversationDetail } from "../lib/types";
 import { ShareDialog } from "../components/ShareDialog";
@@ -306,8 +306,9 @@ function ChatView({
 
   const shownTitle = title?.trim() || (conversation ? t.sidebar.untitled : t.sidebar.newChat);
   useEffect(() => {
-    document.title = `${conversation ? shownTitle : displayName(agent.name) || shownTitle} · ${app.brandName}`;
-  }, [shownTitle, conversation, agent.name, app.brandName]);
+    // A new chat is "New chat", not the agent's name: with one hub that is the brand too.
+    document.title = pageTitle(conversation ? shownTitle : t.sidebar.newChat, app.brandName);
+  }, [shownTitle, conversation, app.brandName]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

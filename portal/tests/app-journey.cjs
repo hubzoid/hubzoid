@@ -193,6 +193,8 @@ function chartPng(width = 160, height = 100) {
     await page.goto(`${BASE}/`);
     await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
     await onlyFixture("agent picker", async () => {
+      // The page is "New chat", not the agent: with one hub its name is the brand too.
+      await page.waitForFunction(() => document.title === "New chat · Hubzoid");
       const cards = page.getByRole("radiogroup", { name: "Choose an agent" }).getByRole("radio");
       assert.equal(await cards.count(), 3);
       await page.goto(`${BASE}/?agent=finance`);
