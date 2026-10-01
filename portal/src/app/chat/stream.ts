@@ -94,14 +94,19 @@ export class MessageAccumulator {
     this.dirty.add(index);
   }
 
-  private ensureText(kind: "text" | "reasoning", id: string) {
-    let i = this.find(kind, id);
-    if (i === -1) {
-      this.parts.push({ kind, id, text: "" });
-      i = this.parts.length - 1;
-      this.touch(i);
-    }
-    return i;
+  /**
+   * The part a text or reasoning chunk belongs to. Text only ever grows at the
+   * end of the message: a chunk for an id whose part is no longer last (a tool
+   * call came in between, or the server reused the id) starts a new part, so
+   * the reply always reads in the order it was written.
+   */
+  private ensureText(kind: "text" | "reasoning", id: string, start = false) {
+    const last = this.parts.length - 1;
+    const tail = this.parts[last];
+    if (tail && tail.kind === kind && tail.id === id && !(start && tail.text !== "")) return last;
+    this.parts.push({ kind, id, text: "" });
+    this.touch(this.parts.length - 1);
+    return this.parts.length - 1;
   }
 
   private ensureTool(id: string, toolName?: string) {
@@ -127,7 +132,7 @@ export class MessageAccumulator {
         break;
       }
       case "text-start":
-        this.ensureText("text", str("id"));
+        this.ensureText("text", str("id"), true);
         break;
       case "text-delta": {
         const i = this.ensureText("text", str("id"));
@@ -139,7 +144,7 @@ export class MessageAccumulator {
         break;
       }
       case "reasoning-start":
-        this.ensureText("reasoning", str("id"));
+        this.ensureText("reasoning", str("id"), true);
         break;
       case "reasoning-delta": {
         const i = this.ensureText("reasoning", str("id"));
