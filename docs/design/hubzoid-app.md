@@ -103,7 +103,11 @@ PostgreSQL through `DATABASE_URL` or `HUBZOID_OPERATIONAL_DB`. Migrations
 Existing tables keep their meaning. A block stays in `hz_meta`.
 `hz_identities.owui_id` holds the Hubzoid account id (the same value for
 migrated people). Files people upload, and files the agent makes in a chat,
-live in the hub folder under `.hubzoid/chats/<conversation id>/`.
+live in the hub folder under `.hubzoid/chats/web-<conversation id>/`. A
+conversation imported from Open WebUI keeps `.hubzoid/chats/<its id>/`, where
+the import copied its files. Other surfaces (Slack, Telegram, WhatsApp) use the
+same folder tree with their own names, so a conversation id never opens their
+files.
 
 The deployment key (`HUBZOID_SECRET_KEY`, else `secret.key` next to a gateway's
 manifest or in `<hub>/.hubzoid/` for a standalone hub, created with mode 0600
@@ -223,8 +227,9 @@ sessions and rate limits are in [authentication](../auth.md).
   `message`, the reply is regenerated under `parent_id`, which must be a user
   message. An edit is a new message with the same parent as the one it edits.
 - Ids are chosen by the browser. Message ids match `^[A-Za-z0-9_-]{8,64}$`.
-  Conversation ids also start and end with a letter or digit. An id used
-  elsewhere is 409 `id_conflict`.
+  Conversation ids also start and end with a letter or digit and have at
+  most 60 characters. An id used elsewhere, or one that differs from another
+  conversation's id only in case, is 409 `id_conflict`.
 - The reply runs in a server task that outlives the request. It is stored as
   `running` at once, updated while it runs, and finished as `complete`,
   `cancelled` or `error`. Closing the page does not stop it. Cancel does. One
@@ -237,7 +242,7 @@ sessions and rate limits are in [authentication](../auth.md).
   hub's model, or `HUBZOID_TITLE_MODEL`). Never an agent run.
 - Usage is recorded with `surface="web"` and `kind="chat"`. Title calls are
   `kind="background"`.
-- Download links the agent writes (`/artifacts/<conversation id>/<file>`) open
+- Download links the agent writes (`/artifacts/web-<conversation id>/<file>`) open
   with the owner's session, or with the signed link. New signed links last 7
   days (`HUBZOID_ARTIFACT_LINK_TTL`, in seconds, `0` for no expiry).
 

@@ -4,9 +4,10 @@
 loop. The task:
 
   * counts in the bridge's in-flight gauge (the scheduler's idle gate),
-  * binds the conversation as the chat scope (``_request_ctx.chat_scope``; the
-    per-chat files folder is keyed by the conversation id) and the signed-in
-    person as the caller (``access.identity_scope``, surface ``web``),
+  * binds the conversation's per-chat folder (``store.chat_key``) as the chat
+    scope (``_request_ctx.chat_scope``), so its tools read its uploads and write
+    its artifacts, and the signed-in person as the caller
+    (``access.identity_scope``, surface ``web``),
   * iterates ``runtime.stream_events(prompt)`` through a ``MessageBuilder``,
     handing every UI stream chunk to the subscribers (the SSE response that
     started it; a subscriber that goes away never stops the run),
@@ -43,6 +44,7 @@ _END = object()
 class Run:
     message_id: str
     conversation_id: str
+    chat_key: str
     owner_id: str
     email: str
     builder: MessageBuilder
@@ -101,15 +103,16 @@ class RunManager:
         self._claimed.discard(conversation_id)
 
     # -- start -------------------------------------------------------------------
-    def start(self, *, conversation_id: str, message_id: str, prompt: str, user,
+    def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
               title: str | None = None) -> Run:
         """Begin writing ``message_id`` (already stored as 'running'). Must be
-        called on the event loop, with the conversation claimed."""
+        called on the event loop, with the conversation claimed. ``chat_key``
+        is the conversation's ``store.chat_key``, the run's chat scope."""
         builder = MessageBuilder(message_id, conversation_id,
                                  show_tools=getattr(self.ctx.settings, "show_tools", "compact") != "off")
-        run = Run(message_id=message_id, conversation_id=conversation_id, owner_id=user.id,
-                  email=user.email, builder=builder, loop=asyncio.get_running_loop(),
-                  started=time.monotonic())
+        run = Run(message_id=message_id, conversation_id=conversation_id, chat_key=chat_key,
+                  owner_id=user.id, email=user.email, builder=builder,
+                  loop=asyncio.get_running_loop(), started=time.monotonic())
         self._runs[message_id] = run
         self._publish(run, builder.start())
         if title:
@@ -206,7 +209,7 @@ class RunManager:
             ctx.inflight.enter()
         try:
             identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
-            with _request_ctx.chat_scope(run.conversation_id), access.identity_scope(identity):
+            with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity):
                 stream = run_events.stream_items(ctx.runtime, prompt)
                 try:
                     async for item in stream:
