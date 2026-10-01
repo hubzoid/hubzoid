@@ -1,5 +1,20 @@
 """Edge router — the single public front door for `hubzoid run` / `gateway`.
 
+Web app mode (`HUBZOID_UI` unset or `hubzoid`, the default): there is no Open
+WebUI. The default upstream is a bridge (the hub's own, or a gateway's first
+bridge, with the others as fallbacks), and routes send `/b/<slug>/...` to that
+hub's bridge with the prefix stripped and `X-Forwarded-Prefix: /b/<slug>` added.
+None of the Open WebUI rewrites described below run: no Users-page hiding or
+redirects, no account-write blocks, no model-ACL or access-UI locks, no
+`/api/models` filtering, no portal navigation script or HTML injection, no
+OAuth client-callback rewrite. What stays: routing, streaming, stripping
+client-sent `X-Hubzoid-*` / `X-OpenWebUI-*` headers, refusing dot segments,
+never keeping cookies between visitors and asserting the public scheme. The
+bridge's internal API (`/v1`, `/uploads`, `/otel`) stays loopback-only, as in
+1.0.x: the edge answers 404 for it.
+
+Legacy Open WebUI mode (`HUBZOID_UI=openwebui`) is 1.0.x, unchanged:
+
 The reverse proxy / load balancer in front of a hub points at ONE port
 (Open WebUI's `PORT`, default 3080). But artifact download links are served
 by the FastAPI bridge on a different, loopback-only port (`BRIDGE_PORT`,
@@ -86,6 +101,30 @@ _HOP_BY_HOP = frozenset({
 # and inbound adapters) when they call a bridge. A client on the public port has
 # no business sending them, so the edge drops them before forwarding anything.
 _IDENTITY_PREFIXES = ("x-hubzoid-", "x-openwebui-")
+
+# The bridge's own API for Hubzoid processes on loopback. Never public: in the
+# web app mode the edge's default upstream is a bridge, so these are refused.
+_BRIDGE_INTERNAL = ("/v1", "/uploads", "/otel")
+_FORWARDED_PREFIX = "x-forwarded-prefix"
+
+
+def web_app_mode(env) -> bool:
+    """True unless the deployment runs the legacy Open WebUI mode: HUBZOID_UI,
+    else the mode the gateway recorded in its manifest (HUBZOID_DEPLOYMENT)."""
+    from . import appmode
+
+    raw = (env.get("HUBZOID_UI") or "").strip()
+    if not raw and env.get("HUBZOID_DEPLOYMENT"):
+        try:
+            raw = str(json.loads(Path(env["HUBZOID_DEPLOYMENT"]).read_text()).get("ui_mode") or "")
+        except (OSError, ValueError):
+            raw = ""
+    return not appmode.is_legacy(env={"HUBZOID_UI": raw})
+
+
+def _is_bridge_internal(path: str) -> bool:
+    path = _clean_path(path)
+    return any(path == p or path.startswith(p + "/") for p in _BRIDGE_INTERNAL)
 
 
 def _has_dot_segment(path: str) -> bool:
@@ -265,7 +304,7 @@ def _forward_target(
 
 
 def _request_headers(
-    request: Request, public_scheme: str = ""
+    request: Request, public_scheme: str = "", *, forwarded_prefix: str | None = None,
 ) -> list[tuple[bytes, bytes]]:
     """Forward the client's headers upstream, minus hop-by-hop and identity headers.
 
@@ -282,6 +321,10 @@ def _request_headers(
     An inbound `X-Forwarded-Proto` from a fronting TLS proxy always wins, and
     with no declared scheme nothing is added, so plain-http localhost is
     untouched. OWUI's uvicorn honours `X-Forwarded-Proto` from loopback.
+
+    `forwarded_prefix` (web app mode only; None leaves 1.0.x behaviour) drops a
+    client-sent `X-Forwarded-Prefix` and, when non-empty, sends the prefix the
+    edge stripped (`/b/<slug>`), so a bridge knows the call is hub-scoped.
     """
     headers = [
         (k, v)
@@ -289,6 +332,12 @@ def _request_headers(
         if k.decode("latin-1").lower() not in _HOP_BY_HOP
         and not k.decode("latin-1").lower().startswith(_IDENTITY_PREFIXES)
     ]
+    if forwarded_prefix is not None:
+        headers = [(k, v) for k, v in headers
+                   if k.decode("latin-1").lower() != _FORWARDED_PREFIX]
+        if forwarded_prefix:
+            headers.append((_FORWARDED_PREFIX.encode("latin-1"),
+                            forwarded_prefix.encode("latin-1")))
     if public_scheme and not any(
         k.decode("latin-1").lower() == "x-forwarded-proto" for k, _ in headers
     ):
@@ -319,25 +368,37 @@ def build_edge_app(
     default_base: str,
     routes: tuple[EdgeRoute, ...] | list[EdgeRoute] = (),
     public_scheme: str = "",
+    web_app: bool | None = None,
+    default_fallbacks: tuple[str, ...] | list[str] = (),
 ) -> Starlette:
-    """A Starlette reverse proxy: `routes` go to their bridge, the rest to OWUI.
+    """A Starlette reverse proxy: `routes` go to their bridge, the rest to the
+    default upstream (Open WebUI in the legacy mode, a bridge in the web app mode).
 
     Args:
-        default_base: Open WebUI base, e.g. "http://127.0.0.1:43080". Receives
-            every path not matched by a route, plus all websockets.
+        default_base: the default upstream, e.g. "http://127.0.0.1:43080".
+            Receives every path not matched by a route, plus all websockets.
         routes: prefix rules sending artifact paths to the right bridge.
         public_scheme: the operator's public scheme ("https"), asserted as
             `X-Forwarded-Proto` when the inbound request carries none. Empty
             (the default) leaves the scheme untouched - correct for localhost.
+        web_app: the web app mode (no Open WebUI rewrites, see the module
+            docstring). None reads it from the environment (`web_app_mode`).
+        default_fallbacks: upstreams tried in order when the default one can't
+            be reached (a gateway's other bridges, which share its database).
     """
     default_base = default_base.rstrip("/")
     norm_routes = tuple(
         EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix,
                   tuple(f.rstrip("/") for f in r.fallbacks)) for r in routes
     )
+    default_bases = (default_base, *(f.rstrip("/") for f in default_fallbacks))
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
-    locked_prefixes = _owui_lock_prefixes(os.environ)
-    hide_users = _hide_owui_users(os.environ)
+    if web_app is None:
+        web_app = web_app_mode(os.environ)
+    # Every Open WebUI rewrite is legacy-mode only.
+    owui_rewrites = not web_app
+    locked_prefixes = _owui_lock_prefixes(os.environ) if owui_rewrites else ()
+    hide_users = _hide_owui_users(os.environ) if owui_rewrites else False
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -360,7 +421,9 @@ def build_edge_app(
     async def http_handler(request: Request) -> Response:
         if _has_dot_segment(request.url.path):
             return Response("Bad request", status_code=400)
-        portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
+        if web_app and _is_bridge_internal(request.url.path):
+            return Response("Not found", status_code=404)
+        portal_enabled = owui_rewrites and any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import script
             # Whether Groups is hidden changes as hubs move to the Console.
@@ -386,7 +449,7 @@ def build_edge_app(
                 return Response("Manage accounts in the Console (People).", status_code=403)
         # Only model ACLs for migrated hubs are locked. Shared groups still serve
         # unmigrated hubs and OWUI's other resources during partial cutover.
-        if os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
+        if owui_rewrites and os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
             from . import deployment
             from .access import store_for
             try:
@@ -420,8 +483,13 @@ def build_edge_app(
             )
         upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
         matched = _match(request.url.path, norm_routes)
-        bases = matched.upstreams() if matched is not None else (upstream,)
+        bases = matched.upstreams() if matched is not None else default_bases
         query = "?" + request.url.query if request.url.query else ""
+        # Web app mode: tell a bridge which /b/<slug> prefix was stripped (and
+        # never pass a client's own claim on). Legacy: headers as in 1.0.x.
+        prefix = None
+        if web_app:
+            prefix = matched.strip_prefix if matched is not None and matched.strip_prefix else ""
 
         client: httpx.AsyncClient = request.app.state.client
         # With fallbacks, buffer the (small) body so a refused connection can be
@@ -431,7 +499,7 @@ def build_edge_app(
             upstream_req = client.build_request(
                 request.method,
                 base + fwd_path + query,
-                headers=_request_headers(request, public_scheme),
+                headers=_request_headers(request, public_scheme, forwarded_prefix=prefix),
                 content=content,
             )
             try:
@@ -475,7 +543,7 @@ def build_edge_app(
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 return Response("Agent access is unavailable. Try again.", status_code=503)
 
-        done = _connect_done(request, resp.status_code) if matched is None else None
+        done = _connect_done(request, resp.status_code) if matched is None and owui_rewrites else None
         if done:
             await resp.aclose()
             headers = {k: v for k, v in _response_headers(resp).items()
@@ -555,10 +623,16 @@ def _factory() -> Starlette:
     Reads the routing table from the environment so `hubzoid run` / `gateway`
     launch it the same way they launch the bridge:
 
-      HUBZOID_EDGE_DEFAULT        Open WebUI base URL (catch-all + websockets).
+      HUBZOID_EDGE_DEFAULT        The default upstream (catch-all + websockets):
+                                  Open WebUI in the legacy mode, a bridge in the
+                                  web app mode.
+      HUBZOID_EDGE_DEFAULT_FALLBACKS  JSON list of upstreams tried when the
+                                  default can't be reached (optional).
       HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix","fallbacks"}, ...].
       HUBZOID_EDGE_PUBLIC_SCHEME  Public scheme ("https") asserted upstream as
                                   X-Forwarded-Proto when the request has none.
+      HUBZOID_UI                  The mode (see `web_app_mode`; the manifest's
+                                  record when unset).
     """
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
@@ -578,8 +652,16 @@ def _factory() -> Starlette:
         for r in spec
     ]
     public_scheme = os.environ.get("HUBZOID_EDGE_PUBLIC_SCHEME", "").strip().lower()
+    kwargs = {}
+    raw_fallbacks = os.environ.get("HUBZOID_EDGE_DEFAULT_FALLBACKS", "").strip()
+    if raw_fallbacks:
+        try:
+            fallbacks = json.loads(raw_fallbacks)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"HUBZOID_EDGE_DEFAULT_FALLBACKS is not valid JSON: {exc}") from exc
+        kwargs["default_fallbacks"] = tuple(str(f) for f in fallbacks)
     return build_edge_app(
-        default_base=default_base, routes=routes, public_scheme=public_scheme
+        default_base=default_base, routes=routes, public_scheme=public_scheme, **kwargs
     )
 
 

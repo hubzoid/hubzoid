@@ -355,6 +355,7 @@ def test_edge_partial_migration_and_navigation(deployment_client, monkeypatch):
     from hubzoid.portal_navigation import inject
 
     c, gs, role, dirs = deployment_client
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # Open WebUI's rewrites are legacy-only
     gs.set_authoritative(False, hub="ops")
     cfg = __import__("json").loads(
         (dirs[0] / ".hubzoid" / "deployment.json").read_text()

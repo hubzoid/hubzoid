@@ -1,9 +1,17 @@
 """The OWUI access-UI lock in the edge proxy."""
 from __future__ import annotations
 
+import pytest
 from starlette.testclient import TestClient
 
 from hubzoid.edge import _owui_lock_prefixes, build_edge_app
+
+
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """These tests pin the legacy Open WebUI mode (HUBZOID_UI=openwebui); the
+    web app mode is covered by tests/test_gateway_app*.py."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 def test_lock_prefixes_env():
