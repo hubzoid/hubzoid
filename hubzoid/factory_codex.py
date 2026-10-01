@@ -27,6 +27,8 @@ _usage_rollup: ContextVar[list | None] = ContextVar("codex_usage_rollup", defaul
 # turn does), the 1.0.x text otherwise (a direct caller, such as a protocol
 # test, gets exactly what it always got).
 _typed_exchange: ContextVar[bool] = ContextVar("codex_typed_exchange", default=False)
+# What the Codex model is told when a Hubzoid tool raises (the chat shows
+# run_events.TOOL_FAILED instead).
 _TOOL_FAILED = "Tool failed. Check the hub server logs."
 # In addition to environments=[], turn off every optional native tool source.
 _DISABLED_FEATURES = (
@@ -356,7 +358,7 @@ class CodexRuntime:
                         log.exception("Codex tool %s failed", name)
                     # 1.0.x printed nothing for a Codex tool result, failed or not.
                     finished = run_events.ToolResult(id=call_id, name=name, ok=success,
-                                                     message=None if success else _TOOL_FAILED)
+                                                     message=None if success else run_events.TOOL_FAILED)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
                 await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})

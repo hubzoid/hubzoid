@@ -853,8 +853,7 @@ class ClaudeRuntime:
                             reasoning_signalled = False
                             yield run_events.ToolResult(
                                 id=tid, name=tool_name, ok=False,
-                                message="The tool did not complete. The agent may retry or ask "
-                                        "for more information.",
+                                message=run_events.TOOL_FAILED,
                                 legacy=tool_events.format_error(tool_name))
                     continue
 
