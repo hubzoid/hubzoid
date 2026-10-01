@@ -24,6 +24,13 @@ RPC_HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """The hosted MCP surface here authenticates Open WebUI API keys and reads
+    the caller's Open WebUI groups: the legacy Open WebUI mode."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
