@@ -26,10 +26,11 @@ read-only transaction). What moves into the operational store:
   (contract 6.4). Share links keep their ids, so ``/s/<id>`` keeps working.
 
 A dry run (the default) changes nothing, not even the target's schema.
-``--apply`` writes in two steps: access first (one transaction, with a backup
-per hub for ``hubzoid access rollback``), then everything else (one
-transaction). If the second step fails, the first is undone. Re-running is
-safe: rows are matched by id, changes made in Hubzoid since the previous
+``--apply`` writes in steps: groups, then access (one transaction, with a
+backup per hub for ``hubzoid access rollback``; it also records which
+accounts are available), then everything else (one transaction). If a step
+fails, the ones before it are undone, account availability included.
+Re-running is safe: rows are matched by id, changes made in Hubzoid since the previous
 import are kept, and what was deleted in Hubzoid is not brought back.
 
 Rehearse first. ``--rehearse <empty folder>`` copies a single hub (with its
@@ -752,7 +753,7 @@ class People:
     action: dict[str, str] = field(default_factory=dict)         # insert | update | same | keep
     email_of: dict[str, str] = field(default_factory=dict)       # account id -> email in Hubzoid
     identity_rows: list[dict] = field(default_factory=list)      # hz_user_identities inserts
-    inactive_new: set[str] = field(default_factory=set)          # emails suspended on insert
+    to_block: set[str] = field(default_factory=set)              # emails this run blocks
     inactive: set[str] = field(default_factory=set)              # deactivated in Open WebUI
     raw_pending: set[str] = field(default_factory=set)           # pending in Open WebUI
     identities: list[dict] = field(default_factory=list)         # for GrantStore.apply_migration
@@ -876,8 +877,15 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
             report.skip("users", "access store bound to another account", uid)
             people.skipped_ids.add(uid)
             continue
-        if action == "insert" and email in people.inactive:
-            people.inactive_new.add(email)
+        reactivated = False
+        if email in people.inactive:
+            # Deactivated in Open WebUI: blocked, on a re-run too (deactivated
+            # since). Only an administrator's reactivation in the Console
+            # (suspended:<email> = "0") outlives it.
+            block = target.meta.get("suspended:" + final_email)
+            if action == "insert" or block is None:
+                people.to_block.add(final_email)
+            reactivated = action != "insert" and block == "0"
         people.action[uid] = action
         people.rows[uid] = row
         people.email_of[uid] = final_email
@@ -889,7 +897,11 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
         if row["status"] == "pending":
             report.bump("users", "pending")
         report.bump("users", "with_password" if row.get("password_hash") else "without_password")
-        if email in people.inactive:
+        if reactivated:
+            report.bump("users", "deactivated_in_open_webui_reactivated_in_hubzoid")
+            report.note("Some people deactivated in Open WebUI were reactivated in the Console. "
+                        "They stay active; block them in the Console if they should not be.")
+        elif email in people.inactive:
             report.bump("users", "deactivated_in_open_webui_blocked")
         if service and email == service:
             report.note("The gateway's service account (HUBZOID_GATEWAY_ADMIN_EMAIL) was imported "
@@ -950,6 +962,7 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
 @dataclass
 class GroupPlan:
     members: dict[str, set[str]] = field(default_factory=dict)       # gid -> emails in Open WebUI
+    resulting: dict[str, set[str]] = field(default_factory=dict)     # gid -> emails in Hubzoid after apply
     inserts: list[dict] = field(default_factory=list)
     add_members: list[dict] = field(default_factory=list)
     remove_members: list[tuple[str, str]] = field(default_factory=list)
@@ -1001,6 +1014,9 @@ def plan_groups(groups: dict[str, dict], memberships: dict[str, dict[str, float 
         else:
             report.bump("groups", "already_present")
         plan.available.add(gid)
+        # Hubzoid keeps the members it has (added in the Console, say), so
+        # access is planned and checked against these, not Open WebUI's.
+        resulting = set(in_hubzoid[gid])
         for uid, joined_at in sorted(joined.items()):
             email = people.email_of.get(uid)
             if not email:
@@ -1014,13 +1030,16 @@ def plan_groups(groups: dict[str, dict], memberships: dict[str, dict[str, float 
                 continue
             plan.add_members.append(dict(group_id=gid, email=email, added_by=ACTOR,
                                          added_at=joined_at or created))
+            resulting.add(email)
             report.bump("groups", "members_to_import")
         if existing is not None and prev:
             # Members this migration added earlier and Open WebUI no longer has.
             for email, row in sorted(in_hubzoid[gid].items()):
                 if row.get("added_by") == ACTOR and email not in emails:
                     plan.remove_members.append((gid, email))
+                    resulting.discard(email)
                     report.bump("groups", "members_removed_in_open_webui")
+        plan.resulting[gid] = resulting
     return plan
 
 
@@ -1070,10 +1089,16 @@ def store_resolves_groups() -> bool:
         engine.dispose()
 
 
+_FUTURE = "__future_signed_in__"  # the matrix row of someone Open WebUI did not know
+
+
 def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPlan,
            people: People) -> dict[str, list[dict]]:
     """Every expected decision, allowed and denied, against a clean candidate
-    store holding what apply would write. Returns the differences per hub."""
+    store holding what apply would write: the grants, and each group with the
+    members it has after apply (Hubzoid keeps members Open WebUI lacks). A
+    member Open WebUI did not know is checked as anyone signed in, who had
+    an account there and nothing else. Returns the differences per hub."""
     from .access.store import GrantStore
 
     engine = create_engine("sqlite://")
@@ -1084,7 +1109,7 @@ def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPla
             for gid in sorted(groups.available):
                 conn.execute(text("INSERT INTO hz_groups (id, name, source, created_at, updated_at) "
                                   "VALUES (:i, :i, 'migrated', :t, :t)"), {"i": gid, "t": now})
-                for email in sorted(groups.members.get(gid, ())):
+                for email in sorted(groups.resulting.get(gid, ())):
                     conn.execute(text("INSERT INTO hz_group_members (group_id, email, added_at) "
                                       "VALUES (:g, :e, :t)"), {"g": gid, "e": email, "t": now})
             for email in sorted(people.inactive):
@@ -1094,10 +1119,17 @@ def verify(hubs: dict[str, HubAccess], grants: dict[str, list], groups: GroupPla
         flat = [g for key in hubs for g in grants.get(key, [])]
         candidate.apply_migration(flat, [], list(hubs), replace=True, authoritative=True,
                                   identities=identities, carry_over_public=True, actor="verify")
+        members = set().union(*(groups.resulting.get(gid, set()) for gid in groups.available))
         out: dict[str, list[dict]] = {}
         for key, access in hubs.items():
+            expected = list(access.expected)
+            anyone = {p: False for _s, _h, p, _a in expected}
+            anyone.update({p: a for s, _h, p, a in expected if s == _FUTURE})
+            known = {s for s, _h, _p, _a in expected}
+            expected += [(email, key, permission, allowed) for email in sorted(members - known)
+                         for permission, allowed in sorted(anyone.items())]
             diffs = []
-            for subject, hub, permission, allowed in access.expected:
+            for subject, hub, permission, allowed in expected:
                 actual = candidate.can(subject, hub, permission)
                 if actual != allowed:
                     diffs.append(dict(subject=subject, permission=permission, expected=allowed, actual=actual))
@@ -1112,15 +1144,20 @@ def group_grants(access: HubAccess, public: bool, groups: GroupPlan, group_names
     """Group grants where they keep the legacy matrix, per-person grants elsewhere.
 
     Starts from the per-person plan and moves coverage onto groups. A
-    visibility group takes over its members' ``use_hub``. A group named after a
-    capability takes over its members' grant of it only when every member may
-    open the hub, because a capability grant also opens the hub. Returns the
-    grants and the capabilities that stay per person."""
+    visibility group takes over its members' ``use_hub``, and a group named
+    after a capability its members' grant of it, only when every member the
+    group has after apply holds that grant in the per-person plan: a member
+    Hubzoid keeps (added in the Console) or one who may not open the hub
+    would otherwise gain access, as a capability grant also opens the hub.
+    Returns the grants and the permissions that stay per person."""
     from .access.store import EVERYONE, USE_HUB
 
     key = access.hub.key
     person = [g for g in access.person_grants if g[1] == key]
-    entry = {s for s, _h, _p in person if s != EVERYONE}
+    holders: dict[str, set[str]] = defaultdict(set)
+    for subject, _h, permission in person:
+        if subject != EVERYONE:
+            holders[permission].add(subject)
     grants: list[tuple[str, str, str]] = []
     covered: dict[str, set[str]] = defaultdict(set)
     per_person: set[str] = set()
@@ -1134,14 +1171,18 @@ def group_grants(access: HubAccess, public: bool, groups: GroupPlan, group_names
         grants.append((EVERYONE, key, USE_HUB))
     else:
         for gid in visibility:
-            grants.append((f"group:{gid}", key, USE_HUB))
-            covered[USE_HUB] |= groups.members.get(gid, set())
+            members = groups.resulting.get(gid, set())
+            if members <= holders[USE_HUB]:
+                grants.append((f"group:{gid}", key, USE_HUB))
+                covered[USE_HUB] |= members
+            else:
+                per_person.add(USE_HUB)
     for permission in sorted({p for _s, _h, p, _a in access.expected if p != USE_HUB}):
         named = sorted(g for g in groups.available
                        if (group_names.get(g) or "").strip().lower() == permission)
         for gid in named:
-            members = groups.members.get(gid, set())
-            if public or members <= entry:
+            members = groups.resulting.get(gid, set())
+            if members <= holders[permission]:
                 grants.append((f"group:{gid}", key, permission))
                 covered[permission] |= members
             else:
@@ -1249,8 +1290,9 @@ def plan_access(setup: Setup, source_engine: Engine, target: TargetState, people
         if per_person[key]:
             access.summary["per_person_capabilities"] = per_person[key]
             access.summary["notes"] = [
-                "per-person grants for " + ", ".join(per_person[key]) + ": the group with that "
-                "name includes people who cannot open this agent"]
+                "per-person grants for " + ", ".join(per_person[key]) + ": a group that gave it "
+                "in Open WebUI has members who may not have it here (who cannot open this "
+                "agent, or members only Hubzoid has)"]
         if not access.grants:
             report.note(f"{key}: nobody could use this agent in Open WebUI, so it is locked until "
                         "someone is granted access in the Console.")
@@ -2039,7 +2081,7 @@ class Writer:
                    "VALUES (:provider, :issuer, :subject, :user_id, :email, :created_at)", people.identity_rows)
         self._many("UPDATE hz_identities SET display=:d WHERE subject=:s AND (display IS NULL OR display='')",
                    [dict(s=e, d=n) for e, n in sorted(people.display.items()) if n])
-        for email in sorted(people.inactive_new):
+        for email in sorted(people.to_block):
             self.conn.execute(text(_UPSERT_META), {"k": "suspended:" + email, "v": "1"})
             self.store.write_audit(self.conn, ACTOR, "suspend", subject=email, hub="*", surface="migration")
         self.report.bump("users", "imported", len(inserts))
@@ -2252,21 +2294,24 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
             path = access.hub.path / ".hubzoid" / "backups" / f"access-{time.time_ns()}.json"
             write_json(path, backup)
             report.backups.append(str(path))
-        access_written = False
-        groups_written = _write_groups(engine, plan.groups, report)
-        if convert or plan.people.identities:
-            try:
-                store.apply_migration([g for a in convert.values() for g in a.grants],
-                                      [x for a in convert.values() for x in a.attrs], sorted(convert),
-                                      replace=True, authoritative=True,
-                                      identities=plan.people.identities, carry_over_public=True,
-                                      actor=ACTOR)
-            except ValueError as exc:
-                if groups_written:
-                    _undo_groups(engine, plan.groups)
-                raise MigrationBlocked(f"The access step was refused: {exc}") from exc
-            access_written = True
+        # Any failure from here undoes every step already written: groups,
+        # then the access step (grants, attributes and authority from the
+        # snapshot; identities and account availability from what the access
+        # step reports it changed, also when no agent is converted).
+        groups_written = access_written = False
+        identities_before: dict | None = None
         try:
+            groups_written = _write_groups(engine, plan.groups, report)
+            if convert or plan.people.identities:
+                try:
+                    identities_before = store.apply_migration(
+                        [g for a in convert.values() for g in a.grants],
+                        [x for a in convert.values() for x in a.attrs], sorted(convert),
+                        replace=True, authoritative=True, identities=plan.people.identities,
+                        carry_over_public=True, actor=ACTOR)
+                except ValueError as exc:
+                    raise MigrationBlocked(f"The access step was refused: {exc}") from exc
+                access_written = True
             for key, access in convert.items():
                 want = set()
                 for subject, hub, permission in access.grants:
@@ -2307,9 +2352,11 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
                 except Exception:  # noqa: BLE001 - reported below with the access undo
                     log.exception("undoing the groups step failed")
                     report.warn("The migration failed and undoing the groups step also failed.")
-            if access_written and snapshot is not None:
+            if access_written:
                 try:
-                    store.restore(snapshot, actor=ACTOR + "-undo")
+                    if snapshot is not None:
+                        store.restore(snapshot, actor=ACTOR + "-undo")
+                    store.restore_identities(identities_before, actor=ACTOR + "-undo")
                     report.warn("The migration failed after the access step, so the access step was undone.")
                 except Exception:  # noqa: BLE001 - both failures are reported
                     log.exception("undoing the access step failed")

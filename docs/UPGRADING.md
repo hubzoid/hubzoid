@@ -99,7 +99,8 @@ Moved:
 - **People**, with their id, email, name, role and approval state. Password
   hashes move as they are, so nobody resets a password. Google, Microsoft and
   OpenID Connect links move. Accounts deactivated in Open WebUI are imported
-  but blocked.
+  but blocked. A later run also blocks accounts deactivated there since,
+  unless an administrator reactivated them in the Console.
 - **Groups** with their members, by email.
 - **Access.** A hub whose access Open WebUI still decided becomes managed in
   the Console. Its groups become group grants wherever that keeps exactly who

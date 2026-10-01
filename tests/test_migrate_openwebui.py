@@ -756,6 +756,8 @@ def test_a_failed_data_step_undoes_the_access_step(gateway, monkeypatch):
     assert gateway.rows("SELECT count(*) AS n FROM hz_groups")[0]["n"] == 0
     assert gateway.rows("SELECT count(*) AS n FROM hz_group_members")[0]["n"] == 0
     assert gateway.rows("SELECT count(*) AS n FROM hz_meta WHERE k LIKE 'openwebui_migration:%'")[0]["n"] == 0
+    assert gateway.rows("SELECT count(*) AS n FROM hz_identities")[0]["n"] == 0
+    assert gateway.rows("SELECT count(*) AS n FROM hz_meta WHERE k LIKE 'account_unavailable:%'")[0]["n"] == 0
     monkeypatch.undo()
     assert _run(gateway, apply=True).applied  # and the next run succeeds
 
@@ -987,3 +989,208 @@ def test_an_unwritable_uploads_folder_is_reported_not_fatal(gateway):
     parts = json.loads(gateway.rows("SELECT content FROM hz_messages WHERE id=:i",
                                     i=gateway.msg("c2u1"))[0]["content"])
     assert {p.get("name") for p in parts} >= {"report.pdf", "notes.txt", "missing.docx"}
+
+
+# ---------------------------------------------------------------------------
+# Review regressions (2026-10-01)
+# ---------------------------------------------------------------------------
+def _save_gateway(dep: Deployment, keys: list[str]) -> Path:
+    """Register these hubs in the gateway's manifest; returns the data folder."""
+    gw = dep.owui.parent
+    deployment.save(gw / "deployment.json",
+                    hubs=[dict(key=k, name=k.title(), path=str(dep.hubs[k]), model_id=k) for k in keys],
+                    operational_url=f"sqlite:///{dep.op}", owui_url="http://127.0.0.1:9",
+                    owui_db=str(dep.owui), owui_database_url=f"sqlite:///{dep.owui}")
+    return gw
+
+
+def test_group_grants_check_members_hubzoid_keeps(gateway):
+    """A Hubzoid group keeps members Open WebUI does not have (added in the
+    Console). A group grant would let them in, so it is not used for them."""
+    gw = _save_gateway(gateway, ["ops"])
+    assert mig.run(mig.locate(gw), apply=True).applied       # Ops first; the groups come along
+    g = gateway.m["groups"]
+    gateway.store().add_group_members(g["finance-team"], ["bob@example.com", "zed@example.com"],
+                                      actor="admin@example.com")
+    _save_gateway(gateway, ["finance", "ops"])               # Finance joins the gateway later
+    report = mig.run(mig.locate(gw), apply=True)
+    assert report.applied and report.access["finance"]["differences"] == 0
+    store = gateway.store()
+    assert store.can("alice@example.com", "finance", "use_hub")
+    assert store.can("dave@example.com", "finance", "use_hub")
+    assert not store.can("bob@example.com", "finance", "use_hub")   # denied in Open WebUI
+    assert not store.can("zed@example.com", "finance", "use_hub")   # no Open WebUI account
+    assert (f"group:{g['finance-team']}", "finance", "use_hub") not in set(store.list_grants("finance"))
+
+
+def test_verify_uses_the_memberships_after_apply():
+    """The check runs against the members each group has after apply, and also
+    checks members Open WebUI does not know (as anyone signed in)."""
+    hub = mig.HubInfo(key="h", name="H", path=Path("."), model_id="h")
+    access = mig.HubAccess(hub=hub, managed=False, expected=[
+        ("alice@example.com", "h", "use_hub", True), ("bob@example.com", "h", "use_hub", False),
+        ("__future_signed_in__", "h", "use_hub", False)])
+    groups = mig.GroupPlan(members={"g1": {"alice@example.com"}}, available={"g1"},
+                           resulting={"g1": {"alice@example.com", "bob@example.com", "zed@example.com"}})
+    diffs = mig.verify({"h": access}, {"h": [("group:g1", "h", "use_hub")]}, groups, mig.People())
+    assert {(d["subject"], d["actual"]) for d in diffs["h"]} == {
+        ("bob@example.com", True), ("zed@example.com", True)}
+
+
+def test_rerun_blocks_people_deactivated_since(gateway):
+    assert _run(gateway, apply=True).applied
+    store = gateway.store()
+    assert store.can("alice@example.com", "finance", "use_hub")
+    # An administrator reactivated Frank (deactivated in Open WebUI) in the Console.
+    store.suspend("frank@example.com", actor="admin@example.com", suspended=False)
+    owui = sqlite3.connect(gateway.owui)
+    owui.execute("UPDATE auth SET active=0 WHERE id=?", (gateway.uid("alice"),))
+    owui.commit()
+    owui.close()
+    report = _run(gateway, apply=True)
+    assert report.applied
+    store = gateway.store()
+    assert store.is_suspended("alice@example.com")
+    assert not store.can("alice@example.com", "finance", "use_hub")
+    assert not store.is_suspended("frank@example.com")       # the Console decision is kept
+    users = report.counts["users"]
+    assert users["deactivated_in_open_webui_blocked"] == 1
+    assert users["deactivated_in_open_webui_reactivated_in_hubzoid"] == 1
+    again = _run(gateway, apply=True)                        # and nothing changes after that
+    assert again.applied and gateway.store().is_suspended("alice@example.com")
+
+
+def test_a_failed_data_step_undoes_identity_changes(gateway, monkeypatch):
+    """No agent left to convert: the access step only updates accounts'
+    availability. A later failure puts it back."""
+    assert _run(gateway, apply=True).applied
+    assert gateway.store().is_suspended("carol@example.com")  # pending
+    before = _dump(gateway)
+    owui = sqlite3.connect(gateway.owui)
+    owui.execute("UPDATE user SET role='user' WHERE id=?", (gateway.uid("carol"),))
+    owui.commit()
+    owui.close()
+
+    def boom(self, plan):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(mig.Writer, "people", boom)
+    with pytest.raises(RuntimeError):
+        _run(gateway, apply=True)
+    assert _dump(gateway) == before
+    assert gateway.store().is_suspended("carol@example.com")
+
+
+def test_a_failed_access_step_undoes_the_groups_step(gateway, monkeypatch):
+    from hubzoid.access.store import GrantStore
+
+    original = GrantStore.apply_migration
+
+    def boom(self, *args, **kw):
+        if kw.get("actor") == mig.ACTOR:        # the real access step, not the planning check
+            raise RuntimeError("database is locked")
+        return original(self, *args, **kw)
+
+    monkeypatch.setattr(GrantStore, "apply_migration", boom)
+    with pytest.raises(RuntimeError):
+        _run(gateway, apply=True)
+    assert gateway.rows("SELECT count(*) AS n FROM hz_groups")[0]["n"] == 0
+    assert gateway.rows("SELECT count(*) AS n FROM hz_group_members")[0]["n"] == 0
+
+
+SAME_A = "aaaa1111-0000-4000-8000-000000000001"
+SAME_B = "bbbb2222-0000-4000-8000-000000000002"
+
+
+def _same_size_chat(dep: Deployment) -> tuple[str, bytes, bytes]:
+    """A chat whose two turns attach different report.pdf files of one size."""
+    a, b = b"%PDF-1.4 first report AAAA\n", b"%PDF-1.4 other report BBBB\n"
+    assert len(a) == len(b)
+    uploads = dep.owui.parent / "uploads"
+    (uploads / f"{SAME_A}_report.pdf").write_bytes(a)
+    (uploads / f"{SAME_B}_report.pdf").write_bytes(b)
+
+    def turn(mid, parent, fid, ts):
+        return {"id": mid, "parentId": parent, "role": "user", "content": "See the report", "timestamp": ts,
+                "files": [{"type": "file", "id": fid, "name": "report.pdf", "url": f"/api/v1/files/{fid}"}]}
+
+    t = 1700000000
+    chat = {"title": "Two reports", "models": ["finance"], "history": {"currentId": "same-size-m2", "messages": {
+        "same-size-m1": turn("same-size-m1", None, SAME_A, t), "same-size-m2": turn("same-size-m2", "same-size-m1", SAME_B, t + 5)}}}
+    owui = sqlite3.connect(dep.owui)
+    owui.execute("INSERT INTO chat (id, user_id, title, chat, created_at, updated_at, archived, pinned, meta) "
+                 "VALUES ('same-size-chat-1', ?, 'Two reports', ?, ?, ?, 0, 0, '{}')",
+                 (dep.uid("alice"), json.dumps(chat), t, t + 5))
+    owui.commit()
+    owui.close()
+    return "same-size-chat-1", a, b
+
+
+def _file_part(dep: Deployment, mid: str) -> dict:
+    parts = json.loads(dep.rows("SELECT content FROM hz_messages WHERE id=:i", i=mid)[0]["content"])
+    return next(p for p in parts if p["type"] == "file")
+
+
+@pytest.mark.xfail(strict=True, reason="review finding 4 (same-size attachments) not fixed yet")
+def test_same_size_attachments_stay_different_files(gateway):
+    cid, a, b = _same_size_chat(gateway)
+    assert _run(gateway, apply=True).applied
+    folder = gateway.hubs["finance"] / ".hubzoid" / "chats" / cid / "uploads"
+    first, second = _file_part(gateway, "same-size-m1"), _file_part(gateway, "same-size-m2")
+    assert first["file_id"] != second["file_id"]
+    assert (folder / first["file_id"]).read_bytes() == a
+    assert (folder / second["file_id"]).read_bytes() == b
+    again = _run(gateway, apply=True)
+    assert again.counts["messages"].get("updated", 0) == 0
+    assert again.counts["files"].get("copied_from_open_webui", 0) == 0
+    assert _file_part(gateway, "same-size-m2")["file_id"] == second["file_id"]
+
+
+@pytest.mark.xfail(strict=True, reason="review finding 4 (same-size attachments) not fixed yet")
+def test_an_alternate_name_holding_other_content_is_not_reused(gateway):
+    cid, a, b = _same_size_chat(gateway)
+    folder = gateway.hubs["finance"] / ".hubzoid" / "chats" / cid / "uploads"
+    folder.mkdir(parents=True)
+    (folder / "report.pdf").write_bytes(a)
+    other = b"%PDF-1.4 third report CCCC\n"
+    assert len(other) == len(b)
+    (folder / f"report ({SAME_B[:8]}).pdf").write_bytes(other)
+    assert _run(gateway, apply=True).applied
+    assert _file_part(gateway, "same-size-m1")["file_id"] == "report.pdf"
+    second = _file_part(gateway, "same-size-m2")["file_id"]
+    assert (folder / second).read_bytes() == b
+    assert (folder / f"report ({SAME_B[:8]}).pdf").read_bytes() == other   # untouched
+
+
+@pytest.mark.xfail(strict=True, reason="review finding 5 (rehearsal writes through links) not fixed yet")
+@pytest.mark.parametrize("linked", [".hubzoid", ".hubzoid/chats"])
+def test_rehearsal_never_writes_through_links(standalone, tmp_path, linked):
+    """State kept elsewhere through a link: the rehearsal copies it instead of
+    writing into the original storage."""
+    outside = tmp_path / "outside-storage"
+    outside.mkdir()
+    link = standalone.entry / linked
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    scratch = tmp_path / "rehearsal"
+    result = CliRunner().invoke(mig.migrate_app, ["openwebui", str(standalone.entry), "--rehearse",
+                                                 str(scratch), "--apply", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["applied"] is True
+    assert list(outside.rglob("*")) == []                     # the original storage is untouched
+    copy = scratch / "solo"
+    assert not (copy / linked).is_symlink()
+    copied = list((copy / ".hubzoid" / "chats").rglob("report.pdf"))
+    assert len(copied) == 1 and copied[0].read_bytes().startswith(b"%PDF")
+
+
+@pytest.mark.xfail(strict=True, reason="review finding 5 (rehearsal writes through links) not fixed yet")
+def test_rehearsal_writes_outside_the_copy_are_refused(tmp_path):
+    root = tmp_path / "rehearsal"
+    root.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (root / "uploads").symlink_to(outside)
+    with pytest.raises(mig.MigrationBlocked):
+        mig.Attachments._write(root / "uploads", "a.txt", b"x", None, "text/plain", write_root=root)
+    assert list(outside.iterdir()) == []
