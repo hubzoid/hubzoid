@@ -204,8 +204,8 @@ Register the redirect URI `https://hub.example.com/oauth/oidc/callback`.
 - send an `email` claim in the ID token or from its userinfo endpoint, and
   `email_verified` true for linking by email and for `OAUTH_ALLOWED_DOMAINS`.
 
-Group and role claims are not read. Access comes from Console grants and
-[groups](ADMINISTRATION.md#groups).
+Group and role claims are not read. Access comes from Console grants to
+people and groups (see [administration](ADMINISTRATION.md)).
 
 ## How an external sign-in finds its account
 
@@ -287,7 +287,7 @@ store, so every bridge enforces the same limits.
 - The client address comes from `X-Forwarded-For`. Behind a TLS proxy that
   sets it, each person is counted on their own address. Without such a proxy,
   a client can send its own `X-Forwarded-For`, so the per-address limit is
-  easy to avoid. See [TLS and a reverse proxy](DEPLOYING.md#reverse-proxy-and-tls).
+  easy to avoid. See [reverse proxy and TLS](DEPLOYING.md#6-reverse-proxy--tls-optional-recommended).
 - Sign-ins, failed sign-ins to existing accounts, sign-outs, password changes,
   used links and sign-ups appear in the Console's **Activity** for
   organization administrators.
