@@ -287,6 +287,9 @@ class OpenAIAgentsRuntime:
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
+        # Tool-call display (SHOW_TOOLS): status while a call runs, a tool
+        # block when it finishes.
+        activity = tool_events.ToolActivity(self._tool_mode)
         try:
             result = Runner.run_streamed(agent, run_input, max_turns=self._max_turns)
             async for event in result.stream_events():
@@ -294,7 +297,7 @@ class OpenAIAgentsRuntime:
                     if event.data.delta:
                         text_accumulated = True
                         shown.append(event.data.delta)
-                        yield event.data.delta
+                        yield activity.text(event.data.delta)
                     continue
                 if event.type == "run_item_stream_event":
                     item = event.item
@@ -302,9 +305,8 @@ class OpenAIAgentsRuntime:
                         text = ItemHelpers.text_message_output(item)
                         if text:
                             shown.append(text)
-                            yield text
+                            yield activity.text(text)
                     elif item.type == "tool_call_item":
-                        # One line per tool call. No matching "returned" line.
                         raw = getattr(item, "raw_item", None)
                         name = getattr(raw, "name", None) or "tool"
                         args = getattr(raw, "arguments", None)
@@ -314,17 +316,20 @@ class OpenAIAgentsRuntime:
                                 args = _json.loads(args)
                             except Exception:  # noqa: BLE001
                                 pass
-                        # Record before formatting: `format_call` returns ""
-                        # when SHOW_TOOLS=off, but an eval's expect_tools must
-                        # still see the call.
+                        # Recorded whatever SHOW_TOOLS shows: an eval's
+                        # expect_tools must still see the call.
                         _request_ctx.record_tool_call(
                             tool_events.short_name(name), args)
-                        line = tool_events.format_call(
-                            tool_events.short_name(name), args,
-                            mode=self._tool_mode,
-                        )
-                        if line:
-                            yield line
+                        for chunk in activity.started(_call_id(raw),
+                                                      tool_events.short_name(name), args):
+                            yield chunk
+                    elif item.type == "tool_call_output_item":
+                        failed = tool_events.failed_output(getattr(item, "output", None))
+                        for chunk in activity.finished(_call_id(getattr(item, "raw_item", None)),
+                                                       error=failed):
+                            yield chunk
+            for chunk in activity.flush():
+                yield chunk
             # Surface final token usage for the usage envelope (best-effort).
             _record_openai_usage(result, _agent_model_name(self._agent))
             # Surface any download link the model did not echo itself.
@@ -336,6 +341,8 @@ class OpenAIAgentsRuntime:
             log.exception("openai-agents stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error", model=_agent_model_name(self._agent))
+            for chunk in activity.flush():
+                yield chunk
             yield f"\n\n[agent error: {type(exc).__name__}: {exc}]"
 
     async def run(self, prompt: str) -> str:
@@ -446,6 +453,16 @@ async def relay_in_task(make_agen):
 class _Failure:
     def __init__(self, exc: BaseException):
         self.exc = exc
+
+
+def _call_id(raw) -> str | None:
+    """A tool call's id from an Agents SDK raw item (an object or a dict), so
+    its start and its output pair up."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw.get("call_id") or raw.get("id")
+    return getattr(raw, "call_id", None) or getattr(raw, "id", None)
 
 
 def _agent_model_name(agent) -> str | None:

@@ -122,7 +122,7 @@ def test_a_left_behind_waiting_line_is_hidden_only_on_a_finished_message():
     event = json.loads(_waiting_status("m", done=False).decode().removeprefix("data: "))
     assert event["event"]["data"]["description"] == "Working on it…"
     assert "const WAITING = 'Working on it\\u2026';" in SCRIPT
-    assert "line.textContent.trim() === WAITING" in SCRIPT
+    assert "(text === WAITING || RUNNING.test(text))" in SCRIPT
     # Only while its message shows Open WebUI's Copy action (rendered once done).
     assert "message?.querySelector('.copy-response-button')" in SCRIPT
     # Only the current line's block; re-checked both ways on every change.
@@ -132,3 +132,17 @@ def test_a_left_behind_waiting_line_is_hidden_only_on_a_finished_message():
     assert "scheduleStatus();\n    if (location.pathname" in SCRIPT
     # It never rewrites message content.
     assert "innerHTML" not in SCRIPT.split("function staleStatus")[1].split("function scheduleStatus")[0]
+
+
+def test_a_left_behind_running_tool_line_is_hidden_too():
+    """The bridge's "Running …" lines (tool_events.running_status) are cleared
+    the same way when a turn dies while a tool runs; other lines are not."""
+    import re
+
+    from hubzoid import tool_events
+    js = re.search(r"const RUNNING = /(.+)/;", SCRIPT).group(1)
+    pattern = re.compile(js.replace("\\u2026", "\u2026"))
+    for names in (["check_program"], ["a", "b"], ["a", "b", "c", "d"]):
+        assert pattern.fullmatch(tool_events.running_status(names).description)
+    assert not pattern.fullmatch("Searching the web")
+    assert not pattern.fullmatch("Working on it\u2026")

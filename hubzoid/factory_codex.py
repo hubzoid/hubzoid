@@ -303,6 +303,9 @@ class CodexRuntime:
         await send({"id": 3, "method": "turn/start", "params": turn_params})
         calls = 0
         saw_delta = set()
+        # Tool-call display (SHOW_TOOLS): status while a call runs, a tool
+        # block when it finishes.
+        activity = tool_events.ToolActivity(self.tool_mode)
         while True:
             msg = await read()
             method = msg.get("method")
@@ -325,15 +328,17 @@ class CodexRuntime:
                     args_json = json.dumps(arguments)
                     ctx = ToolContext(context=None, tool_name=name, tool_call_id=p["callId"], tool_arguments=args_json, run_config=RunConfig())
                     _request_ctx.record_tool_call(name, arguments)
-                    display = tool_events.format_call(name, arguments, mode=self.tool_mode)
-                    if display:
-                        yield display
+                    for chunk in activity.started(p["callId"], name, arguments):
+                        yield chunk
                     try:
                         result = await tool.on_invoke_tool(ctx, args_json)
                         success = True
                     except Exception:
                         result, success = "Tool failed. Check the hub server logs.", False
                         log.exception("Codex tool %s failed", name)
+                    for chunk in activity.finished(
+                            p["callId"], error=not success or tool_events.failed_output(result)):
+                        yield chunk
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
                 await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})
@@ -342,11 +347,11 @@ class CodexRuntime:
                 await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
             elif method == "item/agentMessage/delta":
                 saw_delta.add(p.get("itemId"))
-                yield p.get("delta", "")
+                yield activity.text(p.get("delta", ""))
             elif method == "item/completed":
                 item = p.get("item", {})
                 if item.get("type") == "agentMessage" and item.get("id") not in saw_delta:
-                    yield item.get("text", "")
+                    yield activity.text(item.get("text", ""))
             elif method == "thread/tokenUsage/updated":
                 total = p.get("tokenUsage", {}).get("total", {})
                 usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
