@@ -484,3 +484,63 @@ def test_openai_compatible_endpoint_keeps_its_text(client):
     content = r.json()["choices"][0]["message"]["content"]
     assert "<summary>↳ read_knowledge</summary>" in content
     assert "You said: “use a tool”" in content
+
+
+def test_gateway_conversations_carry_their_hubs_address(tmp_path, monkeypatch):
+    import json as _json
+
+    from hubzoid.chat.common import api_bases
+
+    hub_a, hub_b = tmp_path / "Sales", tmp_path / "support-desk"
+    for h in (hub_a, hub_b):
+        h.mkdir()
+    manifest = tmp_path / "deployment.json"
+    manifest.write_text(_json.dumps({"version": 1, "hubs": [
+        {"key": "sales", "name": "Sales", "path": str(hub_a), "model_id": "sales", "slug": "sales"},
+        {"key": "support-desk", "name": "Support", "path": str(hub_b), "model_id": "support"},
+    ]}))
+    monkeypatch.setenv("HUBZOID_DEPLOYMENT", str(manifest))
+    assert api_bases(hub_a) == {"sales": "/b/sales", "support-desk": "/b/support-desk"}
+    monkeypatch.delenv("HUBZOID_DEPLOYMENT")
+    assert api_bases(hub_a) == {}     # a single hub: calls need no prefix
+
+
+def test_a_refused_first_message_leaves_no_conversation(client, agent):
+    r = client.post("/api/chat", headers=ORIGIN, json={
+        "conversation_id": "c_refused01", "agent": agent,
+        "message": {"id": "m_user00001", "content": [{"type": "file", "file_id": "none.pdf"}]}})
+    assert r.status_code == 400
+    assert client.get("/api/conversations/c_refused01").status_code == 404
+    assert client.get("/api/conversations").json()["items"] == []
+    from hubzoid import memory
+
+    assert not memory.chat_root(client.app.state.chat.hub_dir, "c_refused01").exists()
+    # an id conflict is found before the conversation is made, too
+    _send(client, "c_taken0001", "hi", agent, "m_taken0001", "m_taken0002")
+    r = _send(client, "c_refused02", "hi", agent, "m_taken0001", "m_fresh0001")
+    assert r.status_code == 409
+    r = _send(client, "c_refused02", "hi", agent, "m_fresh0002", "m_taken0002")
+    assert r.status_code == 409
+    assert client.get("/api/conversations/c_refused02").status_code == 404
+
+
+def test_attachment_names_are_searchable(client, agent):
+    client.post("/api/conversations", headers=ORIGIN, json={"agent": agent, "id": "c_search001"})
+    up = client.post("/api/conversations/c_search001/files", headers=ORIGIN,
+                     files={"file": ("quarterly-forecast.xlsx", b"PK", "application/octet-stream")})
+    _send(client, "c_search001", None, None, "m_user00001", "m_asst00001",
+          files=(up.json()["file_id"],))
+    found = client.get("/api/conversations", params={"q": "forecast"}).json()["items"]
+    assert [c["id"] for c in found] == ["c_search001"]
+
+
+def test_an_unavailable_access_check_refuses(client, agent, monkeypatch):
+    import hubzoid.access as access
+
+    def broken(hub_dir):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(access, "store_for", broken)
+    r = _send(client, "c_down00001", "hi", agent, "m_user00001", "m_asst00001")
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "access_unavailable"
+    assert client.get("/api/conversations/c_down00001").status_code == 404
