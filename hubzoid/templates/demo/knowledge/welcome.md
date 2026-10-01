@@ -14,7 +14,7 @@ Hubzoid hub.
 You ran `hubzoid run demo-hub` and the framework booted three things.
 
 1. A FastAPI bridge on `:8000` exposing an OpenAI-compatible API.
-2. Open WebUI on `:3080` pointed at the bridge as its model provider.
+2. The Hubzoid web app on `:3080`, the one public port, in front of the bridge.
 3. This agent. Its instructions live in `demo-hub/AGENTS.md`. Its
    knowledge lives in `demo-hub/knowledge/`. Its skills live in
    `demo-hub/skills/`. Open the folder. Read along.
