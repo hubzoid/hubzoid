@@ -9,8 +9,14 @@ import { Button, Field, Notice, Spinner } from "../components/ui";
 import { AuthLayout } from "./AuthLayout";
 import { authErrorText } from "./SignInPage";
 
-export default function SetPasswordPage({ token }: { token: string | null }) {
+export default function SetPasswordPage({ token: linkToken }: { token: string | null }) {
   const app = useApp();
+  // The one-time token leaves the address bar (and the browser history) once
+  // read; this page keeps it until the password is set.
+  const [token] = useState(linkToken);
+  useEffect(() => {
+    if (linkToken) navigate(location.pathname, { replace: true });
+  }, [linkToken]);
   const [link, setLink] = useState<AuthLink | null>(null);
   const [status, setStatus] = useState<"checking" | "ready" | "invalid">(token ? "checking" : "invalid");
   const [password, setPassword] = useState("");
@@ -34,7 +40,8 @@ export default function SetPasswordPage({ token }: { token: string | null }) {
     };
   }, [token]);
 
-  const reset = link?.purpose === "reset";
+  // The server names the purposes set_password and reset_password.
+  const reset = link?.purpose === "reset_password" || link?.purpose === "reset";
   const title = reset ? t.setPassword.titleReset : t.setPassword.titleSet;
 
   const submit = async (e: FormEvent) => {

@@ -103,8 +103,8 @@ function seed() {
     ],
     sessions: new Map(),
     links: new Map([
-      ["set-token-valid-0001", { email: "sam@example.com", purpose: "set", used: false }],
-      ["reset-token-valid-001", { email: "ada@example.com", purpose: "reset", used: false }],
+      ["set-token-valid-0001", { email: "sam@example.com", purpose: "set_password", used: false }],
+      ["reset-token-valid-001", { email: "ada@example.com", purpose: "reset_password", used: false }],
     ]),
     conversations: new Map(),
     messages: new Map(),

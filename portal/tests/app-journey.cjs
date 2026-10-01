@@ -805,9 +805,12 @@ function chartPng(width = 160, height = 100) {
       const fresh = await browser.newContext({ viewport: { width: 1200, height: 860 } });
       const invited = await fresh.newPage();
       watch(invited);
+      await invited.goto(`${BASE}/auth/set-password?token=reset-token-valid-001`);
+      await invited.getByRole("heading", { name: "Choose a new password" }).waitFor();
       await invited.goto(`${BASE}/auth/set-password?token=set-token-valid-0001`);
       await invited.getByRole("heading", { name: "Set your password" }).waitFor();
       await invited.getByText("For sam@example.com").waitFor();
+      assert.equal(new URL(invited.url()).search, "", "the one-time token leaves the address bar");
       await axe(invited, "set password");
       await invited.getByLabel("New password").fill("short");
       await invited.getByRole("button", { name: "Save password and sign in" }).click();
