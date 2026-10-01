@@ -162,6 +162,47 @@ def test_an_edge_that_cannot_bind_stops_the_run(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Links the bridge writes go through the public port
+# ---------------------------------------------------------------------------
+def test_a_local_run_gives_the_bridge_its_public_origin(tmp_path, launched):
+    result = _run(_hub(tmp_path))
+    assert result.exit_code == 0, result.output
+    bridge = _bridge(launched)
+    assert bridge["HUBZOID_PUBLIC_URL"] == "http://127.0.0.1:3801"     # not the bridge port 3802
+    assert bridge["HUBZOID_ALLOWED_ORIGINS"] == "http://localhost:3801"  # the other local spelling
+    assert "HUBZOID_PUBLIC_URL" not in _edge(launched)["env"]
+
+
+def test_localhost_is_kept_as_typed(tmp_path, launched):
+    result = _run(_hub(tmp_path, "HUBZOID_ALLOWED_ORIGINS=https://tools.example.com\n"), "--host", "localhost")
+    assert result.exit_code == 0, result.output
+    bridge = _bridge(launched)
+    assert bridge["HUBZOID_PUBLIC_URL"] == "http://localhost:3801"
+    assert bridge["HUBZOID_ALLOWED_ORIGINS"] == "https://tools.example.com,http://127.0.0.1:3801"
+
+
+@pytest.mark.parametrize("env", ["HUBZOID_PUBLIC_URL=https://hub.example.com\n", "WEBUI_URL=https://hub.example.com\n"])
+def test_a_configured_public_url_is_kept(tmp_path, launched, env):
+    result = _run(_hub(tmp_path, env))
+    assert result.exit_code == 0, result.output
+    bridge = _bridge(launched)
+    assert bridge.get("HUBZOID_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
+    assert "HUBZOID_ALLOWED_ORIGINS" not in bridge
+
+
+def test_a_network_bind_without_a_public_url_says_to_set_one(tmp_path, launched):
+    result = _run(_hub(tmp_path, "HUBZOID_AUTH=true\n"), "--host", "0.0.0.0")
+    assert result.exit_code == 0, result.output
+    assert "HUBZOID_PUBLIC_URL" not in _bridge(launched)
+    assert "Set HUBZOID_PUBLIC_URL" in " ".join(result.output.split())
+
+
+def test_bridge_only_runs_set_no_public_origin(tmp_path, launched):
+    assert _run(_hub(tmp_path), "--no-ui").exit_code == 0
+    assert "HUBZOID_PUBLIC_URL" not in _bridge(launched)
+
+
+# ---------------------------------------------------------------------------
 # Local mode stays on loopback
 # ---------------------------------------------------------------------------
 def test_local_mode_refuses_a_network_host(tmp_path, launched):
@@ -290,6 +331,8 @@ def test_sign_in_with_an_unmigrated_open_webui_install_stops(tmp_path, launched)
     out = " ".join(result.output.split())
     assert "2 account(s)" in out and "no Hubzoid accounts yet" in out
     assert _flat(f"hubzoid migrate openwebui {hub}") in _flat(result.output)
+    assert "dry run first" in out and _flat(f"hubzoid backup {hub}") in _flat(result.output)
+    assert "stop the hub, and apply" in out
     assert _flat('pip install "hubzoid[openwebui]"') in _flat(result.output)
     assert "HUBZOID_UI=openwebui" in out
     assert launched == []

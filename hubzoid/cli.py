@@ -471,6 +471,9 @@ def run(
     bridge_env["BRIDGE_PORT"] = str(br_port)
     mcp_url = None
     if not legacy and not no_ui:
+        # Links the bridge writes (downloads) go through the public port people
+        # open, not the bridge's own loopback port.
+        bridge_env.update(_origin_defaults(os.environ, host, ui_port))
         # Hosted MCP is on by default where its OAuth can work: a local run, or an
         # https public URL. A key set in the hub's .env or the environment wins.
         mcp_env = _mcp_defaults(os.environ, _public_origin(host, ui_port))
@@ -515,10 +518,16 @@ def run(
                 raise typer.Exit(1)
             url = appmode.public_url() or _local_url(host, ui_port)
             mode = "sign-in on" if auth_on else "local mode, sign-in off"
-            console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(url)}  [dim]({mode})[/dim]")
+            # One line each, never wrapped, so the URL and the command copy cleanly
+            # from any terminal or log viewer.
+            console.print(f"[bold green]✓ Hubzoid is ready:[/bold green] {escape(url)}  [dim]({mode})[/dim]",
+                          soft_wrap=True)
             if mcp_url:
                 console.print(f"  [dim]Connect Claude Code:[/dim] claude mcp add --transport http "
-                              f"{escape(_mcp_client_name(hub))} {escape(mcp_url)}")
+                              f"{escape(_mcp_client_name(hub))} {escape(mcp_url)}", soft_wrap=True)
+            if not appmode.public_url() and not appmode.is_loopback_host(host):
+                console.print("  [dim]Set HUBZOID_PUBLIC_URL to the address people open, so download "
+                              "links and sign-in redirects use it.[/dim]")
             if _should_open_browser(host, no_open):
                 _open_browser(url)
 
@@ -622,6 +631,28 @@ def _public_origin(host: str, port: int) -> str:
     return _local_url(host, port) if appmode.is_loopback_host(host) else ""
 
 
+def _origin_defaults(env, host: str, port: int) -> dict[str, str]:
+    """HUBZOID_PUBLIC_URL and HUBZOID_ALLOWED_ORIGINS for the bridge when no
+    public URL is configured and the web app is on this machine.
+
+    The bridge builds download links from HUBZOID_PUBLIC_URL, falling back to
+    its own loopback port. Setting it to the public port's address sends links
+    through the edge, as people open the page. The other local spelling
+    (localhost or 127.0.0.1) stays an allowed origin, so a page opened either
+    way may send changes. A configured public URL, or a network bind (whose
+    address only the operator knows), is left alone."""
+    from . import appmode
+
+    if appmode.public_url(env) or not appmode.is_loopback_host(host):
+        return {}
+    origin = _local_url(host, port)
+    allowed = [o.strip() for o in (env.get("HUBZOID_ALLOWED_ORIGINS") or "").split(",") if o.strip()]
+    for spelling in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+        if spelling != origin and spelling not in allowed:
+            allowed.append(spelling)
+    return {"HUBZOID_PUBLIC_URL": origin, "HUBZOID_ALLOWED_ORIGINS": ",".join(allowed)}
+
+
 def _mcp_defaults(env, origin: str) -> dict[str, str]:
     """MCP_SERVER and MCP_PUBLIC_URL to add to the bridge's environment.
 
@@ -679,8 +710,8 @@ def _refuse_unauthenticated_network(hub: Path, host: str, auth_on: bool) -> None
                       "(HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true).[/yellow]")
         return
     console.print(
-        f"[red]Sign-in is off, so --host {escape(host)} would let anyone who can reach this port "
-        "use the hub as its owner.[/red]\n"
+        f"[red]Sign-in is off, so listening on {escape(host)} (--host or HUBZOID_HOST) would let "
+        "anyone who can reach this port use the hub as its owner.[/red]\n"
         f"Turn sign-in on: set HUBZOID_AUTH=true in {escape(str(hub / '.env'))} and create the first\n"
         "administrator with HUBZOID_ADMIN_EMAIL and HUBZOID_ADMIN_PASSWORD (see `hubzoid admin --help`).\n"
         "Or keep the web app on this machine: --host 127.0.0.1.\n"
@@ -704,15 +735,18 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
     if found is None or upgrade.hubzoid_accounts(hub):
         return
     where, people = found
+    quoted = escape(shlex.quote(str(hub)))
     if not auth_on:
         console.print(f"[dim]Chats from Open WebUI ({escape(where)}) can be imported: "
-                      f"hubzoid migrate openwebui {escape(shlex.quote(str(hub)))}[/dim]")
+                      f"hubzoid migrate openwebui {quoted} (back up first)[/dim]")
         return
     console.print(
         f"[red]This hub has an Open WebUI database with {people} account(s) ({escape(where)}), "
         "but no Hubzoid accounts yet.[/red]\n"
         "Hubzoid now has its own web app and sign-in. Choose one:\n"
-        f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {escape(shlex.quote(str(hub)))}\n"
+        f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {quoted}\n"
+        "     Do a dry run first (see `hubzoid migrate openwebui --help`), then back up\n"
+        f"     (hubzoid backup {quoted}), stop the hub, and apply.\n"
         "  2. Keep Open WebUI for this release: pip install \"hubzoid\\[openwebui]\" and set\n"
         f"     HUBZOID_UI=openwebui in {escape(str(hub / '.env'))}"
     )
