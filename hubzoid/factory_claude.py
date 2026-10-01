@@ -587,35 +587,40 @@ class _ThinkStream:
     arrives, so the dead reasoning gap shows activity.
 
     mode:
-      - 'full'      -> stream the model's summarized reasoning text verbatim.
-      - 'indicator' -> emit a single placeholder line per block (panel + timer,
-                       no reasoning content exposed).
-    A new block opens for each reasoning burst (e.g. after a tool call), which
-    Open WebUI renders as separate panels.
+      - 'full'      -> stream the model's summarized reasoning text verbatim,
+                       one panel per reasoning burst.
+      - 'indicator' -> no reasoning content is exposed. The first burst,
+                       before anything is shown, is an empty block: the chat
+                       app's own "Thinking…" line and timer, then "Thought
+                       for N seconds". A later burst (between tool rounds)
+                       is the status line `tool_events.THINKING` instead, so
+                       tool rows are not broken up by empty panels.
     """
-
-    _PLACEHOLDER = "_Thinking…_"
 
     def __init__(self, mode: str):
         self.mode = mode  # 'indicator' | 'full' (never 'off' — no deltas then)
         self._open = False
-        self._placeholder_done = False
+        self._shown_any = False
+        self._status_on = False
 
     def thinking(self, text: str) -> str:
+        if self.mode == "indicator" and self._shown_any:
+            if self._status_on:
+                return ""
+            self._status_on = True
+            return tool_events.Status(tool_events.THINKING)
         out = ""
         if not self._open:
             out += "<think>\n"
             self._open = True
-            self._placeholder_done = False
         if self.mode == "full":
             out += text
-        elif not self._placeholder_done:
-            out += self._PLACEHOLDER
-            self._placeholder_done = True
         return out
 
     def visible(self, text: str) -> str:
         """Return `text` for display, closing any open thinking block first."""
+        self._shown_any = True
+        self._status_on = False
         return self.close() + text
 
     def close(self) -> str:
@@ -746,9 +751,15 @@ class ClaudeRuntime:
         # opens one (and build() requests no thinking deltas in that mode).
         tw = _ThinkStream(self._thinking_mode)
         surface_thinking = self._thinking_mode != "off"
-        # tool_use_id -> short name. Used only to identify error result blocks
-        # so we can surface them with a ⚠ marker. Successful results emit
-        # nothing — the call line was already shown.
+        # Tool-call display (SHOW_TOOLS): a status line while a call runs and
+        # a tool block when it finishes. Text goes through `tw` (it closes an
+        # open thinking block); a Status is not text and passes straight on.
+        activity = tool_events.ToolActivity(self._tool_mode)
+
+        def shown_chunks(chunks):
+            return [c if isinstance(c, tool_events.Status) else tw.visible(c) for c in chunks]
+        # tool_use_id -> short name: a call announced again (the SDK can repeat
+        # an assistant message) is shown and recorded once.
         tool_use_names: dict[str, str] = {}
         answered_by: str | None = None
         # Native image vision: expand any [Image: name] reference in the prompt
@@ -780,14 +791,16 @@ class ClaudeRuntime:
                         dtype = delta.get("type")
                         if dtype == "thinking_delta" and surface_thinking:
                             chunk = tw.thinking(delta.get("thinking") or "")
-                            if chunk:
+                            if isinstance(chunk, tool_events.Status):
                                 yield chunk
+                            elif chunk:
+                                yield activity.text(chunk)
                         elif dtype == "text_delta":
                             text = delta.get("text") or ""
                             if text:
                                 streamed_any = True
                                 shown.append(text)
-                                yield tw.visible(text)
+                                yield tw.visible(activity.text(text))
                     continue
 
                 # --- Tool calls announced as full assistant message blocks ---
@@ -806,24 +819,25 @@ class ClaudeRuntime:
                             # expect_tools must still see the call.
                             _request_ctx.record_tool_call(
                                 short, getattr(block, "input", None))
-                            line = tool_events.format_call(
-                                short, getattr(block, "input", None),
-                                mode=self._tool_mode,
-                            )
-                            if line:
-                                yield tw.visible(line)
+                            # A running tool is not thinking: close an open
+                            # panel so its spinner stops while the tool runs.
+                            closing = tw.visible("")
+                            if closing:
+                                yield activity.text(closing)
+                            for chunk in shown_chunks(activity.started(
+                                    tid, short, getattr(block, "input", None))):
+                                yield chunk
                     continue
 
-                # --- Tool results: emit a line only on error. Success is
-                #     implicit (the call line was already shown).
+                # --- Tool results: the call is finished (✓, or ✗ on error).
                 if isinstance(message, UserMessage):
                     for block in getattr(message, "content", []) or []:
                         if isinstance(block, ToolResultBlock):
-                            if not bool(getattr(block, "is_error", False)):
-                                continue
                             tid = getattr(block, "tool_use_id", "") or ""
-                            tool_name = tool_use_names.get(tid, "tool")
-                            yield tw.visible(tool_events.format_error(tool_name))
+                            failed = bool(getattr(block, "is_error", False)) or \
+                                tool_events.failed_output(getattr(block, "content", None))
+                            for chunk in shown_chunks(activity.finished(tid, error=failed)):
+                                yield chunk
                     continue
 
                 # --- Final aggregate (fallback if partials are missing) ---
@@ -840,6 +854,8 @@ class ClaudeRuntime:
             log.exception("claude stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error")
+            for chunk in shown_chunks(activity.flush()):
+                yield chunk
             yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
             return
         finally:
@@ -848,6 +864,8 @@ class ClaudeRuntime:
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.
+        for chunk in shown_chunks(activity.flush()):
+            yield chunk
         if self.last_error is not None:
             yield tw.close() + f"\n\n[agent error: {self.last_error}]"
             return

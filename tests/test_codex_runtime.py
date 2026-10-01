@@ -297,3 +297,37 @@ def test_delegate_usage_is_combined_without_pricing_as_the_wrong_model(monkeypat
     assert _combine_usage(rows) == {"model": None, "input_tokens": 30, "output_tokens": 5, "cost_usd": .03}
     rows[1]["model"] = "unknown"
     assert _combine_usage(rows)["cost_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_compact_tools_show_a_status_then_a_finished_block():
+    """SHOW_TOOLS=compact: a Status while the call runs, then the chat app's
+    tool-call block (✓, or ✗ when the tool raised)."""
+    from hubzoid.tool_events import Status
+
+    @function_tool
+    def lookup(event_id: int) -> str:
+        """Look up an event."""
+        return "ok"
+
+    @function_tool
+    def broken() -> str:
+        """Always fails."""
+        raise RuntimeError("down")
+
+    proc = Process(events(
+        {"method": "item/tool/call", "id": 10, "params": {"tool": "lookup", "arguments": {"event_id": 1556}, "callId": "c1", "threadId": "thread"}},
+        {"method": "item/tool/call", "id": 11, "params": {"tool": "broken", "arguments": {}, "callId": "c2", "threadId": "thread"}},
+        {"method": "item/agentMessage/delta", "params": {"itemId": "a", "delta": "Done"}},
+    ))
+    rt = CodexRuntime(name="demo", instructions="", registry={"lookup": lookup, "broken": broken},
+                      tool_mode="compact")
+    parts = [x async for x in rt._exchange(proc, "hi", "/tmp/empty", {})]
+    statuses = [p.description for p in parts if isinstance(p, Status)]
+    assert statuses == ["Running lookup…", None, "Running broken…", None]
+    text = "".join(parts)
+    first, second = text.index('name="lookup"'), text.index('name="broken"')
+    assert first < second < text.index("Done")
+    assert text.count('<details type="tool_calls" done="true"') == 2
+    assert 'id="c2" name="broken" arguments="{}" status="failed"' in text
+    assert "&quot;event_id&quot;: 1556" in text

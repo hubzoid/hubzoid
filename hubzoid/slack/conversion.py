@@ -188,7 +188,8 @@ def strip_thinking(text: str) -> tuple[str, bool]:
 # hidden on Slack by design. (SHOW_TOOLS=full uses `> ↳` blockquotes instead,
 # which are not `<details>` and pass through unchanged.)
 _TOOL_BLOCK_RE = re.compile(r"<details\b[^>]*>.*?</details>", re.DOTALL | re.IGNORECASE)
-_TOOL_OPEN_RE = re.compile(r"<details\b[^>]*>", re.IGNORECASE)
+# A trailing tag cut before its `>` (a long tool block still streaming) counts too.
+_TOOL_OPEN_RE = re.compile(r"<details\b[^>]*(?:>|$)", re.IGNORECASE)
 
 
 def strip_tool_calls(text: str) -> str:

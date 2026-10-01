@@ -193,11 +193,14 @@ def test_strip_chrome_removes_real_tool_event_output():
     full = tool_events.format_call("read_knowledge", {"name": "policy"}, mode="full")
     compact = tool_events.format_call("http_get", {"url": "x"}, mode="compact")
     err = tool_events.format_error("odoo_info", "connection refused")
-    text = f"The window is 14 days.{full}{compact}{err}"
+    activity = tool_events.ToolActivity("compact")
+    activity.started("c1", "grep_data", {"pattern": "refund"})
+    block = "".join(activity.finished("c1", error=True))
+    text = f"The window is 14 days.{full}{compact}{err}{block}"
 
     clean = assertions.strip_chrome(text)
     assert clean == "The window is 14 days."
-    for noise in ("read_knowledge", "http_get", "odoo_info", "<details>", ">"):
+    for noise in ("read_knowledge", "http_get", "odoo_info", "grep_data", "<details", ">"):
         assert noise not in clean
 
 

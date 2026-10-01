@@ -37,8 +37,8 @@ For every signed-in person it also explains an empty chat: a blocked account,
 or an account with no agent yet, sees a notice instead of an unexplained
 "Select a model".
 
-It also clears the bridge's "Working on it…" status line from a finished
-message. The bridge hides that line itself before the first words, the finish
+It also clears the bridge's own status lines ("Working on it…", and
+"Running <tool>…" while a tool runs) from a finished message. The bridge hides that line itself before the first words, the finish
 or an error, but a turn stopped before its first word, or cut off because the
 bridge died, never gets that hide event, and Open WebUI keeps the line
 animated, even after a reload (status history is stored with the message).
@@ -222,10 +222,12 @@ SCRIPT = r'''
   }
   // The bridge's waiting line, left behind when a turn is stopped before its
   // first word or the bridge dies (see the module docstring). Hide the status
-  // block only while its current line reads exactly WAITING and its message
-  // shows Open WebUI's Copy action, which renders only once the message is done.
-  // Re-checked on every change, so a continued message shows its line again.
+  // block only while its current line reads exactly WAITING (or the bridge's
+  // RUNNING tool line) and its message shows Open WebUI's Copy action, which
+  // renders only once the message is done. Re-checked on every change, so a
+  // continued message shows its line again.
   const WAITING = 'Working on it\u2026';
+  const RUNNING = /^Running \S.*\u2026$/;
   let statusQueued = false;
   function staleStatus() {
     statusQueued = false;
@@ -233,7 +235,8 @@ SCRIPT = r'''
     for (const line of document.querySelectorAll('.status-description')) {
       const current = line.closest('button');  // the history list has no button
       const message = current?.closest('[id^="message-"]');
-      if (current?.parentElement && line.textContent.trim() === WAITING &&
+      const text = line.textContent.trim();
+      if (current?.parentElement && (text === WAITING || RUNNING.test(text)) &&
           message?.querySelector('.copy-response-button')) stale.add(current.parentElement);
     }
     for (const block of document.querySelectorAll('[data-hz-stale-status]'))

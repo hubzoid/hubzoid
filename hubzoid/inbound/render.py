@@ -19,7 +19,8 @@ import re
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
 _TOOL_BLOCK_RE = re.compile(r"<details\b[^>]*>.*?</details>", re.DOTALL | re.IGNORECASE)
-_TOOL_OPEN_RE = re.compile(r"<details\b[^>]*>", re.IGNORECASE)
+# A trailing tag cut before its `>` (a long tool block still streaming) counts too.
+_TOOL_OPEN_RE = re.compile(r"<details\b[^>]*(?:>|$)", re.IGNORECASE)
 
 
 def strip_thinking(text: str) -> "tuple[str, bool]":

@@ -3,6 +3,23 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Changed
+- Chat: tool activity uses the chat app's own tool rows. While a call runs, the
+  status line says "Running <tool>…"; when it finishes it becomes a ✓ (or ✗)
+  row, and consecutive calls fold into one "Explored …" line that expands to
+  the rows and their inputs. Failed or refused calls show ✗ on their row
+  instead of a separate quoted ⚠ line. Results are never written into chat.
+  The same rule applies on all three runtimes. `SHOW_TOOLS=full` keeps the
+  inline lines.
+- Chat: `SHOW_THINKING=indicator` no longer writes a "Thinking…" placeholder
+  that rendered as a quote. The first thinking burst is an empty panel;
+  later bursts between tool rounds show "Thinking…" on the status line
+  instead of more panels.
+- A "Running …" status line left by a turn that died is hidden once the
+  message is finished, like "Working on it…".
+
 ## [1.0.3]
 
 - Fix README images and documentation links on PyPI with absolute URLs.

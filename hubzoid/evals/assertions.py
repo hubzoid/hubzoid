@@ -48,7 +48,8 @@ class Check:
 # tool line rather than the prose) and false failures (`not_contains` tripping
 # over the agent's own reasoning). So we assert against the answer only.
 #
-# The patterns below mirror `tool_events.format_call` / `format_error` and the
+# The patterns below mirror `tool_events.format_call` / `format_error` /
+# `format_tool_block` and the
 # Claude `_ThinkWriter`. `tests/test_evals.py` feeds real output from those
 # functions through `strip_chrome`, so a format change breaks a test rather
 # than silently corrupting eval verdicts.
@@ -56,6 +57,9 @@ class Check:
 _THINK_RE = re.compile(r"<think>.*?(?:</think>|\Z)", re.DOTALL | re.IGNORECASE)
 _DETAILS_RE = re.compile(r"<details>\s*<summary>\s*[✓↳⚠].*?(?:</details>|\Z)",
                          re.DOTALL | re.IGNORECASE)
+# `tool_events.format_tool_block`: the chat app's tool-call block.
+_TOOL_BLOCK_RE = re.compile(r'<details\s+type="tool_calls"[^>]*>.*?(?:</details>|\Z)',
+                            re.DOTALL | re.IGNORECASE)
 _TOOL_LINE_RE = re.compile(r"^[ \t]*>[ \t]*[✓↳⚠].*$", re.MULTILINE)
 _BLANK_RUN_RE = re.compile(r"\n{3,}")
 
@@ -67,6 +71,7 @@ def strip_chrome(text: str) -> str:
     blockquote form, and both before blank-line collapsing.
     """
     out = _THINK_RE.sub("", text or "")
+    out = _TOOL_BLOCK_RE.sub("", out)
     out = _DETAILS_RE.sub("", out)
     out = _TOOL_LINE_RE.sub("", out)
     return _BLANK_RUN_RE.sub("\n\n", out).strip()

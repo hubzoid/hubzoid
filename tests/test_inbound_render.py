@@ -42,3 +42,17 @@ def test_truncate_over_limit_appends_marker_within_budget():
     out = truncate("abcdefghij", limit=5, marker="…")
     assert out.endswith("…")
     assert len(out) <= 5
+
+
+def test_strip_tool_calls_removes_the_chat_apps_tool_blocks():
+    """WhatsApp and Telegram never show the web UI's tool-call blocks."""
+    from hubzoid import tool_events
+
+    act = tool_events.ToolActivity("compact")
+    act.started("c1", "check_program", {"event_id": 1556})
+    ok = "".join(act.finished("c1"))
+    act.started("c2", "finance_review_report", {})
+    failed = "".join(act.finished("c2", error=True))
+    assert strip_tool_calls(f"Before{ok}{failed}After").replace("\n", "") == "BeforeAfter"
+    # Still streaming (a block cut mid-way) drops the tail.
+    assert strip_tool_calls("Answer" + ok[: len(ok) // 2]).strip() == "Answer"

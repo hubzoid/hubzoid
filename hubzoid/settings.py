@@ -121,16 +121,21 @@ Environment variables explicitly supported:
                          how Claude's thinking is surfaced in chat. Opus already
                          thinks by default but hides the text, leaving a dead
                          spinner during the reasoning gap.
-                           indicator (default) -> show a "Thinking…" panel for
-                             the reasoning duration, without exposing the text.
+                           indicator (default) -> the chat app's "Thinking…"
+                             panel before the first output, then the status
+                             line "Thinking…" between tool rounds. The text
+                             is never exposed.
                            full -> stream the summarized reasoning text.
                            off -> surface nothing (legacy behaviour).
                          Aliases: true->full, false->off. Independent of
                          REASONING_EFFORT (which only sets how *much* it thinks).
   SHOW_TOOLS             off | compact | full. Controls how tool-call activity
                          (e.g. `read_knowledge`, `grep_data`) is surfaced.
-                           compact (default) -> a collapsible dropdown per call
-                             on the web UI; hidden on Slack.
+                           compact (default) -> the chat app's own tool rows:
+                             a "Running <tool>…" status line while a call
+                             runs, then a ✓/✗ row per call, folded into one
+                             "Explored …" line. Hidden on Slack, WhatsApp
+                             and Telegram.
                            full -> the legacy inline `> ↳ tool` blockquote on
                              every surface (verbose; useful for debugging).
                            off -> emit nothing.

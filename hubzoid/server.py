@@ -425,7 +425,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
     if inflight:
         inflight.enter()
     started = time.monotonic()
-    waiting = False
+    shown = None  # the status line on screen ("Working on it…", "Running X…"), or None
     try:
         # Role chunk first (OpenAI convention).
         first = _chunk("", model=model)
@@ -435,18 +435,26 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         # the chat app's own cue for that is faint. Show its status line until
         # the first content arrives, then hide it. Status is message metadata,
         # never message content.
-        yield _waiting_status(model, done=False)
-        waiting = True
+        shown = _WAITING
+        yield _status_event(model, shown)
 
         # Set chat scope so tools resolve to this chat's dirs, and bind the
         # caller's identity so the access guard sees who is running each tool.
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        from .tool_events import THINKING, Status
+
         with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
+                if isinstance(delta, Status):
+                    # A running tool's line ("Running X…"), or None to clear it.
+                    if delta.description != shown:
+                        shown = delta.description
+                        yield _status_event(model, shown)
+                    continue
                 if delta:
-                    if waiting:
-                        waiting = False
-                        yield _waiting_status(model, done=True)
+                    if shown in (_WAITING, THINKING):  # the answer has started
+                        shown = None
+                        yield _status_event(model, None)
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
             # Drain usage while still inside chat_scope (the runtime set it
             # there); build the OpenAI usage envelope for the final chunk.
@@ -454,9 +462,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             usage = _usage_envelope(raw_usage)
         await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
 
-        if waiting:
-            waiting = False
-            yield _waiting_status(model, done=True)
+        if shown is not None:
+            shown = None
+            yield _status_event(model, None)
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
         # empty choices + top-level usage. Open WebUI reads this to populate its
@@ -472,21 +480,30 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
         yield b"data: [DONE]\n\n"
     except Exception:
-        # A failed turn must not leave the waiting line behind its error.
-        if waiting:
-            yield _waiting_status(model, done=True)
+        # A failed turn must not leave a status line behind its error.
+        if shown is not None:
+            yield _status_event(model, None)
         raise
     finally:
         if inflight:
             inflight.leave()
 
 
+_WAITING = "Working on it…"
+
+
 def _waiting_status(model: str, *, done: bool) -> bytes:
     """Open WebUI status event (top-level `event` on a chunk with no choices).
     Open WebUI shows it as a status line and stores it as message metadata;
     other clients see an empty chunk, like the usage chunk."""
-    data = {"description": "Working on it…", "done": done}
-    if done:
+    return _status_event(model, None if done else _WAITING)
+
+
+def _status_event(model: str, description: str | None) -> bytes:
+    """The chat app's status line: `description` while work runs, hidden when
+    None (the line disappears; the chat app keeps the history as metadata)."""
+    data = {"description": description or _WAITING, "done": description is None}
+    if description is None:
         data["hidden"] = True
     chunk = {"object": "chat.completion.chunk", "created": int(time.time()), "model": model,
              "choices": [], "event": {"type": "status", "data": data}}
