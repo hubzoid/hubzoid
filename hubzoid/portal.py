@@ -1037,6 +1037,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             visibility=sync_status(hub_dir),
         )
 
+    from . import portal_evals
+    portal_evals.register(router, hub_dir, require_admin=require_admin, require_hub=require_hub)
     return router
 
 

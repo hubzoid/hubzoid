@@ -205,7 +205,10 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
 
     @DBOS.workflow(name=EVAL_WORKFLOW)
     def eval_suite(names: list[str], now_iso: str) -> dict:
-        return run_evals(names, now_iso)
+        result = run_evals(names, now_iso)
+        if result.get("failed"):
+            raise RuntimeError("Eval suite failed")
+        return result
 
     _FNS["md_task"] = md_task
     _FNS["eval_suite"] = eval_suite

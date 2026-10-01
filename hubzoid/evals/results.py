@@ -8,6 +8,13 @@ configured — local files are the floor, Langfuse is an upgrade on top.
 Keep `to_dict` / `from_dict` symmetric. A field that round-trips wrong shows
 up as a phantom regression in `--compare`, which is worse than not recording
 it at all.
+
+Schema 2 (1.1) adds, per suite, `trigger` (cli, schedule, console, ci) and
+`run_as`; per case, `tools` (each call with its arguments, outcome, duration,
+an optional result preview and its turn), `turns` (multi-turn cases) and
+`run_as`. `tool_calls` stays the list of tool names, for older readers.
+Schema 1 files still load: `tools` is rebuilt from `tool_calls` with no
+arguments, and `trigger` reads as None.
 """
 from __future__ import annotations
 
@@ -17,7 +24,59 @@ from typing import Any
 
 from .assertions import Check
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+TRIGGERS = ("cli", "schedule", "console", "ci")
+
+
+@dataclass
+class ToolCallRecord:
+    """One tool call of a case, in order. `args` is already shortened and has
+    secret-looking values redacted (see `calls.safe_args`); `raw_args` keeps
+    the runtime's arguments in memory for `expect_tool_args` and is never
+    written. `ok` and `duration_ms` are None when the runtime did not report a
+    result; `preview` is the start of the result, when the runtime recorded one."""
+    name: str
+    args: dict | None = None
+    ok: bool | None = None
+    error: str | None = None
+    duration_ms: int | None = None
+    preview: str | None = None
+    turn: int = 1
+    raw_args: Any = field(default=None, repr=False, compare=False)
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "args": self.args, "ok": self.ok, "error": self.error,
+                "duration_ms": self.duration_ms, "preview": self.preview, "turn": self.turn}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ToolCallRecord":
+        args = d.get("args")
+        duration = d.get("duration_ms")
+        ok = d.get("ok")
+        return cls(
+            name=str(d.get("name") or "?"),
+            args=args if isinstance(args, dict) else None,
+            ok=None if ok is None else bool(ok),
+            error=d.get("error"),
+            duration_ms=int(duration) if isinstance(duration, (int, float)) else None,
+            preview=d.get("preview"),
+            turn=int(d.get("turn") or 1),
+        )
+
+
+@dataclass
+class TurnRecord:
+    """One turn of a multi-turn case: what the person said, what the agent replied."""
+    prompt: str
+    response: str = ""
+
+    def to_dict(self) -> dict:
+        return {"prompt": self.prompt, "response": self.response}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TurnRecord":
+        return cls(prompt=str(d.get("prompt") or ""), response=str(d.get("response") or ""))
 
 
 @dataclass
@@ -57,6 +116,9 @@ class CaseResult:
     tool_calls: list[str] = field(default_factory=list)
     duration: float = 0.0
     error: str | None = None      # the run blew up / timed out
+    tools: list[ToolCallRecord] = field(default_factory=list)
+    turns: list[TurnRecord] | None = None     # None for a single-prompt case
+    run_as: str | None = None     # the account the case ran as
 
     @property
     def free_passed(self) -> bool:
@@ -96,10 +158,19 @@ class CaseResult:
             "judge": self.judge.to_dict() if self.judge else None,
             "tool_calls": list(self.tool_calls),
             "response": self.response,
+            "tools": [t.to_dict() for t in self.tools],
+            "turns": [t.to_dict() for t in self.turns] if self.turns is not None else None,
+            "run_as": self.run_as,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "CaseResult":
+        names = [str(n) for n in (d.get("tool_calls") or [])]
+        if isinstance(d.get("tools"), list):
+            tools = [ToolCallRecord.from_dict(t) for t in d["tools"] if isinstance(t, dict)]
+        else:   # schema 1: names only
+            tools = [ToolCallRecord(name=n) for n in names]
+        turns = d.get("turns")
         return cls(
             name=d.get("name", "?"),
             tags=list(d.get("tags") or []),
@@ -108,9 +179,13 @@ class CaseResult:
                     for c in (d.get("checks") or [])],
             judge=JudgeResult.from_dict(d["judge"]) if d.get("judge") else None,
             response=d.get("response", ""),
-            tool_calls=list(d.get("tool_calls") or []),
+            tool_calls=names,
             duration=float(d.get("duration") or 0.0),
             error=d.get("error"),
+            tools=tools,
+            turns=([TurnRecord.from_dict(t) for t in turns if isinstance(t, dict)]
+                   if isinstance(turns, list) else None),
+            run_as=d.get("run_as"),
         )
 
 
@@ -123,6 +198,8 @@ class SuiteResult:
     model: str = ""
     judge_model: str | None = None
     judged: bool = True           # was the judge tier enabled for this run
+    trigger: str | None = "cli"   # cli | schedule | console | ci (None: schema 1 file)
+    run_as: str | None = None     # the suite default account, if one was given
 
     @property
     def passed(self) -> int:
@@ -145,6 +222,8 @@ class SuiteResult:
             "model": self.model,
             "judge_model": self.judge_model,
             "judged": self.judged,
+            "trigger": self.trigger,
+            "run_as": self.run_as,
             "passed": self.passed,
             "failed": self.failed,
             "cases": [c.to_dict() for c in self.cases],
@@ -152,6 +231,8 @@ class SuiteResult:
 
     @classmethod
     def from_dict(cls, d: dict) -> "SuiteResult":
+        if d.get("schema", 1) not in (1, 2):
+            raise ValueError("Unsupported eval result schema")
         return cls(
             hub=d.get("hub", "?"),
             cases=[CaseResult.from_dict(c) for c in (d.get("cases") or [])],
@@ -160,6 +241,8 @@ class SuiteResult:
             model=d.get("model", ""),
             judge_model=d.get("judge_model"),
             judged=bool(d.get("judged", True)),
+            trigger=d.get("trigger"),
+            run_as=d.get("run_as"),
         )
 
 

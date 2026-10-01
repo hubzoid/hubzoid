@@ -49,7 +49,8 @@ def verify(raw, headers, name, spec):
         return hmac.compare_digest(carrier.encode(), secret.encode())
     stamp = headers.get(spec['timestamp_header'].lower(), '')
     try:
-        if abs(time.time() - float(stamp)) > 300:
+        import math
+        if not math.isfinite(float(stamp)) or abs(time.time() - float(stamp)) > 300:
             return False
     except (ValueError, OverflowError):
         return False

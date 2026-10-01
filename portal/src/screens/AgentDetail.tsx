@@ -5,8 +5,9 @@ import { AgentAvatar, PageHeader } from "../components/common";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
+import { EvalsScreen } from "./EvalsScreen";
 
-export type AgentTab = "access" | "runs" | "activity";
+export type AgentTab = "access" | "runs" | "evals" | "activity";
 
 export function AgentDetail({
   hub,
@@ -17,7 +18,7 @@ export function AgentDetail({
   hub: Hub;
   hubs: Hub[];
   tab: AgentTab;
-  /** Remaining route segments after the tab (workflow, run id). */
+  /** Remaining route segments after the tab (workflow and run id, or an eval run). */
   rest: string[];
 }) {
   return (
@@ -41,7 +42,7 @@ export function AgentDetail({
         }
         description={
           <>
-            Agent <span className="identity">{hub.key}</span> · decide who can use it, check its scheduled work, and review what happened.
+            Agent <span className="identity">{hub.key}</span> · decide who can use it, check its scheduled work and evals, and review what happened.
           </>
         }
       />
@@ -52,12 +53,14 @@ export function AgentDetail({
         items={[
           { key: "access", label: <a href={agentHref(hub.key, "access")}>Access</a> },
           { key: "runs", label: <a href={agentHref(hub.key, "runs")}>Runs &amp; schedules</a> },
+          { key: "evals", label: <a href={agentHref(hub.key, "evals")}>Evals</a> },
           { key: "activity", label: <a href={agentHref(hub.key, "activity")}>Activity</a> },
         ]}
       />
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} />}
         {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
+        {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
       </div>
     </>

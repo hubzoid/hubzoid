@@ -18,6 +18,10 @@ case, so a newly added case catches up on its own schedule.
 
 **Naming.** State keys are namespaced `eval:<case>` so an eval case and a
 scheduled task may share a name without fighting over the same anchor.
+
+**One results file for every trigger.** `run_due` runs the suite through
+`suite.arun_cases` (what `run_and_save` uses), so a scheduled run writes the
+same schema 2 file as the CLI and the Console, with `trigger: "schedule"`.
 """
 from __future__ import annotations
 
@@ -87,18 +91,12 @@ async def run_due(hub_dir: Path, due: list[EvalCase], state: ScheduleState,
     a persistently failing case waits for its next cron match instead of
     re-firing on every tick.
     """
-    from . import judge as judge_lib
-    from . import langfuse as langfuse_lib
-    from . import report as report_lib
-    from . import runner as runner_lib
+    from . import suite as suite_lib
 
     now = now or datetime.now()
-    judge_fn = None
-    if any(c.is_judged for c in due):
-        judge_fn = judge_lib.make_judge(hub_dir)
-
-    suite = await runner_lib.arun_suite(hub_dir, due, judge_fn=judge_fn)
-    path = report_lib.save(hub_dir, suite)
+    # The CLI's judge settings (HUBZOID_EVAL_JUDGE_MODEL, else the hub's
+    # model), the same results file, and the Langfuse push.
+    path, suite = await suite_lib.arun_cases(hub_dir, due, judge=True, trigger="schedule")
 
     for case in due:
         result = next((r for r in suite.cases if r.name == case.name), None)
@@ -117,12 +115,5 @@ async def run_due(hub_dir: Path, due: list[EvalCase], state: ScheduleState,
     else:
         failing = ", ".join(f"{c.name} ({c.reason})" for c in suite.cases if not c.passed)
         log.error("evals: %d of %d FAILED — %s", suite.failed, len(suite.cases), failing)
-
-    try:
-        pushed = langfuse_lib.push(hub_dir, suite)
-        if pushed:
-            log.info("evals: pushed to langfuse — %s", pushed)
-    except Exception as exc:  # noqa: BLE001 — never let a telemetry outage matter
-        log.warning("evals: langfuse push skipped: %s", exc)
 
     return suite

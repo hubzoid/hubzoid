@@ -568,3 +568,130 @@ export const groupsApi = {
   removeMember: (id: string, email: string) =>
     groupRequest<void>("DELETE", `/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`),
 };
+
+// ---- evals (portal_evals.py): a hub's cases, results and Console runs --------
+
+/** A case's most recent recorded result: the newest results file that ran it. */
+export type EvalLatest = {
+  stamp: string;
+  passed: boolean;
+  reason: string;
+  finished: string | null;
+  /** console | schedule | cli | ci; null in files written before triggers. */
+  trigger: string | null;
+};
+
+export type EvalCaseRow = {
+  name: string;
+  tags: string[];
+  /** 5-field cron, or null for a case run only on demand. */
+  schedule: string | null;
+  /** Has `## Criteria`: graded by the judge. */
+  judged: boolean;
+  /** Prompts in the case: 1, or the number of turns of a conversation. */
+  turns: number;
+  /** The account the case runs as (its file), or null for the default. */
+  run_as: string | null;
+  enabled: boolean;
+  /** What it checks, in a few words each. */
+  checks: string[];
+  /** The (first) prompt, shortened. */
+  prompt: string;
+  latest: EvalLatest | null;
+};
+
+/** An eval run on the hub's workflow engine, scheduled or from the Console. */
+export type EvalRunState = {
+  id: string;
+  source: "console" | "schedule";
+  /** DBOS status: ENQUEUED, PENDING, SUCCESS, ERROR, CANCELLED, … */
+  status: string;
+  created: number | null;
+  started: number | null;
+  completed: number | null;
+  /** The cases chosen; null means every enabled case. */
+  cases: string[] | null;
+  judge: boolean | null;
+  requested_by: string | null;
+  /** The results file the run wrote, once finished. */
+  stamp: string | null;
+  error: string | null;
+};
+
+export type EvalsOverview = {
+  hub: string;
+  /** The agent has an evals folder. */
+  folder: boolean;
+  docs: string;
+  cases: EvalCaseRow[];
+  /** Case files that could not be read. */
+  errors: { file: string; error: string }[];
+  /** How many results files are recorded. */
+  runs: number;
+  active: EvalRunState | null;
+  last: EvalRunState | null;
+  state_error?: string;
+};
+
+export type EvalRunSummary = {
+  stamp: string;
+  schema: number;
+  trigger: string | null;
+  started: string | null;
+  finished: string | null;
+  model: string | null;
+  judge_model: string | null;
+  judged: boolean;
+  run_as: string | null;
+  passed: number;
+  failed: number;
+  total: number;
+};
+
+export type EvalToolCall = {
+  name: string;
+  /** The call's arguments as recorded (secret-looking values redacted); null in older files. */
+  args: unknown;
+  ok: boolean | null;
+  error: string | null;
+  duration_ms: number | null;
+  preview: string | null;
+  /** 1-based turn of a conversation. */
+  turn: number | null;
+};
+
+export type EvalCaseResult = {
+  name: string;
+  tags: string[];
+  passed: boolean;
+  reason: string;
+  /** Seconds. */
+  duration: number;
+  error: string | null;
+  checks: { kind: string; passed: boolean; detail: string }[];
+  judge: {
+    score: number;
+    threshold: number;
+    reasoning: string;
+    model: string | null;
+    error: string | null;
+    passed: boolean;
+  } | null;
+  /** The final reply. */
+  answer: string;
+  /** The prompt in the case file now (it may have changed since the run). */
+  prompt: string | null;
+  turns: { prompt: string; response: string }[] | null;
+  tools: EvalToolCall[];
+  run_as: string | null;
+};
+
+export type EvalRunDetail = EvalRunSummary & { hub: string; cases: EvalCaseResult[] };
+
+export type EvalRunStarted = {
+  ok: boolean;
+  run_id: string;
+  status: string;
+  cases: string[];
+  judge: boolean;
+};

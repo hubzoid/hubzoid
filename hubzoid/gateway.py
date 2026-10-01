@@ -119,7 +119,7 @@ class GatewayPlan:
                 "strip_prefix": base,
             })
             if web_app:
-                for part in ("/api", "/branding"):
+                for part in ("/api", "/branding", "/portal/api"):
                     routes.append({
                         "prefix": base + part,
                         "upstream": f"http://127.0.0.1:{b.bridge_port}",
