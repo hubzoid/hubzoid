@@ -124,6 +124,10 @@ namespaces = false
 [tool.setuptools.package-data]
 hubzoid = ["templates/**/*", "templates/**/.*", "core_assets/**/*", "core_assets/**/.*", "portal_dist/**/*", "migrations/*/versions/*.py", "migrations/*/script.py.mako"]
 
+# Bytecode that tests or a local run leave next to a template's tools never ships.
+[tool.setuptools.exclude-package-data]
+hubzoid = ["*.pyc", "**/__pycache__/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

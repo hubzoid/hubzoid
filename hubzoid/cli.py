@@ -21,6 +21,7 @@ import base64
 import importlib.resources as resources
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -132,6 +133,80 @@ def _choose_initial_model() -> str | None:
         console.print("Choose one of the listed numbers.")
 
 
+DEFAULT_TEMPLATE = "operations"
+
+# Hosted model providers `hubzoid init` sets up from a pasted key: (name, the
+# .env setting, default model, key prefix). The models match the commented
+# stanzas in the starter .env.
+_KEY_PROVIDERS = (
+    ("OpenRouter", "OPENROUTER_API_KEY", "openrouter/anthropic/claude-haiku-4.5", "sk-or-"),
+    ("Anthropic", "ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5", "sk-ant-"),
+    ("OpenAI", "OPENAI_API_KEY", "openai/gpt-4o-mini", "sk-"),
+)
+# One line, nothing a .env file would read as a comment, quote or second value.
+_KEY_SHAPE = re.compile(r"^[A-Za-z0-9_.\-]{20,512}$")
+
+
+def _provider_for_key(key: str):
+    """The provider a key belongs to, by its prefix: an entry of
+    _KEY_PROVIDERS, "subscription" for a Claude subscription token, or None."""
+    if key.startswith("sk-ant-oat"):
+        return "subscription"
+    for provider in _KEY_PROVIDERS:
+        if key.startswith(provider[3]):
+            return provider
+    return None
+
+
+def _prompt_for_key() -> tuple[str, str, str, str] | None:
+    """Offer to save a hosted model key when no Claude or Codex CLI is signed in.
+    Returns (provider name, .env setting, key, model), or None to skip. Called
+    only in an interactive session; the key is never echoed or logged."""
+    console.print(
+        "\nNo signed-in Claude Code or Codex CLI was found, so this hub needs a model.\n"
+        "Paste an OpenRouter, Anthropic or OpenAI API key to save it in the hub's .env\n"
+        "(readable only by you), or press Enter to skip and set one later."
+    )
+    for _attempt in range(3):
+        key = typer.prompt("API key", default="", show_default=False, hide_input=True).strip()
+        if not key:
+            return None
+        if not _KEY_SHAPE.match(key):
+            console.print("That does not look like an API key. Paste the whole key, or press Enter to skip.")
+            continue
+        provider = _provider_for_key(key)
+        if provider == "subscription":
+            console.print("That is a Claude subscription token (from `claude setup-token`), not an API key. "
+                          "It works with the claude CLI: keep MODEL=claude-local and set "
+                          "CLAUDE_CODE_OAUTH_TOKEN in .env. Paste an API key, or press Enter to skip.")
+            continue
+        if provider is None:
+            console.print("Which provider is this key for?")
+            for i, entry in enumerate(_KEY_PROVIDERS, 1):
+                console.print(f"  {i}. {entry[0]}")
+            choice = typer.prompt("Provider", default=1, type=int)
+            if not 1 <= choice <= len(_KEY_PROVIDERS):
+                console.print("Choose one of the listed numbers.")
+                continue
+            provider = _KEY_PROVIDERS[choice - 1]
+        name, setting, model_id, _prefix = provider
+        return name, setting, key, model_id
+    return None
+
+
+def _interactive() -> bool:
+    """A person at a terminal, who can answer a prompt."""
+    return sys.stdin.isatty()
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write a file only its owner can read, from the first byte (it holds keys)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    path.chmod(0o600)  # an existing file keeps its mode through O_TRUNC
+
+
 @app.command()
 def init(
     name: Path = typer.Argument(
@@ -139,13 +214,15 @@ def init(
         help="Name of the new hub folder. Created under the current directory. Default: demo-hub.",
     ),
     template: str = typer.Option(
-        "minimal",
+        DEFAULT_TEMPLATE,
         "--template", "-t",
-        help="Which bundled template to use. 'minimal' (default) scaffolds a tiny, "
-        "runnable hub with one example of each file type. 'demo' scaffolds the full "
-        "guided tour with a Hubzoid Guide agent, four teaching skills, and six "
-        "knowledge pages. 'watchtower' scaffolds a workflow-first sample: a scheduled "
-        "check on bundled sample metrics that explains threshold breaches.",
+        help="Which bundled template to use. 'operations' (default): an operations "
+        "assistant for a fictional home-goods shop, with policy files, a stock export, "
+        "a stock_check tool and three suggested prompts. 'minimal': a tiny, runnable hub "
+        "with one example of each file type. 'demo': the guided tour with a Hubzoid Guide "
+        "agent, four teaching skills and six knowledge pages. 'watchtower': a "
+        "workflow-first sample, a scheduled check on bundled sample metrics that explains "
+        "threshold breaches.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
     model: str | None = typer.Option(None, "--model", help="Model for a new hub, e.g. codex-local, claude-local or a provider model id."),
@@ -160,8 +237,12 @@ def init(
       $ hubzoid init sales-agent
       → writes ./sales-agent/... only. Parent files are left alone.
 
-    Get the full guided tour instead:
+    A tiny hub with one example of each file type, or the guided tour:
+      $ hubzoid init my-hub --template minimal
       $ hubzoid init my-hub --template demo
+
+    In a terminal with no signed-in Claude Code or Codex CLI, init offers to
+    save an OpenRouter, Anthropic or OpenAI key in the hub's .env.
 
     The result is a multi-hub agents repo built one hub at a time.
     """
@@ -213,25 +294,40 @@ def init(
     # 2. Write .env from a Python constant (not part of the template tree
     # because .env is gitignored). Same skip rules as template files.
     env_dst = hub_dir / ".env"
+    selected_model = None
+    saved_key = None
     if env_dst.exists() and not force:
         skipped.append(env_dst)
     else:
         import secrets as _secrets
 
-        selected_model = model or (_choose_initial_model() if fresh_hub and sys.stdin.isatty() else None)
+        selected_model = model
+        if not model and fresh_hub and _interactive():
+            # A person at a terminal: use a signed-in Claude Code or Codex CLI,
+            # else offer to save a hosted provider key.
+            selected_model = _choose_initial_model()
+            if selected_model is None:
+                saved_key = _prompt_for_key()
+                if saved_key:
+                    selected_model = saved_key[3]
+        # Not a terminal (scripts, CI, image builds): never prompt. The .env keeps
+        # MODEL=claude-local and the commented provider stanzas below it, as
+        # before; choose another model with --model or by editing the .env.
         starter = _STARTER_ENV
         if selected_model:
             if any(c in selected_model for c in "\n\r#"):
                 raise typer.BadParameter("Model must be a single model identifier.")
-            starter = starter.replace("MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)", f"MODEL={selected_model}")
-        env_dst.write_text(
-            starter.replace(
-                "# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees",
-                f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated, first one is what Open WebUI sees",
-            )
-        )
-        env_dst.chmod(0o600)  # it holds a live bridge key
+            model_line = f"MODEL={selected_model}"
+            if saved_key:
+                model_line += f"\n{saved_key[1]}={saved_key[2]}"
+            starter = starter.replace(_STARTER_MODEL_LINE, model_line)
+        _write_private(env_dst, starter.replace(
+            _STARTER_BRIDGE_KEY_LINE,
+            f"BRIDGE_API_KEYS={_secrets.token_urlsafe(24)}  # random per hub; comma-separated keys for the /v1 API",
+        ))
         written.append(env_dst)
+        if saved_key:
+            console.print(f"Saved the {saved_key[0]} key in {env_dst} (MODEL={selected_model}).")
 
     # 3. If the parent looks fresh and we are scaffolding a sub-folder, drop
     # the agents-repo wrapper files. Never overwrite existing ones, with or
@@ -263,12 +359,18 @@ def init(
             console.print(f"  + {p.name}")
 
     console.print("\nNext:")
-    console.print(f"  1. Configure the model in {hub_dir / '.env'} (local runtime uses the service account’s CLI login).")
-    console.print(f"  2. hubzoid run {shlex.quote(str(hub_dir))}")
-    if template == "minimal":
+    step = 1
+    if not selected_model:
+        console.print(f"  {step}. Check the model in {escape(str(env_dst))}: MODEL=claude-local uses a "
+                      "signed-in `claude` CLI. Without one, set an OpenRouter, Anthropic or OpenAI key there.")
+        step += 1
+    console.print(f"  {step}. hubzoid run {escape(shlex.quote(str(hub_dir)))}   (opens the web app in your browser)")
+    if template == DEFAULT_TEMPLATE:
         console.print(
-            "\n[dim]Want the guided tour instead? "
-            f"hubzoid init {hub_dir.name} --template demo --force[/dim]"
+            "\n[dim]Kestrel & Oak is a fictional shop. Try a suggested prompt, such as "
+            "\"What should we reorder today, and what could run out first?\"\n"
+            "Other templates: --template minimal (one example of each file type), "
+            "--template demo (a guided tour of Hubzoid).[/dim]"
         )
 
 
@@ -2478,16 +2580,21 @@ def version() -> None:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-_STARTER_ENV = """\
-# demo-hub configuration. This file is git-ignored.
-#
-# The default below uses your installed `claude` CLI and Pro/Max subscription
-# for inference. No API key needed. Requires `claude login` already done.
-#
-# To use a hosted provider instead, comment out MODEL=claude-local and
-# uncomment one of the alternative stanzas. Set the matching API key.
+_STARTER_MODEL_LINE = "MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)"
+_STARTER_BRIDGE_KEY_LINE = "# BRIDGE_API_KEYS=dev           # comma-separated keys for the OpenAI-compatible /v1 API"
 
-MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing rules)
+_STARTER_ENV = """\
+# Hub configuration. This file is git-ignored and can hold keys: keep it private.
+#
+# --- Model -----------------------------------------------------------------
+# The default uses your installed `claude` CLI and Pro/Max subscription for
+# inference. No API key needed. Requires `claude login` already done.
+#
+# No `claude login` here? Use a hosted provider: comment out MODEL=claude-local,
+# uncomment one stanza below and set its key. (`hubzoid init` in a terminal
+# offers to do this for you.)
+
+""" + _STARTER_MODEL_LINE + """
 # MODEL=codex-local            # Codex CLI login; see docs/providers.md for supported version
 # MODEL=codex-local/<model-id> # optional Codex model pin
 # MODEL=claude-local/sonnet     # explicit; same as bare `claude-local`
@@ -2496,7 +2603,7 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 
 # Headless / server (no interactive `claude login` on the box): paste a
 # subscription token minted with `claude setup-token`. It is NOT an API key
-# and is NOT billed per-token — usage draws on your Pro/Max subscription.
+# and is NOT billed per token: usage draws on your Pro/Max subscription.
 # The `claude` CLI reads it automatically. See docs/DEPLOYING.md §5b.
 # CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 
@@ -2507,77 +2614,56 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # (allow fallbacks). Otherwise OpenRouter splits calls across Anthropic /
 # Vertex / Bedrock and prompt cache hits get fragmented.
 
+# --- Anthropic --------------------------------------------------------------
+# ANTHROPIC_API_KEY=
+# MODEL=anthropic/claude-haiku-4-5
+
+# --- OpenAI -----------------------------------------------------------------
+# OPENAI_API_KEY=
+# MODEL=openai/gpt-4o-mini
+
 # --- Jev decisions (hub.call_jev and the call_jev chat tool, experimental) --
 # A dedicated OpenRouter key used only for Jev. OPENROUTER_API_KEY above is
 # never used for Jev, and the chat model never uses this key. The chat tool
 # stays off until the jev capability is granted in the Console.
 # JEV_OPENROUTER_API_KEY=
 
-# --- OpenAI -----------------------------------------------------------------
-# OPENAI_API_KEY=
-# MODEL=openai/gpt-4o-mini
+# --- Web app and sign-in ----------------------------------------------------
+# `hubzoid run` serves the web app, file downloads and MCP on one port.
+# Sign-in is off by default (local mode): whoever opens the page is the hub's
+# owner, so the port stays on this machine (127.0.0.1). Turn sign-in on before
+# exposing it with --host 0.0.0.0 or behind a proxy.
+# HUBZOID_AUTH=true                    # people sign in with Hubzoid accounts
+# HUBZOID_PUBLIC_URL=https://hub.example.com  # the address people open; needed
+                                       # behind a proxy and for Google sign-in
+# HUBZOID_ADMIN_EMAIL=you@example.com  # bootstraps the first administrator;
+# HUBZOID_ADMIN_PASSWORD=              # remove both lines after the first start
+# ENABLE_SIGNUP=false                  # people cannot create their own accounts
+# The 1.0 names WEBUI_AUTH, WEBUI_URL and WEBUI_ADMIN_EMAIL/_PASSWORD still work.
 
-# --- Anthropic --------------------------------------------------------------
-# ANTHROPIC_API_KEY=
-# MODEL=anthropic/claude-haiku-4-5
+# Google sign-in (with sign-in on). Accounts are created by administrators;
+# Google sign-in attaches to the account with the same email.
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+# OAUTH_ALLOWED_DOMAINS=your-company.com
+# Authorized redirect URI in Google Console: <HUBZOID_PUBLIC_URL>/oauth/google/callback
 
-# --- Branding / UI ---------------------------------------------------------
-# WEBUI_NAME=                   # Login page, sidebar, and chat title. Leave
-                                # blank to use the agent's `name:` from
-                                # AGENTS.md, so all three read the same hub
-                                # name. Set this only to override with a
-                                # different display brand. Final fallback when
-                                # neither is set: "Hubzoid".
-# Logo, favicon, splash: drop files into ./branding/. See ./branding/README.md.
-# RESPONSE_WATERMARK=           # watermark on copied messages; defaults to hub name
-# DEFAULT_PROMPT_SUGGESTIONS:   # set the `suggestions:` field in AGENTS.md frontmatter
-# HUBZOID_KEEP_OWUI_SUFFIX=True # keep Open WebUI branding even with files in ./branding/
-                                # (required above 50 users in 30 days without an
-                                # Open WebUI enterprise license)
-# ENABLE_ADMIN_CHAT_ACCESS=true # let admins open other users' chats (default: off)
-# ENABLE_ADMIN_EXPORT=true      # let admins export chats (default: off)
+# Hosted MCP (Claude Code, Cursor and other MCP clients use this hub's tools and
+# knowledge). On by default for a local run and for an https HUBZOID_PUBLIC_URL;
+# `hubzoid run` prints the `claude mcp add` line.
+# MCP_SERVER=false
 
-# --- Bridge / UI knobs (all optional) --------------------------------------
-# BRIDGE_API_KEYS=dev           # comma-separated; first one is what Open WebUI sees
+# Logo and browser tab icon: put logo.svg (or logo.png) and favicon.svg in ./branding/.
+
+# --- Bridge and ports (all optional) ---------------------------------------
+""" + _STARTER_BRIDGE_KEY_LINE + """
 # MODEL_LABEL=                  # what /v1/models reports; blank = derived from AGENTS.md name
-# PORT=3080                     # Open WebUI port
-# BRIDGE_PORT=8000              # FastAPI bridge port
-# HUBZOID_PUBLIC_URL=           # public base URL for the bridge — used to build
-                                # download links emitted by write_artifact. Set
-                                # this when behind a reverse proxy or on a
-                                # different host than the user's browser.
-                                # Default: http://127.0.0.1:<BRIDGE_PORT>
-                                # Example: https://hub.example.com
+# PORT=3080                     # public port: web app, downloads, MCP
+# BRIDGE_PORT=8000              # FastAPI bridge port, always on 127.0.0.1
 # HTTP_ALLOWLIST=               # comma-separated hostnames the http_get tool may visit
 # HUBZOID_DISABLE_HTTP_GET=true # remove http_get from the tool registry entirely
 # HUBZOID_DISABLE_WEB_SEARCH=true  # remove web_search from the tool registry entirely
-
-# --- Auth (default: off, single user) --------------------------------------
-# Uncomment ONE block below to require login. Full walkthrough + Google /
-# Microsoft / GitHub / OIDC / LDAP details: docs/auth.md.
-
-# Mode B: email + password, admin invites users.
-# WEBUI_AUTH=true
-# ENABLE_SIGNUP=false
-# DEFAULT_USER_ROLE=user
-# WEBUI_SECRET_KEY=               # openssl rand -hex 32
-# WEBUI_URL=https://your.host     # required behind a reverse proxy
-# WEBUI_ADMIN_EMAIL=you@you.com   # one-shot: seeds first admin on a fresh DB
-# WEBUI_ADMIN_PASSWORD=           # one-shot: delete both ADMIN lines after first boot
-
-# Mode C: Google SSO (use alongside Mode B's lines above). Sign-up stays closed:
-# create accounts in the Admin Console (Add user), and Google sign-in attaches to
-# them by email.
-# OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
-# OAUTH_ALLOWED_DOMAINS=your-company.com
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
-# Authorized redirect URI in Google Console: <WEBUI_URL>/oauth/google/callback
-
-# Opt-in: let users curate per-user memories in OWUI's UI; OWUI injects the
-# top matches into the agent's system prompt on every chat. Off by default
-# because OWUI flags this feature as Beta and storage format may change.
-# ENABLE_MEMORY=true
 
 # --- Workflows: who they run as, reports and email ------------------------
 # Scheduled workflows and schedule/*.md tasks run as an ordinary account. A
@@ -2602,11 +2688,16 @@ MODEL=claude-local              # defaults to Sonnet 4.x (decisive on routing ru
 # SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
 # SLACK_APP_TOKEN=xapp-...        # App-Level Token, scope connections:write
 
-# --- Strip flags (advanced) -----------------------------------------------
-# Hubzoid sets ~24 Open WebUI flags by default to strip platform surfaces
-# (code interpreter, community sharing, etc.). To override any, just add the
-# line here. See https://github.com/hubzoid/hubzoid/blob/main/docs/branding.md
-# for the full list and what each does.
+# --- Legacy: the Open WebUI chat app (this release only) -------------------
+# HUBZOID_UI=openwebui           # needs: pip install "hubzoid[openwebui]"
+# In legacy mode, Open WebUI's own settings apply, for example:
+# WEBUI_AUTH=true                # Open WebUI sign-in
+# WEBUI_SECRET_KEY=              # required with WEBUI_AUTH: openssl rand -hex 32
+# WEBUI_NAME=                    # display name; blank = the agent's name
+# ENABLE_MEMORY=true             # Open WebUI's per-user memories (Beta)
+# HUBZOID_KEEP_OWUI_SUFFIX=True  # keep Open WebUI branding with files in ./branding/
+# Hubzoid sets about 24 Open WebUI flags to strip platform surfaces; add any of
+# them here to override. See docs/branding.md.
 """
 
 
@@ -2704,11 +2795,12 @@ def _wrapper_files(parent: Path, hub_name: str, version_str: str) -> dict[Path, 
     }
 
 
-def _template_root(name: str = "minimal") -> Path | None:
+def _template_root(name: str = DEFAULT_TEMPLATE) -> Path | None:
     """Return the on-disk path of a bundled template, or None.
 
-    Templates live at `hubzoid/templates/<name>/`. The two shipped today
-    are `minimal` (the runnable starter) and `demo` (the guided tour).
+    Templates live at `hubzoid/templates/<name>/`: `operations` (the default
+    example), `minimal` (one example per file type), `demo` (the guided tour)
+    and `watchtower` (workflow-first).
     """
     try:
         root = resources.files("hubzoid") / "templates" / name
