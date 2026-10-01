@@ -83,7 +83,9 @@ function python(args, options = {}) {
 function makeHub(name, frontmatter) {
   const dir = path.join(WORK, name, "hub");
   fs.rmSync(path.join(WORK, name), { recursive: true, force: true });
-  python(["-m", "hubzoid.cli", "init", dir, "--model", "claude-local"]);
+  // The minimal template: its frontmatter has no name, so the journeys' own
+  // agent names apply (the default template names its own fictional agent).
+  python(["-m", "hubzoid.cli", "init", dir, "--model", "claude-local", "--template", "minimal"]);
   const env = path.join(dir, ".env");
   const text = fs.readFileSync(env, "utf8");
   assert.match(text, /^MODEL=claude-local$/m, "hubzoid init writes MODEL=claude-local");
