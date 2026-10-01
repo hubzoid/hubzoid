@@ -196,8 +196,6 @@ upgrade requirements and its known limits.
   authorization parameters are not supported.
 - Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
   LDAP and trusted proxy headers are legacy-mode only.
-- `hubzoid backup` of a gateway started in this release's web app mode does not
-  find the gateway's data folder. See the release notes.
 - The release notes list the remaining limits.
 
 ## [1.0.3]
