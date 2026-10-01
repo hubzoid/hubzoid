@@ -253,6 +253,13 @@ function chartPng(width = 160, height = 100) {
       await toggle.click();
       assert.equal(await toggle.getAttribute("aria-expanded"), "true");
       await running.getByText('"path": "knowledge/pricing.md"').waitFor();
+      await send("Check my research notes on pricing");
+      await waitIdle();
+      const personal = page.getByTestId("tool-entry").last();
+      await personal.getByText("Done").waitFor();
+      await personal.getByText("list_knowledge", { exact: true }).waitFor();
+      assert.equal(await personal.getByTestId("tool-server").innerText(), "research");
+      assert.equal(await personal.getByText(/mcp__/).count(), 0, "no raw MCP tool name");
       await send("try the failing tool");
       const failed = page.getByTestId("tool-entry").last();
       await failed.getByText("Failed").waitFor();

@@ -363,6 +363,13 @@ function createApp(options = {}) {
       say("I couldn't reach the CRM, so I can't list open renewals right now. Try again in a few minutes.");
       return steps;
     }
+    if (lower.includes("research")) {
+      // A tool from a personal connection, named as the runtimes name MCP tools.
+      steps.push({ kind: "tool", id: "call_" + rid("", 8), name: "mcp__my_research__list_knowledge", args: { topic: "pricing" }, delay: 100 });
+      steps.push({ kind: "tool-ok", delay: 300 });
+      say("Your research notes list three pricing studies from this year.");
+      return steps;
+    }
     if (lower.includes("tool")) {
       steps.push({ kind: "tool", id: "call_" + rid("", 8), name: "read_knowledge", args: { path: "knowledge/pricing.md" }, delay: 100 });
       steps.push({ kind: "tool-ok", delay: 500 });

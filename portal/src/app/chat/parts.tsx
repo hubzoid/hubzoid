@@ -59,6 +59,17 @@ function pretty(value: unknown): string {
 
 type ToolState = "running" | "done" | "failed" | "stopped";
 
+/**
+ * How a tool's name reads: a tool from an MCP server, which runtimes name
+ * mcp__<server>__<tool>, is its own name plus the server's ("my_<connector>"
+ * for a personal connection: the connector). Other names are as they are.
+ */
+export function toolLabel(name: string): { tool: string; server: string | null } {
+  const match = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (!match) return { tool: name, server: null };
+  return { tool: match[2], server: match[1].replace(/^my_/, "") || null };
+}
+
 export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result, isError, status }) => {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
@@ -69,6 +80,7 @@ export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result
   else if (status?.type === "incomplete") state = "failed";
   else state = "done";
   const summary = summarizeArgs(args);
+  const label = toolLabel(toolName);
   const error = state === "failed" ? resultError(result) : null;
   const hasArgs = !!args && typeof args === "object" && Object.keys(args as object).length > 0;
 
@@ -110,7 +122,12 @@ export const ToolEntry: ToolCallMessagePartComponent = ({ toolName, args, result
       >
         <Wrench size={14} aria-hidden className="flex-none text-mute" />
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="flex-none font-mono text-[13px] font-semibold text-ink">{toolName}</span>
+          <span className="flex-none font-mono text-[13px] font-semibold text-ink">{label.tool}</span>
+          {label.server && (
+            <span className="flex-none rounded bg-sunken px-1.5 text-[11.5px] leading-[18px] text-mute" data-testid="tool-server">
+              {label.server}
+            </span>
+          )}
           {summary && <span className="min-w-0 truncate font-mono text-[12.5px] text-mute">{summary}</span>}
         </span>
         <span className="sr-only">,</span>
