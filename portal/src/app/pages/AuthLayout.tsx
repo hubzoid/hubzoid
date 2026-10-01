@@ -65,7 +65,8 @@ export function AuthLayout({ title, children }: { title: string; children: React
       <footer className="px-5 py-5 text-center text-xs text-mute">
         {app.brandName !== t.product && (
           <span>
-            <span className="text-brand">/</span>hubzoid
+            <span className="text-brand">/</span>
+            {t.wordmark}
           </span>
         )}
       </footer>

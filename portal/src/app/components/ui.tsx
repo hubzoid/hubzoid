@@ -254,7 +254,7 @@ export function Wordmark({ className }: { className?: string }) {
       <span className="slash" aria-hidden>
         /
       </span>
-      <span aria-hidden>hubzoid</span>
+      <span aria-hidden>{t.wordmark}</span>
     </span>
   );
 }

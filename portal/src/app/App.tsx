@@ -2,7 +2,7 @@
 // people to /auth, and lays out the sidebar and the current page. Heavy pages
 // (the chat thread with assistant-ui and markdown) load on demand.
 import "./app.css";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { WifiOff } from "lucide-react";
 import { t } from "./i18n/en";
 import { get, setUnauthorizedHandler } from "./lib/api";
@@ -150,6 +150,19 @@ export default function App() {
     navigate(agentId ? `/?agent=${encodeURIComponent(agentId)}` : "/");
   }, []);
 
+  // Ctrl+Shift+O (Cmd+Shift+O on a Mac) starts a new chat, as in other chat apps.
+  useEffect(() => {
+    if (!authenticated) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.shiftKey && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        newChat();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [authenticated, newChat]);
+
   const value: AppContextValue | null = useMemo(() => {
     if (!session) return null;
     return {
@@ -168,19 +181,25 @@ export default function App() {
     };
   }, [session, branding, brandName, agents, loadAgents, loadSession, setUser, newChat, newChatNonce]);
 
-  // Keep one chat mounted while its brand-new conversation gets a URL.
-  const adopted = useRef(new Map<string, string>());
-  const chatKeyRef = useRef("new:0");
-  let chatKey = chatKeyRef.current;
-  if (route.name === "new") chatKey = `new:${newChatNonce}`;
-  else if (route.name === "conversation")
-    chatKey = adopted.current.get(route.id) === chatKeyRef.current ? chatKeyRef.current : `c:${route.id}`;
-  if (route.name === "new" || route.name === "conversation") chatKeyRef.current = chatKey;
+  // A brand-new chat keeps its page (and its streaming reply) when it gets
+  // its URL: the conversation it created is rendered under the new chat's key.
+  const [adopted, setAdopted] = useState<{ key: string; id: string } | null>(null);
+  const newKey = `new:${newChatNonce}:${route.name === "new" ? (route.agent ?? "") : ""}`;
+  const chatKey =
+    route.name === "conversation"
+      ? adopted?.id === route.id
+        ? adopted.key
+        : `c:${route.id}`
+      : newKey;
 
   const onConversationCreated = useCallback((conversation: Conversation, key: string) => {
-    adopted.current.set(conversation.id, key);
     upsertConversation(conversation);
-    if (chatKeyRef.current === key) navigate(`/c/${encodeURIComponent(conversation.id)}`, { replace: true });
+    // Only the page on screen moves to the new URL.
+    const path = window.location.pathname;
+    const onScreen = path === "/" || path.startsWith("/new");
+    if (!onScreen) return;
+    setAdopted({ key, id: conversation.id });
+    navigate(`/c/${encodeURIComponent(conversation.id)}`, { replace: true });
   }, []);
 
   if (bootError && !session)

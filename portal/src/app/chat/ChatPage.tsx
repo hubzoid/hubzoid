@@ -16,6 +16,7 @@ import {
   renameConversation,
   setArchived,
   upsertConversation,
+  useConversations,
 } from "../lib/conversations";
 import { describeError } from "../lib/errors";
 import { displayName } from "../lib/format";
@@ -220,7 +221,18 @@ function ChatView({
   const [agent, setAgent] = useState<Agent>(initialAgent);
   const [conversation, setConversation] = useState<Conversation | null>(detail?.conversation ?? null);
   const [title, setTitle] = useState<string | null>(detail?.conversation.title ?? null);
-  const countAttachmentsRef = useRef<() => number>(() => 0);
+  const titleSeen = useRef(!!detail?.conversation.title);
+
+  // A title the server generated after the reply (seen through the list) wins.
+  const listItems = useConversations().items;
+  const listTitle = conversation ? (listItems.find((c) => c.id === conversation.id)?.title ?? null) : null;
+  useEffect(() => {
+    if (listTitle && listTitle !== title) {
+      titleSeen.current = true;
+      setTitle(listTitle);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listTitle]);
 
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -242,6 +254,7 @@ function ChatView({
           onConversationCreated(c, pageKey);
         },
         onTitle: (id, next) => {
+          titleSeen.current = true;
           setTitle(next);
           patchLocal(id, { title: next });
         },
@@ -254,11 +267,18 @@ function ChatView({
             id,
             updated_at: Date.now() / 1000,
           });
+          // No title in the stream: the server names chats shortly after the
+          // first reply, so look again in a moment.
+          if (!titleSeen.current) {
+            for (const delay of [1500, 6000])
+              setTimeout(() => {
+                if (!titleSeen.current) void loadConversations(undefined, undefined, true);
+              }, delay);
+          }
         },
         onUnauthorized: () => navigate(`/auth?redirect=${encodeURIComponent(location.pathname)}`, { replace: true }),
       },
     });
-    s.countAttachments = () => countAttachmentsRef.current();
     return s;
   });
   const runningIds = useMemo(() => {
@@ -281,9 +301,14 @@ function ChatView({
   }, [agent.id, session]);
 
   const chatModel = useMemo(() => session.chatModelAdapter(), [session]);
-  const history = useMemo(() => session.historyAdapter(), [session]);
+  // A new chat has nothing to load; without a history adapter it starts empty
+  // (not "loading"), so the empty state renders at once, scrolled to the top.
+  const history = useMemo(() => (detail ? session.historyAdapter() : undefined), [session, detail]);
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
   const runtime = useLocalRuntime(chatModel, { adapters: { history, attachments } });
+  useEffect(() => {
+    session.countAttachments = () => runtime.thread.composer.getState().attachments.length;
+  }, [runtime, session]);
 
   const shownTitle = title?.trim() || (conversation ? t.sidebar.untitled : t.sidebar.newChat);
   useEffect(() => {
@@ -310,7 +335,6 @@ function ChatView({
               isFollowing={following}
               onStopFollowed={stopFollowed}
               onBranchSwitched={(id) => session.saveHead(id)}
-              countAttachmentsRef={countAttachmentsRef}
               notice={
                 !agentKnown && app.agents.status === "ready" ? (
                   <Notice tone="warning" className="mb-2">
@@ -355,10 +379,12 @@ function FollowRuns({
       const repo = toRepository(messages, head, ctx);
       aui.thread().import({ headId: repo.headId, messages: repo.messages });
     };
+    const ended = new Map<string, string>();
     (async () => {
       for (const id of runningIds) {
         setFollowing(id);
         for await (const status of pollRun(session.apiBase, id, controller.signal)) {
+          if (status.status !== "running") ended.set(id, String(status.status || "complete"));
           const index = messages.findIndex((m) => m.id === id);
           if (index === -1) break;
           const current = messages[index];
@@ -377,7 +403,11 @@ function FollowRuns({
         const fresh = await get<ConversationDetail>(`/api/conversations/${enc(session.conversationId)}`, {
           signal: controller.signal,
         });
-        messages.splice(0, messages.length, ...(fresh.messages ?? []));
+        // A run that ended (or vanished) never shows as running again.
+        const settled = (fresh.messages ?? []).map((m) =>
+          m.status === "running" && ended.has(m.id) ? { ...m, status: ended.get(m.id) as typeof m.status } : m,
+        );
+        messages.splice(0, messages.length, ...settled);
         for (const m of fresh.messages ?? []) session.ids.markPersisted(m.id);
         importTree();
         if (fresh.conversation?.title) patchLocal(fresh.conversation.id, { title: fresh.conversation.title });

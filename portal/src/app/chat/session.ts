@@ -140,6 +140,8 @@ export class ChatSession {
   countAttachments: () => number = () => 0;
   /** The server id of the reply streaming right now, for Stop. */
   activeReplyId: string | null = null;
+  /** Files accepted by add() that the composer doesn't list yet. */
+  private reservedAttachments = 0;
   private creating: Promise<string> | null = null;
   private preloaded: (ExportedMessageRepository & { runningIds?: string[] }) | null;
 
@@ -219,12 +221,7 @@ export class ChatSession {
   }
 
   chatModelAdapter(): ChatModelAdapter {
-    const session = this;
-    return {
-      async *run(options: ChatModelRunOptions) {
-        yield* session.run(options);
-      },
-    };
+    return { run: (options: ChatModelRunOptions) => this.run(options) };
   }
 
   private userContent(message: ThreadMessage) {
@@ -409,7 +406,30 @@ export class ChatSession {
     uploads: Map<string, FileRef & { previewUrl?: string }>,
   ): AsyncGenerator<PendingAttachment, void> {
     if (file.size > MAX_UPLOAD_BYTES) throw new Error(t.chat.tooLarge(file.name, formatBytes(MAX_UPLOAD_BYTES)));
-    if (this.countAttachments() >= MAX_FILES_PER_MESSAGE) throw new Error(t.chat.tooMany(MAX_FILES_PER_MESSAGE));
+    // Files picked together arrive here before any of them reaches the
+    // composer, so count the ones already accepted but not yet listed too.
+    if (this.countAttachments() + this.reservedAttachments >= MAX_FILES_PER_MESSAGE)
+      throw new Error(t.chat.tooMany(MAX_FILES_PER_MESSAGE));
+    this.reservedAttachments++;
+    let reserved = true;
+    const release = () => {
+      if (reserved) {
+        reserved = false;
+        this.reservedAttachments--;
+      }
+    };
+    try {
+      yield* this.uploadAttachment(file, uploads, release);
+    } finally {
+      release();
+    }
+  }
+
+  private async *uploadAttachment(
+    file: File,
+    uploads: Map<string, FileRef & { previewUrl?: string }>,
+    release: () => void,
+  ): AsyncGenerator<PendingAttachment, void> {
     const isImage = file.type.startsWith("image/");
     const base = {
       id: randomId("a_", 12),
@@ -419,6 +439,8 @@ export class ChatSession {
       file,
     } as const;
     yield { ...base, status: { type: "running", reason: "uploading", progress: 0 } };
+    // The composer lists it now; it counts there from here on.
+    release();
 
     let conversationId: string;
     try {

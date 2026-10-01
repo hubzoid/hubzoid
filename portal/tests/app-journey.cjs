@@ -14,6 +14,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const zlib = require("node:zlib");
 
 const REAL = process.env.BASE_URL || "";
 const shots = process.env.APP_SHOTS || path.join(os.tmpdir(), "hubzoid-app-tests");
@@ -26,7 +27,58 @@ function step(name) {
   steps.push(name);
   console.log(`· ${name}`);
 }
-const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.png`) });
+// Dialogs and drawers animate in; let them land before a screenshot.
+const shot = async (page, name) => {
+  await page.waitForTimeout(260);
+  await page.screenshot({ path: path.join(shots, `${name}.png`) });
+};
+
+/** A small bar chart as a PNG, so the upload preview has something to show. */
+function chartPng(width = 160, height = 100) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 2; // truecolour
+  const bars = [0.45, 0.7, 0.55, 0.9];
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x++) {
+      const bar = Math.floor((x - 16) / 34);
+      const inBar = bar >= 0 && bar < 4 && (x - 16) % 34 < 24 && y > height - 12 - bars[bar] * (height - 24) && y < height - 12;
+      const [r, g, b] = inBar ? [0xe5, 0x57, 0x2a] : y === height - 12 ? [0xcf, 0xcd, 0xc7] : [0xfa, 0xfa, 0xf8];
+      row[1 + x * 3] = r;
+      row[2 + x * 3] = g;
+      row[3 + x * 3] = b;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 (async () => {
   let fixture = null;
@@ -300,10 +352,7 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
       const uploadMark = requests().length;
       const chooser = page.waitForEvent("filechooser");
       await page.getByRole("button", { name: "Attach files" }).click();
-      const png = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKklEQVR4nGP4TyFgGDVg1IBRA0YNGDVg1IBRA0YNGDVg1IBRA0YNGDUAACZHJ/F15R0lAAAAAElFTkSuQmCC",
-        "base64",
-      );
+      const png = chartPng();
       await (await chooser).setFiles([
         { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Quarterly notes\n") },
         { name: "chart.png", mimeType: "image/png", buffer: png },
@@ -321,12 +370,46 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
       assert.deepEqual(sent.content.filter((p) => p.type !== "text").map((p) => [p.type, p.name]), [["file", "notes.txt"], ["image", "chart.png"]]);
       await page.getByRole("link", { name: "Preview of chart.png" }).waitFor();
       await lastAssistant().getByText("I received 2 files", { exact: false }).waitFor();
+      await shot(page, "app-10b-attachments-sent");
 
       step("An attachment that's too big is refused in plain words");
       const big = page.waitForEvent("filechooser");
       await page.getByRole("button", { name: "Attach files" }).click();
       await (await big).setFiles([{ name: "huge.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(26 * 1024 * 1024) }]);
       await page.getByText("huge.bin is larger than 25 MB, the limit for one file.").waitFor();
+
+      step("Files can also be dropped on the chat or pasted into the composer, and more than ten are refused");
+      const dropped = await page.evaluateHandle(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(["# Dropped notes\n"], "dropped.md", { type: "text/markdown" }));
+        return dt;
+      });
+      const zone = page.getByTestId("thread-viewport");
+      await zone.dispatchEvent("dragenter", { dataTransfer: dropped });
+      await page.getByText("Drop files to attach them").waitFor();
+      await shot(page, "app-10c-drop-target");
+      await zone.dispatchEvent("drop", { dataTransfer: dropped });
+      await chips.filter({ hasText: "dropped.md" }).waitFor();
+      await composer().focus();
+      await page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(["pasted"], "pasted.txt", { type: "text/plain" }));
+        document.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await chips.filter({ hasText: "pasted.txt" }).waitFor();
+      const many = page.waitForEvent("filechooser");
+      await page.getByRole("button", { name: "Attach files" }).click();
+      await (await many).setFiles(
+        Array.from({ length: 9 }, (_, i) => ({ name: `part-${i + 1}.txt`, mimeType: "text/plain", buffer: Buffer.from(`part ${i + 1}`) })),
+      );
+      await page.getByText("You can attach up to 10 files to one message.").waitFor();
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid="composer-attachment"]').length === 10);
+      await page.waitForTimeout(300);
+      assert.equal(await chips.count(), 10);
+      while ((await chips.count()) > 0) {
+        await chips.first().getByRole("button", { name: /^Remove / }).click();
+        await page.waitForTimeout(50);
+      }
 
       step("Hub-scoped calls go to the agent's own bridge (api_base), everything else to the deployment");
       const hubMark = requests().length;
@@ -482,6 +565,13 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
     });
 
     // ---- keyboard ----------------------------------------------------------------------
+    step("Ctrl+Shift+O starts a new chat from anywhere");
+    await page.goto(`${BASE}/account`);
+    await page.getByRole("heading", { name: "Account", level: 1 }).waitFor();
+    await page.keyboard.press("Control+Shift+O");
+    await page.waitForURL(`${BASE}/`);
+    await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+
     step("Keyboard only: Tab to the composer, Shift+Enter for a new line, Enter to send");
     await page.goto(`${BASE}/`);
     await composer().waitFor();
@@ -519,6 +609,16 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
     await settled();
     await shot(page, "app-18-dark-new-chat");
     await axe(page, "new chat (dark)");
+    await onlyFixture("dark markdown", async () => {
+      await send("Show me a table and code");
+      await waitIdle();
+      await lastAssistant().locator(".shiki").first().waitFor();
+      await page.waitForTimeout(200);
+      await shot(page, "app-18b-dark-markdown");
+      await axe(page, "markdown and code (dark)");
+      await page.goto(`${BASE}/`);
+      await settled();
+    });
     await page.getByRole("button", { name: /^Account menu/ }).click();
     await page.getByRole("menuitemradio", { name: "Match system" }).click();
     await page.keyboard.press("Escape");
@@ -538,6 +638,12 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
     await mobile.goto(`${BASE}/`);
     await mobile.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
     await noHorizontalScroll(mobile, "phone new chat");
+    if (fixture) {
+      // The empty state starts at the top, with the agent cards in view.
+      await mobile.waitForTimeout(300);
+      assert.equal(await mobile.getByTestId("thread-viewport").evaluate((el) => el.scrollTop), 0);
+      await mobile.getByRole("radiogroup", { name: "Choose an agent" }).waitFor();
+    }
     await shot(mobile, "app-19-phone-new-chat");
     await mobile.getByRole("button", { name: "Open navigation" }).click();
     const drawer = mobile.getByRole("dialog", { name: "Conversations" });
@@ -559,6 +665,8 @@ const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.p
     await mobile.getByRole("heading", { name: "Account", level: 1 }).waitFor();
     await noHorizontalScroll(mobile, "phone account");
     await mobile.goto(`${BASE}/account/connections`);
+    await mobile.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
+    await mobile.getByText(/Connect your own accounts/).waitFor();
     await noHorizontalScroll(mobile, "phone connections");
     await shot(mobile, "app-22-phone-connections");
     await phone.close();
