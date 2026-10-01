@@ -435,3 +435,37 @@ def test_a_password_change_from_an_ended_session_is_refused(hub, monkeypatch):
     assert r.status_code == 409 and r.json()["detail"]["code"] == "account_changed"
     assert sign_in(client(hub)).status_code == 200  # the password did not change
     assert sign_in(client(hub), password="a brand new secret").status_code == 401
+
+
+def test_a_link_used_just_before_a_reset_starts_no_session(hub, monkeypatch):
+    """A stolen link is used, then an administrator resets the password before
+    the link's session starts: no session may start on the reset account."""
+    from hubzoid.auth import links
+
+    user = users.create(hub, email="ana@example.com", name="Ana")  # no password yet
+    users.sync_identity(hub, user)
+    token, _ = links.create(hub, user["id"])
+    real = links.consume
+
+    def consume_then_reset(*args, **kwargs):
+        used = real(*args, **kwargs)
+        _admin_reset(hub, used["user_id"])  # lands before the session is created
+        return used
+
+    monkeypatch.setattr(links, "consume", consume_then_reset)
+    c = client(hub)
+    r = c.post(f"/api/auth/link/{token}", json={"password": "stolen link password"},
+               headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "sign_in_changed"
+    assert "hz_session" not in r.headers.get("set-cookie", "")
+    assert who(c) is None and _live_sessions(hub) == []
+    assert users.store(hub).password_hash(user["id"]) is None
+
+
+def test_a_used_link_reports_the_account_version_it_wrote(hub):
+    from hubzoid.auth import links
+
+    user = person(hub)
+    token, _ = links.create(hub, user["id"], purpose="reset_password")
+    used = links.consume(hub, token, password="a fresh password")
+    assert used["updated_at"] == users.get(hub, user["id"])["updated_at"] > user["updated_at"]

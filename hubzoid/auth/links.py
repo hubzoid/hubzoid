@@ -9,7 +9,9 @@ SHA-256 digest is stored (``hz_auth_links``). A link:
     so two tabs racing get one success,
   * is replaced by a newer link for the same person (issuing one cancels the
     person's unused links), and by any password change,
-  * signs the person in when used, and ends their other sessions.
+  * signs the person in when used, and ends their other sessions. The session
+    starts only on the account exactly as the link left it: a reset, role
+    change or block after the link was used means no session.
 """
 from __future__ import annotations
 
@@ -110,12 +112,14 @@ def inspect(hub_dir: Path, token: str) -> dict:
 
 def consume(hub_dir: Path, token: str, *, password: str) -> dict:
     """Use the link to set ``password``: returns ``{"user_id", "email",
-    "purpose"}``. Raises PasswordRejected (the link stays usable) or
-    LinkInvalid.
+    "purpose", "updated_at"}``. Raises PasswordRejected (the link stays
+    usable) or LinkInvalid.
 
     In one transaction: the link is claimed, the password is stored, every
     session of the account ends and its other unused links are cancelled. The
-    caller then starts the new session."""
+    caller then starts the new session, expecting exactly ``updated_at``, the
+    account version this transaction wrote (``sessions.create_session``), so a
+    reset or block committed in between leaves no session."""
     from . import passwords
 
     passwords.check(password)
@@ -146,4 +150,5 @@ def consume(hub_dir: Path, token: str, *, password: str) -> dict:
         conn.execute(links.delete().where(
             links.c.user_id == m["user_id"], links.c.used_at.is_(None),
             links.c.token_hash != digest))
-        return {"user_id": m["user_id"], "email": m["email"], "purpose": m["purpose"]}
+        return {"user_id": m["user_id"], "email": m["email"], "purpose": m["purpose"],
+                "updated_at": now}
