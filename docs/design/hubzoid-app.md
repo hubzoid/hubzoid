@@ -167,7 +167,7 @@ Otherwise the answer is 403 `cross_origin`. Browsers send it.
 | `POST /api/auth/logout` | | 204. The session ends and the cookie is cleared |
 | `POST /api/auth/signup` | `{email, name, password}` | 201 `{status: "pending"}`. 403 `signup_disabled` unless `ENABLE_SIGNUP=true`, 409 `account_exists` |
 | `GET /api/auth/link/{token}` | | `{valid, purpose, email}` |
-| `POST /api/auth/link/{token}` | `{password}` | sets the password, uses up the link, ends other sessions and signs in: `{user}` and the cookie. 410 `link_invalid`, 422 `invalid_password` |
+| `POST /api/auth/link/{token}` | `{password}` | sets the password, uses up the link, ends other sessions and signs in: `{user}` and the cookie. 410 `link_invalid`, 422 `invalid_password`, 409 `sign_in_changed` when the account changed (a reset, a role change, a block) after the link set the password: no session starts |
 | `POST /api/auth/password` | `{current_password, new_password}` | 204. The person's other sessions end. 409 `no_password` for an account without one, 409 `account_changed` when the account changed (a reset, a role change, a block) or this session ended while the current password was checked. Nothing is changed then |
 | `PATCH /api/auth/me` | `{name}` | `{user}` |
 | `GET /oauth/{provider}/login?redirect=` | | 302 to the provider. `provider` is `google`, `microsoft` or `oidc` |

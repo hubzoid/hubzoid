@@ -367,7 +367,10 @@ def build_router(hub_dir: Path) -> APIRouter:
             user = users.get(hub_dir, used["user_id"])
             if user is None:
                 raise error(410, "link_invalid", "This account no longer exists.")
-            response = complete(request, user, method="link")
+            # The session starts only on the version the link wrote: a reset,
+            # role change or block since then moved it, so none starts.
+            response = complete(request, {**user, "updated_at": used["updated_at"]},
+                                method="link")
         except SQLAlchemyError:
             raise _unavailable()
         response.headers.update(_LINK_HEADERS)
