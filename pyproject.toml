@@ -57,7 +57,7 @@ dependencies = [
   "jinja2>=3.1.6,<4",
   "slack-bolt>=1.30,<2",
   "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
-  "dbos>=3.1,<4",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
+  "dbos==3.1.0",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
   "croniter>=6.2,<7",       # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
   "pwdlib[argon2,bcrypt]>=0.3.1,<0.4",  # hubzoid.auth: argon2 password hashes; verifies bcrypt hashes moved from Open WebUI
   "python-multipart>=0.0.32,<0.1",  # FastAPI form and file uploads (chat attachments, sign-in forms)

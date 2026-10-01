@@ -2266,6 +2266,12 @@ def schedule_run(
                 agent=lambda task, hub_dir=None, subject=None: _agent_rt.run_once(hub_dir, task, subject=subject),
                 jev=lambda spec, hub_dir=None, subject=None: _agent_rt.jev_once(hub_dir, spec, subject=subject),
             )
+            from .workflows.client import enqueue_live
+            live = enqueue_live(hub, want)
+            if live is not None:
+                _audit_cli_start(hub, want, live.get_workflow_id())
+                console.print(f"Workflow {want}: {live.get_result()!r}")
+                return
             _wf.init(hub)
             _wf.load_workflows(hub)
             _wf.launch()
@@ -2339,6 +2345,14 @@ def schedule_run(
     overrides = {"timeout": timeout, "max_rounds": max_rounds,
                  "model": None if task.is_script else model}
     try:
+        from .workflows.client import enqueue_live
+        live = enqueue_live(hub, task.name, markdown=True, overrides=overrides)
+        if live is not None:
+            outcome = live.get_result()
+            console.print(f"Task {task.name}: {outcome!r}")
+            if outcome.get("result") != "done":
+                raise typer.Exit(1)
+            return
         _wf.init(hub)
         _wf.launch()
         handle = _md.enqueue_task(task.name, "manual-" + _dt.now().strftime("%Y%m%dT%H%M%S"),

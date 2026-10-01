@@ -41,6 +41,7 @@ _HUB_NAME: str = ""
 _ENGINE: Any = None
 _QUEUE = None  # code workflows: one run at a time per workflow, optional hub cap
 _MD_QUEUE = None  # markdown schedule tasks + scheduled evals: one at a time per hub
+_OWNER = None
 _APP_VERSION: str | None = None  # this process's workflow-code version
 _lock = threading.Lock()
 
@@ -132,7 +133,7 @@ def sqlite_problem(url: str) -> str | None:
 def init(hub_dir, hub_name: str | None = None) -> None:
     """Construct the DBOS singleton over this hub's database. Idempotent. Must
     run before any workflow module is imported (the decorator needs DBOS)."""
-    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE, _APP_VERSION
+    global _DBOS, _INITED, _HUB_DIR, _HUB_NAME, _ENGINE, _QUEUE, _APP_VERSION, _OWNER
     with _lock:
         if _INITED:
             if _HUB_DIR.resolve() != Path(hub_dir).resolve():
@@ -151,11 +152,15 @@ def init(hub_dir, hub_name: str | None = None) -> None:
         # bridges never share one SQLite DBOS system database.
         _ENGINE = db.operational_engine(_HUB_DIR)
         _APP_VERSION = _workflow_code_version(_HUB_DIR, _app_name(_HUB_NAME))
+        from .ownership import Owner
+        _OWNER = Owner(_HUB_DIR, _HUB_NAME).acquire()
         DBOS(
             config={
                 "name": _app_name(_HUB_NAME),
                 "system_database_url": db.dbos_url(_HUB_DIR),
                 "application_version": _APP_VERSION,
+                "executor_id": "hub:" + _app_name(_HUB_NAME),
+                "max_executor_threads": int(_load_settings().get("max_executor_threads", 32)),
             }
         )
         # Markdown schedule tasks and scheduled evals run on this same engine.
@@ -178,7 +183,8 @@ def _load_settings() -> dict:
     reads workflows/settings.yaml if present, else {}."""
     if _HUB_DIR is None:
         return {}
-    path = _HUB_DIR / "workflows" / "settings.yaml"
+    from .._fs import resolve_bucket
+    path = (resolve_bucket(_HUB_DIR, "workflows") or _HUB_DIR / "workflows") / "settings.yaml"
     if not path.exists():
         return {}
     try:
@@ -471,7 +477,7 @@ def _cancel_runs_from_other_code() -> None:
             for w in _DBOS.list_workflows(
                 status=["PENDING", "ENQUEUED"], queue_name=[_QUEUE.name, _MD_QUEUE.name]
             )
-            if w.app_version != _APP_VERSION
+            if w.app_version is not None and w.app_version != _APP_VERSION
         ]
     except Exception:  # noqa: BLE001 — never block startup on the sweep
         log.exception("workflows: could not list runs from previous code")
@@ -528,7 +534,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
     preserved — we do NOT cancel recoverable work). Best-effort: a failure here
     must never hang or crash the shutdown path. Resets module state so the
     process could re-init a hub afterwards."""
-    global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE
+    global _DBOS, _INITED, _LAUNCHED, _QUEUE, _REGISTRY, _HUB_DIR, _HUB_NAME, _ENGINE, _OWNER
     global _APP_VERSION, _MD_QUEUE, _IDENTITY_STEP
     with _lock:
         if not _INITED:
@@ -539,6 +545,9 @@ def shutdown(*, completion_timeout_sec: float = 5.0) -> None:
         except Exception:  # noqa: BLE001 — shutdown must be safe
             log.exception("workflows: DBOS shutdown failed (continuing)")
         finally:
+            if _OWNER is not None:
+                _OWNER.close()
+                _OWNER = None
             _DBOS = None
             _INITED = False
             _LAUNCHED = False

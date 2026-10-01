@@ -64,6 +64,7 @@ class Dispatcher:
         self._task: asyncio.Task | None = None
         self._last = datetime.now(timezone.utc)
         self._n = 0
+        self._heartbeat_task = None
 
     def prepare(self) -> int:
         """Init DBOS over the hub DB, load the code workflows, launch. Returns
@@ -79,6 +80,20 @@ class Dispatcher:
         runtime.launch()
         self._n = len(runtime.registry())
         return self._n
+
+    async def _heartbeat(self):
+        while True:
+            try:
+                ready = {"version": runtime._APP_VERSION, "workflows": [w.name for w in runtime.registry()], "definitions": {w.name: {"queue": runtime._QUEUE.name, "manual_partition": w.name} for w in runtime.registry()}}
+                await asyncio.to_thread(runtime._OWNER.heartbeat, ready)
+                from ..access import store_for
+                await asyncio.to_thread(store_for(self.hub_dir).set_runtime_health,
+                    self.hub_dir.name, heartbeat=datetime.now(timezone.utc).isoformat(), enabled=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("workflows: ownership heartbeat failed; admission closed")
+            await asyncio.sleep(15)
 
     async def _loop(self) -> None:
         while True:
@@ -119,6 +134,13 @@ class Dispatcher:
             log.info("workflows: dispatcher started (%d workflow(s))", self._n)
 
     async def stop(self) -> None:
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
         if self._task is not None:
             self._task.cancel()
             try:
@@ -201,6 +223,8 @@ async def start(hub_dir, hub_name: str | None = None) -> Dispatcher | None:
         missed_log=runtime.missed_log(prior, downtime["missed"] if downtime else 0, now),
         heartbeat=now.isoformat(),
     )
+    await asyncio.to_thread(runtime._OWNER.heartbeat, {"version": runtime._APP_VERSION, "definitions": {w.name: {"queue": runtime._QUEUE.name, "manual_partition": w.name} for w in runtime.registry()}})
+    disp._heartbeat_task = asyncio.create_task(disp._heartbeat())
     if code_on and n:
         disp.start_loop()
     return disp
