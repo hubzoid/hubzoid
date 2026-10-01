@@ -39,6 +39,7 @@ from . import _request_ctx
 from . import config_secrets
 from . import memory as memlib
 from . import reasoning as reasoninglib
+from . import run_events
 from . import settings as settingslib
 from . import tool_events
 from .factory import HubContext, _compose_instructions, _load_skills_and_delegates
@@ -721,22 +722,31 @@ class ClaudeRuntime:
     async def aclose(self) -> None:
         """No-op counterpart to aopen() — see above."""
 
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        """Yield text deltas + inline tool-activity markers as they arrive.
+    def stream(self, prompt: str) -> AsyncIterator[str]:
+        """The 1.0.x text of one turn (the typed stream, rendered): answer text,
+        `<think>` blocks, one tool line per call, a ⚠ line per tool error, the
+        download footer and `[agent error: ...]`."""
+        return run_events.as_text(self.stream_events(prompt))
 
-        Three event streams are interleaved into one text stream:
+    async def stream_events(self, prompt: str) -> AsyncIterator[run_events.StreamItem]:
+        """Yield answer text and typed run events as they arrive.
 
-        1. **Assistant text**: token-level deltas from `StreamEvent`.
-        2. **Tool calls**: a single blockquote line per `ToolUseBlock`,
-           emitted at call start. No matching "returned" line.
-        3. **Tool errors**: a ⚠ blockquote line for any `ToolResultBlock`
-           that arrives with `is_error=True`.
+        Four event streams are interleaved:
+
+        1. **Assistant text**: token-level deltas from `StreamEvent` (`str`).
+        2. **Reasoning**: thinking deltas (`ReasoningDelta`, `ReasoningEnd`),
+           rendered in 1.0.x as `<think>` blocks. None in 'off' mode.
+        3. **Tool calls**: a `ToolCall` per `ToolUseBlock`, at call start.
+        4. **Tool results**: a `ToolResult` per `ToolResultBlock`; an error
+           result renders the 1.0.x ⚠ line.
 
         Fallback: if partial events don't arrive (older SDK?), we surface
         the final `ResultMessage.result` so the user still sees the reply.
+        Each event's `legacy` text is exactly what 1.0.x printed, so `stream()`
+        is unchanged.
         """
         from claude_agent_sdk import AssistantMessage, ResultMessage, UserMessage, query
-        from claude_agent_sdk.types import StreamEvent, TextBlock, ToolResultBlock, ToolUseBlock
+        from claude_agent_sdk.types import StreamEvent, ToolResultBlock, ToolUseBlock
 
         self.last_error = None
         streamed_any = False
@@ -746,9 +756,10 @@ class ClaudeRuntime:
         # opens one (and build() requests no thinking deltas in that mode).
         tw = _ThinkStream(self._thinking_mode)
         surface_thinking = self._thinking_mode != "off"
-        # tool_use_id -> short name. Used only to identify error result blocks
-        # so we can surface them with a ⚠ marker. Successful results emit
-        # nothing — the call line was already shown.
+        # True once a reasoning item went out since the last visible item, so
+        # the web app hears when reasoning resumes inside a still-open block.
+        reasoning_signalled = False
+        # tool_use_id -> short name, to name each result block.
         tool_use_names: dict[str, str] = {}
         answered_by: str | None = None
         # Native image vision: expand any [Image: name] reference in the prompt
@@ -769,9 +780,11 @@ class ClaudeRuntime:
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
         mcp_config = None
+        messages = None
         try:
             mcp_config = PrivateMcpConfig(self._options_for_turn())
-            async for message in query(prompt=qprompt, options=mcp_config.options):
+            messages = query(prompt=qprompt, options=mcp_config.options)
+            async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
                     event = getattr(message, "event", None) or {}
@@ -779,15 +792,22 @@ class ClaudeRuntime:
                         delta = event.get("delta") or {}
                         dtype = delta.get("type")
                         if dtype == "thinking_delta" and surface_thinking:
-                            chunk = tw.thinking(delta.get("thinking") or "")
-                            if chunk:
-                                yield chunk
+                            thought = delta.get("thinking") or ""
+                            chunk = tw.thinking(thought)
+                            text = thought if self._thinking_mode == "full" else ""
+                            if chunk or text or not reasoning_signalled:
+                                reasoning_signalled = True
+                                yield run_events.ReasoningDelta(text=text, legacy=chunk)
                         elif dtype == "text_delta":
                             text = delta.get("text") or ""
                             if text:
                                 streamed_any = True
                                 shown.append(text)
-                                yield tw.visible(text)
+                                closing = tw.close()
+                                if closing:
+                                    yield run_events.ReasoningEnd(legacy=closing)
+                                reasoning_signalled = False
+                                yield text
                     continue
 
                 # --- Tool calls announced as full assistant message blocks ---
@@ -801,29 +821,40 @@ class ClaudeRuntime:
                                 continue
                             short = tool_events.short_name(block.name)
                             tool_use_names[tid] = short
+                            args = getattr(block, "input", None)
                             # Record before formatting: `format_call` returns
                             # "" when SHOW_TOOLS=off, but an eval's
                             # expect_tools must still see the call.
-                            _request_ctx.record_tool_call(
-                                short, getattr(block, "input", None))
-                            line = tool_events.format_call(
-                                short, getattr(block, "input", None),
-                                mode=self._tool_mode,
-                            )
+                            _request_ctx.record_tool_call(short, args)
+                            line = tool_events.format_call(short, args, mode=self._tool_mode)
+                            # A shown tool line closes the thinking block
+                            # first; with SHOW_TOOLS=off the block stays open.
                             if line:
-                                yield tw.visible(line)
+                                closing = tw.close()
+                                if closing:
+                                    yield run_events.ReasoningEnd(legacy=closing)
+                            reasoning_signalled = False
+                            yield run_events.ToolCall(id=tid, name=short, args=args, legacy=line)
                     continue
 
-                # --- Tool results: emit a line only on error. Success is
-                #     implicit (the call line was already shown).
+                # --- Tool results: a success prints nothing (the call line was
+                #     already shown); an error prints a ⚠ line.
                 if isinstance(message, UserMessage):
                     for block in getattr(message, "content", []) or []:
                         if isinstance(block, ToolResultBlock):
-                            if not bool(getattr(block, "is_error", False)):
-                                continue
                             tid = getattr(block, "tool_use_id", "") or ""
                             tool_name = tool_use_names.get(tid, "tool")
-                            yield tw.visible(tool_events.format_error(tool_name))
+                            if not bool(getattr(block, "is_error", False)):
+                                yield run_events.ToolResult(id=tid, name=tool_name, ok=True)
+                                continue
+                            closing = tw.close()
+                            if closing:
+                                yield run_events.ReasoningEnd(legacy=closing)
+                            reasoning_signalled = False
+                            yield run_events.ToolResult(
+                                id=tid, name=tool_name, ok=False,
+                                message=run_events.TOOL_FAILED,
+                                legacy=tool_events.format_error(tool_name))
                     continue
 
                 # --- Final aggregate (fallback if partials are missing) ---
@@ -840,22 +871,36 @@ class ClaudeRuntime:
             log.exception("claude stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error")
-            yield tw.close() + f"\n\n[agent error: {type(exc).__name__}: {exc}]"
+            closing = tw.close()
+            if closing:
+                yield run_events.ReasoningEnd(legacy=closing)
+            detail = f"{type(exc).__name__}: {exc}"
+            yield run_events.Notice(kind="error", text=detail, legacy=f"\n\n[agent error: {detail}]")
             return
         finally:
-            if mcp_config is not None:
-                mcp_config.close()
+            try:
+                # Stopped early (cancelled or closed): end the CLI run now, in
+                # this task, rather than when the SDK's generator is collected.
+                if messages is not None:
+                    await run_events.aclose(messages)
+            finally:
+                if mcp_config is not None:
+                    mcp_config.close()
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.
         if self.last_error is not None:
-            yield tw.close() + f"\n\n[agent error: {self.last_error}]"
+            closing = tw.close()
+            if closing:
+                yield run_events.ReasoningEnd(legacy=closing)
+            yield run_events.Notice(kind="error", text=str(self.last_error),
+                                    legacy=f"\n\n[agent error: {self.last_error}]")
             return
 
         # Close any thinking block left open (e.g. reasoning with no final text).
         closing = tw.close()
         if closing:
-            yield closing
+            yield run_events.ReasoningEnd(legacy=closing)
 
         if not streamed_any and final_result:
             shown.append(final_result)
@@ -865,7 +910,7 @@ class ClaudeRuntime:
         footer = tool_events.format_artifact_footer(
             _request_ctx.drain_artifacts(), "".join(shown))
         if footer:
-            yield footer
+            yield run_events.Notice(kind="artifacts", text=footer, legacy=footer)
 
     async def run(self, prompt: str) -> str:
         pieces: list[str] = []

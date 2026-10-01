@@ -120,8 +120,13 @@ def test_write_artifact_signed_url_matches_signing_module(ctx, monkeypatch):
     write = _by_name(files_mod.make(ctx), "write_artifact")
     with _request_ctx.chat_scope("chat-X"):
         result = _call(write, filename="data.txt", content="hi")
-    expected = _signing.sign_artifact_path("chat-X", "data.txt", hub_dir=ctx.hub_dir)
-    assert f"?t={expected}" in result
+    # The web app's links carry a 7-day expiry (&e=), covered by the same HMAC.
+    import re
+    from urllib.parse import parse_qs
+
+    query = parse_qs(re.search(r"/artifacts/chat-X/data\.txt\?([^)\s]+)", result).group(1))
+    assert _signing.verify_artifact_token("chat-X", "data.txt", query["t"][0],
+                                          (query.get("e") or [None])[0], hub_dir=ctx.hub_dir)
 
 
 def test_write_artifact_falls_back_to_session_dir_when_no_chat(ctx):
