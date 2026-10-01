@@ -25,10 +25,6 @@ _PRIVATE_WORDS = {
 }
 _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
 
-# The web app contract (docs/design) names the maintainers' local environment
-# for the implementation lanes. The integrator owns that file and strips it
-# before a release, so it is the one file excused from the path check.
-_LOCAL_PATH_EXCUSED = {"docs/design/hubzoid-app.md"}
 # Built from parts so this file does not match itself.
 _LOCAL_PATH = re.compile("/Users/[A-Za-z0-9._-]+/|" + "~" + "/Desktop/|" + "C:" + r"\\Users\\")
 
@@ -75,6 +71,5 @@ def test_no_private_customer_names():
 
 
 def test_no_local_absolute_paths():
-    hits = [rel for rel, text in _text_files()
-            if rel not in _LOCAL_PATH_EXCUSED and _LOCAL_PATH.search(text)]
+    hits = [rel for rel, text in _text_files() if _LOCAL_PATH.search(text)]
     assert not hits, f"local paths in {hits}"
