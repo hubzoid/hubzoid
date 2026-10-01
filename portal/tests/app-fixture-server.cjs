@@ -977,6 +977,16 @@ function createApp(options = {}) {
         res.writeHead(302, { location: `/account/connections?connected=${encodeURIComponent(m[1])}` });
         return res.end();
       }
+      if (url.pathname === "/mcp/oauth/consent") {
+        // The hosted MCP server's consent page: a server page outside the chat
+        // app that sends a signed-out person to sign in and back.
+        if (!currentUser(req)) {
+          res.writeHead(303, { location: `/auth?redirect=${encodeURIComponent(url.pathname + url.search)}` });
+          return res.end();
+        }
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        return res.end(`<!doctype html><meta charset="utf-8"><title>Connect</title><h1>Allow Claude to use Hubzoid Guide?</h1>`);
+      }
       if (url.pathname.startsWith("/branding/")) {
         // The hub's branding folder (public: the sign-in page shows it too).
         const files = {
