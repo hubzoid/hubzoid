@@ -14,7 +14,9 @@ from the same state, so a reloaded page shows what the stream showed.
     Arguments are kept small (long values are cut).
   * The download footer (``Notice`` 'artifacts') is answer text: markdown links.
   * A run error (``Notice`` 'error') is an ``error`` chunk and the message's
-    ``error``; it never becomes answer text.
+    ``error``; it never becomes answer text. When the error is one of the plain
+    sentences (``hubzoid.agent_errors``), ``finish`` names its class in
+    ``messageMetadata.errorKind`` and the app shows the sentence alone.
 
 ``encode`` writes one chunk as an SSE ``data:`` line.
 """
@@ -91,6 +93,8 @@ class MessageBuilder:
         self.show_tools = show_tools
         self.parts: list[dict] = []
         self.error: str | None = None
+        # 'usage_limit', 'auth' or 'overloaded' when ``error`` is a plain sentence.
+        self.error_kind: str | None = None
         self.finished = False
         self._error_sent = False
         self._text: tuple[int, str] | None = None       # (part index, stream id)
@@ -126,7 +130,8 @@ class MessageBuilder:
             return self._tool_result(item) if self.show_tools else []
         if isinstance(item, Notice):
             if item.kind == "error":
-                return self._error(item.text or "The agent could not complete this reply.")
+                return self._error(item.text or "The agent could not complete this reply.",
+                                   kind=item.error_kind)
             return self._append_text(item.legacy or item.text)
         return []
 
@@ -154,8 +159,10 @@ class MessageBuilder:
         self._calls.clear()
         if status == "error" and not self._error_sent:
             chunks += self._error(self.error or "The agent could not complete this reply.")
-        chunks += [{"type": "finish-step"},
-                   {"type": "finish", "messageMetadata": {"status": status}}]
+        meta: dict = {"status": status}
+        if status == "error" and self.error_kind:
+            meta["errorKind"] = self.error_kind
+        chunks += [{"type": "finish-step"}, {"type": "finish", "messageMetadata": meta}]
         self.finished = True
         return chunks
 
@@ -252,9 +259,10 @@ class MessageBuilder:
         return [{"type": "tool-output-error", "toolCallId": call_id, "errorText": message}]
 
     # -- errors ------------------------------------------------------------------
-    def _error(self, message: str) -> list[dict]:
+    def _error(self, message: str, *, kind: str = "") -> list[dict]:
         chunks = self._close_blocks()
         self.error = message
+        self.error_kind = kind or None
         self._error_sent = True
         chunks.append({"type": "error", "errorText": message})
         return chunks

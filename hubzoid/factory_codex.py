@@ -18,7 +18,7 @@ import signal
 import subprocess
 import tempfile
 
-from . import __version__, _request_ctx, run_events, tool_events
+from . import __version__, _request_ctx, agent_errors, run_events, tool_events
 
 log = logging.getLogger(__name__)
 SUPPORTED_CODEX_VERSION = "0.147.0"
@@ -43,6 +43,38 @@ _DISABLED_FEATURES = (
     "external_migration", "external_agent_memory_import", "request_permissions_tool",
     "default_mode_request_user_input", "realtime_conversation",
 )
+
+
+# A failed turn's structured error class (`turn.error.codexErrorInfo`) that the
+# person sees as a plain sentence (see agent_errors). Only the class is read: raw
+# protocol text stays out of chat.
+_ERROR_KINDS = {"usageLimitExceeded": agent_errors.USAGE_LIMIT,
+                "rateLimitExceeded": agent_errors.USAGE_LIMIT,
+                "serverOverloaded": agent_errors.OVERLOADED,
+                "unauthorized": agent_errors.AUTH}
+
+
+class CodexTurnError(RuntimeError):
+    """A turn Codex reported as failed. ``error_kind`` is its agent_errors class
+    when the turn's structured error has one."""
+
+    def __init__(self, message: str, error_kind: str | None = None):
+        super().__init__(message)
+        self.error_kind = error_kind
+
+
+def _turn_error_kind(turn: dict) -> str | None:
+    error = turn.get("error") if isinstance(turn, dict) else None
+    info = error.get("codexErrorInfo") if isinstance(error, dict) else None
+    if isinstance(info, str):
+        return _ERROR_KINDS.get(info)
+    if isinstance(info, dict):  # e.g. {"httpConnectionFailed": {"httpStatusCode": 429}}
+        for value in info.values():
+            status = value.get("httpStatusCode") if isinstance(value, dict) else None
+            kind = agent_errors.classify("", status=status)
+            if kind in agent_errors.PLAIN:
+                return kind
+    return None
 
 
 def codex_binary() -> str:
@@ -244,8 +276,12 @@ class CodexRuntime:
         except Exception as exc:
             self._error.set(exc)
             log.warning("Codex request failed (%s)", type(exc).__name__)
-            yield run_events.Notice(kind="error", text=f"Codex could not complete this request: {exc}",
-                                    legacy=f"\n\n[Codex could not complete this request: {exc}]")
+            kind = getattr(exc, "error_kind", None)
+            if kind in agent_errors.PLAIN:
+                yield agent_errors.notice(f"{type(exc).__name__}: {exc}", kind=kind)
+            else:
+                yield run_events.Notice(kind="error", text=f"Codex could not complete this request: {exc}",
+                                        legacy=f"\n\n[Codex could not complete this request: {exc}]")
         finally:
             _reset_quietly(_typed_exchange, typed_token)
             if usage:
@@ -378,8 +414,10 @@ class CodexRuntime:
                 total = p.get("tokenUsage", {}).get("total", {})
                 usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
             elif method == "turn/completed":
-                if p.get("turn", {}).get("status") != "completed":
-                    raise RuntimeError("Codex turn failed or was interrupted. Check login, model availability and usage limits.")
+                turn = p.get("turn") or {}
+                if turn.get("status") != "completed":
+                    raise CodexTurnError("Codex turn failed or was interrupted. Check login, model availability and usage limits.",
+                                         _turn_error_kind(turn))
                 break
 
 

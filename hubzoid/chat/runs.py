@@ -255,6 +255,8 @@ class RunManager:
         summary = {k: usage.get(k) for k in ("input_tokens", "output_tokens", "cost_usd", "model")
                    if usage.get(k) is not None}
         summary["duration_ms"] = duration_ms
+        if error is not None and run.builder.error_kind:
+            summary["error_kind"] = run.builder.error_kind  # returned as the message's error_kind
         try:
             # Save (and count) before the stream ends, so a client that reloads
             # on 'finish' reads the final message.
