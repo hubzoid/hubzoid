@@ -15,6 +15,13 @@ export function toDate(value: Timestamp): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** The document title: the page's own name, then the brand, never the same name twice. */
+export function pageTitle(name: string, brand: string): string {
+  const own = name.trim();
+  if (!own || own.toLowerCase() === brand.trim().toLowerCase()) return brand;
+  return `${own} · ${brand}`;
+}
+
 const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
 export type DateGroup = "today" | "yesterday" | "week" | "older";
