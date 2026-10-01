@@ -364,6 +364,9 @@ def validate_id_token(p: Provider, meta: Mapping, id_token: str, *, nonce: str,
         raise SignInRefused("invalid_token", "bad subject")
     if not hmac.compare_digest(str(claims.get("nonce") or ""), nonce or "\x00"):
         raise SignInRefused("invalid_token", "nonce mismatch")
+    # Identities are keyed on the canonical issuer (Google also writes it
+    # without the scheme), so one person never becomes two.
+    claims["iss"] = issuer
     return claims
 
 

@@ -353,3 +353,34 @@ def test_mount_creates_the_first_administrator(hub, monkeypatch):
     c = client(hub)
     r = sign_in(c, email="owner@example.com", password="owner password 1")
     assert r.status_code == 200 and r.json()["user"]["role"] == "admin"
+
+
+def test_the_bridge_serves_sign_in_with_the_web_app(tmp_path, monkeypatch):
+    """server.build_app mounts the sign-in routes in the default mode: the
+    first administrator signs in and reaches agents and the Console."""
+    import shutil
+    from pathlib import Path
+
+    for key in ENV:
+        monkeypatch.delenv(key, raising=False)
+    hub = tmp_path / "minimal"
+    shutil.copytree(Path(__file__).parent / "fixtures" / "minimal_hub", hub)
+    monkeypatch.setenv("HUBZOID_HUB_DIR", str(hub))
+    monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "owner@example.com")
+    monkeypatch.setenv("HUBZOID_ADMIN_PASSWORD", "owner password 1")
+    sessions.reset_cache()
+    from hubzoid.server import build_app
+
+    c = TestClient(build_app())
+    assert c.get("/api/auth/session").json()["authenticated"] is False
+    assert c.get("/api/agents").status_code == 401
+    assert sign_in(c, email="owner@example.com", password="owner password 1").status_code == 200
+    assert c.get("/api/auth/session").json()["user"]["role"] == "admin"
+    assert c.get("/api/agents").status_code == 200
+    me = c.get("/portal/api/me").json()
+    assert me["org_admin"] is True and me["sign_in"]["links"] is True

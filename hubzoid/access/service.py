@@ -1364,9 +1364,9 @@ class AccessService:
         if plan["kind"] == "access":
             view["current"] = sorted(
                 p for (s, h, p) in self.store.list_grants(row["hub"]) if s == plan["subject"])
-        else:
+        elif self.links_mode():
             # Default mode: confirming needs no password; the result is a link.
-            view["sign_in_link"] = self.links_mode()
+            view["sign_in_link"] = True
         view["problem"] = None
         if row["status"] == "pending":
             try:

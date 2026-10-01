@@ -320,6 +320,15 @@ export type ActivityContext = {
 
 const inAgent = (hubName: string) => (hubName ? [text(" in "), agent(hubName)] : []);
 
+const SIGN_IN_METHODS: Record<string, string> = {
+  google: " with Google",
+  microsoft: " with Microsoft",
+  oidc: " with single sign-on",
+  link: " with a one-time link",
+};
+/** How a sign-in happened, as a phrase ("" for a password). */
+const signInMethod = (method?: string | null) => (method ? SIGN_IN_METHODS[method] ?? "" : "");
+
 /** `md:<task>` is a markdown schedule task; anything else is a code workflow. */
 function workflowLabel(name?: string | null) {
   if (!name) return "a workflow";
@@ -438,6 +447,39 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         tone: "negative",
         parts: [actor(who), text(" deleted "), person(subjectName), text("’s account")],
         detail: "Their access was removed first.",
+      };
+    // Sign-in events of Hubzoid accounts. The subject is the account's email;
+    // `permission` holds how they signed in (password, google, link, ...).
+    case "signed_in":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" signed in"), text(signInMethod(row.permission))],
+      };
+    case "sign_in_failed":
+      return {
+        tone: "negative",
+        parts: [text("A sign-in to "), person(subjectName), text("’s account failed")],
+        detail: "Wrong password. Ten failures in 15 minutes lock sign-in for 15 minutes.",
+      };
+    case "signed_out":
+      return { tone: "neutral", parts: [person(subjectName), text(" signed out")] };
+    case "signed_up":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" signed up")],
+        detail: "The account waits for an administrator’s approval.",
+      };
+    case "password_changed":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" changed their password")],
+        detail: "Their other sessions were signed out.",
+      };
+    case "password_set_with_link":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" set a password with a one-time link")],
+        detail: "Their other sessions were signed out.",
       };
     // Changes proposed from chat, WhatsApp or MCP and confirmed in the Console.
     case "change_proposed":
