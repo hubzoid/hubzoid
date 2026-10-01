@@ -27,6 +27,7 @@ def test_gateway_child_configuration_is_isolated_and_discoverable(
         "OWUI_NATIVE_MCP",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI gateway's lifecycle
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "synthetic-admin@example.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "synthetic-test-password")
     monkeypatch.setenv(

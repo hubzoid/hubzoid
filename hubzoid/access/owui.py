@@ -16,7 +16,12 @@ from ..gateway_provision import service_token
 def configured(hub_dir) -> bool:
     """Whether an Open WebUI target is reachable to mirror visibility to. When
     false (e.g. a standalone bridge with no gateway), there is simply nothing to
-    sync — callers should treat that as idle, not an error."""
+    sync — callers should treat that as idle, not an error. Always false in the
+    web app mode, which runs no Open WebUI (a public WEBUI_URL is not one)."""
+    from ..appmode import is_legacy
+
+    if not is_legacy(Path(hub_dir)):
+        return False
     env = {**dotenv_values(Path(hub_dir) / ".env"), **os.environ}
     return bool(
         deployment.owui_url(Path(hub_dir))

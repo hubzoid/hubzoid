@@ -61,7 +61,8 @@ def test_only_verified_configured_owner_is_provisioned(tmp_path, monkeypatch, ro
 
 @pytest.mark.parametrize('access_status,expected_status', [(200,200),(401,401),(500,503)])
 def test_edge_picker_filters_admins_and_fails_closed(access_status, expected_status):
-    app = build_edge_app(default_base='http://owui', routes=[EdgeRoute('/portal','http://bridge')])
+    app = build_edge_app(default_base='http://owui', routes=[EdgeRoute('/portal','http://bridge')],
+                         web_app=False)  # the Open WebUI picker filter is legacy-only
     async def handle(req):
         if req.url.path == '/api/models':
             return httpx.Response(200, json={'data':[{'id':'allowed'},{'id':'denied'}]})

@@ -266,6 +266,7 @@ def test_sync_replaces_acl_with_empty_after_last_revoke(deployment_client, monke
     from hubzoid.access.reconcile import sync_owui
     import hubzoid.access.owui as owui
 
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI picker mirror is legacy-only
     c, gs, role, dirs = deployment_client
     writes = []
 
@@ -355,6 +356,7 @@ def test_edge_partial_migration_and_navigation(deployment_client, monkeypatch):
     from hubzoid.portal_navigation import inject
 
     c, gs, role, dirs = deployment_client
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # Open WebUI's rewrites are legacy-only
     gs.set_authoritative(False, hub="ops")
     cfg = __import__("json").loads(
         (dirs[0] / ".hubzoid" / "deployment.json").read_text()

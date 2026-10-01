@@ -17,6 +17,7 @@ import { query, type AuditRow, type Hub, type Person } from "../api";
 import { useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { useHashQuery } from "../hooks/useRoute";
+import { useGroupNames } from "./groups/useGroups";
 import { LoadState, SentenceText, When } from "../components/common";
 import {
   ORG,
@@ -134,11 +135,13 @@ export function ActivityScreen({ hubs, hub }: { hubs: Hub[]; hub?: Hub }) {
   };
   // Display names for identities that appear in the feed (best effort).
   const people = useData<{ people: Person[] }>("/people" + query({ limit: 200 }));
+  // Groups by name (organization administrators, web app mode; else none).
+  const groupNames = useGroupNames();
   const names = useMemo(() => {
-    const map: Record<string, string> = {};
+    const map: Record<string, string> = { ...groupNames };
     for (const p of people.data?.people ?? []) map[p.subject] = personName(p.subject, p.display);
     return map;
-  }, [people.data]);
+  }, [people.data, groupNames]);
   const catalogs = useCatalogs(hub ? [hub.key] : hubs.map((h) => h.key));
   const ctx: ActivityContext = useMemo(
     () => ({

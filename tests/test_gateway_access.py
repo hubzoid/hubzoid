@@ -16,9 +16,18 @@ from pathlib import Path
 from agents import function_tool
 from agents.tool_context import ToolContext
 
+import pytest
+
 from hubzoid import gateway, server
 from hubzoid.access import audit as auditlib
 from hubzoid.access import guard, identity_scope
+
+
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """These tests pin the legacy Open WebUI mode (HUBZOID_UI=openwebui); the
+    web app mode is covered by tests/test_gateway_app*.py."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @function_tool

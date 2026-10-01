@@ -48,7 +48,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.startsWith("/portal/api")) {
     const endpoint = url.pathname.slice("/portal/api".length);
     let body;
-    if (req.method === "POST") {
+    if (["POST", "PATCH", "DELETE"].includes(req.method)) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
