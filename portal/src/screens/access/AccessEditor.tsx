@@ -10,20 +10,33 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { Plus, Search } from "lucide-react";
-import { request, query, type Access, type AccessRow, type Hub, type Me, type Person } from "../../api";
+import { Plus, Search, UsersRound } from "lucide-react";
+import {
+  groupsApi,
+  request,
+  query,
+  type Access,
+  type AccessRow,
+  type AccessRowGroups,
+  type Hub,
+  type Me,
+  type MeGroups,
+  type Person,
+} from "../../api";
 import { errorText, useData } from "../../hooks/useData";
 import {
   AccountTag,
   CapabilityTag,
   LoadState,
+  PersonAvatar,
   PersonCell,
 } from "../../components/common";
 import { useHashQuery } from "../../hooks/useRoute";
-import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
-import { draftFor, emptyRow, orderCapabilities, type Draft } from "./plan";
+import { EVERYONE, USE_HUB, isGroup, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
+import { draftFor, emptyRow, orderCapabilities, viaGroups, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
 import { LegacyServiceTag } from "./AccessParts";
+import { GroupPicker } from "./GroupPicker";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
@@ -51,10 +64,12 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const [notice, setNotice] = useState({ text: "", n: 0 });
   const announce = (text: string) => setNotice((prev) => ({ text, n: prev.n + 1 }));
   const [removingEveryone, setRemovingEveryone] = useState(false);
+  const [pickingGroup, setPickingGroup] = useState(false);
 
   /** The access row of a user with no access to this agent yet: who they are
    *  and their account state (a blocked user shows as blocked before saving). */
   async function personRow(subject: string): Promise<AccessRow> {
+    if (isGroup(subject)) return groupRow(subject);
     try {
       const res = await request<{ people: Person[] }>("/people" + query({ q: subject, limit: 20 }));
       const p = res.people.find((x) => x.subject === subject);
@@ -70,6 +85,17 @@ export function AccessEditor({ hub }: { hub: Hub }) {
       // Unknown here: the server re-checks the account when saving.
     }
     return emptyRow(subject);
+  }
+
+  /** The access row of a group with no access to this agent yet. */
+  async function groupRow(subject: string): Promise<AccessRow> {
+    const id = subject.slice("group:".length);
+    try {
+      const { group } = await groupsApi.get(id);
+      return groupDraftRow(subject, group.name, group.member_count);
+    } catch {
+      return groupDraftRow(subject, "", 0);
+    }
   }
 
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
@@ -148,14 +174,20 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   // refuses edits, so the controls are locked to match.
   const refreshing = data.refreshing;
   const locked = refreshing || !access.editable;
+  // Groups exist in the web app mode; organization administrators give them access.
+  const groupsHere = (me.data as MeGroups | undefined)?.groups === true;
+  const canAddGroup = groupsHere && access.can_manage_admins;
 
   const columns = [
     {
-      title: "Person",
+      title: groupsHere ? "Person or group" : "Person",
       key: "person",
-      render: (_: unknown, r: AccessRow) => (
-        <PersonCell subject={r.subject} display={r.display} />
-      ),
+      render: (_: unknown, r: AccessRow) =>
+        isGroup(r.subject) ? (
+          <GroupCell row={r as AccessRowGroups} link={canAddGroup} />
+        ) : (
+          <PersonCell subject={r.subject} display={r.display} />
+        ),
     },
     {
       title: "Capabilities",
@@ -172,8 +204,11 @@ export function AccessEditor({ hub }: { hub: Hub }) {
                   ? "inherited"
                   : r.perms.includes(p) || r.subject === EVERYONE
                     ? undefined
-                    : "public"
+                    : viaGroups(r, p).length
+                      ? "group"
+                      : "public"
               }
+              groups={viaGroups(r, p)}
             />
           ))}
           {r.effective.length === 0 && <Text type="secondary">No access</Text>}
@@ -202,7 +237,11 @@ export function AccessEditor({ hub }: { hub: Hub }) {
       width: 140,
       align: "right" as const,
       render: (_: unknown, r: AccessRow) =>
-        r.subject === EVERYONE ? (
+        isGroup(r.subject) && !access.can_manage_admins ? (
+          <Tooltip title="Only organization administrators can change a group’s access.">
+            <Text type="secondary" tabIndex={0}>Read-only</Text>
+          </Tooltip>
+        ) : r.subject === EVERYONE ? (
           access.can_manage_admins ? (
             <Button
               danger
@@ -236,17 +275,26 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         <div>
           <Title level={2}>Access to {hub.name}</Title>
           <Paragraph type="secondary">
-            People with direct access, and what each is allowed to do.
+            {groupsHere
+              ? "People and groups with access, and what each is allowed to do."
+              : "People with direct access, and what each is allowed to do."}
           </Paragraph>
         </div>
-        <Button
-          type="primary"
-          icon={<Plus size={16} />}
-          disabled={locked}
-          onClick={() => setDraft(draftFor())}
-        >
-          Add user
-        </Button>
+        <Space wrap>
+          {canAddGroup && (
+            <Button icon={<UsersRound size={16} />} disabled={locked} onClick={() => setPickingGroup(true)}>
+              Add group
+            </Button>
+          )}
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            disabled={locked}
+            onClick={() => setDraft(draftFor())}
+          >
+            Add user
+          </Button>
+        </Space>
       </div>
 
       {!access.authoritative && (
@@ -324,6 +372,21 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         }}
       />
 
+      {canAddGroup && (
+        <GroupPicker
+          open={pickingGroup}
+          hubName={hub.name}
+          exclude={access.rows.map((r) => (r as AccessRowGroups).group_id).filter((id): id is string => !!id)}
+          onClose={() => setPickingGroup(false)}
+          onPick={(group) => {
+            setPickingGroup(false);
+            // A group with no access here yet: start from entry, like a new user.
+            const row = groupDraftRow(group.subject, group.name, group.member_count);
+            setDraft({ ...draftFor(row), selected: [USE_HUB] });
+          }}
+        />
+      )}
+
       <AccessDrawer
         hub={hub}
         access={access}
@@ -337,5 +400,40 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         }}
       />
     </div>
+  );
+}
+
+/** The row a group starts from when it has no access to this agent yet. */
+function groupDraftRow(subject: string, name: string, members: number): AccessRowGroups {
+  return {
+    ...emptyRow(subject),
+    kind: "group",
+    status: "group",
+    display: name,
+    group_id: subject.slice("group:".length),
+    members,
+  };
+}
+
+/** A group in the access list: its name and size, linked to its members for
+ *  the organization administrators who manage groups. */
+function GroupCell({ row, link }: { row: AccessRowGroups; link: boolean }) {
+  const members = row.members ?? 0;
+  return (
+    <Space align="center">
+      <PersonAvatar subject={row.subject} display={row.display} />
+      <div className="person-cell">
+        {link && row.group_id ? (
+          <a href={`#/groups/${encodeURIComponent(row.group_id)}`}>{row.display}</a>
+        ) : (
+          <Text strong>{row.display}</Text>
+        )}
+        <div>
+          <Text type="secondary">
+            Group · {members} {members === 1 ? "member" : "members"}
+          </Text>
+        </div>
+      </div>
+    </Space>
   );
 }
