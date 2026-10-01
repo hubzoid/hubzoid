@@ -13,11 +13,16 @@ the account is not suspended in the access store. Lowering either setting
 applies to existing sessions too. ``last_seen_at`` is written at most every
 five minutes.
 
+A session is created only if the account has not changed since its
+credential was read (``expect_updated_at``): a password reset, role or status
+change racing a sign-in can't leave a session that outlives it.
+
 Local mode (sign-in off): every request is the local owner, ``admin@localhost``.
 Because that owner is implicit, a request is only treated as the local owner
-when it names this server by a loopback name, an IP address, a single-label
-host name or an allowed origin, which stops a web page from reaching it
-through DNS rebinding.
+when it names this server by ``localhost`` (or a ``.localhost`` name), an IP
+address, the address the server listens on, or one of the deployment's
+configured origins. A web page reaching the server through DNS rebinding names
+it by the attacker's host name and is refused.
 """
 from __future__ import annotations
 
@@ -42,7 +47,7 @@ from .schema import attempts, engine_for, links, sessions, users
 log = logging.getLogger("hubzoid.auth")
 
 SESSION_COOKIE = "hz_session"
-TOUCH_INTERVAL = 300  # seconds between last_seen_at writes
+TOUCH_INTERVAL = 300  # seconds between last_seen_at writes (less for short idle limits)
 _SWEEP_INTERVAL = 3600
 _UNAVAILABLE = {"code": "accounts_unavailable",
                 "message": "Sign-in is unavailable right now. Try again shortly."}
@@ -67,6 +72,11 @@ def lifetime_seconds() -> int:
 
 def idle_seconds() -> int:
     return int(_days("HUBZOID_SESSION_IDLE_DAYS", 7) * 86400)
+
+
+class SessionRace(Exception):
+    """The account changed between reading its credential and starting the
+    session (a password reset, a role or status change, a deletion)."""
 
 
 def digest(token: str) -> str:
@@ -109,15 +119,20 @@ def _host_name(request: Request) -> str:
 
 
 def local_request_allowed(request: Request) -> bool:
-    """Whether a request may act as the implicit local owner (see module doc)."""
+    """Whether a request may act as the implicit local owner (see module doc).
+    The listening address comes from the server socket (``scope["server"]``),
+    which no request header can change."""
     host = _host_name(request)
-    if not host or host == "localhost" or host.endswith(".localhost") or "." not in host:
+    if not host or host == "localhost" or host.endswith(".localhost"):
         return True
     try:
         ipaddress.ip_address(host)
         return True
     except ValueError:
         pass
+    server = request.scope.get("server") or ()
+    if server and isinstance(server[0], str) and host == server[0].strip("[]").lower():
+        return True
     allowed = {(urlparse(o).hostname or "").lower() for o in appmode.allowed_origins()}
     if host in allowed:
         return True
@@ -237,24 +252,39 @@ def resolve_token(hub_dir: Path, token: str) -> AuthUser | None:
         from ..access import store_for
 
         if store_for(Path(hub_dir)).is_suspended(m["email"]):
+            # Blocked: this session ends for good, even if the block is lifted.
+            with engine.begin() as conn:
+                conn.execute(sessions.update().where(
+                    sessions.c.token_hash == hashed, sessions.c.revoked_at.is_(None),
+                ).values(revoked_at=now))
             return None
-        if now - m["last_seen_at"] >= TOUCH_INTERVAL:
+        if now - m["last_seen_at"] >= min(TOUCH_INTERVAL, idle / 2):
             with engine.begin() as conn:
                 conn.execute(sessions.update().where(
                     sessions.c.token_hash == hashed, sessions.c.revoked_at.is_(None),
                 ).values(last_seen_at=now))
         return AuthUser(id=m["user_id"], email=m["email"], name=m["name"] or "",
                         role=m["role"], method=m["method"] or "")
-    except SQLAlchemyError:
-        log.warning("auth: session check failed (database error)")
+    except (SQLAlchemyError, OSError, ValueError, RuntimeError):
+        # The account or access store can't be read: nobody is signed in on
+        # its say-so (fail closed), and the caller hears it is unavailable.
+        log.warning("auth: session check failed (store unavailable)", exc_info=True)
         raise HTTPException(status_code=503, detail=dict(_UNAVAILABLE))
 
 
 # ---- creation and revocation --------------------------------------------------
 
-def create_session(hub_dir: Path, user, *, method: str, request: Request | None = None) -> str:
+def create_session(hub_dir: Path, user, *, method: str, request: Request | None = None,
+                   expect_updated_at: float | None = None) -> str:
     """Start a session for ``user`` (an AuthUser or an account dict). Returns
-    the token for the cookie; only its digest is stored."""
+    the token for the cookie; only its digest is stored.
+
+    ``expect_updated_at`` is the account's ``updated_at`` when its credential
+    was read. The session row is written first, then the account is read
+    again under a lock (``FOR SHARE`` on PostgreSQL; SQLite already holds its
+    write lock): if the account changed meanwhile, or is no longer active,
+    nothing is kept and SessionRace is raised. A change that commits later
+    revokes the new session like any other."""
     user_id = user.id if isinstance(user, AuthUser) else user["id"]
     token = new_token()
     now = time.time()
@@ -267,6 +297,13 @@ def create_session(hub_dir: Path, user, *, method: str, request: Request | None 
             user_agent=agent or None, ip=client_ip(request) or None, method=(method or "")[:16],
             revoked_at=None,
         ))
+        if expect_updated_at is not None:
+            current = conn.execute(
+                sa.select(users.c.updated_at, users.c.status)
+                .where(users.c.id == str(user_id)).with_for_update(read=True)
+            ).first()
+            if current is None or current[1] != "active" or current[0] != expect_updated_at:
+                raise SessionRace()
         # This person's long-finished sessions are no longer useful.
         conn.execute(sessions.delete().where(
             sessions.c.user_id == str(user_id),

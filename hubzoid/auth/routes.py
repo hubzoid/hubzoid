@@ -24,6 +24,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.background import BackgroundTask
 
 from .. import appmode
 from . import AuthUser, current_user, links, oidc, passwords, ratelimit, require_user, users
@@ -62,11 +63,24 @@ def error(status: int, code: str, message: str, headers: dict | None = None,
                          headers={**_NO_STORE, **(headers or {})})
 
 
-def _rate_limited(seconds: int) -> HTTPException:
+def refusal(status: int, code: str, message: str, *, headers: dict | None = None,
+            background: BackgroundTask | None = None, **extra) -> JSONResponse:
+    """The same JSON as ``error``, returned rather than raised, so work such
+    as an audit row can run after the response is sent."""
+    return JSONResponse({"detail": {"code": code, "message": message, **extra}},
+                        status_code=status, headers={**_NO_STORE, **(headers or {})},
+                        background=background)
+
+
+def _rate_limit_args(seconds: int) -> tuple:
     minutes = max(1, (seconds + 59) // 60)
-    return error(429, "rate_limited",
-                 f"Too many attempts. Try again in {minutes} minute{'s' if minutes != 1 else ''}.",
-                 headers={"Retry-After": str(seconds)}, retry_after=seconds)
+    return (429, "rate_limited",
+            f"Too many attempts. Try again in {minutes} minute{'s' if minutes != 1 else ''}.")
+
+
+def _rate_limited(seconds: int) -> HTTPException:
+    return error(*_rate_limit_args(seconds), headers={"Retry-After": str(seconds)},
+                 retry_after=seconds)
 
 
 def _unavailable() -> HTTPException:
@@ -139,6 +153,9 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:  # noqa: ARG001 — ctx i
     """Register the sign-in routes and create the first administrator from the
     environment when there is none yet."""
     hub_dir = Path(hub_dir)
+    from . import logredact
+
+    logredact.install()  # set-password links and OAuth codes stay out of access logs
     try:
         users.bootstrap_admin_from_env(hub_dir)
     except Exception:  # noqa: BLE001 — start anyway; sign-in shows the problem
@@ -158,7 +175,9 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise error(409, "sign_in_off", "Sign-in is off on this server.")
 
     def complete(request: Request, user: dict, *, method: str) -> JSONResponse:
-        """Start a session for a verified person and answer with it."""
+        """Start a session for a verified person and answer with it. ``user``
+        is the account as read with the credential just checked; if it changed
+        since (a reset, a role or status change), no session starts."""
         from ..access import store_for
 
         if user["status"] != "active":
@@ -167,7 +186,12 @@ def build_router(hub_dir: Path) -> APIRouter:
         if store_for(hub_dir).is_suspended(user["email"]):
             raise error(403, "suspended", "This account is blocked. Ask an administrator.")
         old = sessionlib.current_token(request)
-        token = sessionlib.create_session(hub_dir, user, method=method, request=request)
+        try:
+            token = sessionlib.create_session(hub_dir, user, method=method, request=request,
+                                              expect_updated_at=user["updated_at"])
+        except sessionlib.SessionRace:
+            raise error(409, "sign_in_changed",
+                        "Your account changed while you were signing in. Sign in again.")
         if old:
             sessionlib.revoke(hub_dir, old)
         users.touch_login(hub_dir, user["id"])
@@ -216,21 +240,26 @@ def build_router(hub_dir: Path) -> APIRouter:
         email = users.normalize_email(f["email"])
         ip = sessionlib.client_ip(request)
         try:
-            wait = ratelimit.retry_after(hub_dir, ip=ip, email=email)
+            # The attempt is counted before the password is checked, so a
+            # burst of parallel guesses can't outrun the lock.
+            wait = ratelimit.admit(hub_dir, ip=ip, email=email)
             if wait:
                 raise _rate_limited(wait)
             st = users.store(hub_dir)
-            user = st.find_by_email(email) if email else None
-            stored = st.password_hash(user["id"]) if user else None
+            user, stored = st.credentials(email)
             ok, new_hash = passwords.verify_and_update(f["password"], stored)
             if not ok:
                 locked = ratelimit.record_failure(hub_dir, ip=ip, email=email)
-                if user:
-                    _audit(hub_dir, "sign-in", "sign_in_failed", subject=user["email"],
-                           detail="password")
+                # Recorded after the answer is sent: a known email takes no
+                # longer to refuse than an unknown one.
+                audit = (BackgroundTask(_audit, hub_dir, "sign-in", "sign_in_failed",
+                                        subject=user["email"], detail="password")
+                         if user else None)
                 if locked:
-                    raise _rate_limited(locked)
-                raise error(401, "invalid_credentials", "The email or password is not right.")
+                    return refusal(*_rate_limit_args(locked), headers={"Retry-After": str(locked)},
+                                   background=audit, retry_after=locked)
+                return refusal(401, "invalid_credentials", "The email or password is not right.",
+                               background=audit)
             if new_hash:
                 st.rehash(user["id"], new_hash, stored)
             ratelimit.record_success(hub_dir, ip=ip, email=email)
@@ -276,7 +305,7 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise error(422, "invalid_password", exc.message)
         ip = sessionlib.client_ip(request)
         try:
-            wait = ratelimit.retry_after(hub_dir, ip=ip)
+            wait = ratelimit.admit(hub_dir, ip=ip)
             if wait:
                 raise _rate_limited(wait)
             try:
@@ -287,6 +316,7 @@ def build_router(hub_dir: Path) -> APIRouter:
                 ratelimit.record_failure(hub_dir, ip=ip)
                 raise error(409, "account_exists",
                             "An account with this email already exists. Sign in instead.")
+            ratelimit.record_success(hub_dir, ip=ip)
             users.sync_identity(hub_dir, user)
         except SQLAlchemyError:
             raise _unavailable()
@@ -342,14 +372,14 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise error(422, "invalid_password", exc.message)
         ip = sessionlib.client_ip(request)
         try:
-            wait = ratelimit.retry_after(hub_dir, ip=ip, email=user.email)
-            if wait:
-                raise _rate_limited(wait)
             st = users.store(hub_dir)
             stored = st.password_hash(user.id)
             if not stored:
                 raise error(409, "no_password", "This account has no password to change. "
                                                 "Sign in the way you usually do.")
+            wait = ratelimit.admit(hub_dir, ip=ip, email=user.email)
+            if wait:
+                raise _rate_limited(wait)
             ok, _ = passwords.verify_and_update(f["current_password"], stored)
             if not ok:
                 locked = ratelimit.record_failure(hub_dir, ip=ip, email=user.email)

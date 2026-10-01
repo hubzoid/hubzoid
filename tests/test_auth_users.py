@@ -278,3 +278,12 @@ def test_mcp_account_requires_an_active_bound_unblocked_account(hub):
     pending = users.create(hub, email="p@example.com", status="pending")
     assert users.mcp_account(hub, account_id=pending["id"]) is None
     assert users.mcp_account(hub, email="nobody@example.com") is None
+
+
+def test_credentials_in_one_query(store):
+    user = store.create(email="k@example.com", password="their password")
+    found, stored = store.credentials("K@example.com")
+    assert found["id"] == user["id"] and passwords.verify("their password", stored)
+    assert store.credentials("nobody@example.com") == (None, None)
+    google = store.create(email="g9@example.com", password_enabled=False)
+    assert store.credentials("g9@example.com") == (google, None)
