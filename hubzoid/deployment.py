@@ -39,6 +39,20 @@ def read(hub_dir: Path, env=None, *, require_hub: bool = True) -> dict:
     return data
 
 
+def manifest_path(hub_dir: Path, env=None) -> Path | None:
+    """Where this hub's deployment manifest lives (the gateway's data folder
+    holds it), or None for a standalone hub."""
+    env = os.environ if env is None else env
+    manifest = env.get("HUBZOID_DEPLOYMENT")
+    pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+    if not manifest and pointer.exists():
+        try:
+            manifest = json.loads(pointer.read_text()).get("manifest")
+        except (OSError, ValueError):
+            manifest = None
+    return Path(manifest) if manifest else None
+
+
 def _write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(f".{os.getpid()}.tmp")

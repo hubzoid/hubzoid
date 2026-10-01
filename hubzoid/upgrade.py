@@ -98,7 +98,11 @@ def hubzoid_accounts(hub: Path) -> int:
         if not inspect(engine).has_table("hz_users"):
             return 0
         with engine.connect() as conn:
-            return int(conn.execute(text("SELECT COUNT(*) FROM hz_users")).scalar() or 0)
+            # The local owner of sign-in-off mode is not a migrated account: a
+            # hub that ran locally still has its Open WebUI people to move.
+            return int(conn.execute(text(
+                "SELECT COUNT(*) FROM hz_users WHERE lower(email) NOT LIKE '%@localhost' "
+                "AND lower(email) NOT LIKE '%.localhost'")).scalar() or 0)
     except Exception:  # noqa: BLE001 - unreachable store: the bridge reports it
         return 0
     finally:
