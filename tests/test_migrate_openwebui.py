@@ -281,11 +281,17 @@ def _owui_env(root: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
-def owui_fixture(request) -> Path:
-    """A cached Open WebUI 0.11.4 database built by Open WebUI's own code."""
+def owui_fixture(request, tmp_path_factory) -> Path:
+    """A cached Open WebUI 0.11.4 database built by Open WebUI's own code.
+
+    Cached across runs in pytest's cache folder; with the cache plugin off
+    (``-p no:cacheprovider``) it is built once per session in a temp folder."""
     version = importlib.metadata.version("open-webui")
     key = hashlib.sha256((BUILD + version).encode()).hexdigest()[:16]
-    root = Path(request.config.cache.mkdir("hubzoid-owui-migration")) / key
+    cache = getattr(request.config, "cache", None)
+    base = (Path(cache.mkdir("hubzoid-owui-migration")) if cache is not None
+            else tmp_path_factory.mktemp("hubzoid-owui-migration"))
+    root = base / key
     if not (root / "manifest.json").is_file():
         if root.exists():
             shutil.rmtree(root)

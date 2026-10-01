@@ -481,8 +481,15 @@ def delete(hub_dir, cid: str, *, actor: str) -> bool:
 def permissions(hub_dir) -> list[dict]:
     """One ``connector_<id>`` capability per registered connector. A switched
     off connector stays listed (its grants remain visible) but unavailable."""
+    from . import existing_engine
+
+    eng = existing_engine(hub_dir)
+    if eng is None:
+        return []
+    with eng.connect() as conn:
+        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()]
     out = []
-    for c in list_all(hub_dir):
+    for c in (_connector(r) for r in rows):
         out.append({
             "permission": c.capability, "label": f"Connect {c.name}",
             "description": f"Connect and use their own {c.name} account through this agent.",
