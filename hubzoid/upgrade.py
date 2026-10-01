@@ -8,6 +8,8 @@ is ever returned.
                              hubzoid.access.owui_db resolves it
   * openwebui_accounts(hub)  (where, number of accounts) when it has any
   * hubzoid_accounts(hub)    accounts in the Hubzoid web app (hz_users)
+  * people(conn)             the same count on an open operational store
+                             connection (the gateway's upgrade guard)
 
 This module deliberately does not import hubzoid.access: that package loads the
 agent SDKs, which would add seconds to every `hubzoid run`.
@@ -81,7 +83,7 @@ def openwebui_accounts(hub: Path) -> tuple[str, int] | None:
 def hubzoid_accounts(hub: Path) -> int:
     """Accounts in the Hubzoid web app (hz_users): 0 before the first start, and
     0 when the operational store cannot be read (the bridge reports that)."""
-    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy import create_engine, inspect
     from sqlalchemy.pool import NullPool
 
     from . import db
@@ -98,12 +100,20 @@ def hubzoid_accounts(hub: Path) -> int:
         if not inspect(engine).has_table("hz_users"):
             return 0
         with engine.connect() as conn:
-            # The local owner of sign-in-off mode is not a migrated account: a
-            # hub that ran locally still has its Open WebUI people to move.
-            return int(conn.execute(text(
-                "SELECT COUNT(*) FROM hz_users WHERE lower(email) NOT LIKE '%@localhost' "
-                "AND lower(email) NOT LIKE '%.localhost'")).scalar() or 0)
+            return people(conn)
     except Exception:  # noqa: BLE001 - unreachable store: the bridge reports it
         return 0
     finally:
         engine.dispose()
+
+
+def people(conn) -> int:
+    """Accounts in hz_users that someone can sign in to. The local owner of
+    sign-in-off mode (admin@localhost, any localhost address) is not a migrated
+    account: a hub or gateway that ran locally still has its Open WebUI people
+    to move."""
+    from sqlalchemy import text
+
+    return int(conn.execute(text(
+        "SELECT COUNT(*) FROM hz_users WHERE lower(email) NOT LIKE '%@localhost' "
+        "AND lower(email) NOT LIKE '%.localhost'")).scalar() or 0)
