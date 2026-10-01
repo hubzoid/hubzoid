@@ -29,7 +29,6 @@ pwdlib[argon2,bcrypt]>=0.3.1,<0.4
 python-multipart>=0.0.32,<0.1
 openai>=2.29.0,<2.30
 mcp>=1.27.2,<1.28
-aiohttp>=3.13.5,<3.14
 tiktoken>=0.13,<0.14
 fastapi>=0.136.3,<0.137
 uvicorn[standard]>=0.51,<0.52
