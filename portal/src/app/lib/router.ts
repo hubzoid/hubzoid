@@ -36,9 +36,14 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
   return value;
 }
 
-/** Paths the chat app renders itself; anything else is a full page load. */
+/**
+ * Paths the chat app renders itself: the routes above, which the server answers
+ * with the page shell (hubzoid/webapp.py SHELL_PATHS). Anything else is a full
+ * page load, so a server page that sent someone to sign in (the hosted MCP
+ * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
+ */
 export function isAppPath(path: string): boolean {
-  return !/^\/(portal|api|oauth|artifacts|branding|b)(\/|$)/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|auth(?:\/|$)|account(?:\/|$))/.test(path);
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {

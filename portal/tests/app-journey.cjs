@@ -874,6 +874,17 @@ function chartPng(width = 160, height = 100) {
       await shot(page, "app-26-branding");
       await fetch(`${BASE}/__fixture/flag/branded/false`);
 
+      step("Signing in for a server page outside the chat app (the MCP consent page) returns to that page");
+      const consent = await browser.newContext({ viewport: { width: 1200, height: 860 } });
+      const cp = await consent.newPage();
+      watch(cp);
+      await cp.goto(`${BASE}/mcp/oauth/consent?ticket=t-123`);
+      await cp.waitForURL(/\/auth\?redirect=%2Fmcp%2Foauth%2Fconsent%3Fticket%3Dt-123$/);
+      await signIn(cp);
+      await cp.waitForURL(`${BASE}/mcp/oauth/consent?ticket=t-123`);
+      await cp.getByRole("heading", { name: "Allow Claude to use Hubzoid Guide?" }).waitFor();
+      await consent.close();
+
       step("External sign-in returns to the page that asked; cancelling it says so");
       const viaGoogle = await browser.newContext({ viewport: { width: 1200, height: 860 } });
       const gp = await viaGoogle.newPage();
