@@ -46,7 +46,8 @@ export type ThreadProps = {
   /** Stop for a run this page didn't start (reloaded while running). */
   onStopFollowed?: () => void;
   isFollowing?: boolean;
-  onBranchSwitched?: (headId: string | undefined) => void;
+  /** The branch on screen changed (a switch, or a run that ended). */
+  onHeadChanged?: (headId: string | undefined) => void;
   composerDisabledReason?: string | null;
   notice?: ReactNode;
 };
@@ -68,6 +69,7 @@ export function Thread(props: ThreadProps) {
   useAuiEvent({ scope: "*", event: "thread.runEnd" }, () => {
     setTimeout(() => {
       const last = aui.thread().getState().messages.at(-1);
+      props.onHeadChanged?.(last?.id);
       const status = last?.role === "assistant" ? last.status : undefined;
       if (status?.type === "incomplete" && status.reason === "cancelled") announce(t.chat.responseStopped);
       else if (status?.type === "incomplete") announce(t.chat.responseFailed);
@@ -75,7 +77,7 @@ export function Thread(props: ThreadProps) {
     }, 0);
   });
   useAuiEvent({ scope: "*", event: "message.branchSwitched" }, () => {
-    setTimeout(() => props.onBranchSwitched?.(aui.thread().getState().messages.at(-1)?.id), 0);
+    setTimeout(() => props.onHeadChanged?.(aui.thread().getState().messages.at(-1)?.id), 0);
   });
   useAuiEvent({ scope: "*", event: "composer.attachmentAddError" }, (event) => {
     toast(event.message || t.errors.generic, "error");

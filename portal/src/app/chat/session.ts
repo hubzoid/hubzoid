@@ -278,7 +278,7 @@ export class ChatSession {
 
     const acc = new MessageAccumulator();
     let announcedTitle: string | null = null;
-    let settled = false;
+    let settled = false; // the server confirmed the run started
     try {
       let response: Response;
       try {
@@ -344,11 +344,10 @@ export class ChatSession {
         yield { content: acc.snapshot(), status: { type: "complete", reason: "stop" } };
       }
     } finally {
+      // The thread view saves the branch on screen when the run ends (the
+      // person may have switched branches meanwhile); a page that is going
+      // away (a detach) leaves the server's own head alone.
       abortSignal.removeEventListener("abort", onAbort);
-      // Remember the new reply as the branch to open next time, unless the
-      // page is going away (a detach), when the server keeps its own head.
-      const detached = (abortSignal.reason as { detach?: boolean } | undefined)?.detach === true;
-      if (settled && !detached) this.saveHead(localReplyId);
       if (this.conversationId) this.events.onRunSettled(this.conversationId);
     }
   }
