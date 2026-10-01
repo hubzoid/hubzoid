@@ -117,6 +117,13 @@ class OAuthMcp:
         con.commit()
         con.close()
         self.hub = hub
+        # The consent page resolves the signed-in person to a Hubzoid account in
+        # the default UI mode (auth.users.mcp_account); the Open WebUI user table
+        # above serves the legacy mode.
+        from hubzoid.auth import users
+
+        if users.find_by_email(hub, self.email) is None:
+            users.create(hub, email=self.email, name="MCP server owner", role="admin")
         self._mp = pytest.MonkeyPatch()
         self._mp.setenv("HUBZOID_OWUI_DB", str(owui))
         self._mp.setenv("MCP_SERVER", "true")

@@ -744,13 +744,17 @@ def test_a_failed_data_step_undoes_the_access_step(gateway, monkeypatch):
     def boom(self, plan):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(mig.Writer, "groups", boom)
+    # Groups are written in their own step before access (grants may name them);
+    # a failure in the later data step undoes both.
+    monkeypatch.setattr(mig.Writer, "people", boom)
     with pytest.raises(RuntimeError):
         _run(gateway, apply=True)
     store = gateway.store()
     assert not store.is_authoritative("finance") and not store.is_authoritative("ops")
     assert store.list_grants("finance") == [] and store.list_grants("ops") == []
     assert gateway.rows("SELECT count(*) AS n FROM hz_users")[0]["n"] == 0
+    assert gateway.rows("SELECT count(*) AS n FROM hz_groups")[0]["n"] == 0
+    assert gateway.rows("SELECT count(*) AS n FROM hz_group_members")[0]["n"] == 0
     assert gateway.rows("SELECT count(*) AS n FROM hz_meta WHERE k LIKE 'openwebui_migration:%'")[0]["n"] == 0
     monkeypatch.undo()
     assert _run(gateway, apply=True).applied  # and the next run succeeds

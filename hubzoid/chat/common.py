@@ -79,7 +79,14 @@ class ChatContext:
     async def user(self, request: Request):
         from .. import auth
 
-        return await asyncio.to_thread(auth.require_user, request, self.hub_dir)
+        try:
+            return await asyncio.to_thread(auth.require_user, request, self.hub_dir)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the account store is unavailable: refuse
+            logging.getLogger("hubzoid.chat").exception("chat: sign-in check unavailable")
+            raise error(503, "access_unavailable",
+                        "Access check unavailable. Try again shortly.") from exc
 
     @staticmethod
     def same_origin(request: Request) -> None:

@@ -2046,16 +2046,6 @@ class Writer:
         self.report.bump("users", "updated", len(updates))
         self.report.bump("identities", "imported", len(people.identity_rows))
 
-    def groups(self, plan: GroupPlan) -> None:
-        self._many("INSERT INTO hz_groups (id, name, description, source, created_by, created_at, "
-                   "updated_at) VALUES (:id, :name, :description, :source, :created_by, :created_at, "
-                   ":updated_at)", plan.inserts)
-        self._many("INSERT INTO hz_group_members (group_id, email, added_by, added_at) "
-                   "VALUES (:group_id, :email, :added_by, :added_at)", plan.add_members)
-        self._many("DELETE FROM hz_group_members WHERE group_id=:g AND email=:e AND added_by=:a",
-                   [dict(g=g, e=e, a=ACTOR) for g, e in plan.remove_members])
-        self.report.bump("groups", "imported", len(plan.inserts))
-        self.report.bump("groups", "members_imported", len(plan.add_members))
 
     def conversation(self, outcome: ChatOutcome) -> None:
         conv = outcome.conversation
@@ -2195,6 +2185,53 @@ def _finish(report: Report) -> None:
                     "open /s/<id>.")
 
 
+
+# ---------------------------------------------------------------------------
+# Groups step: groups and their members exist before any grant names them
+# ---------------------------------------------------------------------------
+def _many_rows(conn, sql: str, rows: list) -> None:
+    if rows:
+        conn.execute(text(sql), rows)
+
+
+def _write_groups(engine: Engine, plan: GroupPlan, report: Report) -> bool:
+    """Create the planned groups and memberships in one transaction, before the
+    access step: the access store refuses a grant to a group that does not
+    exist. Bumps the policy revision so running bridges see the memberships.
+    Returns whether anything was written."""
+    removed = [dict(g=g, e=e, a=ACTOR) for g, e in plan.remove_members]
+    if not (plan.inserts or plan.add_members or removed):
+        return False
+    with engine.begin() as conn:
+        _many_rows(conn, "INSERT INTO hz_groups (id, name, description, source, created_by, "
+                         "created_at, updated_at) VALUES (:id, :name, :description, :source, "
+                         ":created_by, :created_at, :updated_at)", plan.inserts)
+        _many_rows(conn, "INSERT INTO hz_group_members (group_id, email, added_by, added_at) "
+                         "VALUES (:group_id, :email, :added_by, :added_at)", plan.add_members)
+        _many_rows(conn, "DELETE FROM hz_group_members WHERE group_id=:g AND email=:e AND added_by=:a",
+                   removed)
+        conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
+    report.bump("groups", "imported", len(plan.inserts))
+    report.bump("groups", "members_imported", len(plan.add_members))
+    return True
+
+
+def _undo_groups(engine: Engine, plan: GroupPlan) -> None:
+    """Reverse ``_write_groups`` after a later step failed."""
+    now = time.time()
+    with engine.begin() as conn:
+        for row in plan.add_members:
+            conn.execute(text("DELETE FROM hz_group_members WHERE group_id=:g AND email=:e"),
+                         {"g": row["group_id"], "e": row["email"]})
+        for gid in sorted({row["id"] for row in plan.inserts}):
+            conn.execute(text("DELETE FROM hz_group_members WHERE group_id=:g"), {"g": gid})
+            conn.execute(text("DELETE FROM hz_groups WHERE id=:g"), {"g": gid})
+        _many_rows(conn, "INSERT INTO hz_group_members (group_id, email, added_by, added_at) "
+                         "VALUES (:g, :e, :a, :t)",
+                   [dict(g=g, e=e, a=ACTOR, t=now) for g, e in plan.remove_members])
+        conn.execute(text("UPDATE hz_policy_revision SET rev = rev + 1 WHERE id=1"))
+
+
 def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None:
     from .access.store import GrantStore
     from .deployment import _write as write_json
@@ -2216,6 +2253,7 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
             write_json(path, backup)
             report.backups.append(str(path))
         access_written = False
+        groups_written = _write_groups(engine, plan.groups, report)
         if convert or plan.people.identities:
             try:
                 store.apply_migration([g for a in convert.values() for g in a.grants],
@@ -2224,6 +2262,8 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
                                       identities=plan.people.identities, carry_over_public=True,
                                       actor=ACTOR)
             except ValueError as exc:
+                if groups_written:
+                    _undo_groups(engine, plan.groups)
                 raise MigrationBlocked(f"The access step was refused: {exc}") from exc
             access_written = True
         try:
@@ -2243,7 +2283,6 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
             with engine.begin() as conn:
                 writer = Writer(conn, store, report)
                 writer.people(plan.people)
-                writer.groups(plan.groups)
                 importer.run(conn, writer)
                 _finish(report)
                 from . import __version__
@@ -2262,6 +2301,12 @@ def _apply(setup: Setup, source: OwuiSource, report: Report, plan: Plan) -> None
                     },
                 })
         except BaseException:
+            if groups_written:
+                try:
+                    _undo_groups(engine, plan.groups)
+                except Exception:  # noqa: BLE001 - reported below with the access undo
+                    log.exception("undoing the groups step failed")
+                    report.warn("The migration failed and undoing the groups step also failed.")
             if access_written and snapshot is not None:
                 try:
                     store.restore(snapshot, actor=ACTOR + "-undo")
