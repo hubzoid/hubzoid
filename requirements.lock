@@ -9,7 +9,9 @@ aiofile==3.12.3
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.13.5
-    # via litellm
+    # via
+    #   hubzoid (pyproject.toml)
+    #   litellm
 aiosignal==1.4.0
     # via aiohttp
 alembic==1.18.4
@@ -223,6 +225,7 @@ markupsafe==3.0.3
     #   mako
 mcp==1.27.2
     # via
+    #   hubzoid (pyproject.toml)
     #   claude-agent-sdk
     #   fastmcp-slim
     #   openai-agents
@@ -238,6 +241,7 @@ multidict==6.9.1
     #   yarl
 openai==2.29.0
     # via
+    #   hubzoid (pyproject.toml)
     #   composio
     #   litellm
     #   openai-agents
@@ -397,7 +401,9 @@ starlette==1.7.0
     #   mcp
     #   sse-starlette
 tiktoken==0.13.0
-    # via litellm
+    # via
+    #   hubzoid (pyproject.toml)
+    #   litellm
 tokenizers==0.22.2
     # via litellm
 tqdm==4.70.1

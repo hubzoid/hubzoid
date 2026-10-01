@@ -43,45 +43,49 @@ dependencies = [
   # Bounds: lower = the version this release was tested with; upper = the next
   # release line that may break us (next minor for 0.x packages, next major
   # otherwise).
-  #
-  # Open WebUI caps. Remove them when the `openwebui` extra goes. Shared deps
-  # that open-webui 0.11.4 pins exactly (fastapi, pydantic, SQLAlchemy, uvicorn,
-  # cryptography, Pillow, pypdf, alembic, boto3) follow its pins, and its exact
-  # openai/mcp/aiohttp pins cap openai-agents, litellm, fastmcp and composio. The
-  # core install keeps them for this release so that adding the extra resolves to
-  # the set we tested.
-  "openai-agents[litellm]>=0.17.3,<0.18",  # 0.18+ needs openai>=2.36; open-webui pins openai==2.29.0
-  "litellm>=1.95.0,<1.96",  # model routing, reviewed per bump. 1.96+ needs aiohttp>=3.14.2; open-webui pins 3.13.5
+  "openai-agents[litellm]>=0.17.3,<0.18",  # 0.18+ needs openai>=2.36 (see the openai cap below)
+  "litellm>=1.95.0,<1.96",  # model routing, reviewed per bump. 1.96+ needs aiohttp>=3.14.2 (see the aiohttp cap below)
   "claude-agent-sdk>=0.2.159,<0.3",
-  "fastapi>=0.136.3,<1",
   "fastmcp>=3.4.7,<4",    # mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.47,<2",     # edge.py reverse-proxy app
-  "uvicorn[standard]>=0.51,<1",
-  "httpx>=0.28.1,<1",
   "websockets>=15,<18",     # edge.py websocket passthrough (legacy Open WebUI mode)
-  "pydantic>=2.13,<3",
   "PyYAML>=6.0.3,<7",
   "python-dotenv>=1.2,<2",
-  "cryptography>=48,<51",   # secretbox.py deployment key (Fernet); access/owui_oauth_tokens.py decrypts OWUI's per-user tool tokens (same scheme)
-  "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42; open-webui pins 2.29.0 (connected_accounts / auth_configs / link)
+  "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42 (connected_accounts / auth_configs / link)
   "opentelemetry-proto>=1.44,<2",  # otel.py in-bridge OTLP normalize intercept parses/rewrites ExportTraceServiceRequest protobufs
   "typer>=0.27,<1",
-  "rich>=13.9,<14",           # Open WebUI cap: httpx[cli] (via open-webui) caps rich below 14
   "jinja2>=3.1.6,<4",
   "slack-bolt>=1.30,<2",
-  "pypdf>=6.7,<7",
-  "Pillow>=12.2,<13",       # vision_inject.py resizes uploaded images before sending them to the model
-  "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL. open-webui pins 2.0.x
   "casbin>=1.43,<2",        # access/store.py: per-hub authorization (RBAC-with-domains, direct grants) behind can()
   "dbos>=3.1,<4",           # workflows/: durable workflow engine, embedded (SQLite default, Postgres via DATABASE_URL)
   "croniter>=6.2,<7",       # workflows/: evaluate a workflow's cron in its own timezone (DST-safe dispatcher)
-  "alembic>=1.18,<2",       # migrations/: versioned schema for Hubzoid's own tables (open-webui pins 1.18.x)
-  "boto3>=1.42,<2",         # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named (open-webui pins 1.42.x)
-  # The Hubzoid web app: accounts, sign-in, uploads and personal connections.
   "pwdlib[argon2,bcrypt]>=0.3.1,<0.4",  # hubzoid.auth: argon2 password hashes; verifies bcrypt hashes moved from Open WebUI
-  "authlib>=1.7.2,<2",      # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
-  "itsdangerous>=2.2,<3",   # signed, short-lived state for sign-in and connection flows
   "python-multipart>=0.0.32,<0.1",  # FastAPI form and file uploads (chat attachments, sign-in forms)
+
+  # Open WebUI caps. Remove them when the `openwebui` extra goes.
+  # open-webui 0.11.4 pins these shared dependencies exactly. While it was a
+  # required dependency, every install got those versions, and they are the set
+  # Hubzoid is tested with. The core install keeps their release lines for this
+  # release, so `pip install hubzoid` resolves to the tested set with or without
+  # the extra. Without them a fresh install drifts: openai 2.54 breaks
+  # openai-agents 0.17's usage accounting on every run and tool call.
+  "openai>=2.29.0,<2.30",   # via openai-agents, litellm and composio
+  "mcp>=1.27.2,<1.28",      # via fastmcp, claude-agent-sdk and openai-agents
+  "aiohttp>=3.13.5,<3.14",  # via litellm
+  "tiktoken>=0.13,<0.14",   # via litellm
+  "fastapi>=0.136.3,<0.137",
+  "uvicorn[standard]>=0.51,<0.52",
+  "httpx>=0.28.1,<0.29",
+  "pydantic>=2.13.4,<2.14",
+  "cryptography>=48,<49",   # secretbox.py deployment key (Fernet); access/owui_oauth_tokens.py decrypts OWUI's per-user tool tokens (same scheme)
+  "rich>=13.9,<14",         # httpx[cli] (via open-webui) caps rich below 14
+  "pypdf>=6.7.5,<6.8",
+  "Pillow>=12.2,<12.3",     # vision_inject.py resizes uploaded images before sending them to the model
+  "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL
+  "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
+  "boto3>=1.42.62,<1.43",   # config_secrets.py: optional AWS Secrets Manager layers, imported only when a secret is named
+  "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
+  "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
 ]
 
 [project.optional-dependencies]
@@ -94,6 +98,7 @@ openwebui = ["open-webui==0.11.4"]
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
+  "setuptools>=68",  # tests/test_packaging.py runs the build's own package discovery
   "build>=1.2",
   "twine>=5.0",
   "reportlab>=4.0",

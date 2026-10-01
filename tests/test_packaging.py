@@ -106,6 +106,31 @@ def test_web_app_dependencies_are_declared_with_bounds():
         assert ">=" in core[name] and "<" in core[name], core[name]
 
 
+def test_the_core_install_keeps_open_webuis_release_lines():
+    """open-webui pinned these shared packages exactly while it was required. A
+    core install without those caps drifted (openai 2.54 broke openai-agents
+    0.17 on every run), so each keeps the release line of Open WebUI's pin, and
+    that pin is the floor."""
+    core = _requirement_names(PYPROJECT["project"]["dependencies"])
+    owui_pins = {"openai": "2.29.0", "mcp": "1.27.2", "aiohttp": "3.13.5", "tiktoken": "0.13",
+                 "fastapi": "0.136.3", "uvicorn": "0.51", "httpx": "0.28.1", "pydantic": "2.13.4",
+                 "cryptography": "48", "pypdf": "6.7.5", "pillow": "12.2", "sqlalchemy": "2.0.50",
+                 "alembic": "1.18.4", "boto3": "1.42.62", "authlib": "1.7.2", "itsdangerous": "2.2"}
+    for name, floor in owui_pins.items():
+        spec = core[name]
+        assert f">={floor}" in spec, spec
+        major, minor = floor.split(".")[:2] if "." in floor else (floor, None)
+        cap = f"<{major}.{int(minor) + 1}" if minor is not None and name != "sqlalchemy" else None
+        if name == "cryptography":
+            cap = "<49"
+        if name == "sqlalchemy":
+            cap = "<2.1"
+        assert cap in spec, (name, spec)
+    # The reviewed lock agrees with the floors.
+    pins = _pins("requirements.lock")
+    assert pins["openai"] == "2.29.0" and pins["mcp"] == "1.27.2" and pins["aiohttp"] == "3.13.5"
+
+
 def test_requirements_txt_mirrors_the_dependencies():
     lines = [ln.strip() for ln in (ROOT / "requirements.txt").read_text().splitlines()
              if ln.strip() and not ln.startswith("#")]
