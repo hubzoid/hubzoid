@@ -122,7 +122,7 @@ export default function SharePage({ shareId }: { shareId: string }) {
                 </p>
               </div>
               <div className="flex min-h-0 flex-col [&_[data-testid=thread-viewport]]:overflow-visible">
-                <Thread agent={agent} agents={[]} canPickAgent={false} onPickAgent={() => {}} readOnly />
+                <Thread agent={agent} canPickAgent={false} onChangeAgent={() => {}} readOnly />
               </div>
               <footer className="mx-auto w-full max-w-[780px] px-4 pb-12 sm:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-canvas px-4 py-3.5">

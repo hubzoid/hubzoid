@@ -231,6 +231,7 @@ export const en = {
   agents: {
     choose: "Choose an agent",
     search: "Search agents",
+    switchLabel: (name: string) => `${name}. Change agent`,
     searchPlaceholder: (count: number) => `Search ${count} agents`,
     clearSearch: "Clear agent search",
     noMatch: (query: string) => `No agent matches “${query}”.`,

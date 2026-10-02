@@ -21,13 +21,14 @@ upgrade requirements and its known limits.
   copied. Attachments by picker, drag and drop or paste, images previewed.
   Markdown with tables and highlighted code, and download chips for files the
   agent makes. Read-only share links for signed-in people of the deployment.
-- An agent picker with suggestions from `AGENTS.md` (cards for up to six
-  agents; above that a searchable list with recently used agents first), an account page (name,
+- An agent switcher in the chat header (the agent's name opens a searchable
+  menu, recently used agents first) with suggestions from `AGENTS.md`, an account page (name,
   password, theme), a connections page, light and dark themes, a phone layout,
   keyboard access and screen reader announcements. Administrators reach the
   Console from the account menu.
 - Branding from the hub's `branding/` folder: name, logo, favicon and an
-  optional `custom.css`. A gateway uses its own branding and `--name`.
+  optional `custom.css`. The Hubzoid marks `hubzoid init` copies there count
+  as no logo, so the app draws its own wordmark, readable in dark mode. A gateway uses its own branding and `--name`.
 
 ### Sign-in and accounts
 - Hubzoid owns accounts in its operational store. Sign-in is off by default

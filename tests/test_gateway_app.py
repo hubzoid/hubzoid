@@ -371,6 +371,30 @@ def test_single_hub_keeps_its_own_agent_and_branding(tmp_path, monkeypatch):
     assert c.get("/branding/favicon.png").content == b"fav"
 
 
+def test_the_stock_init_marks_are_not_a_custom_logo(tmp_path, monkeypatch):
+    """`hubzoid init` copies the Hubzoid wordmark into branding/. The app draws
+    that mark itself (readable in dark mode), so an unchanged copy is no logo
+    and no avatar; the browser tab still uses the icon."""
+    import shutil
+
+    hub = _hub(tmp_path, "solo", 3611)
+    shutil.copytree(Path(webapp_gateway.__file__).parent / "templates" / "minimal" / "branding",
+                    hub / "branding")
+    eng = create_engine(f"sqlite:///{tmp_path / 'op.db'}")
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("admin@localhost", "solo", "use_hub", actor="t")
+    app = FastAPI()
+    webapp_gateway.mount(app, hub, model_label="solo-label")
+    c = TestClient(app)
+    assert c.get("/api/agents").json()["agents"][0]["avatar_url"] is None
+    branding = c.get("/api/branding").json()
+    assert branding["logo_url"] is None and branding["favicon_url"] == "/branding/favicon.svg"
+    (hub / "branding" / "logo.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
+    assert c.get("/api/branding").json()["logo_url"] == "/branding/logo.svg"
+
+
 # ---------------------------------------------------------------------------
 # the edge, by mode
 # ---------------------------------------------------------------------------

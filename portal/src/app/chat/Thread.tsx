@@ -1,6 +1,6 @@
 // The conversation itself, built from assistant-ui primitives: messages with
 // their parts, branch picker, copy, edit and regenerate, the composer with
-// attachments, and the empty state with the agent picker (AgentPicker) and suggestions.
+// attachments, and the empty state with the agent's greeting and suggestions.
 import { type ReactNode } from "react";
 import {
   ActionBarPrimitive,
@@ -18,6 +18,7 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -32,16 +33,15 @@ import { displayName } from "../lib/format";
 import type { Agent } from "../lib/types";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, IconButton, Notice, cx } from "../components/ui";
-import { AgentPicker } from "./AgentPicker";
 import { MarkdownText } from "./Markdown";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
 
 export type ThreadProps = {
   agent: Agent;
-  agents: Agent[];
-  /** A brand-new chat can still change agent. */
+  /** A brand-new chat with more than one agent available: it can still change agent. */
   canPickAgent: boolean;
-  onPickAgent: (agent: Agent) => void;
+  /** Opens the agent menu in the header. */
+  onChangeAgent: () => void;
   requestedMissing?: boolean;
   readOnly?: boolean;
   /** Stop for a run this page didn't start (reloaded while running). */
@@ -162,13 +162,12 @@ function suggestionText(s: NonNullable<Agent["suggestions"]>[number]): { label: 
   return { label: (s.title || prompt).trim(), prompt };
 }
 
-function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissing }: ThreadProps) {
+function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: ThreadProps) {
   const name = displayName(agent.name);
   const suggestions = (agent.suggestions ?? []).map(suggestionText).filter(Boolean).slice(0, 4) as {
     label: string;
     prompt: string;
   }[];
-  const picking = canPickAgent && agents.length > 1;
   return (
     <div className="mx-auto flex w-full max-w-[780px] flex-1 flex-col justify-center px-4 py-10 sm:px-6">
       {requestedMissing && (
@@ -176,14 +175,23 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
           {t.agents.requestedUnavailable(name)}
         </Notice>
       )}
-      {picking && <AgentPicker agent={agent} agents={agents} onPick={onPickAgent} />}
       <div className="flex flex-col items-center text-center">
         <AgentAvatar name={agent.name} src={agent.avatar_url} size={52} />
         <h1 className="m-0 mt-4 text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
           {t.agents.greeting(name)}
         </h1>
-        {agent.description && !picking && (
+        {agent.description && (
           <p className="m-0 mt-2 max-w-xl text-[15px] leading-relaxed text-mute">{agent.description}</p>
+        )}
+        {canPickAgent && (
+          <button
+            type="button"
+            onClick={onChangeAgent}
+            className="mt-3 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13.5px] font-medium text-accent-text hover:bg-hover"
+          >
+            {t.agents.change}
+            <ChevronDown size={14} aria-hidden />
+          </button>
         )}
       </div>
       {suggestions.length > 0 && (

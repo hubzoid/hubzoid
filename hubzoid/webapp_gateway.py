@@ -28,6 +28,7 @@ wider list. Database and file work runs in the threadpool, so a slow read
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from pathlib import Path
@@ -90,14 +91,38 @@ def api_base_for(hub_dir: Path) -> str:
     return f"/b/{_hub_slug(entry)}" if entry is not None else ""
 
 
-def _find(folder: Path, candidates: tuple[str, ...]) -> str | None:
-    """The real file name of the first candidate present (case-insensitive)."""
+@functools.lru_cache(maxsize=1)
+def _stock_marks() -> frozenset[bytes]:
+    """The Hubzoid wordmark and icon `hubzoid init` copies into every hub's
+    branding/. They are the product's marks, drawn by the app itself in the
+    colours of the current theme, so an unchanged copy is not a custom logo."""
+    root = Path(__file__).parent / "templates"
+    marks = set()
+    for path in root.glob("*/branding/*"):
+        if path.name.lower() in _LOGO_CANDIDATES:
+            try:
+                marks.add(path.read_bytes())
+            except OSError:
+                pass
+    return frozenset(marks)
+
+
+def _is_stock(path: Path) -> bool:
+    try:
+        return path.stat().st_size < 65536 and path.read_bytes() in _stock_marks()
+    except OSError:
+        return False
+
+
+def _find(folder: Path, candidates: tuple[str, ...], *, custom: bool = False) -> str | None:
+    """The real file name of the first candidate present (case-insensitive).
+    `custom`: skip an unchanged Hubzoid mark from `hubzoid init`."""
     try:
         files = {p.name.lower(): p.name for p in folder.iterdir() if p.is_file()}
     except OSError:
         return None
     for name in candidates:
-        if name in files:
+        if name in files and not (custom and _is_stock(folder / files[name])):
             return files[name]
     return None
 
@@ -118,7 +143,7 @@ def agent_card(hub_dir: Path, *, model_label: str | None = None, api_base: str =
     except Exception:  # noqa: BLE001 — a broken AGENTS.md still gets a card
         log.warning("webapp: could not load the main agent of %s", hub_dir.name)
         name, description, suggestions = fallback_name or hub_dir.name, "", []
-    logo = _find(hub_dir / "branding", _LOGO_CANDIDATES)
+    logo = _find(hub_dir / "branding", _LOGO_CANDIDATES, custom=True)
     return {
         "id": model_label or _slugify(name),
         "name": name,
@@ -264,7 +289,7 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
             return {"name": "Hubzoid", "logo_url": None, "favicon_url": None,
                     "custom_css_url": None}
         folder = scope.folder
-        logo = _find(folder, _LOGO_CANDIDATES) if folder else None
+        logo = _find(folder, _LOGO_CANDIDATES, custom=True) if folder else None
         favicon = _find(folder, _FAVICON_CANDIDATES) if folder else None
         css = _find(folder, ("custom.css",)) if folder else None
         base = scope.url_base

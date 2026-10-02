@@ -29,6 +29,7 @@ import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
 import { cancelRun, ChatSession, pollRun } from "./session";
 import { Thread } from "./Thread";
+import { AgentSwitcher } from "./AgentPicker";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
 
 type Load = { status: "loading" } | { status: "ready"; detail: ConversationDetail | null } | { status: "error"; error: unknown };
@@ -280,6 +281,8 @@ function ChatView({
     return toRepository(detail.messages ?? [], detail.head_id, session.convertContext).runningIds;
   }, [detail, session]);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canPick = !conversation && app.agents.list.length > 1;
   const pickAgent = useCallback(
     (next: Agent) => {
       if (session.conversationId) return;
@@ -318,14 +321,14 @@ function ChatView({
           title={shownTitle}
           conversation={conversation}
           onRenamed={(next) => setTitle(next)}
+          picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
         />
         <FollowRuns session={session} runningIds={runningIds} detail={detail}>
           {(following, stopFollowed) => (
             <Thread
               agent={agent}
-              agents={app.agents.list}
-              canPickAgent={!conversation}
-              onPickAgent={pickAgent}
+              canPickAgent={canPick}
+              onChangeAgent={() => setPickerOpen(true)}
               requestedMissing={requestedMissing}
               isFollowing={following}
               onStopFollowed={stopFollowed}
@@ -431,11 +434,14 @@ function ChatHeader({
   title,
   conversation,
   onRenamed,
+  picker,
 }: {
   agent: Agent;
   title: string;
   conversation: Conversation | null;
   onRenamed: (title: string) => void;
+  /** A new chat with several agents: the title opens the agent menu. */
+  picker: { open: boolean; onOpenChange: (open: boolean) => void; onPick: (agent: Agent) => void } | null;
 }) {
   const app = useApp();
   const [sharing, setSharing] = useState(false);
@@ -445,6 +451,23 @@ function ChatHeader({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState(title);
   const agentName = displayName(agent.name);
+  const titleBlock = (
+    <>
+      <AgentAvatar name={agent.name} src={agent.avatar_url} size={28} />
+      <span className="min-w-0">
+        <span
+          className="block truncate text-[15px] font-semibold leading-tight text-ink"
+          data-testid="chat-title"
+          {...(picker ? {} : { role: "heading", "aria-level": 1 })}
+        >
+          {conversation ? title : agentName}
+        </span>
+        <span className="block truncate text-xs leading-tight text-mute" data-testid="chat-agent">
+          {conversation ? agentName : t.sidebar.newChat}
+        </span>
+      </span>
+    </>
+  );
 
   const doRename = async () => {
     if (!conversation) return;
@@ -499,16 +522,14 @@ function ChatHeader({
           <MenuIcon size={20} aria-hidden />
         </IconButton>
       </div>
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-        <AgentAvatar name={agent.name} src={agent.avatar_url} size={28} />
-        <div className="min-w-0">
-          <h1 className="m-0 truncate text-[15px] font-semibold leading-tight text-ink" data-testid="chat-title">
-            {conversation ? title : agentName}
-          </h1>
-          <p className="m-0 truncate text-xs leading-tight text-mute" data-testid="chat-agent">
-            {conversation ? agentName : t.sidebar.newChat}
-          </p>
-        </div>
+      <div className="flex min-w-0 flex-1 items-center">
+        {picker ? (
+          <AgentSwitcher agent={agent} agents={app.agents.list} {...picker}>
+            {titleBlock}
+          </AgentSwitcher>
+        ) : (
+          <div className="flex min-w-0 items-center gap-2.5">{titleBlock}</div>
+        )}
       </div>
       {conversation && (
         <div className="flex flex-none items-center gap-1">

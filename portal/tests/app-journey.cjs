@@ -189,23 +189,33 @@ function chartPng(width = 160, height = 100) {
     await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
 
     // ---- new chat --------------------------------------------------------------------
-    step("A new chat offers agent cards; ?agent= and the Console's ?models= preselect one");
+    step("A new chat picks its agent from the header menu; ?agent= and the Console's ?models= preselect one");
     await page.goto(`${BASE}/`);
     await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
     await onlyFixture("agent picker", async () => {
       // The page is "New chat", not the agent: with one hub its name is the brand too.
       await page.waitForFunction(() => document.title === "New chat · Hubzoid");
-      const cards = page.getByRole("radiogroup", { name: "Choose an agent" }).getByRole("radio");
-      assert.equal(await cards.count(), 3);
+      // The agent's name in the header opens the menu; the page itself has no list.
+      assert.equal(await page.getByRole("listbox", { name: "Choose an agent" }).count(), 0);
+      await page.getByTestId("agent-switcher").click();
+      const menu = page.getByRole("listbox", { name: "Choose an agent" });
+      assert.equal(await menu.getByRole("option").count(), 3);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden" });
       await page.goto(`${BASE}/?agent=finance`);
-      await page.getByRole("radio", { name: /Finance Assistant/ }).and(page.locator('[aria-checked="true"]')).waitFor();
       await page.getByRole("heading", { name: "What can Finance Assistant help with?" }).waitFor();
+      await page.getByTestId("agent-switcher").click();
+      await menu.getByRole("option", { name: /Finance Assistant/, selected: true }).waitFor();
+      await page.keyboard.press("Escape");
       await page.goto(`${BASE}/?models=it-ops`);
       await page.getByRole("heading", { name: "What can IT Ops help with?" }).waitFor();
       await page.goto(`${BASE}/?agent=nobody`);
       // The last agent used (IT Ops, just above) takes its place.
       await page.getByText("The agent in that link isn't available to you, so this chat uses IT Ops.").waitFor();
-      await page.getByRole("radio", { name: /Hubzoid Guide/ }).click();
+      // "Change agent" under the greeting opens the same menu.
+      await page.getByRole("button", { name: "Change agent", exact: true }).click();
+      await menu.getByRole("option", { name: /Hubzoid Guide/ }).click();
+      await menu.waitFor({ state: "hidden" });
       await page.getByRole("heading", { name: "What can Hubzoid Guide help with?" }).waitFor();
       await page.getByRole("button", { name: "What is Hubzoid?" }).waitFor();
     });
@@ -769,10 +779,10 @@ function chartPng(width = 160, height = 100) {
     await mobile.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
     await noHorizontalScroll(mobile, "phone new chat");
     if (fixture) {
-      // The empty state starts at the top, with the agent cards in view.
+      // The empty state starts at the top; the header names the agent and opens the menu.
       await mobile.waitForTimeout(300);
       assert.equal(await mobile.getByTestId("thread-viewport").evaluate((el) => el.scrollTop), 0);
-      await mobile.getByRole("radiogroup", { name: "Choose an agent" }).waitFor();
+      await mobile.getByTestId("agent-switcher").waitFor();
     }
     await shot(mobile, "app-19-phone-new-chat");
     await mobile.getByRole("button", { name: "Open navigation" }).click();
@@ -871,12 +881,13 @@ function chartPng(width = 160, height = 100) {
       await shot(page, "app-24-no-agents");
       await fetch(`${BASE}/__fixture/flag/no_agents/false`);
 
-      step("With many agents a new chat offers a searchable list, recent agents first");
+      step("With many agents the header menu searches them, recent agents first");
       await fetch(`${BASE}/__fixture/flag/many_agents/true`);
       await page.goto(`${BASE}/`);
+      await page.getByTestId("agent-switcher").click();
       const search = page.getByRole("combobox", { name: "Search agents" });
       await search.waitFor();
-      assert.equal(await page.getByRole("radiogroup", { name: "Choose an agent" }).count(), 0);
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Search agents");
       // Agents this browser chatted with come first; the rest follow by name.
       assert.ok((await page.getByRole("group", { name: "Recent" }).getByRole("option").count()) >= 1);
       await page.getByRole("group", { name: "All agents" }).getByRole("option", { name: /Data Requests/ }).waitFor();
@@ -884,11 +895,13 @@ function chartPng(width = 160, height = 100) {
       assert.equal(await page.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 1);
       await search.press("Enter");
       await page.getByRole("heading", { name: "What can Payroll Desk help with?" }).waitFor();
+      await page.getByTestId("agent-switcher").click();
       await page.getByRole("option", { name: /Payroll Desk/, selected: true }).waitFor();
       await shot(page, "app-24b-many-agents");
       await axe(page, "many agents");
       await search.fill("nothing like this");
       await page.getByText("No agent matches “nothing like this”.").waitFor();
+      await page.keyboard.press("Escape");
       await fetch(`${BASE}/__fixture/flag/many_agents/false`);
 
       step("A one-time link sets a password and signs in; a used link says so");
