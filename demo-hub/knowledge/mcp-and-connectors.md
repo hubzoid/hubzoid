@@ -77,7 +77,7 @@ user connects with their own credential, and the hub's access rules apply.
   reaches them with the same credential.
 - For tools where each user must act as themselves, an administrator
   registers the MCP server and each user connects their own account in
-  the web app (Account, Connections). In the legacy Open WebUI mode,
+  the web app (Account, Connections). In Open WebUI mode,
   per-user MCP servers registered in Open WebUI (`OWUI_NATIVE_MCP=true`)
   do this. See `docs/mcp.md` in the repository before enabling it.
 - Hubzoid does not store `.mcp.json` OAuth tokens. They live wherever the

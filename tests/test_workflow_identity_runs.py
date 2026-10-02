@@ -56,6 +56,7 @@ _SETUP = textwrap.dedent('''
     gs = store_for(sys.argv[1])
     for who in ("alice@company.com", "bob@company.com", "carol@company.com"):
         gs.upsert_identity(email=who, owui_id="id-" + who)
+        gs.grant(who, "team", "use_hub", actor="test")
 ''')
 
 _RUN = textwrap.dedent('''
@@ -225,7 +226,9 @@ def test_markdown_task_acts_as_its_run_as(team):
     (hub / "schedule" / "who.md").write_text(_MD_TASK)
     subprocess.run([sys.executable, "-c",
                     "import sys\nfrom hubzoid.access import store_for\n"
-                    "store_for(sys.argv[1]).upsert_identity(email='dana@company.com', owui_id='d')",
+                    "gs = store_for(sys.argv[1])\n"
+                    "gs.upsert_identity(email='dana@company.com', owui_id='d')\n"
+                    "gs.grant('dana@company.com', 'team', 'use_hub', actor='test')",
                     str(hub)], env=env, check=True)
     proc = subprocess.run([sys.executable, "-c", _MD_RUN, str(hub)], env=env,
                           capture_output=True, text=True, timeout=180)
