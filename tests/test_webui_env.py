@@ -26,8 +26,9 @@ def captured_env(tmp_path, monkeypatch):
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     captured: dict[str, str] = {}
 
-    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
         captured.update(env or {})
+        captured["__cwd__"] = cwd
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         return proc
@@ -345,7 +346,7 @@ def captured_cmd(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     captured: list[list[str]] = []
 
-    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
         captured.append(list(cmd))
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
@@ -423,3 +424,14 @@ def test_operator_env_beats_mcp_key_defaults(captured_env, tmp_path, monkeypatch
     monkeypatch.setenv("ENABLE_API_KEYS", "False")
     env = _start(captured_env, tmp_path, enable_api_keys=True)
     assert env["ENABLE_API_KEYS"] == "False"
+
+
+def test_open_webui_runs_in_its_data_folder(captured_env, tmp_path, monkeypatch):
+    """Without WEBUI_SECRET_KEY, `open-webui serve` writes `.webui_secret_key`
+    into its working directory. Starting it in the data folder keeps that key
+    out of wherever `hubzoid run` was launched, such as a git checkout."""
+    monkeypatch.chdir(tmp_path)
+    env = _start(captured_env, tmp_path)
+    assert env["__cwd__"] == env["DATA_DIR"]
+    assert Path(env["__cwd__"]).is_relative_to(tmp_path / "my-hub")
+

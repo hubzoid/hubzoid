@@ -655,6 +655,9 @@ def _spawn_owui(
     log_path = data_dir / "openwebui.log"
     log_file = log_path.open("ab", buffering=0)
     cmd = [binary, "serve", "--host", ui_host, "--port", str(ui_port)]
-    proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
+    # Run inside the data folder: without WEBUI_SECRET_KEY, `open-webui serve`
+    # writes a generated key to `.webui_secret_key` in its working directory,
+    # which would otherwise be wherever `hubzoid run` started (a git checkout).
+    proc = subprocess.Popen(cmd, env=env, cwd=str(data_dir), stdout=log_file, stderr=subprocess.STDOUT)
     proc._log_path = log_path  # type: ignore[attr-defined]
     return proc

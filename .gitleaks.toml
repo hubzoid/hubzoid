@@ -1,0 +1,23 @@
+# Secret scanning (gitleaks), run by .github/workflows/secrets.yml on every push
+# and pull request over the whole history. Run it locally with:
+#   gitleaks git --config .gitleaks.toml --redact .
+title = "hubzoid"
+
+[extend]
+useDefault = true
+
+# Files that hold a secret whatever their contents look like. The default rules
+# match recognisable token formats, so a random key in a file of its own passes
+# them: Open WebUI's .webui_secret_key was committed that way.
+[[rules]]
+id = "key-file"
+description = "A key or certificate file, which never belongs in git"
+path = '''(^|/)(\.webui_secret_key|secret\.key|[^/]+\.(pem|p12|pfx|jks)|id_(rsa|dsa|ecdsa|ed25519))$'''
+
+# Environment files hold real settings; only the .env.example templates belong in git.
+[[rules]]
+id = "env-file"
+description = "An environment file (commit .env.example instead)"
+path = '''(^|/)\.env(\.[^/]*)?$'''
+[[rules.allowlists]]
+paths = ['''(^|/)\.env\.example$''']

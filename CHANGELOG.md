@@ -204,8 +204,18 @@ upgrade requirements and its known limits.
   still runs the full validation, now with the `openwebui` extra installed.
 - A hygiene test keeps key files, local paths and unapproved customer names
   out of the tracked tree.
+- Secret scanning: gitleaks (`.github/workflows/secrets.yml`, rules in
+  `.gitleaks.toml`) checks every push and pull request, the whole history and
+  the current files. Key files such as `.webui_secret_key` and `secret.key`
+  fail it whatever their contents, and so does any `.env` file other than
+  `.env.example`.
 
 ### Fixes
+- Open WebUI starts inside its data folder. Without `WEBUI_SECRET_KEY` it
+  writes a generated key to `.webui_secret_key` in its working directory, which
+  was wherever `hubzoid run` started, such as a git checkout. One such key was
+  committed at the repository root; it is removed, was never used by a known
+  deployment, and is retired.
 - The Console names agents as the chat app does (`hubzoid-guide` shows as
   Hubzoid Guide).
 - Hubs sharing one PostgreSQL workflow database no longer collide on markdown

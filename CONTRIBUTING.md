@@ -84,6 +84,11 @@ pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker
 ```
 
+CI also scans every push and pull request for secrets with gitleaks
+(`.gitleaks.toml`). Run it before pushing with
+`gitleaks git --config .gitleaks.toml --redact .` A fake key a test needs gets a
+`# gitleaks:allow` comment on its line.
+
 The shared browser (`HUBZOID_BROWSER`) gives every agent one shared,
 resource-limited Playwright browser — see [docs/BROWSER.md](docs/BROWSER.md).
 

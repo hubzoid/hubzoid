@@ -21,7 +21,7 @@ import pytest
 pytestmark = [pytest.mark.slow,
               pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")]
 
-KEY = "sk-or-v1-dbos-test-SECRET-9876543210"
+KEY = "sk-or-v1-dbos-test-SECRET-9876543210"  # gitleaks:allow (a fake key for the test)
 
 _WORKFLOW = textwrap.dedent('''
     import os, time

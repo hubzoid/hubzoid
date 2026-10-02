@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -71,10 +72,29 @@ def test_missing_changelog_prevents_new_release(tmp_path):
 
 def test_only_publishing_a_release_triggers_the_release_pipeline():
     workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
-    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/tests.yml"]
+    assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/secrets.yml",
+                         ROOT / ".github/workflows/tests.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
     config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert config["on"] == {"release": {"types": ["published"]}}
+
+
+def test_every_push_and_pull_request_is_scanned_for_secrets():
+    """gitleaks over the history and the current files, pinned and checksummed,
+    with rules that catch key files whatever their contents look like."""
+    text = (ROOT / ".github/workflows/secrets.yml").read_text()
+    config = yaml.load(text, Loader=yaml.BaseLoader)
+    assert config["on"] == {"pull_request": "", "push": ""}
+    assert config["permissions"] == {"contents": "read"}
+    job = config["jobs"]["gitleaks"]
+    assert job["steps"][0]["with"]["fetch-depth"] == "0"
+    assert len(job["env"]["GITLEAKS_SHA256"]) == 64 and "sha256sum -c" in text
+    runs = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "gitleaks git --config .gitleaks.toml" in runs and "gitleaks dir --config .gitleaks.toml" in runs
+    rules = tomllib.loads((ROOT / ".gitleaks.toml").read_text())
+    key_file = next(r for r in rules["rules"] if r["id"] == "key-file")
+    assert re.search(key_file["path"], ".webui_secret_key") and re.search(key_file["path"], "x/secret.key")
+    assert ".webui_secret_key" in (ROOT / ".gitignore").read_text().split()
 
 
 def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
