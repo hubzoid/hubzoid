@@ -25,7 +25,10 @@ class OwnershipLost(BaseException):
     or step as its outcome, and recovery would replay that failure under the
     next owner. Nothing is recorded for this one: the run stays PENDING, as
     after a crash, and the next owner's startup recovery queues it again.
-    Author code that catches Exception cannot swallow it."""
+    Author code that catches Exception cannot swallow it.
+
+    Verified against DBOS 3.1.0 (pinned). Before upgrading DBOS, rerun
+    test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable."""
 
 
 class Owner:

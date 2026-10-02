@@ -305,6 +305,9 @@ upgrade requirements and its known limits.
 - On PostgreSQL, a new engine owner waits for the previous owner's lease to
   lapse, so after a crash workflows resume up to 90 seconds later. A clean stop
   releases it at once.
+- Alerts start from the upgrade: the first start looks back 24 hours, and
+  older failures are not alerted. After that, downtime of any length is caught
+  up.
 
 ### Known limits
 - Per-address sign-in limits depend on `X-Forwarded-For` from a TLS proxy.
@@ -319,6 +322,9 @@ upgrade requirements and its known limits.
 - Arbitrary synchronous workflow code cannot be stopped at its deadline. It
   keeps its thread and ticket partition until it returns.
 - Event and alert records have no automatic retention yet.
+- Two processes serving one PostgreSQL hub: if the old owner is paused beyond
+  its lease while its session ends, runs it claims on resuming stay pending
+  until the owning bridge restarts.
 - The release notes list the remaining limits.
 
 ## [1.0.3]

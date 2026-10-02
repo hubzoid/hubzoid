@@ -341,6 +341,17 @@ of `<timestamp>.<raw body>` using the secret. Timestamps are Unix seconds and
 must be within five minutes. Provider-specific signing formats need their own
 verified adapter. This is not a claim of native authentication for every provider.
 
+A body that is a JSON array is refused with 422. Zoho Desk's built-in webhooks
+send an array of events and sign it with a JWT (`X-ZDesk-JWT`), which Hubzoid
+does not verify, so use a Zoho Desk workflow rule with a custom function that
+POSTs a JSON object with the secret header instead. One rule can run on
+**Create** and another on **Customer Reply**. Put what changes per occurrence
+in the body and in `event_key`, for example the trigger and the time it
+fired: a repeat with the same key and body is the same event, so a reply that
+sends only the ticket id counts as a repeat of the first delivery and starts
+nothing. The legacy single webhook (`WEBHOOK_INBOUND_NAME`) likewise drops an
+identical body seen within the last 10 to 20 minutes.
+
 Webhook names are lowercase letters, digits, `-` and `_`. `whatsapp`, `telegram`
 and the hub's legacy inbound webhook name (`WEBHOOK_INBOUND_NAME`, default
 `webhook`) are already routes of the hub's inbound server, so they are refused
@@ -420,6 +431,16 @@ is not interrupted. On PostgreSQL a new owner also
 waits for the previous owner's lease to lapse, so after a crash workflows
 resume up to 90 seconds later. A clean stop releases the lease at once.
 
+One case is not recovered automatically. Two processes must serve the same hub
+on PostgreSQL. The old owner must be unable to run for longer than the lease (a
+paused virtual machine or a long network partition) while its database session
+ends, and it must claim queued work the moment it resumes, before it notices
+the loss. Those runs then stay pending, without side effects, and hold their
+workflow's queue until the owning bridge restarts, which queues them again.
+A frozen process alone keeps its session and its lock, so it cannot be taken
+over. Run one bridge per hub, and restart the owning bridge if runs stay
+pending after such an outage.
+
 ## Deadlines and alerts
 
 `hub.call_llm(..., timeout=120)`, `hub.call_jev(..., timeout=90)` and
@@ -450,8 +471,10 @@ Resume from the Console or `hubzoid schedule resume` after fixing the cause.
 
 The engine checks for finished runs every 30 seconds. It reads only runs that
 finished since its last check, by completion time, from a cursor kept in the
-operational store, so a long outage is caught up and history size does not
-slow it down. On its first start it looks back 24 hours.
+operational store, so history size does not slow it down. On its very first
+start (a hub new to 1.1) it looks back 24 hours only: runs that finished
+before then are never alerted, and there is no historical backfill. From then
+on the cursor catches up downtime of any length.
 
 Destinations under `alerts.to` accept `webhook: ENV_VAR`, `slack: ENV_VAR` (incoming
 webhook), and `email: address`. Email uses the existing deployment SMTP settings.

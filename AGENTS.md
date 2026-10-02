@@ -71,6 +71,13 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 
 ## Editing rules
 
+- DBOS is pinned (`dbos==3.1.0`). Workflow ownership loss depends on DBOS
+  recording only `Exception` outcomes: `ownership.OwnershipLost` is a
+  `BaseException`, so a run that meets an ownership guard stays recoverable
+  instead of failing. Before changing the pin, read DBOS's step and workflow
+  outcome handling again and run
+  `tests/test_postgres_acceptance.py::test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable`
+  (with the rest of `tests/test_workflow*.py`). It must pass unchanged.
 - The hub structure is the contract. Adding required files or fields is a
   breaking change for every existing hub. Avoid.
 - Folder names are case- and plural-insensitive (see `hubzoid/_fs.py`). Any new
