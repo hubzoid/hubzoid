@@ -37,8 +37,8 @@ classifiers = [
 ]
 
 # Everything needed to run `hubzoid run <hub>`, web app included, is a required
-# dependency: `pip install hubzoid` is enough. The Open WebUI chat app is optional
-# for one release (legacy mode, HUBZOID_UI=openwebui): pip install "hubzoid[openwebui]".
+# dependency: `pip install hubzoid` is enough. The Open WebUI chat app is an
+# optional extra (Open WebUI mode, HUBZOID_UI=openwebui): pip install "hubzoid[openwebui]".
 dependencies = [
   # Bounds: lower = the version this release was tested with; upper = the next
   # release line that may break us (next minor for 0.x packages, next major
@@ -62,7 +62,7 @@ dependencies = [
   "pwdlib[argon2,bcrypt]>=0.3.1,<0.4",  # hubzoid.auth: argon2 password hashes; verifies bcrypt hashes moved from Open WebUI
   "python-multipart>=0.0.32,<0.1",  # FastAPI form and file uploads (chat attachments, sign-in forms)
 
-  # Open WebUI caps. Remove them when the `openwebui` extra goes.
+  # Open WebUI caps: the shared dependencies the `openwebui` extra needs.
   # open-webui 0.11.4 pins these shared dependencies exactly. While it was a
   # required dependency, every install got those versions, and they are the set
   # Hubzoid is tested with. The core install keeps their release lines for this

@@ -1003,7 +1003,7 @@ def gateway(
 
     Hubzoid web app (the default): N bridges and one edge, no Open WebUI. Every
     bridge shares the operational store (accounts, sessions, conversations,
-    groups, access), so one sign-in covers every agent the person may use. The
+    access), so one sign-in covers every agent the person may use. The
     edge sends /b/<slug>/api, /artifacts, /mcp and /branding to that hub's
     bridge and everything else to the first bridge. The page chrome comes from
     HUBZOID_GATEWAY_BRANDING (a hub slug or a path), <data-dir>/branding/, or

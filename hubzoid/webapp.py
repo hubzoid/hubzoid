@@ -6,7 +6,7 @@ registers, in order:
   1. sign-in routes          hubzoid.auth.routes.mount        (/api/auth, /oauth)
   2. chat routes             hubzoid.chat.routes.mount        (/api/chat, /api/conversations, /api/shares)
   3. connection routes       hubzoid.connectors.routes.mount  (/api/connections, /portal/api/connectors)
-  4. gateway and groups      hubzoid.webapp_gateway.mount     (/api/agents, /api/branding, /portal/api/groups)
+  4. agents and branding    hubzoid.webapp_gateway.mount     (/api/agents, /api/branding)
   5. the page shell          GET /, /c/*, /s/*, /auth*, /account*
 
 It must run BEFORE ``portal.mount_portal``: the Console's static files are

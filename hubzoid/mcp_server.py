@@ -129,11 +129,11 @@ def build_registry(
 def _mcp_identity(hub_dir: Path) -> "access.Identity":
     """The verified identity for the current MCP request.
 
-    Reads the access token FastMCP's auth layer attached to this request and
-    resolves the user's groups fresh from OWUI's database, so a group change
-    in the admin panel applies to the caller's next call — same freshness as
-    the chat path. Anonymous when no token is bound (should not happen once
-    auth is configured, but fail-closed is the rule).
+    Reads the access token FastMCP's auth layer attached to this request (the
+    person who signed in over OAuth). Their grants are read fresh on every
+    call, so a change in the Console applies to their next call. Anonymous
+    when no token is bound (should not happen once auth is configured, but
+    fail-closed is the rule).
     """
     from fastmcp.server.dependencies import get_access_token
 

@@ -29,7 +29,7 @@ import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
 import { cancelRun, ChatSession, pollRun } from "./session";
 import { Thread } from "./Thread";
-import { lastAgent, rememberAgent } from "../lib/recentAgents";
+import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
 
 type Load = { status: "loading" } | { status: "ready"; detail: ConversationDetail | null } | { status: "error"; error: unknown };
 
@@ -245,6 +245,7 @@ function ChatView({
       events: {
         onConversationCreated: (c) => {
           setConversation(c);
+          rememberAgent(c.agent);
           // It exists now, so it joins the list either way.
           if (onScreen.current) onConversationCreated(c, pageKey);
           else upsertConversation(c);
@@ -290,7 +291,7 @@ function ChatView({
   );
 
   useEffect(() => {
-    if (!session.conversationId && agent.id) rememberAgent(agent.id);
+    if (!session.conversationId && agent.id) rememberLast(agent.id);
   }, [agent.id, session]);
 
   const chatModel = useMemo(() => session.chatModelAdapter(), [session]);

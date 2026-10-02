@@ -260,9 +260,8 @@ def build_app() -> FastAPI:
         # don't send an id still get a consistent directory.
         chat_id = _derive_chat_id(body, request, messages)
         identity = _derive_identity(body, request, hub_dir)
-        # Hub-entry gate: once Casbin is authoritative, a caller must hold
-        # `use_hub` (verified identity) to chat at all — read knowledge, use even
-        # unrestricted tools. Fail-closed; skipped for un-migrated hubs.
+        # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
+        # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
         _enforce_use_hub(request, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
@@ -725,8 +724,8 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
 
     That is Open WebUI mode. In the web app mode the headers count
     only when a valid ``X-Hubzoid-Assertion`` covers exactly their values
-    (``hubzoid.assertions``); the groups are then the person's Hubzoid groups,
-    the roster's and the asserted ones. Without one the request is anonymous
+    (``hubzoid.assertions``); the groups are then the roster's and the
+    asserted ones (descriptive only). Without one the request is anonymous
     on the ``api`` surface, and ``body["user"]`` is ignored.
     """
     openwebui, vouched = _trust(request, hub_dir)
