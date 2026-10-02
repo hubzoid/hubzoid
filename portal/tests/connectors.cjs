@@ -1,4 +1,5 @@
-// Browser checks for the Connectors screen (personal connections registry).
+// Browser checks for an agent's Connectors tab (personal connections: the
+// servers registered once and offered in each agent).
 // Like journey.cjs: the built assets (hubzoid/portal_dist) run against a small
 // synthetic API through request interception. No server, no live data.
 //
@@ -11,10 +12,12 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "../../hubzoid/portal_dist");
 const ORIGIN = "http://hubzoid.test";
 const SECRET = "shown-once-never-again";
+const HUBS = [{ key: "sales", name: "Sales Assistant" }, { key: "support", name: "Support Assistant" }];
 
 function fixture() {
   const state = {
     org: true,
+    webApp: true,
     calls: [],
     connectors: [
       {
@@ -22,29 +25,39 @@ function fixture() {
         client_id: null, has_client_secret: false, scopes: null, tool_allowlist: ["search_threads", "get_thread"],
         enabled: true, capability: "connector_gmail", dynamic_client: true, created_by: "ada@example.org",
         created_at: 1790000000, updated_at: 1790000000,
-        redirect_uri: `${ORIGIN}/oauth/connectors/gmail/callback`, connections: 3,
+        redirect_uri: `${ORIGIN}/oauth/connectors/gmail/callback`, connections: 3, agents: ["sales"],
       },
       {
         id: "linear", name: "Linear", url: "https://mcp.linear.example/sse", auth_type: "oauth",
         client_id: "hubzoid-linear", has_client_secret: true, scopes: "read write", tool_allowlist: null,
         enabled: true, capability: "connector_linear", dynamic_client: false, created_by: "ada@example.org",
         created_at: 1790000000, updated_at: 1790000000,
-        redirect_uri: `${ORIGIN}/oauth/connectors/linear/callback`, connections: 0,
+        redirect_uri: `${ORIGIN}/oauth/connectors/linear/callback`, connections: 0, agents: ["sales"],
+      },
+      {
+        id: "notion", name: "Notion", url: "https://mcp.notion.example/mcp", auth_type: "oauth",
+        client_id: null, has_client_secret: false, scopes: null, tool_allowlist: null,
+        enabled: true, capability: "connector_notion", dynamic_client: true, created_by: "ada@example.org",
+        created_at: 1790000000, updated_at: 1790000000,
+        redirect_uri: `${ORIGIN}/oauth/connectors/notion/callback`, connections: 1, agents: ["support"],
       },
     ],
   };
   const fail = (status, code, message) => Object.assign(new Error(message), { status, code, message });
-  function handle(method, endpoint, body) {
+  function handle(method, endpoint, body, search = "") {
     if (endpoint === "/me")
-      return { subject: "ada@example.org", org_admin: state.org, manageable: ["sales"], grantable: { sales: [] },
-               account_admin: state.org, can_create_accounts: false, accounts_configured: true,
-               sign_in: { password: true, google: false } };
-    if (endpoint === "/hubs") return { hubs: [{ key: "sales", name: "Sales Assistant", authoritative: true }] };
-    const m = endpoint.match(/^\/connectors(?:\/([^/]+))?(\/test)?$/);
+      return { subject: "ada@example.org", org_admin: state.org, manageable: HUBS.map((h) => h.key),
+               grantable: { sales: [], support: [] }, account_admin: state.org, can_create_accounts: false,
+               accounts_configured: true, sign_in: { password: true, google: false }, web_app: state.webApp };
+    if (endpoint === "/hubs") return { hubs: HUBS };
+    if (endpoint === "/openwebui-connectors")
+      return { native: true, servers: [{ id: "odoo", name: "Odoo", url: "https://erp.example.org/mcp", enabled: true,
+                                          permission: "connector_odoo" }] };
+    const m = endpoint.match(/^\/connectors(?:\/([^/]+))?(?:(\/test)|\/agents\/([^/]+))?$/);
     if (!m) throw fail(404, "not_found", "Unknown endpoint");
     if (!state.org) throw fail(403, "forbidden", "Only organization administrators manage connectors.");
-    state.calls.push({ method, endpoint, body });
-    const [, id, test] = m;
+    state.calls.push({ method, endpoint, body, search });
+    const [, id, test, agent] = m;
     const found = id && state.connectors.find((c) => c.id === id);
     if (!id && method === "GET") return { connectors: state.connectors };
     if (!id && method === "POST") {
@@ -54,12 +67,17 @@ function fixture() {
         has_client_secret: !!body.client_secret, scopes: body.scopes ?? null, tool_allowlist: body.tool_allowlist ?? null,
         enabled: body.enabled, capability: `connector_${body.id}`, dynamic_client: false, created_by: "ada@example.org",
         created_at: 1790000100, updated_at: 1790000100, redirect_uri: `${ORIGIN}/oauth/connectors/${body.id}/callback`,
-        connections: 0,
+        connections: 0, agents: [new URLSearchParams(search).get("hub")].filter(Boolean),
       };
       state.connectors.push(c);
       return { connector: c };
     }
     if (!found) throw fail(404, "not_found", "No connector has this ID.");
+    if (agent) {
+      found.agents = found.agents.filter((a) => a !== agent);
+      if (method === "PUT") found.agents.push(agent);
+      return {};
+    }
     if (test)
       return found.id === "linear"
         ? { connector_id: found.id, auth_type: "oauth", ok: false, redirect_uri: found.redirect_uri,
@@ -110,7 +128,7 @@ const step = (name) => {
         const endpoint = url.pathname.slice("/portal/api".length);
         const body = ["POST", "PATCH"].includes(request.method()) && request.postData() ? request.postDataJSON() : undefined;
         try {
-          const data = fx.handle(request.method(), endpoint, body);
+          const data = fx.handle(request.method(), endpoint, body, url.search);
           return data === undefined ? route.fulfill({ status: 204, body: "" }) : route.fulfill({ json: data });
         } catch (e) {
           return route.fulfill({ status: e.status || 500, json: { detail: { code: e.code, message: e.message } } });
@@ -128,11 +146,13 @@ const step = (name) => {
     // The list reloads after each change, so look for the last write.
     const last = () => [...fx.state.calls].reverse().find((c) => c.method !== "GET");
 
-    step("Organization administrators find Connectors in the navigation");
-    await page.goto(`${ORIGIN}/portal/#/agents`);
-    await page.getByRole("menuitem", { name: "Connectors" }).click();
-    await page.getByRole("heading", { name: "Connectors", level: 1 }).waitFor();
-    assert.equal(await page.evaluate(() => location.hash), "#/connectors");
+    step("Organization administrators find Connectors in each agent");
+    await page.goto(`${ORIGIN}/portal/#/agents/sales/access`);
+    await page.locator(".ant-tabs").getByRole("link", { name: "Connectors", exact: true }).click();
+    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), "#/agents/sales/connectors");
+    // Only the connectors this agent offers are listed; Notion is another agent's.
+    assert.equal(await page.getByRole("row").filter({ hasText: "notion.example" }).count(), 0);
 
     step("The list shows each connector's sign-in, tools, people and switch");
     const gmail = page.getByRole("row").filter({ hasText: "Gmail" });
@@ -164,6 +184,7 @@ const step = (name) => {
     await drawer().getByRole("button", { name: "Add connector" }).click();
     await page.getByText("Google Drive was added.").waitFor();
     const created = fx.state.calls.find((c) => c.method === "POST" && c.endpoint === "/connectors");
+    assert.equal(created.search, "?hub=sales", "a new connector is offered in the agent it was added from");
     assert.deepEqual(created.body, {
       name: "Google Drive", url: "https://drive.example.org/mcp", auth_type: "oauth", scopes: null,
       tool_allowlist: null, enabled: true, client_id: "drive-client", client_secret: SECRET, id: "google_drive",
@@ -210,9 +231,23 @@ const step = (name) => {
     await page.getByText("Linear is switched off.").waitFor();
     assert.deepEqual(last().body, { enabled: false });
 
+    step("Another agent's connector can be offered here, and stopped here only");
+    await page.getByRole("combobox", { name: "Offer a connector another agent offers" }).click();
+    await page.locator(".ant-select-item-option", { hasText: "Notion" }).click();
+    await page.getByText("Sales Assistant now offers it.", { exact: false }).waitFor();
+    assert.deepEqual([last().method, last().endpoint], ["PUT", "/connectors/notion/agents/sales"]);
+    const notion = page.getByRole("row").filter({ hasText: "Notion" });
+    await notion.getByRole("button", { name: "More actions for Notion" }).click();
+    await page.getByRole("menuitem", { name: "Stop offering in Sales Assistant" }).click();
+    await page.getByText("Their connections stay, and other agents that offer it are not affected.", { exact: false }).waitFor();
+    await page.getByRole("button", { name: "Stop offering" }).click();
+    await page.getByText("Sales Assistant no longer offers Notion.").waitFor();
+    assert.deepEqual([last().method, last().endpoint], ["DELETE", "/connectors/notion/agents/sales"]);
+    assert.deepEqual(fx.state.connectors.find((c) => c.id === "notion").agents, ["support"]);
+
     step("Removing asks first and says what happens to connected people");
     await gmail.getByRole("button", { name: "More actions for Gmail" }).click();
-    await page.getByRole("menuitem", { name: "Remove" }).click();
+    await page.getByRole("menuitem", { name: "Remove from every agent" }).click();
     await page.getByText("3 people lose their connections.", { exact: false }).waitFor();
     await page.getByRole("button", { name: "Remove connector" }).click();
     await page.getByText("Gmail was removed.").waitFor();
@@ -221,15 +256,29 @@ const step = (name) => {
 
     step("At phone width the page does not scroll sideways");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("heading", { name: "Connectors", level: 1 }).waitFor();
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
+    // Once the last dialog's closing animation is over.
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth, null, { timeout: 5000 });
     await page.setViewportSize({ width: 1440, height: 950 });
 
-    step("Agent administrators see neither the entry nor the page");
-    fx.state.org = false;
-    await page.goto(`${ORIGIN}/portal/?again#/connectors`);
-    await page.getByText("Page not found").waitFor();
+    step("An old Connectors bookmark explains where connectors went");
+    await page.goto(`${ORIGIN}/portal/?bookmark#/connectors`);
+    await page.getByText("Connectors are in each agent").waitFor();
     assert.equal(await page.getByRole("menuitem", { name: "Connectors" }).count(), 0);
+
+    step("Agent administrators see where connectors come from but cannot change them");
+    fx.state.org = false;
+    await page.goto(`${ORIGIN}/portal/?again#/agents/sales/connectors`);
+    await page.getByText("Organization administrators add the remote MCP servers", { exact: false }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0);
+
+    step("In Open WebUI mode the tab lists Open WebUI's servers, read-only");
+    fx.state.org = true;
+    fx.state.webApp = false;
+    await page.goto(`${ORIGIN}/portal/?owui#/agents/sales/connectors`);
+    await page.getByText("This deployment uses Open WebUI", { exact: false }).waitFor();
+    await page.getByRole("row").filter({ hasText: "Odoo" }).getByText("connector_odoo").waitFor();
+    assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0);
 
     assert.deepEqual(errors, [], "no page errors");
     console.log(`\nPASS: ${steps.length} connector checks`);

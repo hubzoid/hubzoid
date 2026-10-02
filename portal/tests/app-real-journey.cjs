@@ -1226,8 +1226,9 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await ctx.shot(page, "31-connections-empty");
   await ctx.axe(page, "connections");
 
-  step("The administrator registers the second hub's MCP server in the Console");
-  await page.goto(`${ctx.BASE}/portal/#/connectors`);
+  step("The administrator registers the second hub's MCP server in the agent's Connectors tab");
+  const hubKey = (await (await ctx.setup.get("/portal/api/hubs")).json()).hubs[0].key;
+  await page.goto(`${ctx.BASE}/portal/#/agents/${hubKey}/connectors`);
   await page.getByRole("button", { name: "Add connector" }).first().click();
   const editor = page.locator(".ant-drawer-section[role=dialog]");
   await editor.getByLabel("Name").fill("Remote Notes");
@@ -1245,7 +1246,6 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   step("On a Console-managed agent, using it is a capability: the administrator gives it to Sam");
   await page.goto(`${ctx.BASE}/account/connections`);
   await page.getByTestId(/^connection-/).filter({ hasText: "Remote Notes" }).getByText("Not available to you").waitFor();
-  const hubKey = (await (await ctx.setup.get("/portal/api/hubs")).json()).hubs[0].key;
   await page.goto(`${ctx.BASE}/portal/#/agents/${hubKey}/access`);
   await page.getByRole("button", { name: `Edit access for ${SAM.name}` }).click();
   const access = page.locator(".ant-drawer-section[role=dialog]");

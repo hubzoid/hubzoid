@@ -160,7 +160,6 @@ function step(name) {
     for (const name of ["Finance Assistant", "Support Assistant", "IT Ops Assistant"])
       await page.getByRole("link", { name, exact: true }).waitFor();
     // Simplified landing: attention shows only as per-card tags, no alerts/counts.
-    await page.getByText("Legacy access").waitFor();
     await page.getByText("Scheduler stopped").waitFor();
     await page.getByRole("textbox", { name: "Search agents" }).fill("supp");
     assert.equal(await page.getByRole("link", { name: "Finance Assistant", exact: true }).count(), 0);
@@ -805,15 +804,6 @@ function step(name) {
     state.mutations.length = 0;
     await go("/agents/finance/access");
 
-    // ---- legacy (un-migrated) hub is read-only in the dashboard -------------------------
-    step("A legacy agent shows access read-only (managed in the chat app), with edits disabled");
-    await go("/agents/itops/access"); // itops is not authoritative in the fixture
-    await page.getByText("access is managed in the chat app", { exact: false }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add user" }).isDisabled(), true,
-      "legacy hub must not offer Add user");
-    assert.equal(await page.getByRole("switch").count(), 0);
-    assert.equal(state.mutations.length, 0);
-
     // ---- runs & schedules ---------------------------------------------------------------
     step("Runs & schedules explains workflow state, opens runs and run details with steps");
     await go("/agents/finance/runs");
@@ -1249,7 +1239,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Runs & schedules, Evals and Activity").waitFor();
+    await page.getByText("has Access, Connectors, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity tab, not the org-level sidebar link.
     await page.locator(".ant-tabs").getByRole("link", { name: "Activity", exact: true }).click();
@@ -1424,86 +1414,6 @@ function step(name) {
     });
     assert.equal(await page.getByRole("button", { name: "Apply change" }).count(), 0);
     await context.unroute(`${ORIGIN}/portal/api/change-requests/**`, changeRoute);
-    state.mutations.length = 0;
-
-    // ---- groups (web app mode) ----------------------------------------------------------------
-    step("Groups: an organization administrator creates a group and manages its members");
-    state.role = "org";
-    state.groupsEnabled = true;
-    await page.reload();
-    await go("/groups");
-    await page.getByRole("heading", { name: "Groups", level: 1 }).waitFor();
-    await page.locator(".sidebar").getByRole("link", { name: "Groups", exact: true }).waitFor();
-    await page.getByText("No groups yet.", { exact: false }).waitFor();
-    await page.getByRole("button", { name: "New group" }).click();
-    const newGroup = page.locator(".ant-modal").filter({ hasText: "New group" });
-    await newGroup.getByLabel("Name").fill("Finance, team");
-    await newGroup.getByRole("button", { name: "Create group" }).click();
-    await newGroup.getByText("Group names can’t contain commas or semicolons.").waitFor();
-    assert.notEqual(lastMutation()?.endpoint, "/groups", "an invalid name is never sent");
-    await newGroup.getByLabel("Name").fill("Finance team");
-    await newGroup.getByLabel(/^Members/).fill("daniel.okafor@example.org\nnew.hire@example.org");
-    await newGroup.getByRole("button", { name: "Create group" }).click();
-    await drawer().getByText("Members · 2").waitFor();
-    assert.deepEqual(lastMutation(), { endpoint: "/groups", name: "Finance team", description: null,
-                                       emails: ["daniel.okafor@example.org", "new.hire@example.org"] });
-    await drawer().getByText("This group gives no access yet.", { exact: false }).waitFor();
-    await drawer().getByLabel("Add people").fill("aisha.rahman@example.org");
-    await drawer().getByRole("button", { name: "Add", exact: true }).click();
-    await drawer().getByText("Members · 3").waitFor();
-    await drawer().getByRole("button", { name: "Remove new.hire@example.org from Finance team" }).click();
-    await modalTitle("Remove new.hire@example.org from Finance team?").waitFor();
-    await answer("Remove from group");
-    await drawer().getByText("Members · 2").waitFor();
-    await page.screenshot({ path: path.join(shots, "hubzoid-portal-group.png") });
-    await page.keyboard.press("Escape");
-    await drawer().waitFor({ state: "hidden" });
-    await page.getByRole("link", { name: "Finance team", exact: true }).waitFor();
-
-    step("Groups: a group is given access in the editor, and members show it as held via the group");
-    await go("/agents/finance/access");
-    await page.getByRole("button", { name: "Add group" }).click();
-    const picker = page.locator(".ant-modal").filter({ hasText: "Give a group access to Finance Assistant" });
-    await picker.locator(".ant-select").click();
-    await page.locator(".ant-select-item-option").filter({ hasText: "Finance team" }).click();
-    await picker.getByRole("button", { name: "Choose capabilities" }).click();
-    await drawer().getByText("Group · 2 members", { exact: false }).waitFor();
-    await expand("Restricted tools");
-    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
-    await expand("Administration");
-    assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true,
-                 "a group never holds Manage access");
-    await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByRole("button", { name: /^Save/ }).click();
-    await saved();
-    const applied = lastMutation();
-    assert.equal(applied.endpoint, "/access/apply");
-    assert.equal(applied.subject, "group:g_1");
-    assert.deepEqual(applied.operations, [{ action: "grant", permission: "ledger" }]);
-    await page.getByRole("link", { name: "Finance team", exact: true }).waitFor();
-    await page.getByText("Group · 2 members").waitFor();
-    await page.getByText("Read ledger · via Finance team").first().waitFor();
-    await page.screenshot({ path: path.join(shots, "hubzoid-portal-access-groups.png") });
-    await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
-    await expand("Restricted tools");
-    const heldViaGroup = drawer().getByRole("checkbox", { name: /Read ledger/ });
-    assert.equal(await heldViaGroup.isChecked(), true);
-    assert.equal(await heldViaGroup.isDisabled(), true, "changed in the group, not on the person");
-    await drawer().locator('[data-permission="ledger"]').getByText("Via group", { exact: true }).waitFor();
-    await page.screenshot({ path: path.join(shots, "hubzoid-portal-via-group.png") });
-    await drawer().getByRole("button", { name: "Cancel" }).click();
-
-    step("Groups: deleting a group removes the access it gave");
-    await go("/groups/g_1");
-    await drawer().getByRole("button", { name: "Delete group" }).click();
-    await modalTitle("Delete the group Finance team?").waitFor();
-    await answer("Delete group");
-    await drawer().waitFor({ state: "hidden" });
-    assert.deepEqual(state.grants.filter(([s]) => s === "group:g_1"), []);
-    await go("/agents/finance/access");
-    await page.getByRole("button", { name: "Add group" }).waitFor();
-    assert.equal(await page.getByText("Read ledger · via Finance team").count(), 0);
-    state.groupsEnabled = false;
     state.mutations.length = 0;
 
     // ---- mobile -------------------------------------------------------------------------------

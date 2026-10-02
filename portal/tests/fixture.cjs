@@ -11,8 +11,6 @@ const ORG = "*";
 const EVERYONE = "*";
 const USE_HUB = "use_hub";
 const MANAGE_ACCESS = "manage_access";
-const LEGACY_MSG =
-  "This agent's access is still managed in the chat app — it has not been migrated to the dashboard.";
 
 const HOUR = 3600;
 const NOW = Math.floor(Date.now() / 1000);
@@ -55,9 +53,9 @@ function createFixture() {
     visibility: { state: "ok", updated: NOW - 40 },
     schedulerHeartbeat: iso(30),
     hubs: [
-      { key: "finance", name: "Finance Assistant", authoritative: true },
-      { key: "support", name: "Support Assistant", authoritative: true },
-      { key: "itops", name: "IT Ops Assistant", authoritative: false },
+      { key: "finance", name: "Finance Assistant" },
+      { key: "support", name: "Support Assistant" },
+      { key: "itops", name: "IT Ops Assistant" },
     ],
     catalogs: {
       finance: [
@@ -99,10 +97,9 @@ function createFixture() {
     unavailable: new Set(),
     // How new accounts can sign in (GET /me sign_in).
     signIn: { password: true, google: false },
-    // Groups (the web app mode). Off by default: /me says groups: false and
-    // /groups answers 404, as in Open WebUI mode.
-    groupsEnabled: false,
-    groups: {}, // id -> { id, name, description, members: [emails], created_at }
+    // /me web_app: true in the Hubzoid web app, false in Open WebUI mode; unset
+    // (as before 1.1) by default.
+    webApp: undefined,
     // Chat-app roles set through the Console (GET/POST /accounts/<email>).
     chatRoles: {},
     // Accounts that exist in the chat app but are not recorded here yet
@@ -202,26 +199,17 @@ function createFixture() {
     },
   };
 
-  // A person's groups, as grant subjects (group:<id>). Mirrors GrantStore:
-  // a group grant applies to every member, never Manage access.
-  const groupSubjectsOf = (subject) =>
-    Object.values(state.groups).filter((g) => g.members.includes(subject)).map((g) => `group:${g.id}`);
   const gs = {
     can(subject, hub, action) {
       if (!subject || state.suspended.has(subject) || state.unavailable.has(subject)) return false;
-      if (state.grants.some(
+      return state.grants.some(
         ([s, h, p]) => (s === subject || s === EVERYONE) && (h === hub || h === ORG) && (p === action || p === "*"),
-      )) return true;
-      if (action === MANAGE_ACCESS) return false;
-      const groups = groupSubjectsOf(subject);
-      return state.grants.some(([s, h, p]) => groups.includes(s) && h === hub && p === action);
+      );
     },
     permissionsFor(subject, hub) {
       if (state.suspended.has(subject) || state.unavailable.has(subject)) return [];
-      const groups = groupSubjectsOf(subject);
-      return [...new Set(state.grants.filter(([s, h, p]) =>
-        ((s === subject || s === EVERYONE) && (h === hub || h === ORG)) ||
-        (groups.includes(s) && h === hub && p !== MANAGE_ACCESS)).map(([, , p]) => p))].sort();
+      return [...new Set(state.grants.filter(([s, h]) =>
+        (s === subject || s === EVERYONE) && (h === hub || h === ORG)).map(([, , p]) => p))].sort();
     },
     orgAdmins() {
       return state.grants.filter(([, h, p]) => h === ORG && p === MANAGE_ACCESS).map(([s]) => s);
@@ -236,7 +224,7 @@ function createFixture() {
         if (!state.grants.some(([s, h, p]) => s === r[0] && h === r[1] && p === r[2])) state.grants.push(r);
         gs.audit(actor, "grant", r[0], r[1], r[2]);
       }
-      if (!state.identities[subject] && subject !== EVERYONE && !subject.startsWith("group:"))
+      if (!state.identities[subject] && subject !== EVERYONE)
         state.identities[subject] = { display: null, owui_id: null, pending: 0 };
       state.revision += 1;
     },
@@ -301,7 +289,6 @@ function createFixture() {
       const perm = String(g.permission || "").trim().toLowerCase();
       if (hub === ORG) throw error(422, "Initial access is given per agent.", "invalid_grant");
       requireHub(a, hub);
-      if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG, "legacy");
       if (!grantable(state.catalogs[hub].find((p) => p.permission === perm))) throw error(422, "Unknown permission for this hub", "unknown_permission");
       if (!a.org) {
         if (perm === MANAGE_ACCESS) throw error(403, "Only organization admins may change administrator access", "forbidden");
@@ -381,84 +368,16 @@ function createFixture() {
         return { ok: true };
       }
     }
-    // Groups (contract 6.7): organization administrators only, web app mode only.
-    const grp = endpoint.match(/^\/groups(?:\/([^/]+)(?:\/members(?:\/([^/]+))?)?)?$/);
-    if (grp) {
-      if (!state.groupsEnabled) throw error(404, "Not found");
-      if (!a.org) throw error(403, "Only organization administrators can manage groups.", "org_admin_required");
-      const summary = (g) => ({
-        id: g.id, subject: `group:${g.id}`, name: g.name, description: g.description || "", source: "console",
-        created_by: a.subject, created_at: g.created_at, updated_at: g.created_at, member_count: g.members.length,
-        grant_count: state.grants.filter(([s]) => s === `group:${g.id}`).length,
-      });
-      const detail = (g) => {
-        const byHub = {};
-        for (const [s, h, p] of state.grants) if (s === `group:${g.id}`) (byHub[h] ??= []).push(p);
-        return {
-          ...summary(g),
-          members: g.members.map((email) => ({
-            email, display: state.identities[email]?.display ?? null,
-            account: state.identities[email]?.owui_id ? (state.identities[email].pending ? "pending" : "active") : "none",
-            blocked: state.suspended.has(email), added_at: g.created_at, added_by: a.subject,
-          })),
-          access: Object.entries(byHub).map(([hub, perms]) => ({
-            hub, hub_name: state.hubs.find((h) => h.key === hub)?.name ?? hub, permissions: perms.sort() })),
-        };
-      };
-      const cleanName = (raw) => {
-        const name = String(raw || "").trim().replace(/\s+/g, " ");
-        if (!name || /[,;]/.test(name)) throw error(422, "Enter a group name without commas or semicolons.", "invalid_name");
-        if (Object.values(state.groups).some((g) => g.name.toLowerCase() === name.toLowerCase() && g.id !== grp[1]))
-          throw error(409, `A group named ${name} already exists.`, "name_taken");
-        return name;
-      };
-      const emails = (list) => (list || []).map((e) => String(e).trim().toLowerCase()).filter(Boolean);
-      const [, id, member] = grp;
-      if (!id) {
-        if (method === "GET") return { groups: Object.values(state.groups).map(summary) };
-        const g = { id: `g_${Object.keys(state.groups).length + 1}`, name: cleanName(body.name),
-                    description: body.description || "", members: [...new Set(emails(body.emails))], created_at: NOW };
-        state.groups[g.id] = g;
-        return { group: detail(g) };
-      }
-      const g = state.groups[decodeURIComponent(id)];
-      if (!g) throw error(404, "This group doesn't exist.", "not_found");
-      if (member !== undefined) {
-        const email = decodeURIComponent(member).toLowerCase();
-        if (!g.members.includes(email)) throw error(404, `${email} isn't in this group.`, "not_member");
-        g.members = g.members.filter((m) => m !== email);
-        return {};
-      }
-      if (endpoint.endsWith("/members")) {
-        const added = emails(body.emails).filter((e) => !g.members.includes(e));
-        g.members.push(...added);
-        for (const e of added)
-          if (!state.identities[e]) state.identities[e] = { display: null, owui_id: null, pending: 0 };
-        return { group: detail(g), added };
-      }
-      if (method === "PATCH") {
-        if (body.name !== undefined) g.name = cleanName(body.name);
-        if (body.description !== undefined) g.description = body.description || "";
-        return { group: detail(g) };
-      }
-      if (method === "DELETE") {
-        state.grants = state.grants.filter(([s]) => s !== `group:${g.id}`);
-        delete state.groups[g.id];
-        state.revision += 1;
-        return {};
-      }
-      return { group: detail(g) };
-    }
     switch (endpoint) {
       case "/me":
         return {
-          groups: state.groupsEnabled,
+          web_app: state.webApp,
           subject: a.subject,
           org_admin: a.org,
           manageable: allowedHubs(a).map((h) => h.key),
-          grantable: Object.fromEntries(allowedHubs(a).map((h) => [h.key, h.authoritative ? ceiling(a, h.key) : []])),
+          grantable: Object.fromEntries(allowedHubs(a).map((h) => [h.key, ceiling(a, h.key)])),
           account_admin: a.org,
-          can_create_accounts: a.org || allowedHubs(a).some((h) => h.authoritative),
+          can_create_accounts: a.org || allowedHubs(a).length > 0,
           accounts_configured: true,
           sign_in: state.signIn,
         };
@@ -556,42 +475,20 @@ function createFixture() {
             r[domain === hub ? "perms" : "inherited"].push(perm);
           }
         }
-        // Members who hold access here only through a group are listed too.
-        for (const g of Object.values(state.groups))
-          if (state.grants.some(([s, h]) => s === `group:${g.id}` && h === hub))
-            for (const email of g.members) rows[email] ??= { subject: email, perms: [], inherited: [], kind: "person" };
-        const viaGroups = (subject) => {
-          const out = {};
-          for (const g of Object.values(state.groups))
-            if (g.members.includes(subject))
-              for (const [s, h, p] of state.grants)
-                if (s === `group:${g.id}` && h === hub) (out[p] ??= []).push(g.name);
-          return out;
-        };
         const q = (params.q || "").toLowerCase();
         const list = Object.values(rows)
-          .map((r) => {
-            const group = r.subject.startsWith("group:") ? state.groups[r.subject.slice(6)] : null;
-            if (group)
-              return { ...r, kind: "group", effective: [...r.perms].sort(), display: group.name, status: "group",
-                       group_id: group.id, members: group.members.length, suspended: false, account_unavailable: false };
-            const via = viaGroups(r.subject);
-            return {
-              ...r,
-              effective: gs.permissionsFor(r.subject, hub),
-              display: state.identities[r.subject]?.display || r.subject,
-              status: identityStatus(r.subject),
-              ...(Object.keys(via).length ? { via_groups: via } : {}),
-            };
-          })
+          .map((r) => ({
+            ...r,
+            effective: gs.permissionsFor(r.subject, hub),
+            display: state.identities[r.subject]?.display || r.subject,
+            status: identityStatus(r.subject),
+          }))
           .filter((r) => (r.subject + " " + r.display).toLowerCase().includes(q))
           .sort((x, y) => x.subject.localeCompare(y.subject));
         const offset = Number(params.offset || 0);
         const limit = Number(params.limit || 50);
         return {
           hub,
-          editable: !!state.hubs.find((h) => h.key === hub).authoritative,
-          authoritative: state.hubs.find((h) => h.key === hub).authoritative,
           can_manage_admins: a.org,
           permissions: catalogFor(hub),
           total: list.length,
@@ -600,7 +497,7 @@ function createFixture() {
             id.owui_id && !id.pending && !subject.startsWith("workflow:") && !state.suspended.has(subject) &&
             !state.grants.some(([s, h, p]) => s === subject && h === hub && p === USE_HUB)).length,
           revision: state.revision,
-          grantable: state.hubs.find((h) => h.key === hub).authoritative ? ceiling(a, hub) : [],
+          grantable: ceiling(a, hub),
           viewer: a.subject,
           rows: list.slice(offset, offset + limit),
         };
@@ -618,7 +515,6 @@ function createFixture() {
             throw error(403, "Only organization admins can manage organization administrators");
         } else {
           requireHub(a, hub);
-          if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
           const entry = state.catalogs[hub].find((p) => p.permission === perm);
           const held = state.grants.some(([s, h, p]) => s === subject && h === hub && p === perm);
           if (!grantable(entry) && !(revoke && held)) throw error(422, "Unknown permission for this hub");
@@ -643,13 +539,6 @@ function createFixture() {
         const subject = String(body.subject || "").trim().toLowerCase();
         const hub = String(body.hub || "").trim().toLowerCase();
         requireHub(a, hub);
-        if (subject.startsWith("group:")) {
-          if (!a.org) throw error(403, "Only organization administrators can give access to a group.", "forbidden");
-          if (!state.groups[subject.slice(6)]) throw error(404, "This group doesn't exist.", "unknown_group");
-          if ((body.operations || []).some((op) => String(op.permission).toLowerCase() === MANAGE_ACCESS))
-            throw error(422, "A group can't hold Manage access. Give it to people individually.", "group_admin");
-        }
-        if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
         if (subject === EVERYONE) throw error(403, "Public access is changed with the public-access toggle");
         const ops = body.operations || [];
         const existing = new Set(state.grants.filter(([, h]) => h === hub).map(([s, , p]) => `${s}|${p}`));
@@ -822,13 +711,13 @@ function createFixture() {
           const flows = state.workflows[h.key] || [];
           const subjects = new Set(state.grants.filter(([s, hub]) => hub === h.key && !s.startsWith("workflow:")).map(([s]) => s));
           return {
-            key: h.key, name: h.name, managed: h.authoritative,
+            key: h.key, name: h.name,
             chats: u.chats * scale, messages: u.messages * scale, active_users: u.active_users,
             input_tokens: u.input_tokens * scale, output_tokens: u.output_tokens * scale,
             cost_usd: u.cost_usd == null ? null : Math.round(u.cost_usd * scale * 100) / 100,
             unpriced: u.unpriced * scale, last_activity: u.last_activity,
-            users_with_access: h.authoritative ? [...subjects].filter((s) => s !== EVERYONE).length : null,
-            everyone: h.authoritative ? subjects.has(EVERYONE) : null,
+            users_with_access: [...subjects].filter((s) => s !== EVERYONE).length,
+            everyone: subjects.has(EVERYONE),
             denials: u.denials * scale, has_workflows: flows.length > 0,
             runs: flows.length ? 4 * scale : null, failed: flows.length ? (h.key === "finance" ? scale : 0) : null,
             missed: flows.length ? (h.key === "itops" ? 3 : 0) : null,
@@ -857,14 +746,10 @@ function createFixture() {
         const hs = allowedHubs(a);
         const keys = new Set(hs.map((h) => h.key));
         const grants = state.grants.filter(([, h]) => keys.has(h));
-        const managed = hs.filter((h) => h.authoritative).length;
         return {
           hubs: hs.length,
           grants: grants.length,
           people: new Set(grants.filter(([s]) => s !== EVERYONE).map(([s]) => s)).size,
-          authoritative: managed === hs.length,
-          managed,
-          legacy: hs.length - managed,
           visibility: state.visibility,
         };
       }

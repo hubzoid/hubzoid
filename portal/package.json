@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node tests/journey.cjs",
+    "test": "node tests/journey.cjs && node tests/connectors.cjs",
     "test:app": "node --experimental-strip-types --no-warnings tests/app-stream.test.mts && node --experimental-strip-types --no-warnings tests/app-router.test.mts && node --experimental-strip-types --no-warnings tests/app-images.test.mts && node tests/app-journey.cjs",
     "fixture:app": "node tests/app-fixture-server.cjs",
     "test:app:real": "node tests/app-real-journey.cjs"

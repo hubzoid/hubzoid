@@ -39,8 +39,9 @@ for released users. Groups were added in 1.1 and were never released.
 2. **No Groups.** A migration turns each group grant into the same grant for
    each member, and each artifact shared with a group into a share with each
    member, then drops the group tables. Then the Console Groups screen, group
-   pickers and group resolution go. `hubzoid migrate openwebui` turns Open
-   WebUI group access into per-person grants.
+   pickers and group resolution go. `hubzoid migrate openwebui` moves accounts
+   and chats only: access already lives in the Console, so Open WebUI groups
+   are not imported.
 3. **Connectors inside each agent (web app).** The Console's Connectors section
    becomes an agent tab. A connector is still registered once (one OAuth client,
    one connection per person). A new relation records which agents offer it.
@@ -89,8 +90,9 @@ for released users. Groups were added in 1.1 and were never released.
     never an older copy. Signed-out viewers go to sign-in first. A live board
     republished every two hours then has one bookmark.
 11. **An agent picker that scales.** The new-chat screen shows two large cards
-    per row, which does not work for 10 to 20 agents. Replace it with a compact
-    list with search, the person's recent agents first.
+    per row, which does not work for 10 to 20 agents. Up to six agents keep the
+    cards. With more, a compact list with search, the agents this browser used
+    recently first, then the rest by name.
 12. **Phone numbers in the Console.** A person's record holds an optional
     phone number (one per person, unique), set by an organisation administrator
     when adding the person or later in their account. A WhatsApp sender, or a
@@ -122,6 +124,16 @@ Its Open WebUI findings (no identity binding, routes outside `/portal`, pinned
 Open WebUI is 0.11.4, flags are only defaults) plus
 production use of native connectors moved item 4 out of 1.1. Not accepted: a stranded owner marker after
 a rollback, because rollback is removed and doctor reports a hub nobody may use.
+
+## Outcome
+Implemented on `feat/one-access-model` as planned, with these differences:
+- The redrive command shown for a failed webhook event includes `--hub`,
+  which the CLI needs.
+- A bridge call that names no verified person is refused (403), including a
+  bridge-key call with only `body.user`. API clients send a signed identity
+  (web app mode) or the trusted headers (Open WebUI mode).
+- `appmode.is_legacy` is renamed `appmode.is_openwebui`.
+- The connectors browser check runs with the Console journey (`npm test`).
 
 ## Definition of done
 - A hub deployed without `.hubzoid/` denies a signed-in person without a grant,
