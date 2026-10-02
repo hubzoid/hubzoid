@@ -1249,7 +1249,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Runs & schedules and Activity").waitFor();
+    await page.getByText("has Access, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity tab, not the org-level sidebar link.
     await page.locator(".ant-tabs").getByRole("link", { name: "Activity", exact: true }).click();
