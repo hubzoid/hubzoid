@@ -286,7 +286,12 @@ def owui_fixture(request, tmp_path_factory) -> Path:
 
     Cached across runs in pytest's cache folder; with the cache plugin off
     (``-p no:cacheprovider``) it is built once per session in a temp folder."""
-    version = importlib.metadata.version("open-webui")
+    try:
+        version = importlib.metadata.version("open-webui")
+    except importlib.metadata.PackageNotFoundError:
+        # The core install has no Open WebUI to build the fixture with. The
+        # release pipeline installs the `openwebui` extra and runs these.
+        pytest.skip("needs the openwebui extra: Open WebUI builds the fixture database")
     key = hashlib.sha256((BUILD + version).encode()).hexdigest()[:16]
     cache = getattr(request.config, "cache", None)
     base = (Path(cache.mkdir("hubzoid-owui-migration")) if cache is not None
