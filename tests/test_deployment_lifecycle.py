@@ -8,11 +8,13 @@ import subprocess
 import sys
 from unittest.mock import MagicMock
 
+import pytest
 from typer.testing import CliRunner
 
 from hubzoid import cli, deployment, webui
 
 
+@pytest.mark.slow
 def test_gateway_child_configuration_is_isolated_and_discoverable(
     tmp_path, monkeypatch
 ):

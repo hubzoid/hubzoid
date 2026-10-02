@@ -15,6 +15,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 _RUN = textwrap.dedent('''
     import json, os, sys
     from hubzoid.workflows import markdown, runtime

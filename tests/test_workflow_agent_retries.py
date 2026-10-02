@@ -73,10 +73,12 @@ def hub(tmp_path):
     return tmp_path / "retry-hub"
 
 
+@pytest.mark.slow
 def test_failed_agent_call_is_not_retried_by_default(hub):
     assert _run(hub) == "OUTCOME=failed:RuntimeError CALLS=1"
 
 
+@pytest.mark.slow
 def test_hub_can_opt_in_to_agent_retries(hub):
     (hub / "workflows" / "settings.yaml").write_text("agent_max_attempts: 3\n")
     assert _run(hub) == "OUTCOME=ok:done CALLS=2"
@@ -142,6 +144,7 @@ _REINIT = textwrap.dedent('''
 ''')
 
 
+@pytest.mark.slow
 def test_reinit_rebuilds_agent_steps_and_hubs_can_share_a_dbos_db(tmp_path):
     hubs = []
     for name in ("hub-a", "hub-b"):

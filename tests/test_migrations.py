@@ -106,6 +106,7 @@ print("OK")
 """
 
 
+@pytest.mark.slow
 def test_many_bridges_starting_at_once(tmp_path):
     db = tmp_path / "shared.db"
     procs = [subprocess.Popen([sys.executable, "-c", _RACE, str(db)],
@@ -154,6 +155,7 @@ print("OK")
 """
 
 
+@pytest.mark.slow
 def test_postgres_many_bridges_starting_at_once(postgres_url):
     _reset_pg(postgres_url)
     procs = [subprocess.Popen([sys.executable, "-c", _PG_RACE, postgres_url],

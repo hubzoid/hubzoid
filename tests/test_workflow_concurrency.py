@@ -10,6 +10,8 @@ import textwrap
 
 import pytest
 
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 _WORKFLOWS = textwrap.dedent('''
     import os, time
     from pathlib import Path

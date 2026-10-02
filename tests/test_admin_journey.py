@@ -308,6 +308,7 @@ def test_sync_replaces_acl_with_empty_after_last_revoke(deployment_client, monke
     assert next(w for w in writes if w["id"] == "finance")["access_grants"] == []
 
 
+@pytest.mark.slow
 def test_real_dbos_run_history_and_duplicate_dispatch(tmp_path):
     import subprocess
     import sys

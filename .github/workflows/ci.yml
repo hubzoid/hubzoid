@@ -50,7 +50,7 @@ jobs:
       - name: Full test suite (legacy Open WebUI mode included)
         run: |
           pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
-          pytest -q --no-header
+          pytest -q --no-header -m ""
 
       - name: Build sdist and wheel
         run: python -m build

@@ -137,7 +137,10 @@ hubzoid = ["*.pyc", "**/__pycache__/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Fast by default; CI and release checks run everything with `-m ""`.
+addopts = "-m 'not (slow or e2e or e2e_llm or e2e_ui or e2e_browser)'"
 markers = [
+  "slow: starts DBOS, Postgres, the gateway or another process (seconds per test)",
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",
   "e2e_ui: end-to-end test that drives Open WebUI in a real browser via Playwright",

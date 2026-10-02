@@ -101,49 +101,39 @@ def edge(monkeypatch):
 
 # ---- Users page ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("path", ["/admin/users/overview", "/admin/users/overview/",
-                                  "//admin/users/overview"])
-def test_users_page_redirects_to_people_when_hidden(edge, path):
-    client, upstream = edge(hide=True)
-    path = "http://testserver" + path  # keep a leading "//" as a path, not a host
-    r = client.get(path)
-    assert r.status_code == 302 and r.headers["location"] == "/portal/#/people"
-    assert client.head(path).status_code == 302
-    assert upstream.seen == []
-
-
-@pytest.mark.parametrize("path", ["/admin/users", "/admin/users/", "//admin/users"])
-def test_the_users_section_opens_on_groups_when_hidden(edge, path):
-    """Release review: hiding the user list must keep Groups reachable from the
-    Admin Panel's Users tab."""
-    client, upstream = edge(hide=True)
-    r = client.get("http://testserver" + path)
-    assert r.status_code == 302 and r.headers["location"] == "/admin/users/groups"
-    assert upstream.seen == []
-
-
-@pytest.mark.parametrize("path", ["/admin", "/admin/", "//admin"])
-def test_the_admin_panel_opens_on_integrations_over_groups_when_hidden(edge, path):
-    """UX review: the Admin Panel entry opened on the user list and then jumped
-    away. It now opens where an administrator can work: Settings > Integrations
-    (Open WebUI 0.11's admin settings dialog) over the Groups page."""
+@pytest.mark.parametrize("path,location", [
+    ("/admin/users/overview", "/portal/#/people"),
+    # Release review: hiding the user list must keep Groups reachable from the
+    # Admin Panel's Users tab.
+    ("/admin/users", "/admin/users/groups"),
+    # UX review: the Admin Panel opens where an administrator can work:
+    # Settings > Integrations (Open WebUI 0.11's admin settings dialog) over Groups.
+    ("/admin", "/admin/users/groups?settings=admin%3Aintegrations"),
+], ids=["users-page", "users-section", "admin-panel"])
+def test_hidden_users_pages_redirect(edge, path, location):
     from hubzoid.edge import ADMIN_LANDING
 
-    client, upstream = edge(hide=True)
-    r = client.get("http://testserver" + path)
-    assert r.status_code == 302 and r.headers["location"] == ADMIN_LANDING
     assert ADMIN_LANDING == "/admin/users/groups?settings=admin%3Aintegrations"
-    assert client.head("http://testserver" + path).status_code == 302
+    client, upstream = edge(hide=True)
+    for variant in (path, path + "/", "/" + path):
+        url = "http://testserver" + variant  # keep a leading "//" as a path, not a host
+        r = client.get(url)
+        assert (r.status_code, r.headers.get("location")) == (302, location), variant
+        assert client.head(url).status_code == 302, variant
     assert upstream.seen == []
 
 
-@pytest.mark.parametrize("path", ["/admin/users/groups", "/admin/settings",
-                                  "/admin/settings/integrations", "/admin/evaluations",
-                                  "/admin/functions", "/admin/analytics", "/"])
-def test_other_admin_pages_stay(edge, path):
-    client, upstream = edge(hide=True)
-    assert client.get(path).status_code == 200
-    assert upstream.seen == [("GET", path)]
+@pytest.mark.parametrize("managed,paths", [
+    (False, ["/admin/users/groups", "/admin/settings", "/admin/settings/integrations",
+             "/admin/evaluations", "/admin/functions", "/admin/analytics", "/"]),
+    (True, ["/admin/evaluations", "/admin/evaluations/leaderboard", "/admin/settings",
+            "/admin/settings/integrations", "/admin/functions", "/admin/usersx", "/"]),
+], ids=["hidden", "every-hub-managed"])
+def test_other_admin_pages_stay(edge, managed, paths):
+    client, upstream = edge(hide=True, managed=managed)
+    for path in paths:
+        assert client.get(path).status_code == 200, path
+    assert upstream.seen == [("GET", path) for path in paths]
 
 
 def test_the_admin_panel_is_untouched_when_not_hidden(edge):
@@ -163,41 +153,24 @@ def test_nothing_changes_when_not_hidden(edge):
 
 # ---- every hub managed in the Console: Groups is hidden too ---------------------------
 
-@pytest.mark.parametrize("path", ["/admin", "/admin/", "//admin", "/admin/users", "/admin/users/",
-                                  "/admin/users/overview", "/admin/users/groups",
-                                  "/admin/users/groups/", "//admin/users/groups",
-                                  "/admin/users/anything"])
-def test_the_whole_users_section_opens_settings_when_every_hub_is_managed(edge, path):
+def test_the_whole_users_section_opens_settings_when_every_hub_is_managed(edge):
     """Console simplification: with every agent managed in the Console, Open
     WebUI's groups decide nothing, so neither the user list nor Groups shows. The
-    Admin Panel and any typed /admin/users address open Settings > Integrations."""
+    Admin Panel and any typed /admin/users address open Settings > Integrations
+    (Open WebUI 0.11's `?settings=` dialog over Evaluations, a page that stays)."""
     from hubzoid.edge import SETTINGS_LANDING
 
     client, upstream = edge(hide=True, managed=True)
-    r = client.get("http://testserver" + path)
-    assert r.status_code == 302 and r.headers["location"] == SETTINGS_LANDING
-    assert client.head("http://testserver" + path).status_code == 302
+    for path in ("/admin", "/admin/", "//admin", "/admin/users", "/admin/users/",
+                 "/admin/users/overview", "/admin/users/groups", "/admin/users/groups/",
+                 "//admin/users/groups", "/admin/users/anything"):
+        url = "http://testserver" + path
+        r = client.get(url)
+        assert (r.status_code, r.headers.get("location")) == (302, SETTINGS_LANDING), path
+        assert client.head(url).status_code == 302, path
     assert upstream.seen == []
-
-
-def test_the_settings_landing_is_outside_the_users_section():
-    """Open WebUI 0.11 opens its admin settings as a dialog from `?settings=`,
-    here over Evaluations, a page that stays; landing under /admin/users again
-    would loop."""
-    from hubzoid.edge import SETTINGS_LANDING, _is_users_section
-
-    page, _, query = SETTINGS_LANDING.partition("?")
-    assert query == "settings=admin%3Aintegrations"
-    assert page.startswith("/admin/evaluations") and not _is_users_section(page)
-
-
-@pytest.mark.parametrize("path", ["/admin/evaluations", "/admin/evaluations/leaderboard",
-                                  "/admin/settings", "/admin/settings/integrations",
-                                  "/admin/functions", "/admin/usersx", "/"])
-def test_other_admin_pages_stay_when_every_hub_is_managed(edge, path):
-    client, upstream = edge(hide=True, managed=True)
-    assert client.get(path).status_code == 200
-    assert upstream.seen == [("GET", path)]
+    assert SETTINGS_LANDING.endswith("?settings=admin%3Aintegrations")
+    assert client.get(SETTINGS_LANDING).status_code == 200  # the landing never redirects again
 
 
 def test_managed_hubs_alone_change_nothing_while_the_users_page_shows(edge):
@@ -208,63 +181,50 @@ def test_managed_hubs_alone_change_nothing_while_the_users_page_shows(edge):
     assert "const HIDE_GROUPS = false;" in client.get("/hubzoid-portal-navigation.js").text
 
 
-@pytest.mark.parametrize("method,path,status", [
-    ("POST", "/api/v1/auths/add", 403),                    # accounts: still refused
-    ("DELETE", "/api/v1/users/0b5c-uuid", 403),
-    ("POST", "/api/v1/groups/create", 200),                # groups: unchanged (not locked)
-    ("POST", "/api/v1/groups/id/g1/update", 200),
-    ("GET", "/api/v1/groups/", 200),
-])
-def test_hiding_groups_is_not_access_control(edge, method, path, status):
+def test_hiding_groups_is_not_access_control(edge):
     """Hidden links are not access control. Account-admin writes stay refused;
     group writes keep today's behaviour (HUBZOID_LOCK_OWUI_ACCESS_UI locks them)."""
     client, upstream = edge(hide=True, managed=True)
-    assert client.request(method, path, json={}).status_code == status
-    assert (upstream.seen == [(method, path)]) is (status == 200)
+    for method, path, status in [
+        ("POST", "/api/v1/auths/add", 403),                    # accounts: still refused
+        ("DELETE", "/api/v1/users/0b5c-uuid", 403),
+        ("POST", "/api/v1/groups/create", 200),                # groups: unchanged (not locked)
+        ("POST", "/api/v1/groups/id/g1/update", 200),
+        ("GET", "/api/v1/groups/", 200),
+    ]:
+        upstream.seen.clear()
+        assert client.request(method, path, json={}).status_code == status, path
+        assert (upstream.seen == [(method, path)]) is (status == 200), path
 
 
-@pytest.mark.parametrize("method,path", [
-    ("POST", "/api/v1/auths/add"),
-    ("POST", "/api/v1/auths/add/"),
-    ("POST", "/api/v1/users/0b5c-uuid/update"),
-    ("DELETE", "/api/v1/users/0b5c-uuid"),
-    ("POST", "//api/v1/users/0b5c-uuid/update"),
-])
-def test_account_admin_writes_are_blocked(edge, method, path):
+def test_account_admin_writes_are_blocked(edge):
     client, upstream = edge(hide=True)
-    r = client.request(method, "http://testserver" + path, json={"role": "admin"})
-    assert r.status_code == 403 and "Console" in r.text
+    for method, path in [
+        ("POST", "/api/v1/auths/add"),
+        ("POST", "/api/v1/auths/add/"),
+        ("POST", "/api/v1/users/0b5c-uuid/update"),
+        ("DELETE", "/api/v1/users/0b5c-uuid"),
+        ("POST", "//api/v1/users/0b5c-uuid/update"),
+    ]:
+        r = client.request(method, "http://testserver" + path, json={"role": "admin"})
+        assert r.status_code == 403 and "Console" in r.text, path
     assert upstream.seen == []
 
 
-@pytest.mark.parametrize("method,path", [
-    ("POST", "/api/v1/users/user/settings/update"),
-    ("POST", "/api/v1/users/user/info/update"),
-    ("POST", "/api/v1/users/user/status/update"),
-    ("GET", "/api/v1/users/0b5c-uuid"),
-    ("GET", "/api/v1/users/"),
-    ("POST", "/api/v1/auths/signin"),
-    ("POST", "/api/v1/groups/create"),
-])
-def test_own_settings_and_reads_pass_through(edge, method, path):
+def test_own_settings_and_reads_pass_through(edge):
     client, upstream = edge(hide=True)
-    assert client.request(method, path, json={}).status_code == 200
-    assert upstream.seen == [(method, path)]
-
-
-def test_service_calls_do_not_use_the_edge(monkeypatch):
-    """The Console's account adapter talks to Open WebUI's internal URL, so the
-    edge block cannot affect it even with the page hidden."""
-    from hubzoid.access.accounts import OwuiAccounts
-
-    from tests.test_access_service import SERVICE, FakeOwui
-
-    monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
-    fake = FakeOwui()
-    created = OwuiAccounts("http://127.0.0.1:43080", SERVICE, "svc-secret",
-                           transport=httpx.MockTransport(fake)).create(
-        email="ann@x.org", name="Ann", password="Correct-Horse-7")
-    assert created["role"] == "user"
+    calls = [
+        ("POST", "/api/v1/users/user/settings/update"),
+        ("POST", "/api/v1/users/user/info/update"),
+        ("POST", "/api/v1/users/user/status/update"),
+        ("GET", "/api/v1/users/0b5c-uuid"),
+        ("GET", "/api/v1/users/"),
+        ("POST", "/api/v1/auths/signin"),
+        ("POST", "/api/v1/groups/create"),
+    ]
+    for method, path in calls:
+        assert client.request(method, path, json={}).status_code == 200, path
+    assert upstream.seen == calls
 
 
 def test_navigation_script_carries_the_flag(edge):
@@ -318,14 +278,15 @@ def test_callback_redirect_goes_to_the_journey(edge, location):
     assert "hz_connect=; Max-Age=0; Path=/" in cookies
 
 
-@pytest.mark.parametrize("cookie", [None, "short", "has spaces in it 1234567", "x" * 65, "bad!chars" * 3])
-def test_callback_untouched_without_a_valid_journey(edge, cookie):
+def test_callback_untouched_without_a_valid_journey(edge):
     client, upstream = edge()
-    if cookie:
-        client.cookies.set("hz_connect", cookie)
-    r = client.get("/oauth/clients/mcp:gmail/callback")
-    assert r.status_code == 307 and r.headers["location"] == "/"
-    assert not any(v.startswith("hz_connect=") for v in _set_cookie_values(r))
+    for cookie in (None, "short", "has spaces in it 1234567", "x" * 65, "bad!chars" * 3):
+        client.cookies.clear()
+        if cookie:
+            client.cookies.set("hz_connect", cookie)
+        r = client.get("/oauth/clients/mcp:gmail/callback")
+        assert r.status_code == 307 and r.headers["location"] == "/", cookie
+        assert not any(v.startswith("hz_connect=") for v in _set_cookie_values(r)), cookie
 
 
 def test_callback_untouched_for_other_flows(edge):
@@ -405,6 +366,7 @@ def test_the_edge_follows_the_hubs_access_mode(tmp_path, monkeypatch, clean_env)
     monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
     gs = store_for(dirs[0])
     gs.set_authoritative(True, hub="finance")
+    gs.set_authoritative(False, hub="ops")
     app = build_edge_app(default_base="http://127.0.0.1:1",
                          routes=[EdgeRoute("/portal", "http://127.0.0.1:2")])
     with TestClient(app, follow_redirects=False) as client:

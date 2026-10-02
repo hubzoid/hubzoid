@@ -74,7 +74,8 @@ wheel install and both native Docker images. Maintainers: see
 [publishing a release](docs/RELEASING.md).
 
 ```bash
-pytest                       # unit + integration (no LLM calls)
+pytest                       # fast default: no LLM calls, skips `slow` DBOS/Postgres tests
+pytest -m ""                 # everything, as CI runs it
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
 pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker

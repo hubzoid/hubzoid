@@ -21,6 +21,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+pytestmark = pytest.mark.slow  # starts a live gateway and its bridges
+
 from hubzoid.access.store import GrantStore, group_subject
 
 REPO = Path(__file__).resolve().parents[1]

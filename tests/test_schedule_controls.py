@@ -127,6 +127,7 @@ _QUEUE_BLOCKED = textwrap.dedent('''
 ''')
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="uses a background process")
 def test_cancel_a_queued_run(hub, tmp_path):
     (hub / "schedule" / "slow.md").write_text('---\nschedule: "0 4 * * *"\nrun: "sleep 60"\n---\n\nx\n')

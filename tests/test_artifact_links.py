@@ -136,6 +136,7 @@ def test_deleting_the_secret_revokes_old_links(hub, monkeypatch):
     assert client.get(_query(old)).status_code == 401
 
 
+@pytest.mark.slow
 def test_concurrent_first_use_agrees_on_one_full_secret(hub):
     """Many processes creating the secret at once all end up with the same
     complete value; none can read a partial or empty file."""

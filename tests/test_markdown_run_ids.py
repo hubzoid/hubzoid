@@ -99,6 +99,7 @@ def own_postgres(postgres_url):
         admin.dispose()
 
 
+@pytest.mark.slow
 def test_two_hubs_sharing_postgres_both_run_the_same_task_and_slot(own_postgres, tmp_path):
     env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "HUBZOID_DEPLOYMENT")}
     env.update(HUBZOID_DBOS_DB=own_postgres, HUBZOID_OPERATIONAL_DB=own_postgres)
@@ -153,6 +154,7 @@ _LEGACY = textwrap.dedent('''
 ''')
 
 
+@pytest.mark.slow
 def test_runs_queued_before_the_namespace_are_still_seen(tmp_path):
     hub = tmp_path / "hub"
     (hub / "schedule").mkdir(parents=True)

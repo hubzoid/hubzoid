@@ -455,6 +455,7 @@ time.sleep(90)
 """
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="uses a background process")
 def test_running_runs_sees_a_live_scheduled_run(tmp_path):
     import subprocess

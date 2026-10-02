@@ -126,6 +126,7 @@ def _run_dbos(hub, mode):
     return proc
 
 
+@pytest.mark.slow
 def test_dbos_retry_and_partition_exclusion(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -136,6 +137,7 @@ def test_dbos_retry_and_partition_exclusion(tmp_path):
     assert [call[3] for call in calls if call[0] == "enter"] == [1, 2, 3]
 
 
+@pytest.mark.slow
 def test_dbos_different_ticket_keys_parallel_same_key_serial(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -157,6 +159,7 @@ def test_dbos_different_ticket_keys_parallel_same_key_serial(tmp_path):
                for (key, _), times in intervals.items() if key == "T-1")
 
 
+@pytest.mark.slow
 def test_admitted_event_survives_process_restart(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -167,6 +170,7 @@ def test_admitted_event_survives_process_restart(tmp_path):
     _run_dbos(tmp_path, "recover")
 
 
+@pytest.mark.slow
 def test_successful_late_side_effect_is_not_retried(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -246,6 +250,7 @@ print('FAST_BEFORE_SLOW', flush=True)
 '''
 
 
+@pytest.mark.slow
 def test_more_than_32_waiting_coordinators_do_not_starve_other_workflow(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -291,6 +296,7 @@ runtime.shutdown(completion_timeout_sec=0)
 '''
 
 
+@pytest.mark.slow
 def test_operator_cancel_fails_the_event_for_explicit_redrive(tmp_path):
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "settings.yaml").write_text(
@@ -342,6 +348,7 @@ asyncio.run(main())
 '''
 
 
+@pytest.mark.slow
 def test_engine_waits_for_a_temporary_owner_and_reports_broken_modules(tmp_path):
     env = {k: v for k, v in os.environ.items() if k not in
            ("DATABASE_URL", "HUBZOID_DBOS_DB", "HUBZOID_OPERATIONAL_DB", "HUBZOID_DEPLOYMENT",

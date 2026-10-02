@@ -75,6 +75,7 @@ def test_postgres_migration_atomicity_and_hub_isolation(postgres_url):
         engine.dispose()
 
 
+@pytest.mark.slow
 def test_postgres_dbos_recovers_after_process_exit(postgres_url, tmp_path):
     import os
     import sys
@@ -199,6 +200,7 @@ asyncio.run(main())
 """
 
 
+@pytest.mark.slow
 def test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable(postgres_url, tmp_path):
     """The lock session dies mid-run: no run is failed at an ownership guard,
     the backlog is not drained, and the bridge regains ownership and finishes
@@ -290,6 +292,7 @@ def test_postgres_same_hub_cutovers_do_not_merge_plans(postgres_url):
         engine.dispose()
 
 
+@pytest.mark.slow
 def test_postgres_same_named_workflows_are_hub_scoped(postgres_url, tmp_path):
     import os
     import sys

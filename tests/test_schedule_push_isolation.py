@@ -175,6 +175,7 @@ _RUN_TASK = textwrap.dedent('''
 ''')
 
 
+@pytest.mark.slow
 def test_a_scheduled_task_pushes_past_another_hubs_dirty_tree(shared, tmp_path):
     """The same through a real markdown task run on the workflow engine."""
     work, remote, other = shared

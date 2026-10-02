@@ -7,6 +7,10 @@ import subprocess
 import sys
 import time
 
+import pytest
+
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 SCRIPT = """
 import sys, time
 from pathlib import Path

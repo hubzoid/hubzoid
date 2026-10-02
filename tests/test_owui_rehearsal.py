@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 SCRIPT = r"""
 import asyncio, json, sys
 from pathlib import Path

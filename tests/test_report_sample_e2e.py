@@ -15,6 +15,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 EXAMPLE = Path(__file__).resolve().parents[1] / "docs" / "examples" / "report"
 ALICE, BOB = "alice@company.com", "bob@company.com"
 

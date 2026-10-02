@@ -18,7 +18,8 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")
+pytestmark = [pytest.mark.slow,
+              pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")]
 
 KEY = "sk-or-v1-dbos-test-SECRET-9876543210"
 
