@@ -92,10 +92,14 @@ function matches(a: Agent, q: string): boolean {
 
 function AgentList({ agent, agents, onPick }: PickerProps) {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
-  const listId = useId();
   // Read once: picking reorders nothing until the next new chat.
   const [recent] = useState(recentAgents);
+  // The keyboard starts on the agent already chosen.
+  const [active, setActive] = useState(() => {
+    const ordered = orderAgents(agents, recent);
+    return Math.max(0, [...ordered.recent, ...ordered.rest].findIndex((a) => a.id === agent.id));
+  });
+  const listId = useId();
   const q = query.trim().toLowerCase();
   const groups = useMemo(() => {
     if (q) return [{ label: null, items: agents.filter((a) => matches(a, q)).sort(byName) }];
