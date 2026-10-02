@@ -29,23 +29,7 @@ import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
 import { cancelRun, ChatSession, pollRun } from "./session";
 import { Thread } from "./Thread";
-
-const LAST_AGENT_KEY = "hz-last-agent";
-
-function rememberAgent(id: string) {
-  try {
-    localStorage.setItem(LAST_AGENT_KEY, id);
-  } catch {
-    /* storage unavailable */
-  }
-}
-function lastAgent(): string | null {
-  try {
-    return localStorage.getItem(LAST_AGENT_KEY);
-  } catch {
-    return null;
-  }
-}
+import { lastAgent, rememberAgent } from "../lib/recentAgents";
 
 type Load = { status: "loading" } | { status: "ready"; detail: ConversationDetail | null } | { status: "error"; error: unknown };
 

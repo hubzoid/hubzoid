@@ -230,6 +230,12 @@ export const en = {
 
   agents: {
     choose: "Choose an agent",
+    search: "Search agents",
+    searchPlaceholder: (count: number) => `Search ${count} agents`,
+    clearSearch: "Clear agent search",
+    noMatch: (query: string) => `No agent matches “${query}”.`,
+    recent: "Recent",
+    all: "All agents",
     chooseHelp: "Each agent has its own knowledge and tools.",
     change: "Change agent",
     none: "You don't have access to an agent yet. Ask an administrator to give you access, then reload this page.",

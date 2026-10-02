@@ -1,6 +1,6 @@
 // The conversation itself, built from assistant-ui primitives: messages with
 // their parts, branch picker, copy, edit and regenerate, the composer with
-// attachments, and the empty state with the agent picker and suggestions.
+// attachments, and the empty state with the agent picker (AgentPicker) and suggestions.
 import { type ReactNode } from "react";
 import {
   ActionBarPrimitive,
@@ -32,6 +32,7 @@ import { displayName } from "../lib/format";
 import type { Agent } from "../lib/types";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, IconButton, Notice, cx } from "../components/ui";
+import { AgentPicker } from "./AgentPicker";
 import { MarkdownText } from "./Markdown";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
 
@@ -175,60 +176,7 @@ function EmptyThread({ agent, agents, canPickAgent, onPickAgent, requestedMissin
           {t.agents.requestedUnavailable(name)}
         </Notice>
       )}
-      {picking && (
-        <section aria-labelledby="hz-pick-agent" className="mb-8 sm:mb-10">
-          <h2 id="hz-pick-agent" className="hz-eyebrow m-0 mb-3">
-            {t.agents.choose}
-          </h2>
-          <div role="radiogroup" aria-labelledby="hz-pick-agent" className="grid gap-2.5 sm:grid-cols-2">
-            {agents.map((a) => {
-              const selected = a.id === agent.id;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => onPickAgent(a)}
-                  onKeyDown={(e) => {
-                    const i = agents.findIndex((x) => x.id === a.id);
-                    const move = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
-                    if (!move) return;
-                    e.preventDefault();
-                    const nextAgent = agents[(i + move + agents.length) % agents.length];
-                    onPickAgent(nextAgent);
-                    const group = e.currentTarget.parentElement;
-                    setTimeout(() => group?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus(), 0);
-                  }}
-                  tabIndex={selected ? 0 : -1}
-                  className={cx(
-                    "flex items-start gap-3 rounded-xl border p-3 text-left transition-colors sm:p-3.5",
-                    selected ? "border-accent bg-accent-soft/60" : "border-line bg-raised hover:bg-hover",
-                  )}
-                >
-                  <span className="hidden sm:block">
-                    <AgentAvatar name={a.name} src={a.avatar_url} size={36} />
-                  </span>
-                  <span className="sm:hidden">
-                    <AgentAvatar name={a.name} src={a.avatar_url} size={28} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-[14.5px] font-semibold text-ink">{displayName(a.name)}</span>
-                      {selected && <Check size={15} aria-hidden className="flex-none text-accent-text" />}
-                    </span>
-                    {a.description && (
-                      <span className="mt-0.5 line-clamp-1 text-[13px] leading-snug text-mute sm:line-clamp-2">
-                        {a.description}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {picking && <AgentPicker agent={agent} agents={agents} onPick={onPickAgent} />}
       <div className="flex flex-col items-center text-center">
         <AgentAvatar name={agent.name} src={agent.avatar_url} size={52} />
         <h1 className="m-0 mt-4 text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">

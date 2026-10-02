@@ -21,7 +21,7 @@
 //   /__fixture/reset                 fresh data
 //   /__fixture/state                 recorded requests and store (JSON)
 //   /__fixture/flag/<name>/<value>   no_agents, signup, chat_fail, upload_slow,
-//                                    one_agent, branded (true | false)
+//                                    one_agent, many_agents, branded (true | false)
 //   /__fixture/mode/<local|accounts> switch sign-in mode
 //   /__fixture/expire                end every session (as a revocation would)
 "use strict";
@@ -94,10 +94,25 @@ const AGENTS = [
   },
 ];
 
+// Fifteen more agents for the many_agents flag (a team with 18 agents).
+const MORE_AGENTS = [
+  "Payroll Desk", "Procurement", "Legal Review", "Travel Desk", "Facilities", "Recruiting",
+  "Onboarding", "Sales Pipeline", "Support Triage", "Security Desk", "Data Requests",
+  "Marketing Calendar", "Vendor Desk", "Events Desk", "Learning Desk",
+].map((name) => ({
+  id: name.toLowerCase().replace(/ /g, "-"),
+  name,
+  description: `Answers ${name.toLowerCase()} questions from the team's hub.`,
+  suggestions: [],
+  avatar_url: null,
+  hub: "demo-hub",
+  api_base: "",
+}));
+
 function seed() {
   const s = {
     mode: process.env.HZ_FIXTURE_MODE === "local" ? "local" : "accounts",
-    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false, branded: false },
+    flags: { no_agents: false, signup: true, chat_fail: false, upload_slow: false, one_agent: false, many_agents: false, branded: false },
     users: [
       { id: "u_ada00001", email: "ada@example.com", name: "Ada Okafor", role: "admin", password: PASSWORD, status: "active" },
       { id: "u_sam00001", email: "sam@example.com", name: "Sam Rivera", role: "user", password: PASSWORD, status: "active" },
@@ -320,6 +335,7 @@ function createApp(options = {}) {
   function visibleAgents(user) {
     if (state.flags.no_agents) return [];
     if (state.flags.one_agent) return [AGENTS[0]];
+    if (state.flags.many_agents) return [...AGENTS, ...MORE_AGENTS];
     if (user.role === "admin") return AGENTS;
     return AGENTS.slice(0, 2);
   }

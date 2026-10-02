@@ -871,6 +871,26 @@ function chartPng(width = 160, height = 100) {
       await shot(page, "app-24-no-agents");
       await fetch(`${BASE}/__fixture/flag/no_agents/false`);
 
+      step("With many agents a new chat offers a searchable list, recent agents first");
+      await fetch(`${BASE}/__fixture/flag/many_agents/true`);
+      await page.goto(`${BASE}/`);
+      const search = page.getByRole("combobox", { name: "Search agents" });
+      await search.waitFor();
+      assert.equal(await page.getByRole("radiogroup", { name: "Choose an agent" }).count(), 0);
+      // Agents this browser chatted with come first; the rest follow by name.
+      assert.ok((await page.getByRole("group", { name: "Recent" }).getByRole("option").count()) >= 1);
+      await page.getByRole("group", { name: "All agents" }).getByRole("option", { name: /Data Requests/ }).waitFor();
+      await search.fill("payroll");
+      assert.equal(await page.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 1);
+      await search.press("Enter");
+      await page.getByRole("heading", { name: "What can Payroll Desk help with?" }).waitFor();
+      await page.getByRole("option", { name: /Payroll Desk/, selected: true }).waitFor();
+      await shot(page, "app-24b-many-agents");
+      await axe(page, "many agents");
+      await search.fill("nothing like this");
+      await page.getByText("No agent matches “nothing like this”.").waitFor();
+      await fetch(`${BASE}/__fixture/flag/many_agents/false`);
+
       step("A one-time link sets a password and signs in; a used link says so");
       const fresh = await browser.newContext({ viewport: { width: 1200, height: 860 } });
       const invited = await fresh.newPage();
