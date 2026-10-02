@@ -43,7 +43,22 @@ the full array → render for the surface → send → record the exchange. Unkn
 senders never reach the LLM. Work runs in a background task so we ack fast
 (Meta/Telegram redeliver on a slow ack; dedup absorbs the repeat).
 
-## Identity — the `identity/` folder
+## Identity — who a sender is
+
+A sender is a person in two ways, checked in this order:
+
+1. **A phone number in the Console.** An organization administrator records a
+   person's number in **People → the person → Phone**, or when adding them
+   (**Add user → Phone**). A WhatsApp sender, or a Telegram sender who shared
+   their contact, with that number is that person. One number belongs to one
+   person. A blocked person is nobody. No hub file is needed.
+2. **The hub's own roster** in the `identity/` folder, for numbers the Console
+   does not know (for example a live CRM lookup).
+
+Who a sender is never decides what they may do: that is their grants in the
+Console (**Agents → the agent → Access**), as on every other surface.
+
+### The `identity/` folder
 
 Presence-activated, exactly like `restricted/`. Drop **one** of these in the hub:
 
@@ -55,7 +70,7 @@ phone,email,groups,center
 ```
 - `phone` — required, any format (`+91 98000-00001` works; normalized to digits).
 - `email` — the identity key (lowercased to match Open WebUI).
-- `groups` — optional, `;`-separated; drives permissions.
+- `groups` — optional, `;`-separated; context the agent can see. Groups grant nothing.
 - any other column (`center`, `name`, …) — preserved as context.
 - Headers case-insensitive + trimmed; blank rows skipped; unknown phone → no access.
 
@@ -68,12 +83,7 @@ def resolve(surface, handle):
 ```
 Same record as a CSV row; `None` → fail-closed. Wins over the CSV if both exist.
 
-**No `identity/` folder → every webhook sender is unknown → rejected.** The roster
-is the allowlist.
-
-**Group merge:** an identity's groups are the **union** of its Open WebUI groups
-and the resolver's groups. Keep groups in OWUI (table `phone,email` only) *and/or*
-in the table. Identity resolution is Apache-2.0 licensed like the rest of Hubzoid.
+**A number neither the Console nor the roster knows → unknown → rejected.**
 
 ## Access control
 
@@ -83,7 +93,7 @@ in the table. Identity resolution is Apache-2.0 licensed like the rest of Hubzoi
 - Restricted tools stay **off** on these surfaces by default (fail-closed). To let
   verified coordinators reach restricted data, add the surface to
   `HUBZOID_RESTRICTED_SURFACES` (e.g. `owui,web,api,mcp,telegram,whatsapp`) and
-  give them the matching group. **Note:** the access guard runs in the *bridge*
+  grant them the capability in the Console. **Note:** the access guard runs in the *bridge*
   process, so this env change takes effect on a bridge restart (`hubzoid run`
   starts bridge + inbound together, so they never drift).
 
@@ -123,8 +133,7 @@ It needs:
   optional Composio integration is unchanged and not part of it.
 - `whatsapp` in `HUBZOID_RESTRICTED_SURFACES`, because a connection is a
   restricted-class capability.
-- the `connector_<app>` capability for the person (a Console grant on a
-  managed hub, or an Open WebUI or roster group of that name on a legacy hub).
+- the `connector_<app>` capability for the person (a Console grant).
 - an Open WebUI account for the roster email, since the link page needs that
   person signed in.
 
@@ -223,10 +232,11 @@ Every POST is verified against `X-Telegram-Bot-Api-Secret-Token`.
 
 ### Enrollment (contact-share) — handled in code, no LLM
 Telegram never reveals a phone on a normal message, so a coordinator binds their
-numeric id to their roster row once:
+numeric id to their number once:
 1. `/start` → the bot replies with a one-tap **"Share my number"** button.
-2. They tap it → the bot matches the shared phone to `identity/access.csv` and
-   stores the numeric id. Only the sender's **own** contact is accepted.
+2. They tap it → the bot matches the shared phone to a number in the Console
+   (or the hub's roster) and stores the numeric id. Only the sender's **own**
+   contact is accepted.
 3. From then on, messages from that id resolve via the stored phone.
 
 Telegram can't cold-message a user first, so seed that first tap by distributing

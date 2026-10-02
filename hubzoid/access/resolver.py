@@ -1,9 +1,12 @@
 # Hubzoid access management. Apache-2.0, like the rest of the repo (see LICENSING.md).
 """Resolve identity for a hub, from either surface-native handle or email.
 
-This is the generic identity seam every non-web surface plugs into. A hub opts
-in by dropping a file in the ``identity/`` folder, presence-activated,
-owner-authored, git-committed. Two backings, one object (``Roster``):
+This is the generic identity seam every non-web surface plugs into. First the
+phone numbers recorded on people in the Console (``GrantStore.set_phone``): a
+WhatsApp sender, or a Telegram sender who shared their contact, with that
+number is that person. Then, when the hub has one, its own roster in the
+``identity/`` folder, presence-activated, owner-authored, git-committed. Two
+backings, one object (``Roster``):
 
   * ``identity/access.py`` — a function ``resolve(surface, handle)`` (live CRM /
     API lookup). Wins if present. It MAY also define ``groups_for_email(email)``
@@ -74,14 +77,43 @@ class Roster:
         return []
 
 
-def load_resolver(hub_dir) -> "Roster | None":
-    """Return a ``Roster`` for the hub, or ``None`` if it has no ``identity/``.
+def load_resolver(hub_dir) -> "Roster":
+    """The hub's ``Roster``: the Console's phone numbers, then the hub's own
+    ``identity/`` roster when it has one (``hub_roster``)."""
+    return _ConsolePhones(hub_dir, hub_roster(hub_dir))
 
-    Built once per hub (see ``roster_for``); the CSV backing reloads itself on
-    file change, so a single instance stays current. A ``.py`` backing wins over
-    a ``.csv`` table. ``None`` = no directory at all; on a webhook surface that
-    means every sender is unknown -> rejected.
-    """
+
+class _ConsolePhones(Roster):
+    """A sender whose number is recorded on a person in the Console is that
+    person. Anyone else is asked of the hub's own roster, if any. A blocked
+    person is nobody. A store error asks the roster only (fail closed for the
+    Console's part)."""
+
+    def __init__(self, hub_dir, fallback: "Roster | None"):
+        self._hub_dir = Path(hub_dir)
+        self.fallback = fallback
+
+    def __call__(self, surface: str, handle: str) -> "dict | None":
+        try:
+            from . import store_for
+
+            gs = store_for(self._hub_dir)
+            subject = gs.subject_for_phone(handle)
+            if subject and not gs.is_suspended(subject):
+                return {"email": subject, "groups": self.groups_for_email(subject)}
+        except Exception:  # noqa: BLE001 — the roster still answers
+            log.warning("identity: Console phone lookup failed; asking the hub roster only")
+        return self.fallback(surface, handle) if self.fallback is not None else None
+
+    def groups_for_email(self, email: str | None) -> "list[str]":
+        return self.fallback.groups_for_email(email) if self.fallback is not None else []
+
+
+def hub_roster(hub_dir) -> "Roster | None":
+    """The hub's own roster from ``identity/``, or ``None`` without one.
+
+    The CSV backing reloads itself on file change, so a single instance stays
+    current. A ``.py`` backing wins over a ``.csv`` table."""
     idir = resolve_bucket(Path(hub_dir), "identity")
     if idir is None:
         return None

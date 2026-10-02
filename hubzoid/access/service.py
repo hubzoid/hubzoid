@@ -82,7 +82,9 @@ from .store import (
     ORG,
     USE_HUB,
     LastAdminError,
+    PhoneTaken,
     RevisionConflict,
+    phone_digits,
 )
 
 log = logging.getLogger("hubzoid.access")
@@ -1127,7 +1129,7 @@ class AccessService:
         # it is what the Console recorded when it created the account.
         sign_in = account.get("sign_in") or self._sign_in_of(identity["subject"])
         return dict(subject=identity["subject"], name=account.get("name"),
-                    role=account.get("role"), sign_in=sign_in,
+                    role=account.get("role"), sign_in=sign_in, phone=identity.get("phone"),
                     **_role_view(self._console_admin(identity["subject"]), account.get("role")))
 
     def _console_admin(self, subject: str) -> bool:
@@ -1182,6 +1184,35 @@ class AccessService:
                                           created_by=actor.subject)
         self._audit(actor, "account_password_reset", subject=identity["subject"], hub=ORG)
         return result
+
+    def check_phone(self, subject: str, phone: str | None) -> str:
+        """The digits `phone` would be stored as for `subject`, or Denied when
+        it is not a number or someone else has it. Writes nothing."""
+        try:
+            digits = phone_digits(phone)
+        except ValueError as exc:
+            raise Denied(422, "invalid_phone", str(exc))
+        owner = self.store.subject_for_phone(digits) if digits else None
+        if owner and owner != normalize(subject):
+            raise Denied(409, "phone_taken", "This number already belongs to someone else.")
+        return digits
+
+    def set_phone(self, actor: Actor, subject: str, phone: str | None) -> dict:
+        """Record or clear the number a person's WhatsApp and Telegram messages
+        come from (organization administrators, their own included)."""
+        self.require_org_admin(actor, "Only administrators can change a user's phone number.")
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE or "@" not in subject:
+            raise Denied(422, "invalid_subject", "Choose a person's account.")
+        self.check_phone(subject, phone)
+        try:
+            digits = self.store.set_phone(subject, phone, actor=actor.subject,
+                                          surface=actor.surface)
+        except PhoneTaken as exc:
+            raise Denied(409, "phone_taken", str(exc))
+        except ValueError as exc:
+            raise Denied(422, "invalid_phone", str(exc))
+        return dict(subject=subject, phone=digits or None)
 
     def approve_account(self, actor: Actor, subject: str) -> None:
         identity = self._account_target(actor, subject)

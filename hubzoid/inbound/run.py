@@ -41,10 +41,10 @@ def build_app_for_hub(hub_dir, env=None):
     if tg is not None and settingslib.truthy(env.get("TELEGRAM_STREAM", "true")):
         tg.stream = True
 
-    if resolver is None:
-        log.warning(
-            "inbound: no identity/access.{csv,py} found — every sender is "
-            "unknown and will be rejected. Add a roster to let coordinators in."
+    if resolver.fallback is None:
+        log.info(
+            "inbound: senders are matched by the phone numbers recorded on people "
+            "in the Console (no identity/access.{csv,py} roster in this hub)."
         )
 
     model = settings.model_label or _model_label(hub_dir)

@@ -131,6 +131,9 @@ export type Person = {
   account_unavailable: boolean;
   organization_admin: boolean;
   access: Record<string, string[]>;
+  /** The number their WhatsApp and Telegram messages come from (digits).
+   *  Shown to organization administrators only. */
+  phone?: string | null;
 };
 
 // The /people/block response carries the resulting state and a plain-language

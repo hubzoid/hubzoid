@@ -208,6 +208,8 @@ export function AccessDrawer({
   // Add user always creates a new user; existing users are edited instead.
   const kind: AddKind = "new";
   const [newName, setNewName] = useState("");
+  // Optional: the number their WhatsApp and Telegram messages come from.
+  const [newPhone, setNewPhone] = useState("");
   const [signIn, setSignIn] = useState<SignIn>("password");
   // Held only while this drawer is open; never stored anywhere else.
   const [password, setPassword] = useState("");
@@ -265,6 +267,7 @@ export function AccessDrawer({
     setProblems({});
     setAboutOpen(false);
     setNewName("");
+    setNewPhone("");
     setSignIn("password");
     setPassword("");
     setOutcome(null);
@@ -289,6 +292,7 @@ export function AccessDrawer({
     const base = draftFor(row);
     setOutcome(null);
     setNewName("");
+    setNewPhone("");
     setPassword("");
     setTouched(false);
     setDraft({
@@ -397,6 +401,7 @@ export function AccessDrawer({
         name: newName.trim(),
         sign_in: google ? "google" : "password",
         ...(google ? {} : { password }),
+        ...(me?.org_admin && newPhone.trim() ? { phone: newPhone.trim() } : {}),
         grants: accountGrants(d),
       });
       setOutcome({ type: "created", created });
@@ -702,6 +707,24 @@ export function AccessDrawer({
                       {touched && newProblems.email ? newProblems.email : "They sign in with this email."}
                     </Text>
                   </div>
+                  {me?.org_admin && (
+                    <div className="field">
+                      <label className="field-label" htmlFor="new-account-phone">
+                        Phone <Text type="secondary">(optional)</Text>
+                      </label>
+                      <Input
+                        id="new-account-phone"
+                        autoComplete="off"
+                        inputMode="tel"
+                        placeholder="+91 98000 00001"
+                        value={newPhone}
+                        onChange={(e) => setNewPhone(e.target.value)}
+                      />
+                      <Text type="secondary" className="field-help">
+                        With the country code. Their WhatsApp and Telegram messages come from this number.
+                      </Text>
+                    </div>
+                  )}
                   <NewUserSignIn
                     id="new-account-password"
                     signIn={signIn}

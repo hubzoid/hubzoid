@@ -316,3 +316,36 @@ def test_google_sign_in_only_over_http(api, caplog):
     r = api.as_(ROOT).post("/portal/api/accounts", json=dict(
         email="bob@x.org", name="Bob", grants=[]))
     assert r.status_code == 422 and r.json()["code"] == "invalid_password"
+
+
+def test_phone_numbers_for_whatsapp_and_telegram(api):
+    """Organization administrators record the number a person's WhatsApp and
+    Telegram messages come from; one number belongs to one person."""
+    uid = api.owui.add_user("bob@x.org", "Bob", role="user")
+    api.gs.upsert_identity(email="bob@x.org", owui_id=uid)
+    root = api.as_(ROOT)
+    r = root.post("/portal/api/accounts/bob@x.org/phone", json={"phone": "+91 98000 00001"})
+    assert r.status_code == 200 and r.json()["phone"] == "919800000001"
+    assert root.get("/portal/api/accounts/bob@x.org").json()["phone"] == "919800000001"
+    assert api.as_(DELEGATE).post("/portal/api/accounts/bob@x.org/phone",
+                                  json={"phone": "919800000009"}).status_code == 403
+    root = api.as_(ROOT)
+    taken = root.post(f"/portal/api/accounts/{ROOT}/phone", json={"phone": "919800000001"})
+    assert taken.status_code == 409 and taken.json()["code"] == "phone_taken"
+    assert root.post("/portal/api/accounts/bob@x.org/phone",
+                     json={"phone": "12"}).status_code == 422
+    assert root.post("/portal/api/accounts/bob@x.org/phone", json={"phone": ""}).json()["phone"] is None
+
+
+def test_add_user_records_their_phone(api):
+    root = api.as_(ROOT)
+    r = root.post("/portal/api/accounts", json=dict(
+        email="cara@x.org", name="Cara", password=PASSWORD, phone="+91 98000 00007",
+        grants=[dict(hub="finance", permission="use_hub")]))
+    assert r.status_code == 200 and r.json()["phone"] == "919800000007", r.text
+    assert api.gs.subject_for_phone("919800000007") == "cara@x.org"
+    # A taken number refuses before any account is created.
+    r = api.as_(ROOT).post("/portal/api/accounts", json=dict(
+        email="dan@x.org", name="Dan", password=PASSWORD, phone="919800000007",
+        grants=[dict(hub="finance", permission="use_hub")]))
+    assert r.status_code == 409 and not api.gs.identity("dan@x.org")

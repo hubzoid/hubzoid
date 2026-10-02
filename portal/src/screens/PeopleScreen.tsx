@@ -630,6 +630,24 @@ function PersonDrawer({
               { key: "email", label: "Email", children: <span className="identity">{person.subject}</span> },
               { key: "status", label: "Status", children: <AccountTag status={person.status} /> },
               { key: "role", label: "Role", children: roleControl() },
+              ...(me.org_admin && !isService(person.subject)
+                ? [
+                    {
+                      key: "phone",
+                      label: "Phone",
+                      children: (
+                        <PhoneEditor
+                          subject={person.subject}
+                          phone={person.phone ?? null}
+                          onSaved={() => {
+                            data.reload();
+                            onChanged();
+                          }}
+                        />
+                      ),
+                    },
+                  ]
+                : []),
               ...(manageAccount
                 ? [
                     {
@@ -783,5 +801,79 @@ function PersonDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+
+/** The number a person's WhatsApp and Telegram messages come from: a sender
+ *  with this number is them. Organization administrators only. */
+function PhoneEditor({ subject, phone, onSaved }: {
+  subject: string;
+  phone: string | null;
+  onSaved: () => void;
+}) {
+  const { message } = App.useApp();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<{ phone: string | null }>(
+        `/accounts/${encodeURIComponent(subject)}/phone`, { phone: value });
+      message.success(result.phone ? "Phone number saved." : "Phone number removed.");
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing)
+    return (
+      <Space wrap>
+        {phone ? <span className="identity">+{phone}</span> : <Text type="secondary">None</Text>}
+        <Button
+          size="small"
+          onClick={() => {
+            setValue(phone ? "+" + phone : "");
+            setError("");
+            setEditing(true);
+          }}
+        >
+          {phone ? "Change" : "Add"}
+        </Button>
+      </Space>
+    );
+  return (
+    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Space wrap>
+        <Input
+          aria-label="Phone number"
+          aria-describedby="phone-help"
+          placeholder="+91 98000 00001"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onPressEnter={() => void save()}
+          style={{ maxWidth: 220 }}
+        />
+        <Button type="primary" size="small" loading={busy} onClick={() => void save()}>
+          Save
+        </Button>
+        <Button size="small" disabled={busy} onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </Space>
+      <Text type="secondary" id="phone-help">
+        With the country code. WhatsApp and Telegram messages from this number are theirs. Leave it
+        empty to remove it.
+      </Text>
+      {error && <Text type="danger" role="alert">{error}</Text>}
+    </Space>
   );
 }

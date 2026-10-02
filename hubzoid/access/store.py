@@ -129,6 +129,22 @@ NO_NEW_EVERYONE = (
 )
 
 
+class PhoneTaken(ValueError):
+    """The phone number already belongs to someone else (the message is safe
+    to show)."""
+
+
+def phone_digits(phone: str | None) -> str:
+    """A phone number as the channels send it: digits only, country code first.
+    Empty for none; ValueError when it cannot be a phone number."""
+    from ..inbound.normalize import normalize_phone
+
+    digits = normalize_phone(phone)
+    if digits and not 6 <= len(digits) <= 15:
+        raise ValueError("Enter the full number with its country code, for example +91 98000 00001.")
+    return digits
+
+
 class BroadAccessRefused(ValueError):
     """A write would create a new 'everyone signed in' (`*`) grant. Existing ones
     keep working and can be revoked; only migration carrying over demonstrably
@@ -837,6 +853,42 @@ class GrantStore:
                 )
         return subject
 
+    def set_phone(self, subject: str, phone: str | None, *, actor: str,
+                  surface: str | None = None, request_id: str | None = None) -> str:
+        """Record (or with an empty `phone`, clear) the phone number a person's
+        WhatsApp and Telegram messages come from. One number belongs to one
+        person: PhoneTaken when someone else has it. Returns the stored digits."""
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE or "@" not in subject:
+            raise ValueError("a person is required")
+        digits = phone_digits(phone)
+        with self._engine.begin() as conn:
+            if digits:
+                other = conn.execute(
+                    text("SELECT subject FROM hz_identities WHERE phone=:p AND subject<>:s"),
+                    {"p": digits, "s": subject}).fetchone()
+                if other:
+                    raise PhoneTaken("This number already belongs to someone else.")
+            self._ensure_identity(conn, subject)
+            conn.execute(text("UPDATE hz_identities SET phone=:p WHERE subject=:s"),
+                         {"p": digits or None, "s": subject})
+            self._audit(conn, actor, "phone_set" if digits else "phone_clear", subject, ORG,
+                        None, surface, request_id)
+        return digits
+
+    def subject_for_phone(self, phone: str | None) -> str | None:
+        """The person whose recorded phone number this is, or None."""
+        try:
+            digits = phone_digits(phone)
+        except ValueError:
+            return None
+        if not digits:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(text("SELECT subject FROM hz_identities WHERE phone=:p"),
+                               {"p": digits}).fetchone()
+        return row[0] if row else None
+
     def identity(self, subject: str) -> dict | None:
         with self._engine.connect() as conn:
             row = conn.execute(
@@ -1083,7 +1135,8 @@ class GrantStore:
                 dict(r)
                 for r in conn.execute(
                     text(
-                        "SELECT subject, email, owui_id, display, pending FROM hz_identities ORDER BY subject"
+                        "SELECT subject, email, owui_id, display, pending, phone FROM hz_identities "
+                        "ORDER BY subject"
                     )
                 ).mappings()
             ]

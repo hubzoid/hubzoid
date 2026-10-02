@@ -130,6 +130,8 @@ class AccountCreate(BaseModel):
     sign_in: Literal["password", "google"] = "password"
     password: SecretStr | None = None
     grants: list[AccountGrant] = Field(default_factory=list, max_length=200)
+    # For WhatsApp and Telegram (optional): the number their messages come from.
+    phone: str | None = Field(default=None, max_length=32)
 
 
 class ExistingAccountGrant(BaseModel):
@@ -153,6 +155,12 @@ class LinkPasswordRequest(BaseModel):
 class RoleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["user", "admin"]
+
+
+class PhoneRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    # Empty clears it. Digits, spaces, dashes, brackets and a leading +.
+    phone: str = Field(default="", max_length=32)
 
 
 class DeleteAccountRequest(BaseModel):
@@ -594,6 +602,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if q.lower() not in (sub + " " + (person["display"] or "")).lower():
                 continue
             person.update(_account_state(gs, sub, person))
+            if not admin.is_org_admin:
+                person.pop("phone", None)  # personal data: organization administrators
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
             # Filters, applied before pagination.
@@ -783,12 +793,18 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def create_account(request: Request, body: Any = Body(None), admin=Depends(require_admin)):
         _check_mutation(request, admin)
         payload = _validated(AccountCreate, body)
+        if payload.phone:
+            service.require_org_admin(admin.actor(), "Only administrators can set a phone number.")
+            service.check_phone(payload.email, payload.phone)
         created = service.create_account(
             admin.actor(), email=payload.email, name=payload.name,
             password=payload.password.get_secret_value() if payload.password else None,
             sign_in=payload.sign_in,
             grants=[(g.hub, g.permission) for g in payload.grants],
         )
+        if payload.phone:
+            created.update(phone=service.set_phone(admin.actor(), payload.email,
+                                                   payload.phone)["phone"])
         return dict(ok=True, **created)
 
     @router.post("/accounts/grant")
@@ -820,6 +836,15 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             payload.password.get_secret_value() if payload.password else None)
         # Default mode without a password: the one-time link, shown once.
         return dict(ok=True, subject=normalize(subject), **(result or {}))
+
+    @router.post("/accounts/{subject}/phone")
+    @_denied
+    def set_phone(subject: str, request: Request, payload: PhoneRequest,
+                  admin=Depends(require_admin)):
+        """The number a person's WhatsApp and Telegram messages come from.
+        Organization administrators; an empty number clears it."""
+        _check_mutation(request, admin)
+        return dict(ok=True, **service.set_phone(admin.actor(), subject, payload.phone))
 
     @router.post("/accounts/{subject}/approve")
     @_denied

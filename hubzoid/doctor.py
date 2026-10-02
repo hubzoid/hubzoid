@@ -92,9 +92,9 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("access.restricted", "fail", f"Restricted tools do not load: {exc}"))
     try:
-        from .access.resolver import load_resolver
+        from .access.resolver import hub_roster
 
-        if load_resolver(hub) is not None:
+        if hub_roster(hub) is not None:
             out.append(Check("identity.resolver", "info", "Roster resolver present (identity/access)"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))

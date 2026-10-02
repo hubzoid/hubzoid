@@ -316,6 +316,8 @@ export function AccountDrawer({
   const [busy, setBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  // Optional: the number their WhatsApp and Telegram messages come from.
+  const [phone, setPhone] = useState("");
   const [signIn, setSignIn] = useState<SignIn>("password");
   const [password, setPassword] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
@@ -362,6 +364,7 @@ export function AccountDrawer({
     setBusy(false);
     setEmail("");
     setName("");
+    setPhone("");
     setSignIn("password");
     setPassword("");
     setSelected({});
@@ -408,6 +411,7 @@ export function AccountDrawer({
         name: name.trim(),
         sign_in: google ? "google" : "password",
         ...(google || links ? {} : { password }),
+        ...(me.org_admin && phone.trim() ? { phone: phone.trim() } : {}),
         grants,
       });
       setCreated(result);
@@ -591,6 +595,24 @@ export function AccountDrawer({
                 {touched && emailIssue ? emailIssue : "They sign in with this email. Access is granted to it."}
               </Text>
             </div>
+            {me.org_admin && (
+              <div className="field">
+                <label className="field-label" htmlFor="account-phone">
+                  Phone <Text type="secondary">(optional)</Text>
+                </label>
+                <Input
+                  id="account-phone"
+                  autoComplete="off"
+                  inputMode="tel"
+                  placeholder="+91 98000 00001"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+                <Text type="secondary" className="field-help">
+                  With the country code. Their WhatsApp and Telegram messages come from this number.
+                </Text>
+              </div>
+            )}
             <NewUserSignIn
               id="account-password"
               signIn={signIn}

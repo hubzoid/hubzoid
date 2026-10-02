@@ -105,6 +105,11 @@ upgrade requirements and its known limits.
   access list are refused.
 - `hubzoid doctor` warns about an agent nobody may use (`access.who`) and about
   a leftover `MCP_ACCESS_GROUP`.
+- Phone numbers in the Console: an organization administrator records the
+  number a person's WhatsApp and Telegram messages come from (**People → the
+  person → Phone**, or **Add user**). A sender with that number is that
+  person; no `identity/access.csv` is needed. A hub's own roster still works
+  for numbers the Console does not know.
 - Removed: the 1.0 cutover commands `hubzoid access migrate`, `access rollback`
   and `access diff`, `access bootstrap --authoritative`, the
   `.hubzoid/fresh-install` marker, Hubzoid groups (an earlier 1.1 build's

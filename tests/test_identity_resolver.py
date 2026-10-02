@@ -16,8 +16,38 @@ def _write(hub, rel, content):
     return p
 
 
-def test_no_identity_folder_means_no_resolver(tmp_path):
-    assert load_resolver(tmp_path) is None
+def test_console_phone_numbers_resolve_first(tmp_path, monkeypatch):
+    """A number recorded on a person in the Console is that person; anyone else
+    is asked of the hub's own roster. A blocked person is nobody."""
+    import pytest
+
+    from hubzoid.access import store_for
+    from hubzoid.access.store import PhoneTaken
+
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
+    resolve = load_resolver(tmp_path)
+    assert resolve("whatsapp", "919800000001") is None          # no roster, no number yet
+    gs = store_for(tmp_path)
+    assert gs.set_phone("Ana@Example.org", "+91 98000-00001", actor="t") == "919800000001"
+    assert resolve("whatsapp", "919800000001") == {"email": "ana@example.org", "groups": []}
+    assert resolve("telegram", "+919800000001")["email"] == "ana@example.org"
+    with pytest.raises(PhoneTaken):
+        gs.set_phone("ben@example.org", "919800000001", actor="t")
+    with pytest.raises(ValueError):
+        gs.set_phone("ben@example.org", "12", actor="t")
+    _write(tmp_path, "identity/access.csv", """\
+        phone,email,groups
+        919800000001,someone@example.org,coordinator
+        919800000002,ravi@example.org,coordinator
+    """)
+    resolve = load_resolver(tmp_path)
+    got = resolve("whatsapp", "919800000001")                   # the Console wins
+    assert got == {"email": "ana@example.org", "groups": []}
+    assert resolve("whatsapp", "919800000002")["email"] == "ravi@example.org"
+    gs.suspend("ana@example.org", actor="t")
+    assert resolve("whatsapp", "919800000001")["email"] == "someone@example.org"
+    gs.set_phone("ana@example.org", "", actor="t")
+    assert gs.subject_for_phone("919800000001") is None
 
 
 def test_table_resolves_phone_to_email_and_groups(tmp_path):
