@@ -7,6 +7,7 @@ import { Shell, type Area } from "./components/Shell";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
 import { lightTheme, darkTheme, useThemeMode } from "./lib/theme";
+import { displayName } from "./app/lib/format";
 import "./portal.css";
 
 // Each screen is its own chunk so the first paint only needs the shell.
@@ -104,7 +105,8 @@ function Router({
     );
 
   const [area, ...rest] = route.parts;
-  const list = hubs.data.hubs;
+  // Agents are named as the chat app names them ("hubzoid-guide" → "Hubzoid Guide").
+  const list = hubs.data.hubs.map((h) => ({ ...h, name: displayName(h.name) || h.key }));
   let screen: ReactNode;
   let active: Area = "agents";
   if (!area || area === "home") {

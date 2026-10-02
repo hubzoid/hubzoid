@@ -376,7 +376,13 @@ These identities grant no access. Evals invoke **real tools** and may have side
 effects, so use dedicated test accounts and fixtures. For model-free journeys,
 put `MODEL=hubzoid-test/scripted` in the test hub's own `.env`.
 
-The agent's read-only Evals tab shows cases, paged history and result details.
+The agent's read-only Evals tab opens with the score: the latest run's passed
+of total, its time and trigger, a bar for each of the last 10 runs, the cases
+failing now and those never run. Each case shows its last 10 results as dots.
+The agent's card in the Console shows **Evals 8/10** (or **Evals not run**)
+when the agent has cases. Below that are the cases, paged history and result
+details. Case names and pass or fail results are operational data shown for
+every case.
 There is no Console run button. Managers can see verdicts, but details of a run
 with `run_as` belong only to that account (which must also have Console/agent
 access). Other viewers see an explicit private-result notice. Scheduled suites

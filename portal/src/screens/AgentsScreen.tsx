@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Button, Card, Empty, Input, Space, Tag, Typography } from "antd";
 import { Search } from "lucide-react";
-import { type Hub, type SummaryHub, type Workflow } from "../api";
+import { type EvalScore, type Hub, type SummaryHub, type Workflow } from "../api";
+import { useData } from "../hooks/useData";
 import { agentHref } from "../hooks/useRoute";
 import { AgentAvatar } from "../components/common";
 
@@ -10,6 +11,28 @@ import { Cost } from "../components/UsageCost";
 import { short } from "../lib/format";
 
 const { Text } = Typography;
+
+/** The agent's latest eval score, linking to its Evals tab. Nothing for an
+ *  agent without eval cases. Counts only. */
+function EvalBadge({ hub }: { hub: Hub }) {
+  const data = useData<{ cases: number; runs: number; latest: EvalScore | null }>(
+    "/evals/summary?hub=" + encodeURIComponent(hub.key),
+  );
+  const d = data.data;
+  if (!d || d.cases === 0) return null;
+  const tag = d.latest ? (
+    <Tag color={d.latest.passed === d.latest.total ? "green" : "red"}>
+      Evals {d.latest.passed}/{d.latest.total}
+    </Tag>
+  ) : (
+    <Tag>Evals not run</Tag>
+  );
+  return (
+    <a href={agentHref(hub.key, "evals")} onClick={(e) => e.stopPropagation()}>
+      {tag}
+    </a>
+  );
+}
 
 export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?: Workflow[]; usage?: SummaryHub[] }) {
   const [search, setSearch] = useState("");
@@ -88,6 +111,7 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
                     ) : (
                       <Tag>No workflows</Tag>
                     ))}
+                  <EvalBadge hub={h} />
                 </Space>
                 {metrics && <dl className="agent-card-usage" aria-label={`${h.name} usage`}>
                   <div>

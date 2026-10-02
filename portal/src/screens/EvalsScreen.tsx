@@ -75,6 +75,78 @@ function keyArgs(args: unknown): string {
     .join(", ");
 }
 
+/** The latest score, the trend over the last 10 runs, and what needs a look. */
+function ScoreSummary({ hub, score }: { hub: Hub; score: NonNullable<EvalsOverview["score"]> }) {
+  const latest = score.latest;
+  if (!latest)
+    return (
+      <div className="eval-score">
+        <Text type="secondary">No run yet. Run evals from the command line, CI or a schedule.</Text>
+      </div>
+    );
+  const all = latest.passed === latest.total;
+  return (
+    <div className="eval-score" role="group" aria-label="Eval score">
+      <div className="eval-score-main">
+        <a href={href(evalsPath(hub, latest.stamp))} aria-label="Open the latest run">
+          <span className={`eval-score-value ${all ? "good" : "bad"}`}>
+            {latest.passed}/{latest.total}
+          </span>
+        </a>
+        <div>
+          <Text strong>{all ? "All passed" : `${latest.total - latest.passed} failed`}</Text>
+          <div>
+            <Text type="secondary">
+              Last run <When value={latest.finished} />
+              {latest.trigger ? ` · ${latest.trigger}` : ""}
+            </Text>
+          </div>
+        </div>
+      </div>
+      {score.trend.length > 1 && (
+        <div className="eval-trend" aria-label={`Last ${score.trend.length} runs, oldest first`}>
+          {score.trend.map((t) => (
+            <a
+              key={t.stamp}
+              href={href(evalsPath(hub, t.stamp))}
+              className={`eval-bar ${t.passed === t.total ? "good" : "bad"}`}
+              style={{ height: `${Math.max(12, Math.round((t.total ? t.passed / t.total : 0) * 100))}%` }}
+              title={`${t.passed}/${t.total} passed`}
+              aria-label={`${t.passed} of ${t.total} passed`}
+            />
+          ))}
+        </div>
+      )}
+      <div className="eval-score-lists">
+        {score.failing.length > 0 && (
+          <div>
+            <Text type="danger">Failing now:</Text> {score.failing.join(", ")}
+          </div>
+        )}
+        {score.never_run.length > 0 && (
+          <div>
+            <Text type="secondary">Never run:</Text> {score.never_run.join(", ")}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A case's last results as dots, oldest on the left. */
+function ResultDots({ history }: { history: boolean[] }) {
+  if (history.length < 2) return null;
+  const oldestFirst = [...history].reverse();
+  const passed = history.filter(Boolean).length;
+  return (
+    <span className="eval-dots" aria-label={`${passed} of the last ${history.length} runs passed`}>
+      {oldestFirst.map((ok, i) => (
+        <span key={i} className={`eval-dot ${ok ? "good" : "bad"}`} />
+      ))}
+    </span>
+  );
+}
+
 function Verdict({ passed }: { passed: boolean }) {
   return (
     <Tag color={passed ? "green" : "red"} style={{ marginInlineEnd: 0 }}>
@@ -135,6 +207,7 @@ export function EvalsScreen({ hub, run }: { hub: Hub; run?: string }) {
         </Space>
       </div>
       <RunStateAlerts data={data} />
+      {data.score && data.cases.length > 0 && <ScoreSummary hub={hub} score={data.score} />}
       {data.errors.length > 0 && (
         <Alert
           className="notice"
@@ -337,6 +410,7 @@ function CasesTable({ hub, cases }: { hub: Hub; cases: EvalCaseRow[] }) {
                     <Verdict passed={c.latest.passed} />
                   </a>
                   <When value={c.latest.finished} />
+                  <ResultDots history={c.history ?? []} />
                 </Space>
                 {!c.latest.passed && c.latest.reason && (
                   <div>

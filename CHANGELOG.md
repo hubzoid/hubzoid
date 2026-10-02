@@ -203,6 +203,8 @@ upgrade requirements and its known limits.
   out of the tracked tree.
 
 ### Fixes
+- The Console names agents as the chat app does (`hubzoid-guide` shows as
+  Hubzoid Guide).
 - Hubs sharing one PostgreSQL workflow database no longer collide on markdown
   schedule tasks and scheduled evals. Run ids now name the hub
   (`md:<task>:<slot>@<hub>`), so two hubs with the same task and slot both run.
@@ -286,8 +288,10 @@ upgrade requirements and its known limits.
 - Results are private, atomically written schema 2 files with a locked index
   and retention (`HUBZOID_EVAL_KEEP_RUNS`, default 200). Schema 1 files still
   read.
-- A read-only Evals tab on each agent's page. Details of a `run_as` run are
-  visible only to that account. Scheduled suites with failing cases now end as
+- A read-only Evals tab on each agent's page, opening with the score (latest
+  passed of total, the last 10 runs, cases failing now and never run) and each
+  case's last 10 results. Agent cards show **Evals 8/10** or **Evals not run**.
+  Details of a `run_as` run are visible only to that account. Scheduled suites with failing cases now end as
   failed runs, so they raise alerts.
 
 ### Agent tools for workflows and access

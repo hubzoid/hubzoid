@@ -33,6 +33,27 @@ DOCS = "https://github.com/hubzoid/hubzoid/blob/main/docs/evals.md"
 
 _SECRET_KEY = re.compile(r"token|password|passwd|secret|api[_-]?key|authorization|cookie",
                          re.IGNORECASE)
+# ---- scores -------------------------------------------------------------------
+
+#: Runs in the Evals tab's trend and in each case's recent results.
+TREND_RUNS = 10
+
+
+def _run_score(row: dict) -> dict:
+    """One run as counts: passed of total, when and how it ran."""
+    return dict(stamp=row['stamp'], passed=row['passed'], total=row['total'],
+                finished=row['finished'], trigger=row['trigger'])
+
+
+def _histories(rows: list[dict]) -> dict[str, list[bool]]:
+    """Each case's results in the last TREND_RUNS runs, newest first."""
+    out: dict[str, list[bool]] = {}
+    for row in rows[:TREND_RUNS]:
+        for case in row['cases']:
+            out.setdefault(case['name'], []).append(bool(case['passed']))
+    return out
+
+
 # ---- reading cases ----------------------------------------------------------
 
 def _case_checks(case) -> list[str]:
@@ -301,15 +322,36 @@ def register(router: APIRouter, hub_dir: Path, *, require_admin: Callable,
             for case in row['cases']:
                 latest.setdefault(case['name'], dict(stamp=row['stamp'], passed=case['passed'],
                     reason='', finished=row['finished'], trigger=row['trigger']))
+        history = _histories(rows)
         # Definitions for account-scoped cases can contain private assertions.
+        # Case names and pass/fail results are operational data shown for every
+        # case; prompts, checks and answers of a private case are not.
         output = []
         for case in cases:
             row = _case_row(case)
             if case.run_as and normalize(case.run_as) != normalize(admin.subject):
                 row.update(prompt='', checks=[], run_as=None)
-            output.append(dict(row, latest=latest.get(case.name)))
+            output.append(dict(row, latest=latest.get(case.name),
+                               history=history.get(case.name, [])))
+        names = [c.name for c in cases]
+        score = dict(latest=_run_score(rows[0]) if rows else None,
+                     trend=[_run_score(r) for r in reversed(rows[:TREND_RUNS])],
+                     failing=[n for n in names if latest.get(n) and not latest[n]['passed']],
+                     never_run=[n for n in names if n not in latest])
         return dict(hub=hub, folder=folder, docs=DOCS, cases=output, errors=errors,
-                    runs=total, active=None, last=None, state_error=None)
+                    runs=total, score=score, active=None, last=None, state_error=None)
+
+    @router.get('/evals/summary')
+    def evals_summary(request: Request, hub: str, admin=Depends(require_admin)):
+        """The latest run's score for an agent card: counts only, and how many
+        cases the agent has (none: the card shows nothing)."""
+        path, redirect = location(admin, hub, request)
+        if redirect is not None:
+            return redirect
+        _folder, cases, _errors = read_cases(path)
+        rows, total = report.summaries(path, limit=1)
+        return dict(hub=hub, cases=len(cases), runs=total,
+                    latest=_run_score(rows[0]) if rows else None)
 
     @router.get('/evals/runs')
     def eval_runs(request: Request, hub: str, offset: int = Query(0, ge=0),

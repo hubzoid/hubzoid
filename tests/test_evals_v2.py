@@ -34,6 +34,18 @@ def test_eval_api_private_details_and_index_paging(api):
     private = next(c for c in overview.json()["cases"] if c["name"] == "private")
     assert private["prompt"] == "" and private["checks"] == [] and private["run_as"] is None
     assert private["latest"]["passed"] is False
+    # Scores are counts and pass/fail results, never a private case's content.
+    score = overview.json()["score"]
+    assert score["latest"]["passed"] == 1 and score["latest"]["total"] == 1
+    assert [(t["passed"], t["total"]) for t in score["trend"]] == [(1, 2), (1, 1)]
+    assert score["failing"] == ["private"] and score["never_run"] == []
+    assert private["history"] == [False]
+    public = next(c for c in overview.json()["cases"] if c["name"] == "public")
+    assert public["history"] == [True, True]
+    card = api.as_(ROOT).get("/portal/api/evals/summary", params={"hub": "finance"}).json()
+    assert card["runs"] == 2 and card["cases"] == 2
+    assert (card["latest"]["passed"], card["latest"]["total"]) == (1, 1)
+    assert "PRIVATE" not in overview.text.replace("private", "")
 
     params = {"hub": "finance", "limit": 1}
     newest = api.as_(ROOT).get("/portal/api/evals/runs", params={**params, "offset": 0})

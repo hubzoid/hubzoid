@@ -898,3 +898,17 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   border-bottom: 0;
   padding-bottom: 0;
 }
+
+/* Evals: the score, its trend and each case's recent results. */
+.eval-score { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; margin: 4px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.eval-score-main { display: flex; align-items: center; gap: 12px; }
+.eval-score-value { font-size: 32px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.eval-score-value.good { color: #2f7d4f; }
+.eval-score-value.bad { color: #c0392b; }
+.eval-trend { display: flex; align-items: flex-end; gap: 4px; height: 40px; }
+.eval-bar { display: block; width: 10px; border-radius: 2px; }
+.eval-bar.good, .eval-dot.good { background: #3f9a63; }
+.eval-bar.bad, .eval-dot.bad { background: #d9534f; }
+.eval-score-lists { display: grid; gap: 4px; }
+.eval-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.eval-dot { width: 8px; height: 8px; border-radius: 50%; }

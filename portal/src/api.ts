@@ -499,6 +499,17 @@ export type EvalCaseRow = {
   /** The (first) prompt, shortened. */
   prompt: string;
   latest: EvalLatest | null;
+  /** Its results in the last 10 runs, newest first. */
+  history?: boolean[];
+};
+
+/** One run as counts. */
+export type EvalScore = {
+  stamp: string;
+  passed: number;
+  total: number;
+  finished: string | null;
+  trigger: string | null;
 };
 
 /** An eval run on the hub's workflow engine, scheduled or from the Console. */
@@ -529,6 +540,8 @@ export type EvalsOverview = {
   errors: { file: string; error: string }[];
   /** How many results files are recorded. */
   runs: number;
+  /** The latest run, the last 10 runs (oldest first), failing and never run cases. */
+  score?: { latest: EvalScore | null; trend: EvalScore[]; failing: string[]; never_run: string[] };
   active: EvalRunState | null;
   last: EvalRunState | null;
   state_error?: string;
