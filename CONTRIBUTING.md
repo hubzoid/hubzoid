@@ -49,22 +49,25 @@ to trust.
 git clone https://github.com/hubzoid/hubzoid.git
 cd hubzoid
 pip install -e '.[dev]'
-pytest -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'
+pytest
 ```
 
-The legacy Open WebUI chat app is the optional `openwebui` extra. Its tests
+The Open WebUI chat app is the optional `openwebui` extra. Its tests
 need it installed (it brings PyTorch, so use the CPU index):
 `pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'`.
 
 ## Running tests
 
-Every pull request and every push to `main` runs the fast checks in
+Every pull request and every push to `main` runs
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml): the unit tests on
 SQLite, without Open WebUI, browsers, live models or Docker, and the web app's
-lint (`npm run lint` in `portal/`). The same commands work locally:
+lint (`npm run lint` in `portal/`). A pull request runs the fast default, which
+skips tests marked `slow`. A push to `main` runs the slow tests too. The same
+commands work locally:
 
 ```bash
-pytest -q -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'
+pytest -q                                                               # pull request
+pytest -q -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'  # main
 (cd portal && npm ci && npm run lint)
 ```
 

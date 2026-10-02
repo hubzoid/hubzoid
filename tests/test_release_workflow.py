@@ -87,8 +87,11 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
         assert forbidden not in text, forbidden
     runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
     assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
-    assert "not e2e and not e2e_llm and not e2e_ui and not e2e_browser" in runs
     assert "npm run lint" in runs
+    # Pull requests run the fast default; pushes to main add the slow tests.
+    steps = {s.get("if"): s.get("run", "") for s in config["jobs"]["unit"]["steps"] if "pytest" in s.get("run", "")}
+    assert steps["github.event_name == 'pull_request'"].strip() == "pytest -q --no-header"
+    assert "not e2e and not e2e_llm and not e2e_ui and not e2e_browser" in steps["github.event_name != 'pull_request'"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
