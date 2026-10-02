@@ -124,14 +124,16 @@ def definitions(hub_dir) -> list[dict]:
                         timezone="UTC",
                         error=None,
                         run_as=None,
+                        webhook=None,
                     )
                     try:
                         args = {
                             k.arg: ast.literal_eval(k.value)
                             for k in dec.keywords
-                            if k.arg in ("schedule", "timezone", "run_as")
+                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook")
                         }
                         row["run_as"] = args.get("run_as")
+                        row["webhook"] = args.get("on_webhook")
                         row["schedule"] = (
                             ast.literal_eval(dec.args[0])
                             if dec.args
@@ -184,6 +186,8 @@ def catalog(hub_dir) -> list[dict]:
             row["state"] = "error"
         elif row["name"] in paused:
             row["state"] = "paused"
+        elif row.get("webhook") and not row["schedule"]:
+            row["state"] = "event"
         elif not row["schedule"]:
             row["state"] = "manual"
         elif not enabled:
@@ -238,6 +242,7 @@ def markdown_catalog(hub_dir) -> list[dict]:
             hub=hub_dir.name.lower(), name=f"md:{t.name}", kind="markdown",
             source=f"schedule/{t.name}.md",
             schedule=(f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule),
+            webhook=t.on_webhook if t.is_webhook else None,
             timezone="server local time", error=None, enabled=on,
             state=("paused" if f"md:{t.name}" in paused else "definition-disabled" if not t.enabled
                    else "disabled" if disabled else "event" if t.is_webhook else "scheduled"),

@@ -674,6 +674,57 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             ]
         }
 
+    @router.get("/webhooks")
+    @_denied
+    def webhooks(hub: str, admin=Depends(require_admin)):
+        """A hub's webhook workflows: address, verification, the last 24 hours'
+        deliveries by state and the latest failures. Read-only. Never a payload,
+        a digest or a header."""
+        import time
+
+        from sqlalchemy import text
+
+        from .inbound.routing import hub_slug
+        from .artifacts import public_base_url
+        from .workflows import events
+        from .workflows.observe import catalog
+
+        path = Path(require_hub(admin, hub))
+        try:
+            specs = events.declarations(path)
+        except ValueError as exc:
+            return {"webhooks": [], "error": str(exc)}
+        if not specs:
+            return {"webhooks": []}
+        by_webhook: dict[str, list[str]] = {}
+        for w in catalog(path):
+            if w.get("webhook"):
+                by_webhook.setdefault(w["webhook"], []).append(w["name"])
+        base = public_base_url(path)
+        slug = hub_slug(path, {})
+        since = time.time() - 86400
+        out = []
+        with events._engine(path).connect() as conn:  # noqa: SLF001 — read model
+            for name, spec in sorted(specs.items()):
+                counts = {s: 0 for s in ("accepted", "running", "succeeded", "failed")}
+                for state, n in conn.execute(text(
+                        "SELECT state, count(*) FROM hz_workflow_events WHERE hub=:h AND "
+                        "webhook=:w AND created >= :t GROUP BY state"),
+                        {"h": normalize(hub), "w": name, "t": since}):
+                    counts["running" if state == "retrying" else state] = (
+                        counts.get("running" if state == "retrying" else state, 0) + int(n))
+                failures = [dict(r) for r in conn.execute(text(
+                    "SELECT id, workflow, created, updated, attempt, error FROM "
+                    "hz_workflow_events WHERE hub=:h AND webhook=:w AND state='failed' "
+                    "ORDER BY updated DESC LIMIT 5"), {"h": normalize(hub), "w": name}).mappings()]
+                for f in failures:
+                    f["redrive"] = f"hubzoid schedule redrive {f['id']} --hub {path.name}"
+                out.append(dict(
+                    name=name, url=f"{base}/webhooks/{slug}/{name}",
+                    verify=spec.get("verify", "header"), workflows=by_webhook.get(name, []),
+                    last_24h=counts, failures=failures))
+        return {"webhooks": out}
+
     @router.get("/runs")
     def runs(
         hub: str | None = None,

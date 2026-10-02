@@ -93,6 +93,26 @@ export type Workflow = {
   downtime: { since: string; until: string; missed: number } | null;
   // Who a run of this workflow acts as, resolved the way a run resolves it.
   runs_as?: { account: string | null; source: string | null; via: string | null; error: string | null };
+  // The webhook that starts this workflow, when it runs on events.
+  webhook?: string | null;
+};
+// A webhook this agent declares: where it receives events and how they went.
+// Payloads, headers and digests never leave the server.
+export type Webhook = {
+  name: string;
+  url: string;
+  verify: string;
+  workflows: string[];
+  last_24h: { accepted: number; running: number; succeeded: number; failed: number };
+  failures: {
+    id: string;
+    workflow: string;
+    created: number;
+    updated: number;
+    attempt: number;
+    error: string | null;
+    redrive: string;
+  }[];
 };
 export type Run = {
   hub: string;

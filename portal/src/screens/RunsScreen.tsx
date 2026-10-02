@@ -12,7 +12,7 @@ import {
   Typography,
 } from "antd";
 import { RefreshCw } from "lucide-react";
-import { query, type Hub, type Run, type Workflow } from "../api";
+import { query, type Hub, type Run, type Webhook, type Workflow } from "../api";
 import { useData } from "../hooks/useData";
 import { agentHref, href } from "../hooks/useRoute";
 import {
@@ -151,7 +151,12 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "Schedule",
             key: "schedule",
             render: (_, w) =>
-              w.schedule ? (
+              w.webhook ? (
+                <>
+                  <div>On webhook</div>
+                  <Text code>{w.webhook}</Text>
+                </>
+              ) : w.schedule ? (
                 <>
                   <div>{describeCron(w.schedule)}</div>
                   <Text code>{w.schedule}</Text>
@@ -218,6 +223,108 @@ function WorkflowList({ hub }: { hub: Hub }) {
             key: "runs",
             align: "right",
             render: (_, w) => <Button href={runsHref(hub, w.name)}>View runs</Button>,
+          },
+        ]}
+      />
+      <Webhooks hub={hub} />
+    </div>
+  );
+}
+
+const WEBHOOK_STATES = [
+  ["accepted", "Waiting", "default"],
+  ["running", "Running", "blue"],
+  ["succeeded", "Succeeded", "green"],
+  ["failed", "Failed", "red"],
+] as const;
+
+// Read-only: the webhooks this agent declares, their last day of events and the
+// latest failures. Redriving stays a server command an operator runs.
+function Webhooks({ hub }: { hub: Hub }) {
+  const data = useData<{ webhooks: Webhook[]; error?: string }>("/webhooks" + query({ hub: hub.key }));
+  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
+  const { webhooks, error } = data.data;
+  if (!webhooks.length && !error) return null;
+  return (
+    <div className="section">
+      <Title level={5}>Webhooks</Title>
+      {error && <Alert className="notice" type="error" showIcon message={`Webhook settings could not be read: ${error}`} />}
+      <Table<Webhook>
+        rowKey="name"
+        size="middle"
+        dataSource={webhooks}
+        pagination={false}
+        scroll={{ x: 720 }}
+        expandable={{
+          rowExpandable: (h) => h.failures.length > 0,
+          expandedRowRender: (h) => (
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              {h.failures.map((f) => (
+                <div key={f.id}>
+                  <Text strong>{f.workflow}</Text>{" "}
+                  <Text type="secondary">
+                    · failed {formatTime(f.updated)} after {f.attempt}{" "}
+                    {f.attempt === 1 ? "attempt" : "attempts"}
+                  </Text>
+                  {f.error && (
+                    <div>
+                      <Text type="danger">{f.error}</Text>
+                    </div>
+                  )}
+                  <div>
+                    <Text type="secondary" className="hint">
+                      Redrive on the server:{" "}
+                    </Text>
+                    <Text code copyable>
+                      {f.redrive}
+                    </Text>
+                  </div>
+                </div>
+              ))}
+            </Space>
+          ),
+        }}
+        columns={[
+          {
+            title: "Webhook",
+            key: "name",
+            render: (_, h) => (
+              <>
+                <div>{h.name}</div>
+                <Text code copyable className="hint">
+                  {h.url}
+                </Text>
+              </>
+            ),
+          },
+          {
+            title: "Starts",
+            key: "workflows",
+            render: (_, h) =>
+              h.workflows.length ? (
+                h.workflows.map((w) => (
+                  <div key={w}>
+                    <a href={runsHref(hub, w)}>{w}</a>
+                  </div>
+                ))
+              ) : (
+                <Text type="secondary">No workflow</Text>
+              ),
+          },
+          { title: "Verification", key: "verify", render: (_, h) => <Text>{h.verify}</Text> },
+          {
+            title: "Last 24 hours",
+            key: "last_24h",
+            render: (_, h) => (
+              <Space size={4} wrap>
+                {WEBHOOK_STATES.filter(([k]) => h.last_24h[k] > 0).map(([k, label, color]) => (
+                  <Tag key={k} color={color} style={{ marginInlineEnd: 0 }}>
+                    {h.last_24h[k]} {label.toLowerCase()}
+                  </Tag>
+                ))}
+                {WEBHOOK_STATES.every(([k]) => !h.last_24h[k]) && <Text type="secondary">No events</Text>}
+              </Space>
+            ),
           },
         ]}
       />

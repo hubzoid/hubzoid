@@ -398,6 +398,11 @@ fallback. Retries belong to Hubzoid: by default three attempts, after 60 and 300
 seconds. External actions remain at-least-once across a crash. A checkpoint
 cannot undo or guarantee deduplication of a remote write.
 
+The Console shows each webhook under the agent's **Runs & schedules**: its URL,
+the workflows it starts, the last 24 hours of events by state, and the latest
+failures with the redrive command to run on the server. It never shows payloads,
+headers or digests, and it has no redrive button.
+
 Inspect deliveries with `hubzoid schedule deliveries <hub>`. Failed events can
 be retried explicitly with `hubzoid schedule redrive <event-id> --hub <hub>` after
 checking side effects. Cancelling a webhook run from the Console fails its event

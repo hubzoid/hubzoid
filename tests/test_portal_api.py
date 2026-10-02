@@ -327,3 +327,47 @@ def test_audit_filters_before_pagination(client, tmp_path):
     assert len(denied) == 1 and denied[0]["decision"] == "deny"  # found beyond page 1
     payroll = client.get("/portal/api/audit", params={"tool": "payroll_run", "limit": 200}).json()["rows"]
     assert payroll and all(r["tool"] == "payroll_run" for r in payroll)
+
+
+def test_webhook_view_shows_counts_and_failures_never_payloads(client, tmp_path, monkeypatch):
+    import json
+    import time
+
+    from sqlalchemy import text
+
+    from hubzoid.workflows import events
+
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org")
+    (tmp_path / "workflows" / "tickets").mkdir(parents=True)
+    (tmp_path / "workflows" / "settings.yaml").write_text(
+        "webhooks:\n  ticket-created:\n    verify: hmac\n    timestamp_header: X-Ts\n")
+    (tmp_path / "workflows" / "tickets" / "main.py").write_text(
+        "from hubzoid import workflow\n\n@workflow(on_webhook='ticket-created')\n"
+        "def triage():\n    return 'ok'\n")
+    now = time.time()
+    with events._engine(tmp_path).begin() as conn:
+        for i, (state, created) in enumerate([("succeeded", now), ("retrying", now),
+                                              ("failed", now), ("failed", now - 3 * 86400)]):
+            conn.execute(text(
+                "INSERT INTO hz_workflow_events (id, hub, webhook, workflow, digest, payload, "
+                "state, created, updated, attempt, redrive, error) VALUES (:i, :h, "
+                "'ticket-created', 'triage', 'DIGEST-SECRET', :p, :s, :c, :c, 3, 0, 'RuntimeError')"),
+                {"i": f"ev{i}", "h": client.hub, "s": state, "c": created,
+                 "p": json.dumps({"body": {"token": "PAYLOAD-SECRET"},
+                                  "headers": {"authorization": "HEADER-SECRET"}})})
+    r = client.get("/portal/api/webhooks", params={"hub": client.hub})
+    assert r.status_code == 200, r.text
+    (hook,) = r.json()["webhooks"]
+    from hubzoid.inbound.routing import hub_slug
+    assert hook["url"] == f"https://hub.example.org/webhooks/{hub_slug(client.hub)}/ticket-created"
+    assert hook["verify"] == "hmac" and hook["workflows"] == ["triage"]
+    assert hook["last_24h"] == {"accepted": 0, "running": 1, "succeeded": 1, "failed": 1}
+    assert [f["id"] for f in hook["failures"]] == ["ev2", "ev3"]
+    assert hook["failures"][0]["redrive"] == f"hubzoid schedule redrive ev2 --hub {client.hub}"
+    for secret in ("PAYLOAD-SECRET", "HEADER-SECRET", "DIGEST-SECRET"):
+        assert secret not in r.text
+    (row,) = [w for w in client.get("/portal/api/workflows", params={"hub": client.hub}).json()["workflows"]
+              if w["name"] == "triage"]
+    assert row["webhook"] == "ticket-created" and row["state"] == "event"
+    client.admin["who"] = None
+    assert client.get("/portal/api/webhooks", params={"hub": client.hub}).status_code == 403

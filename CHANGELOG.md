@@ -242,6 +242,9 @@ upgrade requirements and its known limits.
   hub's worker threads. A backlog on one webhook workflow does not delay others.
 - The run reads its event as `hub.event` (`id`, `key`, `body`, safe headers,
   `webhook`, `received_at`, `attempt`).
+- The Console's Runs & schedules lists each webhook with its URL, the workflows
+  it starts, the last 24 hours of events by state and the latest failures with
+  their redrive command. Payloads, headers and digests are never shown.
 
 ### Workflow engine
 - One engine owner per hub: a file lock on SQLite and an advisory lock on
