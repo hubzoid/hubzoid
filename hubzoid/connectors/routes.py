@@ -132,7 +132,7 @@ def build_router(hub_dir: Path) -> APIRouter:
     # ---- Console: the registry ------------------------------------------------
     def entry(c: registry.Connector, origin: str, counts: dict) -> dict:
         return {**c.public(), "redirect_uri": oauth_flow.redirect_uri(origin, c.id),
-                "connections": counts.get(c.id, 0)}
+                "connections": counts.get(c.id, 0), "agents": registry.agents_of(hub_dir, c.id)}
 
     @router.get("/portal/api/connectors")
     def list_connectors(request: Request):
@@ -144,11 +144,14 @@ def build_router(hub_dir: Path) -> APIRouter:
                             headers=_NO_STORE)
 
     @router.post("/portal/api/connectors")
-    def create_connector(request: Request, body: Any = Depends(json_body)):
+    def create_connector(request: Request, body: Any = Depends(json_body), hub: str = ""):
+        """Register a connector, and with ``?hub=`` offer it in that agent."""
         user = admin(request)
         same_origin(request)
         try:
             c = registry.create(hub_dir, body, actor=user.email)
+            if hub:
+                registry.offer(hub_dir, c.id, hub, actor=user.email)
         except ConnectorError as err:
             _raise(err)
         return JSONResponse({"connector": entry(c, oauth_flow.origin_for(request, strict=False),
@@ -172,6 +175,37 @@ def build_router(hub_dir: Path) -> APIRouter:
         if not registry.delete(hub_dir, connector_id, actor=user.email):
             raise _error(404, "not_found", "No connector has this ID.")
         return Response(status_code=204)
+
+    @router.put("/portal/api/connectors/{connector_id}/agents/{hub}", status_code=204)
+    def offer_connector(connector_id: str, hub: str, request: Request):
+        """Offer a registered connector in one agent."""
+        user = admin(request)
+        same_origin(request)
+        _known_agent(hub)
+        try:
+            registry.offer(hub_dir, connector_id, hub, actor=user.email)
+        except ConnectorError as err:
+            _raise(err)
+        return Response(status_code=204)
+
+    @router.delete("/portal/api/connectors/{connector_id}/agents/{hub}", status_code=204)
+    def withdraw_connector(connector_id: str, hub: str, request: Request):
+        """Stop offering a connector in one agent (its grants there go too)."""
+        user = admin(request)
+        same_origin(request)
+        if not registry.withdraw(hub_dir, connector_id, hub, actor=user.email):
+            raise _error(404, "not_found", "This agent does not offer this connector.")
+        return Response(status_code=204)
+
+    def _known_agent(hub: str) -> None:
+        from .. import deployment
+
+        try:
+            keys = {normalize(h["key"]) for h in deployment.hubs(hub_dir)}
+        except Exception:  # noqa: BLE001 — a standalone hub without a readable manifest
+            keys = {normalize(hub_dir.name)}
+        if normalize(hub) not in keys:
+            raise _error(404, "unknown_agent", "There is no such agent.")
 
     @router.post("/portal/api/connectors/{connector_id}/test")
     def test_connector(connector_id: str, request: Request):

@@ -251,6 +251,9 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
     registry.create(hub, body(), actor="test")
     registry.create(hub, body(name="Docs", url="https://docs.example.org/mcp", auth_type="none",
                               enabled=False), actor="test")
+    registry.create(hub, body(name="HR", url="https://hr.example.org/mcp"), actor="test")
+    for cid in ("gmail", "docs"):                    # HR is registered but not offered here
+        registry.offer(hub, cid, hub.name, actor="test")
     # An Open WebUI server is not offered in the default mode.
     from tests import connect_helpers as h
 
@@ -260,12 +263,12 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
-    assert "connector_notion" not in rows
+    assert "connector_notion" not in rows and "connector_hr" not in rows
     gmail, docs = rows["connector_gmail"], rows["connector_docs"]
     assert gmail["label"] == "Connect Gmail" and gmail["sensitive"] is True
     assert gmail["group"] == "tools" and gmail["available"] is True
     assert docs["available"] is False and docs["status"] == "Switched off"
-    # The legacy mode is unchanged: Open WebUI's servers, not the registry.
+    # Open WebUI mode: Open WebUI's servers, not the registry.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     rows = {r["permission"] for r in capabilities.catalog(hub)}
     assert "connector_notion" in rows and "connector_gmail" not in rows
@@ -310,6 +313,9 @@ def test_allowed_follows_the_connector_capability(hub, tc, monkeypatch):
     r = tc.post("/api/connections/gmail/connect", json={}, headers={**SAME, "x-test-user": BOB})
     assert r.status_code == 403 and detail(r)["code"] == "not_allowed"
     gs.grant(BOB, "sales", "connector_gmail", actor="test")
+    # Held, but no agent offers it yet.
+    assert tc.get("/api/connections", headers={"x-test-user": BOB}).json()[0]["allowed"] is False
+    registry.offer(hub, "gmail", "sales", actor="test")
     mine = tc.get("/api/connections", headers={"x-test-user": BOB}).json()
     assert mine[0]["allowed"] is True
     gs.suspend(BOB, actor="test")
@@ -449,3 +455,21 @@ def test_oauth_callback_queries_never_reach_the_access_log(hub):
     shown = line("/oauth/connectors/gmail/callback?code=SECRET-CODE&state=SECRET-STATE")
     assert "SECRET" not in shown and "/oauth/connectors/gmail/callback?[redacted]" in shown
     assert "/api/connections?x=1" in line("/api/connections?x=1")
+
+
+def test_a_connector_is_offered_per_agent(hub, tc, monkeypatch):
+    """Registered once, offered in the agents that list it: its capability and
+    people's connection exist only there. Stopping an offer removes that
+    agent's grants and keeps the connector; removing it goes everywhere."""
+    gs = store_for(hub)
+    r = tc.post("/portal/api/connectors?hub=sales", json=body(), headers=SAME)
+    assert r.status_code == 201 and r.json()["connector"]["agents"] == ["sales"]
+    assert "connector_gmail" in {p["permission"] for p in capabilities.catalog(hub)}
+    gs.grant(BOB, "sales", "connector_gmail", actor="test")
+    assert tc.put("/portal/api/connectors/gmail/agents/nowhere", headers=SAME).status_code == 404
+    assert tc.delete("/portal/api/connectors/gmail/agents/sales", headers=SAME).status_code == 204
+    assert not gs.can(BOB, "sales", "connector_gmail")
+    assert "connector_gmail" not in {p["permission"] for p in capabilities.catalog(hub)}
+    assert registry.get(hub, "gmail") is not None and registry.agents_of(hub, "gmail") == []
+    assert tc.put("/portal/api/connectors/gmail/agents/sales", headers=SAME).status_code == 204
+    assert tc.get("/portal/api/connectors").json()["connectors"][0]["agents"] == ["sales"]

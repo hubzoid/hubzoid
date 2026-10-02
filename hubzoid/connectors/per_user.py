@@ -45,9 +45,9 @@ def _blocked(hub_dir, email: str) -> bool:
 
 
 def allowed_ids(hub_dir, email: str, ids) -> set[str]:
-    """Connector ids ``email`` may use somewhere in this deployment: those whose
-    capability the person holds on at least one hub. Empty for a blocked person
-    or when access cannot be checked."""
+    """Connector ids ``email`` may use somewhere in this deployment: those
+    offered in an agent where the person holds their capability. Empty for a
+    blocked person or when access cannot be checked."""
     from .. import deployment
     from ..access import store_for
     from ..access.identity import normalize
@@ -66,7 +66,8 @@ def allowed_ids(hub_dir, email: str, ids) -> set[str]:
             hubs = [normalize(Path(hub_dir).name)]
         out: set[str] = set()
         for hub in hubs:
-            out |= {i for i in ids if gs.can(email, hub, capability(i))}
+            offered = registry.offered_in(hub_dir, hub)
+            out |= {i for i in ids if i in offered and gs.can(email, hub, capability(i))}
         return out
     except Exception:  # noqa: BLE001 — fail closed
         log.warning("connectors: access check failed", exc_info=True)
@@ -92,7 +93,9 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
         connections = [c for c in connections if c.status != "expired"]
         if not connections:
             return []
-        by_id = {c.id: c for c in registry.list_all(hub_dir) if c.enabled}
+        # Only the connectors this agent offers, whatever the person holds elsewhere.
+        offered = registry.offered_in(hub_dir, Path(hub_dir).name)
+        by_id = {c.id: c for c in registry.list_all(hub_dir) if c.enabled and c.id in offered}
     except Exception:  # noqa: BLE001 — a store problem must never break chat
         log.warning("connectors: personal connections unavailable this turn", exc_info=True)
         return []

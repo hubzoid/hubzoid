@@ -100,7 +100,7 @@ def test_open_webui_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monke
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", "legacy")
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
-    f.grant_connector(hub, "odoo", X)
+    store_for(hub).grant(X, hub.name, "connector_odoo", actor="test")
     # Default mode: Open WebUI's connections are not read at all.
     assert keys(owui_mcp.per_user_servers(hub, who(X))) == ["my_mail"]
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
@@ -301,3 +301,17 @@ async def test_a_connector_without_sign_in_carries_no_credentials(hub):
     # Opting out is a disconnect like any other.
     tokens.disconnect(hub, "u-x", "docs")
     assert keys(per_user.per_user_servers(hub, who(X))) == ["my_mail"]
+
+
+def test_a_connection_is_used_only_where_the_agent_offers_it(hub):
+    """The grant alone is not enough: the agent must offer the connector."""
+    from sqlalchemy import text
+
+    from hubzoid import connectors
+
+    assert keys(per_user.per_user_servers(hub, who(X))) == ["my_mail"]
+    with connectors.engine(hub).begin() as conn:
+        conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = 'mail'"))
+    assert store_for(hub).can(X, "sales", "connector_mail")
+    assert per_user.per_user_servers(hub, who(X)) == []
+    assert per_user.allowed_ids(hub, X, ["mail"]) == set()

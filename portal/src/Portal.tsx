@@ -16,9 +16,8 @@ const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ 
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
-const ConnectorsScreen = lazy(() => import("./screens/ConnectorsScreen").then((m) => ({ default: m.ConnectorsScreen })));
 
-const TABS: AgentTab[] = ["access", "runs", "evals", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 export default function Portal() {
   const { mode, setMode, isDark } = useThemeMode();
@@ -126,12 +125,12 @@ function Router({
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Runs & schedules, Evals and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Access, Connectors, Runs & schedules, Evals and Activity, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />
         );
-      else screen = <AgentDetail hub={hub} hubs={list} tab={tab} rest={rest.slice(2)} />;
+      else screen = <AgentDetail hub={hub} hubs={list} me={me.data} tab={tab} rest={rest.slice(2)} />;
     }
   } else if (area === "runs") {
     active = "runs";
@@ -145,9 +144,14 @@ function Router({
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;
-  } else if (area === "connectors" && me.data.org_admin) {
-    active = "connectors";
-    screen = <ConnectorsScreen />;
+  } else if (area === "connectors") {
+    // Connectors moved into each agent; an old bookmark lands here.
+    screen = (
+      <RecoveryScreen
+        title="Connectors are in each agent"
+        subtitle="Open an agent, then its Connectors tab, to add or change the servers people connect to there."
+      />
+    );
   } else {
     screen = (
       <RecoveryScreen

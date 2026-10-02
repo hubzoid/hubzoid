@@ -22,7 +22,7 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                # web app (op_0009 to op_0012): accounts, conversations, connections
                "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
                "hz_conversations", "hz_messages", "hz_shares",
-               "hz_connectors", "hz_connector_tokens", "hz_connector_flows",
+               "hz_connectors", "hz_connector_tokens", "hz_connector_flows", "hz_connector_agents",
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts"}
 
 
@@ -243,3 +243,33 @@ def test_groups_are_dropped_and_their_access_moves_to_the_members(tmp_path):
                       ("bob@x.org", "sales", "ledger"), ("bob@x.org", "sales", "use_hub")}
     assert shares == {("a1", "user", "ann@x.org"), ("a1", "user", "bob@x.org")}
     assert not {"hz_groups", "hz_group_members"} & _tables(eng)
+
+
+
+def test_existing_connectors_stay_offered_in_every_known_agent(tmp_path):
+    """op_0016: a connector registered before agents offered connectors is
+    offered in every agent the store knows, so nothing changes on upgrade."""
+    from alembic.runtime.environment import EnvironmentContext
+
+    eng = _sqlite(tmp_path)
+    cfg, script = migrations._script("operational")
+
+    def to_0015(rev, context):
+        return script._upgrade_revs("op_0015", rev)
+
+    with EnvironmentContext(cfg, script, fn=to_0015, destination_rev="op_0015") as env:
+        with eng.connect() as conn:
+            env.configure(connection=conn, version_table=migrations.STORES["operational"])
+            with env.begin_transaction():
+                env.run_migrations()
+            conn.commit()
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO hz_connectors (id, name, url, created_at, updated_at) "
+                       "VALUES ('gmail', 'Gmail', 'https://g.example/mcp', 1, 1)"))
+        c.execute(text("INSERT INTO hz_grants (subject, hub, permission) VALUES "
+                       "('a@x.org', 'sales', 'use_hub'), ('b@x.org', 'ops', 'use_hub'), "
+                       "('root@x.org', '*', 'manage_access')"))
+    migrations.upgrade(eng, "operational")
+    with eng.connect() as c:
+        offers = set(c.execute(text("SELECT connector_id, hub FROM hz_connector_agents")))
+    assert offers == {("gmail", "sales"), ("gmail", "ops")}

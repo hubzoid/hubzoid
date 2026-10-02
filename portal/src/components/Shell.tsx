@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity" | "connectors";
+export type Area = "home" | "agents" | "runs" | "people" | "activity";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -68,13 +68,9 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
-// Personal connections are deployment-wide: organization administrators only,
-// and only in the Hubzoid web app (`/me` reports `web_app: true`).
-const connectorsItem = { key: "connectors", icon: <Plug size={18} />, label: <a href={href("/connectors")}>Connectors</a> };
-
-function navItems(me: Me) {
-  if (!me.org_admin || me.web_app !== true) return items;
-  return [...items, connectorsItem];
+// Connectors live in each agent (its Connectors tab), not in the menu.
+function navItems(_me: Me) {
+  return items;
 }
 
 function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {

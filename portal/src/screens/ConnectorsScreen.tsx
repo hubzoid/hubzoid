@@ -19,15 +19,19 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { FlaskConical, MoreHorizontal, Pencil, Plug, Trash2 } from "lucide-react";
+import { FlaskConical, MinusCircle, MoreHorizontal, Pencil, Plug, Trash2 } from "lucide-react";
 import {
   ApiError,
   connectorsRequest,
   type Connector,
   type ConnectorInput,
   type ConnectorTest,
+  type Hub,
+  type Me,
+  type OpenWebUIConnector,
 } from "../api";
 import { LoadState } from "../components/common";
+import { useData } from "../hooks/useData";
 import { useNavigationGuard } from "../hooks/useRoute";
 
 const { Text, Title, Paragraph } = Typography;
@@ -74,9 +78,90 @@ function SignInTag({ c }: { c: Connector }) {
   );
 }
 
-export function ConnectorsScreen() {
+/**
+ * An agent's Connectors tab. In the Hubzoid web app, connectors are registered
+ * once for the deployment and offered in the agents that list them; this tab
+ * manages the ones this agent offers (organization administrators). In Open
+ * WebUI mode the servers are registered in Open WebUI and listed read-only.
+ */
+export function AgentConnectors({ hub, me }: { hub: Hub; me: Me }) {
+  if (me.web_app === false) return <OpenWebUIConnectors hub={hub} />;
+  if (!me.org_admin)
+    return (
+      <div className="panel">
+        <Title level={2}>Connectors</Title>
+        <Paragraph type="secondary">
+          Organization administrators add the remote MCP servers people connect to in this agent. Who
+          may use each one is in this agent’s access (“Connect &lt;name&gt;”).
+        </Paragraph>
+      </div>
+    );
+  return <ConnectorsScreen hub={hub} />;
+}
+
+function OpenWebUIConnectors({ hub }: { hub: Hub }) {
+  const data = useData<{ servers: OpenWebUIConnector[]; native: boolean }>(
+    "/openwebui-connectors?hub=" + encodeURIComponent(hub.key),
+  );
+  return (
+    <div className="panel">
+      <Title level={2}>Connectors</Title>
+      <Paragraph type="secondary">
+        This deployment uses Open WebUI, so its MCP servers are added and changed in Open WebUI
+        (Admin Panel → Settings → Integrations). People connect their own account there. Who may use
+        each one in {hub.name} is this agent’s access: “Connect &lt;name&gt;”.
+      </Paragraph>
+      {!data.data ? (
+        <LoadState error={data.error} retry={data.reload} />
+      ) : (
+        <>
+          {!data.data.native && (
+            <Alert
+              type="info"
+              showIcon
+              title="Personal connections are off"
+              description="Set OWUI_NATIVE_MCP=true for the agent to use the servers people connect in Open WebUI."
+              style={{ marginBottom: 12 }}
+            />
+          )}
+          <Table<OpenWebUIConnector>
+            rowKey="id"
+            size="middle"
+            pagination={false}
+            dataSource={data.data.servers}
+            locale={{ emptyText: <Empty description="No MCP servers are registered in Open WebUI." /> }}
+            columns={[
+              {
+                title: "Server",
+                key: "name",
+                render: (_, c) => (
+                  <div className="connector-cell">
+                    <Text strong>{c.name}</Text>
+                    <Text type="secondary" className="identity" style={{ display: "block" }}>
+                      {c.id} · {c.url}
+                    </Text>
+                  </div>
+                ),
+              },
+              { title: "Capability", key: "permission", render: (_, c) => <span className="identity">{c.permission}</span> },
+              {
+                title: "On",
+                key: "enabled",
+                width: 90,
+                render: (_, c) => (c.enabled ? <Tag color="green">On</Tag> : <Tag>Off</Tag>),
+              },
+            ]}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function ConnectorsScreen({ hub }: { hub: Hub }) {
   const { message, modal } = App.useApp();
   const data = useConnectors();
+  const [offering, setOffering] = useState(false);
   const [editing, setEditing] = useState<Connector | "new" | null>(null);
   const [test, setTest] = useState<TestRun | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -104,9 +189,43 @@ export function ConnectorsScreen() {
     }
   }
 
-  function remove(c: Connector) {
+  async function offer(id: string) {
+    setOffering(true);
+    try {
+      await connectorsRequest(`/${encodeURIComponent(id)}/agents/${encodeURIComponent(hub.key)}`, "PUT");
+      message.success(`${hub.name} now offers it. Grant “Connect …” in Access to the people who use it.`);
+    } catch (e) {
+      message.error(errorText(e));
+    } finally {
+      setOffering(false);
+      data.reload();
+    }
+  }
+
+  function withdraw(c: Connector) {
     modal.confirm({
-      title: `Remove ${c.name}?`,
+      title: `Stop offering ${c.name} in ${hub.name}?`,
+      content: `People stop using it in ${hub.name}, and grants of “Connect ${c.name}” here are removed. Their connections stay, and other agents that offer it are not affected.`,
+      okText: "Stop offering",
+      okButtonProps: { danger: true },
+      cancelText: "Keep it",
+      onOk: async () => {
+        try {
+          await connectorsRequest(`/${encodeURIComponent(c.id)}/agents/${encodeURIComponent(hub.key)}`, "DELETE");
+          message.success(`${hub.name} no longer offers ${c.name}.`);
+        } catch (e) {
+          message.error(errorText(e));
+        } finally {
+          data.reload();
+        }
+      },
+    });
+  }
+
+  function remove(c: Connector) {
+    const elsewhere = c.agents.filter((a) => a !== hub.key);
+    modal.confirm({
+      title: `Remove ${c.name} from every agent?`,
       content: (
         <>
           <Paragraph>
@@ -114,6 +233,12 @@ export function ConnectorsScreen() {
               ? `${c.connections} ${c.connections === 1 ? "person loses their connection" : "people lose their connections"}. Hubzoid asks the provider to revoke that access where it supports revocation.`
               : "Nobody is connected to it."}
           </Paragraph>
+          {elsewhere.length > 0 && (
+            <Paragraph>
+              {elsewhere.length === 1 ? "1 other agent offers" : `${elsewhere.length} other agents offer`} it too.
+              To take it out of {hub.name} only, use Stop offering here.
+            </Paragraph>
+          )}
           <Paragraph style={{ marginBottom: 0 }}>
             Grants of “Connect {c.name}” stay listed as no longer available, so you can remove them.
           </Paragraph>
@@ -135,22 +260,36 @@ export function ConnectorsScreen() {
     });
   }
 
-  const list = data.data;
+  const list = data.data?.filter((c) => c.agents.includes(hub.key));
+  const others = data.data?.filter((c) => !c.agents.includes(hub.key)) ?? [];
   return (
     <>
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <Title level={1} style={{ fontSize: 28 }}>Connectors</Title>
+            <Title level={2}>Connectors</Title>
             <Paragraph type="secondary">
-              Remote MCP servers people connect with their own account, such as Gmail. Each person signs
-              in for themselves, and agents act as them. On agents managed here, people also need
-              “Connect &lt;name&gt;” in the agent’s access.
+              Remote MCP servers people connect with their own account, such as Gmail, to use in{" "}
+              {hub.name}. Each person signs in for themselves, and the agent acts as them. People also
+              need “Connect &lt;name&gt;” in this agent’s access.
             </Paragraph>
           </div>
-          <Button type="primary" icon={<Plug size={16} />} onClick={() => setEditing("new")}>
-            Add connector
-          </Button>
+          <Space wrap>
+            {others.length > 0 && (
+              <Select
+                aria-label="Offer a connector another agent offers"
+                placeholder="Offer an existing connector"
+                value={null}
+                loading={offering}
+                style={{ minWidth: 240 }}
+                options={others.map((c) => ({ value: c.id, label: c.name }))}
+                onChange={(id) => id && void offer(id)}
+              />
+            )}
+            <Button type="primary" icon={<Plug size={16} />} onClick={() => setEditing("new")}>
+              Add connector
+            </Button>
+          </Space>
         </div>
         {!list ? (
           <LoadState error={data.error} retry={data.reload} />
@@ -253,9 +392,11 @@ export function ConnectorsScreen() {
                         menu={{
                           items: [
                             { key: "edit", icon: <Pencil size={14} />, label: "Edit" },
-                            { key: "delete", icon: <Trash2 size={14} />, label: "Remove", danger: true },
+                            { key: "withdraw", icon: <MinusCircle size={14} />, label: `Stop offering in ${hub.name}` },
+                            { key: "delete", icon: <Trash2 size={14} />, label: "Remove from every agent", danger: true },
                           ],
-                          onClick: ({ key }) => (key === "edit" ? setEditing(c) : remove(c)),
+                          onClick: ({ key }) =>
+                            key === "edit" ? setEditing(c) : key === "withdraw" ? withdraw(c) : remove(c),
                         }}
                       >
                         <Button icon={<MoreHorizontal size={16} />} aria-label={`More actions for ${c.name}`} />
@@ -270,6 +411,7 @@ export function ConnectorsScreen() {
       </div>
       <ConnectorDrawer
         key={editing === "new" ? "new" : (editing?.id ?? "closed")}
+        hubKey={hub.key}
         target={editing}
         onClose={() => setEditing(null)}
         onSaved={(c, created) => {
@@ -351,10 +493,12 @@ function urlProblem(url: string): string | null {
 }
 
 function ConnectorDrawer({
+  hubKey,
   target,
   onClose,
   onSaved,
 }: {
+  hubKey: string;
   target: Connector | "new" | null;
   onClose: () => void;
   onSaved: (c: Connector, created: boolean) => void;
@@ -426,7 +570,7 @@ function ConnectorDrawer({
     setFailure(null);
     try {
       const r = creating
-        ? await connectorsRequest<{ connector: Connector }>("", "POST", body)
+        ? await connectorsRequest<{ connector: Connector }>(`?hub=${encodeURIComponent(hubKey)}`, "POST", body)
         : await connectorsRequest<{ connector: Connector }>(`/${encodeURIComponent(existing!.id)}`, "PATCH", body);
       const moved = existing && (existing.url !== body.url || existing.auth_type !== body.auth_type);
       message.success(

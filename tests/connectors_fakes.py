@@ -52,10 +52,12 @@ def make_hub(root: Path, name: str) -> Path:
 
 
 def grant_connector(hub: Path, connector_id: str, *emails: str) -> None:
-    """Give people a connector's capability in this hub (Console grants).
-    Default: the local owner."""
+    """Offer a connector in this agent and give people its capability there
+    (Console grants). Default: the local owner."""
     from hubzoid.access import store_for
+    from hubzoid.connectors import registry
 
+    registry.offer(hub, connector_id, Path(hub).name, actor="test")
     for email in emails or (OWNER,):
         store_for(hub).grant(email, Path(hub).name, "connector_" + connector_id, actor="test")
 

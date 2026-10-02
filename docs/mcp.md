@@ -91,12 +91,22 @@ credentials in the process list. Limits:
 In the default UI mode (`HUBZOID_UI` unset or `hubzoid`) Hubzoid runs personal
 MCP connections itself: no Open WebUI and no `OWUI_NATIVE_MCP` switch. Each
 person connects their own account to a remote MCP server, and every chat turn
-and workflow run reaches that server as them. The legacy Open WebUI mode below
-is unchanged.
+and workflow run reaches that server as them. Open WebUI mode (below) keeps its
+own connections.
 
-### Register a server (organization administrators, in the Console)
+A connector is registered once for the deployment (one OAuth client, one
+connection per person) and offered in the agents that list it. Its capability
+`connector_<id>` exists only in those agents, and a person's connection is used
+in a turn only when the agent offers the connector and the person holds the
+capability there.
 
-**Console, Connectors, Add connector**:
+### Add a server (organization administrators, in the Console)
+
+**Console → Agents → the agent → Connectors → Add connector** registers it and
+offers it in that agent. **Offer an existing connector** offers one another
+agent already has. **Stop offering in <agent>** takes it out of that agent only
+and removes its grants there; people's connections and other agents stay.
+**Remove from every agent** deletes it:
 
 - **Name** and **ID**. The ID is a short slug such as `gmail`. It is also the
   capability `connector_<id>` and cannot be changed later.
@@ -138,7 +148,8 @@ overall time limit.
 Changing a connector's URL or sign-in method removes everyone's connection to
 it, so a token is never sent to a server other than the one that issued it.
 Removing a connector removes the connections too. Grants of its capability stay
-listed as no longer available until you remove them.
+listed as no longer available until you remove them. Agent managers who are not
+organization administrators see the tab but cannot change it.
 
 ### Connect (each person)
 
@@ -174,9 +185,9 @@ failure goes to the same place with `?error=<code>`.
   the provider refuses marks the connection **expired** and the person
   reconnects. A provider that cannot be reached marks it **error** and the next
   turn tries again.
-- **Per turn**, the same rules as the legacy mode: restricted surfaces only,
-  `connector_<id>` on a managed hub, the allowed tools, never a server that
-  would replace a hub MCP server. In Claude the tools are named
+- **Per turn**, the same rules as Open WebUI mode: restricted surfaces only, an
+  agent that offers the connector, `connector_<id>` in that agent, the allowed
+  tools, never a server that would replace a hub MCP server. In Claude the tools are named
   `mcp__my_<id>__<tool>`.
 
 ### Limits
@@ -203,7 +214,8 @@ failure goes to the same place with `?error=<code>`.
 
 ## Per-user MCP via Open WebUI (native OAuth)
 
-Legacy Open WebUI mode only (`HUBZOID_UI=openwebui`).
+Open WebUI mode only (`HUBZOID_UI=openwebui`). The agent's **Connectors** tab in
+the Console lists these servers read-only, with the capability each needs.
 
 The `.mcp.json` connectors above are hub-wide: one credential shared by every
 user. For tools where each user must act as **themselves** (their own Jira,
@@ -321,12 +333,9 @@ Implemented. Each OAuth MCP server is a connector app named by its server ID
 turned into `_`). A server registered as `gmail` is the app `gmail` and the
 capability `connector_gmail`.
 
-- **Managed hubs** (access managed in the Console): a personal server is
-  injected only when the caller holds `connector_<app>` in that hub. Grant it
-  like any other capability.
-- **Legacy hubs** (Open WebUI groups): injection is unchanged, apart from the
-  surface rule above. Starting a connection from chat (below) needs an Open
-  WebUI group named `connector_<app>`.
+- A personal server is injected only when the caller holds `connector_<app>`
+  in that agent. Grant it in the Console like any other capability. Open WebUI
+  groups grant nothing.
 - If the access store cannot be read, no personal server is injected that turn.
 
 ## Connect from chat (connection journey)
@@ -340,7 +349,7 @@ In the default UI mode an app is connectable when a switched-on connector has
 that ID (see [personal connections](#personal-connections-default-ui-mode)):
 the link page uses the Hubzoid sign-in, **Continue** starts Hubzoid's own
 authorization, and the provider returns straight to the done page. A refused
-authorization ends the journey as not connected at once. In the legacy mode the
+authorization ends the journey as not connected at once. In Open WebUI mode the
 journey uses Open WebUI native MCP, as described in the rest of this section:
 an app is connectable when an OAuth 2.1 MCP server is registered for it in
 OWUI. The optional Composio integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is
@@ -361,8 +370,7 @@ backend. It also needs:
 - an app to connect: an OAuth 2.1 MCP server registered in OWUI, with
   `OWUI_NATIVE_MCP=true`. For any other app the tool says it is not available
   to connect on this hub.
-- the `connector_<app>` capability for the person (Console grant on a managed
-  hub, OWUI group of that name on a legacy hub).
+- the `connector_<app>` capability for the person (a Console grant).
 - the surface in `HUBZOID_RESTRICTED_SURFACES`. Add `whatsapp` for WhatsApp.
 - `WEBUI_URL` set to the public address people open (the link is
   `<WEBUI_URL>/portal/connect/<id>`).

@@ -467,6 +467,7 @@ def delete(hub_dir, cid: str, *, actor: str) -> bool:
         if res.rowcount != 1:
             return False
         conn.execute(text("DELETE FROM hz_connector_flows WHERE connector_id = :id"), {"id": cid})
+        conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = :id"), {"id": cid})
         _audit(conn, hub_dir, actor, "connector_delete", cid)
     log.info("connectors: %s removed %s", normalize(actor), cid)
     from . import tokens
@@ -476,18 +477,89 @@ def delete(hub_dir, cid: str, *, actor: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Which agents offer a connector
+# ---------------------------------------------------------------------------
+def _hub(hub) -> str:
+    return normalize(str(hub or ""))
+
+
+def offered_in(hub_dir, hub, *, conn=None) -> set[str]:
+    """The ids of the connectors offered in agent `hub`."""
+    def read(c):
+        return {r[0] for r in c.execute(text(
+            "SELECT connector_id FROM hz_connector_agents WHERE hub = :h"), {"h": _hub(hub)})}
+
+    if conn is not None:
+        return read(conn)
+    with engine(hub_dir).connect() as c:
+        return read(c)
+
+
+def agents_of(hub_dir, cid: str) -> list[str]:
+    """The agents that offer connector `cid`."""
+    with engine(hub_dir).connect() as conn:
+        return sorted(r[0] for r in conn.execute(text(
+            "SELECT hub FROM hz_connector_agents WHERE connector_id = :c"), {"c": cid}))
+
+
+def offer(hub_dir, cid: str, hub, *, actor: str) -> bool:
+    """Offer an existing connector in agent `hub`. True when it was not yet."""
+    hub = _hub(hub)
+    if not hub or hub == "*":
+        raise ConnectorError("invalid_agent", "Choose an agent.", 422)
+    with engine(hub_dir).begin() as conn:
+        if not _get_row(conn, cid):
+            raise ConnectorError("not_found", "This connector doesn't exist.", 404)
+        if cid in offered_in(hub_dir, hub, conn=conn):
+            return False
+        conn.execute(text("INSERT INTO hz_connector_agents (connector_id, hub, added_by, added_at) "
+                          "VALUES (:c, :h, :b, :t)"),
+                     {"c": cid, "h": hub, "b": normalize(actor) or None, "t": time.time()})
+        from ..access import store_for
+
+        store_for(Path(hub_dir)).write_audit(conn, normalize(actor) or "unknown", "connector_offer",
+                                             hub=hub, permission=capability(cid), surface="console")
+    return True
+
+
+def withdraw(hub_dir, cid: str, hub, *, actor: str) -> bool:
+    """Stop offering connector `cid` in agent `hub`: people stop using it there
+    and its grants in that agent are removed. The connector, people's
+    connections and other agents' offers stay."""
+    from ..access import store_for
+
+    hub = _hub(hub)
+    with engine(hub_dir).begin() as conn:
+        res = conn.execute(text("DELETE FROM hz_connector_agents WHERE connector_id = :c "
+                                "AND hub = :h"), {"c": cid, "h": hub})
+        if res.rowcount != 1:
+            return False
+        store_for(Path(hub_dir)).write_audit(conn, normalize(actor) or "unknown",
+                                             "connector_withdraw", hub=hub,
+                                             permission=capability(cid), surface="console")
+    gs = store_for(Path(hub_dir))
+    for subject, granted_hub, permission in gs.list_grants(hub):
+        if permission == capability(cid):
+            gs.revoke(subject, granted_hub, permission, actor=normalize(actor) or "unknown")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Capabilities (hubzoid.capabilities lists these through connect_journey)
 # ---------------------------------------------------------------------------
 def permissions(hub_dir) -> list[dict]:
-    """One ``connector_<id>`` capability per registered connector. A switched
-    off connector stays listed (its grants remain visible) but unavailable."""
+    """One ``connector_<id>`` capability per connector offered in this agent
+    (the hub folder's name). A switched off connector stays listed (its grants
+    remain visible) but unavailable."""
     from . import existing_engine
 
     eng = existing_engine(hub_dir)
     if eng is None:
         return []
     with eng.connect() as conn:
-        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()]
+        offered = offered_in(hub_dir, Path(hub_dir).name, conn=conn)
+        rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()
+                if r[0] in offered]
     out = []
     for c in (_connector(r) for r in rows):
         out.append({

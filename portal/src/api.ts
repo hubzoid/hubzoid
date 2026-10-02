@@ -355,6 +355,17 @@ export type Connector = {
   redirect_uri: string;
   /** How many people are connected. */
   connections: number;
+  /** The agents that offer it (hub keys). */
+  agents: string[];
+};
+
+/** Open WebUI mode: an MCP server registered in Open WebUI (read-only here). */
+export type OpenWebUIConnector = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  permission: string;
 };
 
 export type ConnectorInput = {
@@ -399,7 +410,7 @@ export type ConnectorTest = {
 /** Calls under /portal/api/connectors. Their errors are {"detail": {"code", "message"}}. */
 export async function connectorsRequest<T>(
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE" = "GET",
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {

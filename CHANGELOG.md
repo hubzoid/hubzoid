@@ -78,16 +78,20 @@ upgrade requirements and its known limits.
   model-free runtime for tests.
 
 ### Personal MCP connections
-- Organization administrators register remote MCP servers under **Console →
-  Connectors**. Each person connects their own account on **Account →
-  Connections** through Hubzoid's OAuth flow (discovery, dynamic client
-  registration or a client registered in advance, PKCE, resource indicators).
-  Tokens are encrypted with the deployment key and refreshed before they
-  expire, one refresh at a time across the deployment.
+- Organization administrators add remote MCP servers in each agent's
+  **Connectors** tab in the Console. A connector is registered once for the
+  deployment and offered in the agents that list it; its `connector_<id>`
+  capability exists only there. Each person connects their own account on
+  **Account → Connections** through Hubzoid's OAuth flow (discovery, dynamic
+  client registration or a client registered in advance, PKCE, resource
+  indicators). Tokens are encrypted with the deployment key and refreshed
+  before they expire, one refresh at a time across the deployment.
 - Every chat turn and workflow run on every runtime reaches the person's
-  servers with their token. `connector_<id>` gates use on Console-managed
-  hubs. The connection journey (`HUBZOID_CONNECT_JOURNEY`) works with these
-  connectors.
+  servers with their token, in agents that offer the connector and where the
+  person holds `connector_<id>`. The connection journey
+  (`HUBZOID_CONNECT_JOURNEY`) works with these connectors.
+- In Open WebUI mode the agent's Connectors tab lists the servers registered in
+  Open WebUI, read-only.
 
 ### One access model
 - Every agent's access is managed in the Console, in both chat UIs and however
