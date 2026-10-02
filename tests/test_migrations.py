@@ -19,10 +19,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_meta", "hz_access_audit", "hz_workflows", "hz_workflow_kv", "hz_usage",
                "hz_access_decisions", "hz_change_requests", "hz_connect_states",
                "hz_artifacts", "hz_artifact_shares", "hz_artifact_links", "hz_email_deliveries",
-               # web app (op_0009 to op_0012): accounts, conversations, groups, connections
+               # web app (op_0009 to op_0012): accounts, conversations, connections
                "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
                "hz_conversations", "hz_messages", "hz_shares",
-               "hz_groups", "hz_group_members",
                "hz_connectors", "hz_connector_tokens", "hz_connector_flows",
                "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts"}
 
@@ -204,3 +203,43 @@ def test_workflow_state_keeps_its_rows_when_owner_joins_the_key(tmp_path):
     assert [tuple(r) for r in rows] == [("sales", "digest", "", "cursor", "41")]
     pk = inspect(eng).get_pk_constraint("hz_workflow_kv")["constrained_columns"]
     assert pk == ["hub", "workflow", "owner", "k"]
+
+
+def test_groups_are_dropped_and_their_access_moves_to_the_members(tmp_path):
+    """op_0015: each group grant becomes the same grant for each member who is
+    not blocked, artifacts shared with a group by name are shared with those
+    members, an unknown group share goes, and the group tables are dropped."""
+    from alembic.runtime.environment import EnvironmentContext
+
+    eng = _sqlite(tmp_path)
+    cfg, script = migrations._script("operational")
+
+    def to_0014(rev, context):
+        return script._upgrade_revs("op_0014", rev)
+
+    with EnvironmentContext(cfg, script, fn=to_0014, destination_rev="op_0014") as env:
+        with eng.connect() as conn:
+            env.configure(connection=conn, version_table=migrations.STORES["operational"])
+            with env.begin_transaction():
+                env.run_migrations()
+            conn.commit()
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO hz_groups (id, name, created_at, updated_at) "
+                       "VALUES ('g_fin', 'Finance Team', 1, 1)"))
+        for email in ("ann@x.org", "bob@x.org", "eve@x.org"):
+            c.execute(text("INSERT INTO hz_group_members (group_id, email, added_at) "
+                           "VALUES ('g_fin', :e, 1)"), {"e": email})
+        c.execute(text("INSERT INTO hz_meta (k, v) VALUES ('suspended:eve@x.org', '1')"))
+        c.execute(text("INSERT INTO hz_grants (subject, hub, permission) VALUES "
+                       "('group:g_fin', 'sales', 'ledger'), ('group:g_fin', 'sales', 'use_hub'), "
+                       "('bob@x.org', 'sales', 'use_hub')"))
+        c.execute(text("INSERT INTO hz_artifact_shares (artifact_id, kind, principal, added) VALUES "
+                       "('a1', 'group', 'finance team', 1), ('a2', 'group', 'owui-only', 1)"))
+    migrations.upgrade(eng, "operational")
+    with eng.connect() as c:
+        grants = set(c.execute(text("SELECT subject, hub, permission FROM hz_grants")).fetchall())
+        shares = set(c.execute(text("SELECT artifact_id, kind, principal FROM hz_artifact_shares")))
+    assert grants == {("ann@x.org", "sales", "ledger"), ("ann@x.org", "sales", "use_hub"),
+                      ("bob@x.org", "sales", "ledger"), ("bob@x.org", "sales", "use_hub")}
+    assert shares == {("a1", "user", "ann@x.org"), ("a1", "user", "bob@x.org")}
+    assert not {"hz_groups", "hz_group_members"} & _tables(eng)

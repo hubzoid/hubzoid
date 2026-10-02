@@ -362,12 +362,6 @@ function SyncStatus({
         Chat app visibility in sync{v.updated ? ` (${relativeTime(v.updated)})` : ""}.
       </Text>
     );
-  if (v.state === "legacy")
-    return (
-      <Text type="secondary" className="sync-note">
-        Chat app visibility isn’t mirrored yet: no agent has been moved to managed access.
-      </Text>
-    );
   return (
     <Text type="secondary" className="sync-note">
       Chat app visibility sync hasn’t run in this session{" "}
@@ -439,7 +433,7 @@ function PersonDrawer({
     [person],
   );
   const addable = hubs.filter(
-    (h) => h.authoritative && h.key in (me.grantable ?? {}) && !access.some(([k]) => k === h.key),
+    (h) => h.key in (me.grantable ?? {}) && !access.some(([k]) => k === h.key),
   );
   const path = person ? `/accounts/${encodeURIComponent(person.subject)}` : "";
   const role = info.data?.administrator;

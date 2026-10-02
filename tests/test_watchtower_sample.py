@@ -68,7 +68,7 @@ def test_init_gives_a_clean_sample(sample):
                 "raw_data/events/metrics.jsonl", "raw_data/samples/broken.jsonl", "knowledge/watchtower.md"):
         assert (hub / rel).is_file(), rel
     assert not list(hub.rglob("__pycache__"))
-    assert {p.name for p in (hub / ".hubzoid").iterdir()} == {"fresh-install"}
+    assert not (hub / ".hubzoid").exists()
     assert "synthetic" in (hub / "raw_data" / "README.md").read_text().lower()
 
 

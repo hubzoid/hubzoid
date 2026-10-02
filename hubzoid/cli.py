@@ -342,11 +342,6 @@ def init(
             dst.write_text(content)
             parent_written.append(dst)
 
-    if fresh_hub:
-        setup_dir = hub_dir / ".hubzoid"
-        setup_dir.mkdir(exist_ok=True)
-        (setup_dir / "fresh-install").touch(mode=0o600)
-
     # 3. Report.
     console.print(f"[green]Initialized hub at[/green] {hub_dir}")
     if written:
@@ -1236,7 +1231,6 @@ def gateway(
             # hub's own .env still wins inside the bridge (settings.load
             # overrides), so this only settles the .env-less inheritance.
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
-            bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
             bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
             # Gateway mode: enable scheduled workflows (the HUBZOID_SCHEDULES gate
             # is auto-satisfied here), and pin every bridge to ONE shared
@@ -1656,7 +1650,6 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
             if pub:
                 bridge_env["HUBZOID_PUBLIC_URL"] = gp.public_url_for(pub, b)
             bridge_env["MCP_SERVER"] = "true" if b.mcp else "false"
-            bridge_env["MCP_ACCESS_GROUP"] = b.mcp_access_group
             bridge_env["MCP_PUBLIC_URL"] = b.mcp_public_url
             bridge_env["HUBZOID_GATEWAY"] = "1"
             bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
@@ -2674,192 +2667,14 @@ def access_list(
 @access_app.command("bootstrap")
 def access_bootstrap(
     admin: list[str] = typer.Option([], "--admin", help="Subject to make an org admin (repeatable)."),
-    authoritative: bool = typer.Option(
-        False, "--authoritative",
-        help="Make Casbin the authority now (fresh install, no legacy to migrate).",
-    ),
     hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
 ) -> None:
-    """First-boot bootstrap: grant org admins once (idempotent), optionally make
-    Casbin authoritative. Break-glass for a fresh install."""
+    """First-boot bootstrap: grant org admins once (idempotent). Break-glass for
+    a deployment nobody can administer."""
     from .access import store_for
 
-    store_for(hub_dir).bootstrap(admin, authoritative=authoritative, hub=hub_dir.resolve().name)
-    console.print(
-        f"[green]bootstrapped[/green] admins={list(admin) or '(none)'} "
-        f"authoritative={authoritative}"
-    )
-
-
-def _build_plan(hub_dir: Path, from_owui: str | None, model_id: str | None, standalone_public: bool = False):
-    from .access import migrate
-
-    hub_name = hub_dir.resolve().name
-    plan = migrate.plan_from_csv(hub_dir, hub_name)
-    if standalone_public:
-        from .deployment import read
-        if read(hub_dir):
-            raise migrate.MigrationBlocked('registered gateways require OWUI model evidence')
-        if not from_owui:
-            from .access.owui_db import db_path
-            local_owui = db_path(hub_dir)
-            if local_owui.is_file():
-                from_owui = f'sqlite:///{local_owui.resolve()}'
-            else:
-                return migrate.plan_standalone_public(hub_dir, plan)
-    if from_owui:
-        from sqlalchemy import create_engine
-
-        from .deployment import permission_catalog, read
-        registered = read(hub_dir)
-        if registered:
-            target = next(h for h in registered['hubs'] if Path(h['path']).resolve() == hub_dir.resolve())
-            if model_id and model_id != target['model_id']:
-                raise migrate.MigrationBlocked('model ID does not match this registered hub')
-            model_id = target['model_id']
-        source = create_engine(from_owui)
-        try:
-            migrate.plan_from_owui(source, hub_name,
-                model_id=model_id, plan=plan,
-                permissions=[p['permission'] for p in permission_catalog(hub_dir)],
-                standalone_public=standalone_public)
-        finally:
-            source.dispose()
-    return plan
-
-
-@access_app.command("migrate")
-def access_migrate(
-    from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read (group + model access)."),
-    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub (required when multiple models exist)."),
-    standalone_public: bool = typer.Option(False, "--standalone-public", help="Explicitly confirm legacy standalone signed-in public entry; verifies tools against the legacy CSV resolver."),
-    apply: bool = typer.Option(False, "--apply", help="Actually apply + make Casbin authoritative (the cutover). Without this, dry-run."),
-    remigrate: bool = typer.Option(False, "--remigrate", help="Allow re-running --apply on an already-migrated hub (OVERWRITES dashboard edits made since migration). Off by default."),
-    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
-) -> None:
-    """Flatten legacy access (access.csv [+ Open WebUI]) into direct Casbin
-    grants. Dry-run by default; --apply performs the cutover."""
-    from .access import store_for
-    from .access.migrate import MigrationBlocked, apply as apply_plan, diff
-
-    try:
-        plan = _build_plan(hub_dir, from_owui, model_id, standalone_public)
-    except MigrationBlocked as e:
-        console.print(f"[red]migration blocked:[/red] {e}")
-        raise typer.Exit(2)
-
-    console.print(f"[bold]{len(plan.grants)} grant(s), {len(plan.attrs)} attribute(s)[/bold]")
-    for c in plan.conflicts:
-        console.print(f"[yellow]conflict:[/yellow] {c}")
-    for w in plan.warnings:
-        console.print(f"[dim]{w}[/dim]")
-
-    from .access.migrate import verify_effective
-    mismatches = verify_effective(plan)
-    if plan.expected:
-        console.print(f"Effective access: {len(plan.expected)} legacy decisions checked, {len(mismatches)} differences")
-        for row in mismatches:
-            console.print(f"{row['subject']} / {row['hub']} / {row['permission']}: {row['before']} -> {row['after']}")
-    else:
-        console.print("[yellow]CSV-only import: OWUI model visibility has not been verified. Use --from-owui for customer cutover.[/yellow]")
-    if mismatches:
-        raise typer.Exit(2)
-    gs = store_for(hub_dir)
-    if not apply:
-        d = diff(gs, plan)
-        console.print(f"[dim]dry-run — vs current store: {len(d['missing'])} missing, "
-                      f"{len(d['extra'])} extra. Re-run with --apply to cut over.[/dim]")
-        return
-    # Prevent accidental re-import over permissions edited after migration: refuse a
-    # second cutover of an already dashboard-managed hub unless explicitly forced.
-    if gs.is_authoritative(hub_dir.resolve().name) and not remigrate:
-        console.print("[red]already migrated:[/red] this hub is dashboard-managed. "
-                      "Re-importing legacy access would overwrite edits made since "
-                      "migration. Pass --remigrate only if you intend to discard them.")
-        raise typer.Exit(2)
-    if not plan.expected:
-        console.print("[red]Cutover requires --from-owui model evidence or --standalone-public for a legacy standalone hub. CSV alone cannot prove existing model access.[/red]")
-        raise typer.Exit(2)
-    if not plan.grants:
-        console.print("[red]refusing to cut over with an empty plan (no grants). "
-                      "This would lock everyone out.[/red]")
-        raise typer.Exit(2)
-    import time
-    from .deployment import _write
-    backup = hub_dir / '.hubzoid' / 'backups' / f'access-{time.time_ns()}.json'
-    snapshot = gs.snapshot([hub_dir.resolve().name])
-    if plan.visibility_backup is not None:
-        snapshot['owui_visibility'] = plan.visibility_backup
-    _write(backup, snapshot)
-    console.print(f"Backup: {backup} (restore with hubzoid access rollback)")
-    try:
-        apply_plan(gs, plan, authoritative=True)
-    except MigrationBlocked as e:
-        console.print(f"[red]cutover refused:[/red] {e}")
-        raise typer.Exit(2)
-    d = diff(gs, plan)
-    # The cutover gate is a FULL zero diff: nothing planned-but-missing AND
-    # nothing stale (extra) in the store.
-    ok = not d["missing"] and not d["extra"]
-    colour = "green" if ok else "red"
-    console.print(f"[{colour}]applied[/{colour}] · Casbin is now authoritative · "
-                  f"{len(d['missing'])} missing, {len(d['extra'])} extra after apply")
-    if not ok:
-        console.print("[red]non-zero diff after cutover — investigate; the zero-diff "
-                      "gate was not met.[/red]")
-        raise typer.Exit(1)
-
-
-@access_app.command("rollback")
-def access_rollback(backup: Path, hub_dir: Path = typer.Argument(Path("."))) -> None:
-    """Restore a pre-cutover access snapshot; does not change OWUI accounts."""
-    from .access import store_for
-    import getpass
-    snapshot = json.loads(backup.read_text())
-    if snapshot.get('hubs') != [hub_dir.resolve().name.lower()]:
-        console.print("[red]Backup does not match the selected hub; no access changed.[/red]")
-        raise typer.Exit(2)
-    if snapshot.get('owui_visibility'):
-        from .access.reconcile import validate_visibility_backup
-        validate_visibility_backup(hub_dir, snapshot['owui_visibility'])
-    store_for(hub_dir).restore(snapshot, actor=f"cli:{getpass.getuser()}")
-    if all(snapshot['authority'].values()):
-        console.print("Access snapshot restored. Run access sync and verify end-user visibility.")
-    elif snapshot.get('owui_visibility'):
-        from .access.reconcile import restore_visibility
-        try:
-            restore_visibility(hub_dir, snapshot['owui_visibility'])
-        except Exception:
-            console.print("[red]Hubzoid access restored, but OWUI visibility restoration failed. Keep the maintenance window open, check service credentials, then rerun rollback with the same backup.[/red]")
-            raise typer.Exit(1)
-        console.print("Legacy access and pre-cutover OWUI visibility restored. Verify representative end users before ending maintenance.")
-    else:
-        console.print("Legacy access restored. Restore the pre-cutover OWUI model ACL from your deployment backup before ending the maintenance window; access sync does not restore legacy ACLs.")
-
-
-@access_app.command("diff")
-def access_diff(
-    from_owui: str = typer.Option(None, "--from-owui", help="Open WebUI DB URL to also read."),
-    model_id: str = typer.Option(None, "--model-id", help="Which OWUI model is this hub."),
-    standalone_public: bool = typer.Option(False, "--standalone-public", help="Compare the legacy standalone public-entry plan."),
-    hub_dir: Path = typer.Argument(Path("."), help="Hub directory. Default: current dir."),
-) -> None:
-    """Show the full static diff between the migration plan and the live store
-    (the zero-diff cutover gate)."""
-    from .access import store_for
-    from .access.migrate import MigrationBlocked, diff
-
-    try:
-        plan = _build_plan(hub_dir, from_owui, model_id, standalone_public)
-    except MigrationBlocked as e:
-        console.print(f"[red]migration blocked:[/red] {e}")
-        raise typer.Exit(2)
-    d = diff(store_for(hub_dir), plan)
-    for kind in ("missing", "extra"):
-        for subj, hub, perm in d[kind]:
-            mark = "[red]-[/red]" if kind == "extra" else "[green]+[/green]"
-            console.print(f"{mark} {subj:28.28} {perm:18.18} [dim]{hub}[/dim]")
-    console.print(f"[dim]{len(d['missing'])} missing, {len(d['extra'])} extra[/dim]")
+    store_for(hub_dir).bootstrap(admin)
+    console.print(f"[green]bootstrapped[/green] admins={list(admin) or '(none)'}")
 
 
 @access_app.command("sync")

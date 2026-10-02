@@ -14,7 +14,6 @@ from sqlalchemy.exc import DBAPIError
 from hubzoid.access import (
     owui_api_keys,
     owui_db,
-    owui_groups,
     owui_oauth_tokens,
     owui_tool_servers,
 )
@@ -131,16 +130,11 @@ def test_key_identity_and_denials(owui_store):
     assert owui_api_keys.resolve_email(hub, "sk-test") == "alice@example.com"
     for key in ("stale-key", "wrong", "expired", "pending", "", None):
         assert owui_api_keys.resolve_email(hub, key) is None
-    assert owui_groups.resolve_groups(hub, "ALICE@EXAMPLE.COM") == {"clickup"}
-    assert owui_groups.resolve_groups(hub, "unknown@example.com") == set()
 
 
 def test_fresh_revocation_and_account_replacement(owui_store):
     hub, engine = owui_store
     assert owui_api_keys.resolve_email(hub, "sk-test") == "alice@example.com"
-    with engine.begin() as con:
-        con.execute(text("DELETE FROM group_member"))
-    assert owui_groups.resolve_groups(hub, "alice@example.com") == set()
     with engine.begin() as con:
         con.execute(text("UPDATE \"user\" SET id='replacement' WHERE id='alice'"))
         con.execute(
@@ -215,15 +209,17 @@ def test_oauth_read_refresh_and_config(owui_store):
         )
 
 
-def test_mcp_transport_group_and_oauth_revocation(owui_store, monkeypatch):
+def test_mcp_transport_grant_and_oauth_revocation(owui_store, monkeypatch):
     from hubzoid import mcp_server
+    from hubzoid.access import store_for
     from tests.test_mcp_server import _mk_hub, _call, _rpc, _result
 
-    # Open WebUI API keys and Open WebUI groups: the legacy mode.
+    # Open WebUI accounts; access from the Console's grants.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     root, engine = owui_store
     hub = _mk_hub(root)
-    monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
+    gs = store_for(hub)
+    gs.grant("alice@example.com", hub.name, "clickup", actor="test")
     from tests.mcp_credentials import seed, RESOURCE
 
     monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
@@ -232,8 +228,7 @@ def test_mcp_transport_group_and_oauth_revocation(owui_store, monkeypatch):
     body = _rpc("tools/call", {"name": "clickup_echo", "arguments": {"text": "hello"}})
     result = _result(_call(app, body, token="oauth-pg"))
     assert "clickup says: hello" in str(result)
-    with engine.begin() as con:
-        con.execute(text("DELETE FROM group_member"))
+    gs.revoke("alice@example.com", hub.name, "clickup", actor="test")
     result = _result(_call(app, body, token="oauth-pg"))
     assert "clickup says: hello" not in str(result)
     assert "denied" in str(result).lower()
@@ -241,25 +236,6 @@ def test_mcp_transport_group_and_oauth_revocation(owui_store, monkeypatch):
 
     with OAuthStore(hub, RESOURCE).engine.begin() as con:
         con.execute(text("UPDATE hz_mcp_oauth SET used=1 WHERE kind='grant'"))
-    assert _call(app, _rpc("tools/list"), token="oauth-pg").status_code == 401
-
-
-def test_mcp_entry_group(owui_store, monkeypatch):
-    from hubzoid import mcp_server
-    from tests.test_mcp_server import _mk_hub, _call, _rpc
-
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    root, engine = owui_store
-    hub = _mk_hub(root)
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "clickup")
-    from tests.mcp_credentials import seed, RESOURCE
-
-    monkeypatch.setenv("MCP_PUBLIC_URL", RESOURCE)
-    seed(hub, token="oauth-pg", account_id="alice")
-    app = mcp_server.build_mcp_app(hub)
-    assert _call(app, _rpc("tools/list"), token="oauth-pg").status_code == 200
-    with engine.begin() as con:
-        con.execute(text("DELETE FROM group_member"))
     assert _call(app, _rpc("tools/list"), token="oauth-pg").status_code == 401
 
 
@@ -282,7 +258,6 @@ def test_registered_database_and_conflicting_environment(owui_store, monkeypatch
     assert owui_api_keys.resolve_email(hub, "sk-test") == "alice@example.com"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{hub / 'stale.db'}")
     assert owui_api_keys.resolve_email(hub, "stale-key") is None
-    assert owui_groups.resolve_groups(hub, "alice@example.com") == set()
 
 
 def test_configured_unavailable_database_never_falls_back(
@@ -297,5 +272,4 @@ def test_configured_unavailable_database_never_falls_back(
         "postgresql+psycopg://synthetic:secret-canary@127.0.0.1:1/unavailable",
     )
     assert owui_api_keys.resolve_email(tmp_path, "sk-test") is None
-    assert owui_groups.resolve_groups(tmp_path, "alice@example.com") == set()
     assert "secret-canary" not in caplog.text

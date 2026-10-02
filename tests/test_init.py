@@ -244,7 +244,7 @@ def test_init_never_copies_template_runtime_state(tmp_path, monkeypatch):
     result = _run_init(tmp_path / "work", "hub", "--template", "tpl")
     assert result.exit_code == 0, result.output
     assert (tmp_path / "work" / "hub" / "AGENTS.md").is_file()
-    assert {p.name for p in (tmp_path / "work" / "hub" / ".hubzoid").iterdir()} == {"fresh-install"}
+    assert not (tmp_path / "work" / "hub" / ".hubzoid").exists()   # no setup state is copied
     assert not (tmp_path / "work" / "hub" / ".hubzoid" / "artifact_secret").exists()
 
 

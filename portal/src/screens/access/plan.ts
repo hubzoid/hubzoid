@@ -1,5 +1,5 @@
-import type { Access, AccessRow, AccessRowGroups, Permission } from "../../api";
-import { EVERYONE, MANAGE_ACCESS, USE_HUB, isGroup } from "../../lib/format";
+import type { Access, AccessRow, Permission } from "../../api";
+import { EVERYONE, MANAGE_ACCESS, USE_HUB } from "../../lib/format";
 
 /**
  * Pure staging logic for the Access editor. Nothing here talks to the server;
@@ -14,10 +14,7 @@ import { EVERYONE, MANAGE_ACCESS, USE_HUB, isGroup } from "../../lib/format";
  *    organization administrator's, and never an organization-admin-only
  *    capability (`delegate_grantable: false`);
  *  - an `included` capability comes with `use_hub` and is never granted; an
- *    obsolete grant can be removed, never granted;
- *  - a group (`group:<id>`) is given agent access by organization
- *    administrators only, never Manage access; what a person holds through a
- *    group is changed in the group, not on the person.
+ *    obsolete grant can be removed, never granted.
  */
 export type Operation = { action: "grant" | "revoke"; permission: string };
 
@@ -66,13 +63,8 @@ export function toggle(selected: string[], permission: string, on: boolean) {
 
 export type Lock = {
   reason: string;
-  label?: "Inherited" | "Required" | "Outside your access" | "Admins only" | "Included" | "No longer available" | "Via group";
+  label?: "Inherited" | "Required" | "Outside your access" | "Admins only" | "Included" | "No longer available";
 } | null;
-
-/** The groups a person holds `permission` through (none for a group row). */
-export function viaGroups(row: AccessRow, permission: string): string[] {
-  return (row as AccessRowGroups).via_groups?.[permission] ?? [];
-}
 
 type Viewer = Pick<Access, "can_manage_admins" | "grantable" | "viewer">;
 
@@ -103,18 +95,6 @@ export function lockFor(
     return { label: "No longer available", reason: "This capability no longer exists, so it can’t be granted." };
   if (row.subject === EVERYONE)
     return { reason: "“Everyone signed in” can only be removed, from the access list." };
-  if (isGroup(row.subject)) {
-    if (!access.can_manage_admins)
-      return { label: "Admins only", reason: "Only organization administrators can change a group’s access." };
-    if (permission === MANAGE_ACCESS)
-      return { reason: "A group can’t hold Manage access. Give it to people individually." };
-  }
-  const groups = viaGroups(row, permission);
-  if (groups.length && !row.perms.includes(permission))
-    return {
-      label: "Via group",
-      reason: `Held through the group${groups.length === 1 ? "" : "s"} ${groups.join(", ")}. Change it in the group’s access or membership.`,
-    };
   if (row.inherited.includes(permission))
     return {
       label: "Inherited",

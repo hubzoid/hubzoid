@@ -86,8 +86,6 @@ export const humanize = (s: string) =>
 
 export const isService = (subject: string) => subject.startsWith("workflow:");
 
-/** A group grantee: `group:<id>` (web app mode). */
-export const isGroup = (subject: string) => subject.startsWith("group:");
 
 /** A person's readable name; falls back to the identity itself. */
 export function personName(subject: string, display?: string | null) {
@@ -260,8 +258,6 @@ export function accountStatus(status: string): Presentation {
       return { label: "Legacy service identity", color: "default", hint: "Created before workflows ran as user accounts; its access is kept." };
     case "everyone":
       return { label: "Public", color: "purple", hint: "Applies to everyone who can sign in." };
-    case "group":
-      return { label: "Group", color: "geekblue", hint: "Its access applies to every member of the group." };
     default:
       return { label: humanize(status), color: "default", hint: "" };
   }
@@ -612,7 +608,7 @@ export function explainDecisionReason(reason: string | undefined) {
     case "no-grant":
       return "They do not have the permission this tool requires.";
     case "no-group":
-      return "They are not in the required group (legacy access for an unmigrated agent).";
+      return "They were not in the group the tool required (before access was managed in the Console).";
     case "anonymous":
       return "The caller was not signed in.";
     case "blocked":

@@ -16,7 +16,6 @@ import {
   query,
   type Access,
   type AccessRow,
-  type AccessRowGroups,
   type AccountCreated,
   type AccountGranted,
   type Hub,
@@ -33,7 +32,6 @@ import {
   capabilityNotes,
   groupCapabilities,
   isGrantable,
-  isGroup,
   isService,
   normalizeSubject,
   personName,
@@ -49,7 +47,6 @@ import {
   lockFor,
   planOperations,
   toggle,
-  viaGroups,
   type Draft,
   type Lock,
 } from "./plan";
@@ -101,9 +98,8 @@ function selectionProblems(
       continue;
     }
     const lock = lockFor(p, row, access, selected, meta);
-    // Already held through a group: a direct grant as well is allowed (it keeps
-    // the capability if they leave the group), and entry is added with others.
-    if (lock && lock.label !== "Required" && lock.label !== "Via group") out[p] = lock.reason;
+    // Entry is added with others.
+    if (lock && lock.label !== "Required") out[p] = lock.reason;
   }
   return out;
 }
@@ -123,7 +119,6 @@ function CapabilityRow({
   checked,
   lock,
   publicOnly,
-  alsoVia,
   problem,
   onChange,
 }: {
@@ -131,8 +126,6 @@ function CapabilityRow({
   checked: boolean;
   lock: Lock;
   publicOnly: boolean;
-  /** Groups that also give this capability to a person who holds it directly. */
-  alsoVia?: string[];
   problem?: string;
   onChange: (on: boolean) => void;
 }) {
@@ -145,9 +138,6 @@ function CapabilityRow({
     ...capabilityNotes(p),
     lock?.reason,
     !lock && publicOnly ? "Held through “Everyone signed in”. A direct grant keeps access if that is removed." : undefined,
-    !lock && alsoVia?.length
-      ? `Also held through the group${alsoVia.length === 1 ? "" : "s"} ${alsoVia.join(", ")}: removing it here keeps it through ${alsoVia.length === 1 ? "that group" : "those groups"}.`
-      : undefined,
   ].filter(Boolean).join(" ");
   return (
     <div className="capability" data-permission={p.permission}>
@@ -171,9 +161,6 @@ function CapabilityRow({
           </Text>
         )}
         {!lock && publicOnly && <Text type="secondary" className="capability-state">Public</Text>}
-        {!lock && !publicOnly && !!alsoVia?.length && (
-          <Text type="secondary" className="capability-state">Also via group</Text>
-        )}
         {help && (
           <HelpToggle label={p.label} open={helpOpen} controls={helpId} onToggle={() => setHelpOpen((o) => !o)} />
         )}
@@ -771,17 +758,12 @@ export function AccessDrawer({
                     const entry =
                       draft.selected.includes(USE_HUB) ||
                       draft.row.inherited.includes(USE_HUB) ||
-                      viaGroups(draft.row, USE_HUB).length > 0 ||
                       access.public;
-                    // Held through a group (and not directly): shown held, changed in the group.
-                    const viaGroupOnly = (perm: string) =>
-                      viaGroups(draft.row, perm).length > 0 && !draft.row.perms.includes(perm);
                     const isChecked = (p: Permission) =>
                       p.default === "included"
                         ? entry
                         : draft.selected.includes(p.permission) ||
-                          draft.row.inherited.includes(p.permission) ||
-                          viaGroupOnly(p.permission);
+                          draft.row.inherited.includes(p.permission);
                     const collapsible = !ALWAYS_OPEN.has(g.key);
                     return (
                       <CapabilityGroup
@@ -819,7 +801,6 @@ export function AccessDrawer({
                                     !draft.selected.includes(USE_HUB) &&
                                     !inherited
                                   }
-                                  alsoVia={draft.row.perms.includes(p.permission) ? viaGroups(draft.row, p.permission) : undefined}
                                   problem={problems[p.permission]}
                                   onChange={(on) => {
                                     if (problems[p.permission]) {
@@ -860,7 +841,7 @@ export function AccessDrawer({
               name={name}
               hubName={hub.name}
               catalog={catalog}
-              keepsAccess={draft.row.inherited.length > 0 || access.public || viaGroups(draft.row, USE_HUB).length > 0}
+              keepsAccess={draft.row.inherited.length > 0 || access.public}
             />
           )}
         </div>
@@ -869,13 +850,9 @@ export function AccessDrawer({
   );
 }
 
-/** Who is being edited: a person (name, identity and account state) or a group. */
+/** Who is being edited: a person (name, identity and account state). */
 function Identity({ row, name }: { row: AccessRow; name: string }) {
-  return isGroup(row.subject) ? (
-    <GroupIdentity row={row as AccessRowGroups} name={name} />
-  ) : (
-    <PersonIdentity row={row} name={name} />
-  );
+  return <PersonIdentity row={row} name={name} />;
 }
 
 function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
@@ -908,28 +885,6 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
           here. Workflows now run as an ordinary account, so give that account access instead.
         </HelpText>
       )}
-    </div>
-  );
-}
-
-/** A group being given access: its name and size, and where its members are managed. */
-function GroupIdentity({ row, name }: { row: AccessRowGroups; name: string }) {
-  const members = row.members ?? 0;
-  return (
-    <div className="person-heading">
-      <Space align="center">
-        <PersonAvatar subject={row.subject} display={row.display} size={40} />
-        <div>
-          <Text strong>{name}</Text>
-          <div className="identity-tags">
-            <Text type="secondary">
-              Group · {members} {members === 1 ? "member" : "members"}{" "}
-            </Text>
-            {row.group_id && <a href={`#/groups/${encodeURIComponent(row.group_id)}`}>Manage members</a>}
-          </div>
-        </div>
-      </Space>
-      <Text type="secondary">Everyone in this group gets what you choose here, and loses it when they leave the group.</Text>
     </div>
   );
 }
@@ -1045,7 +1000,7 @@ function ReviewList({
           }
           description={
             keepsAccess
-              ? "Access held through organization administrator rights, a group or “Everyone signed in” still applies."
+              ? "Access held through organization administrator rights or “Everyone signed in” still applies."
               : undefined
           }
         />

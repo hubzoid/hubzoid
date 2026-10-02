@@ -163,7 +163,6 @@ def make_review_deployment(tmp_path: Path, monkeypatch, *, owui=None) -> SimpleN
     gs = access.store_for(hubs[REVIEW])
     gs.bootstrap([OWNER])
     for key in hubs:
-        gs.set_authoritative(True, hub=key)
         gs.grant(OWNER, key, "use_hub", actor="owner-setup")
     owui = owui or FakeOwui()
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", SERVICE)

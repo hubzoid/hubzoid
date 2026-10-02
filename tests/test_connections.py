@@ -358,8 +358,11 @@ def test_surfaced_tool_surfaces_link_even_under_the_access_guard(tmp_path):
         "restricted tool that needs the user's odoo connection"
         raise NeedsConnection("odoo", "REALLINK")
 
+    from hubzoid.access import store_for
+
+    store_for(tmp_path).grant("p", tmp_path.name, "erp", actor="test")
     guarded = guard.guard_tool(odoo_read, "erp", tmp_path)
-    with identity_scope(Identity.make("p", ["erp"], surface="owui")):
+    with identity_scope(Identity.make("p", [], surface="owui")):
         out = _invoke_tool(guarded)
     assert "REALLINK" in out  # the link survives the guard layer
 
@@ -747,13 +750,16 @@ def test_build_agent_wires_connections_and_restricted_tool_surfaces_link(tmp_pat
     tools = {getattr(t, "name", ""): t for t in agent.tools}
     assert "odoo_invoices" in tools  # restricted tool loaded and gated
 
-    # Authorized caller (in the odoo group) but not connected -> gets the link.
-    with identity_scope(Identity.make("priya@x.com", ["odoo"], surface="owui")):
+    # Authorized caller (granted odoo) but not connected -> gets the link.
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("priya@x.com", hub.name, "odoo", actor="test")
+    with identity_scope(Identity.make("priya@x.com", [], surface="owui")):
         out = _invoke_tool(tools["odoo_invoices"])
     assert "connect" in out.lower()
     assert "connect.test/odoo" in out  # the broker's connect link, surfaced
 
-    # And a caller without the odoo group is denied by the access guard first.
-    with identity_scope(Identity.make("anon@x.com", ["other"], surface="owui")):
+    # And a caller without the grant is denied by the access guard first.
+    with identity_scope(Identity.make("anon@x.com", ["odoo"], surface="owui")):
         denied = _invoke_tool(tools["odoo_invoices"])
     assert "access denied" in denied.lower()

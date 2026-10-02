@@ -161,8 +161,8 @@ def message_json(message: dict) -> dict:
 def check_use_hub(hub_dir: Path, email: str) -> None:
     """The hub entry gate for the web app: the same decision as the bridge's
     ``server._enforce_use_hub``, for the signed-in person's email. Suspended
-    people are refused; once the hub's access is managed in the Console the
-    person needs ``use_hub``. A store failure refuses (503)."""
+    people are refused, and everyone else needs ``use_hub``. A store failure
+    refuses (503)."""
     from ..access import store_for
     from ..access.identity import normalize
     from ..access.store import USE_HUB
@@ -170,15 +170,12 @@ def check_use_hub(hub_dir: Path, email: str) -> None:
     email = normalize(email)
     try:
         gs = store_for(hub_dir)
-        authoritative = gs.is_authoritative(hub_dir.name)
         blocked = bool(email) and gs.is_suspended(email)
     except Exception:  # noqa: BLE001 — fail closed
         log.exception("chat: use_hub check unavailable for %s", hub_dir.name)
         raise error(503, "access_unavailable", "Access check unavailable. Try again shortly.")
     if blocked:
         raise error(403, "suspended", "Your agent access is blocked. Contact your administrator.")
-    if not authoritative:
-        return
     try:
         allowed = bool(email) and gs.can(email, hub_dir.name, USE_HUB)
         manages = (not allowed) and bool(email) and gs.can(email, hub_dir.name, "manage_access")

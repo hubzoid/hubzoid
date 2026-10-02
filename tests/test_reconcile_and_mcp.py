@@ -69,7 +69,6 @@ def test_mcp_verifier_gates_on_use_hub(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(hub_dir)
-    gs.set_authoritative(True)
 
     from hubzoid.mcp_oauth import HubOAuth
     from tests.test_mcp_server import _mk_owui_db
@@ -79,7 +78,7 @@ def test_mcp_verifier_gates_on_use_hub(tmp_path, monkeypatch):
         "HUBZOID_OWUI_DB", str(_mk_owui_db(tmp_path / "owui.db", email="alice@corp"))
     )
     seed(hub_dir, token="oauth-test", email="alice@corp")
-    verifier = HubOAuth(hub_dir, RESOURCE, access_group="ignored")
+    verifier = HubOAuth(hub_dir, RESOURCE)
 
     # no use_hub -> denied
     assert asyncio.run(verifier.verify_token("oauth-test")) is None

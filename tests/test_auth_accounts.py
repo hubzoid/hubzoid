@@ -43,8 +43,6 @@ def hub(tmp_path, monkeypatch):
     d = tmp_path / "sales"
     d.mkdir()
     (d / "AGENTS.md").write_text("---\nname: Sales\n---\nHelp.\n")
-    (d / ".hubzoid").mkdir()
-    (d / ".hubzoid" / "fresh-install").write_text("")
     sessions.reset_cache()
     yield d
     sessions.reset_cache()
@@ -229,7 +227,6 @@ def test_a_stale_binding_is_recreated_without_old_access(hub, owner):
     outside the Console) is re-created like an unavailable one: old grants go."""
     gs = store_for(hub)
     gs.upsert_identity(email="gone@example.com", owui_id="owui-gone")
-    gs.set_authoritative(True, hub="sales")
     gs.grant("gone@example.com", "sales", "use_hub", actor="test")
     out = AccessService(hub).create_account(actor(), email="gone@example.com", name="Gone",
                                             grants=[])
@@ -313,7 +310,6 @@ def test_refresh_reconciles_from_hubzoid_accounts(hub, owner):
 
 def test_confirming_a_proposed_account_returns_a_link_that_is_not_stored(hub, owner):
     service = AccessService(hub)
-    store_for(hub).set_authoritative(True, hub="sales")
     proposed = service.propose(Actor(OWNER, "web", "session"),
                                {"kind": "account", "hub": "sales", "email": "p@example.com",
                                 "name": "P", "grant": ["use_hub"]})
@@ -332,7 +328,6 @@ def test_admin_chat_tools_use_native_accounts_and_confirmation(hub, owner, monke
     """Default-mode tools read Hubzoid accounts and only propose a new one."""
     monkeypatch.delenv("HUBZOID_MANAGEMENT_TOOLS", raising=False)
     gs = store_for(hub)
-    gs.set_authoritative(True, hub="sales")
     gs.grant(OWNER, "sales", "access_tools", actor="test")
     tools = {tool.name: tool for tool in access_admin.make(SimpleNamespace(hub_dir=hub))}
 

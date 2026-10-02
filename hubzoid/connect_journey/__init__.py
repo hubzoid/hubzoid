@@ -182,16 +182,6 @@ def _denied_message(hub_dir, app: str, reason: str) -> str:
         return _SURFACE_REASONS[reason]
     if reason.startswith("surface:"):
         return f"Connecting {label(app)} is not available on this channel."
-    try:
-        from ..access import store_for
-
-        managed = store_for(Path(hub_dir)).is_authoritative(Path(hub_dir).name.lower())
-    except Exception:  # noqa: BLE001 — wording only
-        managed = True
-    if not managed:
-        # Legacy hubs still grant through a chat-app group of the capability's name.
-        return (f"You do not have permission to connect {label(app)} here. Ask your administrator "
-                f"to add you to the chat-app group {capability(app)}.")
     return (f"You do not have permission to connect {label(app)} here. Ask an administrator "
             f"of this agent to grant you \"{_capability_label(hub_dir, app)}\" in the Admin Console.")
 

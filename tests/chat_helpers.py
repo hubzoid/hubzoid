@@ -55,7 +55,20 @@ def make_hub(tmp_path: Path, monkeypatch, name: str = "chat-hub", **env: str) ->
     settings.update(env)
     for key, value in settings.items():
         monkeypatch.setenv(key, value)
+    from hubzoid.access import store_for
+
+    for person in PEOPLE.values():  # both may use the agent (Console grants)
+        store_for(hub).grant(person.email, hub.name, "use_hub", actor="test")
     return hub
+
+
+def api_headers(hub_dir, email: str = "ana@example.org") -> dict:
+    """An OpenAI-compatible API call for `email`: the bridge key and a signed
+    identity (an API call without one is anonymous and is refused)."""
+    from hubzoid import assertions
+
+    return {"Authorization": "Bearer k-chat-test",
+            **assertions.identity_headers(hub_dir, surface="api", email=email)}
 
 
 def build_app():

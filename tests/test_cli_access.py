@@ -1,7 +1,6 @@
 """CLI tests for the access commands (grant / revoke / access check|list|bootstrap)."""
 from __future__ import annotations
 
-from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -33,7 +32,7 @@ def test_grant_check_revoke_roundtrip(tmp_path):
 
 def test_bootstrap_and_last_admin_guard(tmp_path):
     hub = str(tmp_path)
-    r = runner.invoke(app, ["access", "bootstrap", "--admin", "root", "--authoritative", hub])
+    r = runner.invoke(app, ["access", "bootstrap", "--admin", "root", hub])
     assert r.exit_code == 0, r.output
 
     r = runner.invoke(app, ["access", "check", "root", "--hub", "anything", hub])
@@ -57,29 +56,3 @@ def test_new_workflow_scaffold(tmp_path):
     assert r.exit_code == 1
 
 
-def test_migrate_cli_e2e(tmp_path):
-    # Never migrate a developer's running hub or load its .env into later tests.
-    hub = tmp_path / "test-hub"
-    (hub / "identity").mkdir(parents=True)
-    (hub / "restricted").mkdir()
-    (hub / "AGENTS.md").write_text("---\nname: test-hub\n---\nSynthetic migration fixture.\n")
-    (hub / "identity" / "access.csv").write_text("phone,email,groups\n,tester@example.com,testers\n")
-    (hub / "restricted" / "testers.py").write_text("# Synthetic permission catalog entry.\n")
-    test_hub = str(hub)
-    env = {"DATABASE_URL": f"sqlite:///{tmp_path / 'hub.db'}"}
-
-    r = runner.invoke(app, ["access", "migrate", test_hub], env=env)   # dry run
-    assert r.exit_code == 0, r.output
-    assert "dry-run" in r.output
-
-    r = runner.invoke(app, ["access", "migrate", "--apply", "--standalone-public", test_hub], env=env)
-    assert r.exit_code == 0 and "authoritative" in r.output
-
-    r = runner.invoke(
-        app, ["access", "check", "tester@example.com", "--hub", "test-hub", test_hub],
-        env=env,
-    )
-    assert "testers" in r.output and "use_hub" in r.output
-
-    r = runner.invoke(app, ["access", "diff", "--standalone-public", test_hub], env=env)
-    assert r.exit_code == 0 and "0 missing" in r.output

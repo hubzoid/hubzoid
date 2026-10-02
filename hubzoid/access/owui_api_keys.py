@@ -4,9 +4,8 @@
 This is the credential story for the hosted MCP surface: a user mints an
 API key in Open WebUI (Settings -> Account -> API keys) and presents it as
 the Bearer token on ``/mcp``. We validate it with a read-only lookup against
-OWUI's own database — the same database `owui_groups` reads — so identity,
-revocation (delete the key in OWUI) and expiry all stay in the one place the
-admin already manages.
+OWUI's own database, so identity, revocation (delete the key in OWUI) and
+expiry all stay in the one place the admin already manages.
 
 OWUI itself never accepts these keys for anything: hubzoid launches OWUI
 with API-key endpoint restrictions set to deny-all (see `webui.py`), so the

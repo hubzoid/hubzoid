@@ -66,9 +66,6 @@ What happens when something goes wrong:
   internal URL and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`HUBZOID_GATEWAY_ADMIN_PASSWORD`.
   It refuses to write through a public URL. Add user says so until then.
 
-Console account creation works on a deployment whose agents still use legacy
-access. Access for those agents keeps coming from Open WebUI groups.
-
 Add user no longer offers to pre-approve an email that has no account. A grant
 to an email that starts working when someone first signs in with it (for
 example through single sign-on) can still be made with `hubzoid grant <email>
@@ -327,10 +324,7 @@ refuse it.
 
 An agent that already had one keeps it, and it keeps working:
 
-- It is carried over only by `hubzoid access migrate` when legacy access was
-  demonstrably public (an Open WebUI model open to all users, or
-  `--standalone-public`). The migration report says
-  `Everyone signed in (carried over)`.
+- It exists only on agents that had it before 1.1. Nothing creates a new one.
 - The agent's Access list shows an **Everyone signed in** row with Use this
   agent. It cannot be edited, only removed.
 - Only an organization administrator can remove it. Delegates see it read-only.
@@ -473,8 +467,7 @@ the hub's `JEV_OPENROUTER_API_KEY`. Without that key a granted call fails with
 a message that names it.
 
 Each call writes a usage row (kind `jev`) naming the person, their channel and
-the chat, and an access log entry. On a hub that has not been migrated, an Open
-WebUI group named `jev` grants it instead.
+the chat, and an access log entry.
 
 Where Jev is available today:
 
@@ -494,14 +487,24 @@ of the tools the agent is shown for anyone who may not use it, on every runtime
 is answered as an unknown tool, and the guard also refuses and logs any call
 that reaches it another way.
 
-## Existing hubs
+## One access model
 
-Unmigrated hubs retain their legacy group/roster rules. The Console labels this
-mode and does not pretend its draft grants have replaced the old authority.
-Follow the backup, dry-run and activation procedure in [ADMINISTRATION.md](ADMINISTRATION.md).
-The older mechanics remain documented in [legacy-access.md](legacy-access.md)
-for migration and diagnosis only. Do not use that guide to configure a new
-managed hub.
+Every agent's access is managed here, whatever the chat UI (the Hubzoid web
+app or Open WebUI). A person may use an agent, or one of its controlled tools,
+only with a grant. There is no other source:
+
+- Open WebUI groups, Hubzoid groups and roster groups (`identity/access.csv`)
+  grant nothing. A roster still says who a WhatsApp or Telegram sender is.
+- A hub deployed from git, with no `.hubzoid/` folder, is managed like any
+  other. Nobody can use it until someone is granted access.
+- The configured owner gets the owner's grants on their first verified sign-in
+  as an administrator (the web app, an Open WebUI session or chat, or MCP
+  sign-in). With sign-in off, the local owner owns every hub from the first
+  start. An API key never provisions anyone.
+- A call to the bridge without a verified person is refused, as on any managed
+  agent.
+- `hubzoid doctor` warns about an agent nobody may use and notes one only its
+  owner may use (`access.who`).
 
 ## Hiding the Open WebUI Users page (implemented)
 
@@ -510,15 +513,10 @@ On by default for a gateway set up fresh with Console accounts (recorded as
 explicit `HUBZOID_HIDE_OWUI_USERS=true|false` in the environment of the process
 that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
-- Opening Open WebUI's user list (`/admin/users/overview`) lands on Console
-  **People**.
-- When every agent in the deployment is managed in the Console, Open WebUI's
-  groups decide nothing, so its whole Users section is hidden: the Admin Panel
-  (`/admin`) and every `/admin/users` page, Groups included, open **Settings →
-  Integrations** before anything renders, and the Admin Panel shows no Users
-  link. This is checked on each request, so it follows a hub's migration.
-- While any agent still uses legacy access, the Users section opens Groups,
-  and Groups stays.
+- Open WebUI's groups decide nothing, so its whole Users section is hidden: the
+  Admin Panel (`/admin`) and every `/admin/users` page, the user list and Groups
+  included, open **Settings → Integrations** before anything renders, and the
+  Admin Panel shows no Users link.
 - Settings, Evaluations and Functions are unchanged.
 - Browser writes to Open WebUI's account admin API get 403: `POST
   /api/v1/auths/add`, `POST /api/v1/users/{id}/update` and `DELETE

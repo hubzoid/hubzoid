@@ -5,8 +5,9 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [1.1.0]
 
-Hubzoid 1.1 replaces Open WebUI with the Hubzoid web app. Upgrading from
-1.0.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first. The
+Hubzoid 1.1 adds the Hubzoid web app as the default chat UI. Open WebUI stays a
+supported chat UI (Open WebUI mode), and every agent's access is managed in the
+Console in both. Upgrading from 1.0.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first. The
 [release notes](docs/release-notes/1.1.0.md) summarize the release, its
 upgrade requirements and its known limits.
 
@@ -88,13 +89,28 @@ upgrade requirements and its known limits.
   hubs. The connection journey (`HUBZOID_CONNECT_JOURNEY`) works with these
   connectors.
 
-### Groups
-- **Console → Groups**: create groups, add and remove members, and see each
-  group's access. Groups can be given agent access and capabilities in the
-  access editor (never Manage access). Grants name `group:<id>`.
-- Group grants apply on every surface that knows the person's email. With
-  `SLACK_IDENTITY_MAPPING=true`, Slack senders map to their Hubzoid account and
-  its groups.
+### One access model
+- Every agent's access is managed in the Console, in both chat UIs and however
+  the hub was created or deployed. A person needs a grant; nothing else grants
+  access. A hub deployed from git without `.hubzoid/` denies everyone until
+  someone is granted access.
+- The configured owner gets the owner's grants on their first verified sign-in
+  as an administrator, including their first chat in Open WebUI. With sign-in
+  off the local owner owns every hub from the first start. An API key never
+  provisions anyone.
+- A bridge call without a verified person is refused. Open WebUI groups and
+  roster groups grant nothing, and `MCP_ACCESS_GROUP` is no longer read.
+- Open WebUI's whole Users section (the user list and Groups) opens Settings
+  when `HUBZOID_HIDE_OWUI_USERS` is on, and browser edits to an agent model's
+  access list are refused.
+- `hubzoid doctor` warns about an agent nobody may use (`access.who`) and about
+  a leftover `MCP_ACCESS_GROUP`.
+- Removed: the 1.0 cutover commands `hubzoid access migrate`, `access rollback`
+  and `access diff`, `access bootstrap --authoritative`, the
+  `.hubzoid/fresh-install` marker, Hubzoid groups (an earlier 1.1 build's
+  Groups screen, group grants and artifact shares with a group; a migration
+  gives each member the grants and shares their groups held), and
+  `docs/legacy-access.md`.
 
 ### Gateway
 - `hubzoid gateway` runs one bridge per hub and one edge, with no Open WebUI.
@@ -123,13 +139,13 @@ upgrade requirements and its known limits.
 
 ### Moving from Open WebUI
 - New `hubzoid migrate openwebui [PATH]` moves people (passwords included),
-  external sign-in links, groups, access, conversations with branches and
-  attachments, and share links. Open WebUI is only read. The default is a dry
-  run. `--apply` writes in steps and undoes them on failure. Re-runs are safe.
-  Options: `--owui-db`, `--json`, `--verbose`, `--rehearse`,
-  `--model-alias OLD=AGENT`, `--grants auto|people`.
+  external sign-in links, conversations with branches and attachments, and
+  share links. Access is already in the Console and stays as it is. Open WebUI
+  is only read. The default is a dry run. `--apply` writes in one transaction.
+  Re-runs are safe. Options: `--owui-db`, `--json`, `--verbose`, `--rehearse`,
+  `--model-alias OLD=AGENT`.
 - With sign-in on, a hub or gateway with Open WebUI accounts and no Hubzoid
-  accounts does not start until it is moved or put in legacy mode.
+  accounts does not start until it is moved or set to Open WebUI mode.
 
 ### Install and run
 - `pip install hubzoid` no longer installs Open WebUI or PyTorch. Measured on

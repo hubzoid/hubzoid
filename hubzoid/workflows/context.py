@@ -262,9 +262,8 @@ class Hub:
         in this agent, for anyone who may open that one.
 
         Private to the owner by default. `audience="hub"` (everyone who can use
-        this agent) or `audience="people"` with `share_with=["a@x.com",
-        {"kind": "group", "principal": "finance"}]` shares it explicitly; both
-        need a Console-managed hub. Public links are never made here: the owner
+        this agent) or `audience="people"` with `share_with=["a@x.com"]` shares
+        it explicitly. Public links are never made here: the owner
         creates them in the viewer, with permission. Each call stores a new
         artifact; earlier ones are never overwritten. Checkpointed as a step."""
         ctx = _ctx()

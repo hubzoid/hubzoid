@@ -41,6 +41,8 @@ def hub(tmp_path, monkeypatch, servers):
     registry.create(hub, {"name": "Cal", "url": servers["cal"]}, actor="test")
     registry.create(hub, {"name": "Docs", "url": servers["docs"], "auth_type": "none"},
                     actor="test")
+    for cid in ("mail", "cal", "docs"):
+        f.grant_connector(hub, cid, X, Y)
     connect(hub, "u-x", X, "mail", "tok-x", servers["mail"])
     connect(hub, "u-y", Y, "mail", "tok-y", servers["mail"])
     connect(hub, "u-y", Y, "cal", "tok-y", servers["cal"])
@@ -88,7 +90,7 @@ def test_owui_mcp_dispatches_here_in_the_default_mode(hub, servers):
     assert allowed == ["mcp__my_mail__*"]
 
 
-def test_the_legacy_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monkeypatch, servers):
+def test_open_webui_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monkeypatch, servers):
     from tests import connect_helpers as h
 
     db = tmp_path / "webui.db"
@@ -98,11 +100,12 @@ def test_the_legacy_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monke
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", "legacy")
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
+    f.grant_connector(hub, "odoo", X)
     # Default mode: Open WebUI's connections are not read at all.
     assert keys(owui_mcp.per_user_servers(hub, who(X))) == ["my_mail"]
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    legacy = owui_mcp.per_user_servers(hub, who(X, "owui"))
-    assert keys(legacy) == ["owui_odoo"] and legacy[0].headers == {"Authorization": "Bearer tok-x"}
+    owui = owui_mcp.per_user_servers(hub, who(X, "owui"))
+    assert keys(owui) == ["owui_odoo"] and owui[0].headers == {"Authorization": "Bearer tok-x"}
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +150,10 @@ def test_switched_off_expired_and_moved_connections_are_skipped(hub, servers):
     assert per_user.per_user_servers(hub, who(X)) == []
 
 
-def test_a_managed_hub_needs_the_connector_capability(hub):
+def test_each_server_needs_the_connector_capability(hub):
     gs = store_for(hub)
-    gs.bootstrap(["owner@example.org"], authoritative=True)
+    for cid in ("mail", "cal", "docs"):
+        gs.revoke(Y, "sales", "connector_" + cid, actor="test")
     assert per_user.per_user_servers(hub, who(Y)) == []
     gs.grant(Y, "sales", "connector_cal", actor="test")
     assert keys(per_user.per_user_servers(hub, who(Y))) == ["my_cal"]

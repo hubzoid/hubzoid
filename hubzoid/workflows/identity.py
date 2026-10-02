@@ -10,23 +10,19 @@ Precedence, first match wins:
      gateway's environment, which the gateway also records in the deployment
      manifest for CLI commands);
   4. the setup default: the configured initial owner, recorded once when
-     Hubzoid provisions that owner (`GrantStore.provision_owner`), on
-     Console-managed hubs only. Local quickstart (authentication off, no
-     deployment) is `admin@localhost`.
+     Hubzoid provisions that owner (`GrantStore.provision_owner`). Local
+     quickstart (authentication off, no deployment) is `admin@localhost`.
 
 The email must resolve to a usable account: a bound identity row (an Open WebUI
-account id), not pending, not blocked or replaced, and on a Console-managed hub
-holding `use_hub`. Anything else raises `IdentityError` with the fix. There is
+account id), not pending, not blocked or replaced, and holding `use_hub`. Anything else raises `IdentityError` with the fix. There is
 no fallback to another person, ever.
 
 `run_as` selects an identity; it grants nothing. It is read only from files and
 operator configuration, never from an API, a tool or a model argument.
 
-Legacy hubs (access still managed in the chat app) switch only on explicit
-configuration (`run_as` or HUBZOID_WORKFLOW_USER), never on the setup default.
-With neither, the run keeps its old service identity (`workflow:<name>`,
-`workflow:md:<task>`), which holds no restricted access there, and features
-that need a person (publishing, email, personal connections) refuse.
+Runs recorded before workflows ran as people may still carry their old service
+identity (`workflow:<name>`, `workflow:md:<task>`, source `legacy-service`).
+Features that need a person (publishing, email, personal connections) refuse it.
 
 A run resolves its identity once, as a checkpointed step, and re-checks the
 account before every protected operation (`recheck`), so a configuration change
@@ -56,8 +52,8 @@ class IdentityError(RuntimeError):
 class RunIdentity:
     """The account a run acts as, captured when the run starts.
 
-    `subject` is the normalized email (or, for a legacy hub with nothing
-    configured, the old service subject). `account_id` is the Open WebUI
+    `subject` is the normalized email (or, for a run recorded before workflows
+    ran as people, the old service subject). `account_id` is the Open WebUI
     account id at resolution time, so a later account replacement is caught.
     `source` says which rule chose it."""
 
@@ -142,13 +138,8 @@ def configured(hub_dir: Path, *, hub: str | None = None,
         recorded = ""
     if recorded:
         return normalize(recorded), "deployment"
-    # The setup default applies only where Hubzoid manages access. A legacy hub
-    # (access still in the chat app) switches only on explicit configuration,
-    # so recording an owner never silently changes how its tasks run.
-    gs = store_for(hub_dir)
-    hub_key = hub or hub_dir.name
-    default = gs.workflow_default(hub_key)
-    if default and gs.is_authoritative(hub_key):
+    default = store_for(hub_dir).workflow_default(hub or hub_dir.name)
+    if default:
         return normalize(default), "setup"
     if local_quickstart(hub_dir):
         return LOCAL_OWNER, "local"
@@ -205,8 +196,7 @@ def check(hub_dir: Path, hub: str, email: str, source: str, *,
             f"The account behind {email} changed while this run was in progress. The "
             "run stops rather than continue as a different account.")
     try:
-        managed = gs.is_authoritative(hub)
-        allowed = (not managed) or gs.can(email, hub, USE_HUB)
+        allowed = gs.can(email, hub, USE_HUB)
     except Exception as exc:  # noqa: BLE001 — fail closed
         raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
     if not allowed:
@@ -222,26 +212,10 @@ def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
             quiet: bool = False) -> RunIdentity:
     """Resolve the account a new run acts as (see module docstring). `quiet`
     skips the operator warnings, for listings that resolve on every refresh."""
-    from ..access import store_for
-
     hub_dir = Path(hub_dir)
     hub = (hub or hub_dir.name).lower()
     email, source = configured(hub_dir, hub=hub, run_as=run_as)
     if not email:
-        try:
-            managed = store_for(hub_dir).is_authoritative(hub)
-        except Exception as exc:  # noqa: BLE001
-            raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
-        if not managed and legacy_subject:
-            if not quiet:
-                # A legacy hub never switches on the setup default, so the only
-                # fix is explicit configuration.
-                log.warning("%s: %s in hub %r has no account configured. Add run_as to its "
-                            "declaration or set %s=<account email> in the hub or deployment "
-                            "configuration. Until then it keeps its legacy service identity, "
-                            "which cannot publish, email or use personal connections.",
-                            legacy_subject, what, hub, WORKFLOW_USER_ENV)
-            return RunIdentity(legacy_subject, None, LEGACY_SOURCE)
         raise IdentityError(_missing_default_message(hub_dir, hub, what))
     ident = check(hub_dir, hub, email, source, what=what)
     if legacy_subject and not quiet:

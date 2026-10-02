@@ -300,8 +300,10 @@ def test_web_app_stream_and_stored_reply_carry_the_class(chat_app):
 def test_openai_compatible_output_shows_the_plain_sentence(chat_app):
     from fastapi.testclient import TestClient
 
+    from tests.chat_helpers import api_headers
+
     client = TestClient(chat_app)
-    auth = {"Authorization": "Bearer k-chat-test"}
+    auth = api_headers(chat_app.state.chat.hub_dir)
     body = {"model": "x", "messages": [{"role": "user", "content": "hi"}]}
     content = client.post("/v1/chat/completions", headers=auth, json=body).json()[
         "choices"][0]["message"]["content"]

@@ -246,17 +246,20 @@ def _chat(bridge, headers):
 
 
 def test_bridge_counts_only_signed_identities(bridge, hub):
+    from tests.access_helpers import allow
+
+    allow(hub, "ann@example.org", "boss@example.org")
     signed = assertions.identity_headers(hub, surface="whatsapp", email="ann@example.org")
     assert _chat(bridge, signed).status_code == 200
+    # Unsigned headers are nobody, and nobody may use the agent.
     forged = {"X-OpenWebUI-User-Email": "boss@example.org", "X-Hubzoid-Surface": "slack-dm"}
-    assert _chat(bridge, forged).status_code == 200
-    assert _usage(hub) == [{"surface": "whatsapp", "subject": "ann@example.org"},
-                           {"surface": "api", "subject": None}]
+    assert _chat(bridge, forged).status_code == 403
+    assert _usage(hub) == [{"surface": "whatsapp", "subject": "ann@example.org"}]
 
 
 def test_bridge_managed_hub_refuses_an_unsigned_identity(bridge, hub):
     gs = access.store_for(hub)
-    gs.bootstrap(["boss@example.org"], authoritative=True, hub="sales")
+    gs.bootstrap(["boss@example.org"])
     forged = {"X-OpenWebUI-User-Email": "boss@example.org"}
     r = _chat(bridge, forged)
     assert r.status_code == 403 and "requires sign-in" in r.text

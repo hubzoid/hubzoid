@@ -60,7 +60,9 @@ for released users. Groups were added in 1.1 and were never released.
    everyone. That is its own change, after 1.1. In 1.1 the agent's Connectors
    tab lists the servers registered in Open WebUI with their permission,
    read-only, and says where to change them.
-5. **Wording.** "Open WebUI mode" everywhere. "Legacy" stays only for old data
+5. **Wording.** "Open WebUI mode" everywhere. Open WebUI is a permanent chat
+   UI option, so nothing says it is legacy or will be removed. Access is always
+   managed in the Console in both modes. "Legacy" stays only for old data
    formats and the legacy service identity of pre-account workflows.
 6. **Eval scores.** The Evals tab opens with the latest pass rate (passed of
    total), the trend over the last 10 runs, cases failing now, cases never run,
@@ -89,10 +91,18 @@ for released users. Groups were added in 1.1 and were never released.
 11. **An agent picker that scales.** The new-chat screen shows two large cards
     per row, which does not work for 10 to 20 agents. Replace it with a compact
     list with search, the person's recent agents first.
+12. **Phone numbers in the Console.** A person's record holds an optional
+    phone number (one per person, unique), set by an organisation administrator
+    when adding the person or later in their account. A WhatsApp sender, or a
+    Telegram sender who shares their contact, with that number is that person,
+    and their grants apply. The hub's own `identity/access.csv` or
+    `identity/access.py` still works and is consulted after the Console. A hub
+    without either no longer needs one to let people in over WhatsApp or
+    Telegram.
 
 ## Order
 CI, latest link (a production board is waiting for it), one access model, Groups,
-connectors, eval scores, webhooks, the small UI items, docs. Focused tests per
+phone numbers, connectors, eval scores, webhooks, the small UI items, docs. Focused tests per
 step, then the full suite and both journeys once.
 
 ## Scope and non-goals

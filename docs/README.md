@@ -17,9 +17,8 @@ testing an unreleased branch.
 | Evaluate and observe | [Evals](evals.md), [observability](OBSERVABILITY.md) |
 | Brand a deployment | [Branding and attribution](branding.md) |
 
-[Legacy access](legacy-access.md) is for unmigrated hubs only. The account contract,
-verification records and historical plans document implementation evidence; they
-are not alternate setup guides. Prefer the current journey guides above.
+The account contract, verification records and historical plans document
+implementation evidence; they are not alternate setup guides. Prefer the current journey guides above.
 
 The [first-use verification record](FIRST-USE-VERIFICATION.md) maps the approved
 stabilization review to its implementation and observed test evidence.

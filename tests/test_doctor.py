@@ -19,7 +19,7 @@ STABLE_IDS = {
     "config.layers", "secrets.deployment", "secrets.hub", "secrets.restricted",
     "secrets.names", "auth.google_merge",
     "ui.mode", "ui.openwebui_extra", "ui.openwebui_data", "exposure.local_mode", "deployment.key",
-    "tools.legacy_management_flag",
+    "tools.legacy_management_flag", "access.who", "mcp.access_group",
 }
 
 
@@ -170,3 +170,18 @@ def test_deprecated_management_flag_warns(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "true")
     check = _by_id(doc.run(hub))["tools.legacy_management_flag"]
     assert check.status == "warn" and "access_tools" in check.summary
+
+
+def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
+    from hubzoid.access import store_for
+
+    gs = store_for(hub)
+    check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "warn" and "Nobody may use hub" in check.summary
+    gs.provision_owner("owner@example.org", "hub")
+    check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "info" and "owner@example.org" in check.summary
+    gs.grant("ann@example.org", "hub", "use_hub", actor="t")
+    assert _by_id(doc.run(hub))["access.who"].summary == "2 people may use hub"
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
+    assert _by_id(doc.run(hub))["mcp.access_group"].status == "warn"

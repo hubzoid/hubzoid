@@ -17,7 +17,6 @@ from hubzoid import deployment
 import hubzoid.access as access
 from hubzoid.access.accounts import OwuiAccounts
 from hubzoid.access.service import AccessService, Actor, Denied
-from hubzoid.access.store import group_subject
 
 ROOT = "root@x.org"
 DELEGATE = "dele@x.org"
@@ -128,8 +127,6 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
     )
     gs = access.store_for(dirs["finance"])
     gs.bootstrap([ROOT])
-    for n in dirs:
-        gs.set_authoritative(True, hub=n)
     gs.grant(DELEGATE, "finance", "manage_access", actor="test")
     gs.grant(DELEGATE, "finance", "ledger", actor="test")
     owui = owui or FakeOwui()
@@ -181,12 +178,6 @@ def test_ceiling_matrix(dep):
     with pytest.raises(Denied):
         svc.ceiling(actor(DELEGATE), "finance")
     assert svc.grantable(actor(DELEGATE)) == {}
-
-
-def test_grantable_reports_legacy_hubs_as_empty(dep):
-    dep.gs.set_authoritative(False, hub="ops")
-    g = dep.svc.grantable(actor(ROOT))
-    assert g["ops"] == [] and "payroll" in g["finance"]
 
 
 # ---- delegate rules -------------------------------------------------------------
@@ -283,12 +274,8 @@ def test_org_admin_keeps_scope(dep):
     assert e.value.status == 409
 
 
-def test_legacy_blocked_and_stale_revision(dep):
+def test_blocked_and_stale_revision(dep):
     svc, gs = dep.svc, dep.gs
-    gs.set_authoritative(False, hub="ops")
-    with pytest.raises(Denied) as e:
-        svc.apply_access_change(actor(ROOT), "ann@x.org", "ops", [("grant", "use_hub")])
-    assert (e.value.status, e.value.code) == (409, "legacy")
     gs.suspend("ann@x.org", actor="test")
     with pytest.raises(Denied) as e:
         svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
@@ -358,7 +345,7 @@ def test_hub_access_rows(dep):
     _unavailable(gs, "gone@x.org")
     gs.grant("cy@x.org", "ops", "inventory", actor="test")
     view = svc.hub_access(actor(DELEGATE), "finance")
-    assert (view["hub"], view["authoritative"], view["revision"]) == ("finance", True, gs.revision())
+    assert (view["hub"], view["revision"]) == ("finance", gs.revision())
     by = {r["subject"]: r for r in view["rows"]}
     assert list(by) == sorted(by)
     assert set(by) == {"ann@x.org", DELEGATE, ROOT, "workflow:close", "gone@x.org"}
@@ -459,19 +446,3 @@ def test_person_access_never_shows_an_outsiders_own_grants(dep):
     assert all(h["capabilities"] == [] for h in view["hubs"])
 
 
-def test_person_access_includes_native_group_grants(dep):
-    """Explain access agrees with enforcement and the hub list for group members."""
-    member = "group-only@x.org"
-    group = dep.gs.create_group("Reviewers", actor=ROOT, emails=[member])
-    dep.gs.grant(group_subject(group["id"]), "finance", "use_hub", actor=ROOT)
-
-    assert dep.gs.can(member, "finance", "use_hub")
-    listing = dep.svc.hub_access(actor(ROOT), "finance")
-    assert any(row["subject"] == member and "use_hub" in row["effective"]
-               for row in listing["rows"])
-    for manager in (ROOT, DELEGATE):
-        detail = dep.svc.person_access(actor(manager), member, "finance")
-        assert detail["known"] is True
-        assert "use_hub" in detail["hubs"][0]["effective"]
-        assert any(cap["permission"] == "use_hub"
-                   for cap in detail["hubs"][0]["capabilities"])

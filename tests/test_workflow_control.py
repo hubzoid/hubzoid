@@ -122,6 +122,7 @@ def hub(tmp_path, env):
     from hubzoid.access import store_for
 
     store_for(hub).upsert_identity(email="carol@x.org", owui_id="id-carol")
+    store_for(hub).grant("carol@x.org", "alpha", "use_hub", actor="test")
     return hub
 
 
@@ -265,7 +266,7 @@ def test_pause_and_resume_are_audited_with_actor_and_surface(hub, tmp_path):
                               surface="mcp")["changed"] is True
     assert store_for(hub).paused_workflows("alpha") == set()
     rows = [(r["action"], r["permission"], r["actor"], r["surface"], r["request_id"])
-            for r in _audit(tmp_path)]
+            for r in _audit(tmp_path) if r["action"].startswith("workflow_")]
     assert rows == [
         ("workflow_pause", "nightly_sync", "ann@x.org", "whatsapp", "chat-9"),
         ("workflow_pause", "nightly_sync", "ann@x.org", "owui", None),

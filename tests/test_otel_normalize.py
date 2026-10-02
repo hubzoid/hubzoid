@@ -269,7 +269,11 @@ def test_build_claude_runtime_direct_when_normalize_off(monkeypatch):
 def _client(monkeypatch, *, model="claude-local", normalize=True):
     from fastapi.testclient import TestClient
 
+    import tempfile
+
     from hubzoid.server import build_app
+    # Its own store: the shared fixture hub's may be removed by other tests.
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tempfile.mkdtemp()}/ops.db")
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(MINIMAL))
     monkeypatch.setenv("MODEL", model)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-used")

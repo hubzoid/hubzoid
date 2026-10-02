@@ -156,13 +156,10 @@ def _signed(hub, **kw):
 def test_web_app_mode_trusts_only_asserted_headers(hub):
     from hubzoid.server import _derive_identity
 
-    gs = access.store_for(hub)
-    g = gs.create_group("Night Shift", actor="t", emails=["ann@example.org"])
-    assert g
     ident = _derive_identity({}, _request(_signed(hub, surface="whatsapp", email="ann@example.org",
                                                   groups=["Field"])), hub)
     assert (ident.user, ident.surface) == ("ann@example.org", "whatsapp")
-    assert ident.groups == frozenset({"field", "night shift"})
+    assert ident.groups == frozenset({"field"})
 
     # The same headers without an assertion: anonymous, whatever they claim.
     bare = {"X-OpenWebUI-User-Email": "ann@example.org", "X-Hubzoid-Groups": "admin",
@@ -186,7 +183,7 @@ def test_web_app_mode_entry_needs_an_asserted_identity(hub):
     from hubzoid.server import _enforce_use_hub
 
     gs = access.store_for(hub)
-    gs.bootstrap(["boss@example.org"], authoritative=True, hub="sales")
+    gs.bootstrap(["boss@example.org"])
     gs.grant("ann@example.org", "sales", "use_hub", actor="t")
     with pytest.raises(HTTPException) as err:
         _enforce_use_hub(_request({"X-OpenWebUI-User-Email": "ann@example.org"}), hub)
@@ -217,16 +214,36 @@ def test_web_app_mode_never_rebinds_an_identity_from_a_header(hub):
     assert gs.can("ann@example.org", "sales", "use_hub")
 
 
-def test_legacy_mode_keeps_the_1_0_trust_rule(hub, monkeypatch):
+def test_open_webui_mode_keeps_the_1_0_trust_rule(hub, monkeypatch):
     from hubzoid.server import _derive_identity, _enforce_use_hub
 
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.setattr(access.owui_groups, "resolve_groups", lambda *_a: {"erp"})
     bare = {"X-OpenWebUI-User-Email": "ann@example.org", "X-Hubzoid-Groups": "field"}
     ident = _derive_identity({}, _request(bare), hub)
     assert (ident.user, ident.surface) == ("ann@example.org", "owui")
-    assert ident.groups == frozenset({"erp", "field"})
+    assert ident.groups == frozenset({"field"})
     gs = access.store_for(hub)
-    gs.bootstrap(["boss@example.org"], authoritative=True, hub="sales")
+    gs.bootstrap(["boss@example.org"])
     gs.grant("ann@example.org", "sales", "use_hub", actor="t")
     _enforce_use_hub(_request(bare), hub)  # trusted as sent
+
+
+def test_open_webui_owner_is_provisioned_on_first_chat(hub, monkeypatch):
+    """Every agent needs a grant, so the configured owner, signed in to Open
+    WebUI as an administrator, gets the owner's grants on their first chat (as
+    a Console visit would). Nobody else ever self-provisions."""
+    from hubzoid.server import _enforce_use_hub
+
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    monkeypatch.setenv("WEBUI_AUTH", "true")
+    monkeypatch.setenv("WEBUI_ADMIN_EMAIL", "boss@example.org")
+    gs = access.store_for(hub)
+    for email, role in (("boss@example.org", "user"), ("ann@example.org", "admin")):
+        with pytest.raises(HTTPException) as err:
+            _enforce_use_hub(_request({"X-OpenWebUI-User-Email": email,
+                                       "X-OpenWebUI-User-Role": role}), hub)
+        assert err.value.status_code == 403
+    _enforce_use_hub(_request({"X-OpenWebUI-User-Email": "boss@example.org",
+                               "X-OpenWebUI-User-Role": "admin"}), hub)
+    assert gs.can("boss@example.org", "sales", "use_hub")
+    assert not gs.can("ann@example.org", "sales", "use_hub")

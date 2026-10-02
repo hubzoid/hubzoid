@@ -320,6 +320,17 @@ def build_app() -> FastAPI:
     from . import appmode
 
     web_app = not appmode.is_legacy(hub_dir)
+    if web_app and not appmode.auth_enabled(hub_dir):
+        # Sign-in off: the local owner is the only person, and owns every hub
+        # from the first start, before any page is opened. Best effort: a store
+        # problem never stops the bridge, whose access checks fail closed.
+        from .access.session import LOCAL_OWNER
+        from .auth.users import provision_owner
+
+        try:
+            provision_owner(hub_dir, LOCAL_OWNER)
+        except Exception:  # noqa: BLE001
+            log.warning("access: the local owner could not be provisioned yet", exc_info=True)
 
     @app.get("/artifacts/{chat_id}/{filename:path}")
     async def get_artifact(chat_id: str, filename: str, request: Request):
@@ -616,14 +627,13 @@ def _trust(request: Request, hub_dir: Path | None):
 
 
 def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
-    """Once Casbin is authoritative, require `use_hub` to enter the hub at all.
+    """Require `use_hub` to enter the hub at all.
 
     Uses ONLY the verified identity — never the caller-controlled `body.user` —
-    so an authoritative hub cannot be entered anonymously or under a spoofed
-    subject. Legacy mode: the trusted front headers (`X-OpenWebUI-User-Email` /
+    so a hub cannot be entered anonymously or under a spoofed subject. Open
+    WebUI mode: the trusted front headers (`X-OpenWebUI-User-Email` /
     `X-Hubzoid-User`). Web app mode: the email a valid identity assertion
-    vouches for. Fail-closed: a store error denies (503). Un-migrated hubs pass
-    through (legacy)."""
+    vouches for. Fail-closed: a store error denies (503)."""
     if hub_dir is None:
         return
     from .access import store_for
@@ -631,7 +641,6 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
 
     try:
         gs = store_for(hub_dir)
-        authoritative = gs.is_authoritative(hub_dir.name)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
@@ -656,8 +665,6 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         raise HTTPException(503, detail="access check unavailable")
     if blocked:
         raise HTTPException(403, detail="Your agent access is blocked. Contact your administrator.")
-    if not authoritative:
-        return
     if not verified:
         raise HTTPException(
             status_code=403,
@@ -665,6 +672,14 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         )
     try:
         ok = gs.can(verified, hub_dir.name, USE_HUB)
+        # Open WebUI mode: the configured owner may chat before ever opening the
+        # Console. Provision them here exactly as a Console sign-in would (same
+        # owner and administrator match, once per hub, never after a revoke).
+        if not ok and legacy and request.headers.get("x-openwebui-user-role") == "admin":
+            from .access.session import configured_owner
+
+            if verified == configured_owner(hub_dir) and gs.provision_owner(verified, hub_dir.name):
+                ok = gs.can(verified, hub_dir.name, USE_HUB)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub can() failed for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
@@ -703,12 +718,12 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
          resolver or trusted front (e.g. the inbound WhatsApp/Telegram bridge),
          merged on top rather than overriding.
 
-    A request with no groups reaches no restricted tool (fail-closed). A
-    non-Open-WebUI surface (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``)
-    is refused restricted tools regardless. ``body["user"]`` is only a display
-    fallback for the user id; it never carries groups.
+    Groups describe the person; they authorize nothing. Restricted tools need a
+    grant in the access store, and a surface that does not verify a person
+    (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``) is refused them
+    regardless. ``body["user"]`` is never an identity.
 
-    That is the legacy Open WebUI mode. In the web app mode the headers count
+    That is Open WebUI mode. In the web app mode the headers count
     only when a valid ``X-Hubzoid-Assertion`` covers exactly their values
     (``hubzoid.assertions``); the groups are then the person's Hubzoid groups,
     the roster's and the asserted ones. Without one the request is anonymous
@@ -727,22 +742,8 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     headers = request.headers
     owui_email = headers.get("x-openwebui-user-email")
     user = headers.get("x-hubzoid-user") or owui_email
-    if not user:
-        # `body.user` is caller-controlled (the OpenAI-API `user` field), so it is
-        # NOT trusted as an authz subject on an authoritative hub — that would let
-        # a bridge-key caller assert any grantee. Kept as the identity only for
-        # legacy (un-migrated) hubs, where it carries no groups anyway.
-        u = body.get("user")
-        candidate = u if isinstance(u, str) and u.strip() else None
-        if candidate and hub_dir is not None:
-            try:
-                from .access import store_for
-
-                if store_for(hub_dir).is_authoritative(hub_dir.name):
-                    candidate = None
-            except Exception:  # noqa: BLE001 — fail closed: drop the untrusted id
-                candidate = None
-        user = candidate
+    # `body.user` (the OpenAI-API `user` field) is caller-controlled, so it is
+    # never an identity: that would let a bridge-key caller assert any grantee.
 
     # Groups are the UNION of every store that applies to this surface: the
     # user's Open WebUI groups, the hub roster keyed by the same email, and any

@@ -48,7 +48,6 @@ class GatewayBackend:
     model_label: str   # what /v1/models reports (best-effort, for display)
     mcp_public_url: str = ""
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
-    mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
     # WhatsApp/Telegram inbound: True when this hub's .env configures a webhook
     # surface. The gateway edge then forwards /webhooks/* to its loopback inbound
     # server; without it the webhook falls through to Open WebUI's catch-all.
@@ -289,7 +288,6 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             model_label=label,
             mcp_public_url=mcp_public_url,
             mcp=_mcp_enabled(hub_dir),
-            mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
             inbound=inbound_on,
             inbound_port=inbound_port,
             display_name=meta["fm_name"] or hub_dir.name,

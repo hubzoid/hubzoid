@@ -282,24 +282,3 @@ def test_optional_filters_are_optional_in_the_schema(dep, monkeypatch):
     assert tools["run_workflow"].params_json_schema["required"] == ["name"]
 
 
-def test_on_a_legacy_hub_only_the_same_named_group_grants_them(tmp_path, monkeypatch):
-    """An agent whose access is still in the chat app grants capabilities by
-    Open WebUI group name, as for restricted tools: nobody has the tools until
-    an administrator puts them in a `workflows_view` / `workflows_manage` group."""
-    from hubzoid import access, migrations
-    from hubzoid.access import store_for
-
-    for key in ("HUBZOID_WORKFLOW_TOOLS", "HUBZOID_DEPLOYMENT", "DATABASE_URL"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
-    access._stores.clear()
-    migrations._done.clear()
-    hub = tmp_path / "legacy"
-    hub.mkdir()
-    (hub / "AGENTS.md").write_text("---\nname: legacy\ndescription: d\n---\nbody")
-    assert not store_for(hub).is_authoritative("legacy")
-    tools = {t.name: t for t in workflow_tools.make(SimpleNamespace(hub_dir=hub))}
-    with identity_scope(Identity.make("ann@x.org", surface="owui")):
-        assert not tools["list_workflows"].is_enabled() and not tools["run_workflow"].is_enabled()
-    with identity_scope(Identity.make("ann@x.org", groups=["workflows_view"], surface="owui")):
-        assert tools["list_workflows"].is_enabled() and not tools["run_workflow"].is_enabled()

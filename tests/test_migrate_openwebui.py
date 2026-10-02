@@ -396,31 +396,6 @@ def _tree(root: Path) -> dict[str, str]:
     return out
 
 
-def _group_aware_store(monkeypatch) -> None:
-    """Contract 6.7 (lane E): a grant to group:<id> applies to every member.
-    Emulated only when this build's store does not do it itself."""
-    if mig.store_resolves_groups():
-        return
-    from hubzoid.access.identity import normalize
-    from hubzoid.access.store import GrantStore
-
-    original = GrantStore.can
-
-    def can(self, subject, hub, action):
-        subject = normalize(subject)
-        if not subject or self.is_suspended(subject):
-            return False
-        if original(self, subject, hub, action):
-            return True
-        with self._engine.connect() as conn:
-            groups = [g for (g,) in conn.execute(
-                text("SELECT group_id FROM hz_group_members WHERE email=:e"), {"e": subject})]
-        return any(original(self, f"group:{g}", hub, action) for g in groups)
-
-    monkeypatch.setattr(GrantStore, "can", can)
-    assert mig.store_resolves_groups()
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -434,11 +409,9 @@ def test_dry_run_changes_nothing(gateway):
     assert counts["users"]["to_import"] == 8
     assert counts["conversations"]["to_import"] == 11
     assert counts["files"]["copied_from_open_webui"] == 1  # would copy: nothing written
-    assert report.access["finance"]["state"] == "convert"
-    assert report.access["finance"]["differences"] == 0
 
 
-def test_apply_gateway_moves_people_groups_access_and_chats(gateway):
+def test_apply_gateway_moves_people_and_chats(gateway):
     report = _run(gateway, apply=True)
     assert report.applied and report.blocking == []
     d = gateway
@@ -476,31 +449,9 @@ def test_apply_gateway_moves_people_groups_access_and_chats(gateway):
     assert store.is_suspended("frank@example.com")      # deactivated in Open WebUI
     assert store.is_suspended("carol@example.com")      # pending
 
-    # Groups with members, same ids and names, members by email.
-    groups = {r["id"]: r for r in d.rows("SELECT * FROM hz_groups")}
-    assert {g["name"] for g in groups.values()} == {"finance-team", "ops-team", "ledger", "reports"}
-    assert d.m["groups"]["empty-group"] not in groups
-    members = {(r["group_id"], r["email"]) for r in d.rows("SELECT * FROM hz_group_members")}
-    assert (d.m["groups"]["ledger"], "bob@example.com") in members and len(members) == 8
-
-    # Access: Console-managed now; allowed and denied people exactly as in Open WebUI.
-    for hub in ("finance", "ops"):
-        assert store.is_authoritative(hub)
-    assert store.can("alice@example.com", "finance", "use_hub")
-    assert store.can("dave@example.com", "finance", "use_hub")
-    assert store.can("admin@example.com", "finance", "use_hub")
-    assert not store.can("bob@example.com", "finance", "use_hub")
-    assert not store.can("carol@example.com", "finance", "use_hub")
-    assert store.can("alice@example.com", "finance", "ledger")
-    assert not store.can("bob@example.com", "finance", "ledger")   # tool group, but no hub access
-    assert store.can("bob@example.com", "ops", "reports")
-    assert store.can("erin@example.com", "ops", "use_hub")          # granted by name on the model
-    assert not store.can("frank@example.com", "ops", "use_hub")
-    assert not store.can("alice@example.com", "ops", "use_hub")
-    for hub in ("finance", "ops"):
-        summary = report.access[hub]
-        assert summary["differences"] == 0 and summary["matrix_denied"] > 0
-    assert len(report.backups) == 2 and all(Path(p).is_file() for p in report.backups)
+    # Access stays as it was: it is managed in the Console in both modes.
+    assert store.list_grants("finance") == [] and store.list_grants("ops") == []
+    assert not d.rows("SELECT name FROM sqlite_master WHERE name LIKE 'hz_group%'")
 
     # Conversations: same ids, owner, hub, agent, archive state, current branch.
     convs = {r["id"]: r for r in d.rows("SELECT * FROM hz_conversations")}
@@ -579,12 +530,12 @@ def test_apply_gateway_moves_people_groups_access_and_chats(gateway):
     assert report.counts["content"] == {"assistant_messages_with_math": 3, "assistant_messages_with_mermaid": 2}
     assert report.counts["users"]["with_external_identity"] == 3
     marker = [r for r in d.rows("SELECT k, v FROM hz_meta WHERE k LIKE 'openwebui_migration:%'")]
-    assert len(marker) == 1 and json.loads(marker[0]["v"])["converted_hubs"] == ["finance", "ops"]
+    assert len(marker) == 1 and "converted_hubs" not in json.loads(marker[0]["v"])
 
 
 def _dump(dep: Deployment) -> dict:
     tables = {"hz_users": "id", "hz_user_identities": "subject", "hz_identities": "subject",
-              "hz_groups": "id", "hz_group_members": "group_id, email", "hz_conversations": "id",
+              "hz_conversations": "id",
               "hz_messages": "id", "hz_shares": "id", "hz_grants": "subject, hub, permission"}
     out = {t: dep.rows(f"SELECT * FROM {t} ORDER BY {order}") for t, order in tables.items()}
     out["hz_meta"] = [r for r in dep.rows("SELECT k, v FROM hz_meta ORDER BY k")
@@ -606,72 +557,17 @@ def test_apply_twice_is_idempotent(gateway):
     assert counts["conversations"]["unchanged"] == 11
     assert counts["messages"].get("imported", 0) == 0 and counts["messages"].get("updated", 0) == 0
     assert counts["shares"]["already_present"] == 2
-    assert counts["groups"]["already_present"] == 4
-    assert all(a["state"] == "console-managed" for a in second.access.values())
-    assert second.backups == []
 
 
-def test_group_grants_keep_the_intersection(gateway, monkeypatch):
-    """With group grants: hub visibility groups and exact tool groups become
-    group grants; a tool group that holds people outside the hub stays per person."""
-    _group_aware_store(monkeypatch)
-    report = _run(gateway, apply=True)
-    assert report.applied
-    finance, ops = report.access["finance"], report.access["ops"]
-    assert finance["strategy"] == "mixed" and finance["per_person_capabilities"] == ["ledger"]
-    assert ops["strategy"] == "groups"
-    assert finance["differences"] == ops["differences"] == 0
-    grants = set(gateway.store().list_grants())
-    g = gateway.m["groups"]
-    assert (f"group:{g['finance-team']}", "finance", "use_hub") in grants
-    assert (f"group:{g['ops-team']}", "ops", "use_hub") in grants
-    assert (f"group:{g['reports']}", "ops", "reports") in grants
-    assert (f"group:{g['ledger']}", "finance", "ledger") not in grants
-    assert ("alice@example.com", "finance", "ledger") in grants
-    store = gateway.store()
-    assert not store.can("bob@example.com", "finance", "ledger")
-    assert not store.can("bob@example.com", "finance", "use_hub")
-    assert store.can("alice@example.com", "finance", "use_hub")
-    assert store.can("bob@example.com", "ops", "reports")
-    # Going forward, group membership decides: a new ops-team member can use Ops.
-    with gateway.engine().begin() as conn:
-        conn.execute(text("INSERT INTO hz_group_members (group_id, email, added_at) VALUES (:g, :e, 1)"),
-                     {"g": g["ops-team"], "e": "alice@example.com"})
-    assert gateway.store().can("alice@example.com", "ops", "use_hub")
-
-
-def test_a_matrix_difference_refuses_apply(gateway, monkeypatch):
-    from hubzoid.access import migrate as access_migrate
-
-    original = access_migrate.plan_from_owui
-
-    def lossy(*args, **kw):
-        plan = original(*args, **kw)
-        # Dave holds nothing else there, so without this grant he would lose Finance.
-        plan.grants = [g for g in plan.grants if g != ("dave@example.com", "finance", "use_hub")]
-        return plan
-
-    monkeypatch.setattr(access_migrate, "plan_from_owui", lossy)
-    report = _run(gateway, apply=True, grants_mode="people")
-    assert not report.applied
-    assert any("would change who may use what" in b for b in report.blocking)
-    assert report.access["finance"]["differences"] > 0
-    assert not gateway.op.exists()  # nothing written, not even the schema
-
-
-def test_console_managed_hub_keeps_its_grants(gateway):
+def test_access_in_the_console_is_kept(gateway):
     from hubzoid.access.store import GrantStore
 
     store = GrantStore(gateway.engine())
     store.grant("frank@example.com", "ops", "use_hub", actor="console")
-    store.set_authoritative(True, hub="ops")
-    before = sorted(store.list_grants("ops"))
+    before = sorted(store.list_grants())
     report = _run(gateway, apply=True)
     assert report.applied
-    assert report.access["ops"]["state"] == "console-managed"
-    assert report.access["finance"]["state"] == "convert"
-    assert sorted(gateway.store().list_grants("ops")) == before
-    assert {r["name"] for r in gateway.rows("SELECT name FROM hz_groups")} >= {"ops-team", "reports"}
+    assert sorted(gateway.store().list_grants()) == before
 
 
 def test_an_existing_account_with_the_same_email_blocks(gateway):
@@ -708,16 +604,12 @@ def test_rerun_keeps_hubzoid_changes_and_does_not_restore_deletions(gateway):
                  "VALUES ('later-chat-0001', ?, 'Later', ?, ?, ?, 0, 0, '{}')",
                  (gateway.uid("bob"), json.dumps(new_chat), int(now) + 100, int(now) + 100))
     owui.execute("UPDATE user SET role='user' WHERE id=?", (gateway.uid("carol"),))
-    # An answer edited in Open WebUI, Bob left the reports group, Dave joined it.
+    # An answer edited in Open WebUI.
     raw = json.loads(owui.execute("SELECT chat FROM chat WHERE id=?", (gateway.chat("pending"),)).fetchone()[0])
     answer = raw["history"]["messages"][gateway.msg("c7a1")]
     answer["output"][-1]["content"][0]["text"] = "Hi there, edited"
     owui.execute("UPDATE chat SET chat=?, updated_at=? WHERE id=?",
                  (json.dumps(raw), int(now) + 100, gateway.chat("pending")))
-    owui.execute("DELETE FROM group_member WHERE group_id=? AND user_id=?",
-                 (gateway.m["groups"]["reports"], gateway.uid("bob")))
-    owui.execute("INSERT INTO group_member (id, group_id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                 ("gm-later-0001", gateway.m["groups"]["reports"], gateway.uid("dave"), int(now) + 100, int(now) + 100))
     owui.commit()
     owui.close()
 
@@ -735,31 +627,6 @@ def test_rerun_keeps_hubzoid_changes_and_does_not_restore_deletions(gateway):
     assert gateway.m["shares"]["shared"] not in {r["id"] for r in gateway.rows("SELECT id FROM hz_shares")}
     edited = gateway.rows("SELECT content FROM hz_messages WHERE id=:i", i=gateway.msg("c7a1"))[0]
     assert "Hi there, edited" in edited["content"]
-    members = {r["email"] for r in gateway.rows("SELECT email FROM hz_group_members WHERE group_id=:g",
-                                                 g=gateway.m["groups"]["reports"])}
-    assert members == {"dave@example.com"}
-
-
-def test_a_failed_data_step_undoes_the_access_step(gateway, monkeypatch):
-    def boom(self, plan):
-        raise RuntimeError("disk full")
-
-    # Groups are written in their own step before access (grants may name them);
-    # a failure in the later data step undoes both.
-    monkeypatch.setattr(mig.Writer, "people", boom)
-    with pytest.raises(RuntimeError):
-        _run(gateway, apply=True)
-    store = gateway.store()
-    assert not store.is_authoritative("finance") and not store.is_authoritative("ops")
-    assert store.list_grants("finance") == [] and store.list_grants("ops") == []
-    assert gateway.rows("SELECT count(*) AS n FROM hz_users")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_groups")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_group_members")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_meta WHERE k LIKE 'openwebui_migration:%'")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_identities")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_meta WHERE k LIKE 'account_unavailable:%'")[0]["n"] == 0
-    monkeypatch.undo()
-    assert _run(gateway, apply=True).applied  # and the next run succeeds
 
 
 def test_skipped_chats_are_retried_later(gateway):
@@ -796,13 +663,9 @@ def test_standalone_rehearsal_on_a_copy(standalone, tmp_path):
     copy = Deployment(tmp_path, scratch / "solo" / ".openwebui-data" / "webui.db",
                       scratch / "solo" / ".hubzoid" / "hub.db", standalone.m, scratch / "solo", {})
     store = copy.store()
-    # A single hub showed its agent to everyone signed in: that stays, for active accounts.
-    assert ("*", "solo", "use_hub") in set(store.list_grants("solo"))
-    assert store.can("bob@example.com", "solo", "use_hub")
-    assert not store.can("carol@example.com", "solo", "use_hub")
-    assert not store.can("frank@example.com", "solo", "use_hub")
-    assert store.can("alice@example.com", "solo", "ledger") and store.can("bob@example.com", "solo", "ledger")
-    assert not store.can("dave@example.com", "solo", "ledger")
+    # Access is the Console's, before and after: the migration writes no grant.
+    assert store.list_grants("solo") == []
+    assert store.is_suspended("carol@example.com") and store.is_suspended("frank@example.com")
     assert report["unknown_models"] == {"ops": 4, "retired-agent": 1}
     convs = copy.rows("SELECT hub, agent FROM hz_conversations")
     assert {(r["hub"], r["agent"]) for r in convs} == {("solo", "finance")}
@@ -831,7 +694,6 @@ def test_report_has_no_content_and_no_email(gateway):
 def test_gateway_data_folder_is_accepted(gateway):
     setup = mig.locate(gateway.owui.parent)
     assert setup.kind == "gateway" and [h.key for h in setup.hubs] == ["finance", "ops"]
-    assert setup.public == {"finance": False, "ops": False}
 
 
 def test_rehearse_refuses_a_gateway(gateway, tmp_path):
@@ -990,13 +852,9 @@ def test_older_open_webui_layouts(tmp_path, clean_env):
     dep = Deployment(tmp_path, data / "webui.db", hub / ".hubzoid" / "hub.db", {}, hub, {})
     links = {(r["provider"], r["subject"]) for r in dep.rows("SELECT * FROM hz_user_identities")}
     assert links == {("google", "gsub-1"), ("oidc", "abc-oidc-sub")}
-    assert dep.rows("SELECT email FROM hz_group_members") == [{"email": "grace@example.com"}]
     share = dep.rows("SELECT id, conversation_id, snapshot FROM hz_shares")
     assert [(s["id"], s["conversation_id"]) for s in share] == [("old-share-001", "old-chat-0001")]
     assert json.loads(share[0]["snapshot"])["audience"] == "signed_in"
-    store = dep.store()
-    assert store.can("grace@example.com", "old", "ledger") and not store.can("hal@example.com", "old", "ledger")
-    assert store.can("hal@example.com", "old", "use_hub")
 
 
 def test_an_unwritable_uploads_folder_is_reported_not_fatal(gateway):
@@ -1028,42 +886,10 @@ def _save_gateway(dep: Deployment, keys: list[str]) -> Path:
     return gw
 
 
-def test_group_grants_check_members_hubzoid_keeps(gateway):
-    """A Hubzoid group keeps members Open WebUI does not have (added in the
-    Console). A group grant would let them in, so it is not used for them."""
-    gw = _save_gateway(gateway, ["ops"])
-    assert mig.run(mig.locate(gw), apply=True).applied       # Ops first; the groups come along
-    g = gateway.m["groups"]
-    gateway.store().add_group_members(g["finance-team"], ["bob@example.com", "zed@example.com"],
-                                      actor="admin@example.com")
-    _save_gateway(gateway, ["finance", "ops"])               # Finance joins the gateway later
-    report = mig.run(mig.locate(gw), apply=True)
-    assert report.applied and report.access["finance"]["differences"] == 0
-    store = gateway.store()
-    assert store.can("alice@example.com", "finance", "use_hub")
-    assert store.can("dave@example.com", "finance", "use_hub")
-    assert not store.can("bob@example.com", "finance", "use_hub")   # denied in Open WebUI
-    assert not store.can("zed@example.com", "finance", "use_hub")   # no Open WebUI account
-    assert (f"group:{g['finance-team']}", "finance", "use_hub") not in set(store.list_grants("finance"))
-
-
-def test_verify_uses_the_memberships_after_apply():
-    """The check runs against the members each group has after apply, and also
-    checks members Open WebUI does not know (as anyone signed in)."""
-    hub = mig.HubInfo(key="h", name="H", path=Path("."), model_id="h")
-    access = mig.HubAccess(hub=hub, managed=False, expected=[
-        ("alice@example.com", "h", "use_hub", True), ("bob@example.com", "h", "use_hub", False),
-        ("__future_signed_in__", "h", "use_hub", False)])
-    groups = mig.GroupPlan(members={"g1": {"alice@example.com"}}, available={"g1"},
-                           resulting={"g1": {"alice@example.com", "bob@example.com", "zed@example.com"}})
-    diffs = mig.verify({"h": access}, {"h": [("group:g1", "h", "use_hub")]}, groups, mig.People())
-    assert {(d["subject"], d["actual"]) for d in diffs["h"]} == {
-        ("bob@example.com", True), ("zed@example.com", True)}
-
-
 def test_rerun_blocks_people_deactivated_since(gateway):
     assert _run(gateway, apply=True).applied
     store = gateway.store()
+    store.grant("alice@example.com", "finance", "use_hub", actor="admin@example.com")
     assert store.can("alice@example.com", "finance", "use_hub")
     # An administrator reactivated Frank (deactivated in Open WebUI) in the Console.
     store.suspend("frank@example.com", actor="admin@example.com", suspended=False)
@@ -1103,23 +929,6 @@ def test_a_failed_data_step_undoes_identity_changes(gateway, monkeypatch):
         _run(gateway, apply=True)
     assert _dump(gateway) == before
     assert gateway.store().is_suspended("carol@example.com")
-
-
-def test_a_failed_access_step_undoes_the_groups_step(gateway, monkeypatch):
-    from hubzoid.access.store import GrantStore
-
-    original = GrantStore.apply_migration
-
-    def boom(self, *args, **kw):
-        if kw.get("actor") == mig.ACTOR:        # the real access step, not the planning check
-            raise RuntimeError("database is locked")
-        return original(self, *args, **kw)
-
-    monkeypatch.setattr(GrantStore, "apply_migration", boom)
-    with pytest.raises(RuntimeError):
-        _run(gateway, apply=True)
-    assert gateway.rows("SELECT count(*) AS n FROM hz_groups")[0]["n"] == 0
-    assert gateway.rows("SELECT count(*) AS n FROM hz_group_members")[0]["n"] == 0
 
 
 SAME_A = "aaaa1111-0000-4000-8000-000000000001"

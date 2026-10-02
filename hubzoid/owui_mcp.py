@@ -127,25 +127,10 @@ def _hub_server_keys(hub_dir) -> set[str]:
 
 
 def _connector_gate(hub_dir, identity):
-    """A per-server check for this caller, or None to refuse every server.
-
-    Managed hub (Console-authoritative): each server needs ``connector_<app>``
-    through ``guard.decide``. Legacy hub: no extra check. Fails closed when the
-    access store cannot say which kind the hub is.
-    """
-    from pathlib import Path
-
-    from .access import store_for
+    """A per-server check for this caller: each server needs ``connector_<app>``
+    in this hub, through ``guard.decide`` (fails closed)."""
     from .access.guard import decide
 
-    hub = Path(hub_dir).name
-    try:
-        managed = store_for(hub_dir).is_authoritative(hub)
-    except Exception:  # noqa: BLE001
-        log.warning("owui-mcp: access store unavailable; no personal servers this turn")
-        return None
-    if not managed:
-        return lambda app: True
     return lambda app: decide(hub_dir, identity, capability(app))[0]
 
 
@@ -181,8 +166,6 @@ def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> 
     if not connected:
         return []
     permitted = _connector_gate(hub_dir, identity)
-    if permitted is None:
-        return []
 
     reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)
     by_id = {c["id"]: c for c in servers.list_mcp_connections(hub_dir)}

@@ -41,7 +41,6 @@ from .access.identity import normalize
 
 from .access import store_for
 from .access.service import (  # noqa: F401 — the account-state helpers stay importable here
-    LEGACY_MSG,
     UNAVAILABLE_MSG,
     AccessService,
     Actor,
@@ -58,7 +57,6 @@ from .access.store import (
     ORG,
     USE_HUB,
     EVERYONE,
-    group_id_of,
 )
 
 log = logging.getLogger("hubzoid.portal")
@@ -310,12 +308,6 @@ def _check_mutation(request: Request, admin: PortalAdmin) -> None:
 
 _UNAVAILABLE_MSG = UNAVAILABLE_MSG
 
-# A hub whose access is not yet dashboard-managed (Casbin not authoritative) is still
-# governed by the chat app. Editing its access here would neither take effect nor
-# survive migration, so those edits are refused (in the API, not only the UI).
-_LEGACY_MSG = LEGACY_MSG
-
-
 def _account_flags(gs, subject: str) -> dict:
     """Read the store's two block markers separately (read-only). `blocked` is
     the OR of both and always equals `gs.is_suspended(subject)`."""
@@ -353,8 +345,6 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
 def _subject_kind(subject: str) -> str:
     if subject.startswith("workflow:"):
         return "service"
-    if group_id_of(subject) is not None:
-        return "group"
     return "person"
 
 
@@ -442,7 +432,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         denied = []
         hubs = deployment.hubs(hub_dir)
         for h in hubs:
-            if blocked or (gs.is_authoritative(h["key"]) and not gs.can(subject, h["key"], USE_HUB)):
+            if blocked or not gs.can(subject, h["key"], USE_HUB):
                 denied.append(h["model_id"])
         # `blocked` and `allowed` let the chat explain an empty agent list.
         return {"denied": denied, "blocked": blocked, "allowed": len(hubs) - len(denied)}
@@ -457,10 +447,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         if brief:  # the chat sidebar link only needs to know the Console opens
             return out
-        # Groups (the Groups screen, group grantees) exist in the web app mode.
+        # The Hubzoid web app (not Open WebUI) owns sign-in and personal
+        # connections in this mode.
         from . import appmode
 
-        out["groups"] = not appmode.is_legacy(hub_dir)
+        out["web_app"] = not appmode.is_legacy(hub_dir)
         from .access import accounts as accountlib
 
         actor = admin.actor()
@@ -484,8 +475,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     key=h["key"],
                     name=h["name"],
                     model_id=h["model_id"],
-                    can_chat=not gs.is_suspended(admin.subject) and (not gs.is_authoritative(h["key"]) or gs.can(admin.subject, h["key"], USE_HUB)),
-                    authoritative=gs.is_authoritative(h["key"]),
+                    can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
                 )
                 for h in allowed_hubs(admin)
             ]
@@ -518,15 +508,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         ]
         return dict(
             hub=hub,
-            # Editable only once the hub is dashboard-managed. A legacy (un-migrated)
-            # hub is read-only here; its access still lives in the chat app.
-            editable=view["authoritative"],
-            authoritative=view["authoritative"],
             can_manage_admins=admin.is_org_admin,
             permissions=service.catalog(hub),
             # What this viewer may grant or remove here (a delegate's ceiling).
             # Display only: every write is checked again by the service.
-            grantable=_grantable(admin, hub) if view["authoritative"] else [],
+            grantable=_grantable(admin, hub),
             viewer=normalize(admin.subject),
             total=len(result),
             public=view["public"],
@@ -967,19 +953,17 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         for h in hs:
             key = h["key"]
             u = usage["hubs"].get(key, {})
-            managed = gs.is_authoritative(key)
             subjects = {g[0] for g in grants if g[1] == key and not g[0].startswith("workflow:")}
             r = runs.get(key, {"runs": 0, "failed": 0, "cancelled": 0}) if runs_ok else None
             rows.append(dict(
-                key=key, name=h.get("name") or key, managed=managed,
+                key=key, name=h.get("name") or key,
                 chats=u.get("chats", 0), messages=u.get("messages", 0),
                 active_users=u.get("active_users", 0),
                 input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
                 cost_usd=u.get("cost_usd"), unpriced=u.get("unpriced", 0),
                 last_activity=u.get("last_activity"),
-                # Legacy hubs keep access in the chat app's groups: unknown here.
-                users_with_access=len(subjects - {"*"}) if managed else None,
-                everyone="*" in subjects if managed else None,
+                users_with_access=len(subjects - {"*"}),
+                everyone="*" in subjects,
                 denials=denials.get(normalize(Path(h["path"]).name), 0),
                 has_workflows=key in work_keys,
                 runs=r["runs"] if r and key in work_keys else None,
@@ -1026,14 +1010,10 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         hs = allowed_hubs(admin)
         keys = {h["key"] for h in hs}
         grants = [g for g in gs.list_grants() if g[1] in keys]
-        managed = sum(gs.is_authoritative(h) for h in keys)
         return dict(
             hubs=len(hs),
             grants=len(grants),
             people=len({g[0] for g in grants if g[0] != "*"}),
-            authoritative=managed == len(hs),
-            managed=managed,
-            legacy=len(hs) - managed,
             visibility=sync_status(hub_dir),
         )
 

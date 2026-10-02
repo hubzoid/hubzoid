@@ -20,7 +20,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(tmp_path)
-    gs.set_authoritative(True)
     # Writes are authorized by the access service from the store, not from the
     # injected resolver, so the test administrator is a real org admin there.
     gs.grant("root", "*", "manage_access", actor="test")
@@ -61,7 +60,6 @@ def test_grant_revoke_via_api(client):
     acc = client.get("/portal/api/access", params={"hub": hub}).json()
     alice = [row for row in acc["rows"] if row["subject"] == "alice"][0]
     assert set(alice["perms"]) == {"prod_in", "use_hub"}   # implication surfaced
-    assert acc["editable"] is True
 
     r = client.post("/portal/api/access/revoke",
                     json={"subject": "alice", "hub": hub, "permission": "prod_in"})
@@ -74,7 +72,7 @@ def test_grant_revoke_via_api(client):
 def test_unavailable_account_can_be_offboarded(client):
     """An unavailable (chat-account-gone) person can have retained grants REMOVED and be
     explicitly blocked (offboarded), but must not receive NEW grants or be reactivated
-    here (review finding). The hub is authoritative in this fixture."""
+    here (review finding)."""
     hub = client.hub
     client.gs.grant("ghost@example.org", hub, "prod_in")  # retained grant (implies use_hub)
     with client.gs._engine.begin() as conn:
@@ -92,31 +90,6 @@ def test_unavailable_account_can_be_offboarded(client):
     r = client.post("/portal/api/people/block", json={"subject": "ghost@example.org", "suspended": True})
     assert r.status_code == 200
     assert not [g for g in client.gs.list_grants(hub) if g[0] == "ghost@example.org"]
-
-
-def test_legacy_hub_is_read_only_in_api(client):
-    """A hub whose access is not yet dashboard-managed (Casbin not authoritative) is
-    read-only: `/access` reports editable=false and every hub-scoped edit is refused,
-    so a legacy agent's permissions can neither appear effective nor be silently
-    overwritten by a later migration. Org-admin management stays available."""
-    hub = client.hub
-    client.gs.set_authoritative(False)  # make the hub legacy
-    acc = client.get("/portal/api/access", params={"hub": hub}).json()
-    assert acc["editable"] is False and acc["authoritative"] is False
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "alice", "hub": hub, "permission": "prod_in"}).status_code == 409
-    assert client.post("/portal/api/access/revoke",
-                       json={"subject": "alice", "hub": hub, "permission": "prod_in"}).status_code == 409
-    assert client.post("/portal/api/access/apply", json={
-        "subject": "alice", "hub": hub,
-        "operations": [{"action": "grant", "permission": "prod_in"}],
-    }).status_code == 409
-    # Public toggle (a hub-scoped grant to '*') is refused too.
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "*", "hub": hub, "permission": "use_hub"}).status_code == 409
-    # But org-admin management is not hub-scoped and remains available.
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "newadmin@example.org", "hub": "*", "permission": "manage_access"}).status_code == 200
 
 
 def test_apply_atomic_change_set(client):
@@ -301,7 +274,7 @@ def test_overview_and_workflows_and_audit(client):
     client.post("/portal/api/access/grant",
                 json={"subject": "alice", "hub": client.hub, "permission": "prod_in"})
     ov = client.get("/portal/api/overview").json()
-    assert ov["authoritative"] is True and ov["grants"] >= 1
+    assert ov["grants"] >= 1
     assert "workflows" in client.get("/portal/api/workflows").json()
     assert "rows" in client.get("/portal/api/audit").json()
 

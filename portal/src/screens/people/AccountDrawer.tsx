@@ -630,9 +630,7 @@ export function AccountDrawer({
                     unconfigured={0}
                     problems={0}
                   >
-                    {!hub.authoritative ? (
-                      <Text type="secondary">Access to this agent is managed in the chat app.</Text>
-                    ) : (
+                    {(
                       <div className="capabilities" role="group" aria-label={`Access to ${hub.name}`}>
                         {groups.map((g) => {
                           const groupKey = `${hub.key}:${g.key}`;

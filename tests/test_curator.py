@@ -184,11 +184,12 @@ def test_curator_tool_is_gated(tmp_path):
     # anonymous (CLI / scheduled) -> denied, nothing written
     assert "access denied" in _invoke(guarded, topic="t", content="c").lower()
     assert not (tmp_path / "knowledge" / "_learned").exists()
-    # wrong group -> denied
-    with identity_scope(Identity.make("u", ["sales"], surface="owui")):
-        assert "access denied" in _invoke(guarded, topic="t", content="c").lower()
-    # curator group on a verified surface -> allowed
+    # no grant (a group named like it grants nothing) -> denied
     with identity_scope(Identity.make("u", ["curator"], surface="owui")):
+        assert "access denied" in _invoke(guarded, topic="t", content="c").lower()
+    # granted, on a verified surface -> allowed
+    access.store_for(tmp_path).grant("u", tmp_path.name, curator_mod.CURATOR_PERMISSION, actor="t")
+    with identity_scope(Identity.make("u", [], surface="owui")):
         assert "Saved" in _invoke(guarded, topic="t", content="c")
 
 
@@ -210,7 +211,8 @@ def test_add_curator_tool_guards_and_hub_wins(tmp_path):
     assert "remember" in reg
     tool = reg["remember"]
     assert tool.is_enabled(None, None) is False   # anon can't see it
-    with identity_scope(Identity.make("u", ["curator"], surface="owui")):
+    access.store_for(tmp_path).grant("u", tmp_path.name, curator_mod.CURATOR_PERMISSION, actor="t")
+    with identity_scope(Identity.make("u", [], surface="owui")):
         assert tool.is_enabled(None, None) is True
 
     # Hub already defines `remember` -> hub wins, core tool is not added.

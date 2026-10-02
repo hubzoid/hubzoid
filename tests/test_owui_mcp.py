@@ -53,14 +53,14 @@ def _seed(path, *, user_id, email, server_id, url, token, secret, allow=None):
 def _native_mcp_on(monkeypatch):
     # The feature is opt-in (OWUI_NATIVE_MCP=true). Turn it on for the injection
     # tests; individual tests override to 0/unset to exercise the off path.
-    # Open WebUI connections exist only in the legacy UI mode.
+    # Open WebUI connections exist only in Open WebUI mode.
     monkeypatch.setenv("OWUI_NATIVE_MCP", "1")
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
-    # The connector gate asks the hub's access store whether the hub is managed.
+    # Each personal server needs the person's connector capability in the hub.
     import hubzoid.access as access
     import hubzoid.db as db
     from sqlalchemy import create_engine
@@ -69,6 +69,10 @@ def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
     access._stores.clear()
+    gs = access.store_for(tmp_path)
+    for email in ("bob@x.org", "c@x.org", "d@x.org", "e@x.org"):
+        for app in ("srv1", "gmail", "gone"):
+            gs.grant(email, tmp_path.name, "connector_" + app, actor="test")
     yield
     access._stores.clear()
 
@@ -189,23 +193,17 @@ def test_personal_tokens_follow_the_restricted_surface_rule(owui, monkeypatch):
     assert len(specs) == 1
 
 
-# --- connector capability gate (managed hubs) and hub-key reservation --------
-def test_managed_hub_needs_the_connector_capability(owui):
+# --- connector capability gate and hub-key reservation -----------------------
+def test_each_server_needs_the_connector_capability(owui):
     import hubzoid.access as access
 
     gs = access.store_for(owui["hub"])
-    gs.set_authoritative(True, hub=owui["hub"].name)
     ident = _ident(owui["email"])
-    # Managed and not granted: the personal server is not injected.
+    gs.revoke(owui["email"], owui["hub"].name, owui_mcp.capability("srv1"), actor="test")
+    # Not granted: the personal server is not injected.
     assert owui_mcp.per_user_specs(owui["hub"], ident) == ({}, [])
     gs.grant(owui["email"], owui["hub"].name, owui_mcp.capability("srv1"))
     specs, _ = owui_mcp.per_user_specs(owui["hub"], ident)
-    assert len(specs) == 1
-
-
-def test_legacy_hub_injection_is_unchanged_without_a_connector_group(owui):
-    # Legacy (not Console-managed) hub: no connector group needed, as before.
-    specs, _ = owui_mcp.per_user_specs(owui["hub"], _ident(owui["email"]))
     assert len(specs) == 1
 
 

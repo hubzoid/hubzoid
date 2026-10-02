@@ -81,7 +81,6 @@ def test_no_usage_reads_as_unknown_not_zero_cost(client):
 
 def test_access_numbers_and_denials(client):
     hub = client.hub.name
-    client.gs.set_authoritative(True, hub=hub)
     client.gs.grant("a@x.org", hub, "use_hub")
     client.gs.grant("b@x.org", hub, "use_hub")
     client.gs.grant("workflow:digest", hub, "use_hub")   # services are not people
@@ -92,10 +91,6 @@ def test_access_numbers_and_denials(client):
     (row,) = client.get("/portal/api/summary").json()["hubs"]
     assert row["users_with_access"] == 2 and row["everyone"] is False
     assert row["denials"] == 1
-
-    client.gs.set_authoritative(False, hub=hub)
-    (row,) = client.get("/portal/api/summary").json()["hubs"]
-    assert row["users_with_access"] is None   # legacy access lives in the chat app
 
 
 def test_workflow_columns_only_for_hubs_with_work(client):

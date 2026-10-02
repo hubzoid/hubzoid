@@ -17,13 +17,13 @@ Who may open an artifact is decided here, in `role`, and nowhere else:
   * owner     the account the run acted as. View, download, share, revoke, delete.
   * viewer    view and download only, when the audience allows it:
                 owner   only the owner (the default)
-                people  listed accounts or groups who can currently use the hub
+                people  listed accounts who can currently use the hub
                 hub     anyone who can currently use the hub
                 link    anyone holding an unexpired, unrevoked public link
   * nobody else. Organization admins and workflow managers get nothing extra.
 
-`people` and `hub` need a Console-managed hub, whose membership Hubzoid can
-check. A public link needs the owner to hold `share_public_links` in the hub,
+`people` and `hub` follow the agent's current access in the Console. A public
+link needs the owner to hold `share_public_links` in the hub,
 when it is created and every time it is opened. Link tokens are 256-bit random
 values stored only as a SHA-256 hash. A workflow or model can never create one.
 """
@@ -321,21 +321,12 @@ def _summary(art: Artifact, hub_dir=None) -> dict:
 # ---- who may open it ------------------------------------------------------------
 
 
-def hub_managed(hub_dir, hub: str) -> bool:
-    try:
-        return bool(_store(hub_dir).is_authoritative(hub))
-    except Exception:  # noqa: BLE001 — unknown means unmanaged (fail closed)
-        log.exception("artifacts: access store unavailable")
-        return False
-
-
 def hub_member(hub_dir, hub: str, subject: str) -> bool:
-    """Can `subject` currently use `hub`? Only answerable for managed hubs."""
+    """Can `subject` currently use `hub`?"""
     from ..access.store import USE_HUB
 
     try:
-        gs = _store(hub_dir)
-        return bool(gs.is_authoritative(hub) and gs.can(subject, hub, USE_HUB))
+        return bool(_store(hub_dir).can(subject, hub, USE_HUB))
     except Exception:  # noqa: BLE001 — fail closed
         log.exception("artifacts: membership check failed")
         return False
@@ -378,10 +369,9 @@ def _local_owner(hub_dir, subject: str) -> bool:
 def _owner_current(hub_dir, art: Artifact) -> bool:
     """Is the artifact's recorded owner still that owner, now? The same chat-app
     account it was published under (an email reused by a replacement account
-    inherits nothing), not blocked, and on a Console-managed hub still able to
-    use the hub. An artifact recorded without an account id is honoured only for
-    the local quickstart account. Legacy hubs keep their membership in the chat
-    app, so only the account checks apply there."""
+    inherits nothing), not blocked, and still able to use the hub. An artifact
+    recorded without an account id is honoured only for the local quickstart
+    account."""
     owner = art.owner
     if not _active(hub_dir, owner):
         return False
@@ -390,23 +380,9 @@ def _owner_current(hub_dir, art: Artifact) -> bool:
             return False
     elif not _local_owner(hub_dir, owner):
         return False
-    if hub_managed(hub_dir, art.hub) and not hub_member(hub_dir, art.hub, owner):
+    if not hub_member(hub_dir, art.hub, owner):
         return False
     return True
-
-
-def _groups_of(hub_dir, hub: str, subject: str) -> set[str]:
-    from .. import deployment
-    from ..access import effective_groups, normalize
-
-    try:
-        path = deployment.hub_path(Path(hub_dir), hub)
-    except KeyError:
-        return set()
-    try:
-        return {normalize(g) for g in effective_groups(path, email=subject)}
-    except Exception:  # noqa: BLE001 — a failed lookup grants nothing
-        return set()
 
 
 def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
@@ -428,9 +404,6 @@ def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
         # A share names the account it was made for: a replacement account under
         # the same email is not that person.
         if any(not s["account"] or s["account"] == _account_of(hub_dir, subject) for s in mine):
-            return "viewer"
-        wanted = {s["principal"] for s in listed if s["kind"] == "group"}
-        if wanted and wanted & _groups_of(hub_dir, art.hub, subject):
             return "viewer"
     return None
 
@@ -454,7 +427,7 @@ def _audit(hub_dir, hub: str, action: str, target: str, actor: str) -> None:
 def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
                  people=()) -> None:
     """Change who can view `art`. Only the owner. `people` is a list of
-    {"kind": "user"|"group", "principal": ...} (or plain emails)."""
+    account emails (or {"kind": "user", "principal": ...})."""
     from ..access import normalize
 
     art = _require_owner(hub_dir, art, actor)
@@ -462,33 +435,31 @@ def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
         raise ArtifactError(400, "Choose only you, specific people, or everyone in this hub. "
                                  "Public links have their own action.")
     entries: list[tuple[str, str]] = []
-    if audience in ("people", "hub") and not hub_managed(hub_dir, art.hub):
-        raise ArtifactError(409, "This agent's access is still managed in the chat app, so "
-                                 "Hubzoid cannot check who belongs to it. Only you, or a "
-                                 "public link, are available until it is migrated.")
     if audience == "people":
         for p in list(people or [])[:MAX_SHARES + 1]:
             kind, principal = ("user", p) if isinstance(p, str) else (p.get("kind"), p.get("principal"))
             principal = normalize(principal or "")
-            if kind not in ("user", "group") or not principal:
-                raise ArtifactError(400, "Each person needs an account email or a group name.")
-            if kind == "user":
-                if "@" not in principal:
-                    raise ArtifactError(400, f"{principal!r} is not an account email.")
-                if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
-                    raise ArtifactError(409, f"{principal} cannot use this agent, so the "
-                                             "artifact cannot be shared with them.")
+            if kind == "group":
+                raise ArtifactError(400, "Share with people by their account email. "
+                                         "Groups are no longer available.")
+            if kind != "user" or not principal:
+                raise ArtifactError(400, "Each person needs an account email.")
+            if "@" not in principal:
+                raise ArtifactError(400, f"{principal!r} is not an account email.")
+            if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
+                raise ArtifactError(409, f"{principal} cannot use this agent, so the "
+                                         "artifact cannot be shared with them.")
             entries.append((kind, principal))
         entries = sorted(set(entries))
         if len(entries) > MAX_SHARES:
-            raise ArtifactError(400, f"Share with at most {MAX_SHARES} people or groups.")
+            raise ArtifactError(400, f"Share with at most {MAX_SHARES} people.")
         if not entries:
-            raise ArtifactError(400, "Add at least one person or group.")
+            raise ArtifactError(400, "Add at least one person.")
     now = _now()
     with _engine(hub_dir).begin() as c:
         c.execute(text("DELETE FROM hz_artifact_shares WHERE artifact_id=:a"), {"a": art.id})
         for kind, principal in entries:
-            account = _account_of(hub_dir, principal) if kind == "user" else None
+            account = _account_of(hub_dir, principal)
             c.execute(text("INSERT INTO hz_artifact_shares (artifact_id, kind, principal, "
                            "account, added_by, added) VALUES (:a, :k, :p, :acc, :b, :t)"),
                       {"a": art.id, "k": kind, "p": principal, "acc": account, "b": actor,

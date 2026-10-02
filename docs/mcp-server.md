@@ -41,11 +41,9 @@ and restart to disable MCP.
 Every tool call runs under the caller's identity on surface `mcp`, through
 the same access guard as chat:
 
-* On a Console-managed hub, the caller needs `use_hub` to connect, plus the
-  named grant for each restricted capability. The built-in `remember` tool
-  requires `curator`, shown in Console as **Save shared knowledge**.
-* Unmigrated hubs retain their legacy group/roster permissions. Their optional
-  `MCP_ACCESS_GROUP` also gates entry to the entire endpoint.
+* The caller needs `use_hub` to connect, plus the named grant for each
+  restricted capability. The built-in `remember` tool requires `curator`,
+  shown in Console as **Save shared knowledge**.
 * Restricted tools are hidden from `tools/list` when unavailable and checked
   again on invocation. The audit log records access decisions.
 * `BRIDGE_API_KEYS` are **never** accepted on `/mcp`.
@@ -86,22 +84,12 @@ For SQLite without a manifest, set `HUBZOID_OWUI_DB=<gateway-data>/webui.db`.
 Keep that path in separate bridges for shared uploads even with PostgreSQL;
 `DATABASE_URL` takes precedence for database lookups.
 
-A shared account does not grant entry to every Console-managed hub. Grant
+A shared account does not grant entry to every hub. Grant
 **Use this agent** in each intended hub; the same `use_hub` check protects chat
 and MCP. Open WebUI model visibility is not the MCP authorization boundary.
 
-For an **unmigrated** gateway, set the legacy entry group on each hub:
-
-```dotenv
-MCP_SERVER=true
-MCP_PUBLIC_URL=https://your-domain.example/b/sales/mcp
-WEBUI_AUTH=true
-MCP_ACCESS_GROUP=sales
-```
-
-After that hub's permissions become authoritative in Hubzoid, direct grants
-replace this legacy group gate. Do not rely on an Open WebUI group to grant or
-revoke managed-hub access. See [access management](access-management.md).
+`MCP_ACCESS_GROUP` is no longer read: Open WebUI groups grant nothing, and
+`hubzoid doctor` warns while it is set. See [access management](access-management.md).
 
 ## Operational notes
 

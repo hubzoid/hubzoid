@@ -143,18 +143,12 @@ Environment variables explicitly supported:
   MCP_SERVER             true | false (default). Serve this hub as a hosted
                          MCP server at /mcp on the bridge (exposed publicly by
                          the edge). External MCP clients (Claude Code, Cursor)
-                         authenticate through Open WebUI login and OAuth consent
-                         and get the hub's tools + knowledge under the same
-                         per-group access rules as chat. See docs/mcp-server.md.
+                         sign in and give OAuth consent, and get the hub's tools
+                         and knowledge under the same grants as chat (Console ->
+                         Agents -> Access). See docs/mcp-server.md.
   MCP_PUBLIC_URL         Full HTTPS public MCP URL required when MCP_SERVER=true:
                          https://host/mcp or https://host/b/<slug>/mcp.
                          OAuth only: login in Open WebUI, then Hubzoid consent.
-  MCP_ACCESS_GROUP       Optional OWUI group name gating the WHOLE /mcp
-                         surface: only members get past auth (401 otherwise).
-                         Essential in gateway mode, where one shared user DB
-                         backs every hub — without it, any logged-in user of
-                         any team can reach this hub's unrestricted tools and
-                         knowledge. Unset = every authenticated OWUI user.
   SLACK_IDENTITY_MAPPING true | false (default). When true, the Slack adapter
                          resolves each sender's verified Slack profile email
                          (needs the `users:read.email` manifest scope) and
@@ -352,7 +346,6 @@ class Settings:
     show_tools: str = "compact"
     mcp_public_url: str = ""
     mcp_server: bool = False
-    mcp_access_group: str | None = None
     slack_identity_mapping: bool = False
     otel_endpoint: str | None = None
     otel_normalize: bool = False
@@ -439,7 +432,6 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
         mcp_public_url=(os.environ.get("MCP_PUBLIC_URL") or "").strip(),
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
-        mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
         otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
         otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),

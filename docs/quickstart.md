@@ -67,8 +67,8 @@ administrator, and the public port listens on `127.0.0.1` only. `hubzoid run
 must not be exposed as a shared deployment.
 
 Open **Admin Console** from the account menu (or `/portal/`) for Agents,
-People, Groups, Activity and Connectors. Usage totals sit above the agent
-cards. Runs and schedules live inside each agent. A new deployment starts with
+People and Activity. Usage totals sit above the agent cards. Each agent holds
+its access, connectors, runs and schedules, and evals. A new deployment starts with
 empty usage and run history.
 
 ## Connect Claude Code

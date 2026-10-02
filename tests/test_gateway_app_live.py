@@ -4,7 +4,8 @@ as processes on loopback ports 3690-3699 (no Open WebUI, no model call).
 Checks through the edge: the deployment-wide /api/agents lists each agent the
 signed-in person may use (local mode: the local owner), hub-scoped calls under
 /b/<slug>/api reach that hub's bridge, both bridges decide from one shared
-store (a grant or a group membership written anywhere applies everywhere),
+store (a grant written anywhere applies everywhere, and the local owner is
+provisioned on every hub at the first start),
 branding comes from the gateway folder and each hub's own under /b/<slug>,
 and the bridge's internal API stays off the public port."""
 from __future__ import annotations
@@ -23,7 +24,7 @@ import pytest
 
 pytestmark = pytest.mark.slow  # starts a live gateway and its bridges
 
-from hubzoid.access.store import GrantStore, group_subject
+from hubzoid.access.store import GrantStore
 
 REPO = Path(__file__).resolve().parents[1]
 EDGE, SALES, SUPPORT = 3691, 3692, 3693
@@ -66,8 +67,6 @@ def live(tmp_path_factory):
     # Console; the local owner administers and may use sales only.
     store = GrantStore(__import__("sqlalchemy").create_engine(f"sqlite:///{gw / 'hubzoid-operational.db'}"))
     store.bootstrap([OWNER])
-    for hub in ("sales", "support"):
-        store.set_authoritative(True, hub=hub)
     store.grant(OWNER, "sales", "use_hub", actor="test")
 
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR", "USER")}
@@ -126,35 +125,17 @@ def _agents(base: str, path: str = "/api/agents") -> list[str]:
 def test_agents_across_the_gateway_follow_one_shared_store(live):
     with _diagnose(live):
         base, store = live["base"], live["store"]
+        # The local owner owns every hub from the first start.
         body = httpx.get(base + "/api/agents", timeout=TIMEOUT).json()
-        assert [(a["id"], a["api_base"]) for a in body["agents"]] == [("sales", "/b/sales")]
+        assert [(a["id"], a["api_base"]) for a in body["agents"]] == [
+            ("sales", "/b/sales"), ("support", "/b/support")]
         assert body["agents"][0]["avatar_url"] == "/b/sales/branding/logo.png"
-        # The same answer from the other hub's bridge, through its own prefix.
+        # A revoke written here applies on every bridge at once.
+        store.revoke(OWNER, "support", "use_hub", actor="test")
+        assert _agents(base) == ["sales"]
         assert _agents(base, "/b/support/api/agents") == ["sales"]
-        # A group membership written here applies on every bridge at once.
-        g = store.create_group("Support desk", actor="test", emails=[OWNER])
-        store.grant(group_subject(g["id"]), "support", "use_hub", actor="test")
-        assert _agents(base) == ["sales", "support"]
+        store.grant(OWNER, "support", "use_hub", actor="test")
         assert _agents(base, "/b/sales/api/agents") == ["sales", "support"]
-        store.remove_group_member(g["id"], OWNER, actor="test")
-        assert _agents(base, "/b/support/api/agents") == ["sales"]
-
-
-def test_groups_api_through_the_edge(live):
-    with _diagnose(live):
-        base = live["base"]
-        origin = {"Origin": base}
-        r = httpx.post(base + "/portal/api/groups", json={"name": "Night shift", "emails": ["ops@example.org"]},
-                       headers=origin, timeout=TIMEOUT)
-        assert r.status_code == 201, r.text
-        gid = r.json()["group"]["id"]
-        # The other bridge reads the same store (asked directly, on loopback).
-        other = httpx.get(f"http://127.0.0.1:{SUPPORT}/portal/api/groups", timeout=TIMEOUT).json()["groups"]
-        assert gid in [g["id"] for g in other]
-        r = httpx.post(base + "/portal/api/groups", json={"name": "Evil"},
-                       headers={"Origin": "https://evil.example"}, timeout=TIMEOUT)
-        assert r.status_code == 403 and r.json()["detail"]["code"] == "cross_origin"
-        assert httpx.delete(base + f"/portal/api/groups/{gid}", headers=origin, timeout=TIMEOUT).status_code == 204
 
 
 def test_branding_through_the_edge(live):

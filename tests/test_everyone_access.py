@@ -1,6 +1,5 @@
 """'Everyone signed in' (`*` with use_hub): existing grants keep working and can
-be removed; no path creates a new one, except migration carrying over
-demonstrably public legacy access.
+be removed; no path creates a new one.
 
 No model and no network: the two-hub SQLite deployment from test_access_service.
 """
@@ -15,7 +14,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from typer.testing import CliRunner
 
-from hubzoid.access import migrate
 from hubzoid.access.service import Denied, plan_hash
 from hubzoid.access.store import EVERYONE, USE_HUB, BroadAccessRefused, GrantStore
 from hubzoid.cli import app as cli
@@ -114,27 +112,12 @@ def test_no_path_creates_a_new_everyone_grant(api, monkeypatch):
         gs.apply_changes(EVERYONE, "finance", [("grant", USE_HUB)])
     with pytest.raises(BroadAccessRefused):
         gs.grant_many([(EVERYONE, "finance", USE_HUB)])
-    with pytest.raises(BroadAccessRefused):
-        gs.apply_migration([(EVERYONE, "finance", USE_HUB)], [], ["finance"])
     assert not _everyone_rows(gs)
-
-
-def test_migration_carries_over_public_legacy_access_and_says_so(tmp_path):
-    store = GrantStore(create_engine(f"sqlite:///{tmp_path / 'hub.db'}"))
-    plan = migrate.MigrationPlan()
-    plan.add_grant(EVERYONE, "publichub", USE_HUB)
-    plan.add_grant("ann@x.org", "publichub", "ledger")
-    assert any(w.startswith("Everyone signed in (carried over): publichub") for w in plan.warnings)
-    migrate.apply(store, plan, authoritative=True)
-    assert store.can("anyone-signed-in", "publichub", USE_HUB)
-    # Removing it afterwards stays possible.
-    store.revoke(EVERYONE, "publichub", USE_HUB, actor="cli:test")
-    assert not store.can("anyone-signed-in", "publichub", USE_HUB)
 
 
 def test_fresh_hubs_have_no_everyone_grant(tmp_path):
     store = GrantStore(create_engine(f"sqlite:///{tmp_path / 'hub.db'}"))
-    store.bootstrap(["root@x.org"], authoritative=True, hub="fresh")
-    store.provision_owner("owner@x.org", "fresh", fresh=True)
+    store.bootstrap(["root@x.org"])
+    store.provision_owner("owner@x.org", "fresh")
     assert not _everyone_rows(store)
     assert not store.can("walk.in@x.org", "fresh", USE_HUB)

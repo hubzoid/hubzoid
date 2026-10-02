@@ -18,13 +18,6 @@ Two permissions matter to every hub:
   * `manage_access`  — may grant/revoke within a scope (delegated admin)
 plus the restricted-function stems (`crm_read`, `billing_write`, ...).
 
-Groups (`hz_groups`, `hz_group_members`): a grant may name `group:<id>`, and
-it applies to every member, matched by normalized email. `can(email, hub, perm)`
-is true when the email, any of its groups, or `*` holds the grant. A group
-holds agent access only: never `manage_access` (administration stays per
-person) and never the organization domain. Group writes also bump the policy
-revision, so every process sees a membership change on its next decision.
-
 Writes go through `GrantStore` methods only (never straight SQL from callers),
 so every write is one transaction that also bumps `hz_policy_revision`. `can()`
 reloads the in-memory enforcer when the revision changes, which is how many
@@ -36,7 +29,6 @@ necessary, not sufficient.
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 from typing import Iterable
@@ -56,42 +48,7 @@ USE_HUB = "use_hub"
 MANAGE_ACCESS = "manage_access"
 # hz_meta key holding the account scheduled workflows run as by default.
 WORKFLOW_DEFAULT_KEY = "workflow_default_user"
-# A grant subject naming a group: `group:<id>` (see hz_groups).
-GROUP_PREFIX = "group:"
-#: Grants may name `group:<id>` and `can` resolves them for every member.
-#: Also on `GrantStore.supports_group_grants`, for callers that probe.
-SUPPORTS_GROUP_GRANTS = True
-# Group ids: generated `g_<hex>`, or an id carried over by a migration. Lowercase,
-# because every subject is compared through `normalize`.
-_GROUP_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-
-def is_group_subject(subject: str | None) -> bool:
-    return (subject or "").startswith(GROUP_PREFIX)
-
-
-def group_subject(group_id: str) -> str:
-    return GROUP_PREFIX + normalize(group_id)
-
-
-def group_id_of(subject: str | None) -> str | None:
-    """The group id a `group:<id>` subject names, or None for anything else."""
-    if not is_group_subject(subject):
-        return None
-    gid = (subject or "")[len(GROUP_PREFIX):]
-    return gid if _GROUP_ID.match(gid) else None
-
-
-class GroupError(ValueError):
-    """A group write was refused (the message is safe to show)."""
-
-
-class GroupNotFound(GroupError):
-    """The group does not exist (or was deleted meanwhile)."""
-
-
-class GroupNameTaken(GroupError):
-    """Another group already has this name (compared case-insensitively)."""
 
 # Direct-grants model: a request (sub, dom, act) is allowed if any policy row
 # matches, where subject/domain/permission each match exactly or via `*`.
@@ -123,12 +80,6 @@ def _validate_grant(subject: str, hub: str, permission: str) -> None:
         # A '*' permission would match every action in the matcher, incl.
         # manage_access — never a grantable value.
         raise ValueError("the wildcard permission '*' is not grantable")
-    if is_group_subject(subject):
-        if group_id_of(subject) is None:
-            raise ValueError("invalid group")
-        if hub == ORG or permission == MANAGE_ACCESS:
-            # Administration stays per person: a group never manages access.
-            raise ValueError("groups can hold agent access only, not manage_access")
 
 
 class _Adapter(Adapter):
@@ -194,9 +145,6 @@ class GrantStore:
     gateway DB). Cheap to construct; holds a Casbin enforcer kept fresh against
     `hz_policy_revision`."""
 
-    #: See SUPPORTS_GROUP_GRANTS.
-    supports_group_grants = True
-
     def __init__(self, engine: Engine):
         self._engine = engine
         db_tables.ensure_access_tables(engine)
@@ -207,10 +155,6 @@ class GrantStore:
         self._rev = (
             -1
         )  # first decision reloads: never pair old policy with a newer revision
-        # email -> the `group:<id>` subjects it belongs to, loaded with the
-        # policy (same revision), so a decision never pairs new grants with old
-        # memberships or the reverse.
-        self._members: dict[str, frozenset[str]] = {}
 
     # ---- reads ---------------------------------------------------------------
 
@@ -254,23 +198,6 @@ class GrantStore:
         revision again; if a write landed in between the revision moved and we
         retry. This is correct on any engine and isolation level."""
         return self._consistent_read(self._read_grants)
-
-    def access_snapshot_with_groups(self) -> tuple[int, list[tuple[str, str, str]], dict]:
-        """Like `access_snapshot`, plus every group as {id: {"name", "members"}}
-        (members a set of emails), all from the same policy revision, so the
-        Console can explain group-derived access consistently."""
-        def read(conn):
-            grants = self._read_grants(conn)
-            groups = {gid: {"name": name, "members": set()} for gid, name in conn.execute(
-                text("SELECT id, name FROM hz_groups")).fetchall()}
-            for gid, email in conn.execute(
-                    text("SELECT group_id, email FROM hz_group_members")).fetchall():
-                if gid in groups:
-                    groups[gid]["members"].add(email)
-            return grants, groups
-
-        rev, (grants, groups) = self._consistent_read(read)
-        return rev, grants, groups
 
     @staticmethod
     def _read_grants(conn) -> list[tuple[str, str, str]]:
@@ -397,30 +324,11 @@ class GrantStore:
         if current != self._rev:
             with self._lock:
                 self._enforcer.load_policy()
-                self._members = self._load_members()
                 self._rev = current
-
-    def _load_members(self) -> dict[str, frozenset[str]]:
-        members: dict[str, set[str]] = {}
-        with self._engine.connect() as conn:
-            for gid, email in conn.execute(
-                    text("SELECT group_id, email FROM hz_group_members")).fetchall():
-                members.setdefault(email, set()).add(GROUP_PREFIX + gid)
-        return {email: frozenset(g) for email, g in members.items()}
-
-    def group_subjects_of(self, subject: str) -> frozenset[str]:
-        """The `group:<id>` subjects a person (normalized email) belongs to."""
-        subject = normalize(subject)
-        if not subject or is_group_subject(subject):
-            return frozenset()
-        self._refresh_if_stale()
-        with self._lock:
-            return self._members.get(subject, frozenset())
 
     def can(self, subject: str, hub: str, action: str) -> bool:
         """The authority. True if `subject` holds `action` in `hub` (or org-wide,
-        or via the public wildcard, or through one of its groups). Reloads if
-        another process wrote."""
+        or via the public wildcard). Reloads if another process wrote."""
         subject = normalize(subject)
         if not subject:
             return False
@@ -429,33 +337,18 @@ class GrantStore:
         self._refresh_if_stale()
         hub, action = normalize(hub), normalize(action)
         with self._lock:
-            if self._enforcer.enforce(subject, hub, action):
-                return True
-            if action == MANAGE_ACCESS or is_group_subject(subject):
-                # Administration is never held through a group.
-                return False
-            return any(self._enforcer.enforce(g, hub, action)
-                       for g in sorted(self._members.get(subject, ())))
-
-    def _subjects_for(self, subject: str) -> list[str]:
-        """`subject` plus the groups it belongs to (a group has none), from the
-        memberships loaded with the policy. Callers refresh first."""
-        if is_group_subject(subject):
-            return [subject]
-        with self._lock:
-            groups = self._members.get(subject, frozenset())
-        return [subject, *sorted(groups)]
+            return bool(self._enforcer.enforce(subject, hub, action))
 
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
-        org-wide + wildcard-subject + its groups). Used by the portal and
+        org-wide + wildcard-subject). Used by the portal and
         denied-UX."""
         subject = normalize(subject)
         hub = normalize(hub)
         if self.is_suspended(subject):
             return set()
         self._refresh_if_stale()
-        subjects = self._subjects_for(subject)
+        subjects = [subject]
         out: set[str] = set()
         with self._engine.connect() as conn:
             rows = conn.execute(
@@ -465,19 +358,17 @@ class GrantStore:
                 ).bindparams(bindparam("subs", expanding=True)),
                 {"subs": subjects, "h": hub},
             ).fetchall()
-        for sub, _hub, perm in rows:
-            if is_group_subject(sub) and perm == MANAGE_ACCESS:
-                continue  # never administration through a group
+        for _sub, _hub, perm in rows:
             out.add(perm)
         return out
 
     def hubs_for(self, subject: str) -> set[str]:
         """The hubs `subject` may open (`use_hub`), for the visibility mirror.
         Excludes the org domain; a wildcard `use_hub` grant means "all hubs" and
-        is returned as the sentinel '*'. Includes hubs opened through a group."""
+        is returned as the sentinel '*'."""
         subject = normalize(subject)
         self._refresh_if_stale()
-        subjects = self._subjects_for(subject)
+        subjects = [subject]
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
@@ -527,63 +418,11 @@ class GrantStore:
                 {"k": key, "v": value},
             )
 
-    def is_authoritative(self, hub: str | None = None) -> bool:
-        """True once Casbin is the authority for this hub. A **per-hub** marker
-        (`casbin_authoritative:<hub>`) is checked first, then the deployment-wide
-        one — so on a shared gateway DB, migrating hub A does NOT flip hubs B–N
-        (which stay legacy until their own cutover). Un-migrated hubs are
-        untouched. Cached and refreshed on a policy_revision change so a
-        per-request check is a cheap in-memory read, not a DB hit."""
-        self._refresh_if_stale()
-        hub = normalize(hub) if hub else None
-        with self._engine.connect() as conn:
-            if hub:
-                marker = self._meta_get(conn, f"casbin_authoritative:{hub}")
-                if marker is not None:
-                    return marker == "1"
-            return self._meta_get(conn, "casbin_authoritative") == "1"
-
-    def any_authoritative(self) -> bool:
-        """True if the deployment has migrated any hub (global marker or any
-        per-hub marker). Used to decide the gateway-wide OWUI access-UI lock."""
-        with self._engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT 1 FROM hz_meta WHERE "
-                    "(k = 'casbin_authoritative' OR k LIKE 'casbin_authoritative:%') "
-                    "AND v = '1' LIMIT 1"
-                )
-            ).fetchone()
-        return bool(row)
-
-    def set_authoritative(self, flag: bool = True, *, hub: str | None = None) -> None:
-        key = (
-            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
-        )
-        with self._engine.begin() as conn:
-            self._meta_set(conn, key, "1" if flag else "0")
-            self._bump_revision(conn)
-
-    def bootstrap(
-        self,
-        admin_subjects: Iterable[str] = (),
-        *,
-        authoritative: bool = False,
-        hub: str | None = None,
-    ) -> None:
+    def bootstrap(self, admin_subjects: Iterable[str] = ()) -> None:
         """First-boot bootstrap (idempotent): grant org `manage_access` to the
-        given admins once, so no deployment — fresh or migrated — can lock itself
-        out of the portal. `authoritative=True` also makes Casbin the authority
-        (use for fresh installs with no legacy access to migrate)."""
-        marker = (
-            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
-        )
+        given admins once, so no deployment can lock itself out of the Console."""
         with self._engine.begin() as conn:
             if self._meta_get(conn, "bootstrapped") == "1":
-                if authoritative:
-                    self._meta_set(conn, marker, "1")
-                    self._audit(conn, "bootstrap", "activate", None, hub or ORG, None)
-                    self._bump_revision(conn)
                 return
             granted = 0
             for subj in admin_subjects:
@@ -597,20 +436,10 @@ class GrantStore:
             # empty bootstrap() must NOT block a later legitimate admin list.
             if granted:
                 self._meta_set(conn, "bootstrapped", "1")
-            # Refuse to make Casbin authoritative with no org admin at all — that
-            # is an unrecoverable web lockout (nobody can pass the portal gate).
-            if authoritative:
-                if not (granted or self._org_admins(conn)):
-                    raise LastAdminError(
-                        "refusing authoritative bootstrap with no org admin — "
-                        "pass at least one --admin"
-                    )
-                self._meta_set(conn, marker, "1")
-                self._audit(conn, "bootstrap", "activate", None, ORG, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def provision_owner(self, subject: str, hub: str, *, fresh: bool = False) -> bool:
+    def provision_owner(self, subject: str, hub: str) -> bool:
         """Provision a configured, verified owner once per hub, never on every login.
 
         Caller verifies the account and matches it to operator configuration.
@@ -639,8 +468,6 @@ class GrantStore:
             # configured: recorded once, at setup. Adding people never moves it.
             if not self._meta_get(conn, WORKFLOW_DEFAULT_KEY):
                 self._meta_set(conn, WORKFLOW_DEFAULT_KEY, subject)
-            if fresh:
-                self._meta_set(conn, f"casbin_authoritative:{hub}", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
         return True
@@ -660,19 +487,6 @@ class GrantStore:
                 {"s": subject, "h": hub, "p": permission},
             ).fetchall()
             times = [r[0] for r in rows]
-            if not is_group_subject(subject) and permission != MANAGE_ACCESS:
-                # Through a group, the hold began when both the group's grant
-                # and this membership existed. Leaving the group, or the group
-                # losing the grant, is a break like a revoke.
-                group_rows = conn.execute(
-                    text("SELECT g.created, m.added_at FROM hz_grants g "
-                         "JOIN hz_group_members m ON g.subject = :prefix || m.group_id "
-                         "WHERE m.email = :s AND (g.hub=:h OR g.hub='*') "
-                         "AND (g.permission=:p OR g.permission='*')"),
-                    {"prefix": GROUP_PREFIX, "s": subject, "h": hub, "p": permission},
-                ).fetchall()
-                times += [added if created is None else max(created, added)
-                          for created, added in group_rows]
         if not times or any(t is None for t in times):
             return None
         return float(min(times))
@@ -887,176 +701,8 @@ class GrantStore:
                 raise LastAdminError(
                     "cannot remove the last org admin; grant another first"
                 )
-            self._leave_groups_in_txn(conn, subject, actor, surface, request_id)
             self._audit(conn, actor, "revoke_all", subject, ORG, None, surface, request_id)
             self._bump_revision(conn)
-        self._refresh_if_stale()
-
-    def apply_migration(
-        self,
-        grants: Iterable[tuple[str, str, str]],
-        attrs: Iterable[tuple[str, str, str, str]],
-        hubs: Iterable[str],
-        *,
-        replace: bool = True,
-        authoritative: bool = True,
-        actor: str = "migration",
-        identities: Iterable[dict] = (),
-        carry_over_public: bool = False,
-    ) -> dict:
-        """The migration cutover, in ONE transaction: (optionally) replace the
-        target hubs' grants, insert the plan (with use_hub implication), set
-        attributes + identity rows, set the PER-HUB authority markers, and bump
-        the revision. Atomic — a crash rolls the whole thing back, and replace
-        semantics mean no stale grant survives cutover. An everyone-signed-in
-        grant in the plan needs `carry_over_public` (legacy access that was
-        demonstrably public).
-
-        Returns the identity rows and account availability it touched as they
-        were before, for `restore_identities` (`snapshot`/`restore` cover the
-        hubs' grants, attributes and authority, not identities)."""
-        import time
-
-        hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
-        attrs = list(attrs)
-        identities = list(identities)
-        if any(normalize(h) not in hubs for h, _, _, _ in attrs):
-            raise ValueError("migration attributes outside target hubs")
-        expanded: list[tuple[str, str, str]] = []
-        emails: set[str] = set()
-        for subject, hub, permission in grants:
-            subject = normalize(subject)
-            hub = normalize(hub)
-            permission = normalize(permission)
-            _validate_grant(subject, hub, permission)
-            _refuse_new_everyone(subject, carry_over_public)
-            expanded.append((subject, hub, permission))
-            if hub != ORG and permission != USE_HUB:
-                expanded.append((subject, hub, USE_HUB))
-            if hub not in hubs:
-                raise ValueError("migration grant outside target hubs")
-            if subject != EVERYONE and "@" in subject:
-                emails.add(subject)
-        touched = sorted(
-            {s for s, _h, _p in expanded if s != EVERYONE and not is_group_subject(s)}
-            | emails | {normalize(i["email"]) for i in identities})
-        with self._engine.begin() as conn:
-            self._lock_hubs(conn, hubs)
-            before = self._identity_state(conn, touched)
-            if replace:
-                for h in hubs:
-                    self._audit(conn, actor, "replace_hub_grants", None, h, None)
-                    conn.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
-            for s, h, p in expanded:
-                self._insert_grant(conn, s, h, p)
-                self._audit(conn, actor, "grant", s, h, p)
-            for hub, subject, k, v in attrs:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identity_attrs (hub, subject, k, v) "
-                        "VALUES (:h, :s, :k, :v) "
-                        "ON CONFLICT (hub, subject, k) DO UPDATE SET v=excluded.v"
-                    ),
-                    {"h": normalize(hub), "s": normalize(subject), "k": k, "v": v},
-                )
-            for email in emails:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identities (subject, email, created) "
-                        "VALUES (:s, :s, :t) ON CONFLICT (subject) DO NOTHING"
-                    ),
-                    {"s": email, "t": time.time()},
-                )
-            for identity in identities:
-                subject = normalize(identity["email"])
-                self._ensure_identity(conn, subject)
-                previous = conn.execute(
-                    text("SELECT owui_id FROM hz_identities WHERE subject=:s"),
-                    {"s": subject},
-                ).scalar()
-                if previous and previous != identity["owui_id"]:
-                    raise ValueError(
-                        "OWUI account changed for "
-                        + subject
-                        + "; refresh and review accounts before migration"
-                    )
-                conn.execute(
-                    text(
-                        "UPDATE hz_identities SET owui_id=:o, pending=:p WHERE subject=:s"
-                    ),
-                    {
-                        "o": identity["owui_id"],
-                        "p": int(identity.get("pending", False)),
-                        "s": subject,
-                    },
-                )
-                self._meta_set(
-                    conn,
-                    "account_unavailable:" + subject,
-                    "1" if identity.get("pending") else "0",
-                )
-            if authoritative:
-                for h in hubs:
-                    self._meta_set(conn, f"casbin_authoritative:{h}", "1")
-            self._bump_revision(conn)
-        self._refresh_if_stale()
-        return before
-
-    @staticmethod
-    def _identity_state(conn, subjects: list[str]) -> dict:
-        """Each subject's identity row (owui_id, pending) or None, and its
-        ``account_unavailable`` marker or None."""
-        rows: dict[str, dict] = {}
-        flags: dict[str, str] = {}
-        prefix = "account_unavailable:"
-        for start in range(0, len(subjects), 500):
-            chunk = subjects[start:start + 500]
-            for subject, owui_id, pending in conn.execute(
-                text("SELECT subject, owui_id, pending FROM hz_identities WHERE subject IN :s")
-                .bindparams(bindparam("s", expanding=True)), {"s": chunk}
-            ):
-                rows[subject] = {"owui_id": owui_id, "pending": int(pending or 0)}
-            for key, value in conn.execute(
-                text("SELECT k, v FROM hz_meta WHERE k IN :k")
-                .bindparams(bindparam("k", expanding=True)), {"k": [prefix + s for s in chunk]}
-            ):
-                flags[key[len(prefix):]] = value
-        return {"version": 1, "subjects": {
-            s: {"row": rows.get(s), "unavailable": flags.get(s)} for s in subjects}}
-
-    def restore_identities(self, state: dict, *, actor: str) -> None:
-        """Undo the identity part of `apply_migration`, given what it returned:
-        a row it created goes (unless a grant or group membership names the
-        subject again), the others get their Open WebUI account and pending
-        flag back, and every account's availability is what it was. One
-        transaction."""
-        subjects = (state or {}).get("subjects") or {}
-        if not subjects:
-            return
-        with self._engine.begin() as c:
-            for subject, before in sorted(subjects.items()):
-                row = before.get("row")
-                if row is None:
-                    c.execute(
-                        text(
-                            "DELETE FROM hz_identities WHERE subject=:s "
-                            "AND NOT EXISTS (SELECT 1 FROM hz_grants WHERE subject=:s) "
-                            "AND NOT EXISTS (SELECT 1 FROM hz_group_members WHERE email=:s)"
-                        ),
-                        {"s": subject},
-                    )
-                else:
-                    c.execute(
-                        text("UPDATE hz_identities SET owui_id=:o, pending=:p WHERE subject=:s"),
-                        {"o": row["owui_id"], "p": int(row["pending"]), "s": subject},
-                    )
-                key = "account_unavailable:" + subject
-                if before.get("unavailable") is None:
-                    c.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": key})
-                else:
-                    self._meta_set(c, key, before["unavailable"])
-            self._audit(c, actor, "rollback_accounts", None, None, None)
-            self._bump_revision(c)
         self._refresh_if_stale()
 
     def grant_many(
@@ -1086,12 +732,6 @@ class GrantStore:
     # ---- internals -----------------------------------------------------------
 
     def _insert_grant(self, conn, subject: str, hub: str, permission: str) -> None:
-        if is_group_subject(subject):
-            # Lock order for group writes is always: policy revision, then the
-            # group's row (as delete_group takes them), so a grant racing a
-            # delete waits instead of deadlocking, and never outlives it.
-            self._read_revision_locked(conn)
-            self._require_group(conn, group_id_of(subject) or "")
         self._ensure_identity(conn, subject)
         dialect = conn.engine.dialect.name
         if dialect == "sqlite":
@@ -1164,11 +804,10 @@ class GrantStore:
             }
             if row and owui_id and row[1] and row[1] != owui_id:
                 # A new account reusing an email must not inherit the old owner's
-                # direct grants, including administrator rights, or groups.
+                # direct grants, including administrator rights.
                 conn.execute(
                     text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
                 )
-                self._leave_groups_in_txn(conn, subject, "owui-identity")
                 self._meta_set(conn, "suspended:" + subject, "1")
                 self._audit(
                     conn, "owui-identity", "account_replaced", subject, ORG, None
@@ -1268,7 +907,6 @@ class GrantStore:
                         "administrator must re-create it."
                     )
                 conn.execute(text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject})
-                self._leave_groups_in_txn(conn, subject, actor, surface, request_id)
                 self._audit(conn, actor, "account_replaced", subject, ORG, None,
                             surface, request_id)
             fields = {"s": subject, "o": owui_id, "d": display or None, "t": time.time()}
@@ -1353,9 +991,7 @@ class GrantStore:
     def _ensure_identity(self, conn, subject):
         import time
 
-        # A group is not a person: it never gets an identity row (People
-        # lists identities).
-        if subject != EVERYONE and not is_group_subject(subject):
+        if subject != EVERYONE:
             conn.execute(
                 text(
                     "INSERT INTO hz_identities (subject, email, pending, created) "
@@ -1383,7 +1019,7 @@ class GrantStore:
         the marker is written, so work that must commit with the block (ending
         the person's sessions, ``access.service``) commits or fails with it."""
         subject = normalize(subject)
-        if not subject or subject == EVERYONE or is_group_subject(subject):
+        if not subject or subject == EVERYONE:
             raise ValueError("a person or service is required")
         with self._engine.begin() as conn:
             admins = self._org_admins_locked(conn)
@@ -1393,9 +1029,6 @@ class GrantStore:
                 conn.execute(
                     text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
                 )
-                # Blocking removes access held through groups the same way:
-                # reactivating restores none of it.
-                self._leave_groups_in_txn(conn, subject, actor, surface, request_id)
             self._meta_set(conn, "suspended:" + subject, "1" if suspended else "0")
             self._audit(
                 conn,
@@ -1454,85 +1087,6 @@ class GrantStore:
                     )
                 ).mappings()
             ]
-
-    def snapshot(self, hubs: list[str]) -> dict:
-        hubs = sorted({normalize(h) for h in hubs})
-        with self._engine.connect() as c:
-            attrs = [
-                list(r)
-                for r in c.execute(
-                    text("SELECT hub, subject, k, v FROM hz_identity_attrs")
-                )
-                if r[0] in hubs
-            ]
-        return dict(
-            version=1,
-            hubs=hubs,
-            grants=[g for g in self.list_grants() if g[1] in hubs],
-            attrs=attrs,
-            authority={h: self.is_authoritative(h) for h in hubs},
-        )
-
-    def restore(self, snapshot: dict, *, actor: str) -> None:
-        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
-            raise ValueError("unsupported access backup")
-        try:
-            hubs = set(snapshot["hubs"])
-            if not hubs or any(
-                not isinstance(h, str) or not h or h != normalize(h) or h == ORG
-                for h in hubs
-            ):
-                raise ValueError("invalid backup scope")
-            if set(snapshot["authority"]) != hubs or any(
-                type(v) is not bool for v in snapshot["authority"].values()
-            ):
-                raise ValueError("invalid backup authority")
-            for sub, h, p in snapshot["grants"]:
-                if (
-                    any(
-                        not isinstance(v, str) or v != normalize(v) for v in (sub, h, p)
-                    )
-                    or h not in hubs
-                ):
-                    raise ValueError("invalid backup grant scope")
-                _validate_grant(sub, h, p)
-            for h, sub, k, v in snapshot["attrs"]:
-                if h not in hubs or not all(isinstance(x, str) for x in (h, sub, k, v)):
-                    raise ValueError("invalid backup attribute")
-        except (KeyError, TypeError) as exc:
-            raise ValueError("invalid access backup structure") from exc
-        with self._engine.begin() as c:
-            self._lock_hubs(c, hubs)
-            for h in hubs:
-                c.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
-                c.execute(text("DELETE FROM hz_identity_attrs WHERE hub=:h"), {"h": h})
-                self._meta_set(
-                    c,
-                    "casbin_authoritative:" + h,
-                    "1" if snapshot["authority"][h] else "0",
-                )
-                self._audit(c, actor, "rollback", None, h, None)
-            for sub, h, p in snapshot["grants"]:
-                if is_group_subject(sub) and not c.execute(
-                        text("SELECT 1 FROM hz_groups WHERE id=:g"),
-                        {"g": group_id_of(sub) or ""}).fetchone():
-                    # The group was deleted since the backup: nobody would hold
-                    # this grant, so it is not recreated.
-                    self._audit(c, actor, "restore_skipped", sub, h, p)
-                    continue
-                self._insert_grant(c, sub, h, p)
-                self._audit(c, actor, "restore_grant", sub, h, p)
-            for h, sub, k, v in snapshot["attrs"]:
-                if h not in hubs:
-                    raise ValueError("invalid attribute scope")
-                c.execute(
-                    text(
-                        "INSERT INTO hz_identity_attrs (hub,subject,k,v) VALUES (:h,:s,:k,:v)"
-                    ),
-                    dict(h=h, s=sub, k=k, v=v),
-                )
-            self._bump_revision(c)
-        self._refresh_if_stale()
 
     def runtime_health(self, hub: str) -> dict:
         import json
@@ -1610,289 +1164,3 @@ class GrantStore:
 
         with self._engine.begin() as c:
             self._meta_set(c, key, json.dumps(value))
-
-    # ---- groups ----------------------------------------------------------------
-    #
-    # People who hold agent access together. A grant to `group:<id>` applies to
-    # every member (by normalized email). Every write here takes the policy
-    # revision lock first, bumps the revision and audits in the same
-    # transaction, so decisions everywhere see a membership change on their
-    # next call and the Console's concurrency guard notices it.
-
-    _UNSET = object()
-
-    def _require_group(self, conn, group_id: str) -> tuple[str, str]:
-        """Lock the group's row for this transaction and return (id, name).
-        A concurrent delete either finished first (GroupNotFound) or waits for
-        this transaction, so no grant or member outlives its group."""
-        gid = normalize(group_id)
-        if not _GROUP_ID.match(gid):
-            raise GroupNotFound("This group doesn't exist.")
-        if conn.engine.dialect.name == "sqlite":
-            # SQLite has no row locks: a no-op write takes the database write
-            # lock now (as _read_revision_locked does), then read.
-            conn.execute(text("UPDATE hz_groups SET id=id WHERE id=:g"), {"g": gid})
-            row = conn.execute(text("SELECT id, name FROM hz_groups WHERE id=:g"),
-                               {"g": gid}).fetchone()
-        else:
-            row = conn.execute(text("SELECT id, name FROM hz_groups WHERE id=:g FOR UPDATE"),
-                               {"g": gid}).fetchone()
-        if row is None:
-            raise GroupNotFound("This group doesn't exist. It may have been deleted.")
-        return row[0], row[1]
-
-    @staticmethod
-    def _clean_group_name(name: str) -> str:
-        name = " ".join((name or "").split())
-        if not name:
-            raise GroupError("Enter a group name.")
-        if len(name) > 255:
-            raise GroupError("Use a shorter group name.")
-        return name
-
-    @staticmethod
-    def _check_name_free(conn, name: str, *, except_id: str | None = None) -> None:
-        wanted = normalize(name)
-        for gid, other in conn.execute(text("SELECT id, name FROM hz_groups")).fetchall():
-            if gid != except_id and normalize(other) == wanted:
-                raise GroupNameTaken(f"A group named {other} already exists.")
-
-    @staticmethod
-    def _member_emails(emails: Iterable[str]) -> list[str]:
-        out: list[str] = []
-        for raw in emails:
-            email = normalize(raw)
-            if not email or "@" not in email or is_group_subject(email) or email == EVERYONE:
-                raise GroupError("Members are people, added by email address.")
-            if email not in out:
-                out.append(email)
-        return out
-
-    def list_groups(self) -> list[dict]:
-        """Every group with its member and grant counts, by name."""
-        with self._engine.connect() as conn:
-            groups = conn.execute(text(
-                "SELECT id, name, description, source, created_by, created_at, updated_at "
-                "FROM hz_groups")).mappings().all()
-            members: dict[str, int] = {}
-            for gid, n in conn.execute(text(
-                    "SELECT group_id, COUNT(*) FROM hz_group_members GROUP BY group_id")).fetchall():
-                members[gid] = int(n)
-            grants: dict[str, int] = {}
-            for sub, n in conn.execute(text(
-                    "SELECT subject, COUNT(*) FROM hz_grants WHERE subject LIKE 'group:%' "
-                    "GROUP BY subject")).fetchall():
-                grants[sub[len(GROUP_PREFIX):]] = int(n)
-        out = []
-        for g in groups:
-            row = dict(g)
-            row["member_count"] = members.get(row["id"], 0)
-            row["grant_count"] = grants.get(row["id"], 0)
-            out.append(row)
-        return sorted(out, key=lambda r: (normalize(r["name"]), r["id"]))
-
-    def group(self, group_id: str) -> dict | None:
-        """One group with its members (email, added_by, added_at) and its
-        grants [(hub, permission)], or None."""
-        gid = normalize(group_id)
-        with self._engine.connect() as conn:
-            row = conn.execute(text(
-                "SELECT id, name, description, source, created_by, created_at, updated_at "
-                "FROM hz_groups WHERE id=:g"), {"g": gid}).mappings().first()
-            if row is None:
-                return None
-            members = [dict(m) for m in conn.execute(text(
-                "SELECT email, added_by, added_at FROM hz_group_members WHERE group_id=:g "
-                "ORDER BY email"), {"g": gid}).mappings()]
-            grants = [(h, p) for h, p in conn.execute(text(
-                "SELECT hub, permission FROM hz_grants WHERE subject=:s ORDER BY hub, permission"),
-                {"s": GROUP_PREFIX + gid}).fetchall()]
-        out = dict(row)
-        out["members"] = members
-        out["member_count"] = len(members)
-        out["grants"] = grants
-        return out
-
-    def people_states(self, subjects: Iterable[str]) -> dict[str, dict]:
-        """{subject: {"display", "blocked"}} for many people in two reads (the
-        Groups screen's member list). `blocked` is `is_suspended`."""
-        subjects = sorted({normalize(s) for s in subjects if normalize(s)})
-        out = {s: {"display": None, "blocked": False} for s in subjects}
-        if not subjects:
-            return out
-        keys = [p + s for s in subjects for p in ("suspended:", "account_unavailable:")]
-        with self._engine.connect() as conn:
-            for subject, display in conn.execute(text(
-                    "SELECT subject, display FROM hz_identities WHERE subject IN :subs"
-            ).bindparams(bindparam("subs", expanding=True)), {"subs": subjects}).fetchall():
-                out[subject]["display"] = display
-            for key, value in conn.execute(text(
-                    "SELECT k, v FROM hz_meta WHERE k IN :keys"
-            ).bindparams(bindparam("keys", expanding=True)), {"keys": keys}).fetchall():
-                if value == "1":
-                    out[key.split(":", 1)[1]]["blocked"] = True
-        return out
-
-    def groups_for(self, email: str) -> list[dict]:
-        """The groups a person belongs to: [{"id", "name"}], by name."""
-        email = normalize(email)
-        if not email:
-            return []
-        with self._engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT g.id, g.name FROM hz_groups g "
-                "JOIN hz_group_members m ON m.group_id = g.id WHERE m.email=:e"),
-                {"e": email}).fetchall()
-        return sorted(({"id": gid, "name": name} for gid, name in rows),
-                      key=lambda g: (normalize(g["name"]), g["id"]))
-
-    def create_group(self, name: str, *, actor: str | None, description: str | None = None,
-                     group_id: str | None = None, source: str = "console",
-                     emails: Iterable[str] = (), surface: str | None = None,
-                     request_id: str | None = None) -> dict:
-        """Create a group (optionally with first members) in one transaction.
-        Raises GroupNameTaken, or GroupError for an invalid name or member."""
-        import secrets
-
-        name = self._clean_group_name(name)
-        gid = normalize(group_id) if group_id else "g_" + secrets.token_hex(8)
-        if not _GROUP_ID.match(gid):
-            raise GroupError("invalid group id")
-        members = self._member_emails(emails)
-        now = time.time()
-        with self._engine.begin() as conn:
-            self._read_revision_locked(conn)
-            self._check_name_free(conn, name)
-            if conn.execute(text("SELECT 1 FROM hz_groups WHERE id=:g"), {"g": gid}).fetchone():
-                raise GroupError("A group with this id already exists.")
-            conn.execute(text(
-                "INSERT INTO hz_groups (id, name, description, source, created_by, created_at, "
-                "updated_at) VALUES (:g, :n, :d, :src, :by, :t, :t)"),
-                {"g": gid, "n": name, "d": description or None, "src": source,
-                 "by": normalize(actor) if actor else None, "t": now})
-            self._audit(conn, actor, "group_create", GROUP_PREFIX + gid, ORG, name,
-                        surface, request_id)
-            for email in members:
-                self._add_member(conn, gid, name, email, actor, now, surface, request_id)
-            self._bump_revision(conn)
-        self._refresh_if_stale()
-        return self.group(gid) or {}
-
-    def update_group(self, group_id: str, *, actor: str | None, name: str | None = None,
-                     description=_UNSET, surface: str | None = None,
-                     request_id: str | None = None) -> dict:
-        """Rename and/or describe a group. `description=None` clears it."""
-        with self._engine.begin() as conn:
-            self._read_revision_locked(conn)
-            gid, current = self._require_group(conn, group_id)
-            now = time.time()
-            if name is not None:
-                name = self._clean_group_name(name)
-                if name != current:
-                    self._check_name_free(conn, name, except_id=gid)
-                    conn.execute(text("UPDATE hz_groups SET name=:n, updated_at=:t WHERE id=:g"),
-                                 {"n": name, "t": now, "g": gid})
-                    self._audit(conn, actor, "group_rename", GROUP_PREFIX + gid, ORG, name,
-                                surface, request_id)
-                    current = name
-            if description is not self._UNSET:
-                conn.execute(text("UPDATE hz_groups SET description=:d, updated_at=:t WHERE id=:g"),
-                             {"d": description or None, "t": now, "g": gid})
-                self._audit(conn, actor, "group_describe", GROUP_PREFIX + gid, ORG, current,
-                            surface, request_id)
-            self._bump_revision(conn)
-        self._refresh_if_stale()
-        return self.group(gid) or {}
-
-    def delete_group(self, group_id: str, *, actor: str | None, surface: str | None = None,
-                     request_id: str | None = None) -> dict:
-        """Delete a group, every grant it holds and every membership, in one
-        transaction. Each removed grant is audited as a revoke."""
-        with self._engine.begin() as conn:
-            self._read_revision_locked(conn)
-            gid, name = self._require_group(conn, group_id)
-            subject = GROUP_PREFIX + gid
-            grants = conn.execute(text("SELECT hub, permission FROM hz_grants WHERE subject=:s"),
-                                  {"s": subject}).fetchall()
-            for hub, perm in grants:
-                self._audit(conn, actor, "revoke", subject, hub, perm, surface, request_id)
-            conn.execute(text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject})
-            members = conn.execute(text("DELETE FROM hz_group_members WHERE group_id=:g"),
-                                   {"g": gid}).rowcount
-            conn.execute(text("DELETE FROM hz_groups WHERE id=:g"), {"g": gid})
-            self._audit(conn, actor, "group_delete", subject, ORG, name, surface, request_id)
-            self._bump_revision(conn)
-        self._refresh_if_stale()
-        return {"id": gid, "name": name, "grants_removed": len(grants),
-                "members_removed": int(members or 0)}
-
-    def _leave_groups_in_txn(self, conn, subject: str, actor, surface=None,
-                             request_id=None) -> None:
-        """Remove a person from every group, audited, inside the caller's
-        transaction (blocking, account replacement and "revoke all")."""
-        if not subject or is_group_subject(subject) or subject == EVERYONE:
-            return
-        # Membership rows change under the policy revision lock, as every
-        # group write does (revision, then group rows, then members).
-        self._read_revision_locked(conn)
-        rows = conn.execute(text(
-            "SELECT g.id, g.name FROM hz_groups g JOIN hz_group_members m "
-            "ON m.group_id = g.id WHERE m.email=:e"), {"e": subject}).fetchall()
-        for _gid, name in rows:
-            self._audit(conn, actor, "group_member_remove", subject, ORG, name,
-                        surface, request_id)
-        conn.execute(text("DELETE FROM hz_group_members WHERE email=:e"), {"e": subject})
-
-    def _add_member(self, conn, gid, name, email, actor, now, surface, request_id) -> bool:
-        exists = conn.execute(text(
-            "SELECT 1 FROM hz_group_members WHERE group_id=:g AND email=:e"),
-            {"g": gid, "e": email}).fetchone()
-        if exists:
-            return False
-        # A member is a grantee like any other: People lists them (awaiting
-        # sign-up until they sign in).
-        self._ensure_identity(conn, email)
-        conn.execute(text(
-            "INSERT INTO hz_group_members (group_id, email, added_by, added_at) "
-            "VALUES (:g, :e, :by, :t)"),
-            {"g": gid, "e": email, "by": normalize(actor) if actor else None, "t": now})
-        self._audit(conn, actor, "group_member_add", email, ORG, name, surface, request_id)
-        return True
-
-    def add_group_members(self, group_id: str, emails: Iterable[str], *, actor: str | None,
-                          surface: str | None = None, request_id: str | None = None) -> list[str]:
-        """Add people by email. Returns the ones newly added (idempotent)."""
-        members = self._member_emails(emails)
-        added: list[str] = []
-        with self._engine.begin() as conn:
-            self._read_revision_locked(conn)
-            gid, name = self._require_group(conn, group_id)
-            now = time.time()
-            for email in members:
-                if self._add_member(conn, gid, name, email, actor, now, surface, request_id):
-                    added.append(email)
-            if added:
-                conn.execute(text("UPDATE hz_groups SET updated_at=:t WHERE id=:g"),
-                             {"t": now, "g": gid})
-                self._bump_revision(conn)
-        self._refresh_if_stale()
-        return added
-
-    def remove_group_member(self, group_id: str, email: str, *, actor: str | None,
-                            surface: str | None = None, request_id: str | None = None) -> bool:
-        """Remove one person from a group. False when they were not a member."""
-        email = normalize(email)
-        with self._engine.begin() as conn:
-            self._read_revision_locked(conn)
-            gid, name = self._require_group(conn, group_id)
-            removed = conn.execute(text(
-                "DELETE FROM hz_group_members WHERE group_id=:g AND email=:e"),
-                {"g": gid, "e": email}).rowcount
-            if removed:
-                conn.execute(text("UPDATE hz_groups SET updated_at=:t WHERE id=:g"),
-                             {"t": time.time(), "g": gid})
-                self._audit(conn, actor, "group_member_remove", email, ORG, name,
-                            surface, request_id)
-                self._bump_revision(conn)
-        self._refresh_if_stale()
-        return bool(removed)

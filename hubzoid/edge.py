@@ -85,7 +85,6 @@ import httpx
 import websockets
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -198,22 +197,14 @@ DEFAULT_ARTIFACT_PREFIX = "/artifacts"
 _OWUI_LOCK_DEFAULT = ("/api/v1/groups",)
 
 
-# Open WebUI's admin Users page (a single-page-app route). The Groups tab
-# (/admin/users/groups) stays: legacy hubs still use Open WebUI groups.
-_USERS_PAGES = frozenset({"/admin/users/overview"})
-# The Users section's own page opens on its user list; send it to Groups instead.
-_USERS_SECTION = "/admin/users"
-GROUPS_URL = "/admin/users/groups"
-PEOPLE_URL = "/portal/#/people"
-# The Admin Panel itself (the user menu's entry) opens on the user list too. Open
-# it on Settings > Integrations, over Groups, instead. Open WebUI 0.11 shows its
+# Open WebUI's admin Users section (its user list and Groups) and the Admin
+# Panel, which opens on the user list. People and access are managed in the
+# Console, so these open Settings > Integrations over Evaluations (the Admin
+# Panel page that stays, with Functions and Settings). Open WebUI 0.11 shows its
 # admin settings in a dialog opened by `?settings=admin:<tab>` on any page, and
 # only for administrators. `portal_navigation.SCRIPT` uses the same address.
+_USERS_SECTION = "/admin/users"
 _ADMIN_PANEL = "/admin"
-ADMIN_LANDING = "/admin/users/groups?settings=admin%3Aintegrations"
-# When every hub is managed in the Console, Groups is hidden too: the Admin Panel
-# and every /admin/users page open Settings > Integrations over Evaluations (the
-# Admin Panel page that stays, with Functions and Settings).
 SETTINGS_LANDING = "/admin/evaluations/leaderboard?settings=admin%3Aintegrations"
 # Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
 # user's own settings, never blocked.
@@ -250,35 +241,10 @@ def _hide_owui_users(env) -> bool:
         return False
 
 
-def _fully_managed(env) -> bool:
-    """Every hub in the deployment is managed in the Console (authoritative in
-    the access store), so Open WebUI groups decide nothing about any agent.
-    Read on each use, because a hub moves to Console access while the gateway
-    runs. False without a manifest (a standalone `hubzoid run`), with no hubs,
-    or when the store cannot be read: Groups then stays."""
-    if not env.get("HUBZOID_DEPLOYMENT"):
-        return False
-    try:
-        from . import deployment
-        from .access import store_for
-
-        hubs = deployment.read(Path("."), env, require_hub=False).get("hubs") or []
-        return bool(hubs) and all(
-            store_for(Path(h["path"])).is_authoritative(h["key"]) for h in hubs)
-    except Exception:  # noqa: BLE001 - navigation only; keep Groups
-        log.warning("Cannot read how hubs manage access; Open WebUI Groups stays",
-                    exc_info=True)
-        return False
-
-
 def _clean_path(path: str) -> str:
     """Collapse repeated slashes and drop a trailing one, for matching only."""
     path = re.sub(r"/{2,}", "/", path)
     return path.rstrip("/") or "/"
-
-
-def _is_users_page(path: str) -> bool:
-    return _clean_path(path) in _USERS_PAGES
 
 
 def _is_users_section(path: str) -> bool:
@@ -497,41 +463,30 @@ def build_edge_app(
         portal_enabled = owui_rewrites and any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import script
-            # Whether Groups is hidden changes as hubs move to the Console.
-            managed = hide_users and await run_in_threadpool(_fully_managed, os.environ)
-            return Response(script(hide_users=hide_users, hide_groups=managed),
+            return Response(script(hide_users=hide_users),
                             media_type='application/javascript',
                             headers={'cache-control': 'no-cache'})
-        # Accounts are managed in the Console: Open WebUI's Users page lands on
-        # People, and browser writes to its account-admin API are refused. With
-        # every hub managed there, its whole Users section (Groups too) opens
-        # Settings instead.
+        # People and access are managed in the Console: Open WebUI's Users
+        # section (Groups too) opens Settings, and browser writes to its
+        # account-admin API are refused.
         if hide_users and _match(request.url.path, norm_routes) is None:
-            if (request.method in ("GET", "HEAD") and _is_users_section(request.url.path)
-                    and await run_in_threadpool(_fully_managed, os.environ)):
+            if request.method in ("GET", "HEAD") and _is_users_section(request.url.path):
                 return Response(status_code=302, headers={"location": SETTINGS_LANDING})
-            if request.method in ("GET", "HEAD") and _is_users_page(request.url.path):
-                return Response(status_code=302, headers={"location": PEOPLE_URL})
-            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _USERS_SECTION:
-                return Response(status_code=302, headers={"location": GROUPS_URL})
-            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _ADMIN_PANEL:
-                return Response(status_code=302, headers={"location": ADMIN_LANDING})
             if _is_account_write(request.method, request.url.path):
                 return Response("Manage accounts in the Console (People).", status_code=403)
-        # Only model ACLs for migrated hubs are locked. Shared groups still serve
-        # unmigrated hubs and OWUI's other resources during partial cutover.
+        # Agent model ACLs are Hubzoid's (the visibility mirror): browser edits
+        # to a registered hub's model access are refused.
         if owui_rewrites and os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
             from . import deployment
-            from .access import store_for
             try:
                 cfg = deployment.read(Path('.'), require_hub=False)
                 body = await request.body()
                 payload = json.loads(body) if body else {}
                 model_id = payload.get('id') or request.query_params.get('id')
                 for h in cfg['hubs']:
-                    if h['model_id'] == model_id and store_for(Path(h['path'])).is_authoritative(h['key']):
+                    if h['model_id'] == model_id:
                         if payload.get('access_grants') is not None or 'delete' in request.url.path or request.method == 'DELETE':
-                            return Response('Agent access is managed at /portal/. Open WebUI accounts and legacy groups remain available.', status_code=403)
+                            return Response('Agent access is managed at /portal/.', status_code=403)
             except Exception:
                 log.exception('Cannot verify managed model access')
                 return Response('Access configuration unavailable; retry later.',status_code=503)

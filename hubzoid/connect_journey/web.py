@@ -211,7 +211,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
 
     def still_permitted(j: dict) -> bool:
         """At start, re-check what can change after the link was sent: a block,
-        and on a managed hub the connector grant itself."""
+        and the connector grant itself."""
         from ..access import store_for
 
         from . import capability
@@ -219,12 +219,10 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             gs = store_for(hub_dir)
             if gs.is_suspended(j["subject"]):
                 return False
-            if gs.is_authoritative(j["hub"]):
-                return gs.can(j["subject"], j["hub"], capability(j["app"]))
+            return gs.can(j["subject"], j["hub"], capability(j["app"]))
         except Exception:  # noqa: BLE001 — cannot check -> refuse
             log.warning("connect: access re-check failed", exc_info=True)
             return False
-        return True
 
     @router.get("/{jid}")
     def page(jid: str, request: Request):

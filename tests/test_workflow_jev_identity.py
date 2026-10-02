@@ -23,6 +23,7 @@ def team(tmp_path, monkeypatch):
     d.mkdir()
     (d / "AGENTS.md").write_text("---\nname: team\n---\nbody")
     store_for(d).upsert_identity(email=ALICE, owui_id="acct-alice")
+    store_for(d).grant(ALICE, "team", "use_hub", actor="test")
     seen = []
     monkeypatch.setattr(wctx, "_JEV", lambda spec, hub_dir=None, subject=None:
                         seen.append(subject) or {"answers": {"ok": {"value": True}}})

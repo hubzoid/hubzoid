@@ -701,7 +701,7 @@ def provision_owner(hub_dir: Path, email: str) -> list[str]:
         with gs.engine.connect() as conn:
             if gs._meta_get(conn, "initial_owner:" + str(h["key"]).strip().lower()):  # noqa: SLF001
                 continue
-        if gs.provision_owner(email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()):
+        if gs.provision_owner(email, h["key"]):
             done.append(h["key"])
     return done
 

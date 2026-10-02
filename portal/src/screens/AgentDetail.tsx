@@ -1,4 +1,4 @@
-import { Button, Breadcrumb, Tabs, Tag, Tooltip } from "antd";
+import { Button, Breadcrumb, Tabs } from "antd";
 import type { Hub } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
 import { AgentAvatar, PageHeader } from "../components/common";
@@ -31,13 +31,6 @@ export function AgentDetail({
           <span className="agent-title">
             <AgentAvatar size={40} />
             <span>{hub.name}</span>
-            {hub.authoritative ? (
-              <Tag color="green">Managed here</Tag>
-            ) : (
-              <Tooltip title="Access changes take effect only after migration.">
-                <Tag color="gold">Legacy access</Tag>
-              </Tooltip>
-            )}
           </span>
         }
         description={

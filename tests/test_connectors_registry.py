@@ -193,7 +193,7 @@ def test_only_organization_administrators_manage_connectors(hub, tc, monkeypatch
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "admin"), BOB: ("u-b", "admin"),
                                   CAROL: ("u-c", "user")})
     gs = store_for(hub)
-    gs.bootstrap([ALICE], authoritative=True)
+    gs.bootstrap([ALICE])
     gs.grant(BOB, "sales", "manage_access", actor="test")  # an agent administrator only
     assert tc.get("/portal/api/connectors").status_code == 401
     assert detail(tc.get("/portal/api/connectors"))["code"] == "unauthenticated"
@@ -300,14 +300,11 @@ def test_people_see_switched_on_connectors_and_their_own_state(hub, tc, monkeypa
     assert [c["connector_id"] for c in theirs] == ["gmail"]
 
 
-def test_allowed_follows_the_connector_capability_on_managed_hubs(hub, tc, monkeypatch):
+def test_allowed_follows_the_connector_capability(hub, tc, monkeypatch):
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "admin"), BOB: ("u-b", "user")})
     registry.create(hub, body(), actor="test")
     gs = store_for(hub)
-    # Not yet managed in the Console: the surface rule only.
-    mine = tc.get("/api/connections", headers={"x-test-user": BOB}).json()
-    assert mine[0]["allowed"] is True
-    gs.bootstrap([ALICE], authoritative=True)
+    gs.bootstrap([ALICE])
     mine = tc.get("/api/connections", headers={"x-test-user": BOB}).json()
     assert mine[0]["allowed"] is False
     r = tc.post("/api/connections/gmail/connect", json={}, headers={**SAME, "x-test-user": BOB})
@@ -336,6 +333,7 @@ def test_connect_refusals(hub, tc):
 def test_an_unreachable_server_fails_clearly(hub, tc):
     port = f.free_port()
     registry.create(hub, body(url=f"http://127.0.0.1:{port}/mcp"), actor="test")
+    f.grant_connector(hub, "gmail")
     r = tc.post("/api/connections/gmail/connect", json={}, headers=SAME)
     assert r.status_code == 502 and detail(r)["code"] == "unreachable"
     r = tc.post("/portal/api/connectors/gmail/test", headers=SAME)
@@ -346,6 +344,7 @@ def test_an_unreachable_server_fails_clearly(hub, tc):
 def test_a_connector_without_sign_in_connects_at_once(hub, tc):
     with f.bearer_mcp("docs", {}, {"lookup": lambda who: "found"}) as url:
         registry.create(hub, body(name="Docs", url=url, auth_type="none"), actor="test")
+        f.grant_connector(hub, "docs")
         r = tc.post("/portal/api/connectors/docs/test", headers=SAME)
         assert r.json()["ok"] is True and r.json()["requires_auth"] is False
         r = tc.post("/api/connections/docs/connect", json={}, headers=SAME)
@@ -421,6 +420,7 @@ def test_a_connect_needs_a_trusted_redirect_origin(hub, monkeypatch):
     built on a Host someone sent."""
     f.accounts(monkeypatch, hub, {ALICE: ("u-a", "user")})
     registry.create(hub, body(), actor="test")
+    f.grant_connector(hub, "gmail", ALICE)
     c = f.client_for(f.app_for(hub), "https://hub.example.org")
     r = c.post("/api/connections/gmail/connect", json={},
                headers={"origin": "https://hub.example.org", "x-test-user": ALICE})

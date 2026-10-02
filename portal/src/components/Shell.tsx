@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users, UsersRound } from "lucide-react";
-import { usesSignInLinks, type Me, type MeGroups } from "../api";
+import { History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { usesSignInLinks, type Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity" | "connectors" | "groups";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "connectors";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -23,9 +23,9 @@ function SignOutButton({ me }: { me: Me }) {
   async function onClick() {
     setBusy(true);
     try {
-      // The Hubzoid web app (the default mode; /me says so with one-time sign-in
-      // links and groups) owns the session: end it there, then show sign-in.
-      if (usesSignInLinks(me) || (me as { groups?: boolean }).groups === true) {
+      // The Hubzoid web app (the default mode; /me says so) owns the session:
+      // end it there, then show sign-in.
+      if (me.web_app === true || usesSignInLinks(me)) {
         const res = await fetch("/api/auth/logout", {
           method: "POST",
           credentials: "same-origin",
@@ -68,15 +68,13 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
-// Personal connections and groups are deployment-wide: organization
-// administrators only, and only in the Hubzoid web app (the legacy Open WebUI
-// mode mounts neither; `/me` reports `groups: true` in the web app mode).
+// Personal connections are deployment-wide: organization administrators only,
+// and only in the Hubzoid web app (`/me` reports `web_app: true`).
 const connectorsItem = { key: "connectors", icon: <Plug size={18} />, label: <a href={href("/connectors")}>Connectors</a> };
-const groupsItem = { key: "groups", icon: <UsersRound size={18} />, label: <a href={href("/groups")}>Groups</a> };
 
 function navItems(me: Me) {
-  if (!me.org_admin || (me as MeGroups).groups !== true) return items;
-  return [items[0], items[1], groupsItem, items[2], connectorsItem];
+  if (!me.org_admin || me.web_app !== true) return items;
+  return [...items, connectorsItem];
 }
 
 function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {

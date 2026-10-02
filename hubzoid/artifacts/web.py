@@ -51,7 +51,7 @@ _ORIGIN = re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$")
 
 class ShareEntry(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    kind: str = Field(pattern="^(user|group)$")
+    kind: str = Field(default="user", pattern="^user$")
     principal: str = Field(min_length=1, max_length=320)
 
 
@@ -181,15 +181,12 @@ def build_router(hub_dir) -> APIRouter:
         except arts.ArtifactError:
             out["preview"] = None
         if who == "owner" and not public:
-            managed = arts.hub_managed(hub_dir, art.hub)
             out["sharing"] = dict(
                 audience=art.audience, people=arts.shares(hub_dir, art.id),
                 link=arts.active_link(hub_dir, art.id),
                 can_public_link=arts.can_create_link(hub_dir, art, art.owner),
                 public_link_hint=_public_link_hint(),
-                hub_managed=managed, default_days=arts.link_days(),
-                unmanaged_note=("Not available: this agent's access is still managed in "
-                                "the chat app." if not managed else ""))
+                default_days=arts.link_days())
         return out
 
     def refused(exc: arts.ArtifactError):

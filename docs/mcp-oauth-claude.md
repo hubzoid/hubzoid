@@ -47,7 +47,7 @@ MCP_PUBLIC_URL=https://your-domain.example/b/your-hub-slug/mcp
 ```
 
 Use the exact URL exposed by the edge, without a trailing slash. Every gateway
-hub has its own setting. Keep existing access grants or `MCP_ACCESS_GROUP` rules.
+hub has its own setting. Keep existing access grants.
 OAuth does not grant someone access to a hub they could not already use.
 
 Restart your existing `hubzoid run <hub-folder>` or `hubzoid gateway ...` service.

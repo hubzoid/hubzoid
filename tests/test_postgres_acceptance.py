@@ -46,35 +46,6 @@ def test_postgres_concurrent_admin_revocation_and_policy_refresh(postgres_url):
             e.dispose()
 
 
-def test_postgres_migration_atomicity_and_hub_isolation(postgres_url):
-    engine = create_engine(postgres_url)
-    try:
-        gs = GrantStore(engine)
-        gs.grant("retained", "other", "use_hub")
-        barrier = threading.Barrier(2)
-
-        def cutover(hub):
-            barrier.wait()
-            gs.apply_migration([(hub + "@example.com", hub, "ledger")], [], [hub])
-
-        with ThreadPoolExecutor(2) as pool:
-            futures = [pool.submit(cutover, hub) for hub in ("alpha", "beta")]
-            for f in futures:
-                f.result(timeout=15)
-        assert gs.can("alpha@example.com", "alpha", "ledger")
-        assert not gs.can("alpha@example.com", "beta", "ledger")
-        assert gs.can("retained", "other", "use_hub")
-        snapshot = gs.snapshot(["alpha"])
-        gs.restore(snapshot, actor="test")
-        assert gs.snapshot(["alpha"]) == snapshot
-        with engine.connect() as conn:
-            assert (
-                conn.execute(text("SELECT count(*) FROM hz_access_audit")).scalar() > 0
-            )
-    finally:
-        engine.dispose()
-
-
 @pytest.mark.slow
 def test_postgres_dbos_recovers_after_process_exit(postgres_url, tmp_path):
     import os
@@ -271,27 +242,6 @@ def test_postgres_access_history_retains_timestamp_precision(postgres_url):
         engine.dispose()
 
 
-def test_postgres_same_hub_cutovers_do_not_merge_plans(postgres_url):
-    engine = create_engine(postgres_url)
-    try:
-        store = GrantStore(engine)
-        barrier = threading.Barrier(2)
-
-        def cutover(subject):
-            barrier.wait()
-            store.apply_migration(
-                [(subject, "concurrent-hub", "ledger")], [], ["concurrent-hub"]
-            )
-
-        with ThreadPoolExecutor(2) as pool:
-            futures = [pool.submit(cutover, s) for s in ("migration-a", "migration-b")]
-            for future in futures:
-                future.result(timeout=15)
-        assert len({s for s, _, _ in store.list_grants("concurrent-hub")}) == 1
-    finally:
-        engine.dispose()
-
-
 @pytest.mark.slow
 def test_postgres_same_named_workflows_are_hub_scoped(postgres_url, tmp_path):
     import os
@@ -451,54 +401,3 @@ def _seed_owui_sqlite(path, users, grants):
     con.close()
 
 
-def test_explicit_migration_on_postgres_operational_store(postgres_url, tmp_path, monkeypatch):
-    """The EXPLICIT migration path (the manual maintenance procedure's cutover) on a
-    PostgreSQL operational store: plan_from_owui + apply(authoritative=True) preserves
-    allowed/denied access and the per-hub authority marker; snapshot/restore rolls it
-    back to legacy. This is the real cutover primitive on the real storage config."""
-    from sqlalchemy import create_engine as _ce
-
-    import hubzoid.access as access
-    from hubzoid.access import migrate
-
-    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", postgres_url)
-    for var in ("HUBZOID_OWUI_DB", "HUBZOID_OWUI_DB_URL", "HUBZOID_DEPLOYMENT", "WEBUI_URL"):
-        monkeypatch.delenv(var, raising=False)
-    # Virgin operational store: other tests share this one Postgres DB.
-    eng = create_engine(postgres_url)
-    with eng.begin() as conn:
-        tables = conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'hz\\_%'")).scalars().all()
-        for t in tables:  # every Hubzoid table, including ones added by later migrations
-            conn.execute(text(f"DROP TABLE IF EXISTS {t} CASCADE"))
-    eng.dispose()
-    access._stores.clear()
-    from hubzoid import migrations
-
-    migrations._done.clear()
-
-    d = tmp_path / "pghub"
-    (d / "restricted").mkdir(parents=True)
-    _seed_owui_sqlite(
-        d / ".openwebui-data" / "webui.db",
-        [("uadmin", "admin@pg.io", "admin"), ("uann", "ann@pg.io", "user"), ("udan", "dan@pg.io", "user")],
-        [("model", "m1", "user", "uann", "read")],
-    )
-    gs = access.store_for(d)
-    gs.bootstrap(["admin@pg.io"], authoritative=False)  # dashboard admin, explicit
-    source = _ce(f"sqlite:///{(d / '.openwebui-data' / 'webui.db').resolve()}")
-    try:
-        plan = migrate.plan_from_owui(source, "pghub", model_id="m1", permissions=["use_hub"])
-    finally:
-        source.dispose()
-    snap_before = gs.snapshot(["pghub"])  # backup for rollback
-    migrate.apply(gs, plan, authoritative=True)  # the cutover
-    assert gs.is_authoritative("pghub")
-    assert gs.can("ann@pg.io", "pghub", "use_hub")      # allowed preserved
-    assert not gs.can("dan@pg.io", "pghub", "use_hub")  # denied preserved
-    assert gs.can("admin@pg.io", "*", "manage_access")  # dashboard admin
-    # Rollback to legacy via the snapshot; restart (new store) leaves it rolled back.
-    gs.restore(snap_before, actor="operator-rollback")
-    assert gs.is_authoritative("pghub") is False
-    access._stores.clear()
-    assert access.store_for(d).is_authoritative("pghub") is False

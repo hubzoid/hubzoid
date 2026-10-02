@@ -31,6 +31,7 @@ def team(tmp_path, monkeypatch):
     (d / "AGENTS.md").write_text("---\nname: team\n---\nbody")
     for who in (ALICE, "bob@company.com"):
         store_for(d).upsert_identity(email=who, owui_id="id-" + who)
+        store_for(d).grant(who, "team", "use_hub", actor="test")
     return d
 
 

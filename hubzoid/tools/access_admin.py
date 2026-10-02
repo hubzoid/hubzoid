@@ -135,7 +135,6 @@ def make(ctx) -> list:
     from ..access.store import EVERYONE
 
     service = AccessService(hub_dir)
-    hub_key = normalize(hub_dir.name)
     grant_free = legacy()
     if grant_free:
         _warn_legacy()
@@ -148,9 +147,6 @@ def make(ctx) -> list:
         if ident.surface not in TOOL_SURFACES:
             return None, f"Access can't be managed from {ident.surface}."
         try:
-            if not service.store.is_authoritative(hub_key):
-                return None, ("Access for this agent is still managed in the chat app, so "
-                              "it can't be managed from here.")
             if not grant_free:
                 # The grant in the agent where the chat runs, decided like any
                 # guarded tool (surface, block, grant; fail closed).
@@ -249,9 +245,6 @@ def make(ctx) -> list:
         rows = [r for r in view["rows"] if r["subject"] != EVERYONE]
         lines = [f"{hub}: {len(rows)} " + ("person or service has" if len(rows) == 1 else
                                           "people and services have") + " access."]
-        if not view["authoritative"]:
-            lines.append("Access to this agent is still managed in the chat app, so this list "
-                         "may not match who can use it.")
         if view["public"]:
             reliant = view["public_reliant"]
             lines.append("Everyone signed in can use this agent" + (
@@ -314,9 +307,7 @@ def make(ctx) -> list:
                          + " Their grants are kept:")
         for entry in held:
             known = names(entry["hub"])
-            lines.append(f"In {entry['hub']}:" + ("" if entry["authoritative"] else
-                         " (access still managed in the chat app, so this may not match what "
-                         "they can use)"))
+            lines.append(f"In {entry['hub']}:")
             for cap in entry["capabilities"]:
                 lines.append(f"- {labelled(entry['hub'], [cap['permission']], known)}: "
                              + ", ".join(_SOURCE_WORDS[s] for s in cap["sources"]))

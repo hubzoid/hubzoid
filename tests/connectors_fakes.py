@@ -51,6 +51,15 @@ def make_hub(root: Path, name: str) -> Path:
     return hub
 
 
+def grant_connector(hub: Path, connector_id: str, *emails: str) -> None:
+    """Give people a connector's capability in this hub (Console grants).
+    Default: the local owner."""
+    from hubzoid.access import store_for
+
+    for email in emails or (OWNER,):
+        store_for(hub).grant(email, Path(hub).name, "connector_" + connector_id, actor="test")
+
+
 def free_port(taken: set[int] | None = None) -> int:
     for port in PORTS:
         if taken and port in taken:
@@ -124,6 +133,9 @@ class OAuthMcp:
 
         if users.find_by_email(hub, self.email) is None:
             users.create(hub, email=self.email, name="MCP server owner", role="admin")
+        from hubzoid.access import store_for
+
+        store_for(hub).grant(self.email, hub.name, "use_hub", actor="test")
         self._mp = pytest.MonkeyPatch()
         self._mp.setenv("HUBZOID_OWUI_DB", str(owui))
         self._mp.setenv("MCP_SERVER", "true")

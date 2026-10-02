@@ -99,30 +99,27 @@ def account(hub_dir, *, email=None, account_id=None):
         con.close()
 
 
-def allowed(hub_dir, email, access_group=None):
+def allowed(hub_dir, email):
+    """May `email` use this hub over MCP: not blocked and holding `use_hub`.
+    Fails closed."""
     from .access.store import USE_HUB
 
     try:
         gs = access.store_for(hub_dir)
         if gs.is_suspended(email):
             return False
-        if gs.is_authoritative(hub_dir.name):
-            return gs.can(email, hub_dir.name, USE_HUB)
-        return not access_group or access.normalize(
-            access_group
-        ) in access.owui_groups.resolve_groups(hub_dir, email)
+        return gs.can(email, hub_dir.name, USE_HUB)
     except Exception:
         return False
 
 
 class HubOAuth(OAuthProvider):
-    def __init__(self, hub_dir, resource, access_group=None):
+    def __init__(self, hub_dir, resource):
         self.hub_dir = hub_dir
         self.resource = validate_public_url(resource)
         self.issuer = self.resource + "/oauth"
         self.public_path = urlsplit(self.issuer).path
         self.origin = self.resource.removesuffix(urlsplit(self.resource).path)
-        self.access_group = access_group
         self.store = OAuthStore(hub_dir, self.resource)
         super().__init__(
             base_url=self.issuer,
@@ -224,7 +221,7 @@ class HubOAuth(OAuthProvider):
         if (
             not who
             or who["email"] != g["email"]
-            or not allowed(self.hub_dir, who["email"], self.access_group)
+            or not allowed(self.hub_dir, who["email"])
         ):
             return None
         return g

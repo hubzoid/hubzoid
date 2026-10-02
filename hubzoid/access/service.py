@@ -53,9 +53,6 @@ Rules (checked on every write, from the store, never from the caller):
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
-  * A group (`group:<id>`, see `hubzoid.groups`) is given access like a person,
-    by organization administrators only, and only agent access: never Manage
-    access. The group must exist.
   * Reads follow the same scope: `hub_access` and `person_access` cover only
     agents the actor manages (every agent for organization administrators).
   * Store or directory errors deny (fail closed).
@@ -86,8 +83,6 @@ from .store import (
     USE_HUB,
     LastAdminError,
     RevisionConflict,
-    group_id_of,
-    is_group_subject,
 )
 
 log = logging.getLogger("hubzoid.access")
@@ -105,11 +100,6 @@ _RETRYABLE = frozenset({"rejected", "invalid_password"})
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
-LEGACY_MSG = (
-    "This agent's access is still managed in the chat app — it has not been migrated "
-    "to the dashboard. Migrate the agent first; edits made here would not take effect "
-    "and would be overwritten by migration."
-)
 UNAVAILABLE_MSG = (
     "This account is unavailable in the chat app (awaiting approval or removed). "
     "Approve or restore it in Open WebUI, then refresh accounts."
@@ -351,24 +341,13 @@ class AccessService:
         return frozenset((held & (delegable | obsolete)) - {MANAGE_ACCESS})
 
     def grantable(self, actor: Actor) -> dict[str, list[str]]:
-        """{hub: [permission]} this actor may grant, for every hub they manage.
-        A hub whose access is still in the chat app (legacy) grants nothing."""
+        """{hub: [permission]} this actor may grant, for every hub they manage."""
         scope = self.scope(actor)
-        out: dict[str, list[str]] = {}
-        gs = self.store
-        for hub in scope.hubs:
-            if not gs.is_authoritative(hub):
-                out[hub] = []
-                continue
-            out[hub] = sorted(self._ceiling(actor, scope, hub))
-        return out
+        return {hub: sorted(self._ceiling(actor, scope, hub)) for hub in scope.hubs}
 
     def can_create_accounts(self, actor: Actor) -> bool:
         scope = self.scope(actor)
-        if scope.org_admin:
-            return True
-        gs = self.store
-        return any(gs.is_authoritative(h) for h in scope.hubs)
+        return scope.org_admin or bool(scope.hubs)
 
     # ---- reading access -----------------------------------------------------------
 
@@ -388,7 +367,7 @@ class AccessService:
         resolved it for this request (the Console does, per request); by
         default it is read from the store.
 
-        Returns hub, authoritative, revision, public, public_reliant and rows
+        Returns hub, revision, public, public_reliant and rows
         sorted by subject. A row is a subject holding something in `hub`, or an
         organization administrator: subject, perms (direct grants here),
         inherited (organization-wide grants), kind (person|service), center,
@@ -399,22 +378,10 @@ class AccessService:
         is not defeated by new rows arriving under an old revision."""
         hub = self._readable(self.scope(actor) if scope is None else scope, hub)
         gs = self.store
-        # One consistent read of (revision, every grant, every group): the
-        # returned revision describes exactly the rows below, so the editor's
-        # concurrency guard is not defeated by new rows arriving under an old
-        # revision (or the reverse).
-        revision, all_grants, groups = gs.access_snapshot_with_groups()
-        # Access held through groups here: a group's grants in this hub (never
-        # Manage access), and each member's groups.
-        group_perms: dict[str, set[str]] = {}
-        for subject, domain, perm in all_grants:
-            gid = group_id_of(subject)
-            if gid is not None and domain == hub and perm != MANAGE_ACCESS:
-                group_perms.setdefault(gid, set()).add(perm)
-        member_of: dict[str, list[str]] = {}
-        for gid, g in groups.items():
-            for email in g["members"]:
-                member_of.setdefault(email, []).append(gid)
+        # One consistent read of (revision, every grant): the returned revision
+        # describes exactly the rows below, so the editor's concurrency guard is
+        # not defeated by new rows arriving under an old revision (or the reverse).
+        revision, all_grants = gs.access_snapshot()
         rows = {}
         for subject, domain, perm in all_grants:
             if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
@@ -424,43 +391,20 @@ class AccessService:
                         subject=subject,
                         perms=[],
                         inherited=[],
-                        kind="group" if group_id_of(subject) is not None else ("service" if subject.startswith("workflow:") else "person"),
+                        kind="service" if subject.startswith("workflow:") else "person",
                     ),
                 )
                 row["perms" if domain == hub else "inherited"].append(perm)
-        # Everyone who can use this agent through a group is listed too, so the
-        # list answers "who has access", with the group named on each capability.
-        for gid, perms in group_perms.items():
-            for email in groups.get(gid, {}).get("members", ()):
-                rows.setdefault(email, dict(subject=email, perms=[], inherited=[], kind="person"))
-
-        def via_groups(subject: str) -> dict[str, list[str]]:
-            out: dict[str, list[str]] = {}
-            for gid in member_of.get(subject, ()):
-                for perm in group_perms.get(gid, ()):
-                    out.setdefault(perm, []).append(groups[gid]["name"])
-            return {p: sorted(names) for p, names in out.items()}
-
         def effective_for(subject: str) -> list[str]:
             # Mirrors GrantStore.permissions_for over the same snapshot: direct +
-            # org-wide + public wildcard + groups. Suspended subjects hold nothing.
-            held = {
+            # org-wide + public wildcard. Suspended subjects hold nothing.
+            return sorted({
                 p
                 for (s, h, p) in all_grants
                 if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
-            }
-            return sorted(held | set(via_groups(subject)))
+            })
 
         for subject, row in rows.items():
-            gid = group_id_of(subject)
-            if gid is not None:
-                # A group: its own grants, its name and size. Never blocked.
-                group = groups.get(gid)
-                row.update(display=group["name"] if group else "Deleted group", group_id=gid,
-                           members=len(group["members"]) if group else 0, status="group",
-                           suspended=False, account_unavailable=False, blocked=False,
-                           center=None, effective=sorted(set(row["perms"])))
-                continue
             row["center"] = gs.get_attr(hub, subject, "center")
             identity = gs.identity(subject) or {}
             row["display"] = identity.get("display") or subject
@@ -470,9 +414,6 @@ class AccessService:
             # suspension OR an unavailable chat account) holds nothing, though its
             # direct grants are preserved separately in `perms`.
             row["effective"] = [] if state["blocked"] else effective_for(subject)
-            held_via = {} if state["blocked"] else via_groups(subject)
-            if held_via:
-                row["via_groups"] = held_via
         public = any(
             s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
             for (s, h, p) in all_grants
@@ -483,16 +424,13 @@ class AccessService:
         public_reliant = 0
         if public:
             direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
-            # Entry through a group is not reliance on "everyone signed in".
-            direct |= {email for email, gids in member_of.items()
-                       if any(USE_HUB in group_perms.get(g, ()) for g in gids)}
             for ident in gs.identities():
                 subject = ident["subject"]
                 if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
                         and not subject.startswith("workflow:") and subject not in direct
                         and not gs.is_suspended(subject)):
                     public_reliant += 1
-        return dict(hub=hub, authoritative=gs.is_authoritative(hub), revision=revision,
+        return dict(hub=hub, revision=revision,
                     public=public, public_reliant=public_reliant,
                     rows=sorted(rows.values(), key=lambda r: r["subject"]))
 
@@ -504,7 +442,7 @@ class AccessService:
         Returns subject, display, kind, organization_admin (holds the
         organization-wide grant), the account flags and status, revision and
         hubs: one entry per agent in scope, in deployment order, with hub,
-        name, authoritative, capabilities ([{permission, sources}], from the
+        name, capabilities ([{permission, sources}], from the
         grants) and effective (what the enforcer allows now: nothing while
         blocked).
 
@@ -521,10 +459,9 @@ class AccessService:
         hubs = [self._readable(scope, hub)] if hub else list(scope.hubs)
         names = {h["key"]: h.get("name") or h["key"] for h in self._hubs()}
         gs = self.store
-        revision, all_grants, groups = gs.access_snapshot_with_groups()
-        memberships = {"group:" + gid for gid, group in groups.items() if subject in group["members"]}
+        revision, all_grants = gs.access_snapshot()
         managed = set(scope.hubs)
-        known = scope.org_admin or any((s == subject or s in memberships) and h in managed for s, h, _p in all_grants)
+        known = scope.org_admin or any(s == subject and h in managed for s, h, _p in all_grants)
         if not known:
             hidden = dict(suspended=None, account_unavailable=None, blocked=None, status=None)
             entries = []
@@ -534,7 +471,7 @@ class AccessService:
                 public = {p: ["everyone"] for p, src in _sources(all_grants, subject, key).items()
                           if "everyone" in src}
                 entries.append(dict(
-                    hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
+                    hub=key, name=names.get(key, key),
                     capabilities=[dict(permission=p, sources=s) for p, s in public.items()],
                     effective=None,
                 ))
@@ -547,11 +484,8 @@ class AccessService:
         entries = []
         for key in hubs:
             sources = _sources(all_grants, subject, key)
-            for member, domain, permission in all_grants:
-                if member in memberships and domain == key and permission != MANAGE_ACCESS:
-                    sources.setdefault(permission, []).append(member)
             entries.append(dict(
-                hub=key, name=names.get(key, key), authoritative=gs.is_authoritative(key),
+                hub=key, name=names.get(key, key),
                 capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],
                 effective=[] if state["blocked"] else sorted(sources),
             ))
@@ -578,8 +512,6 @@ class AccessService:
             raise Denied(422, "invalid_subject", "a person or service is required")
         if any(a not in ("grant", "revoke") for a, _ in ops):
             raise Denied(422, "invalid_action", "Each change must grant or revoke")
-        if is_group_subject(subject):
-            self._check_group(scope, subject, hub, ops)
         if hub == ORG:
             if not scope.org_admin or subject == EVERYONE or any(
                 p != MANAGE_ACCESS for _, p in ops
@@ -590,8 +522,6 @@ class AccessService:
         if not scope.org_admin and hub not in scope.hubs:
             raise Denied(403, "forbidden", f"Cannot manage {hub}")
         self._hub_path(hub)
-        if not gs.is_authoritative(hub):
-            raise Denied(409, "legacy", LEGACY_MSG)
         entries = {e["permission"]: e for e in self.catalog(hub)}
         existing = None
         for action, p in ops:
@@ -615,35 +545,13 @@ class AccessService:
                              "Only organization admins may remove access for everyone signed in")
         if not scope.org_admin:
             self._check_delegate(actor, scope, subject, hub, ops)
-        if any(a == "grant" for a, _ in ops) and not is_group_subject(subject):
+        if any(a == "grant" for a, _ in ops):
             flags = _account_flags(gs, subject)
             if flags["suspended"]:
                 raise Denied(409, "blocked", "This person is blocked, so they can't be given access.")
             if flags["account_unavailable"] and not new_account:
                 raise Denied(409, "unavailable", UNAVAILABLE_MSG)
         return ops
-
-    def _check_group(self, scope: Scope, subject: str, hub: str,
-                     ops: list[tuple[str, str]]) -> None:
-        """A group grantee: organization administrators only, agent access
-        only, and the group must exist (checked again inside the write)."""
-        if not scope.org_admin:
-            raise Denied(403, "forbidden",
-                         "Only organization administrators can give access to a group.")
-        if hub == ORG or any(p == MANAGE_ACCESS for _, p in ops):
-            raise Denied(422, "group_admin",
-                         "A group can't hold Manage access. Give it to people individually.")
-        gid = group_id_of(subject)
-        try:
-            exists = gid is not None and self.store.group(gid) is not None
-        except Denied:
-            raise
-        except Exception:  # noqa: BLE001 — fail closed
-            log.exception("access service: group lookup failed")
-            raise Denied(503, "store_unavailable",
-                         "Access data is unavailable. Try again shortly.")
-        if not exists:
-            raise Denied(404, "unknown_group", "This group doesn't exist. It may have been deleted.")
 
     def _check_delegate(self, actor: Actor, scope: Scope, subject: str, hub: str,
                         ops: list[tuple[str, str]]) -> None:
@@ -1067,7 +975,7 @@ class AccessService:
         account is gone (organization administrators only)."""
         scope = self._require_scope(actor)
         if not scope.org_admin:
-            if not any(self.store.is_authoritative(h) for h in scope.hubs):
+            if not scope.hubs:
                 raise Denied(403, "forbidden",
                              "Creating accounts needs an agent whose access you manage here.")
             if not by_hub:
@@ -1411,7 +1319,7 @@ class AccessService:
     def delete_account(self, actor: Actor, subject: str) -> None:
         """Delete a user: every grant (`revoke_all`), then their chat account
         through the chat app's own delete, which also removes their chats,
-        shared chat links and group memberships. Kept: the identity row (marked
+        shared chat links. Kept: the identity row (marked
         removed, so the email inherits nothing and only an organization
         administrator can re-create it), Activity history, usage records and
         artifacts they saved (their public links stop working with the owner's

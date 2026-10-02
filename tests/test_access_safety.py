@@ -1,6 +1,5 @@
 """Imports and rollback must preserve the same boundaries as individual grants."""
 
-import copy
 
 import pytest
 from sqlalchemy import create_engine
@@ -30,30 +29,6 @@ def test_bulk_rejects_reserved_scope_atomically(store, row):
     assert store.list_grants() == []
 
 
-def test_migration_cannot_escape_target_hubs(store):
-    store.grant("existing", "finance", "ledger")
-    before = store.list_grants()
-    with pytest.raises(ValueError):
-        store.apply_migration([("alice", "ops", "ledger")], [], ["finance"])
-    assert store.list_grants() == before
-
-
-@pytest.mark.parametrize("corrupt", ["authority", "public_admin", "attribute_scope"])
-def test_invalid_rollback_leaves_state_untouched(store, corrupt):
-    store.grant("alice", "finance", "ledger")
-    snapshot = store.snapshot(["finance"])
-    bad = copy.deepcopy(snapshot)
-    if corrupt == "authority":
-        bad["authority"]["finance"] = "false"
-    elif corrupt == "public_admin":
-        bad["grants"].append(("*", "finance", "manage_access"))
-    else:
-        bad["attrs"].append(["ops", "alice", "center", "other"])
-    with pytest.raises(ValueError):
-        store.restore(bad, actor="operator")
-    assert store.snapshot(["finance"]) == snapshot
-
-
 def test_deployment_rejects_split_configuration(tmp_path, monkeypatch):
     hub = tmp_path / "finance"
     hub.mkdir()
@@ -74,76 +49,6 @@ def test_deployment_rejects_split_configuration(tmp_path, monkeypatch):
             tmp_path / "other",
             {"HUBZOID_DEPLOYMENT": str(tmp_path / "deployment.json")},
         )
-
-
-def test_visibility_restore_keeps_non_access_fields(tmp_path, monkeypatch):
-    from contextlib import contextmanager
-    import json
-    import httpx
-    from hubzoid.access import owui
-    from hubzoid.access.reconcile import restore_visibility
-
-    writes = []
-    current = dict(
-        id="finance",
-        name="Updated name",
-        meta={"description": "kept"},
-        params={},
-        is_active=True,
-    )
-
-    def handle(request):
-        if request.method == "GET":
-            return httpx.Response(200, json=current)
-        writes.append(json.loads(request.content))
-        return httpx.Response(200, json={})
-
-    @contextmanager
-    def client(_):
-        with httpx.Client(
-            base_url="http://owui", transport=httpx.MockTransport(handle)
-        ) as c:
-            yield c
-
-    monkeypatch.setattr(owui, "client_for", client)
-    grants = [
-        dict(principal_type="group", principal_id="legacy-team", permission="read")
-    ]
-    restore_visibility(tmp_path, dict(model_id="finance", access_grants=grants))
-    assert writes == [{**current, "access_grants": grants}]
-
-
-def test_cli_rollback_retries_visibility_failure(tmp_path, monkeypatch):
-    import json
-    from typer.testing import CliRunner
-    from hubzoid.access import store_for, reconcile
-    from hubzoid.cli import app
-
-    gs = store_for(tmp_path)
-    gs.grant("legacy", tmp_path.name, "use_hub")
-    backup = gs.snapshot([tmp_path.name])
-    backup["owui_visibility"] = dict(model_id="agent", access_grants=[])
-    path = tmp_path / "backup.json"
-    path.write_text(json.dumps(backup))
-    gs.grant("new", tmp_path.name, "ledger")
-    gs.set_authoritative(True, hub=tmp_path.name)
-    calls = []
-
-    def restore(hub, snapshot):
-        calls.append(snapshot)
-        if len(calls) == 1:
-            raise RuntimeError("OWUI temporarily unavailable")
-
-    monkeypatch.setattr(reconcile, "restore_visibility", restore)
-    result = CliRunner().invoke(app, ["access", "rollback", str(path), str(tmp_path)])
-    assert result.exit_code == 1, result.output
-    assert "maintenance window open" in result.output
-    assert not gs.is_authoritative(tmp_path.name)
-    assert not gs.can("new", tmp_path.name, "ledger")
-    result = CliRunner().invoke(app, ["access", "rollback", str(path), str(tmp_path)])
-    assert result.exit_code == 0, result.output
-    assert len(calls) == 2
-    assert gs.can("legacy", tmp_path.name, "use_hub")
 
 
 def test_schema_cache_tracks_engine_lifetime():
@@ -205,7 +110,6 @@ def test_chat_account_binding_denies_recycled_email(tmp_path):
     gs = store_for(tmp_path)
     gs.upsert_identity(email="person@example.com", owui_id="original")
     gs.grant("person@example.com", tmp_path.name, "use_hub")
-    gs.set_authoritative(True, hub=tmp_path.name)
     request = Request(
         {
             "type": "http",

@@ -50,14 +50,18 @@ def hub(tmp_path, monkeypatch):
 
 @pytest.fixture
 def tc(hub):
-    return f.client_for(f.app_for(hub, journeys=True), APP)
+    client = f.client_for(f.app_for(hub, journeys=True), APP)
+    client.hub = hub
+    return client
 
 
 def add_connector(tc, server, **extra) -> str:
     r = tc.post("/portal/api/connectors", json={"name": "Team hub", "url": server.url, **extra},
                 headers=SAME)
     assert r.status_code == 201, r.text
-    return r.json()["connector"]["id"]
+    cid = r.json()["connector"]["id"]
+    f.grant_connector(tc.hub, cid)
+    return cid
 
 
 def start(tc, cid, **body) -> str:
@@ -323,6 +327,7 @@ def test_another_account_cannot_finish_someone_elses_authorization(hub, tc, serv
                 headers={**SAME, "x-test-user": alice})
     assert r.status_code == 201, r.text
     cid = r.json()["connector"]["id"]
+    f.grant_connector(hub, cid, alice, bob)
     r = tc.post(f"/api/connections/{cid}/connect",
                 json={"return_to": "/account/connections?mine=1"},
                 headers={**SAME, "x-test-user": alice})

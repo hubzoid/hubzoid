@@ -194,9 +194,7 @@ def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool
                 if user.get("role") == "admin" and email == owner:
                     for h in deployment.hubs(hub_dir):
                         path = Path(h["path"])
-                        store_for(path).provision_owner(
-                            email, h["key"], fresh=(path / ".hubzoid" / "fresh-install").exists()
-                        )
+                        store_for(path).provision_owner(email, h["key"])
             return email
     except HTTPException:
         raise

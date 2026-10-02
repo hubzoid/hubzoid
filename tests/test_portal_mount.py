@@ -26,7 +26,7 @@ def test_mount_serves_api_and_static(tmp_path, monkeypatch):
     assert c.get("/portal/api/me").status_code == 401
 
     # dev user that is an org admin -> 200 (dev override is a two-part opt-in)
-    access.store_for(tmp_path).bootstrap(["dev@corp"], authoritative=True)
+    access.store_for(tmp_path).bootstrap(["dev@corp"])
     monkeypatch.setenv("HUBZOID_PORTAL_DEV_USER", "dev@corp")
     # DEV_USER alone is not trusted without the explicit DEV flag
     monkeypatch.delenv("HUBZOID_PORTAL_DEV", raising=False)

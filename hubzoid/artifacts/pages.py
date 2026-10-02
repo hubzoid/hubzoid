@@ -142,14 +142,14 @@ function openShare(){
     const d = el('div'); d.append(el('div', {}, label)); if (help) d.append(el('small', {}, help));
     l.append(i, d); p.append(l); return i; };
   opt('owner', 'Only you', '', true);
-  opt('people', 'Specific people or groups', s.hub_managed ? 'People who can use this agent.' : s.unmanaged_note, s.hub_managed);
-  opt('hub', 'Anyone with access to this agent', s.hub_managed ? 'Everyone who can currently use it.' : s.unmanaged_note, s.hub_managed);
+  opt('people', 'Specific people', 'People who can use this agent.', true);
+  opt('hub', 'Anyone with access to this agent', 'Everyone who can currently use it.', true);
   opt('link', 'Anyone with the link', s.can_public_link ? 'No sign-in. Anyone who has the link can view it.' : (s.public_link_hint || 'You do not have permission to create public links here.'), s.can_public_link);
   const peopleBox = el('div');
-  peopleBox.append(el('label', {for:'share-people', class:'field'}, 'People or groups who can view it'));
+  peopleBox.append(el('label', {for:'share-people', class:'field'}, 'People who can view it'));
   const people = el('textarea', {id:'share-people', 'aria-describedby':'share-people-hint', placeholder:'name@company.com'});
-  people.value = s.people.map(x => x.kind === 'group' ? 'group:' + x.principal : x.principal).join('\n');
-  peopleBox.append(people, el('small', {id:'share-people-hint'}, 'One per line: an email address, or group:name for a group. Each must be able to use this agent.'));
+  people.value = s.people.map(x => x.principal).join('\n');
+  peopleBox.append(people, el('small', {id:'share-people-hint'}, 'One email address per line. Each must be able to use this agent.'));
   p.append(peopleBox);
   const linkArea = el('div'); p.append(linkArea);
   const save = el('button', {class:'primary'}, 'Save');
@@ -187,8 +187,7 @@ function openShare(){
     if (v === 'link') {
       if (meta.sharing && meta.sharing.link) { status('The public link is on. Use Create new link to replace it, or Turn off link.'); return; }
       return makeLink(); }
-    const list = people.value.split('\n').map(x => x.trim()).filter(Boolean).map(x =>
-      x.toLowerCase().startsWith('group:') ? {kind:'group', principal: x.slice(6).trim()} : {kind:'user', principal: x});
+    const list = people.value.split('\n').map(x => x.trim()).filter(Boolean).map(x => ({kind:'user', principal: x}));
     try { await post(cfg.api + '/audience', {audience: v, people: v === 'people' ? list : []});
       meta = await (await fetch(cfg.api, {credentials:'same-origin'})).json(); status('Saved.'); }
     catch (e) { status(e.message); } });

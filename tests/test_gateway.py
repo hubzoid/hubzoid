@@ -343,9 +343,8 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
 @pytest.mark.parametrize("database_url", [None, "postgresql+psycopg://test@localhost/shared"])
 def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_url):
     """Each bridge is told where the SHARED gateway DB lives (HUBZOID_OWUI_DB),
-    so the restricted-tool group lookup (access.owui_groups) reads the gateway's
-    webui.db — not the nonexistent per-hub .openwebui-data/webui.db. Without
-    this, restricted-tool access is dead in gateway mode."""
+    so Open WebUI account lookups (API keys, personal connections) read the
+    gateway's webui.db, not the nonexistent per-hub .openwebui-data/webui.db."""
     sales, support = tmp_path / "sales", tmp_path / "support"
     if database_url:
         monkeypatch.setenv("DATABASE_URL", database_url)

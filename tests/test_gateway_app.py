@@ -21,7 +21,6 @@ from typer.testing import CliRunner
 import hubzoid.access as access
 import hubzoid.db as db
 from hubzoid import cli, deployment, edge, gateway, secretbox, webapp_gateway
-from hubzoid.access.store import group_subject
 from hubzoid.auth import AuthUser
 
 _ENV = ("HUBZOID_UI", "HUBZOID_AUTH", "WEBUI_AUTH", "HUBZOID_SECRET_KEY", "HUBZOID_DEPLOYMENT",
@@ -278,7 +277,7 @@ def deployment_hubs(tmp_path, monkeypatch):
                     operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="", owui_db="",
                     ui_mode="hubzoid", auth=True, name="Acme", branding_dir=str(gw / "branding"))
     gs = access.store_for(sales)
-    gs.bootstrap(["boss@example.org"], authoritative=True, hub="sales")
+    gs.bootstrap(["boss@example.org"])
     return sales, support, gw, gs
 
 
@@ -298,13 +297,13 @@ def test_agents_span_the_deployment_per_person(deployment_hubs, monkeypatch):
     monkeypatch.setattr("hubzoid.auth.sessions.resolve", resolve)
     c = TestClient(app)
 
-    body = c.get("/api/agents").json()   # sales is managed: ann has no entry yet
+    gs.grant("ann@example.org", "support", "use_hub", actor="boss@example.org")
+    body = c.get("/api/agents").json()   # ann has no entry to sales yet
     assert [a["id"] for a in body["agents"]] == ["support-agent"]
     assert body["agents"][0]["api_base"] == "/b/support"
     assert body["default_agent"] == "support-agent"
 
-    g = gs.create_group("Sales team", actor="boss@example.org", emails=["ann@example.org"])
-    gs.grant(group_subject(g["id"]), "sales", "use_hub", actor="boss@example.org")
+    gs.grant("ann@example.org", "sales", "use_hub", actor="boss@example.org")
     agents = c.get("/api/agents").json()["agents"]
     assert [a["id"] for a in agents] == ["sales-agent", "support-agent"]
     sales_card = agents[0]
@@ -359,6 +358,9 @@ def test_single_hub_keeps_its_own_agent_and_branding(tmp_path, monkeypatch):
     (hub / "branding" / "favicon.png").write_bytes(b"fav")
     eng = create_engine(f"sqlite:///{tmp_path / 'op.db'}")
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("admin@localhost", "solo", "use_hub", actor="t")  # provisioned at start
     app = FastAPI()
     webapp_gateway.mount(app, hub, model_label="solo-label")
     c = TestClient(app)   # local mode: the local owner
@@ -467,13 +469,13 @@ def test_web_app_edge_falls_back_to_the_next_bridge(monkeypatch):
     assert seen[-1].content == b'{"email":"a@example.org"}'
 
 
-def test_legacy_edge_keeps_every_open_webui_rewrite(monkeypatch):
+def test_open_webui_edge_keeps_every_open_webui_rewrite(monkeypatch):
     monkeypatch.setenv("HUBZOID_HIDE_OWUI_USERS", "true")
     app, seen = _edge(monkeypatch, web_app=False, default="http://owui",
                       routes=[edge.EdgeRoute("/portal", "http://bridge1"),
                               edge.EdgeRoute("/b/sales/api", "http://sales", "/b/sales")])
     with StarletteClient(app) as c:
-        assert c.get("/admin/users/overview", follow_redirects=False).headers["location"] == edge.PEOPLE_URL
+        assert c.get("/admin/users/overview", follow_redirects=False).headers["location"] == edge.SETTINGS_LANDING
         assert c.post("/api/v1/auths/add").status_code == 403
         assert [m["id"] for m in c.get("/api/models").json()["data"]] == ["sales"]
         assert "hubzoid-portal-navigation" in c.get("/page").text

@@ -93,6 +93,16 @@ def isolated_store(tmp_path, monkeypatch):
     return eng
 
 
+def grant(hub, *emails, permissions=("connector_gmail", "connector_wiki")) -> None:
+    """Give each person the connector capabilities in this hub (Console grants)."""
+    import hubzoid.access as access
+
+    gs = access.store_for(hub)
+    for email in emails:
+        for permission in permissions:
+            gs.grant(email, hub.name, permission, actor="test")
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

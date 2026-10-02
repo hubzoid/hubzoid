@@ -73,7 +73,6 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("JEV_OPENROUTER_API_KEY", KEY)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-used")
     gs = store_for(d)
-    gs.set_authoritative(True, hub="support")
     gs.grant(ALLOWED, "support", "jev", actor="test")
     gs.grant(PLAIN, "support", "use_hub", actor="test")
     gs.grant(MANAGER, "support", "manage_access", actor="test")
@@ -207,21 +206,6 @@ def test_naming_the_hidden_tool_does_not_run_it(hub, jev_http, tmp_path):
     with create_engine(f"sqlite:///{tmp_path / 'ops.db'}").connect() as c:
         rows = c.execute(text("SELECT subject, tool, decision FROM hz_access_decisions")).fetchall()
     assert (PLAIN, TOOL, "deny") in [tuple(r) for r in rows]
-
-
-def test_legacy_hub_uses_the_jev_group(tmp_path, monkeypatch, jev_http):
-    from hubzoid.factory_claude import build_claude_runtime
-
-    d = tmp_path / "legacy"
-    d.mkdir()
-    (d / "AGENTS.md").write_text("---\nname: legacy\ndescription: d\n---\nbody\n")
-    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'legacy-ops.db'}")
-    monkeypatch.setenv("JEV_OPENROUTER_API_KEY", KEY)
-    rt = build_claude_runtime(d)
-    for groups, allowed in ((["jev"], True), (["sales"], False)):
-        with identity_scope(Identity.make("dee@example.org", groups, surface="owui")):
-            listed = asyncio.run(_claude_list(_claude_server(rt._options_for_turn())))
-        assert (TOOL in listed) is allowed
 
 
 # --- the same tool everywhere ------------------------------------------------------

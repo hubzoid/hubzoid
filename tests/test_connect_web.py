@@ -38,11 +38,12 @@ def hub(tmp_path, monkeypatch):
         {"id": "gmail", "name": "Gmail", "url": "https://gmail-mcp.example.org/mcp"}])
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
-    # Open WebUI sessions: the legacy UI mode (HUBZOID_UI=openwebui).
+    # Open WebUI sessions: Open WebUI mode (HUBZOID_UI=openwebui).
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
+    h.grant(hub, ALICE, BOB)
     hub.db = db
     return hub
 
@@ -182,7 +183,6 @@ def test_start_rechecks_a_revoked_grant_on_a_managed_hub(client, hub):
     import hubzoid.access as access
 
     gs = access.store_for(hub)
-    gs.set_authoritative(True, hub=hub.name)
     gs.grant(ALICE, hub.name, "connector_gmail")
     jid = _link(hub)
     gs.revoke(ALICE, hub.name, "connector_gmail")

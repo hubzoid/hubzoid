@@ -108,7 +108,7 @@ def browser_routes(provider):
             return login(
                 provider.public_path + "/consent?ticket=" + quote(ticket, safe="")
             )
-        if not allowed(provider.hub_dir, who["email"], provider.access_group):
+        if not allowed(provider.hub_dir, who["email"]):
             return PlainTextResponse(
                 "Your account does not have access to this hub.", 403, headers=HEADERS
             )

@@ -53,7 +53,7 @@ def sync(store: GrantStore, projector: Projector) -> int:
 
 
 def sync_owui(hub_dir) -> dict:
-    """Replace visibility ONLY for migrated, registered hub models via OWUI API.
+    """Replace the visibility of every registered hub model via the OWUI API.
 
     Recompute the complete ACL, including empty sets: a user's last revocation
     must remove visibility. Public entry is expanded over current OWUI accounts;
@@ -70,9 +70,7 @@ def sync_owui(hub_dir) -> dict:
         # decided by the bridge and /api/agents.
         return {"state": "direct"}
     store = store_for(hub_dir)
-    targets = [h for h in deployment.hubs(hub_dir) if store.is_authoritative(h["key"])]
-    if not targets:
-        return {"state": "legacy", "models": 0}
+    targets = deployment.hubs(hub_dir)
     result = {"state": "ok", "models": 0, "updated": time.time()}
     try:
         with client_for(hub_dir) as c:
@@ -123,59 +121,3 @@ def sync_status(hub_dir) -> dict:
         return {"state": "direct"}   # no Open WebUI picker to mirror
     gs = store_for(hub_dir)
     return gs.metadata("visibility_sync", {"state": "not-run"})
-
-
-def validate_visibility_backup(hub_dir, backup: dict) -> None:
-    from .. import deployment
-
-    if (
-        not isinstance(backup, dict)
-        or not isinstance(backup.get("model_id"), str)
-        or not backup["model_id"]
-    ):
-        raise ValueError("invalid visibility backup model")
-    cfg = deployment.read(hub_dir)
-    if cfg:
-        from pathlib import Path
-
-        target = next(
-            h
-            for h in cfg["hubs"]
-            if Path(h["path"]).resolve() == Path(hub_dir).resolve()
-        )
-        if target["model_id"] != backup["model_id"]:
-            raise ValueError(
-                "visibility backup does not match the registered hub model"
-            )
-    if not isinstance(backup.get("access_grants"), list):
-        raise ValueError("invalid visibility backup grants")
-    for grant in backup["access_grants"]:
-        if (
-            not isinstance(grant, dict)
-            or grant.get("principal_type") not in ("user", "group", "anyone")
-            or grant.get("permission") not in ("read", "write")
-            or not isinstance(grant.get("principal_id"), str)
-        ):
-            raise ValueError("invalid visibility backup grant")
-
-
-def restore_visibility(hub_dir, backup: dict) -> None:
-    """Restore the pre-cutover model ACL through OWUI's supported API.
-
-    Call after restoring legacy authority, with access edits and the projection
-    worker paused. Current non-access model fields are retained.
-    """
-    from .owui import client_for
-
-    validate_visibility_backup(hub_dir, backup)
-    with client_for(hub_dir) as client:
-        response = client.get("/api/v1/models/model", params={"id": backup["model_id"]})
-        response.raise_for_status()
-        old = response.json()
-        form = {
-            k: old[k]
-            for k in ("id", "name", "base_model_id", "params", "meta", "is_active")
-            if k in old
-        }
-        form["access_grants"] = backup["access_grants"]
-        client.post("/api/v1/models/model/update", json=form).raise_for_status()

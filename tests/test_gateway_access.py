@@ -84,9 +84,12 @@ def test_gateway_connection_env_forwards_user_info(tmp_path):
 
 
 def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
-    """End-to-end: the audit line flips from deny/anonymous to allow/group
+    """End-to-end: the audit line flips from deny/anonymous to allow/grant
     the moment OWUI forwards the email (which the drop-in enables)."""
+    from hubzoid.access import store_for
+
     _make_owui_db(tmp_path)
+    store_for(tmp_path).grant("priya@x.com", tmp_path.name, "erp", actor="test")
     guarded = guard.guard_tool(erp_sales, "erp", tmp_path)
 
     # Case A — OWUI did NOT forward the email (pre-fix gateway): no header.
@@ -96,7 +99,7 @@ def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
     line_a = auditlib.read(tmp_path)[-1]
 
     # Case B — with ENABLE_FORWARD_USER_INFO_HEADERS=true OWUI forwards the
-    # email; the bridge resolves the user's group from OWUI's DB.
+    # email; the bridge decides from the person's grant.
     ident_b = server._derive_identity(
         {}, _FakeRequest(headers={"x-openwebui-user-email": "priya@x.com"}), tmp_path,
     )
@@ -111,6 +114,6 @@ def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
     assert "access denied" in out_a.lower()
     assert (line_a["decision"], line_a["reason"], line_a["user"]) == ("deny", "anonymous", "anonymous")
 
-    # post-fix: email -> group resolved -> allowed
+    # post-fix: email -> grant -> allowed
     assert out_b == "sales:BLR"
-    assert (line_b["decision"], line_b["reason"], line_b["user"]) == ("allow", "group", "priya@x.com")
+    assert (line_b["decision"], line_b["reason"], line_b["user"]) == ("allow", "grant", "priya@x.com")

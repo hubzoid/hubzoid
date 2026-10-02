@@ -2,9 +2,9 @@
 """Access management: per-role tool gating for a hub, enforced in the runtime.
 
 The model is never the gate. A restricted tool lives in `<hub>/restricted/`, its
-file name is the permission, and an Open WebUI group of the same name is the key.
-The runtime hides tools a caller may not use and fails closed if one is reached
-anyway, logging every decision.
+file name is the permission, and a grant in the access store (the Console) is
+the key. The runtime hides tools a caller may not use and fails closed if one is
+reached anyway, logging every decision.
 
 Public surface (import from `hubzoid.access`):
   * Identity, current_identity, identity_scope, set_identity, normalize
@@ -20,7 +20,6 @@ from __future__ import annotations
 import threading
 
 from . import audit
-from . import owui_groups
 from .groups import effective_groups
 from .guard import apply, guard_tool
 from .identity import (
@@ -70,7 +69,6 @@ __all__ = [
     "is_allowed",
     "load_restricted",
     "normalize",
-    "owui_groups",
     "set_identity",
     "store_for",
 ]

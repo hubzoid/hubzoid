@@ -1,27 +1,18 @@
-"""Agents, branding and groups for the web app, for one hub or a whole gateway.
+"""Agents and branding for the web app, for one hub or a whole gateway.
 
-Mounted by ``hubzoid.webapp.mount`` in the web app mode only (never in the
-legacy Open WebUI mode), before the Console's static files, so the
-``/portal/api/groups`` routes are not shadowed.
+Mounted by ``hubzoid.webapp.mount`` in the web app mode only (never in Open
+WebUI mode).
 
 Routes:
   GET    /api/agents                           agents the signed-in person may use
   GET    /api/branding                         name and asset URLs for the page chrome
   GET    /branding/{file}                      branding files (public: the sign-in page needs them)
-  GET    /portal/api/groups                    groups            (organization administrators)
-  POST   /portal/api/groups                    {name, description?, emails?}
-  GET    /portal/api/groups/{id}               one group, its members and its access
-  PATCH  /portal/api/groups/{id}               {name?, description?}
-  DELETE /portal/api/groups/{id}               also removes every grant it holds
-  POST   /portal/api/groups/{id}/members       {emails}
-  DELETE /portal/api/groups/{id}/members/{email}
 
 One hub (``hubzoid run``): one agent card, ``api_base`` "" and the hub's
 ``branding/`` folder.
 
 Gateway (this hub is registered in a deployment manifest): every registered hub
-is a card, filtered per hub by suspension and ``use_hub`` (a hub whose access
-is not yet managed in the Console is open to everyone signed in, as its bridge
+is a card, filtered per hub by suspension and ``use_hub`` (as its bridge
 enforces), with ``api_base`` ``/b/<slug>`` and its avatar under
 ``/b/<slug>/branding/``. The page chrome uses the gateway's branding folder:
 the one the gateway recorded in the manifest (from ``HUBZOID_GATEWAY_BRANDING``,
@@ -42,7 +33,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import auth
@@ -141,12 +132,9 @@ def agent_card(hub_dir: Path, *, model_label: str | None = None, api_base: str =
 
 def _may_use(gs, hub_key: str, email: str) -> bool:
     """Entry to one hub, as its bridge decides it (`server._enforce_use_hub`):
-    a hub still on legacy access is open to everyone signed in; a managed hub
-    needs `use_hub` (directly, through a group, or public)."""
+    `use_hub` (directly or public)."""
     from .access.store import USE_HUB
 
-    if not gs.is_authoritative(hub_key):
-        return True
     return gs.can(email, hub_key, USE_HUB)
 
 
@@ -316,128 +304,3 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         if target is None:
             raise HTTPException(404, "not found")
         return FileResponse(str(target), headers={"Cache-Control": "public, max-age=300"})
-
-    _mount_groups(app, hub_dir)
-
-
-def _mount_groups(app: FastAPI, hub_dir: Path) -> None:
-    """The Console's group routes (contract 6.7). Organization administrators
-    only (decided by the access store), same-origin mutations."""
-    from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-    from .access.service import Actor
-    from .groups import UNSET, GroupRefused, GroupService
-
-    service = GroupService(hub_dir)
-
-    class CreateBody(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        name: str = Field(max_length=400)
-        description: str | None = Field(default=None, max_length=2000)
-        emails: list[str] = Field(default_factory=list, max_length=200)
-
-    class UpdateBody(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        name: str | None = Field(default=None, max_length=400)
-        description: str | None = Field(default=None, max_length=2000)
-
-    class MembersBody(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        emails: list[str] = Field(min_length=1, max_length=200)
-
-    def actor(request: Request) -> Actor:
-        user = auth.require_user(request, hub_dir)
-        return Actor(normalize(user.email), "console", "session")
-
-    def same_origin(request: Request) -> None:
-        from .access.session import require_same_origin
-
-        try:
-            require_same_origin(request)
-        except HTTPException as exc:
-            raise GroupRefused(403, "cross_origin",
-                               "This change must come from the Console's own page.") from exc
-
-    async def body(request: Request, model):
-        try:
-            raw = await request.json()
-        except Exception:  # noqa: BLE001
-            raise GroupRefused(422, "invalid_request", "Send a JSON body.")
-        try:
-            return model.model_validate(raw if raw is not None else {})
-        except ValidationError as exc:
-            fields = sorted({".".join(str(x) for x in e["loc"]) or "body" for e in exc.errors()})
-            raise GroupRefused(422, "invalid_request", "Check these fields: " + ", ".join(fields) + ".")
-
-    def refused(fn):
-        import functools
-
-        @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await fn(*args, **kwargs)
-            except GroupRefused as exc:
-                return _error(exc.status, exc.code, exc.message)
-
-        return wrapper
-
-    # Every service call reads or writes the store: run it in the threadpool.
-    def call(fn, *args, **kwargs):
-        return run_in_threadpool(fn, *args, **kwargs)
-
-    @app.get("/portal/api/groups")
-    @refused
-    async def list_groups(request: Request):
-        who = await call(actor, request)
-        return JSONResponse({"groups": await call(service.list, who)})
-
-    @app.post("/portal/api/groups")
-    @refused
-    async def create_group(request: Request):
-        who = await call(actor, request)
-        same_origin(request)
-        payload = await body(request, CreateBody)
-        group = await call(service.create, who, name=payload.name,
-                           description=payload.description, emails=payload.emails)
-        return JSONResponse({"group": group}, status_code=201)
-
-    @app.get("/portal/api/groups/{group_id}")
-    @refused
-    async def get_group(group_id: str, request: Request):
-        who = await call(actor, request)
-        return JSONResponse({"group": await call(service.get, who, group_id)})
-
-    @app.patch("/portal/api/groups/{group_id}")
-    @refused
-    async def update_group(group_id: str, request: Request):
-        who = await call(actor, request)
-        same_origin(request)
-        payload = await body(request, UpdateBody)
-        description = payload.description if "description" in payload.model_fields_set else UNSET
-        group = await call(service.update, who, group_id, name=payload.name, description=description)
-        return JSONResponse({"group": group})
-
-    @app.delete("/portal/api/groups/{group_id}")
-    @refused
-    async def delete_group(group_id: str, request: Request):
-        who = await call(actor, request)
-        same_origin(request)
-        await call(service.delete, who, group_id)
-        return Response(status_code=204)
-
-    @app.post("/portal/api/groups/{group_id}/members")
-    @refused
-    async def add_members(group_id: str, request: Request):
-        who = await call(actor, request)
-        same_origin(request)
-        payload = await body(request, MembersBody)
-        group = await call(service.add_members, who, group_id, payload.emails)
-        return JSONResponse({"group": group, "added": group.pop("added", [])})
-
-    @app.delete("/portal/api/groups/{group_id}/members/{email}")
-    @refused
-    async def remove_member(group_id: str, email: str, request: Request):
-        who = await call(actor, request)
-        same_origin(request)
-        await call(service.remove_member, who, group_id, email)
-        return Response(status_code=204)

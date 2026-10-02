@@ -110,6 +110,7 @@ def test_token_upsert_refresh_lease_and_accounts_on_postgres(hub, monkeypatch):
     monkeypatch.setattr(net, "_transport", httpx.MockTransport(token_endpoint))
     f.accounts(monkeypatch, hub, {"x@example.org": ("u-x", "user")})
     registry.create(hub, {"name": "Mail", "url": "https://mail.example.org/mcp"}, actor="t")
+    f.grant_connector(hub, "mail", "x@example.org")
     record = {"v": 1, "kind": "oauth", "access_token": "at-1", "refresh_token": "rt-1",
               "expires_at": time.time() - 1, "token_endpoint": "https://as.example.org/token",
               "resource": "https://mail.example.org/mcp", "client": {"client_id": "c"},

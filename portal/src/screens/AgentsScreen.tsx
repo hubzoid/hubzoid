@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, Empty, Input, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Card, Empty, Input, Space, Tag, Typography } from "antd";
 import { Search } from "lucide-react";
 import { type Hub, type SummaryHub, type Workflow } from "../api";
 import { agentHref } from "../hooks/useRoute";
@@ -74,13 +74,6 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
                   </div>
                 </div>
                 <Space wrap size={[6, 6]} className="agent-card-tags">
-                  {h.authoritative ? (
-                    <Tag color="green">Managed here</Tag>
-                  ) : (
-                    <Tooltip title="Access changes take effect only after migration.">
-                      <Tag color="gold">Legacy access</Tag>
-                    </Tooltip>
-                  )}
                   {workflows &&
                     (stale ? (
                       <Tag color="red">Scheduler stopped</Tag>

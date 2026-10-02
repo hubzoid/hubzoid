@@ -166,22 +166,6 @@ def test_wildcard_permission_rejected(store):
     assert not store.can("bob", "finance", "manage_access")
 
 
-def test_per_hub_authority_isolation(store):
-    store.set_authoritative(True, hub="finance")
-    assert store.is_authoritative("finance") is True
-    assert store.is_authoritative("ops") is False       # a different hub stays legacy
-    assert store.is_authoritative() is False            # no deployment-global marker
-
-
-def test_authoritative_marker(store):
-    assert store.is_authoritative() is False
-    store.set_authoritative(True)
-    assert store.is_authoritative() is True             # deployment-global
-    assert store.is_authoritative("anyhub") is True     # global covers all hubs
-    store.set_authoritative(False)
-    assert store.is_authoritative() is False
-
-
 def test_upsert_identity(store):
     subj = store.upsert_identity(email="Alice@Corp", owui_id="u1", display="Alice")
     assert subj == "alice@corp"                      # subject = normalized email
@@ -194,10 +178,9 @@ def test_upsert_identity(store):
 
 
 def test_bootstrap_grants_org_admins_once(store):
-    store.bootstrap(["root", "ops"], authoritative=True)
+    store.bootstrap(["root", "ops"])
     assert store.can("root", "any-hub", MANAGE_ACCESS)
     assert store.can("ops", "any-hub", MANAGE_ACCESS)
-    assert store.is_authoritative() is True
     # idempotent: a second call with different admins does nothing (already done)
     store.bootstrap(["someone-else"])
     assert not store.can("someone-else", "any-hub", MANAGE_ACCESS)
@@ -232,26 +215,20 @@ def test_policy_surface_gate_beats_grant():
 
 
 def test_initial_owner_is_one_time_and_preserves_revocation(store):
-    assert store.provision_owner("owner@example.com", "finance", fresh=True)
-    assert store.is_authoritative("finance")
+    assert store.provision_owner("owner@example.com", "finance")
     assert store.can("owner@example.com", "finance", USE_HUB)
     store.revoke("owner@example.com", "finance", USE_HUB)
-    assert not store.provision_owner("owner@example.com", "finance", fresh=True)
+    assert not store.provision_owner("owner@example.com", "finance")
     assert not store.can("owner@example.com", "finance", USE_HUB)
     assert not store.provision_owner("replacement@example.com", "finance")
     assert not store.can("replacement@example.com", ORG, MANAGE_ACCESS)
 
 
-def test_initial_owner_keeps_existing_hub_authority_mode(store):
-    store.provision_owner("owner@example.com", "finance")
-    assert not store.is_authoritative("finance")
-
-
 def test_adding_hub_does_not_restore_revoked_owner_org_role(store):
-    store.provision_owner("owner@example.com", "finance", fresh=True)
+    store.provision_owner("owner@example.com", "finance")
     store.grant("ops@example.com", ORG, MANAGE_ACCESS)
     store.revoke("owner@example.com", ORG, MANAGE_ACCESS)
-    assert store.provision_owner("owner@example.com", "support", fresh=True)
+    assert store.provision_owner("owner@example.com", "support")
     assert not store.can("owner@example.com", ORG, MANAGE_ACCESS)
     assert store.can("owner@example.com", "support", USE_HUB)
 

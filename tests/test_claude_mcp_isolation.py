@@ -42,7 +42,6 @@ def hub(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
     gs = store_for(d)
-    gs.set_authoritative(True, hub="support")
     gs.grant("ana@example.org", "support", "jev", actor="test")
     gs.grant("ben@example.org", "support", "use_hub", actor="test")
     return d

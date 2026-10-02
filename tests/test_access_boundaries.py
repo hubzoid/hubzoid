@@ -62,9 +62,6 @@ def gateway(tmp_path):
                     hubs=[dict(key=h.name, name=h.name, path=str(h), model_id=h.name) for h in (alpha, beta)],
                     operational_url=f"sqlite:///{tmp_path / 'gw' / 'ops.db'}",
                     owui_url="http://127.0.0.1:9", owui_db=str(tmp_path / "gw" / "webui.db"))
-    gs = access.store_for(alpha)
-    for h in ("alpha", "beta"):
-        gs.set_authoritative(True, hub=h)
     return alpha, beta
 
 

@@ -230,16 +230,6 @@ def test_new_account_proposal_carries_no_password(dep, monkeypatch):
     assert "password" not in plan
 
 
-def test_inert_on_a_legacy_agent(dep, monkeypatch):
-    tools = _tools(dep, monkeypatch)
-    dep.gs.set_authoritative(False, hub="finance")
-    with identity_scope(Identity.make(ROOT, surface="owui")):
-        assert tools["propose_access_change"].is_enabled() is False
-        out = _invoke(tools["propose_access_change"],
-                      {"person": "ann@x.org", "hub": "ops", "grant": ["inventory"]})
-    assert out.startswith("[not proposed") and "chat app" in out
-
-
 def test_confirm_url(monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com/b/sales")
     assert access_admin.confirm_url("/portal/#/confirm/x") == "https://hub.example.com/portal/#/confirm/x"

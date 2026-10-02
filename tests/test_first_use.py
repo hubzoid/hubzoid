@@ -101,7 +101,7 @@ def test_chat_access_accepts_the_chat_apps_bearer_credential(tmp_path, monkeypat
 
     monkeypatch.setattr(httpx, 'get', fake_get)
     monkeypatch.setattr(portal, 'store_for', lambda _: __import__('unittest.mock').mock.Mock(
-        is_suspended=lambda s: False, is_authoritative=lambda h: False))
+        is_suspended=lambda s: False))
     monkeypatch.setattr(deployment, 'hubs', lambda _: [])
     app = FastAPI()
     app.include_router(portal.build_router(tmp_path))
@@ -125,7 +125,7 @@ def test_chat_access_says_why_the_agent_list_is_empty(tmp_path, monkeypatch, sus
 
     monkeypatch.setattr(portal, '_verify_owui_session', lambda *a, **k: 'ana@example.org')
     monkeypatch.setattr(portal, 'store_for', lambda _: mock.Mock(
-        is_suspended=lambda s: suspended, is_authoritative=lambda h: True,
+        is_suspended=lambda s: suspended,
         can=lambda s, h, p: h in granted))
     monkeypatch.setattr(deployment, 'hubs', lambda _: [{'key': 'a', 'model_id': 'm-a'},
                                                      {'key': 'b', 'model_id': 'm-b'}])

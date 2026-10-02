@@ -77,26 +77,6 @@ def test_stream_reply_surface_is_configurable():
         assert fake.stream.call_args.kwargs["headers"]["X-Hubzoid-Surface"] == surf
 
 
-def test_owui_group_lookup_is_case_insensitive(tmp_path, monkeypatch):
-    import sqlite3
-    from hubzoid.access import owui_groups
-    db = tmp_path / ".openwebui-data" / "webui.db"
-    db.parent.mkdir(parents=True)
-    con = sqlite3.connect(db)
-    con.executescript(
-        'CREATE TABLE "group"(id TEXT, name TEXT);'
-        'CREATE TABLE "user"(id TEXT, email TEXT);'
-        'CREATE TABLE group_member(group_id TEXT, user_id TEXT);'
-        "INSERT INTO \"group\" VALUES('g1','erp');"
-        "INSERT INTO \"user\" VALUES('u1','john.doe@corp.com');"
-        "INSERT INTO group_member VALUES('g1','u1');"
-    )
-    con.commit()
-    con.close()
-    # Slack forwards mixed-case; must still match the lowercased OWUI email
-    assert owui_groups.resolve_groups(tmp_path, "John.Doe@CORP.com") == {"erp"}
-
-
 def test_lookup_email_extracts_profile_email():
     client = MagicMock()
     client.users_info.return_value = {"user": {"profile": {"email": "u@x.org"}}}

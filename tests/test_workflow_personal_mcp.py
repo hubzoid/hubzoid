@@ -60,7 +60,6 @@ def team(tmp_path, monkeypatch, mail):
     import hubzoid.access as access
 
     gs = access.store_for(hub_dir)
-    gs.set_authoritative(True, hub=hub_dir.name)
     for who, uid in ((ALICE, "ua"), (BOB, "ub")):
         gs.upsert_identity(email=who, owui_id=uid)
         gs.grant(who, hub_dir.name, owui_mcp.capability("mail"), actor="test")
@@ -182,7 +181,7 @@ def test_a_blocked_account_stops_before_any_agent_call(team, probe):
 
 def test_the_legacy_service_identity_gets_no_personal_server(team, probe):
     hub_dir, gs, *_ = team
-    gs.set_authoritative(False, hub=hub_dir.name)                 # a legacy hub
+    # A run recorded before workflows ran as people carries no account.
     with run_scope(hub=hub_dir.name, workflow="digest", hub_dir=hub_dir, engine=None):
         wf_hub.call_agent("check my mail")
     assert probe.servers == [[]]

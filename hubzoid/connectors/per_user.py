@@ -45,10 +45,9 @@ def _blocked(hub_dir, email: str) -> bool:
 
 
 def allowed_ids(hub_dir, email: str, ids) -> set[str]:
-    """Connector ids ``email`` may use somewhere in this deployment: every one
-    when a hub still uses legacy access (surface rule only), else those whose
-    capability the person holds on at least one managed hub. Empty for a
-    blocked person or when access cannot be checked."""
+    """Connector ids ``email`` may use somewhere in this deployment: those whose
+    capability the person holds on at least one hub. Empty for a blocked person
+    or when access cannot be checked."""
     from .. import deployment
     from ..access import store_for
     from ..access.identity import normalize
@@ -67,8 +66,6 @@ def allowed_ids(hub_dir, email: str, ids) -> set[str]:
             hubs = [normalize(Path(hub_dir).name)]
         out: set[str] = set()
         for hub in hubs:
-            if not gs.is_authoritative(hub):
-                return ids
             out |= {i for i in ids if gs.can(email, hub, capability(i))}
         return out
     except Exception:  # noqa: BLE001 — fail closed
@@ -103,8 +100,6 @@ def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None
     if not connections or _blocked(hub_dir, identity.user):
         return []
     permitted = _connector_gate(hub_dir, identity)
-    if permitted is None:
-        return []
 
     reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)
     out: list = []

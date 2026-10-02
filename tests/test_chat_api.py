@@ -428,8 +428,7 @@ def test_hub_access_is_enforced(hub, monkeypatch):
     client = TestClient(app)
     agent = app.state.chat.model_label
     gs = access.store_for(hub)
-    gs.set_authoritative(True, hub=hub.name)
-    gs.grant("ana@example.org", hub.name, "use_hub", actor="test")
+    gs.revoke("ben@example.org", hub.name, "use_hub", actor="test")
     assert _send(client, "c_access001", "hi", agent, "m_user00001", "m_asst00001",
                  headers=who("ana")).status_code == 200
     r = _send(client, "c_access002", "hi", agent, "m_user00002", "m_asst00002", headers=who("ben"))
@@ -480,8 +479,10 @@ def test_usage_rows_for_the_reply_and_the_title(app, client, agent):
     assert reply["model"] == "hubzoid-test/scripted" and reply["usage"]["output_tokens"] > 0
 
 
-def test_openai_compatible_endpoint_keeps_its_text(client):
-    r = client.post("/v1/chat/completions", headers={"Authorization": "Bearer k-chat-test"},
+def test_openai_compatible_endpoint_keeps_its_text(app, client):
+    from tests.chat_helpers import api_headers
+
+    r = client.post("/v1/chat/completions", headers=api_headers(app.state.chat.hub_dir),
                     json={"model": "x", "messages": [{"role": "user", "content": "use a tool"}]})
     assert r.status_code == 200
     content = r.json()["choices"][0]["message"]["content"]

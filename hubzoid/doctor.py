@@ -330,13 +330,13 @@ def _app_checks(hub: Path) -> list[Check]:
     from . import appmode
 
     summary = appmode.mode_summary(hub)
-    legacy = summary["ui_mode"] == appmode.UI_OPENWEBUI
+    owui = summary["ui_mode"] == appmode.UI_OPENWEBUI
     source = ("HUBZOID_UI" if (os.environ.get("HUBZOID_UI") or "").strip()
-              else "deployment record" if legacy else "default")
+              else "deployment record" if owui else "default")
     out = [Check("ui.mode", "info",
-                 "Web app: Open WebUI (legacy mode, removed in a later release)" if legacy
-                 else "Web app: Hubzoid", {**summary, "source": source})]
-    if legacy:
+                 "Chat UI: Open WebUI (Open WebUI mode)" if owui
+                 else "Chat UI: Hubzoid web app", {**summary, "source": source})]
+    if owui:
         out.append(_openwebui_extra())
     else:
         found = _openwebui_data(hub, auth_on=summary["auth"])
@@ -476,6 +476,14 @@ def _meta(engine, key: str, default=None):
     return json.loads(row[0]) if row and row[0] else default
 
 
+def _meta_text(engine, key: str) -> str | None:
+    from sqlalchemy import text
+
+    with engine.connect() as c:
+        row = c.execute(text("SELECT v FROM hz_meta WHERE k=:k"), {"k": key}).fetchone()
+    return row[0] if row else None
+
+
 def _store_checks(hub: Path) -> list[Check]:
     """Checks that read the operational store. Skipped when it does not exist yet."""
     from sqlalchemy import create_engine, inspect
@@ -501,9 +509,35 @@ def _store_checks(hub: Path) -> list[Check]:
             out.append(Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
                              f"Last backup {days:.1f} days ago", last))
         out.append(_scheduler(hub, engine))
+        if inspect(engine).has_table("hz_grants"):
+            out.append(_who_may_use(hub, engine))
     finally:
         engine.dispose()
     return [c for c in out if c is not None]
+
+
+def _who_may_use(hub: Path, engine) -> Check:
+    """Access is decided only by grants in the Console. An agent nobody may use
+    (or only its owner) is usually an access setup still to do."""
+    from sqlalchemy import text
+
+    from .access.identity import normalize
+
+    key = normalize(hub.name)
+    with engine.connect() as conn:
+        holders = sorted({s for (s,) in conn.execute(text(
+            "SELECT subject FROM hz_grants WHERE (hub=:h OR hub='*') "
+            "AND (permission='use_hub' OR permission='*')"), {"h": key})})
+    owner = _meta_text(engine, "initial_owner:" + key)
+    if not holders:
+        return Check("access.who", "warn", f"Nobody may use {key}. Grant \"Use this agent\" "
+                     "in the Console (Agents, Access), or sign in once as the configured owner.")
+    if "*" in holders:
+        return Check("access.who", "ok", f"Everyone signed in may use {key}")
+    if holders == [owner]:
+        return Check("access.who", "info", f"Only the owner ({owner}) may use {key} so far. "
+                     "Add people in the Console (Agents, Access).")
+    return Check("access.who", "ok", f"{len(holders)} people may use {key}")
 
 
 def _scheduler(hub: Path, engine) -> Check | None:
@@ -530,6 +564,15 @@ def _scheduler(hub: Path, engine) -> Check | None:
     if detail["paused"]:
         return Check("scheduler.health", "info", f"{len(detail['paused'])} paused", detail)
     return Check("scheduler.health", "ok", "Scheduled work is not held or paused", detail)
+
+
+def _mcp_access_group() -> Check | None:
+    """MCP_ACCESS_GROUP gated /mcp by an Open WebUI group. It is no longer read."""
+    if not (os.environ.get("MCP_ACCESS_GROUP") or "").strip():
+        return None
+    return Check("mcp.access_group", "warn",
+                 "MCP_ACCESS_GROUP is no longer read: who may use an agent over MCP is its "
+                 "\"Use this agent\" grant in the Console. Remove the setting.")
 
 
 def _legacy_management_flag() -> Check | None:
@@ -570,9 +613,9 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if google:
             checks.append(google)
         checks.append(_exposure())
-        legacy = _legacy_management_flag()
-        if legacy:
-            checks.append(legacy)
+        for optional in (_legacy_management_flag(), _mcp_access_group()):
+            if optional:
+                checks.append(optional)
         try:
             checks.append(_model(hub))
         except Exception as exc:  # noqa: BLE001
