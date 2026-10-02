@@ -52,8 +52,8 @@ for released users. Groups were added in 1.1 and were never released.
    agent offers the connector and the person holds `connector_<id>` on that
    agent; the current-agent check stays. The connections page lists what the
    person may use in at least one agent that offers it.
-4. **Open WebUI mode keeps its connectors in 1.1.** Isha's ERP and Nurturing
-   hubs register their Odoo servers in Open WebUI (`OWUI_NATIVE_MCP=true`) and
+4. **Open WebUI mode keeps its connectors in 1.1.** Two production hubs
+   register their Odoo servers in Open WebUI (`OWUI_NATIVE_MCP=true`) and
    their skills call `mcp__owui_odoo_<erp>__...`. Replacing that path needs an
    Open WebUI identity adapter, connection routes under `/portal`, a one-time
    import of the registered servers, stable tool names and a reconnect for
@@ -91,7 +91,7 @@ for released users. Groups were added in 1.1 and were never released.
     list with search, the person's recent agents first.
 
 ## Order
-CI, latest link (Isha's AdBrain is waiting for it), one access model, Groups,
+CI, latest link (a production board is waiting for it), one access model, Groups,
 connectors, eval scores, webhooks, the small UI items, docs. Focused tests per
 step, then the full suite and both journeys once.
 
@@ -109,8 +109,8 @@ deleting them (item 2), the connector-to-agent relation and the detach versus
 delete split (item 3), the eval privacy statement (item 6), the webhook
 projection and code-workflow declaration (item 7), and two CI steps (item 9).
 Its Open WebUI findings (no identity binding, routes outside `/portal`, pinned
-Open WebUI is 0.11.4, flags are only defaults) plus Isha's use of native
-connectors moved item 4 out of 1.1. Not accepted: a stranded owner marker after
+Open WebUI is 0.11.4, flags are only defaults) plus
+production use of native connectors moved item 4 out of 1.1. Not accepted: a stranded owner marker after
 a rollback, because rollback is removed and doctor reports a hub nobody may use.
 
 ## Definition of done
