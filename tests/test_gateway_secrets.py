@@ -36,7 +36,7 @@ def _clean(monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-    # These pin the legacy Open WebUI gateway (HUBZOID_UI=openwebui).
+    # These pin the Open WebUI gateway (HUBZOID_UI=openwebui).
     with clean_process_env(HUBZOID_UI="openwebui"):
         yield
 
@@ -247,7 +247,7 @@ def test_standalone_run_keeps_hub_only_layers_out_of_open_webui_and_edge(tmp_pat
     hub = tmp_path / "solo"
     (hub / "restricted").mkdir(parents=True)
     (hub / "AGENTS.md").write_text("---\nname: solo\n---\nbody")
-    # Legacy Open WebUI mode; tests/test_cli_run_webapp.py covers the web app's edge.
+    # Open WebUI mode; tests/test_cli_run_webapp.py covers the web app's edge.
     (hub / ".env").write_text("BRIDGE_API_KEYS=solo-bridge-key-long-enough\nAWS_SECRET_NAME=dep\n"
                               "AWS_REGION=eu-west-1\nHUBZOID_HUB_SECRET_NAME=solo-hub\nSHARED=hub\n"
                               "HUBZOID_UI=openwebui\n")

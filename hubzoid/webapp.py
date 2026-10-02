@@ -1,6 +1,6 @@
 """The Hubzoid web app on the bridge: one page for chat and Console.
 
-``mount`` runs in the default UI mode (not the legacy Open WebUI mode). It
+``mount`` runs in the default UI mode (not Open WebUI mode). It
 registers, in order:
 
   1. sign-in routes          hubzoid.auth.routes.mount        (/api/auth, /oauth)

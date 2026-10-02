@@ -3,7 +3,7 @@
 Default UI mode only (``HUBZOID_UI`` unset or ``hubzoid``). Hubzoid owns the whole
 journey: an administrator registers a server once, each person authorizes it
 with their own account in the browser, and every chat turn reaches the server
-as that person. The legacy Open WebUI mode keeps Open WebUI's MCP connections
+as that person. Open WebUI mode keeps Open WebUI's MCP connections
 (``hubzoid.owui_mcp``) unchanged.
 
   registry.py    servers an administrator registers (``hz_connectors``)

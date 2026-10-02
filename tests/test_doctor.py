@@ -76,7 +76,7 @@ def test_unsafe_settings_fail(hub, monkeypatch):
     c = _by_id(doc.run(hub))
     assert "exposure.local_mode" not in c and c["auth.chat_signin"].status == "warn"  # no first admin
 
-    # Legacy Open WebUI mode keeps its 1.0 checks.
+    # Open WebUI mode keeps its 1.0 checks.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     monkeypatch.delenv("WEBUI_AUTH")
     assert _by_id(doc.run(hub))["auth.chat_signin"].status == "fail"  # off and exposed

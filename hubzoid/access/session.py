@@ -8,8 +8,8 @@ identity header. Which session is checked depends on the UI mode
 
   * default (``hubzoid``): the Hubzoid session (``hubzoid.auth``). With
     sign-in off, every request is the local owner, ``admin@localhost``.
-  * legacy (``openwebui``): the Open WebUI session, validated by Open WebUI,
-    exactly as in 1.0.x.
+  * Open WebUI mode (``openwebui``): the Open WebUI session, validated by
+    Open WebUI, as in 1.0.x.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def require_same_origin(request: Request) -> None:
     must come from our own origin: an Origin (or Referer) whose host equals
     the request's Host or, in the default mode, one of the deployment's
     origins (``appmode.allowed_origins``; a deployment may answer on two
-    public names). Legacy mode keeps the 1.0.x rule exactly."""
+    public names). Open WebUI mode keeps the 1.0.x rule exactly."""
     from urllib.parse import urlparse
 
     from .. import appmode
@@ -48,7 +48,7 @@ def require_same_origin(request: Request) -> None:
         raise HTTPException(
             status_code=403, detail="missing or invalid Origin on a mutation"
         )
-    if not appmode.is_legacy():
+    if not appmode.is_openwebui():
         allowed = appmode.allowed_origins()
         if allowed and appmode.normalize_origin(origin) in allowed:
             return
@@ -68,12 +68,12 @@ def configured_owner(hub_dir: Path) -> str:
     ``HUBZOID_GATEWAY_ADMIN_EMAIL``, then the gateway's recorded owner. With
     sign-in off every request is the local owner, ``admin@localhost``.
 
-    Legacy mode keeps 1.0.x: the gateway service account or
+    Open WebUI mode keeps 1.0.x: the gateway service account or
     ``WEBUI_ADMIN_EMAIL``, the recorded owner, and ``admin@localhost`` for the
     local quickstart (authentication off, no deployment)."""
     from .. import appmode
 
-    if appmode.is_legacy(hub_dir):
+    if appmode.is_openwebui(hub_dir):
         return _legacy_configured_owner(hub_dir)
     if not appmode.auth_enabled(hub_dir):
         return LOCAL_OWNER
@@ -116,7 +116,7 @@ def verified_email(request: Request, hub_dir: Path | None = None, *,
     a cookie."""
     from .. import appmode
 
-    if appmode.is_legacy(hub_dir):
+    if appmode.is_openwebui(hub_dir):
         return _owui_verified_email(request, hub_dir, bearer=bearer)
     return _hubzoid_verified_email(request, hub_dir, bearer=bearer)
 
@@ -154,7 +154,7 @@ def _hubzoid_verified_email(request: Request, hub_dir: Path | None, *, bearer: b
 
 
 def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool) -> str:
-    """Legacy mode: validate the Open WebUI session cookie with Open WebUI."""
+    """Open WebUI mode: validate the Open WebUI session cookie with Open WebUI."""
     token = request.cookies.get("token") or ""
     if not token and bearer:
         scheme, _, value = (request.headers.get("authorization") or "").partition(" ")

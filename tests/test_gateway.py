@@ -20,7 +20,7 @@ from hubzoid.settings import Settings
 
 @pytest.fixture(autouse=True)
 def _legacy_ui(monkeypatch):
-    """These tests pin the legacy Open WebUI mode (HUBZOID_UI=openwebui); the
+    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui); the
     web app mode is covered by tests/test_gateway_app*.py."""
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
 

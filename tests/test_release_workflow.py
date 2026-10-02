@@ -98,7 +98,7 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
 
 def test_release_validation_covers_legacy_mode_and_a_core_only_install():
     steps = {s.get("name"): s.get("run", "") for s in WORKFLOW["jobs"]["validate"]["steps"]}
-    assert ".[dev,openwebui]" in steps["Full test suite (legacy Open WebUI mode included)"]
+    assert ".[dev,openwebui]" in steps["Full test suite (Open WebUI mode included)"]
     clean = steps["Clean install of the wheel works and serves the Console"]
     assert "pip install dist/*.whl" in clean and 'import open_webui"' in clean
     smoke = next(s["run"] for s in WORKFLOW["jobs"]["image"]["steps"] if s.get("name") == "Check the image starts")

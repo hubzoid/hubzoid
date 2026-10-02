@@ -47,10 +47,10 @@ def _is_person(subject: str) -> bool:
 
 def _directory_accounts(hub_dir: Path) -> set[str] | None:
     """Normalized emails of every login account, or None when unreadable.
-    Default mode reads Hubzoid's own accounts; legacy mode, Open WebUI's."""
+    Default mode reads Hubzoid's own accounts; Open WebUI mode, Open WebUI's."""
     from .. import appmode
 
-    if not appmode.is_legacy(hub_dir):
+    if not appmode.is_openwebui(hub_dir):
         try:
             from ..auth import users
 

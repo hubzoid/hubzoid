@@ -3,7 +3,7 @@
 Every page is bound to the journey's subject: it needs a signed-in session
 whose email is the person who asked, checked server-side: a Hubzoid session
 (`hubzoid.auth.current_user`) in the default UI mode, an Open WebUI session
-(`access.session.verified_email`) in the legacy mode. A signed-out visitor is
+(`access.session.verified_email`) in Open WebUI mode. A signed-out visitor is
 sent to sign in and brought back to the same page. Another account gets 403
 and the attempt is audited.
 Mutations (`start`, `cancel`) also require the same Origin. The pages use
@@ -155,7 +155,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
     def legacy() -> bool:
         from .. import appmode
 
-        return appmode.is_legacy(hub_dir)
+        return appmode.is_openwebui(hub_dir)
 
     def email_of(request: Request) -> str:
         if session_email is not None:

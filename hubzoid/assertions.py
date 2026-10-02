@@ -15,7 +15,7 @@ other answers without restricted tools). A bridge API key therefore can't be
 used to act as somebody else, and the edge strips every client-sent
 ``X-Hubzoid-*`` header anyway.
 
-The legacy Open WebUI mode keeps the 1.0.x rule (Open WebUI and the adapters
+Open WebUI mode keeps the 1.0.x rule (Open WebUI and the adapters
 hold the bridge key, so their headers are trusted) and its callers send no
 assertion.
 
@@ -186,7 +186,7 @@ def identity_headers(hub_dir, *, surface: str, email: str | None = None,
                      groups: Iterable[str] | None = None, legacy: bool | None = None) -> dict[str, str]:
     """The identity headers an internal caller sends to `hub_dir`'s bridge.
 
-    Legacy mode: exactly the 1.0.x headers. Web app mode: the same headers plus
+    Open WebUI mode: exactly the 1.0.x headers. Web app mode: the same headers plus
     `X-Hubzoid-Assertion`. When the deployment key can't be used, the assertion
     is left out and the bridge treats the call as anonymous (fail closed)."""
     headers = {"X-Hubzoid-Surface": surface}
@@ -196,9 +196,9 @@ def identity_headers(hub_dir, *, surface: str, email: str | None = None,
     if groups:
         headers["X-Hubzoid-Groups"] = ",".join(groups)
     if legacy is None:
-        from .appmode import is_legacy
+        from .appmode import is_openwebui
 
-        legacy = is_legacy(Path(hub_dir)) if hub_dir is not None else False
+        legacy = is_openwebui(Path(hub_dir)) if hub_dir is not None else False
     if legacy or hub_dir is None:
         return headers
     try:

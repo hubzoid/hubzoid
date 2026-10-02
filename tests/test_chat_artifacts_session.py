@@ -1,7 +1,7 @@
 """Download links the agent writes: in the web app the conversation's signed-in
 owner downloads without a token (so an expired link keeps working for them),
 and new signed links expire after 7 days unless HUBZOID_ARTIFACT_LINK_TTL says
-otherwise. The legacy Open WebUI mode is unchanged."""
+otherwise. Open WebUI mode is unchanged."""
 from __future__ import annotations
 
 import re
@@ -99,7 +99,7 @@ def test_legacy_mode_does_not_accept_sessions(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     as_people(monkeypatch)
     app = build_app()
-    assert not hasattr(app.state, "chat")          # no web app routes in legacy mode
+    assert not hasattr(app.state, "chat")          # no web app routes in Open WebUI mode
     client = TestClient(app)
     from hubzoid.chat import store as chat_store
 

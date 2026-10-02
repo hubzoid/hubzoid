@@ -258,11 +258,11 @@ def api_key(request: Request) -> str | None:
     if scheme.lower() == "bearer" and token.startswith("sk-"):
         from . import appmode
 
-        # Open WebUI's keys belong to the legacy mode only. In the web app mode
+        # Open WebUI's keys belong to Open WebUI mode only. In the web app mode
         # an old database may still be on disk after the move, and its keys
         # must not keep opening the Console: the header is ignored and the
         # request falls back to the session cookie like any other.
-        if not appmode.is_legacy():
+        if not appmode.is_openwebui():
             return None
         return token
     return None
@@ -459,7 +459,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         # connections in this mode.
         from . import appmode
 
-        out["web_app"] = not appmode.is_legacy(hub_dir)
+        out["web_app"] = not appmode.is_openwebui(hub_dir)
         from .access import accounts as accountlib
 
         actor = admin.actor()
@@ -498,7 +498,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         require_hub(admin, hub)
         from . import appmode
 
-        if not appmode.is_legacy(hub_dir):
+        if not appmode.is_openwebui(hub_dir):
             return {"servers": [], "native": False}
         from .access import owui_tool_servers
         from .owui_mcp import capability as owui_capability, enabled as native_enabled

@@ -1,5 +1,5 @@
 """`hubzoid doctor` checks for the web app: the UI mode, sign-in, the
-deployment key (fingerprint only), the openwebui extra in legacy mode, an Open
+deployment key (fingerprint only), the openwebui extra in Open WebUI mode, an Open
 WebUI install not yet moved, and the local-mode loopback guard."""
 from __future__ import annotations
 

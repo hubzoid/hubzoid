@@ -10,8 +10,8 @@ and for people who integrate with a deployment. Setup guides are elsewhere:
 The web app covers what Hubzoid users relied on Open WebUI for: sign-in
 (passwords, Google, Microsoft and standard OpenID Connect), sessions, chat with
 streamed tool steps and reasoning, conversation history, uploads, share links,
-personal MCP connections, groups and multi-hub gateways. Open WebUI stays
-available for this release only, as a legacy mode.
+personal MCP connections and multi-hub gateways. Open WebUI remains a
+supported chat app (Open WebUI mode); access is managed in the Console in both.
 
 ## 1. Modes
 
@@ -26,7 +26,7 @@ available for this release only, as a legacy mode.
 - **Default mode** (`hubzoid`). The bridge serves the web app, its API under
   `/api/`, the sign-in routes under `/auth` and `/oauth/`, the Console under
   `/portal/` and hosted MCP under `/mcp`. No Open WebUI process runs.
-- **Legacy mode** (`openwebui`). Hubzoid 1.0.x behaviour, unchanged: Open
+- **Open WebUI mode** (`openwebui`). Hubzoid 1.0.x behaviour, unchanged: Open
   WebUI provides chat and accounts. None of the web app routes are mounted. It
   needs the `openwebui` extra (`pip install "hubzoid[openwebui]"`).
 - **Local mode** is the default mode with sign-in off. Every request that
@@ -36,7 +36,7 @@ available for this release only, as a legacy mode.
   in local mode unless `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`.
 - **Upgrade guard.** In the default mode with sign-in on, a hub or gateway
   that has Open WebUI accounts and no Hubzoid accounts stops at start and
-  explains the two ways forward: `hubzoid migrate openwebui`, or legacy mode.
+  explains the two ways forward: `hubzoid migrate openwebui`, or Open WebUI mode.
   In local mode it prints a notice that old chats can be imported. The local
   owner that local mode creates is not counted as a Hubzoid account, and a
   gateway started in the web app keeps its manifest's record of where Open

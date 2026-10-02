@@ -223,7 +223,7 @@ class AccessService:
 
     def accounts(self):
         """The account directory: Hubzoid's own accounts in default mode, the
-        Open WebUI admin API as the service account in legacy mode."""
+        Open WebUI admin API as the service account in Open WebUI mode."""
         if self._accounts_override is not None:
             return self._accounts_override
         from . import accounts as accountlib
@@ -237,12 +237,12 @@ class AccessService:
         """True when new accounts and password resets get a one-time sign-in
         link instead of a password typed in the Console: the directory in use
         says so (``HubzoidAccounts``, the default mode). Open WebUI's directory
-        (legacy mode) takes passwords."""
+        (Open WebUI mode) takes passwords."""
         if self._accounts_override is not None:
             return bool(getattr(self._accounts_override, "links", False))
         from .. import appmode
 
-        if appmode.is_legacy(self.hub_dir):
+        if appmode.is_openwebui(self.hub_dir):
             return False
         try:
             return bool(getattr(self.accounts(), "links", False))
@@ -665,10 +665,10 @@ class AccessService:
         starts no session or has the one it started revoked, and lifting the
         block never brings an old sign-in (or a stolen cookie) back. Without
         the account store nothing is blocked (fail closed: the administrator
-        retries). Open WebUI keeps its own sessions in legacy mode: None."""
+        retries). Open WebUI keeps its own sessions in Open WebUI mode: None."""
         from .. import appmode
 
-        if appmode.is_legacy(self.hub_dir):
+        if appmode.is_openwebui(self.hub_dir):
             return None
         try:
             from ..auth import users
@@ -1147,7 +1147,7 @@ class AccessService:
     def set_password(self, actor: Actor, subject: str, password: str | None = None) -> dict | None:
         """Reset a person's password (organization administrators).
 
-        Legacy mode: set the password the administrator typed; returns None.
+        Open WebUI mode: set the password the administrator typed; returns None.
 
         Default mode (``links_mode``): without a password, the current one stops
         working, their sessions end, and the result is a one-time link for them

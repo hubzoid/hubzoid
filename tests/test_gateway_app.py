@@ -1,7 +1,7 @@
 """`hubzoid gateway` in the web app mode: N bridges and one edge, no Open
 WebUI; the edge's routes (contract section 2); agents and branding across the
 deployment; and the edge's behaviour by mode (no Open WebUI rewrites in the
-web app mode, all of them intact in the legacy mode)."""
+web app mode, all of them intact in Open WebUI mode)."""
 from __future__ import annotations
 
 import json

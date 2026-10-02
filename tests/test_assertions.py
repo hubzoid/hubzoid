@@ -1,6 +1,6 @@
 """Signed identity assertions (hubzoid.assertions) and how the bridge trusts
 identity headers: in the web app mode only when a valid X-Hubzoid-Assertion
-covers exactly those values; in the legacy Open WebUI mode as in 1.0.x."""
+covers exactly those values; in Open WebUI mode as in 1.0.x."""
 from __future__ import annotations
 
 import base64

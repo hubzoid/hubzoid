@@ -3,7 +3,7 @@ an app (for example Gmail), confirms the verified result on a browser page and
 back in the chat that asked. Pages live under `/portal/connect/`.
 
 An app is connected through its Hubzoid connector (``hubzoid.connectors``, the
-default UI mode), or in the legacy Open WebUI mode through the OAuth 2.1 MCP
+default UI mode), or in Open WebUI mode through the OAuth 2.1 MCP
 server registered for it in Open WebUI (``OWUI_NATIVE_MCP``). An app with no
 such connector or server is not available to connect.
 
@@ -16,7 +16,7 @@ The journey, end to end:
      If not, :func:`start` records a short-lived journey bound to the trusted
      caller and returns ``<public>/portal/connect/<id>``, never a provider URL.
   2. The link page requires a signed-in session (Hubzoid's, or Open WebUI's in
-     legacy mode) whose email is the journey's subject (`web.py`). ``Start``
+     Open WebUI mode) whose email is the journey's subject (`web.py`). ``Start``
      begins the authorization: Hubzoid's own OAuth flow, or Open WebUI's
      authorize route.
   3. After consent the browser returns to ``/portal/connect/<id>/done``, which
@@ -127,12 +127,12 @@ def permissions(hub_dir: Path) -> list[dict]:
     """Connector capabilities (`connector_<app>`) this hub offers (a managed
     hub needs these grants for per-turn injection too): one per registered
     Hubzoid connector in the default UI mode, or one per Open WebUI OAuth MCP
-    server when ``OWUI_NATIVE_MCP`` is on in the legacy mode."""
+    server when ``OWUI_NATIVE_MCP`` is on in Open WebUI mode."""
     from .. import appmode, owui_mcp
     from ..access import owui_tool_servers as servers
 
     hub_dir = Path(hub_dir)
-    if not appmode.is_legacy(hub_dir):
+    if not appmode.is_openwebui(hub_dir):
         from ..connectors import registry
 
         return registry.permissions(hub_dir)
@@ -158,8 +158,7 @@ def _perm(app: str, name: str) -> dict:
 # ---------------------------------------------------------------------------
 def may_start(hub_dir, ident, app: str) -> tuple[bool, str]:
     """May this caller start a journey for ``app`` here? ``guard.decide`` on
-    ``connector_<app>``: the surface gate, then the Console grant (managed hub)
-    or the legacy group of the same name."""
+    ``connector_<app>``: the surface gate, then the Console grant."""
     from ..access.guard import decide
 
     return decide(Path(hub_dir), ident, capability(app))

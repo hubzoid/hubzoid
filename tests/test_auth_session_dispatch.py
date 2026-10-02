@@ -1,5 +1,5 @@
 """Who is asking, by UI mode: ``access.session.verified_email`` and
-``configured_owner`` (Hubzoid sessions by default, Open WebUI in legacy mode),
+``configured_owner`` (Hubzoid sessions by default, Open WebUI in Open WebUI mode),
 owner provisioning, the same-origin rule, and MCP OAuth consent on Hubzoid
 sessions in sign-in and local mode."""
 from __future__ import annotations
@@ -112,7 +112,7 @@ def test_store_errors_are_a_503(hub, monkeypatch):
     assert exc.value.status_code == 503
 
 
-# ---- legacy mode keeps Open WebUI ---------------------------------------------------------
+# ---- Open WebUI mode keeps Open WebUI ---------------------------------------------------------
 
 def test_legacy_mode_still_asks_open_webui(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
@@ -126,7 +126,7 @@ def test_legacy_mode_still_asks_open_webui(hub, monkeypatch):
 
     monkeypatch.setattr(httpx, "get", fake_get)
     _, token = account(hub, "ana@example.com")
-    # A Hubzoid session means nothing in legacy mode.
+    # A Hubzoid session means nothing in Open WebUI mode.
     assert session.verified_email(request(cookies={"hz_session": token}), hub) == ""
     assert session.verified_email(request(cookies={"token": "jwt"}), hub) == "bo@example.com"
     assert seen == {"url": "http://127.0.0.1:43080/api/v1/auths/", "auth": "Bearer jwt"}

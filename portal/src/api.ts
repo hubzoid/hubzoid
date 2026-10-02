@@ -466,8 +466,8 @@ export async function connectorsRequest<T>(
 
 // ---- One-time sign-in links (Hubzoid accounts, the default mode) -------------
 // Add user and Reset password return a link for the person to set their own
-// password instead of a password typed here. Open WebUI deployments (legacy
-// mode) keep passwords; there `sign_in.links` is absent.
+// password instead of a password typed here. Open WebUI mode
+// deployments keep passwords; there `sign_in.links` is absent.
 
 export type LinkSignInOptions = SignInOptions & { links?: boolean };
 /** A one-time sign-in link: absolute, or a path on this site. Works once. */

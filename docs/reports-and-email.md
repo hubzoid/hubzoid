@@ -117,8 +117,6 @@ The owner chooses one audience per artifact in **Share**:
   the group or from the agent takes effect on their next click. So does
   blocking their account.
 - **Changing one artifact never changes future artifacts.**
-- **Sharing with people or with the agent needs a Console-managed hub.** A
-  legacy hub's membership lives in the chat app, and Hubzoid cannot check it.
 - **Owner and viewers.** The owner can view, download, share, turn off links
   and delete. Viewers can view and download. There is no editor role.
 - **No administrator override.** Organization admins and agent managers see

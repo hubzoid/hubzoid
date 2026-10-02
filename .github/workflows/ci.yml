@@ -47,7 +47,7 @@ jobs:
           npm install -g @openai/codex@0.147.0
           cd portal && npx playwright install --with-deps chromium && npm test
 
-      - name: Full test suite (legacy Open WebUI mode included)
+      - name: Full test suite (Open WebUI mode included)
         run: |
           pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
           pytest -q --no-header -m ""

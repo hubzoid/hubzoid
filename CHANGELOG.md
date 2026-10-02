@@ -71,7 +71,7 @@ upgrade requirements and its known limits.
   `HUBZOID_MAX_FILES_PER_MESSAGE` (10).
 - Download links in the web app expire after 7 days by default
   (`HUBZOID_ARTIFACT_LINK_TTL`, `0` for never), and the signed-in owner of a
-  conversation can always download its files. Legacy mode is unchanged.
+  conversation can always download its files. Open WebUI mode is unchanged.
 - Workflows: `hub.call_agent` returns only the agent's answer. Tool lines,
   reasoning, download footers and error markers no longer appear in workflow
   data or reports.
@@ -162,10 +162,11 @@ upgrade requirements and its known limits.
   macOS arm64 with Python 3.12.6 and fresh caches, on a machine shared with
   other work (load average 14 to 21 on 8 cores): a cold `uv` install took
   53 s for 136 packages and a 511 MB environment, a cold `pip` install 202 s
-  for 137 packages and 646 MB. The legacy `hubzoid[openwebui]` took 355 s for
+  for 137 packages and 646 MB. The `hubzoid[openwebui]` extra took 355 s for
   285 packages and 2.1 GB with `uv`.
-- Open WebUI stays available for this release as legacy mode:
-  `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`.
+- Open WebUI remains a supported chat app (Open WebUI mode):
+  `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`. Access is
+  managed in the Console in both modes.
 - New required dependencies: pwdlib (argon2 and bcrypt), Authlib,
   itsdangerous and python-multipart. The shared packages Open WebUI used to
   pin exactly (openai, mcp, FastAPI, pydantic and others) keep those release
@@ -183,11 +184,11 @@ upgrade requirements and its known limits.
   OpenRouter, Anthropic or OpenAI key.
 - `hubzoid doctor` reports the web app mode (`ui.mode`), sign-in
   (`auth.chat_signin`), the deployment key by fingerprint (`deployment.key`),
-  the `openwebui` extra in legacy mode (`ui.openwebui_extra`), an Open WebUI
+  the `openwebui` extra in Open WebUI mode (`ui.openwebui_extra`), an Open WebUI
   install not yet moved (`ui.openwebui_data`) and the local-mode loopback
   guard (`exposure.local_mode`).
 - The Docker image no longer carries ffmpeg, PyAV build tools or PyTorch.
-  `--build-arg WITH_OPENWEBUI=true` builds the legacy image. The compose file
+  `--build-arg WITH_OPENWEBUI=true` builds the Open WebUI image. The compose file
   turns sign-in on, since its port is reachable from other machines.
 - `import hubzoid` no longer loads the agent SDKs, so the CLI and the edge
   start faster.
@@ -357,7 +358,7 @@ upgrade requirements and its known limits.
   client registered in advance. `private_key_jwt` and provider-specific
   authorization parameters are not supported.
 - Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
-  LDAP and trusted proxy headers are legacy-mode only.
+  LDAP and trusted proxy headers are Open WebUI mode only.
 - Arbitrary synchronous workflow code cannot be stopped at its deadline. It
   keeps its thread and ticket partition until it returns.
 - Event and alert records have no automatic retention yet.

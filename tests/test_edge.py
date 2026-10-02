@@ -244,7 +244,7 @@ def edge_url():
     app = edge.build_edge_app(
         default_base=f"http://127.0.0.1:{oport}",
         routes=[edge.EdgeRoute(prefix="/artifacts", upstream=f"http://127.0.0.1:{bport}")],
-        web_app=False,  # the legacy Open WebUI topology
+        web_app=False,  # the Open WebUI topology
     )
     front = _Server(app, eport)
     bridge.start()

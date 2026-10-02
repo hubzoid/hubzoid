@@ -95,7 +95,7 @@ def sqlalchemy_url(url: str) -> str:
 
     ``postgresql://`` and ``postgres://`` mean psycopg (version 3), which
     Hubzoid installs. Without this, SQLAlchemy picks psycopg2, which only the
-    legacy Open WebUI extra brought in, so a 1.0.x ``DATABASE_URL`` would stop
+    Open WebUI extra brought in, so a 1.0.x ``DATABASE_URL`` would stop
     working after the upgrade. Other URLs are returned unchanged."""
     for prefix in ("postgresql://", "postgres://"):
         if url.startswith(prefix):

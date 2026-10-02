@@ -25,10 +25,8 @@ see only their own data, whichever backend the hub runs on.
 Entirely no-op (empty result) when the switch ``OWUI_NATIVE_MCP`` is not set,
 the caller is anonymous, the caller's surface may not carry personal tokens
 (``HUBZOID_RESTRICTED_SURFACES``, the restricted-tool rule), or they have
-connected nothing. On a hub whose access is managed in the Console, each server
-also needs the caller's ``connector_<app>`` capability (``app`` is the server's
-id, see :func:`app_key`). Legacy hubs keep today's behaviour apart from the
-surface rule. A server whose key would replace a hub MCP server is skipped for
+connected nothing. Each server also needs the caller's ``connector_<app>``
+capability (``app`` is the server's id, see :func:`app_key`). A server whose key would replace a hub MCP server is skipped for
 that turn, so a personal server never shadows a hub tool.
 
 Token freshness (expiry + refresh) is delegated to ``owui_refresh``, so a server
@@ -143,11 +141,11 @@ def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> 
 
     In the default UI mode Hubzoid owns personal connections, so this answers
     from ``hubzoid.connectors`` instead (same shape, same rules). Only the
-    legacy Open WebUI mode reads Open WebUI's connections below.
+    Open WebUI mode reads Open WebUI's connections below.
     """
     from . import appmode
 
-    if not appmode.is_legacy(hub_dir):
+    if not appmode.is_openwebui(hub_dir):
         from .connectors.per_user import per_user_servers as hubzoid_servers
 
         return hubzoid_servers(hub_dir, identity, reserved=reserved)

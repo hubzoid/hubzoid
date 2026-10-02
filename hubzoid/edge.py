@@ -19,7 +19,7 @@ decoded path is encoded again, so `%25` escapes are never decoded twice
 fallback upstreams, only a small request body is held in memory for a retry on
 the next upstream; a larger one streams to the first.
 
-Legacy Open WebUI mode (`HUBZOID_UI=openwebui`) is 1.0.x, unchanged:
+Open WebUI mode (`HUBZOID_UI=openwebui`) is 1.0.x, unchanged:
 
 The reverse proxy / load balancer in front of a hub points at ONE port
 (Open WebUI's `PORT`, default 3080). But artifact download links are served
@@ -57,12 +57,10 @@ Two optional behaviours sit on the same front door:
     with Evaluations, Functions and Settings), and refuses browser writes to
     Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
     own service calls go to Open WebUI's internal URL and never pass this edge.
-    When every hub in the deployment is also managed in the Console (each is
-    authoritative in the access store), Open WebUI's groups decide nothing about
-    agents, so Groups is hidden as well: `/admin` and every `/admin/users` page
-    open Settings > Integrations over Evaluations. A deployment with any hub
-    still on Open WebUI groups keeps Groups. In-app navigation is handled the
-    same way by `portal_navigation`.
+    Access is decided in the Console, so Open WebUI's groups decide nothing
+    about agents and Groups is hidden as well: `/admin` and every `/admin/users`
+    page open Settings > Integrations over Evaluations. In-app navigation is
+    handled the same way by `portal_navigation`.
   * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
     before sending the browser through Open WebUI's OAuth client flow. When the
     client callback redirects, the edge sends the browser to the journey's done
@@ -125,7 +123,7 @@ _RETRY_BODY_LIMIT = 64 * 1024
 
 
 def web_app_mode(env) -> bool:
-    """True unless the deployment runs the legacy Open WebUI mode: HUBZOID_UI,
+    """True unless the deployment runs Open WebUI mode: HUBZOID_UI,
     else the mode the gateway recorded in its manifest (HUBZOID_DEPLOYMENT)."""
     from . import appmode
 
@@ -135,7 +133,7 @@ def web_app_mode(env) -> bool:
             raw = str(json.loads(Path(env["HUBZOID_DEPLOYMENT"]).read_text()).get("ui_mode") or "")
         except (OSError, ValueError):
             raw = ""
-    return not appmode.is_legacy(env={"HUBZOID_UI": raw})
+    return not appmode.is_openwebui(env={"HUBZOID_UI": raw})
 
 
 def _upstream_path(path: str) -> str:
@@ -393,7 +391,7 @@ def build_edge_app(
     workflow_hubs: tuple[str, ...] | list[str] = (),
 ) -> Starlette:
     """A Starlette reverse proxy: `routes` go to their bridge, the rest to the
-    default upstream (Open WebUI in the legacy mode, a bridge in the web app mode).
+    default upstream (Open WebUI in Open WebUI mode, a bridge in the web app mode).
 
     Args:
         default_base: the default upstream, e.g. "http://127.0.0.1:43080".
@@ -416,7 +414,7 @@ def build_edge_app(
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
     if web_app is None:
         web_app = web_app_mode(os.environ)
-    # Every Open WebUI rewrite is legacy-mode only.
+    # Every Open WebUI rewrite is Open WebUI mode only.
     owui_rewrites = not web_app
     locked_prefixes = _owui_lock_prefixes(os.environ) if owui_rewrites else ()
     hide_users = _hide_owui_users(os.environ) if owui_rewrites else False
@@ -679,7 +677,7 @@ def _factory() -> Starlette:
     launch it the same way they launch the bridge:
 
       HUBZOID_EDGE_DEFAULT        The default upstream (catch-all + websockets):
-                                  Open WebUI in the legacy mode, a bridge in the
+                                  Open WebUI in Open WebUI mode, a bridge in the
                                   web app mode.
       HUBZOID_EDGE_DEFAULT_FALLBACKS  JSON list of upstreams tried when the
                                   default can't be reached (optional).

@@ -10,7 +10,7 @@ hub's bridge with the prefix stripped (`edge_routes(web_app=True)`),
 first bridge. The chat app calls hub-scoped routes at `${api_base}/api/...`
 with `api_base` = `/b/<slug>`.
 
-Legacy Open WebUI mode (`HUBZOID_UI=openwebui`, 1.0.x, unchanged below):
+Open WebUI mode (`HUBZOID_UI=openwebui`, 1.0.x, unchanged below):
 `hubzoid run` is one bridge + one Open WebUI per hub. That is full isolation
 but N heavy OWUI processes. For a team-of-teams deployment (sales hub, support
 hub, …) where the weight matters and per-team *access* — not per-team URLs —

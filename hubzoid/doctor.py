@@ -266,7 +266,7 @@ def _auth(hub: Path | None = None) -> list[Check]:
     else:
         out.append(Check("auth.bridge_keys", "ok", f"{len(keys)} bridge key(s) set"))
 
-    if not appmode.is_legacy(hub):
+    if not appmode.is_openwebui(hub):
         out.append(_web_app_signin(hub))
         return out
     auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in _TRUTHY

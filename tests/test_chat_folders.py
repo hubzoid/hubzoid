@@ -2,7 +2,7 @@
 aliasing another owner's files).
 
 The per-chat folder ``.hubzoid/chats/<key>/`` is shared by every surface: the
-web app, Open WebUI chats of the legacy mode, Slack, Telegram and WhatsApp. A
+web app, Open WebUI chats of Open WebUI mode, Slack, Telegram and WhatsApp. A
 conversation started in the web app keeps its files in ``web-<id>`` (its chat
 scope too), so a browser-chosen id never names another surface's folder, and
 ids are unique ignoring case, so two conversations never share a folder on a

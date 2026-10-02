@@ -234,7 +234,7 @@ administrators keep their full scope.
 ## Management API (implemented)
 
 The Console's API under `/portal/api` is also the management API. Besides the
-session cookie, in the legacy Open WebUI mode (`HUBZOID_UI=openwebui`) only,
+session cookie, in Open WebUI mode (`HUBZOID_UI=openwebui`) only,
 every endpoint accepts `Authorization: Bearer sk-...` with the caller's Open
 WebUI API key. The Hubzoid web app mode ignores these keys. The key is verified against Open WebUI's key table,
 as for the hosted MCP surface, and the caller acts as its owner under the same
@@ -293,8 +293,7 @@ On an unbootstrapped deployment the owner receives organization administration,
 with entry provisioned once per configured hub. An existing administration
 bootstrap is preserved. Adding a hub never restores a revoked organization role.
 Removing access later is intentional and
-is not undone on the next sign-in. Fresh hubs become authoritative; existing hubs
-keep their prior access mode until explicitly migrated.
+is not undone on the next sign-in.
 
 See [administration](ADMINISTRATION.md) for recovery and migration commands.
 

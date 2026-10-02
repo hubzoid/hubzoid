@@ -132,7 +132,7 @@ def plan(hub_dir: Path, *, include_secrets: bool = False) -> Plan:
         if include_secrets and (path / ".env").is_file():
             add(path / ".env", "file", key)
     if manifest:
-        # The gateway's data folder holds its manifest (and, in the legacy mode,
+        # The gateway's data folder holds its manifest (and, in Open WebUI mode,
         # Open WebUI's database). The web app mode records no Open WebUI path.
         located = deployment.manifest_path(hub_dir)
         if located is not None:

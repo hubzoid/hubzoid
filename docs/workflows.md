@@ -161,7 +161,7 @@ Each `call_jev` writes one usage row, including any retry:
 | Field | Value |
 |---|---|
 | `kind` | `jev` |
-| `subject`, `surface` | For a workflow, the account the run acts as on `workflow` (`workflow:<name>` only for a legacy hub's service identity); for chat, the person and their channel (`web`, `api`) |
+| `subject`, `surface` | For a workflow, the account the run acts as on `workflow` (`workflow:<name>` only for a run recorded before workflows ran as people); for chat, the person and their channel (`web`, `api`) |
 | `chat_id` | The chat, for chat calls |
 | `model` | The version that answered, such as `typesafe/jev-1.13-20260917`; the requested model if the call failed |
 | `input_tokens`, `output_tokens`, `cost_usd` | As OpenRouter reports them. Jev bills input tokens only |

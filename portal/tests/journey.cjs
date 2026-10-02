@@ -1545,7 +1545,7 @@ function step(name) {
     await page.setViewportSize({ width: 1440, height: 950 });
 
     // ---- sign out --------------------------------------------------------------------------
-    step("Sign out ends Open WebUI's session in the legacy mode, the Hubzoid web app's in the default mode");
+    step("Sign out ends Open WebUI's session in Open WebUI mode, the Hubzoid web app's in the default mode");
     const signOuts = [];
     await context.route(`${ORIGIN}/api/v1/auths/signout`, (route) => {
       signOuts.push(`openwebui ${route.request().method()}`);

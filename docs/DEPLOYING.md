@@ -274,7 +274,7 @@ sudo apt update && sudo apt install -y \
 sudo useradd -r -m -d /opt/hubzoid -s /bin/bash hubzoid
 ```
 
-Only the legacy Open WebUI mode (`pip install "hubzoid[openwebui]"`) also
+Only Open WebUI mode (`pip install "hubzoid[openwebui]"`) also
 needs `pkg-config` and `ffmpeg` for its PyAV dependency. Reverse-proxy
 install comes in step 6 once you've picked one.
 
@@ -674,9 +674,9 @@ gateway then creates for every hub:
 * a **team group** named after the hub (its slug), with **read access** to
   that model only.
 
-For new managed hubs, grant people **Use this agent** and tool capabilities in
-**Console → Agents → Access**. For an unmigrated hub, its existing team group
-continues to apply until the explicit migration in [ADMINISTRATION.md](ADMINISTRATION.md). New hub in the command line → provisioned
+Grant people **Use this agent** and tool capabilities in
+**Console → Agents → Access**. The team group and the model's access list
+decide nothing: access is checked in the Console. New hub in the command line → provisioned
 on next boot. Provisioning is idempotent and deliberately conservative:
 identity fields (name, description, suggestions, avatar) are refreshed from
 the hub every boot — including removals, so deleting a `suggestions:` block
@@ -738,7 +738,7 @@ missing system libraries), build the Docker image from the `Dockerfile` at
 the repo root and run it instead. It installs the checked-out source with
 the reviewed dependency set in `requirements.lock`, so the image version is
 the version you checked out. `--build-arg WITH_OPENWEBUI=true` builds the
-legacy Open WebUI image.
+Open WebUI image.
 
 ```bash
 git checkout v<version>          # the release you want

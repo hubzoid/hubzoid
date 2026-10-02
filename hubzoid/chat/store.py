@@ -15,7 +15,7 @@ and globally unique, so an id already used in another conversation is refused.
 A conversation's files (uploads, the agent's artifacts) live in the hub folder
 under ``.hubzoid/chats/<key>/``, ``chat_key`` below, which is also the chat
 scope of its runs. That folder tree is shared with every other surface (Open
-WebUI chats of the legacy mode, Slack, Telegram, WhatsApp), so a conversation
+WebUI chats of Open WebUI mode, Slack, Telegram, WhatsApp), so a conversation
 started here uses ``web-<id>``: an id the browser chose never names another
 surface's chat. A conversation imported from Open WebUI keeps its id, the
 folder ``hubzoid migrate openwebui`` copied its files to. Web conversation ids

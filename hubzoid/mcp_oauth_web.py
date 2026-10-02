@@ -2,8 +2,8 @@
 
 Who is signed in comes from ``access.session.verified_email``: the Hubzoid
 session in the default mode (the local owner when sign-in is off), the Open
-WebUI session in the legacy mode. Signing in happens on the web app's
-``/auth`` page (Open WebUI's in legacy mode), which returns here afterwards."""
+WebUI session in Open WebUI mode. Signing in happens on the web app's
+``/auth`` page (Open WebUI's in Open WebUI mode), which returns here afterwards."""
 
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def browser_routes(provider):
             ),
         }
         if request.method == "GET":
-            through = " through Open WebUI" if appmode.is_legacy(provider.hub_dir) else ""
+            through = " through Open WebUI" if appmode.is_openwebui(provider.hub_dir) else ""
             csrf = csrf_form(who, "consent:" + ticket)
             body = f"""<p><strong>{escape(client.client_name or 'MCP assistant')}</strong> wants to connect to <strong>{escape(provider.hub_dir.name)}</strong>.</p>
 <p>Signed in as <strong>{escape(who['email'])}</strong>{through}.</p><p>This allows the assistant to read hub context and run tools, including actions, using your current hub permissions. It cannot grant itself additional permissions.</p>

@@ -13,7 +13,7 @@ Drop files here to brand the web app. All optional. Use these lowercase names:
 `logo.svg` and `favicon.svg` ship as Hubzoid samples. Replace them with your
 own, or delete them to use the Hubzoid defaults.
 
-## Legacy Open WebUI mode
+## Open WebUI mode
 
 With `HUBZOID_UI=openwebui`, `hubzoid run` copies these files into Open WebUI
 on every start. There, filenames are case-insensitive, `logo.webp`,

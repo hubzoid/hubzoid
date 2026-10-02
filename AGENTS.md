@@ -88,7 +88,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 - Pre-shipped tools must scope writes to `<hub>/output/<session>/`. Reads
   may go anywhere under the hub directory. No filesystem access outside the
   hub root.
-- Open WebUI is an optional legacy extra invoked as a subprocess; the package
+- Open WebUI (Open WebUI mode) is an optional extra invoked as a subprocess; the package
   must not `import open_webui` at module load (keeps cold-start fast and lets
   the bridge run headless via `--no-ui`).
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple

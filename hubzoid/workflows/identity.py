@@ -315,8 +315,7 @@ def markdown_scratch(hub_dir: Path, task_name: str, ident: RunIdentity) -> str:
     Each person gets their own folder, `.hubzoid/schedule/<task>@<person>`, a
     sibling of the task's historical folder, so no run can read or write
     another person's state. The historical folder (`.hubzoid/schedule/<task>`)
-    is left as it was: it belongs to no person, and only a legacy service run
-    (a legacy hub with no account configured) keeps using it."""
+    is left as it was and belongs to no person."""
     base = f".hubzoid/schedule/{task_name}"
     if not ident.is_person:
         return base

@@ -270,9 +270,8 @@ def _build_list_filter(hub_dir: Path, permissions: dict[str, str],
                 return tools
             ident = _mcp_identity(hub_dir)
             surfaces = _allowed_surfaces()
-            # Use the SAME authoritative/fail-closed decision as invocation, so a
-            # user with a direct Casbin grant sees the tool (and a legacy-only
-            # user after cutover does not see one that would fail on invoke).
+            # Use the SAME fail-closed decision as invocation, so a user sees a
+            # tool exactly when invoking it would be allowed.
             shown = []
             with access.identity_scope(ident):
                 try:

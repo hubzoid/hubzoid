@@ -86,7 +86,7 @@ def _request(**headers) -> Request:
 
 @pytest.fixture
 def legacy_ui(monkeypatch):
-    """Open WebUI's forwarded email is trusted as sent only in the legacy mode;
+    """Open WebUI's forwarded email is trusted as sent only in Open WebUI mode;
     the web app mode needs a signed assertion (tests/test_assertions*.py)."""
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
 

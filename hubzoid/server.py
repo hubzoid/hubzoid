@@ -319,7 +319,7 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     from . import appmode
 
-    web_app = not appmode.is_legacy(hub_dir)
+    web_app = not appmode.is_openwebui(hub_dir)
     if web_app and not appmode.auth_enabled(hub_dir):
         # Sign-in off: the local owner is the only person, and owns every hub
         # from the first start, before any page is opened. Best effort: a store
@@ -415,7 +415,7 @@ def build_app() -> FastAPI:
     # Open WebUI mode (HUBZOID_UI=openwebui) keeps the 1.0.x surface unchanged.
     from . import appmode
 
-    if not appmode.is_legacy(hub_dir):
+    if not appmode.is_openwebui(hub_dir):
         from . import webapp
 
         webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
@@ -603,9 +603,9 @@ _UNSET = object()
 
 
 def _trust(request: Request, hub_dir: Path | None):
-    """(legacy, vouched) for this request, computed once.
+    """(openwebui, vouched) for this request, computed once.
 
-    Legacy Open WebUI mode: identity headers are trusted as sent, because only
+    Open WebUI mode: identity headers are trusted as sent, because only
     holders of the bridge key (Open WebUI, the adapters) reach the bridge.
     Web app mode: only what a valid `X-Hubzoid-Assertion` covers exactly
     (`hubzoid.assertions`); `vouched` is None for an anonymous request."""
@@ -615,9 +615,9 @@ def _trust(request: Request, hub_dir: Path | None):
         return cached
     from . import appmode, assertions
 
-    legacy = appmode.is_legacy(hub_dir)
-    vouched = None if legacy else assertions.vouched(hub_dir, request.headers)
-    result = (legacy, vouched)
+    openwebui = appmode.is_openwebui(hub_dir)
+    vouched = None if openwebui else assertions.vouched(hub_dir, request.headers)
+    result = (openwebui, vouched)
     if state is not None:
         try:
             state.hubzoid_trust = result
@@ -644,8 +644,8 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
-    legacy, vouched = _trust(request, hub_dir)
-    if legacy:
+    openwebui, vouched = _trust(request, hub_dir)
+    if openwebui:
         verified = (
             request.headers.get("x-openwebui-user-email")
             or request.headers.get("x-hubzoid-user")
@@ -675,7 +675,7 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         # Open WebUI mode: the configured owner may chat before ever opening the
         # Console. Provision them here exactly as a Console sign-in would (same
         # owner and administrator match, once per hub, never after a revoke).
-        if not ok and legacy and request.headers.get("x-openwebui-user-role") == "admin":
+        if not ok and openwebui and request.headers.get("x-openwebui-user-role") == "admin":
             from .access.session import configured_owner
 
             if verified == configured_owner(hub_dir) and gs.provision_owner(verified, hub_dir.name):
@@ -729,8 +729,8 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
     the roster's and the asserted ones. Without one the request is anonymous
     on the ``api`` surface, and ``body["user"]`` is ignored.
     """
-    legacy, vouched = _trust(request, hub_dir)
-    if not legacy:
+    openwebui, vouched = _trust(request, hub_dir)
+    if not openwebui:
         if vouched is None:
             return access.Identity.make(user=None, groups=None, surface="api")
         email = vouched.email or None
@@ -811,7 +811,7 @@ def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
     """True when the signed-in person (web app session) owns the conversation
     whose files live under this chat id (its ``chat.store.chat_key``: ``web-<id>``,
     or the Open WebUI id of an imported one). Another surface's chat (Slack,
-    Telegram, WhatsApp, a legacy Open WebUI chat) is never a conversation's,
+    Telegram, WhatsApp, an Open WebUI chat) is never a conversation's,
     even when a conversation has the same id. Any failure is a no."""
     try:
         from . import auth

@@ -17,9 +17,9 @@ hosted MCP and every agent of a [gateway](DEPLOYING.md). An account is not
 access: what someone may use is granted per agent in the Console (see
 [administration](ADMINISTRATION.md)).
 
-This page describes the Hubzoid web app, the default in 1.1. The legacy Open
-WebUI mode (`HUBZOID_UI=openwebui`) keeps Open WebUI's own sign-in, described
-at the end in [Legacy mode: Open WebUI sign-in](#legacy-mode-open-webui-sign-in).
+This page describes the Hubzoid web app, the default in 1.1. Open WebUI mode
+(`HUBZOID_UI=openwebui`) keeps Open WebUI's own sign-in, described at the end
+in [Sign-in in Open WebUI mode](#sign-in-in-open-webui-mode).
 
 ## Local mode
 
@@ -312,7 +312,7 @@ spelling (`localhost` or `127.0.0.1`) for you.
 
 `hubzoid admin` works on the deployment's account store without signing in,
 with the authority of whoever runs it on the server. Pass any hub of a gateway,
-or run it in a hub folder. It refuses a deployment in the legacy Open WebUI
+or run it in a hub folder. It refuses a deployment in the Open WebUI
 mode. Passwords are typed at a hidden prompt, never passed as arguments, and
 never printed.
 
@@ -350,13 +350,13 @@ you set `HUBZOID_WORKFLOW_USER` or `run_as` to a real account (see
 | Nobody can administer | `hubzoid admin set-role <email> admin <hub>` on the server |
 | Signed in, but no agent | The account has no access yet. An administrator grants **Use this agent** in the Console |
 
-## Legacy mode: Open WebUI sign-in
+## Sign-in in Open WebUI mode
 
 This section applies only with `HUBZOID_UI=openwebui` and the `openwebui`
-extra, kept for this release. In legacy mode Open WebUI owns accounts and
-sign-in, exactly as in Hubzoid 1.0.x, and everything above about Hubzoid
-accounts does not apply. To move to Hubzoid accounts, see
-[upgrading](UPGRADING.md).
+extra. In Open WebUI mode Open WebUI owns accounts and sign-in, as in Hubzoid
+1.0.x, and everything above about Hubzoid accounts does not apply. Who may use
+each agent is still decided in the Console, never by Open WebUI groups or model
+access lists. To move to Hubzoid accounts, see [upgrading](UPGRADING.md).
 
 Settings go in the hub's `.env` (for a gateway, in the gateway's environment):
 

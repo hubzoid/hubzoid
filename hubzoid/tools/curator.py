@@ -2,8 +2,8 @@
 
 This ships with hubzoid, so every hub has it — but it is GATED. The tool
 carries the ``curator`` permission, shown in Console as Save shared knowledge.
-On a managed hub, the caller needs that grant on an allowed surface (including
-the trusted workflow surface). Unmigrated hubs retain legacy group membership.
+The caller needs that grant on an allowed surface (including the trusted
+workflow surface).
 Anonymous callers and disallowed surfaces are refused by the same guard as
 `restricted/` tools; installing the tool does not grant permission to use it.
 
@@ -48,7 +48,7 @@ log = logging.getLogger("hubzoid")
 
 # The capability a caller needs to use `remember`, registered here where it is
 # enforced so the Console row and the guard share one id. Factories and tests
-# read CURATOR_PERMISSION; on legacy hubs it is also the OWUI group name.
+# read CURATOR_PERMISSION.
 CURATOR = register(Capability(
     permission="curator", label="Save shared knowledge", group="tools",
     description="Use remember to create or replace learned knowledge shared by this agent.",

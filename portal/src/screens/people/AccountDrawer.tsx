@@ -338,8 +338,7 @@ export function AccountDrawer({
   const google = signIn === "google" && !!options?.google;
   // Hubzoid accounts: no password is set here; they get a one-time link.
   const links = usesSignInLinks(me);
-  // Agents this viewer manages, in the Console's order. Legacy agents are
-  // listed but take no grants here: their access is still in the chat app.
+  // Agents this viewer manages, in the Console's order.
   const managed = hubs.filter((h) => h.key in grantable);
   const catalogs = useCatalogs(managed.map((h) => h.key));
 

@@ -100,7 +100,7 @@ function createFixture() {
     // How new accounts can sign in (GET /me sign_in).
     signIn: { password: true, google: false },
     // Groups (the web app mode). Off by default: /me says groups: false and
-    // /groups answers 404, as in the legacy Open WebUI mode.
+    // /groups answers 404, as in Open WebUI mode.
     groupsEnabled: false,
     groups: {}, // id -> { id, name, description, members: [emails], created_at }
     // Chat-app roles set through the Console (GET/POST /accounts/<email>).

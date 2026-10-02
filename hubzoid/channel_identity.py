@@ -3,7 +3,7 @@
 Slack verifies a sender's profile email server-side (``users.info``), so the
 Slack adapter can say who is asking. What that email means depends on the mode:
 
-  * Legacy Open WebUI mode (1.0.x, unchanged): the email is forwarded as it is
+  * Open WebUI mode (1.0.x, unchanged): the email is forwarded as it is
     and the bridge maps it to the person's Open WebUI groups.
   * Web app mode: the email must belong to a Hubzoid account that may sign in,
     active and not blocked. The bridge then applies that account's Hubzoid
@@ -33,7 +33,7 @@ def account_email(hub_dir, email: str | None, *, env=None) -> str | None:
 
     hub_dir = Path(hub_dir)
     try:
-        if appmode.is_legacy(hub_dir, env):
+        if appmode.is_openwebui(hub_dir, env):
             return email
         sign_in = appmode.auth_enabled(hub_dir, env)
     except Exception:  # noqa: BLE001

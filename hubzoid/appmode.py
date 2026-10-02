@@ -4,8 +4,8 @@ Two UI modes:
 
   * ``hubzoid`` (default): the Hubzoid web app. Hubzoid owns accounts, sign-in,
     sessions, conversations and personal connections. No Open WebUI.
-  * ``openwebui`` (legacy, one release): the bundled Open WebUI chat and
-    accounts, exactly as in Hubzoid 1.0.x. Needs ``pip install
+  * ``openwebui`` (Open WebUI mode): the bundled Open WebUI chat and
+    accounts, as in Hubzoid 1.0.x. Access is still decided in the Console. Needs ``pip install
     "hubzoid[openwebui]"`` and ``HUBZOID_UI=openwebui``.
 
 Sign-in is off by default (local, single user on loopback). ``HUBZOID_AUTH``
@@ -19,7 +19,7 @@ sign-in of a web app deployment: a hub ``.env`` or a bridge's own environment
 can never turn sign-in off behind the gateway's public edge.
 ``deployment_conflicts`` names settings that disagree, and a bridge refuses to
 start with any. A standalone hub reads its environment as before, and so does
-the sign-in of a legacy (Open WebUI) deployment, which Open WebUI enforces.
+the sign-in of an Open WebUI mode deployment, which Open WebUI enforces.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ UI_HUBZOID = "hubzoid"
 UI_OPENWEBUI = "openwebui"
 
 _TRUE = {"1", "true", "yes", "on"}
-_LEGACY_NAMES = {"openwebui", "open-webui", "owui", "legacy"}
+_OPENWEBUI_NAMES = {"openwebui", "open-webui", "owui", "legacy"}
 
 
 def _env(name: str, env: Mapping[str, str] | None = None) -> str:
@@ -53,7 +53,7 @@ def _manifest(hub_dir: Path | None, env: Mapping[str, str] | None) -> dict:
 
 
 def _mode(raw: str) -> str:
-    return UI_OPENWEBUI if raw.strip().lower() in _LEGACY_NAMES else UI_HUBZOID
+    return UI_OPENWEBUI if raw.strip().lower() in _OPENWEBUI_NAMES else UI_HUBZOID
 
 
 def ui_mode(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> str:
@@ -63,7 +63,7 @@ def ui_mode(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -
     return _mode(recorded or _env("HUBZOID_UI", env))
 
 
-def is_legacy(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> bool:
+def is_openwebui(hub_dir: Path | None = None, env: Mapping[str, str] | None = None) -> bool:
     return ui_mode(hub_dir, env) == UI_OPENWEBUI
 
 
@@ -79,7 +79,7 @@ def _requested_auth(env: Mapping[str, str] | None) -> tuple[str, str] | None:
 
 def _recorded_auth(manifest: dict) -> bool | None:
     """The sign-in a web app deployment recorded, which its bridges keep. None
-    without a record, or for a legacy deployment (Open WebUI signs people in)."""
+    without a record, or in Open WebUI mode (Open WebUI signs people in)."""
     recorded = manifest.get("auth")
     mode = str(manifest.get("ui_mode") or "")
     if not isinstance(recorded, bool) or not mode or _mode(mode) != UI_HUBZOID:

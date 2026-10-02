@@ -147,8 +147,8 @@ def phone_digits(phone: str | None) -> str:
 
 class BroadAccessRefused(ValueError):
     """A write would create a new 'everyone signed in' (`*`) grant. Existing ones
-    keep working and can be revoked; only migration carrying over demonstrably
-    public legacy access may write one (`carry_over_public=True`)."""
+    keep working and can be revoked; only a caller recreating an existing row
+    (tests seeding one) may write one (`carry_over_public=True`)."""
 
 
 def _refuse_new_everyone(subject: str, carry_over_public: bool = False) -> None:
@@ -674,8 +674,7 @@ class GrantStore:
         open a hub they have any permission in. Idempotent.
 
         A grant to everyone signed in (`*`) is refused unless
-        `carry_over_public` says it preserves demonstrably public legacy access
-        (migration only)."""
+        `carry_over_public` says it recreates an existing one (tests only)."""
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)

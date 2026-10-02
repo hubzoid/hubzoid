@@ -8,7 +8,7 @@ mode (``for_deployment``):
     (``hubzoid.auth.users``) in the shared operational store. No service
     account. A new account needs no password: the Console hands out a one-time
     sign-in link (``issue_link``) instead.
-  * ``OwuiAccounts`` (legacy ``openwebui`` mode), described below, unchanged.
+  * ``OwuiAccounts`` (Open WebUI mode, ``openwebui``), described below.
 
 Open WebUI owns credentials. Hubzoid only calls its supported admin API as the
 deployment's service account (`HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD`) on the
@@ -96,7 +96,7 @@ def unusable_password() -> str:
 def _legacy(hub_dir: Path) -> bool:
     from .. import appmode
 
-    return appmode.is_legacy(Path(hub_dir))
+    return appmode.is_openwebui(Path(hub_dir))
 
 
 def sign_in_options(hub_dir: Path) -> dict:
@@ -128,7 +128,7 @@ def _hubzoid_sign_in_options(hub_dir: Path) -> dict:
 
 
 def _owui_sign_in_options(hub_dir: Path) -> dict:
-    """Legacy mode: how a new Open WebUI account can sign in.
+    """Open WebUI mode: how a new Open WebUI account can sign in.
 
     "google" is true only when the chat app attaches a Google sign-in to an
     existing account by email: Google configured, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`
@@ -594,7 +594,7 @@ class HubzoidAccounts:
 def for_deployment(hub_dir: Path, *, transport: httpx.BaseTransport | None = None
                    ) -> AccountDirectory:
     """The deployment's account directory. Default mode: ``HubzoidAccounts``.
-    Legacy mode: Open WebUI through its internal URL and the service account
+    Open WebUI mode: Open WebUI through its internal URL and the service account
     only; raises AccountsUnavailable when either is missing."""
     if not _legacy(hub_dir):
         return HubzoidAccounts(hub_dir)

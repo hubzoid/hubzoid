@@ -2,7 +2,7 @@
 
 Commands:
   hubzoid init [PATH]              Scaffold a hub from the bundled template.
-  hubzoid run [PATH]               Start a hub: bridge + web app on one port (Open WebUI in legacy mode).
+  hubzoid run [PATH]               Start a hub: bridge + web app on one port (Open WebUI in Open WebUI mode).
   hubzoid gateway [HUBS...]        One shared Open WebUI fronting many hub bridges.
   hubzoid schedule ...             Inspect / manually fire <hub>/schedule/*.md tasks.
   hubzoid slack run [PATH]         Start the Slack adapter (Socket Mode).
@@ -378,7 +378,7 @@ def run(
     port: int = typer.Option(None, "--port", help="Public port: the web app, downloads and MCP. Default: 3080 (or PORT env)."),
     bridge_port: int = typer.Option(None, "--bridge-port", help="FastAPI bridge port on 127.0.0.1. Default: 8000 (or BRIDGE_PORT env)."),
     host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public port binds to (or HUBZOID_HOST env). 0.0.0.0 exposes it on the network, which needs sign-in (HUBZOID_AUTH=true). The bridge always stays on 127.0.0.1."),
-    no_ui: bool = typer.Option(False, "--no-ui", help="Bridge only, on 127.0.0.1: no public port (and no Open WebUI in legacy mode)."),
+    no_ui: bool = typer.Option(False, "--no-ui", help="Bridge only, on 127.0.0.1: no public port (and no Open WebUI in Open WebUI mode)."),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open the web app in a browser. It opens only from a terminal, on a loopback host."),
     slack: bool = typer.Option(
         False,
@@ -410,8 +410,8 @@ def run(
 
     Sign-in is off by default (local mode: you are the hub's owner), so the
     public port stays on this machine. Turn sign-in on with HUBZOID_AUTH=true
-    before binding another interface. HUBZOID_UI=openwebui runs the legacy Open
-    WebUI chat app instead (pip install "hubzoid\\[openwebui]").
+    before binding another interface. HUBZOID_UI=openwebui runs the Open WebUI
+    chat app instead (pip install "hubzoid\\[openwebui]").
     """
     hub = hub.resolve()
     if not hub.is_dir():
@@ -447,11 +447,11 @@ def run(
             console.print(f"[red]{escape(problem)}[/red]")
         raise typer.Exit(2)
 
-    # The web experience: the Hubzoid web app (default) or, for one release, the
-    # legacy Open WebUI chat app. Read after the hub's .env is loaded.
-    legacy = appmode.is_legacy(hub)
+    # The web experience: the Hubzoid web app (default) or the Open WebUI chat
+    # app. Read after the hub's .env is loaded.
+    openwebui = appmode.is_openwebui(hub)
     auth_on = appmode.auth_enabled(hub)
-    if legacy:
+    if openwebui:
         if not no_ui:
             _require_openwebui()
     else:
@@ -459,7 +459,7 @@ def run(
             _refuse_unauthenticated_network(hub, host, auth_on)
         _check_openwebui_upgrade(hub, auth_on)
 
-    if legacy and not no_ui:
+    if openwebui and not no_ui:
         os.environ["OWUI_INTERNAL_URL"] = f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}"
 
     # 1. Start the bridge in a subprocess. We pass HUBZOID_HUB_DIR via env so
@@ -474,7 +474,7 @@ def run(
     # fallback both need settings.bridge_port to match the actual bind.
     bridge_env["BRIDGE_PORT"] = str(br_port)
     mcp_url = None
-    if not legacy and not no_ui:
+    if not openwebui and not no_ui:
         # Links the bridge writes (downloads) go through the public port people
         # open, not the bridge's own loopback port.
         bridge_env.update(_origin_defaults(os.environ, host, ui_port))
@@ -511,7 +511,7 @@ def run(
             raise typer.Exit(1)
         console.print("[green]→ bridge[/green]  ready")
 
-        if not no_ui and legacy:
+        if not no_ui and openwebui:
             _start_openwebui(hub, settings, host=host, ui_port=ui_port, br_port=br_port,
                              inbound=bool(whatsapp or telegram or webhook), started=children)
         elif not no_ui:
@@ -685,14 +685,14 @@ def _mcp_client_name(hub: Path) -> str:
 
 
 def _require_openwebui() -> None:
-    """Legacy mode needs the `openwebui` extra. Checked before anything starts."""
+    """Open WebUI mode needs the `openwebui` extra. Checked before anything starts."""
     from . import webui
 
     if webui.is_available():
         return
     console.print(
-        "[red]HUBZOID_UI=openwebui runs the legacy Open WebUI chat app, which is not installed.[/red]\n"
-        "Install it (legacy mode, available for this release):\n"
+        "[red]HUBZOID_UI=openwebui runs the Open WebUI chat app, which is not installed.[/red]\n"
+        "Install it:\n"
         '  pip install "hubzoid\\[openwebui]"\n'
         "or remove HUBZOID_UI from the hub's .env to use the Hubzoid web app."
     )
@@ -771,7 +771,7 @@ def _check_openwebui_upgrade(hub: Path, auth_on: bool) -> None:
         f"  1. Move accounts, groups and chats:  hubzoid migrate openwebui {quoted}\n"
         "     Do a dry run first (see `hubzoid migrate openwebui --help`), then back up\n"
         f"     (hubzoid backup {quoted}), stop the hub, and apply.\n"
-        "  2. Keep Open WebUI for this release: pip install \"hubzoid\\[openwebui]\" and set\n"
+        "  2. Keep Open WebUI as the chat app: pip install \"hubzoid\\[openwebui]\" and set\n"
         f"     HUBZOID_UI=openwebui in {escape(str(hub / '.env'))}"
     )
     raise typer.Exit(1)
@@ -850,7 +850,7 @@ def _open_browser(url: str) -> None:
 
 def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: int,
                      inbound: bool, started: list):
-    """Legacy mode (HUBZOID_UI=openwebui): Open WebUI behind the edge, exactly as
+    """Open WebUI mode (HUBZOID_UI=openwebui): Open WebUI behind the edge, exactly as
     in 1.0.x. Each process is added to `started` as soon as it runs."""
     from . import config_secrets
 
@@ -995,8 +995,8 @@ def gateway(
     port: int = typer.Option(None, "--port", help="Public port people reach the deployment on. Default: 3080 (or PORT env)."),
     host: str = typer.Option("127.0.0.1", "--host", envvar="HUBZOID_HOST", help="Interface the public edge binds to (or HUBZOID_HOST env). Use 0.0.0.0 to expose."),
     public_url: str = typer.Option(None, "--public-url", help="Public base URL (e.g. https://hub.example.com); used to build per-hub artifact download links. Falls back to HUBZOID_PUBLIC_URL."),
-    name: str = typer.Option("Hubzoid", "--name", help="The deployment's display name (the shared Open WebUI's name in the legacy mode)."),
-    data_dir: Path = typer.Option(None, "--data-dir", help="Gateway state dir: manifest, shared database, deployment key (and Open WebUI's data in the legacy mode). Default: ./.hubzoid-gateway."),
+    name: str = typer.Option("Hubzoid", "--name", help="The deployment's display name (the shared Open WebUI's name in Open WebUI mode)."),
+    data_dir: Path = typer.Option(None, "--data-dir", help="Gateway state dir: manifest, shared database, deployment key (and Open WebUI's data in Open WebUI mode). Default: ./.hubzoid-gateway."),
     launch_bridges: bool = typer.Option(True, "--launch-bridges/--no-bridges", help="Launch each hub's headless bridge. --no-bridges fronts bridges already running as separate units."),
 ) -> None:
     """Serve many hubs behind one front door — one headless bridge per hub.
@@ -1010,7 +1010,7 @@ def gateway(
     the first hub's branding/. Sign-in is set once, in the gateway's
     environment (HUBZOID_AUTH); a hub .env that disagrees stops the gateway.
 
-    Legacy Open WebUI mode (HUBZOID_UI=openwebui), as in 1.0.x: ONE Open WebUI
+    Open WebUI mode (HUBZOID_UI=openwebui), as in 1.0.x: ONE Open WebUI
     over many hubs. Lighter than one `hubzoid run` per hub (a single OWUI
     process instead of N). Each hub surfaces as a selectable model. With
     HUBZOID_GATEWAY_ADMIN_EMAIL/PASSWORD set, each hub's model entry (name,
@@ -1108,7 +1108,7 @@ def gateway(
     shared_op_url = _op_override or f"sqlite:///{gw_data / 'hubzoid-operational.db'}"
 
     from . import appmode
-    if not appmode.is_legacy(env=os.environ):
+    if not appmode.is_openwebui(env=os.environ):
         _gateway_web_app(
             gp=gp, hub_dirs=hub_dirs, deployment_env=deployment_env, process_env=process_env,
             dep_secret=dep_secret, dep_values=dep_values, conflicts=conflicts, host=host,
@@ -1402,7 +1402,7 @@ def _gateway_mode_conflicts(hub_dirs: list[Path], *, auth_on: bool, env, conflic
     for h in hub_dirs:
         own = gateway_lib._own_env(h)
         ui = (own.get("HUBZOID_UI") or "").strip()
-        if ui and _is_legacy_value(ui):
+        if ui and _is_openwebui_value(ui):
             problems.append(
                 f"{h.name}/.env sets HUBZOID_UI={ui}, but this gateway runs the Hubzoid web app. "
                 "Remove it, or set HUBZOID_UI=openwebui in the gateway's environment for every hub.")
@@ -1435,10 +1435,10 @@ def _deployment_origins(pub: str) -> list[str]:
     return appmode.allowed_origins(env)
 
 
-def _is_legacy_value(raw: str) -> bool:
+def _is_openwebui_value(raw: str) -> bool:
     from . import appmode
 
-    return appmode.is_legacy(env={"HUBZOID_UI": raw})
+    return appmode.is_openwebui(env={"HUBZOID_UI": raw})
 
 
 def _gateway_upgrade_guard(gw_data: Path, prior: dict, operational_url: str, *, auth_on: bool) -> None:
@@ -1478,7 +1478,7 @@ def _gateway_upgrade_guard(gw_data: Path, prior: dict, operational_url: str, *, 
             "so nobody could sign in.[/red]\n"
             "  Move its people and chats first:  hubzoid migrate openwebui   "
             "(see hubzoid migrate --help)\n"
-            "  Or keep Open WebUI for this release: set HUBZOID_UI=openwebui")
+            "  Or keep Open WebUI as the chat app: set HUBZOID_UI=openwebui")
         raise typer.Exit(1)
     console.print("[yellow]→ upgrade[/yellow]  Open WebUI data found here. Old chats can be "
                   "imported into the Hubzoid web app with `hubzoid migrate openwebui`.")
@@ -1635,7 +1635,7 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         for b in gp.backends:
             bridge_env = os.environ.copy()
             if dep_secret:
-                # As in the legacy gateway: a bridge takes only
+                # As in the Open WebUI mode gateway: a bridge takes only
                 # BRIDGE_DEPLOYMENT_KEYS from the deployment secret and never
                 # fetches it again.
                 for key in dep_values:
@@ -2894,9 +2894,9 @@ _STARTER_ENV = """\
 # SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
 # SLACK_APP_TOKEN=xapp-...        # App-Level Token, scope connections:write
 
-# --- Legacy: the Open WebUI chat app (this release only) -------------------
+# --- Open WebUI mode: the Open WebUI chat app ------------------------------
 # HUBZOID_UI=openwebui           # needs: pip install "hubzoid[openwebui]"
-# In legacy mode, Open WebUI's own settings apply, for example:
+# In Open WebUI mode, Open WebUI's own settings apply, for example:
 # WEBUI_AUTH=true                # Open WebUI sign-in
 # WEBUI_SECRET_KEY=              # required with WEBUI_AUTH: openssl rand -hex 32
 # WEBUI_NAME=                    # display name; blank = the agent's name

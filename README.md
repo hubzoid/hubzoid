@@ -112,7 +112,7 @@ and [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md)
 Hubzoid 1.1 replaces Open WebUI with its own web app and accounts. A 1.0.x
 deployment with sign-in on does not start until its accounts and chats are
 moved with `hubzoid migrate openwebui` (dry run first, then a backup), or until
-you keep Open WebUI for this release with `pip install "hubzoid[openwebui]"`
+you keep Open WebUI as the chat app with `pip install "hubzoid[openwebui]"`
 and `HUBZOID_UI=openwebui`. Hosted MCP clients now connect with OAuth instead
 of Open WebUI API keys. Read
 [upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)

@@ -4,7 +4,7 @@ Two providers, one per UI mode:
 
   * Default mode: a Hubzoid connector (``hubzoid.connectors``). Hubzoid runs the
     authorization itself and keeps the person's tokens.
-  * Legacy mode (``HUBZOID_UI=openwebui``): an MCP tool server registered in
+  * Open WebUI mode (``HUBZOID_UI=openwebui``): an MCP tool server registered in
     Open WebUI with OAuth 2.1. Open WebUI runs the authorization and stores the
     person's token in ``oauth_session``.
 
@@ -174,7 +174,7 @@ class ConnectorProvider:
 def _legacy(hub_dir) -> bool:
     from .. import appmode
 
-    return appmode.is_legacy(Path(hub_dir))
+    return appmode.is_openwebui(Path(hub_dir))
 
 
 def _connector_for(hub_dir, app: str):
@@ -201,7 +201,7 @@ def _owui_servers_for(hub_dir, app: str) -> list[dict]:
 def require_available(hub_dir, app: str) -> None:
     """Raise JourneyError ``unavailable`` when nothing serves ``app`` on this
     hub: no switched-on connector (default mode), no Open WebUI OAuth MCP
-    server (legacy mode)."""
+    server (Open WebUI mode)."""
     if not _legacy(hub_dir):
         if _connector_for(hub_dir, app) is None:
             raise JourneyError("unavailable", f"{label(app)} is not available to connect on "
@@ -214,7 +214,7 @@ def require_available(hub_dir, app: str) -> None:
 def for_app(hub_dir, app: str):
     """The provider that serves ``app`` for this hub: its connector (default
     mode; connector ids are unique, so never a conflict), or the one Open WebUI
-    OAuth MCP server (legacy mode).
+    OAuth MCP server (Open WebUI mode).
 
     Raises JourneyError ``unavailable`` when there is none, or ``conflict``
     when more than one could. The server ids go to the log for the
@@ -242,7 +242,7 @@ def for_app(hub_dir, app: str):
 def for_journey(hub_dir, journey: dict):
     """The provider that checks ``journey``, or None for a row it does not
     know. Any bridge of the deployment can check it (they share the
-    operational store, and in legacy mode Open WebUI's database)."""
+    operational store, and in Open WebUI mode Open WebUI's database)."""
     if journey.get("provider") == OwuiMcpProvider.name:
         return OwuiMcpProvider(hub_dir, journey.get("provider_ref") or "")
     if journey.get("provider") == ConnectorProvider.name:
@@ -254,7 +254,7 @@ def begin_url(hub_dir, journey: dict, *, request=None, user=None) -> str:
     """Where the browser goes to authorize this journey: the connector's
     authorization (default mode, which needs the page's ``request`` and the
     signed-in ``user``), or Open WebUI's authorize route while the server is
-    still registered (legacy mode)."""
+    still registered (Open WebUI mode)."""
     from ..access import owui_tool_servers as servers
 
     if journey.get("provider") == ConnectorProvider.name:

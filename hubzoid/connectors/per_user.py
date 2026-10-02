@@ -1,15 +1,14 @@
 """The personal MCP servers the caller may reach this turn (default UI mode).
 
 Same return shape and rules as ``hubzoid.owui_mcp.per_user_servers``, which
-dispatches here unless the deployment runs the legacy Open WebUI mode, so all
+dispatches here unless the deployment runs Open WebUI mode, so all
 three runtimes use it unchanged:
 
   * nobody for an anonymous caller, or on a surface that may not carry
     personal credentials (``HUBZOID_RESTRICTED_SURFACES``, the restricted-tool
     rule), or for a blocked person;
-  * only connectors the caller connected, that are switched on, and (on a hub
-    whose access is managed in the Console) whose ``connector_<id>`` capability
-    the caller holds; a legacy hub applies the surface rule only;
+  * only connectors the caller connected, that are switched on, offered in
+    this agent, and whose ``connector_<id>`` capability the caller holds;
   * the administrator's tool allow-list;
   * never a server whose key would replace one of the hub's own MCP servers;
   * each with a currently valid token (refreshed if due). A connection that

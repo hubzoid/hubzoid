@@ -60,7 +60,7 @@ def _prepare(hub: Path) -> Path:
         raise
     except Exception as exc:  # noqa: BLE001 — never print a configuration value
         _fail(f"The hub's configuration could not be loaded ({type(exc).__name__}).", 2)
-    if appmode.is_legacy(hub):
+    if appmode.is_openwebui(hub):
         _fail("This deployment uses Open WebUI accounts (HUBZOID_UI=openwebui). Manage people "
               "in the Console (People) or in Open WebUI.", 2)
     return hub

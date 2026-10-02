@@ -1,7 +1,7 @@
 """`hubzoid run` in the default mode: the Hubzoid web app, no Open WebUI.
 
 Processes are never started: Popen is replaced and the readiness probe answers
-at once. The legacy Open WebUI mode (HUBZOID_UI=openwebui) is checked for the
+at once. Open WebUI mode (HUBZOID_UI=openwebui) is checked for the
 extra and for keeping its 1.0.x processes.
 """
 from __future__ import annotations
@@ -367,7 +367,7 @@ def test_an_empty_open_webui_database_is_not_an_install(tmp_path, launched):
 
 
 # ---------------------------------------------------------------------------
-# Legacy Open WebUI mode
+# Open WebUI mode
 # ---------------------------------------------------------------------------
 def test_legacy_mode_without_the_extra_explains_how_to_install_it(tmp_path, launched, monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: None)

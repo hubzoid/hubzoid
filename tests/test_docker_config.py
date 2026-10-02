@@ -52,7 +52,7 @@ def test_bridge_always_binds_loopback():
 
 
 def test_image_uses_cpu_pytorch_without_cuda():
-    """The default image has no PyTorch at all; the legacy Open WebUI image
+    """The default image has no PyTorch at all; the Open WebUI image
     (and its lock) uses the CPU build."""
     core = (ROOT / "requirements.lock").read_text().lower()
     assert "\ntorch==" not in core

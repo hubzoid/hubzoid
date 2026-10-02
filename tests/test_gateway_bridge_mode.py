@@ -144,7 +144,7 @@ def test_the_deployments_mode_wins_too(tmp_path, recorded, asked, legacy):
     hub = _hub(tmp_path, "sales", 4163)
     _manifest(tmp_path, hub, ui_mode=recorded, auth=True)
     with clean_process_env(HUBZOID_UI=asked):
-        assert appmode.is_legacy(hub) is legacy
+        assert appmode.is_openwebui(hub) is legacy
         problems = appmode.deployment_conflicts(hub)
     assert len(problems) == 1 and f"HUBZOID_UI={asked}" in problems[0]
 
@@ -167,7 +167,7 @@ def test_standalone_and_legacy_sign_in_are_unchanged(tmp_path):
     with clean_process_env(HUBZOID_AUTH="true", WEBUI_AUTH="false"):
         assert appmode.auth_enabled(hub) is True and appmode.deployment_conflicts(hub) == []
     with clean_process_env(HUBZOID_UI="openwebui"):
-        assert appmode.is_legacy(hub) and appmode.deployment_conflicts(hub) == []
+        assert appmode.is_openwebui(hub) and appmode.deployment_conflicts(hub) == []
     # A legacy deployment: Open WebUI owns sign-in; the environment decides first, as in 1.1.
     _manifest(tmp_path, hub, ui_mode="openwebui", auth=True)
     with clean_process_env(WEBUI_AUTH="false"):
@@ -175,5 +175,5 @@ def test_standalone_and_legacy_sign_in_are_unchanged(tmp_path):
     # A 1.0.x manifest records neither: the environment decides, as before.
     _manifest(tmp_path, hub)
     with clean_process_env(WEBUI_AUTH="false", HUBZOID_UI="openwebui"):
-        assert appmode.auth_enabled(hub) is False and appmode.is_legacy(hub)
+        assert appmode.auth_enabled(hub) is False and appmode.is_openwebui(hub)
         assert appmode.deployment_conflicts(hub) == []

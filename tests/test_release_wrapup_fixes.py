@@ -1,7 +1,7 @@
 """Regressions for fixes made while wrapping up the web app release.
 
 - The edge redacts one-time sign-in secrets from its access log too.
-- Open WebUI API keys open the Console API only in the legacy mode.
+- Open WebUI API keys open the Console API only in Open WebUI mode.
 - `hubzoid backup` finds a web app gateway's data folder from its manifest.
 - The upgrade guard does not count the local owner as a migrated account.
 """

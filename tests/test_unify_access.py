@@ -26,7 +26,7 @@ from hubzoid.access.resolver import reset_roster_cache
 
 @pytest.fixture(autouse=True)
 def _legacy_ui(monkeypatch):
-    """These tests pin the legacy Open WebUI mode (HUBZOID_UI=openwebui), where
+    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui), where
     the bridge trusts Open WebUI's forwarded identity and reads its groups; the
     web app mode is covered by tests/test_assertions*.py and test_groups_*.py."""
     monkeypatch.setenv("HUBZOID_UI", "openwebui")

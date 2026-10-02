@@ -2,7 +2,7 @@
 
 They need the `access_tools` grant ("Manage access from chat") in the agent
 where the chat runs plus management rights, or the deprecated
-`HUBZOID_MANAGEMENT_TOOLS=true` (legacy mode: every manager, no grant). They
+`HUBZOID_MANAGEMENT_TOOLS=true` (Open WebUI mode: every manager, no grant). They
 only propose; the actor is the request identity on every surface, never a
 model argument; they refuse anonymous callers, scheduled work and Slack; what
 they read stays inside the caller's management scope; and they are inert on an
@@ -44,7 +44,7 @@ def _invoke(tool, raw: dict) -> str:
 
 
 def _tools(dep, monkeypatch):
-    """Legacy mode: every manager, no grant."""
+    """Open WebUI mode: every manager, no grant."""
     monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "true")
     return {t.name: t for t in access_admin.make(SimpleNamespace(hub_dir=dep.hub_dir))}
 

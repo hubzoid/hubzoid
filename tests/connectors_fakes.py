@@ -130,7 +130,7 @@ class OAuthMcp:
         self.hub = hub
         # The consent page resolves the signed-in person to a Hubzoid account in
         # the default UI mode (auth.users.mcp_account); the Open WebUI user table
-        # above serves the legacy mode.
+        # above serves Open WebUI mode.
         from hubzoid.auth import users
 
         if users.find_by_email(hub, self.email) is None:
