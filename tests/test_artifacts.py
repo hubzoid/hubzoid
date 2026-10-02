@@ -332,6 +332,28 @@ def test_signed_out_viewer_goes_to_sign_in_and_back(hub, web, tmp_path):
     assert _as(web, None).get(f"/portal/artifacts/{art.id}/download").status_code == 401
 
 
+def test_latest_link_opens_the_newest_artifact_and_never_an_older_one(hub, web, tmp_path,
+                                                                       monkeypatch):
+    _managed(hub)
+    ticks = iter(range(1, 100))
+    monkeypatch.setattr(arts, "_now", lambda: float(next(ticks)))
+    older, _ = _publish(hub, tmp_path, key="board", audience="hub")
+    newest, out = _publish(hub, tmp_path, key="board")  # private to its owner
+    assert out["latest_url"].endswith("/portal/latest/sales/board")
+    assert _as(web, OWNER).get("/portal/latest/sales/board").headers["location"] == \
+        f"/portal/artifacts/{newest.id}"
+    # The teammate may open the older copy, but the link never falls back to it.
+    assert _as(web, TEAMMATE).get("/portal/latest/sales/board").status_code == 404
+    r = _as(web, None).get("/portal/latest/sales/board")
+    assert r.headers["location"] == "/auth?redirect=/portal/latest/sales/board"
+    assert _as(web, OWNER).get("/portal/latest/sales/Board!").status_code == 404
+    arts.delete(hub, newest, OWNER)
+    assert _as(web, TEAMMATE).get("/portal/latest/sales/board").headers["location"] == \
+        f"/portal/artifacts/{older.id}"
+    with pytest.raises(arts.ArtifactError):
+        _publish(hub, tmp_path, key="Q3 board")
+
+
 def test_ordinary_owner_views_and_downloads_without_console_rights(hub, web, tmp_path):
     art, _ = _publish(hub, tmp_path)
     c = _as(web, OWNER)

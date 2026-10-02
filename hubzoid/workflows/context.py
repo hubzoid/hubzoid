@@ -133,7 +133,7 @@ def publish_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: s
         Path(hub_dir), hub=hub, owner=ident.subject, owner_account=ident.account_id,
         source=Path(request["path"]), title=request.get("title"), workflow=workflow,
         run_id=run_id or None, idem_key=idem_key, audience=request.get("audience") or "owner",
-        share_with=request.get("share_with") or ())
+        share_with=request.get("share_with") or (), key=request.get("key"))
 
 
 def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str,
@@ -253,9 +253,13 @@ class Hub:
         return path
 
     def publish_artifact(self, path, *, title: str | None = None,
-                         audience: str = "owner", share_with=()) -> dict:
+                         audience: str = "owner", share_with=(), key: str | None = None) -> dict:
         """Publish an existing file as an artifact owned by the run's account and
         return {"id", "url", "title", "filename", "content_type", "size"}.
+
+        `key` (lowercase letters, digits, '-' or '_') adds "latest_url", one
+        bookmark that always opens the newest artifact published with this key
+        in this agent, for anyone who may open that one.
 
         Private to the owner by default. `audience="hub"` (everyone who can use
         this agent) or `audience="people"` with `share_with=["a@x.com",
@@ -268,7 +272,8 @@ class Hub:
         if not source.is_absolute():
             source = Path(ctx.hub_dir) / source
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
-                   "share_with": [p if isinstance(p, str) else dict(p) for p in share_with]}
+                   "share_with": [p if isinstance(p, str) else dict(p) for p in share_with],
+                   "key": key}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
         _owned(ctx)

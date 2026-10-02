@@ -2,6 +2,7 @@
 """The artifact viewer and its API, served under `/portal` by any bridge.
 
   GET    /portal/artifacts/<id>                 viewer page (sign-in redirect)
+  GET    /portal/latest/<hub>/<key>             the newest artifact with that key
   GET    /portal/artifacts/<id>/content         the file, inline, isolated
   GET    /portal/artifacts/<id>/download        the file, as a download
   GET    /portal/artifacts/api/<id>             metadata (+ sharing, for the owner)
@@ -256,6 +257,26 @@ def build_router(hub_dir) -> APIRouter:
         nonce = secrets.token_urlsafe(16)
         return _page(pages.shell(mode="auth", api=f"/portal/artifacts/api/{artifact_id}",
                                  nonce=nonce), nonce)
+
+    @router.get("/portal/latest/{hub}/{key}")
+    def newest(hub: str, key: str, request: Request):
+        """One bookmark for a board a workflow republishes: the newest artifact
+        published with this key, if this viewer may open that one. Never an
+        older copy."""
+        if not arts.HUB_RE.match(hub) or not arts.KEY_RE.match(key):
+            return _message("Artifact not found", _UNAVAILABLE, 404)
+        subject = signed_in(request)
+        if not subject:
+            # Built only from the validated hub and key: never an open redirect.
+            back = f"/portal/latest/{hub}/{key}"
+            return RedirectResponse(f"/auth?redirect={quote(back, safe='/')}", status_code=302)
+        art = arts.latest(hub_dir, hub, key)
+        if art is None or arts.role(hub_dir, art, subject) is None:
+            return _message("Artifact not available",
+                            f"{_UNAVAILABLE} You are signed in as {subject}. If you should "
+                            "see it, ask its owner to share it with you.", 404)
+        return RedirectResponse(f"/portal/artifacts/{art.id}", status_code=302,
+                                headers={"Cache-Control": "private, no-store"})
 
     @router.get("/portal/artifacts/{artifact_id}/content")
     @router.get("/portal/artifacts/{artifact_id}/content/{_filename}")

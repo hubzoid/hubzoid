@@ -186,6 +186,12 @@ upgrade requirements and its known limits.
   requested, and restoring in place keeps the current key and link secret.
 - `.webui_secret_key` is no longer tracked in the repository.
 
+### Reports
+- `hub.publish_artifact(..., key="board")` tags a publish, and
+  `/portal/latest/<agent>/<key>` opens the newest artifact with that key for a
+  viewer who may open it (never an older copy). A board republished on a
+  schedule keeps one bookmark. Every publish is still a new, permanent page.
+
 ### Webhook workflows
 - `@workflow(on_webhook="name")` starts a code workflow from a named webhook
   declared in `workflows/settings.yaml`, served by the hub's own bridge at

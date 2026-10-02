@@ -23,8 +23,9 @@ the template is required: publish any HTML you like, or any other file.
 
 ## Publishing
 
-`hub.publish_artifact(path, *, title=None, audience="owner", share_with=())`
-returns `{"id", "url", "title", "filename", "content_type", "size"}`.
+`hub.publish_artifact(path, *, title=None, audience="owner", share_with=(), key=None)`
+returns `{"id", "url", "title", "filename", "content_type", "size"}`, and
+`latest_url` when a `key` is given.
 
 - **Owner.** The owner is the account the run acts as
   ([workflow-identity.md](workflow-identity.md)). No caller can choose it.
@@ -36,6 +37,12 @@ returns `{"id", "url", "title", "filename", "content_type", "size"}`.
   - A workflow can never create a public link.
 - **Every call stores a new artifact.** Earlier artifacts are never
   overwritten, even when the file name is the same.
+- **One bookmark for a board you republish.** `key="sales-board"` (lowercase
+  letters, digits, `-` and `_`) tags the publish.
+  `https://<your host>/portal/latest/<agent>/sales-board` opens the newest
+  artifact published with that key in that agent. A viewer who may not open
+  the newest one gets "not available", never an older copy. Older artifacts
+  stay at their own addresses.
 - **Recorded server-side:** owner, hub, workflow, run, content type, size,
   SHA-256, storage location, creation time and sharing.
 - **Stored privately** under `<hub>/.hubzoid/artifacts/`. Agent file tools
