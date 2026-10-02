@@ -21,7 +21,7 @@ deployments get short notes at the end.
 | Path | Use when |
 |---|---|
 | A. Native venv + systemd + a reverse proxy of your choice | 1-3 agents on a single Linux box. Cheapest and simplest. |
-| B. Docker | The `pip install` dance fails on your target OS (PyAV build issues, Python-version traps, missing system libraries). |
+| B. Docker | `pip install` fails on your target OS (Python-version traps, missing system libraries), or you want the reviewed dependency set. |
 | C. ECS / Kubernetes / other orchestrators | Your org mandates IaC or a managed orchestrator. The image from Path B is the entry point; the wiring is yours. |
 
 If you don't have a reason to pick B or C, pick A.
@@ -270,13 +270,13 @@ agent; 4 GB comfortable for 2-3 agents on the same box.
 
 ```bash
 sudo apt update && sudo apt install -y \
-  python3.12 python3.12-venv pkg-config ffmpeg build-essential git curl
+  python3.12 python3.12-venv build-essential git curl
 sudo useradd -r -m -d /opt/hubzoid -s /bin/bash hubzoid
 ```
 
-`pkg-config` and `ffmpeg` are the PyAV dependencies that most often bite
-a fresh box. Reverse-proxy install comes in step 6 once you've picked
-one.
+Only the legacy Open WebUI mode (`pip install "hubzoid[openwebui]"`) also
+needs `pkg-config` and `ffmpeg` for its PyAV dependency. Reverse-proxy
+install comes in step 6 once you've picked one.
 
 ### 2. Firewall / security group
 
@@ -733,12 +733,12 @@ instances; the gateway shares one login surface by design.)
 
 ## Path B: Docker
 
-If `pip install hubzoid` fails on your target OS (PyAV build issues,
-Python-version traps, missing system libraries), build the Docker image
-from the `Dockerfile` at the repo root and run it instead. It installs the
-checked-out source with the reviewed dependency set in `requirements.lock`,
-so the image version is the version you checked out. hubzoid disables
-Open WebUI's local embedding model, so first boot is fast regardless.
+If `pip install hubzoid` fails on your target OS (Python-version traps,
+missing system libraries), build the Docker image from the `Dockerfile` at
+the repo root and run it instead. It installs the checked-out source with
+the reviewed dependency set in `requirements.lock`, so the image version is
+the version you checked out. `--build-arg WITH_OPENWEBUI=true` builds the
+legacy Open WebUI image.
 
 ```bash
 git checkout v<version>          # the release you want
