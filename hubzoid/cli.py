@@ -3075,9 +3075,6 @@ def _slugify(text: str) -> str:
     return out.strip("-") or "agent"
 
 
-if __name__ == "__main__":
-    app()
-
 
 # ---------------------------------------------------------------------------
 # eval — hub-owned behavioural checks (see hubzoid/evals/)
@@ -3373,3 +3370,7 @@ app.add_typer(
     help="Run the hub's eval cases; inspect results and regressions.",
     rich_help_panel="Commands",
 )
+
+
+if __name__ == "__main__":
+    app()
