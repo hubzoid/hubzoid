@@ -239,3 +239,31 @@ def test_postgres_upsert(postgres_url, tmp_path, monkeypatch):
     ratelimit.admit(hub, ip="203.0.113.9", email="ok@example.com")
     ratelimit.record_success(hub, ip="203.0.113.9", email="ok@example.com")
     assert ratelimit.retry_after(hub, ip="203.0.113.9", email="ok@example.com") == 0
+
+def test_successful_signups_are_not_refunded(hub, monkeypatch):
+    """Every sign-up counts. The limit-plus-one from one address is refused,
+    and a successful sign-in still clears only the sign-in counters."""
+    monkeypatch.setenv("ENABLE_SIGNUP", "true")
+    c = client(hub, ip="203.0.113.40")
+    for i in range(ratelimit.max_failures()):
+        response = c.post("/api/auth/signup", headers=ORIGIN, json={
+            "email": f"signup{i}@example.com", "name": f"Signup {i}", "password": PASSWORD})
+        assert response.status_code == 201, response.text
+    blocked = c.post("/api/auth/signup", headers=ORIGIN, json={
+        "email": "signup-over@example.com", "name": "Over", "password": PASSWORD})
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "rate_limited"
+    assert blocked.headers["retry-after"]
+    other = client(hub, ip="198.51.100.40")
+    allowed = other.post("/api/auth/signup", headers=ORIGIN, json={
+        "email": "elsewhere@example.com", "name": "Elsewhere", "password": PASSWORD})
+    assert allowed.status_code == 201, allowed.text
+    users.create(hub, email="ana@example.com", password=PASSWORD)
+    signer = client(hub, ip="203.0.113.41")
+    for _ in range(9):
+        assert attempt(signer).status_code == 401
+    assert attempt(signer, password=PASSWORD).status_code == 200
+    elsewhere = client(hub, ip="198.51.100.41")
+    for _ in range(9):
+        assert attempt(elsewhere).status_code == 401
+
