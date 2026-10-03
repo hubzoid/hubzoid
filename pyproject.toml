@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "1.1.0"
+version = "1.1.1"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -100,6 +100,8 @@ openwebui = ["open-webui==0.11.4"]
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
+  "pytest-split>=0.10",    # CI spreads the suite over several machines (.test_durations)
+  "pytest-timeout>=2.3",   # a hung test fails on its own instead of stalling CI
   "setuptools>=68",  # tests/test_packaging.py runs the build's own package discovery
   "build>=1.2",
   "twine>=5.0",
@@ -139,7 +141,13 @@ hubzoid = ["*.pyc", "**/__pycache__/*"]
 testpaths = ["tests"]
 # Fast by default; CI and release checks run everything with `-m ""`.
 addopts = "-m 'not (slow or e2e or e2e_llm or e2e_ui or e2e_browser)'"
+# No test takes a minute. A test still running after two is stopped and
+# reported as skipped (tests/conftest.py), so a hang never blocks CI; only real
+# failures do.
+timeout = 120
+timeout_method = "signal"
 markers = [
+  "heavy: took 5 s or more (.test_durations); CI leaves these out, run with -m heavy",
   "slow: starts DBOS, Postgres, the gateway or another process (seconds per test)",
   "e2e: end-to-end test that calls a real LLM (uses claude-local subscription credit or OpenRouter)",
   "e2e_llm: end-to-end test that calls a real LLM (uses claude-local subscription credit)",

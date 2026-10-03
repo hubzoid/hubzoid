@@ -3,6 +3,32 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.1.1]
+
+The first published Hubzoid 1.1 release. 1.1.0 was tagged but never published:
+its release checks stopped when a test shut down the CI machine. 1.1.1 has
+everything listed under 1.1.0 below; read that section and
+[docs/release-notes/1.1.0.md](docs/release-notes/1.1.0.md) before upgrading.
+
+### Fixed
+- Stopping child services only ever signals a real child's own process group.
+  A child without a real process id could make `os.killpg(1)` signal every
+  process of the user (`kill(-1)`). Running Hubzoid was not affected, only
+  tests with stand-in processes.
+- The test suite refuses `os.kill(-1)` and `os.killpg(0 or 1)` with a clear
+  failure, and the gateway lifecycle test follows the current gateway.
+
+### CI
+- Pull requests and pushes to `main` run the fast tests on two machines in a
+  few minutes. A release runs its tests on two machines, the Console journeys,
+  packaging and both images side by side, and publishes when all pass.
+- Tests that took 5 s or more (`.test_durations`) are marked `heavy` and left
+  out of CI; run them with `pytest -m heavy`.
+- A test still running after two minutes is reported as skipped instead of
+  holding up the run; a failing assertion still fails.
+- Workflow tests waiting for a run to finish also stop on `CANCELLED`, which
+  saves a minute.
+
 ## [1.1.0]
 
 Hubzoid 1.1 adds the Hubzoid web app as the default chat UI. Open WebUI stays a

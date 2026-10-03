@@ -234,7 +234,7 @@ _RECOVER = textwrap.dedent('''
     deadline = time.time() + 60
     while time.time() < deadline:
         st = DBOS.get_workflow_status(markdown.run_id("slow", "s1"))
-        if st.status in ("SUCCESS", "ERROR"):
+        if st.status in ("SUCCESS", "ERROR", "CANCELLED"):
             break
         time.sleep(0.5)
     print("STATUS " + st.status + " " + json.dumps(str(st.error)))
@@ -295,7 +295,7 @@ _UNDER_VERSION = textwrap.dedent('''
         deadline = time.time() + 60
         while time.time() < deadline:
             st = DBOS.get_workflow_status(markdown.run_id("sync", "s1") + ":requeued")
-            if st and st.status in ("SUCCESS", "ERROR"):
+            if st and st.status in ("SUCCESS", "ERROR", "CANCELLED"):
                 break
             time.sleep(0.5)
     runs = {w.workflow_id: w.status for w in DBOS.list_workflows(workflow_id_prefix="md:sync:")}

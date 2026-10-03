@@ -76,7 +76,7 @@ _RESUME = textwrap.dedent('''
     status = None
     while time.time() < deadline:
         status = DBOS.get_workflow_status(wid).status
-        if status in ("SUCCESS", "ERROR"):
+        if status in ("SUCCESS", "ERROR", "CANCELLED"):
             break
         time.sleep(0.5)
     print("STATUS", status, flush=True)
@@ -85,7 +85,7 @@ _RESUME = textwrap.dedent('''
         deadline = time.time() + 60
         while time.time() < deadline:
             s = DBOS.get_workflow_status(new.get_workflow_id()).status
-            if s in ("SUCCESS", "ERROR"):
+            if s in ("SUCCESS", "ERROR", "CANCELLED"):
                 break
             time.sleep(0.5)
         print("NEW", s, flush=True)

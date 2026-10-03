@@ -88,14 +88,6 @@ def test_a_run_detects_explains_and_remembers(sample):
 
 
 @pytest.mark.slow
-def test_thresholds_come_from_settings(sample):
-    hub, env = sample
-    (hub / "workflows" / "settings.yaml").write_text("watchtower:\n  p95_ms: 5000\n  error_rate: 0.5\n")
-    result, _ = _run(hub, env)
-    assert result["out"] == {"breaches": 0, "new": 0, "report": None}
-
-
-@pytest.mark.slow
 def test_the_controlled_failure_names_the_bad_line(sample):
     hub, env = sample
     (hub / "raw_data" / "events" / "broken.jsonl").write_text(

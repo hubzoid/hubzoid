@@ -54,6 +54,12 @@ print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=depl
 """
     # Save the original Popen; subprocess.run uses the module's Popen at runtime.
     real_popen = subprocess.Popen
+    # mcp annotates with subprocess.Popen[bytes] at import; load it before the
+    # patch below, or the test fails when run on its own.
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        pass
 
     def spawn(command, env=None, **kwargs):
         if command[:3] == [sys.executable, "-m", "hubzoid"] and "run" in command:
@@ -73,6 +79,9 @@ print(json.dumps(dict(op=db.operational_url(hub), dbos=db.dbos_url(hub), ui=depl
 
     monkeypatch.setattr(cli.subprocess, "Popen", spawn)
     monkeypatch.setattr(cli, "_wait_for", lambda *args, **kwargs: True)
+    monkeypatch.setattr(cli, "_wait_for_bridge", lambda *args, **kwargs: True)
+    # The gateway runs until stopped; here it stops at once, as on a clean shutdown.
+    monkeypatch.setattr(cli, "_wait_any", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *args: None)
     fake_webui = MagicMock()
     fake_webui.wait.return_value = 0
@@ -127,3 +136,15 @@ def test_duplicate_access_domains_refused_before_gateway_start(tmp_path):
     # before matching rather than depending on where the line break lands.
     assert "access domains cannot overlap" in " ".join(result.output.split())
     assert not (tmp_path / "gateway" / "deployment.json").exists()
+
+
+def test_stopping_stand_in_children_never_signals_every_process(monkeypatch):
+    """A child without a real process id (a test double's pid is 1) must not
+    reach killpg: killpg(1) is kill(-1), which on CI killed the runner."""
+    calls = []
+    monkeypatch.setattr(cli.os, "killpg", lambda pgid, sig: calls.append(pgid))
+    child = MagicMock()
+    child.poll.return_value = None
+    cli._stop_groups([child], timeout=0)
+    assert calls == []
+    child.terminate.assert_called_once()

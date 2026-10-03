@@ -98,7 +98,7 @@ _RESUME = textwrap.dedent('''
     deadline = time.time() + 60
     while time.time() < deadline:
         st = DBOS.get_workflow_status(sys.argv[2])
-        if st.status in ("SUCCESS", "ERROR"):
+        if st.status in ("SUCCESS", "ERROR", "CANCELLED"):
             break
         time.sleep(0.5)
     print("RESULT " + json.dumps({"status": st.status, "output": st.output,

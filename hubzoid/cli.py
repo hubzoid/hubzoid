@@ -1590,9 +1590,12 @@ def _stop_groups(procs, *, timeout: float = 15.0) -> None:
     killpg = getattr(os, "killpg", None)
 
     def signal_group(p, sig) -> None:
+        # killpg(1) means kill(-1): every process this user owns. Only a real
+        # child's own group is ever signalled, never 0, 1 or a stand-in's id.
+        pid = getattr(p, "pid", None)
         try:
-            if killpg is not None:
-                killpg(p.pid, sig)
+            if killpg is not None and type(pid) is int and pid > 1:
+                killpg(pid, sig)
             elif sig == signal.SIGTERM:
                 p.terminate()
             else:

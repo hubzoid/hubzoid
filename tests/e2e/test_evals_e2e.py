@@ -184,7 +184,7 @@ def test_scheduled_case_fires_through_the_real_scheduler(tmp_path):
         deadline = time.time() + 600
         while time.time() < deadline:
             runs = DBOS.list_workflows(workflow_id_prefix="eval:")
-            if runs and runs[0].status in ("SUCCESS", "ERROR"):
+            if runs and runs[0].status in ("SUCCESS", "ERROR", "CANCELLED"):
                 break
             time.sleep(2)
     finally:

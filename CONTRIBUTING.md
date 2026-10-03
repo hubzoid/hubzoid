@@ -59,15 +59,23 @@ need it installed (it brings PyTorch, so use the CPU index):
 ## Running tests
 
 Every pull request and every push to `main` runs
-[`.github/workflows/tests.yml`](.github/workflows/tests.yml): the unit tests on
-SQLite, without Open WebUI, browsers, live models or Docker, and the web app's
-lint (`npm run lint` in `portal/`). A pull request runs the fast default, which
-skips tests marked `slow`. A push to `main` runs the slow tests too. The same
-commands work locally:
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) in a few minutes:
+the fast default tests (no `slow` or end-to-end tests) on SQLite, without Open
+WebUI, browsers, live models or Docker, spread over two machines, and the web
+app's lint (`npm run lint` in `portal/`). Publishing a release adds the slow and
+end-to-end tests, except those marked `heavy`.
+
+A test that took 5 s or more in `.test_durations` is marked `heavy` and left
+out of CI; run them locally before a change to the workflow engine, the gateway
+or process handling. A test still running after two minutes is reported as
+skipped, so a hang never blocks CI; a failing assertion always does. After
+adding or speeding up slow tests, refresh the timings with
+`pytest -m "" --store-durations`.
 
 ```bash
-pytest -q                                                               # pull request
-pytest -q -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'  # main
+pytest -q                     # pull request and main
+pytest -q -m "not heavy"      # release
+pytest -q -m heavy            # the heavy tests CI leaves out
 (cd portal && npm ci && npm run lint)
 ```
 

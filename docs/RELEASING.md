@@ -4,7 +4,9 @@ Pull requests and pushes to `main` run the fast checks
 (`.github/workflows/tests.yml`), and every push and pull request is scanned for
 secrets (`.github/workflows/secrets.yml`). The full validation, the image
 builds and publishing run only when a GitHub release is published
-(`.github/workflows/ci.yml`).
+(`.github/workflows/ci.yml`). Its checks (the tests on two machines without the
+`heavy` ones, the Console journeys, packaging and both images) run side by side
+in about ten minutes, and publishing waits for all of them.
 
 1. Update `pyproject.toml` and `CHANGELOG.md` to the new version and push main.
 2. In GitHub, open **Releases → Draft a new release**.
