@@ -263,6 +263,7 @@ class Setup:
     operational_url: str
     aliases: dict[str, str] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
+    write_root: Path | None = None  # rehearsal writes must remain in this copy
 
 
 def _normalize_source_url(value: str) -> URL:
@@ -1114,11 +1115,13 @@ class Attachments:
     1.0.x bridge copied what people attached), bringing in bytes Open WebUI
     still holds when the folder lacks them. Writes files only when applying."""
 
-    def __init__(self, source: OwuiSource, uploads_dir: Path | None, report: Report, apply: bool):
+    def __init__(self, source: OwuiSource, uploads_dir: Path | None, report: Report, apply: bool,
+                 write_root: Path | None = None):
         self.source = source
         self.owui_uploads = uploads_dir.resolve() if uploads_dir else None
         self.report = report
         self.apply = apply
+        self.write_root = write_root
 
     def _owui_bytes(self, conn: Connection, file_id: str, name: str) -> Path | None:
         if not self.owui_uploads:
@@ -1141,14 +1144,23 @@ class Attachments:
         return None
 
     @staticmethod
-    def _write(folder: Path, name: str, payload: bytes | None, source: Path | None, mime: str) -> None:
+    def _write(folder: Path, name: str, payload: bytes | None, source: Path | None, mime: str,
+               *, write_root: Path | None = None) -> None:
+        import tempfile
+
         from . import uploads as uploads_lib
 
-        folder.mkdir(parents=True, exist_ok=True)
+        folder = folder.resolve()
+        if write_root is not None and not folder.is_relative_to(write_root.resolve()):
+            raise MigrationBlocked("An attachment would leave the rehearsal copy. Nothing was written there.")
         target = (folder / name).resolve()
-        if target.parent != folder.resolve():
+        sidecar = folder / f"{name}{uploads_lib.SIDECAR_SUFFIX}"
+        if target.parent != folder or sidecar.resolve().parent != folder:
             raise OSError("attachment name leaves the uploads folder")
-        tmp = folder / f".migrating-{hashlib.sha256(name.encode()).hexdigest()[:16]}"
+        folder.mkdir(parents=True, exist_ok=True)
+        # Unique temporary files avoid following a pre-existing migration link.
+        with tempfile.NamedTemporaryFile(dir=folder, prefix=".migrating-", delete=False) as fh:
+            tmp = Path(fh.name)
         try:
             if payload is not None:
                 tmp.write_bytes(payload)
@@ -1160,9 +1172,14 @@ class Attachments:
             tmp.replace(target)
         finally:
             tmp.unlink(missing_ok=True)
-        (folder / f"{name}{uploads_lib.SIDECAR_SUFFIX}").write_text(
-            json.dumps({"mime": mime, "size": size, "kind": uploads_lib.classify(mime, head)}),
-            encoding="utf-8")
+        with tempfile.NamedTemporaryFile(dir=folder, prefix=".migrating-", delete=False) as fh:
+            meta_tmp = Path(fh.name)
+            fh.write(json.dumps({"mime": mime, "size": size,
+                                 "kind": uploads_lib.classify(mime, head)}).encode())
+        try:
+            meta_tmp.replace(sidecar)
+        finally:
+            meta_tmp.unlink(missing_ok=True)
 
     def parts(self, conn: Connection, files: Any, folder: Path, *, count: bool = True) -> list[dict]:
         from . import uploads as uploads_lib
@@ -1210,24 +1227,48 @@ class Attachments:
             source_path = None if payload is not None else self._owui_bytes(conn, file_id, name)
             source_size = len(payload) if payload is not None else (
                 source_path.stat().st_size if source_path else None)
+            digest = hashlib.sha256(payload).hexdigest() if payload is not None else None
+            if source_path is not None:
+                with source_path.open("rb") as fh:
+                    digest = hashlib.file_digest(fh, "sha256").hexdigest()
+
+            def matches(path: Path) -> bool:
+                if not path.is_file():
+                    return False
+                # Older bridges kept only the chat-local bytes. With no source
+                # bytes, preserve that file, without claiming verified equality.
+                if digest is None:
+                    return True
+                if path.stat().st_size != source_size:
+                    return False
+                with path.open("rb") as fh:
+                    return hashlib.file_digest(fh, "sha256").hexdigest() == digest
+
             stored, target = safe, folder / safe
             outcome = "missing"
-            if target.is_file() and (source_size is None or target.stat().st_size == source_size):
+            if matches(target):
                 outcome = "present"
             elif source_size is not None:
-                if target.is_file():  # a different file with the same name (another turn)
+                if target.exists():  # a different file with the same name (another turn)
                     stem, dot, ext = safe.rpartition(".")
-                    tag = re.sub(r"[^A-Za-z0-9_-]", "", file_id)[:8] or \
-                        hashlib.sha256(payload or b"").hexdigest()[:8]
-                    stored = f"{stem} ({tag}).{ext}" if dot and stem else f"{safe} ({tag})"
+                    tag = re.sub(r"[^A-Za-z0-9_-]", "", file_id)[:8] or digest[:12]
+                    suffix, index = tag, 1
+                    while True:
+                        stored = f"{stem} ({suffix}).{ext}" if dot and stem else f"{safe} ({suffix})"
+                        target = folder / stored
+                        if not target.exists() or matches(target):
+                            break
+                        index += 1
+                        suffix = f"{tag}-{index}"
                     target = folder / stored
-                if target.is_file():
+                if matches(target):
                     outcome = "present"
                 else:
                     outcome = "extracted_inline_image" if payload is not None else "copied_from_open_webui"
                     if self.apply:
                         try:
-                            self._write(folder, stored, payload, source_path, mime)
+                            self._write(folder, stored, payload, source_path, mime,
+                                        write_root=self.write_root)
                         except OSError as exc:
                             outcome = "could_not_be_written"
                             self.report.warn("Some attachments could not be written into their chat's "
@@ -1327,7 +1368,7 @@ class ConversationImporter:
         for sid, meta in sorted(self.share_meta.items()):
             self.shares_by_chat[meta["chat_id"]].append(sid)
         self.audience = source.share_audiences()
-        self.attachments = Attachments(source, setup.uploads_dir, report, apply)
+        self.attachments = Attachments(source, setup.uploads_dir, report, apply, setup.write_root)
         self.skipped: dict[str, set[str]] = {"conversations": set(), "shares": set()}
         self.stats: dict[str, int] = {}
 
@@ -1806,9 +1847,8 @@ def _finish(report: Report) -> None:
         report.warn("Some conversations use an agent this deployment does not serve (see "
                     "unknown_models). Pass --model-alias OLD=AGENT to import them into an agent.")
     if counts["shares"].get("audience_restricted") or counts["shares"].get("audience_owner"):
-        report.warn("Some share links were limited to named people or to their owner in Open WebUI. "
-                    "Each snapshot records its Open WebUI audience; the web app decides who may "
-                    "open /s/<id>.")
+        report.warn("Private and restricted Open WebUI share links stay disabled. Their owners "
+                    "can open the original conversation and explicitly share it again in the web app.")
 
 
 
@@ -1883,7 +1923,9 @@ def _sqlite_copy(src: Path, dst: Path) -> None:
 
 
 def _copy_tree(src: Path, dst: Path) -> None:
-    shutil.copytree(src, dst, symlinks=True,
+    # Materialize linked storage in the copy rather than retaining pointers to
+    # the original. The source is read only, including external SQLite files.
+    shutil.copytree(src, dst, symlinks=False,
                     ignore=shutil.ignore_patterns("*-wal", "*-shm", "*-journal", "*.migrate.lock"))
     for path in list(dst.rglob("*")):
         original = src / path.relative_to(dst)
@@ -1911,6 +1953,8 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
     if dest.exists() and any(dest.iterdir()):
         raise MigrationBlocked(f"{dest} is not empty. Choose an empty scratch folder.")
     hub = setup.hubs[0]
+    if dest.is_relative_to(hub.path.resolve()):
+        raise MigrationBlocked("Choose a rehearsal folder outside the original hub.")
     copy = dest / hub.path.name
     _copy_tree(hub.path, copy)
 
@@ -1931,7 +1975,7 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
     return replace(setup, entry=copy, hubs=[replace(hub, path=copy)],
                    source_url=URL.create("sqlite", database=str(new_owui)),
                    uploads_dir=uploads if uploads.is_dir() else None,
-                   operational_url=f"sqlite:///{new_op}")
+                   operational_url=f"sqlite:///{new_op}", write_root=dest)
 
 
 # ---------------------------------------------------------------------------

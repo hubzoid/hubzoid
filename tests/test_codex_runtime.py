@@ -336,3 +336,19 @@ async def test_compact_tools_show_a_status_then_a_finished_block():
     assert text.count('<details type="tool_calls" done="true"') == 2
     assert 'id="c2" name="broken" arguments="{}" status="failed"' in text
     assert "&quot;event_id&quot;: 1556" in text
+
+
+def test_build_codex_keeps_neutral_connector_specs(tmp_path, monkeypatch):
+    from hubzoid.factory_codex import build_codex_runtime
+    (tmp_path / 'AGENTS.md').write_text('---\nname: demo\nmodel: codex-local\n---\nHello')
+    connectors = tmp_path / 'connectors'
+    connectors.mkdir()
+    (connectors / '.mcp.json').write_text(json.dumps({'mcpServers': {
+        'example': {'transport': 'streamable-http', 'url': 'https://example.org/mcp',
+                    'headers': {'X-Test': 'value'}, 'client_session_timeout_seconds': 42}}}))
+    monkeypatch.delenv('MODEL', raising=False)
+    built = build_codex_runtime(tmp_path)
+    server = next(s for s in built._servers if s.name == 'example')
+    assert server.params['url'] == 'https://example.org/mcp'
+    assert server.params['headers'] == {'X-Test': 'value'}
+    assert server.client_session_timeout_seconds == 42

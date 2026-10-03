@@ -71,6 +71,36 @@ People and Activity. Usage totals sit above the agent cards. Each agent holds
 its access, connectors, runs and schedules, and evals. A new deployment starts with
 empty usage and run history.
 
+## Use an existing project
+
+`init` is optional. A hub needs an `AGENTS.md`; knowledge, tools, skills and
+workflows are optional. Write instructions for the **hub's runtime agent**
+there. If the project already has an `AGENTS.md` for coding agents, put the
+hub in a subfolder so the two prompts stay separate. Hubzoid reads under the
+hub root, so choose that boundary deliberately.
+
+```bash
+cd existing-project
+# Create AGENTS.md with the hub agent's purpose and instructions.
+python -c 'from pathlib import Path; import secrets; p = Path(".env"); p.touch(mode=0o600, exist_ok=False); p.write_text("MODEL=claude-local\nBRIDGE_API_KEYS=" + secrets.token_urlsafe(32) + "\n")'
+hubzoid doctor .
+hubzoid run .
+```
+
+This creates a new `.env` and refuses to replace an existing one. If you
+already have `.env`, add `MODEL` and a randomly generated `BRIDGE_API_KEYS`
+yourself. Use a signed-in Claude CLI for `claude-local`, or choose another
+[provider](providers.md). Plain Markdown in `AGENTS.md` works; optional
+frontmatter supplies the display name, description and suggestions
+([authoring](authoring.md)). No application files need to be replaced.
+
+To add a model-free workflow in the same project:
+
+```bash
+hubzoid new workflow first-check .
+hubzoid schedule run . first_check
+```
+
 ## Connect Claude Code
 
 Hosted MCP is on for a local run. Paste the line `hubzoid run` printed:
@@ -129,7 +159,8 @@ access, then share the one-time sign-in link it gives you. Nothing is emailed.
 With Google, Microsoft or an OpenID Connect provider configured, people can
 sign in with it instead ([authentication](auth.md)).
 
-For several agents behind one address, run them as a gateway, with sign-in set
+For several agents behind one address, give each hub a unique `BRIDGE_PORT`
+in its `.env` (for example 8000 and 8001), then run a gateway with sign-in set
 once in the gateway's environment:
 
 ```bash
@@ -175,5 +206,7 @@ installation. Installing from PyPI tests the published version instead.
   or ask one for **Manage access** on the agent.
 - **`hubzoid run` refuses `--host 0.0.0.0`:** that is local mode protecting
   you. Turn sign-in on first ([authentication](auth.md)).
-- **The port is busy:** `hubzoid run my-hub --port 3090`.
+- **The port is busy:** each running hub needs a unique public port **and**
+  bridge port: `hubzoid run my-hub --port 3090 --bridge-port 8001`.
+  `--port` alone does not change the bridge's default port, 8000.
 - **Configuration issue:** `hubzoid doctor my-hub` reports loader and setup errors.

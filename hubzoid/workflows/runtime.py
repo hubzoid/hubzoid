@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 import threading
 from dataclasses import dataclass
@@ -169,6 +170,7 @@ def init(hub_dir, hub_name: str | None = None) -> None:
                     "system_database_url": db.dbos_url(_HUB_DIR),
                     "application_version": _APP_VERSION,
                     "executor_id": "hub:" + _app_name(_HUB_NAME),
+                    "log_level": "DEBUG" if os.environ.get("HUB_LOG_LEVEL", "").lower() == "debug" else "WARNING",
                     "max_executor_threads": int(_load_settings().get("max_executor_threads", 32)),
                 }
             )

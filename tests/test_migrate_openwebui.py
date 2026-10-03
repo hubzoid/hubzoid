@@ -969,7 +969,6 @@ def _file_part(dep: Deployment, mid: str) -> dict:
     return next(p for p in parts if p["type"] == "file")
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 4 (same-size attachments) not fixed yet")
 def test_same_size_attachments_stay_different_files(gateway):
     cid, a, b = _same_size_chat(gateway)
     assert _run(gateway, apply=True).applied
@@ -984,7 +983,6 @@ def test_same_size_attachments_stay_different_files(gateway):
     assert _file_part(gateway, "same-size-m2")["file_id"] == second["file_id"]
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 4 (same-size attachments) not fixed yet")
 def test_an_alternate_name_holding_other_content_is_not_reused(gateway):
     cid, a, b = _same_size_chat(gateway)
     folder = gateway.hubs["finance"] / ".hubzoid" / "chats" / cid / "uploads"
@@ -1000,7 +998,6 @@ def test_an_alternate_name_holding_other_content_is_not_reused(gateway):
     assert (folder / f"report ({SAME_B[:8]}).pdf").read_bytes() == other   # untouched
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 5 (rehearsal writes through links) not fixed yet")
 @pytest.mark.parametrize("linked", [".hubzoid", ".hubzoid/chats"])
 def test_rehearsal_never_writes_through_links(standalone, tmp_path, linked):
     """State kept elsewhere through a link: the rehearsal copies it instead of
@@ -1022,7 +1019,6 @@ def test_rehearsal_never_writes_through_links(standalone, tmp_path, linked):
     assert len(copied) == 1 and copied[0].read_bytes().startswith(b"%PDF")
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 5 (rehearsal writes through links) not fixed yet")
 def test_rehearsal_writes_outside_the_copy_are_refused(tmp_path):
     root = tmp_path / "rehearsal"
     root.mkdir()

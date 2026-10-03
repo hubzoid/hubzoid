@@ -35,6 +35,7 @@ def test_healthz(client):
     body = r.json()
     assert body["status"] == "ok"
     assert body["agent"] == "testbot"
+    assert body["model"] == "testbot-label"
 
 
 def test_models_requires_auth(client):
@@ -46,6 +47,7 @@ def test_models_returns_label(client):
     assert r.status_code == 200
     body = r.json()
     assert body["data"][0]["id"] == "testbot-label"
+    assert body["data"][0]["name"] == "testbot"
 
 
 def test_chat_empty_messages_400(client):

@@ -158,7 +158,7 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
         api_base: deleteTarget.api_base ?? agentById(app.agents.list, deleteTarget.agent)?.api_base,
       });
       toast(t.sidebar.deletedToast);
-      if (deleteTarget.id === activeId) navigate("/", { replace: true });
+      if (deleteTarget.id === activeId) app.newChat(deleteTarget.agent);
       setDeleteTarget(null);
     } catch (error) {
       setDeleteError(describeError(error));
@@ -171,7 +171,7 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     try {
       await setArchived(c.id, archived);
       toast(archived ? t.sidebar.archivedToast : t.sidebar.unarchivedToast);
-      if (archived && c.id === activeId) navigate("/", { replace: true });
+      if (archived && c.id === activeId) app.newChat(c.agent);
     } catch (error) {
       toast(describeError(error), "error");
     }

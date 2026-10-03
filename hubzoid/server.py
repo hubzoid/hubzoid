@@ -62,6 +62,8 @@ def _hub_dir() -> Path:
 def build_app() -> FastAPI:
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
+    logging.getLogger("alembic").setLevel(
+        logging.DEBUG if settings.log_level.lower() == "debug" else logging.WARNING)
     # A hub in a gateway's deployment serves only in the mode and sign-in the
     # gateway recorded; settings that disagree stop the bridge before it serves.
     from . import appmode
@@ -229,7 +231,7 @@ def build_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
-        return {"status": "ok", "hub": hub_dir.name, "agent": rt.name}
+        return {"status": "ok", "hub": hub_dir.name, "agent": rt.name, "model": model_label}
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> JSONResponse:
@@ -238,7 +240,7 @@ def build_app() -> FastAPI:
             {
                 "object": "list",
                 "data": [
-                    {"id": model_label, "object": "model", "created": int(time.time()), "owned_by": "hubzoid"}
+                    {"id": model_label, "name": rt.name, "object": "model", "created": int(time.time()), "owned_by": "hubzoid"}
                 ],
             }
         )

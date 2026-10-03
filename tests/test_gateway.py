@@ -291,7 +291,7 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
-        proc.poll.return_value = 0
+        proc.poll.return_value = None
         return proc
     from hubzoid import webui
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
@@ -305,6 +305,9 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
         return proc
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
 
     result = CliRunner().invoke(
@@ -375,7 +378,7 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_ur
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
-        proc.poll.return_value = 0
+        proc.poll.return_value = None
         return proc
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
 
@@ -388,6 +391,9 @@ def test_gateway_injects_owui_db_into_bridges(tmp_path, monkeypatch, database_ur
         return proc
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
 
     gwdata = tmp_path / "gwdata"
@@ -431,7 +437,7 @@ def _gateway_harness(tmp_path, monkeypatch):
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
-        proc.poll.return_value = 0
+        proc.poll.return_value = None
         return proc
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
 
@@ -441,6 +447,9 @@ def _gateway_harness(tmp_path, monkeypatch):
         return proc
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     return sales
 
@@ -538,6 +547,7 @@ def test_gateway_provision_skip_message_when_owui_not_ready(tmp_path, monkeypatc
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "s3cret")
     monkeypatch.setenv("WEBUI_AUTH", "true")
     # Bridges healthy, but the OWUI probe times out.
+    monkeypatch.setattr(cli, "_wait_for_bridge", lambda proc, url, **kw: "healthz" in url)
     monkeypatch.setattr(cli, "_wait_for", lambda url, **kw: "healthz" in url)
     monkeypatch.setattr(gwp, "provision",
                         lambda **kw: (_ for _ in ()).throw(AssertionError("must not be called")))
@@ -545,7 +555,7 @@ def test_gateway_provision_skip_message_when_owui_not_ready(tmp_path, monkeypatc
     result = CliRunner().invoke(
         cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert "not ready" in result.output.lower()
     assert "set BOTH" not in result.output
 
@@ -623,7 +633,7 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
-        proc.poll.return_value = 0
+        proc.poll.return_value = None
         return proc
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
 
@@ -633,6 +643,9 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
         return proc
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
 
     # Fake OWUI static dir + the gateway's own branding source.
@@ -689,7 +702,7 @@ def test_gateway_ui_gets_sign_in_settings_from_hub_env(tmp_path, monkeypatch):
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         proc.wait.return_value = 0
-        proc.poll.return_value = 0
+        proc.poll.return_value = None
         return proc
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
 
@@ -700,3 +713,35 @@ def test_gateway_ui_gets_sign_in_settings_from_hub_env(tmp_path, monkeypatch):
     assert seen == {"secret": "hub-secret", "model": ""}
     assert "WEBUI_SECRET_KEY" in result.output
     assert "hub-secret" not in result.output
+
+
+def test_owned_child_exit_never_counts_as_readiness(monkeypatch):
+    proc = MagicMock()
+    proc.poll.side_effect = [None, 0]
+    monkeypatch.setattr(cli, '_wait_for', lambda *a, **k: True)
+    assert not cli._wait_for_bridge(proc, 'http://localhost/healthz', timeout=1)
+
+
+@pytest.mark.parametrize('code', [0, 1, -9])
+def test_supervisor_fails_on_any_unexpected_child_exit(code):
+    import typer
+    proc = MagicMock()
+    proc.poll.return_value = code
+    with pytest.raises(typer.Exit) as exc:
+        cli._wait_any([proc], interval=0)
+    assert exc.value.exit_code == 1
+
+
+@pytest.mark.parametrize('health', [
+    {'status': 'ok'}, {'hub': 'different', 'model': 'sales-agent'},
+    {'hub': 'sales', 'model': 'different'},
+])
+def test_bridge_health_checks_the_hub_and_model(monkeypatch, health):
+    import httpx
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: httpx.Response(200, json=health))
+    assert not cli._wait_for('http://localhost/healthz', timeout=1,
+                             expected_hub='sales', expected_model='sales-agent')
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: httpx.Response(200, json={
+        'hub': 'sales', 'model': 'sales-agent'}))
+    assert cli._wait_for('http://localhost/healthz', timeout=1,
+                        expected_hub='sales', expected_model='sales-agent')

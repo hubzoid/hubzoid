@@ -13,6 +13,7 @@ attachment names and types, never a way to download the attachments.
 """
 from __future__ import annotations
 
+import json
 import time
 
 from fastapi import FastAPI, Request
@@ -52,7 +53,21 @@ def snapshot(store, conv: dict, owner_name: str) -> dict:
 
 
 def share_url(share_id: str) -> str:
-    return f"{appmode.public_url()}/s/{share_id}"
+    # A gateway bridge's public URL includes /b/<hub> for its API and files.
+    # Shared conversations are pages of the deployment's app at /s/<id>.
+    return f"{appmode.normalize_origin(appmode.public_url())}/s/{share_id}"
+
+
+def _disabled_import(share: dict) -> bool:
+    snap = share.get("snapshot") or {}
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except ValueError:
+            return True
+    if not isinstance(snap, dict):
+        return True
+    return snap.get("source") == "openwebui" and snap.get("audience") != "signed_in"
 
 
 def register(app: FastAPI, ctx: ChatContext) -> None:
@@ -63,7 +78,7 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
         user = await ctx.user(request)
         conv = await ctx.owned(user, conv_id)
         share = await db(store.share_for, conv["id"])
-        if share is None:
+        if share is None or _disabled_import(share):
             raise error(404, "not_shared", "This conversation is not shared.")
         return {"share_id": share["id"], "url": share_url(share["id"])}
 
@@ -89,7 +104,7 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
     async def read_share(share_id: str, request: Request):
         await ctx.user(request)
         share = await db(store.get_share, share_id) if 8 <= len(share_id) <= 64 else None
-        if share is None:
+        if share is None or _disabled_import(share):
             raise not_found("shared conversation")
         snap = share.get("snapshot") or {}
         return {"title": snap.get("title"), "agent": snap.get("agent"),

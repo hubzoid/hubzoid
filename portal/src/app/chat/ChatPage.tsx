@@ -495,7 +495,7 @@ function ChatHeader({
       await deleteConversation({ id: conversation.id, api_base: conversation.api_base ?? agent.api_base });
       toast(t.sidebar.deletedToast);
       setDeleting(false);
-      navigate("/", { replace: true });
+      app.newChat(agent.id);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -509,7 +509,7 @@ function ChatHeader({
       await setArchived(conversation.id, true);
       toast(t.sidebar.archivedToast);
       void loadConversations(undefined, undefined, true);
-      navigate("/", { replace: true });
+      app.newChat(agent.id);
     } catch (e) {
       toast(describeError(e), "error");
     }

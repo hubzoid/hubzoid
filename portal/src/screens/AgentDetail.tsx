@@ -1,7 +1,7 @@
 import { Button, Breadcrumb, Tabs } from "antd";
 import type { Hub, Me } from "../api";
 import { agentHref, href, navigate } from "../hooks/useRoute";
-import { AgentAvatar, PageHeader } from "../components/common";
+import { AgentAvatar, PageHeader, InfoHelp } from "../components/common";
 import { AccessEditor } from "./access/AccessEditor";
 import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
@@ -38,7 +38,7 @@ export function AgentDetail({
         }
         description={
           <>
-            Agent <span className="identity">{hub.key}</span> · decide who can use it and what they connect, check its scheduled work and evals, and review what happened.
+            <span className="identity">{hub.key}</span> <InfoHelp text="Manage agent access and connections, check workflows and evals, and review activity." />
           </>
         }
       />

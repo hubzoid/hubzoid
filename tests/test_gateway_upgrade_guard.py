@@ -34,6 +34,7 @@ def _isolated(monkeypatch):
 
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
     monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)

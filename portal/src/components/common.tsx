@@ -10,7 +10,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ShieldCheck, Sparkle, Workflow } from "lucide-react";
+import { ShieldCheck, Sparkle, Workflow, CircleHelp } from "lucide-react";
 import type { Permission } from "../api";
 import {
   accountStatus,
@@ -29,6 +29,11 @@ import {
 import { href } from "../hooks/useRoute";
 
 const { Text, Title, Paragraph } = Typography;
+
+export function InfoHelp({ text }: { text: string }) {
+  return <Tooltip title={text} trigger={["hover", "click"]}><Button
+    type="text" size="small" shape="circle" aria-label={text} icon={<CircleHelp size={15} />} /></Tooltip>;
+}
 
 export function PageHeader({
   eyebrow,

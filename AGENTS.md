@@ -58,8 +58,8 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
-| `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |
-| `gateway.py` | Plans one shared Open WebUI over many hub bridges (`hubzoid gateway`). |
+| `edge.py` | Public reverse proxy: the native chat app and Console by default; Open WebUI and bridge routes in Open WebUI mode. |
+| `gateway.py` | Plans one deployment over many hub bridges (`hubzoid gateway`), for either chat UI. |
 | `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
 | `schedule_runner.py` | Executes one task: fresh-context rounds via the hub Runtime until `STATUS: DONE`, then scoped commit/push. |
@@ -67,7 +67,9 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `evals/` | Hub-owned behavioural checks (`<hub>/evals/*.md`): format, free assertions, runner, judge, report, optional Langfuse push. |
 | `evals/schedule.py` | Second task source for `scheduler.py` — a due eval case runs the deterministic runner, not the agent harness. |
 | `cli.py` | Typer-based CLI. |
-| `factory.py` | `build_agent(hub_dir)`. composes everything. |
+| `factory.py`, `factory_claude.py`, `factory_codex.py`, `runtime.py` | Runtime adapters; SDK construction belongs here. |
+| `chat/`, `auth/`, `webapp_gateway.py` | Native conversations, sign-in and the shared gateway app. |
+| `workflows/` | Durable execution, observation, identity and controls over DBOS. |
 
 ## Editing rules
 

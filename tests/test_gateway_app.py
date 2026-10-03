@@ -92,6 +92,7 @@ class _Run:
 
         monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+        monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
         monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
         monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
         monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
@@ -240,13 +241,21 @@ def test_legacy_gateway_still_runs_open_webui_and_records_its_mode(tmp_path, mon
         started.update(kwargs)
         proc = MagicMock()
         proc.wait.return_value = 0
+        proc.poll.return_value = None
         return proc
 
     from hubzoid import webui
 
     monkeypatch.setattr(webui, "start_gateway", fake_start_gateway)
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda cmd, env=None, **kw: MagicMock())
+    def fake_popen(*a, **kw):
+        proc = MagicMock()
+        proc.poll.return_value = None
+        return proc
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda *a: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     result = CliRunner().invoke(cli.app, ["gateway", str(sales), "--data-dir", str(gw)])
     assert result.exit_code == 0, result.output

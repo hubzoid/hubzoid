@@ -28,6 +28,16 @@ Choose one path before you start:
 
   With Docker, build with `--build-arg WITH_OPENWEBUI=true`.
 
+  For an existing Console-managed deployment, this is the least disruptive
+  first upgrade: preserve Open WebUI history and personal connections, and
+  keep the existing Console grants. Set the mode in the gateway environment
+  **and every bridge**. No access migration is needed.
+
+Restart the gateway and all bridges on the same Hubzoid version. With
+`--no-bridges`, start the upgraded bridges before the gateway. Its readiness
+check verifies both the hub name and model id; an older or different service
+on the expected port is refused.
+
 ### What changes
 
 | Change | What you do |
@@ -112,9 +122,11 @@ app does not offer those providers.
 
 Also note:
 
-- **Share links** open for any signed-in person of the deployment. A share
-  that Open WebUI kept private or restricted becomes readable by everyone
-  signed in. The report warns when such shares exist.
+- **Share links** that Open WebUI kept private or restricted stay disabled.
+  Their snapshots and original audience are retained. The owner can open the
+  conversation and explicitly share it again. New links open for any signed-in
+  person of the deployment, as the Share dialog explains. Previously public
+  Open WebUI links keep working for signed-in people.
 - **Tool arguments** in moved conversations are the short previews 1.0.x
   stored. Full arguments were never kept.
 - **`admin@localhost`** from Open WebUI's sign-in-off mode is imported

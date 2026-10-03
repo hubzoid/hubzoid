@@ -1,4 +1,4 @@
-"""Read <hub>/connectors/.mcp.json and build MCP server objects.
+"""Read <hub>/connectors/.mcp.json into runtime-neutral server configuration.
 
 Supported shapes (subset of the MCP / Claude Desktop config format):
 
@@ -71,62 +71,6 @@ def load_all_raw(hub_dir: Path) -> dict[str, dict]:
         for name, spec in browser_entry.items():
             out.setdefault(name, spec)
 
-    return out
-
-
-def load_all(hub_dir: Path) -> list:
-    """OpenAI Agents SDK wrapper around `load_all_raw`.
-
-    Returns MCPServerStreamableHttp / MCPServerSse / MCPServerStdio objects
-    ready to attach to an Agent. Transport is taken from the spec's `transport`
-    field. For backward compatibility, a spec with a `url` but no explicit
-    transport still defaults to SSE (the historical behaviour); Streamable HTTP
-    is opt-in via `transport: streamable-http` (the auto-injected browser sets
-    it explicitly).
-    """
-    from agents.mcp import MCPServerSse, MCPServerStdio, MCPServerStreamableHttp
-
-    out: list = []
-    for name, spec in load_all_raw(hub_dir).items():
-        raw_transport = (spec.get("transport") or "").lower()
-        # Normalize aliases: "http"/"streamable_http" -> "streamable-http".
-        if raw_transport in ("http", "streamable_http", "streamablehttp"):
-            raw_transport = "streamable-http"
-        has_url = bool(spec.get("url"))
-        if not raw_transport:
-            # Preserve the pre-existing default: bare url -> SSE, else stdio.
-            raw_transport = "sse" if has_url else "stdio"
-        # Optional per-server override of the MCP client's per-call timeout.
-        # HTTP transports only; slow tools (e.g. a browser) need more than 5s.
-        timeout = spec.get("client_session_timeout_seconds")
-        http_kwargs = {}
-        if timeout is not None:
-            http_kwargs["client_session_timeout_seconds"] = timeout
-        try:
-            if raw_transport == "sse":
-                server = MCPServerSse(
-                    params={"url": spec["url"], "headers": spec.get("headers", {})},
-                    name=name,
-                    **http_kwargs,
-                )
-            elif raw_transport == "streamable-http":
-                server = MCPServerStreamableHttp(
-                    params={"url": spec["url"], "headers": spec.get("headers", {})},
-                    name=name,
-                    **http_kwargs,
-                )
-            else:
-                server = MCPServerStdio(
-                    params={
-                        "command": spec["command"],
-                        "args": spec.get("args", []),
-                        "env": spec.get("env", {}),
-                    },
-                    name=name,
-                )
-            out.append(server)
-        except KeyError as exc:
-            log.warning("MCP server %r missing required field %s; skipping", name, exc)
     return out
 
 

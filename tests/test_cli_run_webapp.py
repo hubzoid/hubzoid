@@ -31,6 +31,7 @@ def _isolated(monkeypatch):
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_open_browser", lambda url: None)
     with clean_process_env():
@@ -457,6 +458,7 @@ _NO_OWUI = textwrap.dedent('''
     from hubzoid import cli
     subprocess.Popen = fake_popen
     cli._wait_for = lambda *a, **k: True
+    cli._ensure_port_available = lambda *a: None
     cli.signal.signal = lambda *a, **k: None
     result = CliRunner().invoke(cli.app, ["run", sys.argv[1], "--port", "3811",
                                           "--bridge-port", "3812", "--no-open"])
@@ -494,6 +496,7 @@ _LIGHT = textwrap.dedent('''
 
     subprocess.Popen = FakePopen
     cli._wait_for = lambda *a, **k: True
+    cli._ensure_port_available = lambda *a: None
     result = CliRunner().invoke(cli.app, ["run", sys.argv[1], "--port", "3813",
                                           "--bridge-port", "3814", "--no-open"])
     print("EXIT", result.exit_code)
@@ -526,7 +529,7 @@ def test_a_bridge_that_exits_is_reported_at_once(tmp_path, monkeypatch):
     proc = MagicMock()
     proc.poll.return_value = 1  # exited
     assert cli._wait_for_bridge(proc, "http://127.0.0.1:3802/healthz", timeout=60) is False
-    assert len(waits) == 1
+    assert not waits
 
 
 def test_a_slow_bridge_is_waited_for(tmp_path, monkeypatch):
@@ -535,3 +538,40 @@ def test_a_slow_bridge_is_waited_for(tmp_path, monkeypatch):
     proc = MagicMock()
     proc.poll.return_value = None  # still starting
     assert cli._wait_for_bridge(proc, "http://127.0.0.1:3802/healthz", timeout=60) is True
+
+
+def test_bridge_exit_after_readiness_is_a_failure(tmp_path, monkeypatch, launched):
+    original = subprocess.Popen
+
+    def failing_bridge(cmd, *args, **kwargs):
+        proc = original(cmd, *args, **kwargs)
+        if "hubzoid.server:build_app" in cmd:
+            proc.wait.return_value = 1
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", failing_bridge)
+    assert _run(_hub(tmp_path)).exit_code == 1
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("option", ["--bridge-port", "--port"])
+def test_occupied_port_refuses_start_without_launching_children(tmp_path, monkeypatch, launched, option):
+    import socket
+
+    # Undo the default test's port-probe stub for this actual occupied socket.
+    monkeypatch.undo()
+    with clean_process_env(), socket.socket() as occupied, socket.socket() as available:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        port = occupied.getsockname()[1]
+        available.bind(("127.0.0.1", 0))
+        other_port = available.getsockname()[1]
+        available.close()
+        started = []
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen(lambda *a: started.append(a)))
+        other_option = "--port" if option == "--bridge-port" else "--bridge-port"
+        result = CliRunner().invoke(cli.app, ["run", str(_hub(tmp_path)), "--no-open", option, str(port),
+                                             other_option, str(other_port)])
+    assert result.exit_code == 1, result.output
+    assert "unavailable" in result.output and option in result.output
+    assert not started

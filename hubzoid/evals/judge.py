@@ -276,23 +276,10 @@ async def _ask_claude_local(model_id: str, prompt: str) -> str:
     """Single-turn Claude call with no tools, via the bundled `claude` login.
     A judge has no business calling anything: no tools, no MCP servers (not
     even the host account's connectors), no settings."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, query
+    from ..factory_claude import claude_complete
 
-    from ..factory_claude import _parse_model_pin, tool_free_options
-
-    options = tool_free_options(_SYSTEM, _parse_model_pin(model_id) or None)
-
-    chunks: list[str] = []
-    final = ""
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            for block in getattr(message, "content", []) or []:
-                text = getattr(block, "text", None)
-                if text:
-                    chunks.append(text)
-        elif isinstance(message, ResultMessage):
-            final = getattr(message, "result", None) or ""
-    return "".join(chunks) or final
+    text, _usage = await claude_complete(prompt, system=_SYSTEM, model_setting=model_id)
+    return text
 
 
 async def _ask_litellm(model_id: str, prompt: str) -> str:

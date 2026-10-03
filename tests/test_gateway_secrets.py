@@ -35,6 +35,9 @@ def _clean(monkeypatch):
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     # These pin the Open WebUI gateway (HUBZOID_UI=openwebui).
     with clean_process_env(HUBZOID_UI="openwebui"):
@@ -244,6 +247,8 @@ def test_deployment_secret_wins_over_hub_env_compatibility_keys(tmp_path, monkey
 
 
 def test_standalone_run_keeps_hub_only_layers_out_of_open_webui_and_edge(tmp_path, monkeypatch, launched):
+    # This test replaces every service process; it must not inspect real ports.
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     hub = tmp_path / "solo"
     (hub / "restricted").mkdir(parents=True)
     (hub / "AGENTS.md").write_text("---\nname: solo\n---\nbody")

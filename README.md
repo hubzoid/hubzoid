@@ -168,7 +168,7 @@ example's instructions before connecting real systems or enabling schedules.
   servers your administrators register. See
   [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md).
 - **Control who can do what.** Grant agent access and restricted capabilities
-  to people or groups in the Console. Hubzoid checks permissions before a
+  to people in the Console. Hubzoid checks permissions before a
   restricted tool runs.
 - **See what happened.** Inspect workflow runs, steps, usage, and activity.
   Model cost estimates are guidance; your provider's bill is authoritative.
@@ -186,7 +186,7 @@ agent makes, and read-only share links for signed-in colleagues. It has an
 account page, a connections page, light and dark themes, and works on a phone.
 Conversations are stored by Hubzoid in its operational database.
 
-The **Admin Console** at `/portal/` manages people, groups, agent access,
+The **Admin Console** at `/portal/` manages people, agent access,
 personal connectors and activity, and shows workflow runs and usage, with the
 same accounts. Administrators open it from **Admin Console** in the web app's
 account menu. For adding teammates, sign-in providers and permissions, see

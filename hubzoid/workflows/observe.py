@@ -13,6 +13,7 @@ administration alone never reveals a person's run results.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -310,6 +311,17 @@ def resolve_statuses(values) -> list[str] | None:
     return [s for s in out if not (s in seen or seen.add(s))]
 
 
+def _output_text(value, limit: int) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)[:limit]
+        except (TypeError, ValueError):
+            pass
+    return str(value)[:limit]
+
+
 def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = None) -> dict:
     # `created` is the ordering/pagination key: it is what DBOS's own `sort_desc`
     # orders by (created_at), so merging and paginating cross-agent results by the
@@ -335,7 +347,7 @@ def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = No
         started=started,
         completed=completed,
         duration_ms=completed - started if completed and started else None,
-        output=(str(w.output)[:8000] if w.output is not None else None) if visible else None,
+        output=_output_text(w.output, 8000) if visible else None,
         error=(str(w.error)[:8000] if w.error else None) if visible else _error_summary(w.error),
         redacted=(not visible) and w.output is not None,
         run_as=(owner or {}).get("subject"),
@@ -437,8 +449,7 @@ def _step_row(x: dict, visible: bool) -> dict:
         completed=x.get("completed_at_epoch_ms"),
         error=(str(x["error"])[:4000] if x.get("error") else None) if shown
         else _error_summary(x.get("error")),
-        output=(str(x["output"])[:4000] if x.get("output") is not None else None)
-        if shown else None,
+        output=_output_text(x.get("output"), 4000) if shown else None,
         redacted=(not shown) and x.get("output") is not None,
     )
 

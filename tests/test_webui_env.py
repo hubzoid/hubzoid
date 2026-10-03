@@ -26,7 +26,7 @@ def captured_env(tmp_path, monkeypatch):
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     captured: dict[str, str] = {}
 
-    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         captured.update(env or {})
         captured["__cwd__"] = cwd
         proc = MagicMock()
@@ -346,7 +346,7 @@ def captured_cmd(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     captured: list[list[str]] = []
 
-    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         captured.append(list(cmd))
         proc = MagicMock()
         proc._log_path = tmp_path / "log"

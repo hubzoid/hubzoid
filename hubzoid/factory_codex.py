@@ -498,7 +498,7 @@ async def _stop(proc):
 
 def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_override=None):
     from . import access, connections, memory, settings
-    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool, _add_jev_tool
+    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool, _add_jev_tool, load_mcp_servers
     from .loaders import agents, knowledge, tools_local, mcp
     from .tools import make_all
     hub_dir = Path(hub_dir).resolve()
@@ -531,6 +531,7 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
             params_json_schema={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"], "additionalProperties": False}, on_invoke_tool=invoke)
     return CodexRuntime(name=main.spec.name, instructions=_compose_instructions(main.instructions, ctx, backend="codex-local"),
                         registry=registry, model_setting=model, hub_dir=hub_dir,
-                        max_turns=max_turns, tool_mode=config.show_tools, mcp_servers=mcp.load_all(hub_dir),
+                        max_turns=max_turns, tool_mode=config.show_tools,
+                        mcp_servers=load_mcp_servers(mcp.load_all_raw(hub_dir)),
                         vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
                         personal_mcp=True)

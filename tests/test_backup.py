@@ -420,7 +420,7 @@ def test_cli_backup_and_dry_run_restore(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
     assert r.exit_code == 0, r.output
     assert "Backup written" in r.output
-    assert "Left out: .env files, signing keys and database passwords" in " ".join(r.output.split())
+    assert "Left out: .env files, deployment encryption keys, signing keys and database passwords" in " ".join(r.output.split())
     r = CliRunner().invoke(cli.app, ["restore", "b.tar.gz", "--dry-run",
                                      "--move", f"{tmp_path / 'live'}={tmp_path / 'elsewhere'}"])
     assert r.exit_code == 0, r.output
@@ -439,7 +439,8 @@ def test_cli_backup_without_chat_data_says_so(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
     assert r.exit_code == 0, r.output
     out = " ".join(r.output.split())
-    assert "No chat app data was found" in out
+    assert "No Open WebUI data directory" in out
+    assert "conversations live in the operational database" in out
     assert "also archive the gateway's --data-dir" in out
     assert "holds user accounts" not in out
 

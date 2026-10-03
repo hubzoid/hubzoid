@@ -26,12 +26,14 @@ def setup(tmp_path, monkeypatch):
     return app, client
 
 
-def test_owner_shares_and_anyone_signed_in_reads(setup):
+@pytest.mark.parametrize("public_url,origin", [("", ""), ("https://hub.example.com/b/finance", "https://hub.example.com")])
+def test_owner_shares_and_anyone_signed_in_reads(setup, monkeypatch, public_url, origin):
     app, client = setup
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", public_url)
     r = client.post("/api/conversations/c_share0001/share", headers=who("ana"))
     assert r.status_code == 200
     share_id, url = r.json()["share_id"], r.json()["url"]
-    assert url == f"/s/{share_id}" and len(share_id) >= 16
+    assert url == f"{origin}/s/{share_id}" and len(share_id) >= 16
     assert client.get("/api/conversations/c_share0001/share", headers=who("ana")).json()["share_id"] == share_id
     shared = client.get(f"/api/shares/{share_id}", headers=who("ben"))
     assert shared.status_code == 200
@@ -56,6 +58,24 @@ def test_signed_out_people_cannot_read_a_share(setup):
     assert client.get(f"/api/shares/{share_id}").status_code == 401
     assert client.get("/api/shares/not-a-real-share-id", headers=who("ben")).status_code == 404
     assert client.get("/api/shares/x", headers=who("ben")).status_code == 404
+
+
+@pytest.mark.parametrize("audience", ["owner", "restricted", None])
+def test_imported_private_links_stay_closed_until_owner_reshares(setup, audience):
+    app, client = setup
+    store = app.state.chat.store
+    share_id = client.post("/api/conversations/c_share0001/share", headers=who("ana")).json()["share_id"]
+    share = store.get_share(share_id)
+    snap = dict(share["snapshot"], source="openwebui", audience=audience)
+    store.save_share(conversation_id=share["conversation_id"], owner_id=share["owner_id"],
+                     title=share["title"], agent=share["agent"], snapshot=snap)
+    for person in ("ana", "ben"):
+        assert client.get(f"/api/shares/{share_id}", headers=who(person)).status_code == 404
+    assert client.get("/api/conversations/c_share0001/share", headers=who("ana")).status_code == 404
+    assert store.get_share(share_id)["snapshot"]["audience"] == audience  # retained, not public
+    again = client.post("/api/conversations/c_share0001/share", headers=who("ana")).json()
+    assert again["share_id"] == share_id
+    assert client.get(f"/api/shares/{share_id}", headers=who("ben")).status_code == 200
 
 
 def test_the_snapshot_is_frozen_until_shared_again(setup):
