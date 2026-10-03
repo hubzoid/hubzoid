@@ -140,7 +140,7 @@ hubzoid = ["*.pyc", "**/__pycache__/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Fast by default; CI and release checks run everything with `-m ""`.
-addopts = "-m 'not (slow or e2e or e2e_llm or e2e_ui or e2e_browser)'"
+addopts = "-m 'not (slow or heavy or e2e or e2e_llm or e2e_ui or e2e_browser)'"
 # No test takes a minute. A test still running after two is stopped and
 # reported as skipped (tests/conftest.py), so a hang never blocks CI; only real
 # failures do.
