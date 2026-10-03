@@ -908,6 +908,12 @@ function chartPng(width = 160, height = 100) {
       const fresh = await browser.newContext({ viewport: { width: 1200, height: 860 } });
       const invited = await fresh.newPage();
       watch(invited);
+      // Someone else (an administrator, with every agent) is signed in on this browser first.
+      await invited.goto(`${BASE}/`);
+      await signIn(invited);
+      await invited.getByTestId("agent-switcher").click();
+      assert.equal(await invited.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 3);
+      await invited.keyboard.press("Escape");
       await invited.goto(`${BASE}/auth/set-password?token=reset-token-valid-001`);
       await invited.getByRole("heading", { name: "Choose a new password" }).waitFor();
       await invited.goto(`${BASE}/auth/set-password?token=set-token-valid-0001`);
@@ -923,6 +929,10 @@ function chartPng(width = 160, height = 100) {
       await invited.getByRole("button", { name: "Save password and sign in" }).click();
       await invited.waitForURL(`${BASE}/`);
       await invited.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      // Only the new person's agents, never the previous person's list.
+      await invited.getByTestId("agent-switcher").click();
+      assert.equal(await invited.getByRole("listbox", { name: "Choose an agent" }).getByRole("option").count(), 2);
+      await invited.keyboard.press("Escape");
       await invited.goto(`${BASE}/auth/set-password?token=set-token-valid-0001`);
       await invited.getByRole("heading", { name: "This link can't be used" }).waitFor();
 

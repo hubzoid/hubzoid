@@ -114,9 +114,14 @@ export default function App() {
       .catch((error) => setAgents({ status: "error", list: [], defaultAgent: null, error }));
   }, []);
 
+  // The agents belong to the person signed in: load them again whenever that
+  // person changes (a sign-in link or a sign-in in a tab where someone else
+  // was signed in), and never show the previous person's list meanwhile.
+  const userId = authenticated ? (session?.user?.id ?? session?.user?.email ?? "") : null;
   useEffect(() => {
-    if (authenticated) loadAgents();
-  }, [authenticated, loadAgents]);
+    setAgents({ status: "loading", list: [], defaultAgent: null, error: null });
+    if (userId !== null) loadAgents();
+  }, [userId, loadAgents]);
 
   // Branding: favicon and an optional stylesheet from the hub's branding folder.
   useEffect(() => {
