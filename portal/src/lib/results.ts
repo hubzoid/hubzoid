@@ -38,6 +38,9 @@ export function resultArtifacts(raw: string): ResultArtifact[] {
   return [...found.values()];
 }
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-export function workflowCommand(action: "run" | "cancel", target: string): string {
-  return `hubzoid schedule ${action} '<hub-folder>' ${quote(target)}`;
+export function workflowCommand(action: "run" | "cancel", target: string, hubPath: string): string {
+  return `hubzoid schedule ${action} ${quote(hubPath)} ${quote(target)}`;
+}
+export function createWorkflowCommand(hubPath: string): string {
+  return `hubzoid new workflow my-workflow ${quote(hubPath)}`;
 }

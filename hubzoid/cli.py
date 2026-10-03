@@ -617,6 +617,9 @@ def _ensure_port_available(host: str, port: int, label: str, option: str) -> Non
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     try:
         with socket.socket(family, socket.SOCK_STREAM) as probe:
+            # Match uvicorn: closing TCP connections must not block a restart.
+            # This still refuses a port with an active listener.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind((host, port))
     except OSError:
         console.print(f"[red]{label} port {port} is unavailable on {escape(host)}.[/red]\n"
@@ -1325,7 +1328,9 @@ def gateway(
             ready = (_wait_for_bridge(procs[i], url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity)
                      if launch_bridges else _wait_for(url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity))
             if not ready:
-                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up[/red]")
+                console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
+                              f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
+                              "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
                 for p in procs:
                     p.terminate()
                 raise typer.Exit(1)
@@ -1759,7 +1764,9 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         ready = (_wait_for_bridge(procs[i], url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity)
                  if launch_bridges else _wait_for(url, timeout=_GATEWAY_BRIDGE_TIMEOUT, **identity))
         if not ready:
-            console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up[/red]")
+            console.print(f"[red]bridge {b.slug} (:{b.bridge_port}) failed to come up with "
+                          f"hub {escape(b.hub_dir.name)!r} and model {escape(b.model_label)!r}. "
+                          "Check this hub’s MODEL_LABEL and upgrade/restart its bridge before the gateway.[/red]")
             raise typer.Exit(1)
     console.print(f"[green]→ bridges[/green]  {len(gp.backends)} ready: {', '.join(b.slug for b in gp.backends)}")
 
@@ -3141,9 +3148,14 @@ def _wait_for(url: str, timeout: float = 60.0, *, expected_hub: str | None = Non
                 try:
                     health = r.json()
                 except ValueError:
-                    return False
-                return (isinstance(health, dict) and health.get("hub") == expected_hub
-                        and health.get("model") == expected_model)
+                    health = None
+                # Older bridges report the hub but not the model. A reported
+                # mismatch may be a bridge still restarting during an upgrade;
+                # keep polling until the deadline, without accepting the wrong hub.
+                if (isinstance(health, dict) and health.get("hub") == expected_hub
+                        and (expected_model is None or health.get("model") is None
+                             or health.get("model") == expected_model)):
+                    return True
             if not expected_hub and 200 <= r.status_code < 400:
                 return True
         except httpx.HTTPError:

@@ -315,8 +315,16 @@ files with the rollback materials. The default backup excludes secrets and `.env
    Ubuntu 24.04) or PostgreSQL.
 6. **Start** as before. At the first start Hubzoid upgrades its tables. It
    imports the old decision logs the first time it records or reads a tool
-   decision. With a gateway whose bridges run as their own services, restart
-   the bridges once after the gateway is up.
+   decision. For an existing gateway deployment with independently managed
+   bridges (`--no-bridges`), upgrade and restart the bridges first, verify their
+   `/healthz` responses, then restart the gateway. Keep `MODEL_LABEL` consistent
+   with each hub's configuration. The gateway accepts older health responses
+   that omit the model and retries identity mismatches until its startup timeout;
+   it still refuses a different hub or a conflicting reported model.
+
+   On a first deployment without a manifest, start the gateway to record it,
+   then start/restart the bridges while the gateway waits for their health
+   checks. See [deployment lifecycle](DEPLOYING.md#multi-hub-on-one-address-hubzoid-gateway).
 7. **Verify**: sign in as a normal user and chat with each agent, download a
    file the agent makes, open the Console (Agents, per-agent Runs & schedules, Activity), and run
    `hubzoid doctor <hub>` again.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { resultArtifacts, resultSummary, workflowCommand, shortRunId } from '../src/lib/results.ts';
+import { resultArtifacts, resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from '../src/lib/results.ts';
 const id = 'a123456789012345678';
 const output = JSON.stringify({ title: 'Weekly report', artifact: { id, title: 'Weekly report', url: `https://hub.example.com/portal/artifacts/${id}` } });
 assert.equal(resultSummary(output), 'Weekly report');
@@ -10,8 +10,12 @@ for (const url of ['javascript:alert(1)', '/portal/artifacts/wrong', 'https://ev
 }
 assert.deepEqual(resultArtifacts("{'artifact': 'old Python repr'}"), []);
 assert.equal(resultSummary('Plain answer'), 'Plain answer');
-assert.equal(workflowCommand('cancel', "run';touch /tmp/unwanted"), "hubzoid schedule cancel '<hub-folder>' 'run'\\'';touch /tmp/unwanted'");
+assert.equal(workflowCommand('cancel', "run';touch /tmp/unwanted", "/srv/hubs/Finance Hub"), "hubzoid schedule cancel '/srv/hubs/Finance Hub' 'run'\\'';touch /tmp/unwanted'");
 console.log('Workflow result and command checks passed');
 
 assert.equal(shortRunId('manual:5b5e27d62e4144e09f588847ae01b0a8@hz-finance-eab762a0'), 'ae01b0a8');
 assert.equal(shortRunId('manual:d24c19affcfd4d56940f0a55e49f1191@hz-finance-eab762a0'), 'e49f1191');
+
+assert.equal(workflowCommand('run', 'md:weekly', '/srv/hubs/finance'), "hubzoid schedule run '/srv/hubs/finance' 'md:weekly'");
+assert.equal(createWorkflowCommand('/srv/hubs/Finance Hub'), "hubzoid new workflow my-workflow '/srv/hubs/Finance Hub'");
+assert.equal(workflowCommand('run', 'weekly', "/srv/O'Brien"), "hubzoid schedule run '/srv/O'\\''Brien' 'weekly'");

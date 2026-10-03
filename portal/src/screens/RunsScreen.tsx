@@ -27,12 +27,12 @@ import {
 } from "../components/common";
 import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
 import { WorkflowResult } from "../components/WorkflowResult";
-import { resultSummary, workflowCommand, shortRunId } from "../lib/results";
+import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
 function CopyCommand({ command, label }: { command: string; label: string }) {
-  return <Tooltip title="Run on the server. Replace <hub-folder> with the hub directory." trigger={["hover", "focus"]}>
+  return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
     <Button size="small" icon={<Copy size={14} />} onClick={async () => {
       try { await navigator.clipboard.writeText(command); message.success("Command copied"); }
       catch { message.error("Could not copy. Check clipboard permission."); }
@@ -135,7 +135,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
                 <>
                   <div>No workflows yet <Help text="Use a Markdown task for a plain-language brief, or create a Python workflow with the server command." /></div>
                   <Space><Button href="https://hubzoid.com/docs/guides/markdown-tasks" target="_blank" rel="noopener noreferrer">Guide</Button>
-                  <CopyCommand label="Copy create command" command="hubzoid new workflow my-workflow '<hub-folder>'" /></Space>
+                  <CopyCommand label="Copy create command" command={createWorkflowCommand(hub.path || hub.key)} /></Space>
                 </>
               }
             />
@@ -168,7 +168,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ) : w.schedule ? (
                 <>
                   <div>{describeCron(w.schedule)}</div>
-                  <Help text={`${w.schedule} · ${w.timezone}`} />
+                  <Space size={6}><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{w.timezone}</Text><Help text={`Cron: ${w.schedule}`} /></Space>
                 </>
               ) : (
                 <Text type="secondary">On demand</Text>
@@ -220,7 +220,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "",
             key: "runs",
             align: "right",
-            render: (_, w) => <Space wrap>{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
+            render: (_, w) => <Space wrap>{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
           },
         ]}
       />
@@ -561,8 +561,8 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         )}
       </div>
       <Space>
-        {/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <CopyCommand label="Copy cancel command" command={workflowCommand("cancel", r.id)} />}
-        {definition && !definition.webhook && !/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <><CopyCommand label="Copy run again command" command={workflowCommand("run", workflow)} /><Help text="Starts a new run using the current workflow and account settings. Completed side effects are not undone." /></>}
+        {/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <CopyCommand label="Copy cancel command" command={workflowCommand("cancel", r.id, hub.path || hub.key)} />}
+        {definition && !definition.webhook && !/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <><CopyCommand label="Copy run again command" command={workflowCommand("run", workflow, hub.path || hub.key)} /><Help text="Starts a new run using the current workflow and account settings. Completed side effects are not undone." /></>}
         <Button href={runsHref(hub, workflow)}>Back to runs</Button>
         <Button href={agentHref(hub.key, "activity")}>Agent activity</Button>
       </Space>

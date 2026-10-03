@@ -101,6 +101,7 @@ def load_mcp_servers(specs: dict[str, dict]) -> list:
             log.warning("MCP server %r missing required field %s; skipping", name, exc)
     return out
 
+
 def build_agent(hub_dir: Path, *, extra_tools: dict[str, FunctionTool] | None = None,
                 model_override: str | None = None) -> Agent:
     """Build and return the main Agent for the hub at `hub_dir`.

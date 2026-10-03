@@ -614,3 +614,23 @@ def test_public_service_readiness_timeout_is_a_failure(tmp_path, monkeypatch, la
     result = _run(_hub(tmp_path, f"HUBZOID_UI={mode}\n"))
     assert result.exit_code == 1, result.output
     assert 'Hubzoid is ready' not in result.output
+
+
+@pytest.mark.slow
+def test_recently_closed_tcp_connections_do_not_block_restart():
+    import socket
+
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen()
+        with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
+            connection, _ = listener.accept()
+            connection.close()  # server is the active closer: its port enters TIME_WAIT
+            assert client.recv(1) == b''
+    cli._ensure_port_available('127.0.0.1', port, 'Bridge', '--bridge-port')
+    with socket.socket() as restarted:
+        restarted.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        restarted.bind(('127.0.0.1', port))
+        restarted.listen()

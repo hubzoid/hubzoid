@@ -123,3 +123,56 @@ concise frontend and earlier human browser review remain in the preceding
 hardening commit. Customer sign-in and integrations need deployment acceptance;
 real phone viewport, live SSO, authenticated Codex and release-image checks
 remain unverified, as recorded above.
+
+## Approved restart and final UX follow-up
+
+The owner requested verification and correction of the reported CI and restart
+regressions. Match the server's address-reuse behavior in port probes; retain
+hub identity checks while accepting pre-model health responses and retrying
+mismatches to the startup deadline. Name the failed hub and document independent
+bridge upgrade order. Keep gateway-owned services as one supervised unit;
+document independent services for isolated restarts and systemd control-group
+cleanup for OOM or forced kills. Do not add a custom restart daemon or kill
+unknown listeners. Correct stale test fixtures and status expectations. Fill
+workflow commands with registered server paths, keep the timezone visible, and
+remove duplicated readiness wording only where reproduced. Rebuild the shipped
+frontend and run the affected tests plus real socket/process checks. The owner’s
+instruction against a full-suite rerun remains in force; the separate default
+suite report supplies broader regression evidence.
+
+## Restart and final UX follow-up completed
+
+The five reported CI failures were reproduced and their stale fixtures corrected.
+The bridge-port probe now uses the server's address-reuse behavior, allowing an
+immediate restart after TCP connections close while still rejecting an active
+listener. Gateway identity checks accept older health responses without a model,
+retry malformed/mismatched responses to the deadline, and identify the failing
+hub and expected model. Existing independently supervised bridges should be
+upgraded/restarted before the gateway.
+
+Run, cancel, create and webhook-redrive commands use the registered absolute hub
+path, with shell quoting. The schedule timezone is visible; the raw cron and
+secondary instructions remain in accessible help. The browser fixture now
+serves the read-only webhook view and includes delayed runs in its active filter.
+Open WebUI's gateway-ready message was not duplicated in the reviewed path; an
+existing CLI test now verifies it occurs once. The factory spacing is corrected.
+
+Gateway-owned services deliberately remain one supervised unit. Independent
+bridge services with `--no-bridges` retain isolated restarts. Deployment guidance
+now explicitly covers systemd control-group cleanup and OOM policy. A manually
+force-killed CLI cannot guarantee child cleanup; no custom supervisor or automatic
+termination of unknown listeners was added.
+
+| Focused check | Result |
+|---|---|
+| Branding fixtures, cross-hub run filters, CLI, gateway modes and Console API | 180 passed |
+| Actual recently closed TCP restart and occupied-port refusal | 3 passed |
+| Actual service failure and SIGTERM during gateway startup | 2 passed; expected exit codes and owned ports/groups released |
+| Open WebUI gateway readiness count | 1 passed (included in the CLI scope above) |
+| Frontend | TypeScript/Vite build and command/result checks passed; lint has no errors (existing warnings remain) |
+| Browser | Synthetic workflow list showed timezone and help; command copy produced success feedback; no view errors after completing the fixture |
+
+No full suite rerun, customer deployment, push or publishing was performed. The
+separate default suite review supplied broader regression evidence before these
+focused corrections. Customer sign-in and integration acceptance, and the
+previously recorded real-device/SSO/Codex/release-image limits, remain unchanged.

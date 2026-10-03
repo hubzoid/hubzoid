@@ -368,6 +368,8 @@ ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run %i
 Environment=PATH=/opt/hubzoid/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=10s
+KillMode=control-group
+OOMPolicy=stop
 TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
@@ -634,11 +636,31 @@ hub's `.env`. The gateway records the deployment manifest and a discovery
 pointer in each hub; CLI commands and bridges use those to find shared access
 and accounts. Each SQLite hub keeps its own DBOS file.
 
-For independently supervised bridges, use `--no-bridges`, start the gateway
-before its bridges on the first deployment, then restart each bridge to read
-its manifest. The bridge paths and databases must be accessible to all those
-processes. Do not point a bridge at a conflicting operational database.
+For independently supervised bridges, use `--no-bridges`. On the first
+deployment, start the gateway to record its manifest, then start or restart the
+bridges while the gateway waits for their health checks. On later upgrades,
+upgrade/restart the bridges first and the gateway last. Keep each bridge's
+`MODEL_LABEL` consistent with the hub configuration read by the gateway. The
+bridge paths and databases must be accessible to all those processes. Do not
+point a bridge at a conflicting operational database.
 See [administration](ADMINISTRATION.md) for owner bootstrap and inspection.
+
+When the gateway launches bridges, it supervises one deployment: any owned
+bridge, edge or chat process exiting ends the gateway with status 1 and stops
+its remaining children. A service manager restarts the complete unit. Use
+separate bridge units with `--no-bridges` for independent per-hub restarts; the
+gateway leaves those independently managed bridges running.
+
+SIGTERM or Ctrl-C performs bounded child cleanup, including during startup.
+SIGKILL and OOM can prevent the CLI from cleaning up its child process groups.
+For production use the systemd unit above, including `KillMode=control-group`
+and `OOMPolicy=stop`, or a container supervisor that owns the complete process
+lifecycle. These systemd settings stop the unit's remaining processes after a
+stop or OOM failure ([KillMode](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml),
+[OOMPolicy](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml#L1244)).
+After force-killing a manual run, identify and stop the processes it started
+before launching it again. The occupied-port check deliberately leaves an
+unknown listener running; it never kills a process merely to reclaim a port.
 
 ### Open WebUI mode
 

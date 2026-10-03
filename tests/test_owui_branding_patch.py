@@ -115,7 +115,7 @@ def captured_env_owui(tmp_path, monkeypatch):
         webui, "_patch_owui_branding", lambda brand, *, strip: brands.append(brand)
     )
 
-    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         from unittest.mock import MagicMock
 
         proc = MagicMock()
@@ -146,7 +146,7 @@ def start_strip(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_patch_owui_suffix", lambda strip: decisions.append(strip))
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, *, strip: None)
 
-    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         from unittest.mock import MagicMock
 
         proc = MagicMock()

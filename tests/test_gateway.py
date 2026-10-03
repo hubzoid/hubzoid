@@ -316,6 +316,8 @@ def test_gateway_command_wires_owui_and_edge(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
 
+    assert " ".join(result.output.lower().split()).count("gateway ready") == 1
+
     # Shared OWUI got both bridges, positionally aligned.
     conn = captured["connection_env"]
     assert conn["OPENAI_API_BASE_URLS"] == "http://127.0.0.1:8000/v1;http://127.0.0.1:8001/v1"
@@ -745,3 +747,26 @@ def test_bridge_health_checks_the_hub_and_model(monkeypatch, health):
         'hub': 'sales', 'model': 'sales-agent'}))
     assert cli._wait_for('http://localhost/healthz', timeout=1,
                         expected_hub='sales', expected_model='sales-agent')
+
+
+@pytest.mark.parametrize('health', [{'hub': 'sales'}, {'hub': 'sales', 'model': None}])
+def test_older_bridge_health_without_model_is_compatible(monkeypatch, health):
+    import httpx
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: httpx.Response(200, json=health))
+    assert cli._wait_for('http://localhost/healthz', timeout=1,
+                         expected_hub='sales', expected_model='sales-agent')
+
+
+@pytest.mark.parametrize('first', [
+    {'hub': 'wrong', 'model': 'sales-agent'},
+    {'hub': 'sales', 'model': 'old-model'},
+    'temporarily invalid JSON',
+])
+def test_bridge_identity_mismatch_retries_during_upgrade(monkeypatch, first):
+    import httpx
+    replies = iter([httpx.Response(200, json=first),
+                    httpx.Response(200, json={'hub': 'sales', 'model': 'sales-agent'})])
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: next(replies))
+    monkeypatch.setattr(cli.time, 'sleep', lambda *a: None)
+    assert cli._wait_for('http://localhost/healthz', timeout=1,
+                         expected_hub='sales', expected_model='sales-agent')

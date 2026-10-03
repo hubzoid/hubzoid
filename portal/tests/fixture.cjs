@@ -21,7 +21,7 @@ const iso = (secondsAgo) => new Date((NOW - secondsAgo) * 1000).toISOString();
 const STATUS_BUCKETS = {
   succeeded: ["SUCCESS"],
   failed: ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"],
-  running: ["PENDING", "ENQUEUED"],
+  running: ["PENDING", "ENQUEUED", "DELAYED"],
   cancelled: ["CANCELLED"],
 };
 const KNOWN_STATUSES = new Set([
@@ -53,9 +53,9 @@ function createFixture() {
     visibility: { state: "ok", updated: NOW - 40 },
     schedulerHeartbeat: iso(30),
     hubs: [
-      { key: "finance", name: "Finance Assistant" },
-      { key: "support", name: "Support Assistant" },
-      { key: "itops", name: "IT Ops Assistant" },
+      { key: "finance", path: "/srv/hubs/finance", name: "Finance Assistant" },
+      { key: "support", path: "/srv/hubs/support", name: "Support Assistant" },
+      { key: "itops", path: "/srv/hubs/itops", name: "IT Ops Assistant" },
     ],
     catalogs: {
       finance: [
@@ -151,7 +151,7 @@ function createFixture() {
     workflows: {
       finance: [
         wf("finance", "monthly_close", "0 6 1 * *", "Asia/Kolkata"),
-        wf("finance", "daily_ledger_check", "daily 06:00", "UTC"),
+        wf("finance", "daily_ledger_check", "0 6 * * *", "UTC"),
         wf("finance", "reissue_invoice", null, "UTC"),
       ],
       support: [wf("support", "ticket_digest", "weekly monday 08:00", "Europe/Berlin")],
@@ -631,6 +631,10 @@ function createFixture() {
         const hubs = params.hub ? [params.hub] : allowedHubs(a).map((h) => h.key);
         if (params.hub) requireHub(a, params.hub);
         return { workflows: hubs.flatMap((h) => state.workflows[h].map((w) => decorate(w, state))) };
+      }
+      case "/webhooks": {
+        if (params.hub) requireHub(a, params.hub);
+        return { webhooks: [] };
       }
       case "/runs": {
         // A named agent scopes to one bridge (per-step detail on run_id); no agent

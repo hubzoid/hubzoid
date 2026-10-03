@@ -341,7 +341,7 @@ def test_portal_runs_endpoint_scopes_to_manageable_agents(agents, monkeypatch):
 
 def test_resolve_statuses_buckets_passthrough_and_rejects_invalid():
     assert observe.resolve_statuses("failed") == ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"]
-    assert observe.resolve_statuses("running") == ["PENDING", "ENQUEUED"]
+    assert observe.resolve_statuses("running") == ["PENDING", "ENQUEUED", "DELAYED"]
     assert observe.resolve_statuses("succeeded") == ["SUCCESS"]
     # Comma list + raw DBOS-state pass-through.
     assert observe.resolve_statuses("succeeded,failed") == [

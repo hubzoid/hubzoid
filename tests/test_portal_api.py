@@ -45,11 +45,12 @@ def test_me_and_forbidden(client):
     assert client.get("/portal/api/me").status_code == 403
 
 
-def test_permissions_and_hubs(client):
+def test_permissions_and_hubs(client, tmp_path):
     r = client.get("/portal/api/permissions", params={"hub": client.hub})
     perms = {p["permission"] for p in r.json()["permissions"]}
     assert {"use_hub", "manage_access"} <= perms
     assert client.hub in {h["key"] for h in client.get("/portal/api/hubs").json()["hubs"]}
+    assert client.get("/portal/api/hubs").json()["hubs"][0]["path"] == str(tmp_path.resolve())
 
 
 def test_grant_revoke_via_api(client):
@@ -363,7 +364,7 @@ def test_webhook_view_shows_counts_and_failures_never_payloads(client, tmp_path,
     assert hook["verify"] == "hmac" and hook["workflows"] == ["triage"]
     assert hook["last_24h"] == {"accepted": 0, "running": 1, "succeeded": 1, "failed": 1}
     assert [f["id"] for f in hook["failures"]] == ["ev2", "ev3"]
-    assert hook["failures"][0]["redrive"] == f"hubzoid schedule redrive ev2 --hub {client.hub}"
+    assert hook["failures"][0]["redrive"] == f"hubzoid schedule redrive ev2 --hub {tmp_path.resolve()}"
     for secret in ("PAYLOAD-SECRET", "HEADER-SECRET", "DIGEST-SECRET"):
         assert secret not in r.text
     (row,) = [w for w in client.get("/portal/api/workflows", params={"hub": client.hub}).json()["workflows"]

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 import functools
+import shlex
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
@@ -482,6 +483,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 dict(
                     key=h["key"],
                     name=h["name"],
+                    path=str(Path(h["path"]).resolve()),
                     model_id=h["model_id"],
                     can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
                 )
@@ -718,7 +720,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                     "hz_workflow_events WHERE hub=:h AND webhook=:w AND state='failed' "
                     "ORDER BY updated DESC LIMIT 5"), {"h": normalize(hub), "w": name}).mappings()]
                 for f in failures:
-                    f["redrive"] = f"hubzoid schedule redrive {f['id']} --hub {path.name}"
+                    f["redrive"] = f"hubzoid schedule redrive {shlex.quote(f['id'])} --hub {shlex.quote(str(path.resolve()))}"
                 out.append(dict(
                     name=name, url=f"{base}/webhooks/{slug}/{name}",
                     verify=spec.get("verify", "header"), workflows=by_webhook.get(name, []),
