@@ -43,8 +43,10 @@ font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif
 header{padding:16px 20px}@media(min-width:640px){header{padding:18px 32px}}
 .mark{font:700 17px/1 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-.02em;color:var(--ink)}
 .mark b{color:var(--brand)}
-main{max-width:440px;margin:6vh auto 64px;padding:0 16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px}
+main{max-width:460px;margin:7vh auto 64px;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:32px 32px 26px;
+box-shadow:0 1px 2px rgb(0 0 0/.04),0 8px 24px rgb(0 0 0/.04)}
+@media(max-width:520px){.card{border:0;box-shadow:none;background:transparent;padding:8px 4px}}
 h1{margin:0 0 10px;font-size:22px;line-height:1.25;letter-spacing:-.01em;color:var(--ink);font-weight:600}
 p{margin:0 0 12px}strong{color:var(--ink);font-weight:600}
 .muted{color:var(--mute);font-size:13px}
@@ -59,14 +61,33 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 dl{margin:20px 0 0;padding-top:16px;border-top:1px solid var(--line);display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px}
 dt{color:var(--mute)}dd{margin:0;overflow-wrap:anywhere}
 article{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
-article form{margin:0}"""
+article form{margin:0}
+.parties{display:flex;align-items:center;justify-content:center;gap:10px;margin:4px 0 22px}
+.tile{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+font:600 18px/1 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+.tile.hub b{color:var(--brand)}
+.link{display:flex;gap:4px;color:var(--mute)}.link i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block}
+.consent{text-align:center}.consent h1{font-size:21px;margin-bottom:6px}
+.who{color:var(--mute);font-size:13.5px;margin:0 0 22px}
+.scope{text-align:left;margin:0 0 4px;padding:0;list-style:none}
+.scope li{display:flex;gap:10px;align-items:flex-start;padding:9px 0}
+.scope li+li{border-top:1px solid var(--line)}
+.scope svg{flex:none;margin-top:3px}
+.scope .yes{color:var(--brand)}.scope .no{color:var(--mute)}
+.scope small{display:block;color:var(--mute);font-size:12.5px}
+.label{text-align:left;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--mute);margin:18px 0 2px}
+.consent .actions{justify-content:center;margin-top:24px}
+.consent .actions button{min-width:140px}
+.fine{margin:22px 0 0;font-size:12.5px;color:var(--mute);line-height:1.5}
+.fine a{color:inherit}"""
 
 
-def page(title, body, status=200):
+def page(title, body, status=200, *, own_heading=False):
+    heading = "" if own_heading else f"<h1>{escape(title)}</h1>"
     return HTMLResponse(
         f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · Hubzoid</title>
 <style>{_STYLE}</style></head><body><header><span class="mark" role="img" aria-label="Hubzoid"><b>/</b>hubzoid</span></header>
-<main id="main"><div class="card"><h1>{escape(title)}</h1>{body}</div></main></body></html>""",
+<main id="main"><div class="card">{heading}{body}</div></main></body></html>""",
         status_code=status,
         headers=HEADERS,
     )
@@ -179,12 +200,30 @@ def browser_routes(provider):
         if request.method == "GET":
             through = " through Open WebUI" if appmode.is_openwebui(provider.hub_dir) else ""
             csrf = csrf_form(who, "consent:" + ticket)
-            body = f"""<p><strong>{escape(client.client_name or 'An assistant')}</strong> wants to use <strong>{escape(_agent_name(provider.hub_dir))}</strong> as <strong>{escape(who['email'])}</strong>{through}.</p>
-<p>It can read this agent’s knowledge and run its tools with your access. It can’t give itself more.</p>
-<form method="post" class="actions"><input type="hidden" name="csrf" value="{csrf}"><button name="decision" value="allow">Allow connection</button><button class="secondary" name="decision" value="deny">Cancel</button></form>
-<dl><dt>Returns to</dt><dd><code>{escape(str(params['redirect_uri']))}</code></dd><dt>Lasts</dt><dd>Up to 30 days. Revoke any time.</dd></dl>
-<p class="muted" style="margin:14px 0 0">The assistant names itself; Hubzoid can’t verify that name. Allow only if you started this.</p>"""
-            response = page("Connect your assistant", body)
+            app_name = client.client_name or "An assistant"
+            agent = _agent_name(provider.hub_dir)
+            back = urlsplit(str(params["redirect_uri"]))
+            yes = '<svg class="yes" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            no = '<svg class="no" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+            body = f"""<div class="consent">
+<div class="parties" aria-hidden="true"><span class="tile">{escape(app_name[:1].upper())}</span><span class="link"><i></i><i></i><i></i></span><span class="tile hub"><b>/</b>{escape(agent[:1].lower())}</span></div>
+<h1>{escape(app_name)} wants to use {escape(agent)}</h1>
+<p class="who">Signed in as <strong>{escape(who['email'])}</strong>{through}</p>
+<p class="label">This will allow it to</p>
+<ul class="scope">
+<li>{yes}<span>Read {escape(agent)}’s knowledge and files</span></li>
+<li>{yes}<span>Use {escape(agent)}’s tools, including ones that make changes<small>Only the tools your access allows, as you.</small></span></li>
+</ul>
+<p class="label">It can’t</p>
+<ul class="scope">
+<li>{no}<span>Do anything your access doesn’t allow</span></li>
+<li>{no}<span>Use other agents, or keep access after you revoke it</span></li>
+</ul>
+<form method="post" class="actions"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary" name="decision" value="deny">Cancel</button><button name="decision" value="allow">Allow connection</button></form>
+<p class="fine">Access lasts up to 30 days. You can revoke it any time in <a href="{escape(provider.public_path)}/connections">your connections</a>.<br>
+Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netloc or str(params['redirect_uri']))}</code>. The assistant names itself, so allow this only if you started it.</p>
+</div>"""
+            response = page(f"Connect {app_name}", body, own_heading=True)
             response.headers.update(consent_headers)
             return set_cookie(response, csrf)
         form = await request.form()

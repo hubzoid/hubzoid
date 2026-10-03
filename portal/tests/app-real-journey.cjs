@@ -1278,7 +1278,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await ctx.signIn(page2, MCP_OWNER);
   // Back to the other hub's own consent page (a server page, not the chat app's).
   await page2.waitForURL(/\/mcp\/oauth\/consent\?ticket=/);
-  await page2.getByRole("heading", { name: "Connect your assistant" }).waitFor();
+  await page2.getByRole("heading", { name: /wants to use Remote Notes/ }).waitFor();
   await page2.getByText(`Signed in as ${MCP_OWNER.email}.`).waitFor();
   await ctx.shot(page2, "36-mcp-consent");
   await page2.getByRole("button", { name: "Allow connection" }).click();
