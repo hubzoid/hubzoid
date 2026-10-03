@@ -7,6 +7,7 @@ import { Shell, type Area } from "./components/Shell";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
 import { lightTheme, darkTheme, useThemeMode } from "./lib/theme";
+import { displayName } from "./app/lib/format";
 import "./portal.css";
 
 // Each screen is its own chunk so the first paint only needs the shell.
@@ -17,7 +18,7 @@ const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) =>
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
 
-const TABS: AgentTab[] = ["access", "runs", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 export default function Portal() {
   const { mode, setMode, isDark } = useThemeMode();
@@ -104,7 +105,8 @@ function Router({
     );
 
   const [area, ...rest] = route.parts;
-  const list = hubs.data.hubs;
+  // Agents are named as the chat app names them ("hubzoid-guide" → "Hubzoid Guide").
+  const list = hubs.data.hubs.map((h) => ({ ...h, name: displayName(h.name) || h.key }));
   let screen: ReactNode;
   let active: Area = "agents";
   if (!area || area === "home") {
@@ -125,12 +127,12 @@ function Router({
         screen = (
           <RecoveryScreen
             title="Page not found"
-            subtitle={`${hub.name} has Access, Runs & schedules and Activity, but no “${tab}”.`}
+            subtitle={`${hub.name} has Access, Connectors, Runs & schedules, Evals and Activity, but no “${tab}”.`}
             to={`/agents/${encodeURIComponent(hub.key)}/access`}
             label={`Open ${hub.name}`}
           />
         );
-      else screen = <AgentDetail hub={hub} hubs={list} tab={tab} rest={rest.slice(2)} />;
+      else screen = <AgentDetail hub={hub} hubs={list} me={me.data} tab={tab} rest={rest.slice(2)} />;
     }
   } else if (area === "runs") {
     active = "runs";
@@ -144,6 +146,14 @@ function Router({
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;
+  } else if (area === "connectors") {
+    // Connectors moved into each agent; an old bookmark lands here.
+    screen = (
+      <RecoveryScreen
+        title="Connectors are in each agent"
+        subtitle="Open an agent, then its Connectors tab, to add or change the servers people connect to there."
+      />
+    );
   } else {
     screen = (
       <RecoveryScreen

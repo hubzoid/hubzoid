@@ -21,8 +21,7 @@ The first match wins:
 3. `HUBZOID_WORKFLOW_USER` in the deployment's configuration (the gateway's
    environment, or the deployment secret).
 4. The **setup default**: the owner account recorded when Hubzoid first set up
-   the deployment. It applies only on Console-managed hubs. A legacy hub never
-   switches on it.
+   the deployment.
 
 Runs, `hubzoid schedule list` and the Console's **Runs as** column all use this
 one resolution, and name where the account came from. A run's result is shown
@@ -109,8 +108,7 @@ asking, unless an explicit, authorized delegation exists.
 
 State written before this release (`hub.state` rows and a markdown task's
 `.hubzoid/schedule/<task>/` folder) is kept exactly as it was and belongs to no
-one. A person's state starts empty. Only a legacy hub with no account configured
-keeps using the old state. To carry it over deliberately, copy the old state
+one. A person's state starts empty. To carry it over deliberately, copy the old state
 file into the person's folder before their first run.
 
 A personal connection (for example Gmail through the chat app's native MCP
@@ -123,7 +121,7 @@ reconnects from chat.
 Step return values are kept in the run history, which the hub's managers can
 see. Keep personal data inside steps, and in the artifacts you publish.
 
-## Legacy hubs and `workflow:*` grants
+## Old `workflow:*` grants
 
 Before this release a Python workflow acted as `workflow:<name>` and a markdown
 task as `workflow:md:<task>`.
@@ -133,16 +131,7 @@ task as `workflow:md:<task>`.
   log and the server log name it. To keep the behaviour, grant that permission
   to the account the workflow runs as. You can also point `run_as` at an
   account that already holds it. Then remove the old grant.
-- **Legacy hubs switch only when you configure them.** A legacy hub is one whose
-  access is still managed in the chat app.
-  - Its runs keep their old service identity, old state and old scratch folder,
-    with a warning naming the fix, until you set `run_as` or
-    `HUBZOID_WORKFLOW_USER`.
-  - A recorded setup owner does not switch it. On a legacy hub that identity
-  holds no restricted access, exactly as before.
 - **Publishing, email and personal connections always need a real account.**
-- **Restricted tools in scheduled runs need a Console-managed hub.** On a legacy
-  hub a run's account carries no chat-app groups.
 
 ## Boundaries
 

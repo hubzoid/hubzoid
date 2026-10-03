@@ -3,6 +3,385 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.1.0]
+
+Hubzoid 1.1 adds the Hubzoid web app as the default chat UI. Open WebUI stays a
+supported chat UI (Open WebUI mode), and every agent's access is managed in the
+Console in both. Upgrading from 1.0.x: read [docs/UPGRADING.md](docs/UPGRADING.md) first. The
+[release notes](docs/release-notes/1.1.0.md) summarize the release, its
+upgrade requirements and its known limits.
+
+### Web app
+- `hubzoid run` and `hubzoid gateway` serve the Hubzoid web app on the public
+  port: chat at `/`, the Admin Console at `/portal/`, sign-in at `/auth`, one
+  bundle and one sign-in for both. No Open WebUI process runs.
+- Conversations with history, search, rename, archive and delete. Replies
+  stream with their tool steps (running, done, failed, stopped) and
+  reasoning, can be stopped, edited and resent, regenerated with branches and
+  copied. Attachments by picker, drag and drop or paste, images previewed.
+  Markdown with tables and highlighted code, and download chips for files the
+  agent makes. Read-only share links for signed-in people of the deployment.
+- An agent switcher in the chat header (the agent's name opens a searchable
+  menu, recently used agents first) with suggestions from `AGENTS.md`, an account page (name,
+  password, theme), a connections page, light and dark themes, a phone layout,
+  keyboard access and screen reader announcements. Administrators reach the
+  Console from the account menu.
+- Branding from the hub's `branding/` folder: name, logo, favicon and an
+  optional `custom.css`. The Hubzoid marks `hubzoid init` copies there count
+  as no logo, so the app draws its own wordmark, readable in dark mode. A gateway uses its own branding and `--name`.
+
+### Sign-in and accounts
+- Hubzoid owns accounts in its operational store. Sign-in is off by default
+  (local mode: the local owner `admin@localhost`, on loopback only).
+  `HUBZOID_AUTH=true` turns it on. The 1.0 names `WEBUI_AUTH`, `WEBUI_URL`,
+  `WEBUI_ADMIN_EMAIL` and `WEBUI_ADMIN_PASSWORD` still work.
+- Passwords (Argon2id, 8 to 1024 characters), Google, Microsoft (Entra ID) and
+  one standard OpenID Connect provider, with Open WebUI's variable names and
+  callback paths. Authorization code flow with PKCE, state and nonce, and ID
+  tokens checked against the provider's keys. Links to an existing account by
+  email only for a verified email with `OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true`.
+  `OAUTH_ALLOWED_DOMAINS` applies to every provider.
+- Self sign-up (`ENABLE_SIGNUP`, `ENABLE_OAUTH_SIGNUP`) is off by default and
+  waits for an administrator's approval.
+- One-time sign-in links (72 hours, `HUBZOID_LINK_HOURS`, single use) for new
+  accounts and password resets, from the Console's People screen and from
+  `hubzoid admin`. Nothing is emailed.
+- Sessions: an opaque cookie (`hz_session`) stored as a digest, 30 days at
+  most (`HUBZOID_SESSION_DAYS`) and 7 idle days (`HUBZOID_SESSION_IDLE_DAYS`).
+  Password, role and status changes, blocks and deletion end sessions.
+- Rate limits per client address and per email: 10 failures in 15 minutes
+  (`HUBZOID_AUTH_MAX_FAILURES`) lock for 15 minutes, shared by every bridge.
+- `HUBZOID_PUBLIC_URL` and `HUBZOID_ALLOWED_ORIGINS` name the addresses people
+  use. Changes from a browser must come from one of them.
+- New `hubzoid admin create | reset-password | list | set-role` for the
+  server's operator. `--owner` gives the owner's access on every hub.
+- The first administrator can come from `HUBZOID_ADMIN_EMAIL` and
+  `HUBZOID_ADMIN_PASSWORD` on a deployment with no accounts.
+- Sign-in events appear in the Console's Activity.
+- An agent's **Add user** starts with one search: pick someone who already has
+  an account to give or edit their access in that agent (their current access
+  is filled in), or enter a new email to create an account. An email that
+  already has an account is caught as you type, with a link to their access.
+
+### Chat backend
+- Runtimes emit typed run events (text, tool calls and results, reasoning,
+  notices). The OpenAI-compatible `/v1` output is byte for byte the 1.0.x
+  text, checked against recorded output of every runtime.
+- Replies run in a server task that outlives the page: closing the browser
+  does not stop a reply, Stop does. A reloaded page follows a running reply.
+  One reply per conversation at a time.
+- Titles from one model call (the hub's model, or `HUBZOID_TITLE_MODEL`),
+  recorded as background usage.
+- Limits: `HUBZOID_MAX_UPLOAD_BYTES` (25 MiB per file) and
+  `HUBZOID_MAX_FILES_PER_MESSAGE` (10).
+- Download links in the web app expire after 7 days by default
+  (`HUBZOID_ARTIFACT_LINK_TTL`, `0` for never), and the signed-in owner of a
+  conversation can always download its files. Open WebUI mode is unchanged.
+- Workflows: `hub.call_agent` returns only the agent's answer. Tool lines,
+  reasoning, download footers and error markers no longer appear in workflow
+  data or reports.
+- `MODEL=hubzoid-test/<script>` with `HUBZOID_TEST_RUNTIME=1` runs a scripted,
+  model-free runtime for tests.
+
+### Personal MCP connections
+- Organization administrators add remote MCP servers in each agent's
+  **Connectors** tab in the Console. A connector is registered once for the
+  deployment and offered in the agents that list it; its `connector_<id>`
+  capability exists only there. Each person connects their own account on
+  **Account → Connections** through Hubzoid's OAuth flow (discovery, dynamic
+  client registration or a client registered in advance, PKCE, resource
+  indicators). Tokens are encrypted with the deployment key and refreshed
+  before they expire, one refresh at a time across the deployment.
+- Every chat turn and workflow run on every runtime reaches the person's
+  servers with their token, in agents that offer the connector and where the
+  person holds `connector_<id>`. The connection journey
+  (`HUBZOID_CONNECT_JOURNEY`) works with these connectors.
+- In Open WebUI mode the agent's Connectors tab lists the servers registered in
+  Open WebUI, read-only.
+
+### One access model
+- Every agent's access is managed in the Console, in both chat UIs and however
+  the hub was created or deployed. A person needs a grant; nothing else grants
+  access. A hub deployed from git without `.hubzoid/` denies everyone until
+  someone is granted access.
+- The configured owner gets the owner's grants on their first verified sign-in
+  as an administrator, including their first chat in Open WebUI. With sign-in
+  off the local owner owns every hub from the first start. An API key never
+  provisions anyone.
+- A bridge call without a verified person is refused. Open WebUI groups and
+  roster groups grant nothing, and `MCP_ACCESS_GROUP` is no longer read.
+- Open WebUI's whole Users section (the user list and Groups) opens Settings
+  when `HUBZOID_HIDE_OWUI_USERS` is on, and browser edits to an agent model's
+  access list are refused.
+- `hubzoid doctor` warns about an agent nobody may use (`access.who`) and about
+  a leftover `MCP_ACCESS_GROUP`.
+- Phone numbers in the Console: an organization administrator records the
+  number a person's WhatsApp and Telegram messages come from (**People → the
+  person → Phone**, or **Add user**). A sender with that number is that
+  person; no `identity/access.csv` is needed. A hub's own roster still works
+  for numbers the Console does not know.
+- Removed: the 1.0 cutover commands `hubzoid access migrate`, `access rollback`
+  and `access diff`, `access bootstrap --authoritative`, the
+  `.hubzoid/fresh-install` marker, Hubzoid groups (an earlier 1.1 build's
+  Groups screen, group grants and artifact shares with a group; a migration
+  gives each member the grants and shares their groups held), and
+  `docs/legacy-access.md`.
+
+### Gateway
+- `hubzoid gateway` runs one bridge per hub and one edge, with no Open WebUI.
+  Bridges share the operational store, so one sign-in covers every agent a
+  person may use. Hub-scoped calls go to `/b/<slug>/api`.
+- Sign-in is set once in the gateway's environment. A hub `.env` that sets a
+  different `HUBZOID_UI`, `HUBZOID_AUTH` or `HUBZOID_SECRET_KEY` stops the
+  gateway.
+- The deployment key (`secret.key` next to the manifest, or
+  `HUBZOID_SECRET_KEY`) is created before the bridges start and its
+  fingerprint printed.
+- The bridge trusts identity headers in the default mode only with a signed
+  assertion from another Hubzoid process (the Slack adapter, the inbound
+  process). The edge answers 404 for the bridge's `/v1`, `/uploads` and
+  `/otel`.
+
+### Hosted MCP
+- OAuth only. Clients connect with Hubzoid-issued OAuth credentials after
+  sign-in and consent (`hub:access` scope, access tokens up to 10 minutes,
+  refresh tokens and grants up to 30 days, revocable at
+  `/mcp/oauth/connections`). Open WebUI API keys no longer authenticate
+  `/mcp`. `MCP_PUBLIC_URL` is required with `MCP_SERVER=true`.
+- On by default for a local `hubzoid run` and for an https
+  `HUBZOID_PUBLIC_URL`. `hubzoid run` prints the `claude mcp add` line.
+  `MCP_SERVER` and `MCP_PUBLIC_URL` set in the hub's `.env` still win.
+
+### Moving from Open WebUI
+- New `hubzoid migrate openwebui [PATH]` moves people (passwords included),
+  external sign-in links, conversations with branches and attachments, and
+  share links. Access is already in the Console and stays as it is. Open WebUI
+  is only read. The default is a dry run. `--apply` writes in one transaction.
+  Re-runs are safe. Options: `--owui-db`, `--json`, `--verbose`, `--rehearse`,
+  `--model-alias OLD=AGENT`.
+- With sign-in on, a hub or gateway with Open WebUI accounts and no Hubzoid
+  accounts does not start until it is moved or set to Open WebUI mode.
+
+### Install and run
+- `pip install hubzoid` no longer installs Open WebUI or PyTorch. Measured on
+  macOS arm64 with Python 3.12.6 and fresh caches, on a machine shared with
+  other work (load average 14 to 21 on 8 cores): a cold `uv` install took
+  53 s for 136 packages and a 511 MB environment, a cold `pip` install 202 s
+  for 137 packages and 646 MB. The `hubzoid[openwebui]` extra took 355 s for
+  285 packages and 2.1 GB with `uv`.
+- Open WebUI remains a supported chat app (Open WebUI mode):
+  `pip install "hubzoid[openwebui]"` and `HUBZOID_UI=openwebui`. Access is
+  managed in the Console in both modes.
+- New required dependencies: pwdlib (argon2 and bcrypt), Authlib,
+  itsdangerous and python-multipart. The shared packages Open WebUI used to
+  pin exactly (openai, mcp, FastAPI, pydantic and others) keep those release
+  lines in the core install for this release. aiohttp is left to LiteLLM, so
+  Mac installs get wheels.
+- `hubzoid run` serves the web app, file downloads and MCP on one port, prints
+  one ready line with the URL and opens it in a browser from a terminal
+  (`--no-open` to skip). With sign-in off a network `--host` is refused unless
+  `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true`. Measured from the installed
+  wheel at load average 12 to 19, the page answered 20 s after a first start
+  and 10.5 to 11.2 s after later starts.
+- `hubzoid init` scaffolds an operations assistant for a fictional shop by
+  default (`--template minimal` keeps the 1.0 starter), and in a terminal
+  without a signed-in Claude Code or Codex CLI it offers to save an
+  OpenRouter, Anthropic or OpenAI key.
+- `hubzoid doctor` reports the web app mode (`ui.mode`), sign-in
+  (`auth.chat_signin`), the deployment key by fingerprint (`deployment.key`),
+  the `openwebui` extra in Open WebUI mode (`ui.openwebui_extra`), an Open WebUI
+  install not yet moved (`ui.openwebui_data`) and the local-mode loopback
+  guard (`exposure.local_mode`).
+- The Docker image no longer carries ffmpeg, PyAV build tools or PyTorch.
+  `--build-arg WITH_OPENWEBUI=true` builds the Open WebUI image. The compose file
+  turns sign-in on, since its port is reachable from other machines.
+- `import hubzoid` no longer loads the agent SDKs, so the CLI and the edge
+  start faster.
+- Every package under `hubzoid/` ships: packages are discovered instead of
+  listed by hand, and a test fails when a directory of Python modules would not
+  ship.
+
+### Development
+- Pull requests and pushes to `main` run fast checks again
+  (`.github/workflows/tests.yml`): unit tests on SQLite without Open WebUI,
+  browsers, live models or Docker, and the web app lint. Publishing a release
+  still runs the full validation, now with the `openwebui` extra installed.
+- A hygiene test keeps key files, local paths and unapproved customer names
+  out of the tracked tree.
+- Secret scanning: gitleaks (`.github/workflows/secrets.yml`, rules in
+  `.gitleaks.toml`) checks every push and pull request, the whole history and
+  the current files. Key files such as `.webui_secret_key` and `secret.key`
+  fail it whatever their contents, and so does any `.env` file other than
+  `.env.example`.
+
+### Fixes
+- Open WebUI starts inside its data folder. Without `WEBUI_SECRET_KEY` it
+  writes a generated key to `.webui_secret_key` in its working directory, which
+  was wherever `hubzoid run` started, such as a git checkout. One such key was
+  committed at the repository root; it is removed, was never used by a known
+  deployment, and is retired.
+- The Console names agents as the chat app does (`hubzoid-guide` shows as
+  Hubzoid Guide).
+- Hubs sharing one PostgreSQL workflow database no longer collide on markdown
+  schedule tasks and scheduled evals. Run ids now name the hub
+  (`md:<task>:<slot>@<hub>`), so two hubs with the same task and slot both run.
+  Runs queued under the earlier ids are still listed, re-queued and cancelled.
+- Backups leave the deployment key (`secret.key`) out unless secrets are
+  requested, and restoring in place keeps the current key and link secret.
+- `.webui_secret_key` is no longer tracked in the repository.
+
+### Reports
+- `hub.publish_artifact(..., key="board")` tags a publish, and
+  `/portal/latest/<agent>/<key>` opens the newest artifact with that key for a
+  viewer who may open it (never an older copy). A board republished on a
+  schedule keeps one bookmark. Every publish is still a new, permanent page.
+
+### Webhook workflows
+- `@workflow(on_webhook="name")` starts a code workflow from a named webhook
+  declared in `workflows/settings.yaml`, served by the hub's own bridge at
+  `/webhooks/<hub>/<name>`, in single-hub and gateway modes. Several webhooks per
+  hub, each with its own `WEBHOOK_SECRET_<NAME>`, and a shared-secret header or a
+  timestamped HMAC (five-minute window). Bodies are limited to 256 KiB.
+- A 200 means the event is stored. Each event is one durable record keyed by
+  hub, webhook and sender event key (`event_key`, then delivery-id headers,
+  then the body hash). Repeats attach to it, and different content under the
+  same key answers 409 and raises an alert.
+- Hubzoid retries a failed event itself (`webhook_retry_delays`, default 60 and
+  300 seconds, three attempts) and then marks it failed with an alert.
+  `hubzoid schedule redrive <event-id>` retries it explicitly and
+  `hubzoid schedule deliveries` lists events and alert deliveries. Cancelling a
+  webhook run fails its event for an explicit redrive.
+- After a code change, events that never started run on the current code,
+  matched by webhook name. Events whose attempt began under the old code are
+  failed visibly, never replayed on changed code.
+- `concurrency=N` and `concurrency_key="field.path"` limit runs per workflow and
+  per key (one ticket at a time). `max_executor_threads` (default 32) bounds the
+  hub's worker threads. A backlog on one webhook workflow does not delay others.
+- The run reads its event as `hub.event` (`id`, `key`, `body`, safe headers,
+  `webhook`, `received_at`, `attempt`).
+- The Console's Runs & schedules lists each webhook with its URL, the workflows
+  it starts, the last 24 hours of events by state and the latest failures with
+  their redrive command. Payloads, headers and digests are never shown.
+
+### Workflow engine
+- One engine owner per hub: a file lock on SQLite and an advisory lock on
+  PostgreSQL, with a fenced lease and readiness that webhook admission checks.
+  `hubzoid schedule run` hands its run to the live owner, or owns the hub for
+  that one run and serves only that workflow's queue.
+- A bridge that finds another owner keeps chat running and takes over when the
+  owner releases the hub, retrying every 15 seconds.
+- A PostgreSQL owner that loses its database session stops claiming work at
+  once and keeps chat running. Runs it had claimed stay recoverable instead of
+  failing, and the bridge regains ownership by itself.
+- Deadlines: `@workflow(timeout=...)` and `workflow_timeout`, 15 minutes by
+  default for webhook runs. `hub.call_llm`, `hub.call_agent` and `hub.call_jev`
+  take a `timeout` (defaults 120 s, 10 min and 90 s) on every runtime. A run that
+  returns just after its deadline keeps its result and raises a timeout alert.
+- The workflow engine pins DBOS 3.1.0.
+
+### Alerts and health
+- Durable, retried alerts (up to five attempts, `Idempotency-Key`, optional
+  `X-Hubzoid-Signature` with `HUBZOID_ALERT_SECRET`) to a webhook, Slack or
+  email, per hub (`alerts.to`), per workflow (`alert_to=`) or per markdown task
+  (`alert_to:`), with `HUBZOID_ALERT_URL` as the deployment fallback.
+- Alerts for failed runs, failed scheduled eval suites, overdue runs, failures
+  in a row (`failures_in_a_row`, default 3), a schedule that stopped firing,
+  event content mismatches and stale engines, with a one-hour cooldown.
+- A schedule that fails 20 scheduled runs in a row pauses itself
+  (`pause_after_failures`, `0` turns it off). Manual and webhook runs do not
+  count. Webhook workflows are never paused.
+- Alert messages carry only the hub, kind, workflow, run id, a count and a
+  Console link. Outputs and exception text stay on the server.
+- The engine reads only runs finished since its last check, by completion time,
+  so monitoring cost does not grow with history.
+- The edge watches every hub's engine, alerts when one goes stale and when it
+  recovers, and serves `GET /healthz/workflows` (503 while any hub is unhealthy)
+  for an external uptime monitor.
+
+### Evals
+- Multi-turn cases (`## Turn 1`, `## Turn 2`) in one chat, with one deadline
+  for the whole case.
+- Tool calls are recorded with arguments, outcome, duration and a 500-character
+  preview on every runtime. `expect_tool_args` checks arguments and
+  `hubzoid eval run --details` prints the calls.
+- `run_as:` in a case, or `--run-as`, runs it as an account. It grants nothing.
+- Results are private, atomically written schema 2 files with a locked index
+  and retention (`HUBZOID_EVAL_KEEP_RUNS`, default 200). Schema 1 files still
+  read.
+- A read-only Evals tab on each agent's page, opening with the score (latest
+  passed of total, the last 10 runs, cases failing now and never run) and each
+  case's last 10 results. Agent cards show **Evals 8/10** or **Evals not run**.
+  Details of a `run_as` run are visible only to that account. Scheduled suites with failing cases now end as
+  failed runs, so they raise alerts.
+
+### Agent tools for workflows and access
+#### Added
+- Workflow tools for agents: `list_workflows`, `workflow_runs`,
+  `run_workflow`, `pause_workflow`, `resume_workflow` and
+  `cancel_workflow_run`. Two capabilities control them: See workflows and runs
+  (`workflows_view`) and Run and control workflows (`workflows_manage`,
+  sensitive). They act only on the agent they run in. A run started from chat
+  acts as the workflow's own account and is audited as `run_start` with the
+  person and surface. Off for everyone until granted.
+- Access tools `who_has_access` and `explain_access`, next to the existing
+  proposal tools.
+- Console: **Hubzoid tools** shows sections, **Workflows** and **Access
+  control**, in the access and new-account drawers. Activity shows runs started
+  from chat.
+- Capabilities can declare a `section`, a `probe` that says why they can't run
+  in a hub (for example "No workflows in this agent"), and several switches.
+- `hubzoid/workflows/control.py`: run, pause, resume and cancel in one service
+  used by the CLI and the tools.
+
+#### Changed
+- The access tools need the Manage access from chat capability (`access_tools`,
+  granted by organization administrators) instead of `HUBZOID_MANAGEMENT_TOOLS`.
+  `HUBZOID_ACCESS_TOOLS=false` and `HUBZOID_WORKFLOW_TOOLS=false` remove a family
+  from an agent.
+- MCP `tools/list` hides gated built-in tools from callers who may not use them
+  (calls were already refused).
+- Pause, resume and cancel audit rows record the surface.
+
+#### Deprecated
+- `HUBZOID_MANAGEMENT_TOOLS=true` keeps its 1.0.x meaning (every manager gets
+  the access tools without a grant) for this release only. `hubzoid doctor`
+  warns. Grant `access_tools` instead.
+
+### Compatibility
+- `on_failure` now goes through the alert outbox: its POST body is the alert
+  payload, with no `error` field, the one-hour cooldown applies, and a value
+  that is not an `http(s)://` URL is read as an environment variable name
+  holding the URL (1.0.x only logged it).
+- `workflows/settings.yaml` is validated when the bridge starts. An invalid file
+  turns workflows off for that hub with the error in workflow health. Chat and
+  other hubs keep running.
+- Webhook names `whatsapp`, `telegram` and the hub's `WEBHOOK_INBOUND_NAME`
+  (default `webhook`) are refused, since the inbound server already serves them.
+- On PostgreSQL, a new engine owner waits for the previous owner's lease to
+  lapse, so after a crash workflows resume up to 90 seconds later. A clean stop
+  releases it at once.
+- Alerts start from the upgrade: the first start looks back 24 hours, and
+  older failures are not alerted. After that, downtime of any length is caught
+  up.
+
+### Known limits
+- Per-address sign-in limits depend on `X-Forwarded-For` from a TLS proxy.
+  Without one, a client can send its own. Per-email limits always apply.
+- A reloaded page follows a running reply by polling. There is no stream
+  resume.
+- Personal connections need a provider with dynamic client registration or a
+  client registered in advance. `private_key_jwt` and provider-specific
+  authorization parameters are not supported.
+- Microsoft emails count as verified only with the `xms_edov` claim. GitHub,
+  LDAP and trusted proxy headers are Open WebUI mode only.
+- Arbitrary synchronous workflow code cannot be stopped at its deadline. It
+  keeps its thread and ticket partition until it returns.
+- Event and alert records have no automatic retention yet.
+- Two processes serving one PostgreSQL hub: if the old owner is paused beyond
+  its lease while its session ends, runs it claims on resuming stay pending
+  until the owning bridge restarts.
+- The release notes list the remaining limits.
+
 ## [1.0.3]
 
 - Fix README images and documentation links on PyPI with absolute URLs.

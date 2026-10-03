@@ -14,13 +14,22 @@ door, and that a roster edit takes effect with no restart.
 """
 from __future__ import annotations
 
-import sqlite3
 import textwrap
 from pathlib import Path
+
+import pytest
 
 from hubzoid import server
 from hubzoid.access import effective_groups
 from hubzoid.access.resolver import reset_roster_cache
+
+
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui), where
+    the bridge trusts Open WebUI's forwarded identity and reads its groups; the
+    web app mode is covered by tests/test_assertions*.py and test_groups_*.py."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 def _write(hub: Path, rel: str, content: str) -> Path:
@@ -28,24 +37,6 @@ def _write(hub: Path, rel: str, content: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(textwrap.dedent(content))
     return p
-
-
-def _make_owui_db(hub_dir: Path, email: str, group: str) -> None:
-    data = hub_dir / ".openwebui-data"
-    data.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(data / "webui.db")
-    con.executescript(
-        f'''
-        CREATE TABLE "user" (id TEXT, email TEXT);
-        CREATE TABLE "group" (id TEXT, name TEXT);
-        CREATE TABLE group_member (id TEXT, group_id TEXT, user_id TEXT);
-        INSERT INTO "user" VALUES ('u1', '{email}');
-        INSERT INTO "group" VALUES ('g1', '{group}');
-        INSERT INTO group_member VALUES ('m1', 'g1', 'u1');
-        '''
-    )
-    con.commit()
-    con.close()
 
 
 class _FakeRequest:
@@ -68,35 +59,6 @@ def test_roster_group_reaches_owui_identity(tmp_path):
     """)
     groups = effective_groups(tmp_path, email="ravi@example.org", surface="owui")
     assert "coordinator" in groups
-
-
-def test_owui_only_user_not_in_roster_is_not_locked_out(tmp_path):
-    """Additive, never a gate: an email absent from the roster keeps its OWUI
-    groups instead of being denied."""
-    _make_owui_db(tmp_path, "priya@x.com", "erp")
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    groups = effective_groups(tmp_path, email="priya@x.com", surface="owui")
-    assert groups == {"erp"}
-
-
-def test_union_of_owui_and_roster(tmp_path):
-    """A person in both stores carries both groups."""
-    _make_owui_db(tmp_path, "ravi@example.org", "erp")
-    _write(tmp_path, "identity/access.csv", """\
-        phone,email,groups
-        919800000001,ravi@example.org,coordinator
-    """)
-    groups = effective_groups(tmp_path, email="ravi@example.org", surface="owui")
-    assert groups == {"erp", "coordinator"}
-
-
-def test_no_roster_folder_is_owui_only(tmp_path):
-    _make_owui_db(tmp_path, "priya@x.com", "erp")
-    groups = effective_groups(tmp_path, email="priya@x.com", surface="owui")
-    assert groups == {"erp"}
 
 
 def test_header_groups_still_union(tmp_path):

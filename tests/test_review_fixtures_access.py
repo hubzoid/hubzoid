@@ -44,6 +44,9 @@ NEW = "new.person@example.org"
 
 @pytest.fixture
 def dep(tmp_path, monkeypatch):
+    # The review deployment fronts Open WebUI (its chat requests carry Open
+    # WebUI's forwarded email): Open WebUI mode.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     return make_review_deployment(tmp_path, monkeypatch)
 
 

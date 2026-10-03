@@ -26,8 +26,12 @@ def _cleanup_chats():
     shutil.rmtree(MINIMAL / ".hubzoid", ignore_errors=True)
 
 
+from tests.access_helpers import caller  # noqa: E402
+
+
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, tmp_path):
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(MINIMAL))
     monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
@@ -95,7 +99,7 @@ def test_data_url_attachment_writes_sidecar(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
         r = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer dev"},
+            headers=caller(MINIMAL),
             json={
                 "model": "testbot-label",
                 "chat_id": "sidecar-c",

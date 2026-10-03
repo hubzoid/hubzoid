@@ -86,6 +86,7 @@ export const humanize = (s: string) =>
 
 export const isService = (subject: string) => subject.startsWith("workflow:");
 
+
 /** A person's readable name; falls back to the identity itself. */
 export function personName(subject: string, display?: string | null) {
   if (subject === EVERYONE) return "Everyone signed in";
@@ -180,6 +181,27 @@ export function groupCapabilities(permissions: Permission[], held: string[]) {
     ...g,
     items: rows.filter((p) => capabilityGroup(p) === g.key),
   })).filter((g) => g.items.length > 0);
+}
+
+/** Sub-headings inside a group, in display order after the unsectioned rows
+ *  (hubzoid/capabilities.py SECTIONS). Presentation only, like the groups. */
+export const CAPABILITY_SECTIONS = [
+  { key: "workflows", title: "Workflows" },
+  { key: "access", title: "Access control" },
+] as const;
+
+/**
+ * One group's rows split by section: the unsectioned block first (key and
+ * title ""), then each known section in order, empty ones left out. A section
+ * this Console doesn't know (an older or newer bridge) reads as unsectioned.
+ * Input order is kept inside each block.
+ */
+export function splitSections<T extends Pick<Permission, "section">>(items: T[]) {
+  const known = (s?: string) => CAPABILITY_SECTIONS.some((k) => k.key === s);
+  return [
+    { key: "", title: "", items: items.filter((p) => !known(p.section)) },
+    ...CAPABILITY_SECTIONS.map((s) => ({ key: s.key, title: s.title, items: items.filter((p) => p.section === s.key) })),
+  ].filter((s) => s.items.length > 0);
 }
 
 /** Can be granted: current, and not included with Use this agent. */
@@ -320,10 +342,37 @@ export type ActivityContext = {
 
 const inAgent = (hubName: string) => (hubName ? [text(" in "), agent(hubName)] : []);
 
+const SIGN_IN_METHODS: Record<string, string> = {
+  google: " with Google",
+  microsoft: " with Microsoft",
+  oidc: " with single sign-on",
+  link: " with a one-time link",
+};
+/** How a sign-in happened, as a phrase ("" for a password). */
+const signInMethod = (method?: string | null) => (method ? SIGN_IN_METHODS[method] ?? "" : "");
+
 /** `md:<task>` is a markdown schedule task; anything else is a code workflow. */
 function workflowLabel(name?: string | null) {
   if (!name) return "a workflow";
   return name.startsWith("md:") ? `the ${name.slice(3)} schedule` : `the ${name} workflow`;
+}
+
+const RUN_CONTROL_SURFACES: Record<string, string> = {
+  owui: "from chat",
+  web: "from chat",
+  openwebui: "from chat",
+  mcp: "over MCP",
+  api: "over the API",
+  whatsapp: "from WhatsApp",
+  telegram: "from Telegram",
+  cli: "from the CLI",
+};
+
+/** Where a run control came from, as the end of its sentence. Rows written
+ *  before the surface was recorded have none, and read as before. */
+function fromSurface(surface?: string | null) {
+  if (!surface || surface === "system") return [];
+  return [text(` ${RUN_CONTROL_SURFACES[surface] ?? `via ${humanize(surface)}`}`)];
 }
 
 export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sentence {
@@ -396,14 +445,22 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [text("A new account reused "), person(subjectName), text("’s email")],
         detail: "Previous access was removed and the identity blocked until an administrator reviews it.",
       };
-    // Run controls come from `hubzoid schedule pause | resume | cancel` on the
-    // server; the target is kept in the permission column.
+    // Run controls come from `hubzoid schedule run | pause | resume | cancel` on
+    // the server, or from agent tools for people granted Run and control
+    // workflows. The workflow (or, for a cancel, the run) is kept in the
+    // permission column; a started run's id is the subject.
+    case "run_start":
+      return {
+        tone: "neutral",
+        parts: [actor(who), text(" started "), text(workflowLabel(row.permission)), ...inAgent(hubName), ...fromSurface(row.surface)],
+        detail: row.subject ? `Run ${row.subject}` : undefined,
+      };
     case "workflow_pause":
-      return { tone: "negative", parts: [actor(who), text(" paused "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+      return { tone: "negative", parts: [actor(who), text(" paused "), text(workflowLabel(row.permission)), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "workflow_resume":
-      return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName)] };
+      return { tone: "positive", parts: [actor(who), text(" resumed "), text(workflowLabel(row.permission)), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "run_cancel":
-      return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName)] };
+      return { tone: "negative", parts: [actor(who), text(" cancelled run "), text(row.permission || ""), text(" in "), agent(hubName), ...fromSurface(row.surface)] };
     case "account_unavailable":
       return {
         tone: "negative",
@@ -439,6 +496,56 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [actor(who), text(" deleted "), person(subjectName), text("’s account")],
         detail: "Their access was removed first.",
       };
+    // Sign-in events of Hubzoid accounts. The subject is the account's email;
+    // `permission` holds how they signed in (password, google, link, ...).
+    case "signed_in":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" signed in"), text(signInMethod(row.permission))],
+      };
+    case "sign_in_failed":
+      return {
+        tone: "negative",
+        parts: [text("A sign-in to "), person(subjectName), text("’s account failed")],
+        detail: "Wrong password. Ten failures in 15 minutes lock sign-in for 15 minutes.",
+      };
+    case "signed_out":
+      return { tone: "neutral", parts: [person(subjectName), text(" signed out")] };
+    case "signed_up":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" signed up")],
+        detail: "The account waits for an administrator’s approval.",
+      };
+    case "password_changed":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" changed their password")],
+        detail: "Their other sessions were signed out.",
+      };
+    case "password_set_with_link":
+      return {
+        tone: "neutral",
+        parts: [person(subjectName), text(" set a password with a one-time link")],
+        detail: "Their other sessions were signed out.",
+      };
+    // Groups (the Groups screen). The group's name is kept in the permission column.
+    case "group_create":
+      return { tone: "positive", parts: [actor(who), text(" created the group "), person(row.permission || "")] };
+    case "group_rename":
+      return { tone: "neutral", parts: [actor(who), text(" renamed a group to "), person(row.permission || "")] };
+    case "group_describe":
+      return { tone: "neutral", parts: [actor(who), text(" changed the description of the group "), person(row.permission || "")] };
+    case "group_delete":
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" deleted the group "), person(row.permission || "")],
+        detail: "Its access and memberships were removed.",
+      };
+    case "group_member_add":
+      return { tone: "positive", parts: [actor(who), text(" added "), person(subjectName), text(" to the group "), person(row.permission || "")] };
+    case "group_member_remove":
+      return { tone: "negative", parts: [actor(who), text(" removed "), person(subjectName), text(" from the group "), person(row.permission || "")] };
     // Changes proposed from chat, WhatsApp or MCP and confirmed in the Console.
     case "change_proposed":
       return {
@@ -462,6 +569,21 @@ export function describeAccessChange(row: AuditRow, ctx: ActivityContext): Sente
         parts: [actor(who), text(" confirmed a change for "), person(subjectName), ...inAgent(hubName), text(", but it failed")],
         detail: "Nothing was applied.",
       };
+    // Connector registry changes (Connectors). The capability id is in the permission column.
+    case "connector_create":
+    case "connector_update":
+    case "connector_delete": {
+      const id = capability((row.permission || "").replace(/^connector_/, ""));
+      if (row.action === "connector_create")
+        return { tone: "positive", parts: [actor(who), text(" added the connector "), id] };
+      if (row.action === "connector_update")
+        return { tone: "neutral", parts: [actor(who), text(" changed the connector "), id] };
+      return {
+        tone: "negative",
+        parts: [actor(who), text(" removed the connector "), id],
+        detail: "Everyone’s connection to it was removed.",
+      };
+    }
     default:
       return {
         tone: "neutral",
@@ -486,7 +608,7 @@ export function explainDecisionReason(reason: string | undefined) {
     case "no-grant":
       return "They do not have the permission this tool requires.";
     case "no-group":
-      return "They are not in the required group (legacy access for an unmigrated agent).";
+      return "They were not in the group the tool required (before access was managed in the Console).";
     case "anonymous":
       return "The caller was not signed in.";
     case "blocked":

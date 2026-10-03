@@ -44,7 +44,6 @@ def _account(hub, email, owui_id=None, pending=False):
 
 def _manage(hub, *people):
     gs = store_for(hub)
-    gs.set_authoritative(True, hub="sales")
     for p in people:
         gs.grant(p, "sales", "use_hub", actor="test")
 
@@ -88,15 +87,6 @@ def test_nothing_configured_on_a_managed_hub_names_the_fix(shared):
         idlib.resolve(shared, legacy_subject="workflow:w", what="Workflow 'w'")
     msg = str(err.value)
     assert "run_as" in msg and "HUBZOID_WORKFLOW_USER" in msg and "owner@company.com" in msg
-
-
-def test_nothing_configured_on_a_legacy_hub_keeps_the_service_identity(shared, caplog):
-    with caplog.at_level(logging.WARNING, logger="hubzoid.workflows"):
-        ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
-    assert ident.subject == "workflow:md:sync" and not ident.is_person
-    assert "HUBZOID_WORKFLOW_USER" in caplog.text
-    with pytest.raises(IdentityError):
-        idlib.require_person(ident, "Sending email")
 
 
 # --- precedence ------------------------------------------------------------------
@@ -160,6 +150,7 @@ def test_a_failed_account_never_falls_back_to_the_default(shared):
 
 def test_recheck_stops_a_run_whose_account_was_blocked_or_replaced(shared):
     _account(shared, "priya@company.com", owui_id="acct-1")
+    _manage(shared, "priya@company.com")
     ident = idlib.resolve(shared, run_as="priya@company.com")
     idlib.recheck(shared, "sales", ident)
     # The email now belongs to a different account: stop, never continue as it.
@@ -170,6 +161,7 @@ def test_recheck_stops_a_run_whose_account_was_blocked_or_replaced(shared):
 
 def test_identity_round_trips_as_plain_data(shared):
     _account(shared, "priya@company.com")
+    _manage(shared, "priya@company.com")
     ident = idlib.resolve(shared, run_as="priya@company.com")
     assert RunIdentity.from_dict(ident.to_dict()) == ident
 
@@ -223,22 +215,6 @@ def test_markdown_scratch_is_per_person_and_leaves_the_old_folder_alone(hub):
     assert not mine.startswith(".hubzoid/schedule/sync/")
     assert (hub / ".hubzoid/schedule/sync/state.json").read_text() == '{"sha": "abc"}'
     assert not (hub / ".hubzoid/schedule/sync/.owner").exists()
-
-
-def test_a_legacy_hub_never_switches_on_the_setup_default(shared, caplog):
-    """Recording an owner (their first verified sign-in) must not change how a
-    legacy hub's tasks run: same service identity, same old scratch folder."""
-    _account(shared, "owner@company.com")
-    gs = store_for(shared)
-    assert gs.provision_owner("owner@company.com", "sales")        # not fresh: stays legacy
-    assert not gs.is_authoritative("sales")
-    assert gs.workflow_default() == "owner@company.com"
-    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
-    assert (ident.subject, ident.source) == ("workflow:md:sync", "legacy-service")
-    assert idlib.markdown_scratch(shared, "sync", ident) == ".hubzoid/schedule/sync"
-    # Explicit configuration still switches it.
-    (shared / ".env").write_text("HUBZOID_WORKFLOW_USER=owner@company.com\n")
-    assert idlib.resolve(shared, legacy_subject="workflow:md:sync").source == "hub"
 
 
 # --- one resolution for execution, listing and display (release review) -------------
@@ -315,15 +291,3 @@ def test_the_gateway_records_its_workflow_user_for_cli_commands(shared, tmp_path
     assert (ident.subject, ident.source) == ("deploy@company.com", "deployment")
 
 
-def test_a_legacy_hub_switches_only_on_explicit_configuration_including_a_secret(shared, monkeypatch):
-    _account(shared, "secretuser@company.com")
-    _secret_hub(shared, monkeypatch, "", {})             # a named secret without the key
-    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
-    assert (ident.subject, ident.source) == ("workflow:md:sync", "legacy-service")
-    from hubzoid import config_secrets
-
-    config_secrets.clear_cache()
-    _fake = __import__("tests._fake_secrets", fromlist=["install"])
-    _fake.install(monkeypatch, {"prod/sales": {"HUBZOID_WORKFLOW_USER": "secretuser@company.com"}})
-    ident = idlib.resolve(shared, legacy_subject="workflow:md:sync")
-    assert (ident.subject, ident.source) == ("secretuser@company.com", "hub-secret")

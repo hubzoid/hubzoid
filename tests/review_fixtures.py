@@ -149,6 +149,8 @@ def make_review_deployment(tmp_path: Path, monkeypatch, *, owui=None) -> SimpleN
     from tests.test_access_service import FakeOwui
 
     reset_access_state(monkeypatch)
+    # An Open WebUI deployment: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     hubs = {key: write_hub(tmp_path, key) for key in (REVIEW, OPERATIONS)}
     deployment.save(
         tmp_path / "gateway" / "deployment.json",
@@ -161,7 +163,6 @@ def make_review_deployment(tmp_path: Path, monkeypatch, *, owui=None) -> SimpleN
     gs = access.store_for(hubs[REVIEW])
     gs.bootstrap([OWNER])
     for key in hubs:
-        gs.set_authoritative(True, hub=key)
         gs.grant(OWNER, key, "use_hub", actor="owner-setup")
     owui = owui or FakeOwui()
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", SERVICE)

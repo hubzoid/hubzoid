@@ -124,6 +124,28 @@ def test_secrets_only_when_asked(tmp_path):
     assert any(n.endswith("artifact_secret") for n in names)
 
 
+def test_the_deployment_key_stays_out_of_archives_and_survives_restore(tmp_path):
+    from hubzoid import secretbox
+
+    hub = _standalone(tmp_path)
+    secretbox.reset_cache()
+    secretbox.keys(hub)  # creates .hubzoid/secret.key
+    key = (hub / ".hubzoid" / "secret.key").read_bytes()
+    link_secret = (hub / ".hubzoid" / "artifact_secret").read_bytes()
+    archive = tmp_path / "b.tar.gz"
+    bk.backup(hub, archive, wait=0)
+    assert not any(n.endswith("secret.key") for n in _names(archive))
+
+    bk.restore(archive)  # in place, from an archive without secrets
+    assert (hub / ".hubzoid" / "secret.key").read_bytes() == key
+    assert (hub / ".hubzoid" / "artifact_secret").read_bytes() == link_secret
+
+    with_secrets = tmp_path / "s.tar.gz"
+    bk.backup(hub, with_secrets, wait=0, include_secrets=True)
+    assert any(n.endswith("secret.key") for n in _names(with_secrets))
+    secretbox.reset_cache()
+
+
 def test_restore_in_place_keeps_the_current_state_aside(tmp_path):
     hub = _standalone(tmp_path)
     archive = tmp_path / "b.tar.gz"
@@ -398,7 +420,7 @@ def test_cli_backup_and_dry_run_restore(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
     assert r.exit_code == 0, r.output
     assert "Backup written" in r.output
-    assert "Left out: .env files, signing keys and database passwords" in " ".join(r.output.split())
+    assert "Left out: .env files, deployment encryption keys, signing keys and database passwords" in " ".join(r.output.split())
     r = CliRunner().invoke(cli.app, ["restore", "b.tar.gz", "--dry-run",
                                      "--move", f"{tmp_path / 'live'}={tmp_path / 'elsewhere'}"])
     assert r.exit_code == 0, r.output
@@ -417,7 +439,8 @@ def test_cli_backup_without_chat_data_says_so(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["backup", str(hub), "--out", "b.tar.gz", "--wait", "0"])
     assert r.exit_code == 0, r.output
     out = " ".join(r.output.split())
-    assert "No chat app data was found" in out
+    assert "No Open WebUI data directory" in out
+    assert "conversations live in the operational database" in out
     assert "also archive the gateway's --data-dir" in out
     assert "holds user accounts" not in out
 
@@ -433,6 +456,7 @@ time.sleep(90)
 """
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="uses a background process")
 def test_running_runs_sees_a_live_scheduled_run(tmp_path):
     import subprocess
@@ -461,7 +485,9 @@ def test_running_runs_sees_a_live_scheduled_run(tmp_path):
         while not busy and time.time() < deadline:
             time.sleep(0.3)
             busy = bk.running_runs(p)
-        assert busy == ["hub: md:slow:s1"]
+        from hubzoid.workflows import markdown
+
+        assert busy == [f"hub: {markdown.run_id('slow', 's1', 'hub')}"]
     finally:
         proc.kill()
         proc.wait(timeout=30)

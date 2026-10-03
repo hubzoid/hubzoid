@@ -11,22 +11,24 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { Copy, KeyRound } from "lucide-react";
+import { Copy, KeyRound, Link2 } from "lucide-react";
 import {
   type ApiError,
   request,
-  type AccountCreated,
+  type AccountCreatedWithLink,
   type AccountGranted,
   type Hub,
   type Me,
   type SignIn,
   type SignInOptions,
+  shareableLink,
+  usesSignInLinks,
 } from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
 import { personHref, useNavigationGuard } from "../../hooks/useRoute";
-import { MANAGE_ACCESS, USE_HUB, capabilityLabel, groupCapabilities, isGrantable } from "../../lib/format";
+import { MANAGE_ACCESS, USE_HUB, capabilityLabel, formatTime, groupCapabilities, isGrantable, splitSections } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
-import { CapabilityGroup } from "../access/AccessParts";
+import { CapabilityGroup, CapabilitySection } from "../access/AccessParts";
 import { generatePassword, passwordProblem } from "./password";
 import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "./accountRules";
 
@@ -97,6 +99,38 @@ export function OneTimePassword({ password }: { password: string }) {
   );
 }
 
+/** Shows a one-time sign-in link once, with Copy and when it expires. The
+ *  caller drops it when closing; the server keeps only a digest. */
+export function OneTimeLink({ link, expiresAt }: { link: string; expiresAt?: number }) {
+  const { message } = App.useApp();
+  const url = shareableLink(link);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      message.success("Sign-in link copied.");
+    } catch {
+      message.warning("Couldn’t copy. Select the link and copy it yourself.");
+    }
+  }
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor="one-time-link">
+        One-time sign-in link
+      </label>
+      <Space.Compact style={{ width: "100%" }}>
+        <Input id="one-time-link" readOnly value={url} className="identity" onFocus={(e) => e.target.select()} />
+        <Button icon={<Copy size={16} />} onClick={() => void copy()}>
+          Copy sign-in link
+        </Button>
+      </Space.Compact>
+      <Text type="secondary" className="field-help">
+        Share it with them directly. It works once{expiresAt ? `, until ${formatTime(expiresAt)}` : ""}, and lets them
+        set their own password. It won’t be shown again.
+      </Text>
+    </div>
+  );
+}
+
 /**
  * How a new user signs in: a password (typed or generated), or "Google
  * sign-in only" beside it. Google is offered only when the chat app attaches a
@@ -111,6 +145,7 @@ export function NewUserSignIn({
   onPassword,
   touched,
   id,
+  links,
 }: {
   signIn: SignIn;
   onSignIn: (v: SignIn) => void;
@@ -119,11 +154,13 @@ export function NewUserSignIn({
   onPassword: (v: string) => void;
   touched?: boolean;
   id: string;
+  /** Hubzoid accounts: they set their own password with a one-time link. */
+  links?: boolean;
 }) {
   const available = !!options?.google;
   const google = available && signIn === "google";
   const domains = options?.google_domains?.filter(Boolean) ?? [];
-  const problem = touched && !google ? passwordProblem(password) : null;
+  const problem = touched && !google && !links ? passwordProblem(password) : null;
   const choice = (
     <Checkbox
       checked={google}
@@ -142,7 +179,13 @@ export function NewUserSignIn({
         {available ? (
           choice
         ) : (
-          <Tooltip title="Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true.">
+          <Tooltip
+            title={
+              links
+                ? "Needs Google sign-in set up here, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
+                : "Needs Google sign-in set up for the chat app, with OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true."
+            }
+          >
             <span>{choice}</span>
           </Tooltip>
         )}
@@ -151,6 +194,11 @@ export function NewUserSignIn({
         <Text type="secondary" className="field-help">
           They sign in with Google using this email{domains.length ? ` (${domains.join(", ")} only)` : ""}. No
           password is set that anyone knows.
+        </Text>
+      ) : links ? (
+        <Text type="secondary" className="field-help" id={id}>
+          <Link2 size={14} style={{ verticalAlign: "-2px" }} /> They set their own password with a one-time sign-in
+          link. You copy the link after saving and share it with them.
         </Text>
       ) : (
         <>
@@ -184,10 +232,17 @@ export function SignInDetails({
   email,
   password,
   signIn,
+  link,
+  expiresAt,
+  linkError,
 }: {
   email: string;
   password: string;
   signIn: SignIn;
+  /** Hubzoid accounts: the one-time link to set their password. */
+  link?: string | null;
+  expiresAt?: number;
+  linkError?: string;
 }) {
   const { message } = App.useApp();
   const chat = `${window.location.origin}/`;
@@ -197,6 +252,25 @@ export function SignInDetails({
         They sign in at <Text className="identity">{chat}</Text> with Google as{" "}
         <Text className="identity">{email}</Text>. There is no password to share.
       </Paragraph>
+    );
+  if (link || linkError || (!password && link !== undefined))
+    return (
+      <>
+        <Paragraph style={{ margin: 0 }}>
+          They open the link, set a password and are signed in. Afterwards they sign in at{" "}
+          <Text className="identity">{chat}</Text> as <Text className="identity">{email}</Text>.
+        </Paragraph>
+        {link ? (
+          <OneTimeLink link={link} expiresAt={expiresAt} />
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            title="The sign-in link couldn’t be made"
+            description={linkError || "Open their details and use Reset password to make a new link."}
+          />
+        )}
+      </>
     );
   async function copyAll() {
     try {
@@ -242,6 +316,8 @@ export function AccountDrawer({
   const [busy, setBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  // Optional: the number their WhatsApp and Telegram messages come from.
+  const [phone, setPhone] = useState("");
   const [signIn, setSignIn] = useState<SignIn>("password");
   const [password, setPassword] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
@@ -253,15 +329,16 @@ export function AccountDrawer({
   const [failure, setFailure] = useState<ApiError | null>(null);
   // A retry of "grant access" that failed, shown under the outcome it retried.
   const [retryError, setRetryError] = useState<ApiError | null>(null);
-  const [created, setCreated] = useState<AccountCreated | null>(null);
+  const [created, setCreated] = useState<AccountCreatedWithLink | null>(null);
   // The previous attempt's outcome was unknown: a duplicate now may be that attempt.
   const [afterUncertain, setAfterUncertain] = useState(false);
 
   const grantable = me.grantable ?? {};
   const options = me.sign_in;
   const google = signIn === "google" && !!options?.google;
-  // Agents this viewer manages, in the Console's order. Legacy agents are
-  // listed but take no grants here: their access is still in the chat app.
+  // Hubzoid accounts: no password is set here; they get a one-time link.
+  const links = usesSignInLinks(me);
+  // Agents this viewer manages, in the Console's order.
   const managed = hubs.filter((h) => h.key in grantable);
   const catalogs = useCatalogs(managed.map((h) => h.key));
 
@@ -276,7 +353,7 @@ export function AccountDrawer({
     [selected],
   );
   const needsGrant = !me.org_admin && grants.length === 0;
-  const invalid = !!(emailIssue || nameProblem || (!google && passwordProblem(password)) || needsGrant);
+  const invalid = !!(emailIssue || nameProblem || (!google && !links && passwordProblem(password)) || needsGrant);
   // Unsaved input exists only before saving; after a result there is nothing to lose.
   const dirty =
     (step === "edit" || step === "review") && (!!email || !!name || !!password || grants.length > 0);
@@ -286,6 +363,7 @@ export function AccountDrawer({
     setBusy(false);
     setEmail("");
     setName("");
+    setPhone("");
     setSignIn("password");
     setPassword("");
     setSelected({});
@@ -327,11 +405,12 @@ export function AccountDrawer({
     setBusy(true);
     setRetryError(null);
     try {
-      const result = await request<AccountCreated>("/accounts", {
+      const result = await request<AccountCreatedWithLink>("/accounts", {
         email: subject,
         name: name.trim(),
         sign_in: google ? "google" : "password",
-        ...(google ? {} : { password }),
+        ...(google || links ? {} : { password }),
+        ...(me.org_admin && phone.trim() ? { phone: phone.trim() } : {}),
         grants,
       });
       setCreated(result);
@@ -359,8 +438,15 @@ export function AccountDrawer({
     setRetryError(null);
     try {
       const result = await request<AccountGranted>("/accounts/grant", { email: subject, grants });
-      // The account was made here, with the password still on screen.
-      setCreated({ ok: true, subject, name: name.trim(), grants: result.grants, sign_in: google ? "google" : "password" });
+      // The account was made here, with the password (or its link) still on screen.
+      setCreated({
+        ok: true,
+        subject,
+        name: name.trim(),
+        grants: result.grants,
+        sign_in: google ? "google" : "password",
+        ...partialLink(failure),
+      });
       setStep("done");
     } catch (e) {
       const err = asApiError(e);
@@ -508,6 +594,24 @@ export function AccountDrawer({
                 {touched && emailIssue ? emailIssue : "They sign in with this email. Access is granted to it."}
               </Text>
             </div>
+            {me.org_admin && (
+              <div className="field">
+                <label className="field-label" htmlFor="account-phone">
+                  Phone <Text type="secondary">(optional)</Text>
+                </label>
+                <Input
+                  id="account-phone"
+                  autoComplete="off"
+                  inputMode="tel"
+                  placeholder="+91 98000 00001"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+                <Text type="secondary" className="field-help">
+                  With the country code. Their WhatsApp and Telegram messages come from this number.
+                </Text>
+              </div>
+            )}
             <NewUserSignIn
               id="account-password"
               signIn={signIn}
@@ -516,6 +620,7 @@ export function AccountDrawer({
               password={password}
               onPassword={setPassword}
               touched={touched}
+              links={links}
             />
 
             <div className="section">
@@ -546,9 +651,7 @@ export function AccountDrawer({
                     unconfigured={0}
                     problems={0}
                   >
-                    {!hub.authoritative ? (
-                      <Text type="secondary">Access to this agent is managed in the chat app.</Text>
-                    ) : (
+                    {(
                       <div className="capabilities" role="group" aria-label={`Access to ${hub.name}`}>
                         {groups.map((g) => {
                           const groupKey = `${hub.key}:${g.key}`;
@@ -568,62 +671,68 @@ export function AccountDrawer({
                               unconfigured={perms.filter((p) => chosen.includes(p) && catalog[p]?.available === false).length}
                               problems={0}
                             >
-                              {perms.map((p) => {
-                                const outside = !allowed.has(p);
-                                // Held, but only organization administrators may give it.
-                                const adminOnly =
-                                  outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
-                                const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
-                                return (
-                                  <div className="capability-row" key={p}>
-                                    <Checkbox
-                                      checked={chosen.includes(p)}
-                                      disabled={outside || required}
-                                      onChange={(e) =>
-                                        setSelected({
-                                          ...selected,
-                                          [hub.key]: toggle(chosen, p, e.target.checked),
-                                        })
-                                      }
-                                    >
-                                      <span className="capability-title">
-                                        <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
-                                        {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
-                                        {catalog[p]?.available === false && (
-                                          <Text type="warning" className="capability-status">
-                                            {catalog[p].status || "Not configured"}
+                              {/* Sub-headings (Workflows, Access control) only group
+                                  rows for reading; counts stay with the group. */}
+                              {splitSections(g.items).map((s) => (
+                                <CapabilitySection key={s.key} id={`new-user-${hub.key}-${g.key}-${s.key}`} title={s.title}>
+                                  {orderCapabilities(s.items.map((i) => i.permission), Object.keys(catalog)).map((p) => {
+                                    const outside = !allowed.has(p);
+                                    // Held, but only organization administrators may give it.
+                                    const adminOnly =
+                                      outside && (p === MANAGE_ACCESS || catalog[p]?.delegate_grantable === false);
+                                    const required = p === USE_HUB && chosen.some((c) => c !== USE_HUB);
+                                    return (
+                                      <div className="capability-row" key={p}>
+                                        <Checkbox
+                                          checked={chosen.includes(p)}
+                                          disabled={outside || required}
+                                          onChange={(e) =>
+                                            setSelected({
+                                              ...selected,
+                                              [hub.key]: toggle(chosen, p, e.target.checked),
+                                            })
+                                          }
+                                        >
+                                          <span className="capability-title">
+                                            <Text strong={!outside}>{capabilityLabel(p, catalog)}</Text>
+                                            {catalog[p]?.sensitive && <Tag color="orange">Sensitive</Tag>}
+                                            {catalog[p]?.available === false && (
+                                              <Text type="warning" className="capability-status">
+                                                {catalog[p].status || "Not configured"}
+                                              </Text>
+                                            )}
+                                          </span>
+                                        </Checkbox>
+                                        {catalog[p]?.description && (
+                                          <Tooltip title={catalog[p].description}>
+                                            <Text type="secondary" className="capability-state" aria-label={catalog[p].description}>
+                                              ⓘ
+                                            </Text>
+                                          </Tooltip>
+                                        )}
+                                        {outside && (
+                                          <Tooltip
+                                            title={
+                                              adminOnly
+                                                ? "Only organization administrators can grant this."
+                                                : "You can only give capabilities you hold in this agent yourself."
+                                            }
+                                          >
+                                            <Text type="secondary" className="capability-state">
+                                              {adminOnly ? "Admins only" : "Outside your access"}
+                                            </Text>
+                                          </Tooltip>
+                                        )}
+                                        {required && (
+                                          <Text type="warning" className="capability-state">
+                                            Required
                                           </Text>
                                         )}
-                                      </span>
-                                    </Checkbox>
-                                    {catalog[p]?.description && (
-                                      <Tooltip title={catalog[p].description}>
-                                        <Text type="secondary" className="capability-state" aria-label={catalog[p].description}>
-                                          ⓘ
-                                        </Text>
-                                      </Tooltip>
-                                    )}
-                                    {outside && (
-                                      <Tooltip
-                                        title={
-                                          adminOnly
-                                            ? "Only organization administrators can grant this."
-                                            : "You can only give capabilities you hold in this agent yourself."
-                                        }
-                                      >
-                                        <Text type="secondary" className="capability-state">
-                                          {adminOnly ? "Admins only" : "Outside your access"}
-                                        </Text>
-                                      </Tooltip>
-                                    )}
-                                    {required && (
-                                      <Text type="warning" className="capability-state">
-                                        Required
-                                      </Text>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                                      </div>
+                                    );
+                                  })}
+                                </CapabilitySection>
+                              ))}
                             </CapabilityGroup>
                           );
                         })}
@@ -647,7 +756,9 @@ export function AccountDrawer({
                 <li>
                   {google
                     ? "Normal user role, signs in with Google using this email"
-                    : "Normal user role, signs in with this email and the password you set"}
+                    : links
+                      ? "Normal user role, sets their own password with a one-time sign-in link"
+                      : "Normal user role, signs in with this email and the password you set"}
                 </li>
               </ul>
             </div>
@@ -674,8 +785,16 @@ export function AccountDrawer({
               <Alert
                 type="info"
                 showIcon
-                title="The password is shown once after the account is created"
-                description="Copy it then and share it with them directly."
+                title={
+                  links
+                    ? "The sign-in link is shown once after the account is created"
+                    : "The password is shown once after the account is created"
+                }
+                description={
+                  links
+                    ? "Copy it then and share it with them directly. It works once and expires after 72 hours."
+                    : "Copy it then and share it with them directly."
+                }
               />
             )}
           </div>
@@ -689,7 +808,12 @@ export function AccountDrawer({
               title={`${created.name} can now sign in as ${created.subject}`}
               description={accessLine(created.grants)}
             />
-            <SignInDetails email={created.subject} password={password} signIn={created.sign_in ?? signIn} />
+            <SignInDetails
+              email={created.subject}
+              password={password}
+              signIn={created.sign_in ?? signIn}
+              {...linkProps(created, links)}
+            />
             <a href={personHref(created.subject)} onClick={finish}>
               Open their details
             </a>
@@ -704,7 +828,7 @@ export function AccountDrawer({
               title="This user already exists"
               description="Nothing was changed. Edit their access from their details."
             />
-            {afterUncertain && !google && (
+            {afterUncertain && !google && !links && (
               <>
                 <Paragraph style={{ margin: 0 }}>
                   It may be the account your earlier attempt created. If so, it signs in with the password you set:
@@ -712,13 +836,24 @@ export function AccountDrawer({
                 <OneTimePassword password={password} />
               </>
             )}
+            {afterUncertain && !google && links && (
+              <Paragraph style={{ margin: 0 }}>
+                It may be the account your earlier attempt created. Open their details and use Reset password to
+                make a sign-in link for them.
+              </Paragraph>
+            )}
           </>
         )}
 
         {step === "partial" && failure && (
           <>
             <Alert type="warning" showIcon title="The account was created, but access wasn’t granted" description={partialDetail(failure)} />
-            <SignInDetails email={subject} password={password} signIn={google ? "google" : "password"} />
+            <SignInDetails
+              email={subject}
+              password={password}
+              signIn={google ? "google" : "password"}
+              {...linkProps(partialLink(failure), links)}
+            />
           </>
         )}
 
@@ -734,4 +869,23 @@ export function AccountDrawer({
       </div>
     </Drawer>
   );
+}
+
+/** The one-time link a partial create still made (the account exists). */
+function partialLink(failure: ApiError | null) {
+  const data = failure?.data ?? {};
+  return {
+    ...(typeof data.link === "string" || data.link === null ? { link: data.link as string | null } : {}),
+    ...(typeof data.expires_at === "number" ? { expires_at: data.expires_at } : {}),
+    ...(typeof data.link_error === "string" ? { link_error: data.link_error } : {}),
+  };
+}
+
+/** SignInDetails props for a created account in link mode. */
+function linkProps(
+  result: { link?: string | null; expires_at?: number; link_error?: string },
+  links: boolean,
+) {
+  if (!links) return {};
+  return { link: result.link ?? null, expiresAt: result.expires_at, linkError: result.link_error };
 }

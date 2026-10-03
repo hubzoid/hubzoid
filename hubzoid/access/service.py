@@ -33,7 +33,10 @@ Rules (checked on every write, from the store, never from the caller):
     told, and is offered only when the chat app links Google sign-in to an
     existing account by email (`accounts.sign_in_options`). How an account was
     created is recorded (`sign_in:<email>` metadata) so the Console shows a
-    Google-only account's password as managed through Google.
+    Google-only account's password as managed through Google. In the default
+    (Hubzoid) mode the Console sets no password: a new account and a password
+    reset return a one-time sign-in link (`links_mode`), and a Google sign-in
+    only account has no password at all.
   * Creating an account and granting its initial access touch two systems
     that cannot commit together. The account is never deleted to fake a
     rollback: if access fails after the account exists, the result says so
@@ -50,6 +53,8 @@ Rules (checked on every write, from the store, never from the caller):
   * Agent tools only propose (`propose`). A change request applies after the
     same person confirms the exact plan (`confirm`) with a verified web
     session: single use, short lived, re-checked at confirmation, audited.
+  * Reads follow the same scope: `hub_access` and `person_access` cover only
+    agents the actor manages (every agent for organization administrators).
   * Store or directory errors deny (fail closed).
 """
 from __future__ import annotations
@@ -77,7 +82,9 @@ from .store import (
     ORG,
     USE_HUB,
     LastAdminError,
+    PhoneTaken,
     RevisionConflict,
+    phone_digits,
 )
 
 log = logging.getLogger("hubzoid.access")
@@ -95,11 +102,6 @@ _RETRYABLE = frozenset({"rejected", "invalid_password"})
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
-LEGACY_MSG = (
-    "This agent's access is still managed in the chat app — it has not been migrated "
-    "to the dashboard. Migrate the agent first; edits made here would not take effect "
-    "and would be overwritten by migration."
-)
 UNAVAILABLE_MSG = (
     "This account is unavailable in the chat app (awaiting approval or removed). "
     "Approve or restore it in Open WebUI, then refresh accounts."
@@ -172,6 +174,17 @@ def check_password(password: str | None) -> str:
     return password
 
 
+def check_hubzoid_password(password: str | None) -> str:
+    """Default mode's password rule (``hubzoid.auth.passwords``: 8 to 1024
+    characters, hashed with Argon2id). The message never repeats the password."""
+    from ..auth import passwords
+
+    try:
+        return passwords.check(password)
+    except passwords.PasswordRejected as exc:
+        raise Denied(422, "invalid_password", exc.message)
+
+
 def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
@@ -209,7 +222,8 @@ class AccessService:
                          "Access data is unavailable. Try again shortly.")
 
     def accounts(self):
-        """The account directory (Open WebUI admin API as the service account)."""
+        """The account directory: Hubzoid's own accounts in default mode, the
+        Open WebUI admin API as the service account in Open WebUI mode."""
         if self._accounts_override is not None:
             return self._accounts_override
         from . import accounts as accountlib
@@ -218,6 +232,22 @@ class AccessService:
             return accountlib.for_deployment(self.hub_dir)
         except accountlib.AccountError as exc:
             raise Denied(exc.status, exc.code, exc.message)
+
+    def links_mode(self) -> bool:
+        """True when new accounts and password resets get a one-time sign-in
+        link instead of a password typed in the Console: the directory in use
+        says so (``HubzoidAccounts``, the default mode). Open WebUI's directory
+        (Open WebUI mode) takes passwords."""
+        if self._accounts_override is not None:
+            return bool(getattr(self._accounts_override, "links", False))
+        from .. import appmode
+
+        if appmode.is_openwebui(self.hub_dir):
+            return False
+        try:
+            return bool(getattr(self.accounts(), "links", False))
+        except Denied:
+            return False
 
     def _hubs(self) -> list[dict]:
         try:
@@ -313,24 +343,160 @@ class AccessService:
         return frozenset((held & (delegable | obsolete)) - {MANAGE_ACCESS})
 
     def grantable(self, actor: Actor) -> dict[str, list[str]]:
-        """{hub: [permission]} this actor may grant, for every hub they manage.
-        A hub whose access is still in the chat app (legacy) grants nothing."""
+        """{hub: [permission]} this actor may grant, for every hub they manage."""
         scope = self.scope(actor)
-        out: dict[str, list[str]] = {}
-        gs = self.store
-        for hub in scope.hubs:
-            if not gs.is_authoritative(hub):
-                out[hub] = []
-                continue
-            out[hub] = sorted(self._ceiling(actor, scope, hub))
-        return out
+        return {hub: sorted(self._ceiling(actor, scope, hub)) for hub in scope.hubs}
 
     def can_create_accounts(self, actor: Actor) -> bool:
         scope = self.scope(actor)
-        if scope.org_admin:
-            return True
+        return scope.org_admin or bool(scope.hubs)
+
+    # ---- reading access -----------------------------------------------------------
+
+    def _readable(self, scope: Scope, hub: str) -> str:
+        """`hub`, normalized, when `scope` may read it. Scope before existence,
+        so a delegate learns nothing about agents they don't manage."""
+        hub = normalize(hub)
+        if not scope.org_admin and hub not in scope.hubs:
+            raise Denied(403, "forbidden", f"Cannot manage {hub}")
+        self._hub_path(hub)
+        return hub
+
+    def hub_access(self, actor: Actor, hub: str, *, scope: Scope | None = None) -> dict:
+        """Everyone with access to one agent: the Console's Access tab and the
+        `who_has_access` tool. Organization administrators and managers of
+        `hub` only (403). `scope` is the actor's scope when the caller already
+        resolved it for this request (the Console does, per request); by
+        default it is read from the store.
+
+        Returns hub, revision, public, public_reliant and rows
+        sorted by subject. A row is a subject holding something in `hub`, or an
+        organization administrator: subject, perms (direct grants here),
+        inherited (organization-wide grants), kind (person|service), center,
+        display, the account flags and status (`_account_state`) and effective
+        (what the enforcer allows now: nothing while blocked, though `perms`
+        keeps the grants). One consistent read of (revision, every grant): the
+        revision describes exactly these rows, so an editor's concurrency guard
+        is not defeated by new rows arriving under an old revision."""
+        hub = self._readable(self.scope(actor) if scope is None else scope, hub)
         gs = self.store
-        return any(gs.is_authoritative(h) for h in scope.hubs)
+        # One consistent read of (revision, every grant): the returned revision
+        # describes exactly the rows below, so the editor's concurrency guard is
+        # not defeated by new rows arriving under an old revision (or the reverse).
+        revision, all_grants = gs.access_snapshot()
+        rows = {}
+        for subject, domain, perm in all_grants:
+            if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
+                row = rows.setdefault(
+                    subject,
+                    dict(
+                        subject=subject,
+                        perms=[],
+                        inherited=[],
+                        kind="service" if subject.startswith("workflow:") else "person",
+                    ),
+                )
+                row["perms" if domain == hub else "inherited"].append(perm)
+        def effective_for(subject: str) -> list[str]:
+            # Mirrors GrantStore.permissions_for over the same snapshot: direct +
+            # org-wide + public wildcard. Suspended subjects hold nothing.
+            return sorted({
+                p
+                for (s, h, p) in all_grants
+                if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
+            })
+
+        for subject, row in rows.items():
+            row["center"] = gs.get_attr(hub, subject, "center")
+            identity = gs.identity(subject) or {}
+            row["display"] = identity.get("display") or subject
+            state = _account_state(gs, subject, identity)
+            row.update(state)
+            # Effective access must match the enforcer: a blocked account (admin
+            # suspension OR an unavailable chat account) holds nothing, though its
+            # direct grants are preserved separately in `perms`.
+            row["effective"] = [] if state["blocked"] else effective_for(subject)
+        public = any(
+            s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
+            for (s, h, p) in all_grants
+        )
+        # Chat accounts that enter only through "everyone signed in": signed
+        # up, approved, not blocked, and without a direct grant in this hub.
+        # Shown before an administrator removes that grant.
+        public_reliant = 0
+        if public:
+            direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
+            for ident in gs.identities():
+                subject = ident["subject"]
+                if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
+                        and not subject.startswith("workflow:") and subject not in direct
+                        and not gs.is_suspended(subject)):
+                    public_reliant += 1
+        return dict(hub=hub, revision=revision,
+                    public=public, public_reliant=public_reliant,
+                    rows=sorted(rows.values(), key=lambda r: r["subject"]))
+
+    def person_access(self, actor: Actor, subject: str, hub: str | None = None) -> dict:
+        """One person's (or service's) access in the agents `actor` manages, or
+        only in `hub`, with where each capability comes from (`SOURCES`).
+        Managers only (403); agents outside the actor's scope are never read.
+
+        Returns subject, display, kind, organization_admin (holds the
+        organization-wide grant), the account flags and status, revision and
+        hubs: one entry per agent in scope, in deployment order, with hub,
+        name, capabilities ([{permission, sources}], from the
+        grants) and effective (what the enforcer allows now: nothing while
+        blocked).
+
+        `known` says whether the actor may see the person at all: an
+        organization administrator always; a delegate only when the person
+        holds a grant of their own in an agent the delegate manages (as on
+        the Console's People and Access pages). Otherwise display, account
+        state and organization_admin are withheld (None): "everyone signed
+        in" alone never exposes someone from outside the delegate's agents."""
+        scope = self._require_scope(actor)
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE:
+            raise Denied(422, "invalid_subject", "Name one person or service.")
+        hubs = [self._readable(scope, hub)] if hub else list(scope.hubs)
+        names = {h["key"]: h.get("name") or h["key"] for h in self._hubs()}
+        gs = self.store
+        revision, all_grants = gs.access_snapshot()
+        managed = set(scope.hubs)
+        known = scope.org_admin or any(s == subject and h in managed for s, h, _p in all_grants)
+        if not known:
+            hidden = dict(suspended=None, account_unavailable=None, blocked=None, status=None)
+            entries = []
+            for key in hubs:
+                # Only what everyone signed in gets: never this person's own
+                # (e.g. organization) grants, which the delegate may not see.
+                public = {p: ["everyone"] for p, src in _sources(all_grants, subject, key).items()
+                          if "everyone" in src}
+                entries.append(dict(
+                    hub=key, name=names.get(key, key),
+                    capabilities=[dict(permission=p, sources=s) for p, s in public.items()],
+                    effective=None,
+                ))
+            return dict(subject=subject, display=None,
+                        kind="service" if subject.startswith("workflow:") else "person",
+                        organization_admin=None, known=False, **hidden, revision=revision,
+                        hubs=entries)
+        identity = gs.identity(subject) or {}
+        state = _account_state(gs, subject, identity)
+        entries = []
+        for key in hubs:
+            sources = _sources(all_grants, subject, key)
+            entries.append(dict(
+                hub=key, name=names.get(key, key),
+                capabilities=[dict(permission=p, sources=s) for p, s in sources.items()],
+                effective=[] if state["blocked"] else sorted(sources),
+            ))
+        return dict(
+            subject=subject, display=identity.get("display") or subject,
+            kind="service" if subject.startswith("workflow:") else "person",
+            organization_admin=(subject, ORG, MANAGE_ACCESS) in all_grants,
+            known=True, **state, revision=revision, hubs=entries,
+        )
 
     # ---- access changes -----------------------------------------------------------
 
@@ -358,8 +524,6 @@ class AccessService:
         if not scope.org_admin and hub not in scope.hubs:
             raise Denied(403, "forbidden", f"Cannot manage {hub}")
         self._hub_path(hub)
-        if not gs.is_authoritative(hub):
-            raise Denied(409, "legacy", LEGACY_MSG)
         entries = {e["permission"]: e for e in self.catalog(hub)}
         existing = None
         for action, p in ops:
@@ -484,13 +648,37 @@ class AccessService:
         before = _account_flags(gs, subject)
         changed = suspended or before["suspended"]
         if changed:
+            end_sessions = self._session_ender(subject) if suspended else None
             try:
                 gs.suspend(subject, actor=actor.subject, suspended=suspended,
-                           surface=actor.surface)
+                           surface=actor.surface, in_transaction=end_sessions)
             except (LastAdminError, ValueError) as exc:
                 raise Denied(409, "conflict", str(exc))
             self._project_visibility()
         return changed
+
+    def _session_ender(self, subject: str):
+        """Default mode: what ends a blocked person's sessions for good, run in
+        the block's own transaction (``GrantStore.suspend``): the account's
+        version moves, then every session is revoked
+        (``UserStore.end_sessions_in``). A sign-in racing the block then either
+        starts no session or has the one it started revoked, and lifting the
+        block never brings an old sign-in (or a stolen cookie) back. Without
+        the account store nothing is blocked (fail closed: the administrator
+        retries). Open WebUI keeps its own sessions in Open WebUI mode: None."""
+        from .. import appmode
+
+        if appmode.is_openwebui(self.hub_dir):
+            return None
+        try:
+            from ..auth import users
+
+            accounts = users.store(self.hub_dir)
+        except Exception:  # noqa: BLE001
+            log.exception("block: account store unavailable")
+            raise Denied(503, "store_unavailable",
+                         "Accounts are unavailable right now. Try again shortly.")
+        return lambda conn: accounts.end_sessions_in(conn, subject)
 
     def _project_visibility(self) -> None:
         """Mirror access to the chat app's agent picker now, not at the next
@@ -511,6 +699,19 @@ class AccessService:
     def refresh_accounts(self, actor: Actor) -> int:
         """Re-read the chat app's account directory (organization administrators)."""
         self.require_org_admin(actor)
+        if self.links_mode():
+            directory_rows = getattr(self.accounts(), "directory", None)
+            try:
+                rows = directory_rows() if callable(directory_rows) else []
+                self.store.reconcile_accounts(
+                    [dict(id=r["owui_id"], email=r["email"], name=r["display"], role=r["role"])
+                     for r in rows]
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("account directory refresh failed")
+                raise Denied(503, "accounts_unavailable",
+                             "Account refresh failed. Try again shortly.")
+            return len(rows)
         from .owui import directory
 
         try:
@@ -581,16 +782,33 @@ class AccessService:
 
         return accountlib.sign_in_options(self.hub_dir)
 
-    def _new_password(self, email: str, password: str | None, sign_in: str) -> str:
+    def _new_password(self, email: str, password: str | None, sign_in: str) -> str | None:
         """The password to create the account with, checked before anything is
-        created. Google sign-in only: a random one nobody is told."""
+        created. Google sign-in only: a random one nobody is told.
+
+        Default mode (``links_mode``): None unless the caller chose a password,
+        because the person sets their own through a one-time link; a Google
+        sign-in only account has no password at all."""
+        links = self.links_mode()
         if sign_in == "password":
+            if links:
+                return check_hubzoid_password(password) if password else None
             return check_password(password)
         if sign_in != "google":
             raise Denied(422, "invalid_sign_in", "Choose how they sign in.")
         if password:
             raise Denied(422, "invalid_request",
                          "An account that signs in with Google has no password to set.")
+        self._check_google(email)
+        if links:
+            return None
+        from .accounts import unusable_password
+
+        return unusable_password()
+
+    def _check_google(self, email: str) -> None:
+        """Google sign-in only is offered when Google attaches to an existing
+        account by email here, for the domains it accepts."""
         options = self.sign_in_options()
         if not options.get("google"):
             raise Denied(409, "google_unavailable",
@@ -601,9 +819,6 @@ class AccessService:
             allowed = ", ".join(d for d in domains if d) or "no domains"
             raise Denied(422, "google_domain",
                          f"Google sign-in here accepts only these domains: {allowed}.")
-        from .accounts import unusable_password
-
-        return unusable_password()
 
     def create_account(self, actor: Actor, *, email: str, name: str, password: str | None = None,
                        grants: list[tuple[str, str]], sign_in: str = "password",
@@ -616,21 +831,32 @@ class AccessService:
         in one store transaction. If that fails the account still exists: it is
         bound on its own when possible and the refusal says the account was
         created without access (`partial`), so a retry grants access to it
-        instead of creating it again."""
+        instead of creating it again.
+
+        Default mode (``links_mode``): a password account created without a
+        password comes with a one-time sign-in link, in the result as
+        ``link`` and ``expires_at`` (also on a `partial` refusal, since the
+        account exists). A Google sign-in only account has no password."""
         email = normalize(email)
         if not _EMAIL.match(email) or len(email) > 320:
             raise Denied(422, "invalid_email", "Enter a valid email address.")
         name = (name or "").strip()
         if not name or len(name) > 200:
             raise Denied(422, "invalid_name", "Enter the person's name.")
+        links = self.links_mode()
         secret = self._new_password(email, password, sign_in)
+        wants_link = links and sign_in == "password" and not secret
         by_hub = self._group_grants(grants)
         scope, replace = self._check_new_account(actor, email, by_hub)
         directory = self.accounts()
         from .accounts import AccountError
 
         try:
-            created = directory.create(email=email, name=name, password=secret, role="user")
+            if links:
+                created = directory.create(email=email, name=name, password=secret, role="user",
+                                           password_enabled=sign_in == "password")
+            else:
+                created = directory.create(email=email, name=name, password=secret, role="user")
         except AccountError as exc:
             if exc.code == "account_exists":
                 # Nothing is written: their account, password and access stay as they are.
@@ -663,17 +889,32 @@ class AccessService:
                 reason = "Access could not be saved."
             bound = self._bind_only(actor, email, created, name, replace=replace,
                                     request_id=request_id)
+            link = self._sign_in_link(directory, created, actor) if wants_link else {}
             raise Denied(
                 502, "partial",
                 f"The account for {email} was created, but access was not granted. {reason} "
                 "Try again to grant access; the account won't be created twice.",
-                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason),
+                extra=dict(account=account, access_granted=False, recorded=bound, reason=reason,
+                           **link),
             )
         self._project_visibility()
+        link = self._sign_in_link(directory, created, actor) if wants_link else {}
         return dict(
             subject=email, owui_id=created["id"], name=name, role="user", sign_in=sign_in,
-            grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision,
+            grants={h: sorted(p) for h, p in by_hub.items()}, revision=revision, **link,
         )
+
+    def _sign_in_link(self, directory, created: dict, actor: Actor) -> dict:
+        """The one-time link for a new account (default mode), or a note saying
+        it could not be made. The account exists either way; Reset password
+        makes a new link."""
+        try:
+            return directory.issue_link(created["id"], purpose="set_password",
+                                        created_by=actor.subject)
+        except Exception:  # noqa: BLE001 — never undo the account over the link
+            log.warning("account create: the sign-in link could not be made")
+            return dict(link=None, link_error="The account was created, but its sign-in link "
+                                              "could not be made. Use Reset password to make one.")
 
     def _bind_with_grants(self, actor: Actor, email: str, created: dict, name: str,
                           by_hub: dict[str, set[str]], *, replace: bool,
@@ -736,7 +977,7 @@ class AccessService:
         account is gone (organization administrators only)."""
         scope = self._require_scope(actor)
         if not scope.org_admin:
-            if not any(self.store.is_authoritative(h) for h in scope.hubs):
+            if not scope.hubs:
                 raise Denied(403, "forbidden",
                              "Creating accounts needs an agent whose access you manage here.")
             if not by_hub:
@@ -750,11 +991,15 @@ class AccessService:
         identity = gs.identity(email) or {}
         replace = False
         if identity.get("owui_id"):
-            if identity.get("pending"):
+            # Default mode: an identity still bound to an account that no longer
+            # exists (removed outside the Console, or never migrated) is the
+            # same case as an unavailable one.
+            gone = self.links_mode() and self._account_gone(identity["owui_id"])
+            if identity.get("pending") and not gone:
                 raise Denied(409, "account_exists",
                              "This person already signed up and is awaiting approval. "
                              "Approve the account instead.")
-            if not flags["account_unavailable"]:
+            if not flags["account_unavailable"] and not gone:
                 raise Denied(409, "account_exists", EXISTS_MSG, extra=dict(subject=email))
             if not scope.org_admin:
                 raise Denied(409, "account_replaced",
@@ -781,6 +1026,15 @@ class AccessService:
             self._check_ops(actor, scope, email, hub, [("grant", p) for p in sorted(perms)],
                             new_account=True)
         return scope, replace
+
+    def _account_gone(self, account_id: str) -> bool:
+        """Whether the directory no longer has this account (default mode)."""
+        from .accounts import AccountError
+
+        try:
+            return self.accounts().get(account_id) is None
+        except (AccountError, Denied):
+            return False  # unknown: treat the binding as current (the safer refusal)
 
     def _record_sign_in(self, email: str, sign_in: str) -> None:
         """Remember how the Console created this account, so a Google-only
@@ -871,8 +1125,11 @@ class AccessService:
         implicitly), and "pending" while the account awaits approval."""
         identity = self._account_target(actor, subject)
         account = self._live_account(self.accounts(), identity)
+        # Hubzoid's own directory says how the account signs in; for Open WebUI
+        # it is what the Console recorded when it created the account.
+        sign_in = account.get("sign_in") or self._sign_in_of(identity["subject"])
         return dict(subject=identity["subject"], name=account.get("name"),
-                    role=account.get("role"), sign_in=self._sign_in_of(identity["subject"]),
+                    role=account.get("role"), sign_in=sign_in, phone=identity.get("phone"),
                     **_role_view(self._console_admin(identity["subject"]), account.get("role")))
 
     def _console_admin(self, subject: str) -> bool:
@@ -887,17 +1144,75 @@ class AccessService:
             return None
         return value if value in ("password", "google") else None
 
-    def set_password(self, actor: Actor, subject: str, password: str) -> None:
+    def set_password(self, actor: Actor, subject: str, password: str | None = None) -> dict | None:
+        """Reset a person's password (organization administrators).
+
+        Open WebUI mode: set the password the administrator typed; returns None.
+
+        Default mode (``links_mode``): without a password, the current one stops
+        working, their sessions end, and the result is a one-time link for them
+        to set a new one, ``{"link", "expires_at"}``. With a password, it is set
+        and their sessions end; the result is ``{}``."""
         identity = self._account_target(actor, subject)
         if self._sign_in_of(identity["subject"]) == "google":
             raise Denied(409, "google_managed",
                          "This user signs in with Google, so their password is managed "
                          "through Google.")
+        if self.links_mode():
+            return self._reset_with_link(actor, identity, password)
         check_password(password)
         directory = self.accounts()
         self._live_account(directory, identity)
         self._directory_call(directory.update, identity["owui_id"], password=password)
         self._audit(actor, "account_password_reset", subject=identity["subject"], hub=ORG)
+        return None
+
+    def _reset_with_link(self, actor: Actor, identity: dict, password: str | None) -> dict:
+        if password:
+            check_hubzoid_password(password)
+        directory = self.accounts()
+        account = self._live_account(directory, identity)
+        if account.get("sign_in") == "google":
+            raise Denied(409, "google_managed",
+                         "This user signs in with Google, so their password is managed "
+                         "through Google.")
+        if password:
+            self._directory_call(directory.update, identity["owui_id"], password=password)
+            result: dict = {}
+        else:
+            result = self._directory_call(directory.reset_with_link, identity["owui_id"],
+                                          created_by=actor.subject)
+        self._audit(actor, "account_password_reset", subject=identity["subject"], hub=ORG)
+        return result
+
+    def check_phone(self, subject: str, phone: str | None) -> str:
+        """The digits `phone` would be stored as for `subject`, or Denied when
+        it is not a number or someone else has it. Writes nothing."""
+        try:
+            digits = phone_digits(phone)
+        except ValueError as exc:
+            raise Denied(422, "invalid_phone", str(exc))
+        owner = self.store.subject_for_phone(digits) if digits else None
+        if owner and owner != normalize(subject):
+            raise Denied(409, "phone_taken", "This number already belongs to someone else.")
+        return digits
+
+    def set_phone(self, actor: Actor, subject: str, phone: str | None) -> dict:
+        """Record or clear the number a person's WhatsApp and Telegram messages
+        come from (organization administrators, their own included)."""
+        self.require_org_admin(actor, "Only administrators can change a user's phone number.")
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE or "@" not in subject:
+            raise Denied(422, "invalid_subject", "Choose a person's account.")
+        self.check_phone(subject, phone)
+        try:
+            digits = self.store.set_phone(subject, phone, actor=actor.subject,
+                                          surface=actor.surface)
+        except PhoneTaken as exc:
+            raise Denied(409, "phone_taken", str(exc))
+        except ValueError as exc:
+            raise Denied(422, "invalid_phone", str(exc))
+        return dict(subject=subject, phone=digits or None)
 
     def approve_account(self, actor: Actor, subject: str) -> None:
         identity = self._account_target(actor, subject)
@@ -1035,7 +1350,7 @@ class AccessService:
     def delete_account(self, actor: Actor, subject: str) -> None:
         """Delete a user: every grant (`revoke_all`), then their chat account
         through the chat app's own delete, which also removes their chats,
-        shared chat links and group memberships. Kept: the identity row (marked
+        shared chat links. Kept: the identity row (marked
         removed, so the email inherits nothing and only an organization
         administrator can re-create it), Activity history, usage records and
         artifacts they saved (their public links stop working with the owner's
@@ -1235,6 +1550,9 @@ class AccessService:
         if plan["kind"] == "access":
             view["current"] = sorted(
                 p for (s, h, p) in self.store.list_grants(row["hub"]) if s == plan["subject"])
+        elif self.links_mode():
+            # Default mode: confirming needs no password; the result is a link.
+            view["sign_in_link"] = True
         view["problem"] = None
         if row["status"] == "pending":
             try:
@@ -1264,7 +1582,12 @@ class AccessService:
                          "This request doesn't match what you reviewed. Reload it and review again.")
         plan = json.loads(row["plan"])
         if plan["kind"] == "account":
-            check_password(password)
+            if not self.links_mode():
+                check_password(password)
+            elif password:
+                # Default mode: the confirming administrator may set the
+                # password; without one the result carries a sign-in link.
+                check_hubzoid_password(password)
         gs = self.store
         with gs.engine.begin() as conn:
             claimed = conn.execute(
@@ -1277,12 +1600,15 @@ class AccessService:
         # Grants carry the surface the change was proposed from, and the request id.
         applier = Actor(subject=normalize(actor.subject), surface=row["surface"] or actor.surface,
                         via=actor.via)
+        link: dict = {}
         try:
             if plan["kind"] == "account":
                 outcome = self.create_account(
                     applier, email=plan["email"], name=plan["name"], password=password,
                     grants=[(plan["hub"], p) for p in plan["grant"]], request_id=row["id"])
                 result = dict(subject=outcome["subject"], grants=outcome["grants"])
+                # Shown once to the confirming administrator; never stored.
+                link = {k: outcome[k] for k in ("link", "expires_at", "link_error") if k in outcome}
             else:
                 revision = self.apply_access_change(
                     applier, plan["subject"], plan["hub"],
@@ -1302,7 +1628,7 @@ class AccessService:
                 raise
             raise Denied(503, "failed", message)
         self._finish(row, "confirmed", actor, _canonical(result), "change_confirmed")
-        return dict(id=row["id"], status="confirmed", result=result)
+        return dict(id=row["id"], status="confirmed", result=result, **link)
 
     def _unclaim(self, row: dict) -> None:
         with self.store.engine.begin() as conn:
@@ -1376,11 +1702,81 @@ def deleted_by_console(gs, subject: str, owui_id: str | None) -> bool:
         return False
 
 
+# ---- account state ----------------------------------------------------------
+#
+# The store keeps two independent block markers per subject and `is_suspended`
+# ORs them: `suspended:<subject>` (an admin's explicit block, or an
+# account_replaced safeguard) and `account_unavailable:<subject>` (derived from
+# Open WebUI: the account is pending approval, or vanished from the directory).
+# Only the first is cleared by "reactivate"; the second only clears when OWUI
+# reports the account as approved/present again. They are exposed apart so the
+# Console can tell "blocked by an admin" from "blocked by the chat app".
+
 def _account_flags(gs, subject: str) -> dict:
-    """The store's two block markers, read separately. `blocked` is their OR."""
+    """The store's two block markers, read separately (read-only). `blocked`
+    is their OR and always equals `gs.is_suspended(subject)`."""
     subject = normalize(subject)
     with gs.engine.connect() as conn:
         suspended = gs._meta_get(conn, "suspended:" + subject) == "1"  # noqa: SLF001
         unavailable = gs._meta_get(conn, "account_unavailable:" + subject) == "1"  # noqa: SLF001
     return dict(suspended=suspended, account_unavailable=unavailable,
                 blocked=suspended or unavailable)
+
+
+def _account_status(subject: str, identity: dict, flags: dict) -> str:
+    """One display status per subject. Precedence: an admin block beats
+    everything; then the structural kinds; then signup/approval progress; an
+    OWUI-side unavailable account that is *not* pending (deleted/missing) is
+    reported as `blocked` with `account_unavailable=true` alongside."""
+    if flags["suspended"]:
+        return "blocked"
+    if subject == EVERYONE:
+        return "everyone"
+    if subject.startswith("workflow:"):
+        return "service"
+    if not identity.get("owui_id"):
+        return "awaiting-signup"
+    if identity.get("pending"):
+        return "pending-approval"
+    if flags["account_unavailable"]:
+        return "blocked"
+    return "active"
+
+
+def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
+    """The account flags plus their display `status`."""
+    identity = identity if identity is not None else (gs.identity(subject) or {})
+    flags = _account_flags(gs, subject)
+    return dict(flags, status=_account_status(normalize(subject), identity, flags))
+
+
+# ---- reading access over one snapshot ----------------------------------------
+
+#: Where an effective capability comes from, in display order: a grant to the
+#: subject in that agent, the grant to everyone signed in, or an
+#: organization-wide grant (organization administration).
+SOURCES = ("direct", "everyone", "organization")
+
+
+def _effective(grants, subject: str, hub: str) -> list[str]:
+    """What `subject` holds in `hub` over one grant snapshot, as the enforcer
+    matches it (`GrantStore.permissions_for`): direct, organization-wide and
+    everyone signed in. A blocked subject holds nothing; callers check that."""
+    return sorted({p for (s, h, p) in grants if s in (subject, EVERYONE) and h in (hub, ORG)})
+
+
+def _sources(grants, subject: str, hub: str) -> dict[str, list[str]]:
+    """{permission: [source]} for the same set as `_effective`, sources in
+    `SOURCES` order."""
+    out: dict[str, set[str]] = {}
+    for s, h, p in grants:
+        if s == subject and h == hub:
+            source = "direct"
+        elif s == EVERYONE and h in (hub, ORG):
+            source = "everyone"
+        elif s == subject and h == ORG:
+            source = "organization"
+        else:
+            continue
+        out.setdefault(p, set()).add(source)
+    return {p: sorted(out[p], key=SOURCES.index) for p in sorted(out)}

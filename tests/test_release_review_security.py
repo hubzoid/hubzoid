@@ -35,7 +35,6 @@ def hub(tmp_path, monkeypatch):
     h.mkdir()
     (h / "AGENTS.md").write_text("---\nname: sales\n---\nTest")
     gs = store_for(h)
-    gs.set_authoritative(True, hub="sales")
     for who, acct in ((OWNER, "acct-priya"), (MANAGER, "acct-manager"), (TEAMMATE, "acct-sam")):
         gs.upsert_identity(email=who, owui_id=acct)
         gs.grant(who, "sales", "use_hub", actor="test")
@@ -173,6 +172,9 @@ def test_reports_without_an_account_id_are_honoured_only_for_local_quickstart(hu
     local.mkdir()
     (local / "AGENTS.md").write_text("---\nname: local\n---\nTest")
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path}/local.db")
+    from hubzoid.access import store_for
+
+    store_for(local).grant("admin@localhost", "sales", "use_hub", actor="t")  # the local owner
     mine = _publish(local, owner="admin@localhost", account=None)
     assert arts.role(local, mine, "admin@localhost") == "owner"
 

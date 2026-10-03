@@ -8,11 +8,13 @@ import subprocess
 import sys
 from unittest.mock import MagicMock
 
+import pytest
 from typer.testing import CliRunner
 
 from hubzoid import cli, deployment, webui
 
 
+@pytest.mark.slow
 def test_gateway_child_configuration_is_isolated_and_discoverable(
     tmp_path, monkeypatch
 ):
@@ -27,6 +29,7 @@ def test_gateway_child_configuration_is_isolated_and_discoverable(
         "OWUI_NATIVE_MCP",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI gateway's lifecycle
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "synthetic-admin@example.com")
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "synthetic-test-password")
     monkeypatch.setenv(

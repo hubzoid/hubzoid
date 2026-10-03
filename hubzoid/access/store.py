@@ -35,8 +35,9 @@ from typing import Iterable
 
 import casbin
 from casbin.persist import Adapter
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from . import db_tables
 from .identity import normalize
@@ -48,6 +49,7 @@ USE_HUB = "use_hub"
 MANAGE_ACCESS = "manage_access"
 # hz_meta key holding the account scheduled workflows run as by default.
 WORKFLOW_DEFAULT_KEY = "workflow_default_user"
+
 
 # Direct-grants model: a request (sub, dom, act) is allowed if any policy row
 # matches, where subject/domain/permission each match exactly or via `*`.
@@ -128,10 +130,33 @@ NO_NEW_EVERYONE = (
 )
 
 
+def _phone_conflict(exc: IntegrityError) -> bool:
+    """Recognize only the phone constraint; preserve unrelated integrity errors."""
+    return (getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            == "hz_identities_phone_unique"
+            or "UNIQUE constraint failed: hz_identities.phone" in str(exc.orig))
+
+
+class PhoneTaken(ValueError):
+    """The phone number already belongs to someone else (the message is safe
+    to show)."""
+
+
+def phone_digits(phone: str | None) -> str:
+    """A phone number as the channels send it: digits only, country code first.
+    Empty for none; ValueError when it cannot be a phone number."""
+    from ..inbound.normalize import normalize_phone
+
+    digits = normalize_phone(phone)
+    if str(phone or "").strip() and not 6 <= len(digits) <= 15:
+        raise ValueError("Enter the full number with its country code, for example +91 98000 00001.")
+    return digits
+
+
 class BroadAccessRefused(ValueError):
     """A write would create a new 'everyone signed in' (`*`) grant. Existing ones
-    keep working and can be revoked; only migration carrying over demonstrably
-    public legacy access may write one (`carry_over_public=True`)."""
+    keep working and can be revoked; only a caller recreating an existing row
+    (tests seeding one) may write one (`carry_over_public=True`)."""
 
 
 def _refuse_new_everyone(subject: str, carry_over_public: bool = False) -> None:
@@ -196,6 +221,16 @@ class GrantStore:
         default), so we do a read-verify loop: read revision, read grants, read
         revision again; if a write landed in between the revision moved and we
         retry. This is correct on any engine and isolation level."""
+        return self._consistent_read(self._read_grants)
+
+    @staticmethod
+    def _read_grants(conn) -> list[tuple[str, str, str]]:
+        rows = conn.execute(text("SELECT subject, hub, permission FROM hz_grants")).fetchall()
+        return [(s, h, p) for (s, h, p) in rows]
+
+    def _consistent_read(self, read):
+        """(revision, read(conn)) where the result describes exactly that
+        revision: read-verify on any engine, locked read as a last resort."""
         self._refresh_if_stale()
         last_rev = 0
         for _ in range(8):
@@ -206,9 +241,7 @@ class GrantStore:
                     ).scalar()
                     or 0
                 )
-                rows = conn.execute(
-                    text("SELECT subject, hub, permission FROM hz_grants")
-                ).fetchall()
+                result = read(conn)
                 rev2 = int(
                     conn.execute(
                         text("SELECT rev FROM hz_policy_revision WHERE id=1")
@@ -216,16 +249,14 @@ class GrantStore:
                     or 0
                 )
             if rev1 == rev2:
-                return rev1, [(s, h, p) for (s, h, p) in rows]
+                return rev1, result
             last_rev = rev2
         # Extremely unlikely: writes on every attempt. Fall back to a locked read
         # so the pair is at least internally consistent under the write lock.
         with self._engine.begin() as conn:
             rev = self._read_revision_locked(conn)
-            rows = conn.execute(
-                text("SELECT subject, hub, permission FROM hz_grants")
-            ).fetchall()
-        return rev or last_rev, [(s, h, p) for (s, h, p) in rows]
+            result = read(conn)
+        return rev or last_rev, result
 
     def _grant_in_txn(self, conn, subject, hub, permission, actor,
                       surface=None, request_id=None, *, carry_over_public=False) -> None:
@@ -328,27 +359,28 @@ class GrantStore:
         if self.is_suspended(subject):
             return False
         self._refresh_if_stale()
+        hub, action = normalize(hub), normalize(action)
         with self._lock:
-            return bool(
-                self._enforcer.enforce(subject, normalize(hub), normalize(action))
-            )
+            return bool(self._enforcer.enforce(subject, hub, action))
 
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
-        org-wide + wildcard-subject). Used by the portal and denied-UX."""
+        org-wide + wildcard-subject). Used by the portal and
+        denied-UX."""
         subject = normalize(subject)
         hub = normalize(hub)
         if self.is_suspended(subject):
             return set()
         self._refresh_if_stale()
+        subjects = [subject]
         out: set[str] = set()
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT subject, hub, permission FROM hz_grants "
-                    "WHERE (subject=:s OR subject='*') AND (hub=:h OR hub='*')"
-                ),
-                {"s": subject, "h": hub},
+                    "WHERE (subject IN :subs OR subject='*') AND (hub=:h OR hub='*')"
+                ).bindparams(bindparam("subs", expanding=True)),
+                {"subs": subjects, "h": hub},
             ).fetchall()
         for _sub, _hub, perm in rows:
             out.add(perm)
@@ -360,13 +392,14 @@ class GrantStore:
         is returned as the sentinel '*'."""
         subject = normalize(subject)
         self._refresh_if_stale()
+        subjects = [subject]
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT hub FROM hz_grants "
-                    "WHERE (subject=:s OR subject='*') AND permission=:u"
-                ),
-                {"s": subject, "u": USE_HUB},
+                    "WHERE (subject IN :subs OR subject='*') AND permission=:u"
+                ).bindparams(bindparam("subs", expanding=True)),
+                {"subs": subjects, "u": USE_HUB},
             ).fetchall()
         return {h for (h,) in rows}
 
@@ -409,63 +442,11 @@ class GrantStore:
                 {"k": key, "v": value},
             )
 
-    def is_authoritative(self, hub: str | None = None) -> bool:
-        """True once Casbin is the authority for this hub. A **per-hub** marker
-        (`casbin_authoritative:<hub>`) is checked first, then the deployment-wide
-        one — so on a shared gateway DB, migrating hub A does NOT flip hubs B–N
-        (which stay legacy until their own cutover). Un-migrated hubs are
-        untouched. Cached and refreshed on a policy_revision change so a
-        per-request check is a cheap in-memory read, not a DB hit."""
-        self._refresh_if_stale()
-        hub = normalize(hub) if hub else None
-        with self._engine.connect() as conn:
-            if hub:
-                marker = self._meta_get(conn, f"casbin_authoritative:{hub}")
-                if marker is not None:
-                    return marker == "1"
-            return self._meta_get(conn, "casbin_authoritative") == "1"
-
-    def any_authoritative(self) -> bool:
-        """True if the deployment has migrated any hub (global marker or any
-        per-hub marker). Used to decide the gateway-wide OWUI access-UI lock."""
-        with self._engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT 1 FROM hz_meta WHERE "
-                    "(k = 'casbin_authoritative' OR k LIKE 'casbin_authoritative:%') "
-                    "AND v = '1' LIMIT 1"
-                )
-            ).fetchone()
-        return bool(row)
-
-    def set_authoritative(self, flag: bool = True, *, hub: str | None = None) -> None:
-        key = (
-            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
-        )
-        with self._engine.begin() as conn:
-            self._meta_set(conn, key, "1" if flag else "0")
-            self._bump_revision(conn)
-
-    def bootstrap(
-        self,
-        admin_subjects: Iterable[str] = (),
-        *,
-        authoritative: bool = False,
-        hub: str | None = None,
-    ) -> None:
+    def bootstrap(self, admin_subjects: Iterable[str] = ()) -> None:
         """First-boot bootstrap (idempotent): grant org `manage_access` to the
-        given admins once, so no deployment — fresh or migrated — can lock itself
-        out of the portal. `authoritative=True` also makes Casbin the authority
-        (use for fresh installs with no legacy access to migrate)."""
-        marker = (
-            f"casbin_authoritative:{normalize(hub)}" if hub else "casbin_authoritative"
-        )
+        given admins once, so no deployment can lock itself out of the Console."""
         with self._engine.begin() as conn:
             if self._meta_get(conn, "bootstrapped") == "1":
-                if authoritative:
-                    self._meta_set(conn, marker, "1")
-                    self._audit(conn, "bootstrap", "activate", None, hub or ORG, None)
-                    self._bump_revision(conn)
                 return
             granted = 0
             for subj in admin_subjects:
@@ -479,20 +460,10 @@ class GrantStore:
             # empty bootstrap() must NOT block a later legitimate admin list.
             if granted:
                 self._meta_set(conn, "bootstrapped", "1")
-            # Refuse to make Casbin authoritative with no org admin at all — that
-            # is an unrecoverable web lockout (nobody can pass the portal gate).
-            if authoritative:
-                if not (granted or self._org_admins(conn)):
-                    raise LastAdminError(
-                        "refusing authoritative bootstrap with no org admin — "
-                        "pass at least one --admin"
-                    )
-                self._meta_set(conn, marker, "1")
-                self._audit(conn, "bootstrap", "activate", None, ORG, None)
             self._bump_revision(conn)
         self._refresh_if_stale()
 
-    def provision_owner(self, subject: str, hub: str, *, fresh: bool = False) -> bool:
+    def provision_owner(self, subject: str, hub: str) -> bool:
         """Provision a configured, verified owner once per hub, never on every login.
 
         Caller verifies the account and matches it to operator configuration.
@@ -521,8 +492,6 @@ class GrantStore:
             # configured: recorded once, at setup. Adding people never moves it.
             if not self._meta_get(conn, WORKFLOW_DEFAULT_KEY):
                 self._meta_set(conn, WORKFLOW_DEFAULT_KEY, subject)
-            if fresh:
-                self._meta_set(conn, f"casbin_authoritative:{hub}", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
         return True
@@ -534,13 +503,14 @@ class GrantStore:
         granting again writes a new time, so a later time means a break. None
         when no row gives it, or when one predates recorded times (treated as
         held all along)."""
+        subject, hub, permission = normalize(subject), normalize(hub), normalize(permission)
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text("SELECT created FROM hz_grants WHERE (subject=:s OR subject='*') "
                      "AND (hub=:h OR hub='*') AND (permission=:p OR permission='*')"),
-                {"s": normalize(subject), "h": normalize(hub), "p": normalize(permission)},
+                {"s": subject, "h": hub, "p": permission},
             ).fetchall()
-        times = [r[0] for r in rows]
+            times = [r[0] for r in rows]
         if not times or any(t is None for t in times):
             return None
         return float(min(times))
@@ -712,8 +682,7 @@ class GrantStore:
         open a hub they have any permission in. Idempotent.
 
         A grant to everyone signed in (`*`) is refused unless
-        `carry_over_public` says it preserves demonstrably public legacy access
-        (migration only)."""
+        `carry_over_public` says it recreates an existing one (tests only)."""
         subject = normalize(subject)
         hub = normalize(hub)
         permission = normalize(permission)
@@ -756,106 +725,6 @@ class GrantStore:
                     "cannot remove the last org admin; grant another first"
                 )
             self._audit(conn, actor, "revoke_all", subject, ORG, None, surface, request_id)
-            self._bump_revision(conn)
-        self._refresh_if_stale()
-
-    def apply_migration(
-        self,
-        grants: Iterable[tuple[str, str, str]],
-        attrs: Iterable[tuple[str, str, str, str]],
-        hubs: Iterable[str],
-        *,
-        replace: bool = True,
-        authoritative: bool = True,
-        actor: str = "migration",
-        identities: Iterable[dict] = (),
-        carry_over_public: bool = False,
-    ) -> None:
-        """The migration cutover, in ONE transaction: (optionally) replace the
-        target hubs' grants, insert the plan (with use_hub implication), set
-        attributes + identity rows, set the PER-HUB authority markers, and bump
-        the revision. Atomic — a crash rolls the whole thing back, and replace
-        semantics mean no stale grant survives cutover. An everyone-signed-in
-        grant in the plan needs `carry_over_public` (legacy access that was
-        demonstrably public)."""
-        import time
-
-        hubs = [normalize(h) for h in hubs if h and normalize(h) != ORG]
-        attrs = list(attrs)
-        if any(normalize(h) not in hubs for h, _, _, _ in attrs):
-            raise ValueError("migration attributes outside target hubs")
-        expanded: list[tuple[str, str, str]] = []
-        emails: set[str] = set()
-        for subject, hub, permission in grants:
-            subject = normalize(subject)
-            hub = normalize(hub)
-            permission = normalize(permission)
-            _validate_grant(subject, hub, permission)
-            _refuse_new_everyone(subject, carry_over_public)
-            expanded.append((subject, hub, permission))
-            if hub != ORG and permission != USE_HUB:
-                expanded.append((subject, hub, USE_HUB))
-            if hub not in hubs:
-                raise ValueError("migration grant outside target hubs")
-            if subject != EVERYONE and "@" in subject:
-                emails.add(subject)
-        with self._engine.begin() as conn:
-            self._lock_hubs(conn, hubs)
-            if replace:
-                for h in hubs:
-                    self._audit(conn, actor, "replace_hub_grants", None, h, None)
-                    conn.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
-            for s, h, p in expanded:
-                self._insert_grant(conn, s, h, p)
-                self._audit(conn, actor, "grant", s, h, p)
-            for hub, subject, k, v in attrs:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identity_attrs (hub, subject, k, v) "
-                        "VALUES (:h, :s, :k, :v) "
-                        "ON CONFLICT (hub, subject, k) DO UPDATE SET v=excluded.v"
-                    ),
-                    {"h": normalize(hub), "s": normalize(subject), "k": k, "v": v},
-                )
-            for email in emails:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identities (subject, email, created) "
-                        "VALUES (:s, :s, :t) ON CONFLICT (subject) DO NOTHING"
-                    ),
-                    {"s": email, "t": time.time()},
-                )
-            for identity in identities:
-                subject = normalize(identity["email"])
-                self._ensure_identity(conn, subject)
-                previous = conn.execute(
-                    text("SELECT owui_id FROM hz_identities WHERE subject=:s"),
-                    {"s": subject},
-                ).scalar()
-                if previous and previous != identity["owui_id"]:
-                    raise ValueError(
-                        "OWUI account changed for "
-                        + subject
-                        + "; refresh and review accounts before migration"
-                    )
-                conn.execute(
-                    text(
-                        "UPDATE hz_identities SET owui_id=:o, pending=:p WHERE subject=:s"
-                    ),
-                    {
-                        "o": identity["owui_id"],
-                        "p": int(identity.get("pending", False)),
-                        "s": subject,
-                    },
-                )
-                self._meta_set(
-                    conn,
-                    "account_unavailable:" + subject,
-                    "1" if identity.get("pending") else "0",
-                )
-            if authoritative:
-                for h in hubs:
-                    self._meta_set(conn, f"casbin_authoritative:{h}", "1")
             self._bump_revision(conn)
         self._refresh_if_stale()
 
@@ -938,58 +807,99 @@ class GrantStore:
         hardening. Idempotent."""
         import time
 
+        digits = phone_digits(phone)
         email_n = normalize(email) if email else None
         subject = email_n or normalize(owui_id) or normalize(phone)
         if not subject:
             raise ValueError("need at least one of email/owui_id/phone")
-        with self._engine.begin() as conn:
-            row = conn.execute(
-                text("SELECT subject, owui_id FROM hz_identities WHERE subject=:s"),
-                {"s": subject},
-            ).fetchone()
-            fields = {
-                "s": subject,
-                "e": email_n,
-                "o": (owui_id or None),
-                "p": (phone or None),
-                "d": (display or None),
-                "pend": 1 if pending else 0,
-                "t": time.time(),
-            }
-            if row and owui_id and row[1] and row[1] != owui_id:
-                # A new account reusing an email must not inherit the old owner's
-                # direct grants, including administrator rights.
-                conn.execute(
-                    text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
-                )
-                self._meta_set(conn, "suspended:" + subject, "1")
-                self._audit(
-                    conn, "owui-identity", "account_replaced", subject, ORG, None
-                )
-                self._bump_revision(conn)
-            if owui_id:
-                self._meta_set(
-                    conn, "account_unavailable:" + subject, "1" if pending else "0"
-                )
-            if row:
-                conn.execute(
-                    text(
-                        "UPDATE hz_identities SET "
-                        "email=COALESCE(:e, email), owui_id=COALESCE(:o, owui_id), "
-                        "phone=COALESCE(:p, phone), display=COALESCE(:d, display), "
-                        "pending=:pend WHERE subject=:s"
-                    ),
-                    fields,
-                )
-            else:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identities (subject, email, owui_id, phone, "
-                        "display, pending, created) VALUES (:s, :e, :o, :p, :d, :pend, :t)"
-                    ),
-                    fields,
-                )
+        try:
+            with self._engine.begin() as conn:
+                row = conn.execute(
+                    text("SELECT subject, owui_id FROM hz_identities WHERE subject=:s"),
+                    {"s": subject},
+                ).fetchone()
+                fields = {
+                    "s": subject,
+                    "e": email_n,
+                    "o": (owui_id or None),
+                    "p": (digits or None),
+                    "d": (display or None),
+                    "pend": 1 if pending else 0,
+                    "t": time.time(),
+                }
+                if row and owui_id and row[1] and row[1] != owui_id:
+                    # A new account reusing an email must not inherit the old owner's
+                    # direct grants, including administrator rights.
+                    conn.execute(
+                        text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
+                    )
+                    self._meta_set(conn, "suspended:" + subject, "1")
+                    self._audit(
+                        conn, "owui-identity", "account_replaced", subject, ORG, None
+                    )
+                    self._bump_revision(conn)
+                if owui_id:
+                    self._meta_set(
+                        conn, "account_unavailable:" + subject, "1" if pending else "0"
+                    )
+                if row:
+                    conn.execute(
+                        text(
+                            "UPDATE hz_identities SET "
+                            "email=COALESCE(:e, email), owui_id=COALESCE(:o, owui_id), "
+                            "phone=COALESCE(:p, phone), display=COALESCE(:d, display), "
+                            "pending=:pend WHERE subject=:s"
+                        ),
+                        fields,
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            "INSERT INTO hz_identities (subject, email, owui_id, phone, "
+                            "display, pending, created) VALUES (:s, :e, :o, :p, :d, :pend, :t)"
+                        ),
+                        fields,
+                    )
+        except IntegrityError as exc:
+            if _phone_conflict(exc):
+                raise PhoneTaken("This number already belongs to someone else.") from exc
+            raise
         return subject
+
+    def set_phone(self, subject: str, phone: str | None, *, actor: str,
+                  surface: str | None = None, request_id: str | None = None) -> str:
+        """Record (or with an empty `phone`, clear) the phone number a person's
+        WhatsApp and Telegram messages come from. One number belongs to one
+        person: PhoneTaken when someone else has it. Returns the stored digits."""
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE or "@" not in subject:
+            raise ValueError("a person is required")
+        digits = phone_digits(phone)
+        try:
+            with self._engine.begin() as conn:
+                self._ensure_identity(conn, subject)
+                conn.execute(text("UPDATE hz_identities SET phone=:p WHERE subject=:s"),
+                             {"p": digits or None, "s": subject})
+                self._audit(conn, actor, "phone_set" if digits else "phone_clear", subject, ORG,
+                            None, surface, request_id)
+        except IntegrityError as exc:
+            if _phone_conflict(exc):
+                raise PhoneTaken("This number already belongs to someone else.") from exc
+            raise
+        return digits
+
+    def subject_for_phone(self, phone: str | None) -> str | None:
+        """The person whose recorded phone number this is, or None."""
+        try:
+            digits = phone_digits(phone)
+        except ValueError:
+            return None
+        if not digits:
+            return None
+        with self._engine.connect() as conn:
+            rows = conn.execute(text("SELECT subject FROM hz_identities WHERE phone=:p"),
+                                {"p": digits}).fetchmany(2)
+        return rows[0][0] if len(rows) == 1 else None
 
     def identity(self, subject: str) -> dict | None:
         with self._engine.connect() as conn:
@@ -1166,7 +1076,12 @@ class GrantStore:
             )
 
     def suspend(self, subject: str, *, actor: str, suspended=True,
-                surface: str | None = None, request_id: str | None = None) -> None:
+                surface: str | None = None, request_id: str | None = None,
+                in_transaction=None) -> None:
+        """Block (or, with ``suspended=False``, reactivate) a subject.
+        ``in_transaction(conn)``, when given, runs in the same transaction once
+        the marker is written, so work that must commit with the block (ending
+        the person's sessions, ``access.service``) commits or fails with it."""
         subject = normalize(subject)
         if not subject or subject == EVERYONE:
             raise ValueError("a person or service is required")
@@ -1190,6 +1105,8 @@ class GrantStore:
                 request_id,
             )
             self._bump_revision(conn)
+            if in_transaction is not None:
+                in_transaction(conn)
         self._refresh_if_stale()
 
     def reconcile_accounts(self, people: list[dict]) -> None:
@@ -1230,82 +1147,11 @@ class GrantStore:
                 dict(r)
                 for r in conn.execute(
                     text(
-                        "SELECT subject, email, owui_id, display, pending FROM hz_identities ORDER BY subject"
+                        "SELECT subject, email, owui_id, display, pending, phone FROM hz_identities "
+                        "ORDER BY subject"
                     )
                 ).mappings()
             ]
-
-    def snapshot(self, hubs: list[str]) -> dict:
-        hubs = sorted({normalize(h) for h in hubs})
-        with self._engine.connect() as c:
-            attrs = [
-                list(r)
-                for r in c.execute(
-                    text("SELECT hub, subject, k, v FROM hz_identity_attrs")
-                )
-                if r[0] in hubs
-            ]
-        return dict(
-            version=1,
-            hubs=hubs,
-            grants=[g for g in self.list_grants() if g[1] in hubs],
-            attrs=attrs,
-            authority={h: self.is_authoritative(h) for h in hubs},
-        )
-
-    def restore(self, snapshot: dict, *, actor: str) -> None:
-        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
-            raise ValueError("unsupported access backup")
-        try:
-            hubs = set(snapshot["hubs"])
-            if not hubs or any(
-                not isinstance(h, str) or not h or h != normalize(h) or h == ORG
-                for h in hubs
-            ):
-                raise ValueError("invalid backup scope")
-            if set(snapshot["authority"]) != hubs or any(
-                type(v) is not bool for v in snapshot["authority"].values()
-            ):
-                raise ValueError("invalid backup authority")
-            for sub, h, p in snapshot["grants"]:
-                if (
-                    any(
-                        not isinstance(v, str) or v != normalize(v) for v in (sub, h, p)
-                    )
-                    or h not in hubs
-                ):
-                    raise ValueError("invalid backup grant scope")
-                _validate_grant(sub, h, p)
-            for h, sub, k, v in snapshot["attrs"]:
-                if h not in hubs or not all(isinstance(x, str) for x in (h, sub, k, v)):
-                    raise ValueError("invalid backup attribute")
-        except (KeyError, TypeError) as exc:
-            raise ValueError("invalid access backup structure") from exc
-        with self._engine.begin() as c:
-            self._lock_hubs(c, hubs)
-            for h in hubs:
-                c.execute(text("DELETE FROM hz_grants WHERE hub=:h"), {"h": h})
-                c.execute(text("DELETE FROM hz_identity_attrs WHERE hub=:h"), {"h": h})
-                self._meta_set(
-                    c,
-                    "casbin_authoritative:" + h,
-                    "1" if snapshot["authority"][h] else "0",
-                )
-                self._audit(c, actor, "rollback", None, h, None)
-            for sub, h, p in snapshot["grants"]:
-                self._insert_grant(c, sub, h, p)
-                self._audit(c, actor, "restore_grant", sub, h, p)
-            for h, sub, k, v in snapshot["attrs"]:
-                if h not in hubs:
-                    raise ValueError("invalid attribute scope")
-                c.execute(
-                    text(
-                        "INSERT INTO hz_identity_attrs (hub,subject,k,v) VALUES (:h,:s,:k,:v)"
-                    ),
-                    dict(h=h, s=sub, k=k, v=v),
-                )
-            self._bump_revision(c)
-        self._refresh_if_stale()
 
     def runtime_health(self, hub: str) -> dict:
         import json
@@ -1327,7 +1173,8 @@ class GrantStore:
         tasks, the function name for code workflows). Dispatchers skip these."""
         return set(self.metadata("workflow_paused:" + normalize(hub), []) or [])
 
-    def set_workflow_paused(self, hub: str, name: str, paused: bool, *, actor: str) -> None:
+    def set_workflow_paused(self, hub: str, name: str, paused: bool, *, actor: str,
+                            surface: str | None = None, request_id: str | None = None) -> None:
         """Pause or resume one workflow's schedule, audited in the same transaction."""
         import json
 
@@ -1338,12 +1185,16 @@ class GrantStore:
             names = (names | {name}) if paused else (names - {name})
             self._meta_set(c, key, json.dumps(sorted(names)))
             self._audit(c, actor, "workflow_pause" if paused else "workflow_resume",
-                        None, normalize(hub), name)
+                        None, normalize(hub), name, surface, request_id)
 
-    def audit_run_control(self, hub: str, action: str, target: str, *, actor: str) -> None:
-        """Record an operator's run control (e.g. a cancel) in the access audit."""
+    def audit_run_control(self, hub: str, action: str, target: str, *, actor: str,
+                          surface: str | None = None, request_id: str | None = None,
+                          subject: str | None = None) -> None:
+        """Record a run control (a start or a cancel) in the access audit.
+        `target` is what was acted on (the workflow for a start, the run for a
+        cancel); `subject` optionally names the run a start created."""
         with self._engine.begin() as c:
-            self._audit(c, actor, action, None, normalize(hub), target)
+            self._audit(c, actor, action, subject, normalize(hub), target, surface, request_id)
 
     HOLD_KEY = "maintenance:hold"
 

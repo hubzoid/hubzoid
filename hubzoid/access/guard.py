@@ -52,12 +52,9 @@ _allowed_surfaces = allowed_surfaces
 def decide(hub_dir: Path, ident, permission: str,
            surfaces: "frozenset[str] | None" = None) -> tuple[bool, str]:
     """The ONE access decision, used by both the invocation guard and MCP tool
-    discovery: surface gate first, then Casbin `can()` once this hub is
-    authoritative, else the legacy group check.
+    discovery: the surface gate first, then the access store's `can()`.
 
-    FAIL CLOSED: once Casbin is (or might be) authoritative, any error
-    determining or evaluating it denies — it never silently drops to legacy
-    groups, which after cutover would be a bypass."""
+    FAIL CLOSED: any error reading or evaluating the store denies."""
     if surfaces is None:
         surfaces = _allowed_surfaces()
     pre_allowed, reason = is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: True)
@@ -65,25 +62,18 @@ def decide(hub_dir: Path, ident, permission: str,
         return False, reason
     hub_dir = Path(hub_dir)
     hub_name = hub_dir.name
+    subject = getattr(ident, "user", None) or ""
     from . import store_for
 
     try:
         gs = store_for(hub_dir)
-        authoritative = gs.is_authoritative(hub_name)
-        if gs.is_suspended(getattr(ident, "user", None) or ""):
+        if gs.is_suspended(subject):
             return False, "blocked"
-    except Exception:  # noqa: BLE001 — can't determine authority -> deny, don't guess
+        allowed = gs.can(subject, hub_name, permission)
+    except Exception:  # noqa: BLE001 — can't decide -> deny, don't guess
         log.exception("access: store unavailable for %s; denying", hub_name)
         return (False, "store-error")
-    if authoritative:
-        subject = getattr(ident, "user", None) or ""
-        try:
-            allowed = gs.can(subject, hub_name, permission)
-        except Exception:  # noqa: BLE001 — authoritative but errored -> deny, never legacy
-            log.exception("access: can() failed for %s; denying", hub_name)
-            return (False, "store-error")
-        return is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: allowed)
-    return is_allowed(ident, permission, allowed_surfaces=surfaces)
+    return is_allowed(ident, permission, allowed_surfaces=surfaces, can=lambda: allowed)
 
 
 def _named(hub_dir: Path, permission: str) -> str:
@@ -99,14 +89,19 @@ def _named(hub_dir: Path, permission: str) -> str:
     return f"'{permission}'"
 
 
-def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool:
+def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
+               surfaces: "frozenset[str] | None" = None) -> FunctionTool:
     """Return a guarded copy of `ft` that enforces `permission`.
 
     The original is left untouched (`dataclasses.replace` copies it). The
     decision is read from the per-request identity at call time, so one guarded
     instance built at boot serves every user correctly.
+
+    `surfaces` replaces the restricted-tool surface policy for this tool (a
+    tool family with its own rule, e.g. the management tools'
+    `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
     """
-    surfaces = _allowed_surfaces()
+    surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 
@@ -140,6 +135,9 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path) -> FunctionTool
         return allowed
 
     _is_enabled.hubzoid_permission = permission
+    # Tools sharing a permission and surface rule share one decision per turn
+    # (`visible_map`).
+    _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
     return dataclasses.replace(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
 
 
@@ -152,6 +150,26 @@ def visible(ft) -> bool:
     if getattr(check, "hubzoid_permission", None) is None:
         return True
     return bool(check())
+
+
+def visible_map(tools: dict) -> dict[str, bool]:
+    """`visible` for a whole registry at once ({name: shown}), for runtimes
+    that filter the tool list every turn. Each distinct check runs once: tools
+    guarded by the same permission and surface rule (`hubzoid_key`), or
+    sharing one `is_enabled` (the management tools), get one decision. Called
+    per turn, so a grant or revocation shows on the next turn."""
+    decided: dict = {}
+    out: dict[str, bool] = {}
+    for name, ft in tools.items():
+        check = getattr(ft, "is_enabled", True)
+        if getattr(check, "hubzoid_permission", None) is None:
+            out[name] = True
+            continue
+        key = getattr(check, "hubzoid_key", None) or ("fn", id(check))
+        if key not in decided:
+            decided[key] = bool(check())
+        out[name] = decided[key]
+    return out
 
 
 def apply(hub_dir: Path, registry: dict) -> dict:

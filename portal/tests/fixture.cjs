@@ -11,8 +11,6 @@ const ORG = "*";
 const EVERYONE = "*";
 const USE_HUB = "use_hub";
 const MANAGE_ACCESS = "manage_access";
-const LEGACY_MSG =
-  "This agent's access is still managed in the chat app — it has not been migrated to the dashboard.";
 
 const HOUR = 3600;
 const NOW = Math.floor(Date.now() / 1000);
@@ -23,7 +21,7 @@ const iso = (secondsAgo) => new Date((NOW - secondsAgo) * 1000).toISOString();
 const STATUS_BUCKETS = {
   succeeded: ["SUCCESS"],
   failed: ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"],
-  running: ["PENDING", "ENQUEUED"],
+  running: ["PENDING", "ENQUEUED", "DELAYED"],
   cancelled: ["CANCELLED"],
 };
 const KNOWN_STATUSES = new Set([
@@ -55,13 +53,14 @@ function createFixture() {
     visibility: { state: "ok", updated: NOW - 40 },
     schedulerHeartbeat: iso(30),
     hubs: [
-      { key: "finance", name: "Finance Assistant", authoritative: true },
-      { key: "support", name: "Support Assistant", authoritative: true },
-      { key: "itops", name: "IT Ops Assistant", authoritative: false },
+      { key: "finance", path: "/srv/hubs/finance", name: "Finance Assistant" },
+      { key: "support", path: "/srv/hubs/support", name: "Support Assistant" },
+      { key: "itops", path: "/srv/hubs/itops", name: "IT Ops Assistant" },
     ],
     catalogs: {
       finance: [
         perm("curator", "Save shared knowledge", "Use remember to create or replace shared agent knowledge."),
+        ...agentTools(),
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
         perm("ledger", "Read ledger", "View accounting entries and balances."),
@@ -71,6 +70,8 @@ function createFixture() {
       support: [
         perm(USE_HUB, "Use this agent", "Open the agent in the chat app and use its unrestricted tools."),
         perm(MANAGE_ACCESS, "Manage access", "Decide who can use this agent and what they can do."),
+        // Workflow tools switched off for this agent (HUBZOID_WORKFLOW_TOOLS=false).
+        ...agentTools({ status: "Disabled for this hub", available: false }),
         perm("tickets", "Work tickets", "Read and update helpdesk tickets."),
         perm("refunds", "Issue refunds", "Refund customer payments.", true),
       ],
@@ -96,6 +97,9 @@ function createFixture() {
     unavailable: new Set(),
     // How new accounts can sign in (GET /me sign_in).
     signIn: { password: true, google: false },
+    // /me web_app: true in the Hubzoid web app, false in Open WebUI mode; unset
+    // (as before 1.1) by default.
+    webApp: undefined,
     // Chat-app roles set through the Console (GET/POST /accounts/<email>).
     chatRoles: {},
     // Accounts that exist in the chat app but are not recorded here yet
@@ -126,6 +130,8 @@ function createFixture() {
     audit: [
       row(NOW - 2 * HOUR, "aisha.rahman@example.org", "grant", "priya.natarajan@example.org", "finance", "ledger"),
       row(NOW - 2 * HOUR + 1, "aisha.rahman@example.org", "grant", "priya.natarajan@example.org", "finance", USE_HUB),
+      // A run started with an agent tool: the workflow in permission, the run id as subject.
+      row(NOW - 3 * HOUR, "aisha.rahman@example.org", "run_start", "mc-2026-10-01", "finance", "monthly_close", "mcp"),
       row(NOW - 5 * HOUR, "admin@example.org", "suspend", "tomas.herrera@example.org", ORG, null),
       row(NOW - 26 * HOUR, "admin@example.org", "grant", EVERYONE, "support", USE_HUB),
       row(NOW - 3 * 24 * HOUR, "bootstrap", "grant", "admin@example.org", ORG, MANAGE_ACCESS),
@@ -145,7 +151,7 @@ function createFixture() {
     workflows: {
       finance: [
         wf("finance", "monthly_close", "0 6 1 * *", "Asia/Kolkata"),
-        wf("finance", "daily_ledger_check", "daily 06:00", "UTC"),
+        wf("finance", "daily_ledger_check", "0 6 * * *", "UTC"),
         wf("finance", "reissue_invoice", null, "UTC"),
       ],
       support: [wf("support", "ticket_digest", "weekly monday 08:00", "Europe/Berlin")],
@@ -202,7 +208,8 @@ function createFixture() {
     },
     permissionsFor(subject, hub) {
       if (state.suspended.has(subject) || state.unavailable.has(subject)) return [];
-      return [...new Set(state.grants.filter(([s, h]) => (s === subject || s === EVERYONE) && (h === hub || h === ORG)).map(([, , p]) => p))].sort();
+      return [...new Set(state.grants.filter(([s, h]) =>
+        (s === subject || s === EVERYONE) && (h === hub || h === ORG)).map(([, , p]) => p))].sort();
     },
     orgAdmins() {
       return state.grants.filter(([, h, p]) => h === ORG && p === MANAGE_ACCESS).map(([s]) => s);
@@ -282,7 +289,6 @@ function createFixture() {
       const perm = String(g.permission || "").trim().toLowerCase();
       if (hub === ORG) throw error(422, "Initial access is given per agent.", "invalid_grant");
       requireHub(a, hub);
-      if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG, "legacy");
       if (!grantable(state.catalogs[hub].find((p) => p.permission === perm))) throw error(422, "Unknown permission for this hub", "unknown_permission");
       if (!a.org) {
         if (perm === MANAGE_ACCESS) throw error(403, "Only organization admins may change administrator access", "forbidden");
@@ -365,12 +371,13 @@ function createFixture() {
     switch (endpoint) {
       case "/me":
         return {
+          web_app: state.webApp,
           subject: a.subject,
           org_admin: a.org,
           manageable: allowedHubs(a).map((h) => h.key),
-          grantable: Object.fromEntries(allowedHubs(a).map((h) => [h.key, h.authoritative ? ceiling(a, h.key) : []])),
+          grantable: Object.fromEntries(allowedHubs(a).map((h) => [h.key, ceiling(a, h.key)])),
           account_admin: a.org,
-          can_create_accounts: a.org || allowedHubs(a).some((h) => h.authoritative),
+          can_create_accounts: a.org || allowedHubs(a).length > 0,
           accounts_configured: true,
           sign_in: state.signIn,
         };
@@ -482,8 +489,6 @@ function createFixture() {
         const limit = Number(params.limit || 50);
         return {
           hub,
-          editable: !!state.hubs.find((h) => h.key === hub).authoritative,
-          authoritative: state.hubs.find((h) => h.key === hub).authoritative,
           can_manage_admins: a.org,
           permissions: catalogFor(hub),
           total: list.length,
@@ -492,7 +497,7 @@ function createFixture() {
             id.owui_id && !id.pending && !subject.startsWith("workflow:") && !state.suspended.has(subject) &&
             !state.grants.some(([s, h, p]) => s === subject && h === hub && p === USE_HUB)).length,
           revision: state.revision,
-          grantable: state.hubs.find((h) => h.key === hub).authoritative ? ceiling(a, hub) : [],
+          grantable: ceiling(a, hub),
           viewer: a.subject,
           rows: list.slice(offset, offset + limit),
         };
@@ -510,7 +515,6 @@ function createFixture() {
             throw error(403, "Only organization admins can manage organization administrators");
         } else {
           requireHub(a, hub);
-          if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
           const entry = state.catalogs[hub].find((p) => p.permission === perm);
           const held = state.grants.some(([s, h, p]) => s === subject && h === hub && p === perm);
           if (!grantable(entry) && !(revoke && held)) throw error(422, "Unknown permission for this hub");
@@ -535,7 +539,6 @@ function createFixture() {
         const subject = String(body.subject || "").trim().toLowerCase();
         const hub = String(body.hub || "").trim().toLowerCase();
         requireHub(a, hub);
-        if (!state.hubs.find((h) => h.key === hub).authoritative) throw error(409, LEGACY_MSG);
         if (subject === EVERYONE) throw error(403, "Public access is changed with the public-access toggle");
         const ops = body.operations || [];
         const existing = new Set(state.grants.filter(([, h]) => h === hub).map(([s, , p]) => `${s}|${p}`));
@@ -629,6 +632,10 @@ function createFixture() {
         if (params.hub) requireHub(a, params.hub);
         return { workflows: hubs.flatMap((h) => state.workflows[h].map((w) => decorate(w, state))) };
       }
+      case "/webhooks": {
+        if (params.hub) requireHub(a, params.hub);
+        return { webhooks: [] };
+      }
       case "/runs": {
         // A named agent scopes to one bridge (per-step detail on run_id); no agent
         // → cross-agent over every agent this admin may manage. All filters run
@@ -708,13 +715,13 @@ function createFixture() {
           const flows = state.workflows[h.key] || [];
           const subjects = new Set(state.grants.filter(([s, hub]) => hub === h.key && !s.startsWith("workflow:")).map(([s]) => s));
           return {
-            key: h.key, name: h.name, managed: h.authoritative,
+            key: h.key, name: h.name,
             chats: u.chats * scale, messages: u.messages * scale, active_users: u.active_users,
             input_tokens: u.input_tokens * scale, output_tokens: u.output_tokens * scale,
             cost_usd: u.cost_usd == null ? null : Math.round(u.cost_usd * scale * 100) / 100,
             unpriced: u.unpriced * scale, last_activity: u.last_activity,
-            users_with_access: h.authoritative ? [...subjects].filter((s) => s !== EVERYONE).length : null,
-            everyone: h.authoritative ? subjects.has(EVERYONE) : null,
+            users_with_access: [...subjects].filter((s) => s !== EVERYONE).length,
+            everyone: subjects.has(EVERYONE),
             denials: u.denials * scale, has_workflows: flows.length > 0,
             runs: flows.length ? 4 * scale : null, failed: flows.length ? (h.key === "finance" ? scale : 0) : null,
             missed: flows.length ? (h.key === "itops" ? 3 : 0) : null,
@@ -743,14 +750,10 @@ function createFixture() {
         const hs = allowedHubs(a);
         const keys = new Set(hs.map((h) => h.key));
         const grants = state.grants.filter(([, h]) => keys.has(h));
-        const managed = hs.filter((h) => h.authoritative).length;
         return {
           hubs: hs.length,
           grants: grants.length,
           people: new Set(grants.filter(([s]) => s !== EVERYONE).map(([s]) => s)).size,
-          authoritative: managed === hs.length,
-          managed,
-          legacy: hs.length - managed,
           visibility: state.visibility,
         };
       }
@@ -768,9 +771,27 @@ function perm(permission, label, description, sensitive = false, extra = {}) {
   const group =
     permission === USE_HUB ? "hub" : permission === MANAGE_ACCESS ? "admin" : permission === "curator" ? "tools" : "restricted";
   return {
-    permission, label, description, sensitive, group, surfaces: [], status: "", available: true,
+    permission, label, description, sensitive, group, section: "", surfaces: [], status: "", available: true,
     default: "grant", delegate_grantable: permission !== MANAGE_ACCESS, obsolete: false, ...extra,
   };
+}
+// The agent tools in Hubzoid tools, in the server's order (unsectioned rows,
+// then the Workflows section, then Access control; by id inside each).
+// `workflows` overrides the workflow rows, e.g. a hub with the family off.
+function agentTools(workflows = {}) {
+  const tools = { group: "tools", surfaces: ["chat", "mcp"] };
+  return [
+    // Registration order inside a section (capabilities.catalog), not the id.
+    perm("workflows_view", "See workflows and runs",
+      "List this agent's workflows and schedules and check recent runs.",
+      false, { ...tools, section: "workflows", ...workflows }),
+    perm("workflows_manage", "Run and control workflows",
+      "Start a workflow now, pause or resume its schedule, and cancel a run. Runs act as the workflow's own account.",
+      true, { ...tools, section: "workflows", ...workflows }),
+    perm("access_tools", "Manage access from chat",
+      "See and propose access changes in the agents this person manages. Has an effect only for people who manage access. Every change is confirmed in the Console.",
+      true, { ...tools, section: "access", delegate_grantable: false }),
+  ];
 }
 // A granted id that is no longer in the catalogue (capabilities._obsolete).
 function obsoletePerm(permission) {
@@ -780,8 +801,8 @@ function obsoletePerm(permission) {
 }
 // Grantable: current and not included with Use this agent (service._grantable).
 const grantable = (p) => !!p && !p.obsolete && p.default !== "included";
-function row(ts, actor, action, subject, hub, permission) {
-  return { ts, actor, action, subject, hub, permission };
+function row(ts, actor, action, subject, hub, permission, surface = null) {
+  return { ts, actor, action, subject, hub, permission, surface };
 }
 function wf(hub, name, schedule, timezone) {
   return { hub, name, schedule, timezone, error: null, source: `workflows/${name}/main.py` };

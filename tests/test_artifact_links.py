@@ -97,7 +97,10 @@ def test_real_bridge_key_still_works_for_api_callers(hub, monkeypatch):
     assert r.status_code == 200
 
 
-def test_links_never_expire_by_default(hub):
+def test_links_never_expire_by_default_in_legacy_mode(hub, monkeypatch):
+    # The Hubzoid web app (default UI mode) issues 7-day links instead; see
+    # tests/test_chat_artifacts_session.py.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     assert "&e=" not in _signing.artifact_query("c1", "report.txt", hub_dir=hub)
 
 
@@ -133,6 +136,7 @@ def test_deleting_the_secret_revokes_old_links(hub, monkeypatch):
     assert client.get(_query(old)).status_code == 401
 
 
+@pytest.mark.slow
 def test_concurrent_first_use_agrees_on_one_full_secret(hub):
     """Many processes creating the secret at once all end up with the same
     complete value; none can read a partial or empty file."""

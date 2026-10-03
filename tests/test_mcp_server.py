@@ -24,6 +24,13 @@ RPC_HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """The hosted MCP surface here authenticates Open WebUI accounts: Open WebUI
+    mode. Access comes from the Console's grants."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -46,7 +53,7 @@ def _mk_owui_db(path: Path, *, email="alice@example.com", key="sk-test",
     return path
 
 
-def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "") -> Path:
+def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "", oauth_fixture: bool = True) -> Path:
     """A tiny hub: AGENTS.md, one knowledge doc, one restricted tool."""
     hub = tmp_path / "hub"
     (hub / "knowledge").mkdir(parents=True)
@@ -62,6 +69,12 @@ def _mk_hub(tmp_path: Path, *, frontmatter_extra: str = "") -> Path:
         '    """Echo, but only for the clickup group."""\n'
         "    return f'clickup says: {text}'\n"
     )
+    from tests.mcp_credentials import seed
+    from hubzoid.access import store_for
+    if oauth_fixture:
+        seed(hub)
+    # Alice may use the hub; restricted tools need their own grant.
+    store_for(hub).grant("alice@example.com", hub.name, "use_hub", actor="test")
     return hub
 
 
@@ -87,7 +100,7 @@ def _result(resp: httpx.Response) -> dict:
     return payload["result"]
 
 
-def _call(app, body: dict, token: str | None = "sk-test") -> httpx.Response:
+def _call(app, body: dict, token: str | None = "oauth-test") -> httpx.Response:
     async def go():
         async with app.lifespan(app):
             transport = httpx.ASGITransport(app=app)
@@ -108,13 +121,19 @@ def _clean_mcp_env(monkeypatch):
     production. Scrub before every test so no test inherits another's hub."""
     monkeypatch.delenv("MCP_SERVER", raising=False)
     monkeypatch.delenv("MCP_ACCESS_GROUP", raising=False)
+    monkeypatch.setenv("MCP_PUBLIC_URL", "https://hub.example/mcp")
+    # MCP OAuth grants here belong to Open WebUI accounts: the legacy UI mode.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
+    from hubzoid.access import store_for
+
     hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=("clickup",))
+    db = _mk_owui_db(tmp_path / "webui.db")
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    store_for(hub).grant("alice@example.com", hub.name, "clickup", actor="test")
     return hub
 
 
@@ -145,15 +164,14 @@ def test_registry_maps_restricted_permissions(hub):
     assert perms == {"clickup_echo": "clickup"}
 
 
-def test_policy_mcp_surface_allowed_with_group():
+def test_policy_mcp_surface_allowed_with_a_grant():
     from hubzoid import access
 
-    member = access.Identity.make(user="a@x", groups=["clickup"], surface="mcp")
-    outsider = access.Identity.make(user="a@x", groups=[], surface="mcp")
-    slack = access.Identity.make(user="a@x", groups=["clickup"], surface="slack")
-    assert access.is_allowed(member, "clickup")[0]
-    assert not access.is_allowed(outsider, "clickup")[0]
-    assert not access.is_allowed(slack, "clickup")[0]
+    member = access.Identity.make(user="a@x", groups=[], surface="mcp")
+    slack = access.Identity.make(user="a@x", groups=[], surface="slack")
+    assert access.is_allowed(member, "clickup", can=lambda: True)[0]
+    assert not access.is_allowed(member, "clickup", can=lambda: False)[0]
+    assert not access.is_allowed(slack, "clickup", can=lambda: True)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +212,53 @@ def test_tools_list_hides_restricted_for_nonmember(tmp_path, monkeypatch):
     names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
     assert "clickup_echo" not in names
     assert "read_knowledge" in names
+
+
+def _with_gated_builtin(monkeypatch, permission):
+    """A built-in tool wrapped by the access guard (like the capability tools)."""
+    from agents.tool import FunctionTool
+
+    from hubzoid import tools as toolpkg
+    from hubzoid.access.guard import guard_tool
+
+    real = toolpkg.make_all
+
+    def make_all(ctx):
+        out = real(ctx)
+
+        async def run(_ctx, _raw):
+            return "gated ran"
+
+        ft = FunctionTool(name="gated_builtin", description="A gated built-in.",
+                          params_json_schema={"type": "object", "properties": {},
+                                              "additionalProperties": True},
+                          on_invoke_tool=run, strict_json_schema=False)
+        out["gated_builtin"] = guard_tool(ft, permission, ctx.hub_dir)
+        return out
+
+    monkeypatch.setattr(toolpkg, "make_all", make_all)
+
+
+def test_tools_list_hides_gated_builtin_without_the_grant(tmp_path, monkeypatch):
+    hub = _mk_hub(tmp_path)
+    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # no groups
+    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
+    _with_gated_builtin(monkeypatch, "clickup")
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
+    assert "gated_builtin" not in names
+    assert "read_knowledge" in names
+
+
+def test_tools_list_shows_gated_builtin_to_holders(hub, monkeypatch):
+    _with_gated_builtin(monkeypatch, "clickup")  # alice is in the clickup group
+    from hubzoid import mcp_server
+
+    app = mcp_server.build_mcp_app(hub)
+    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
+    assert "gated_builtin" in names
 
 
 def test_tools_call_reads_knowledge(mcp_app):
@@ -280,7 +345,7 @@ def test_bridge_mounts_mcp_when_enabled(bridge_env, monkeypatch):
         assert r.status_code == 401                               # OWUI key required
         r = client.post(
             "/mcp", json=_rpc("tools/list"),
-            headers={**RPC_HEADERS, "Authorization": "Bearer sk-test"},
+            headers={**RPC_HEADERS, "Authorization": "Bearer oauth-test"},
         )
         assert r.status_code == 200
         names = {t["name"] for t in _result(r)["tools"]}
@@ -319,7 +384,7 @@ def _mk_gateway_hub(base: Path, name: str, port: int, *, mcp: bool) -> Path:
     (hub / "AGENTS.md").write_text(f"---\nname: {name}\n---\nbody\n")
     env = f"BRIDGE_PORT={port}\n"
     if mcp:
-        env += "MCP_SERVER=true\n"
+        env += f"MCP_SERVER=true\nMCP_PUBLIC_URL=https://hub.example/b/{name}/mcp\n"
     (hub / ".env").write_text(env)
     return hub
 
@@ -358,39 +423,6 @@ def test_gateway_plan_no_mcp_env_bleed(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # MCP_ACCESS_GROUP — the per-hub front door (gateway multi-tenancy)
 # ---------------------------------------------------------------------------
-def test_access_group_gates_whole_surface(tmp_path, monkeypatch):
-    hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=("clickup",))  # not in "sales"
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
-    from hubzoid import mcp_server
-
-    app = mcp_server.build_mcp_app(hub)
-    # Valid key, wrong team: 401 before a single tool name leaks.
-    assert _call(app, _rpc("tools/list")).status_code == 401
-
-
-def test_access_group_admits_members(tmp_path, monkeypatch):
-    hub = _mk_hub(tmp_path)
-    db = _mk_owui_db(tmp_path / "webui.db", groups=("SALES",))  # case-insensitive
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
-    from hubzoid import mcp_server
-
-    app = mcp_server.build_mcp_app(hub)
-    names = {t["name"] for t in _result(_call(app, _rpc("tools/list")))["tools"]}
-    assert "read_knowledge" in names
-
-
-def test_gateway_plan_carries_access_group(tmp_path):
-    from hubzoid import gateway
-
-    hub = _mk_gateway_hub(tmp_path, "alpha", 8100, mcp=True)
-    (hub / ".env").write_text("BRIDGE_PORT=8100\nMCP_SERVER=true\nMCP_ACCESS_GROUP=sales\n")
-    gp = gateway.plan([hub])
-    assert gp.backends[0].mcp_access_group == "sales"
-
-
 # ---------------------------------------------------------------------------
 # Error paths + identity isolation
 # ---------------------------------------------------------------------------
@@ -435,8 +467,8 @@ def test_denied_restricted_call_flagged_is_error(tmp_path, monkeypatch):
 
 
 def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
-    """Two callers with different groups, interleaved: each tool run must see
-    its own caller's identity (ContextVar scoping inside Tool.run)."""
+    """Two callers, interleaved: each tool run must see its own caller's
+    identity (ContextVar scoping inside Tool.run)."""
     hub = _mk_hub(tmp_path)
     (hub / "tools_local").mkdir()
     (hub / "tools_local" / "whoami.py").write_text(
@@ -469,6 +501,12 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     from hubzoid import mcp_server
 
+    from tests.mcp_credentials import seed
+    seed(hub, token="oauth-alice", email="alice@x.io", account_id="u1")
+    seed(hub, token="oauth-bob", email="bob@x.io", account_id="u2")
+    from hubzoid.access import store_for
+    for who in ("alice@x.io", "bob@x.io"):
+        store_for(hub).grant(who, hub.name, "use_hub", actor="test")
     app = mcp_server.build_mcp_app(hub)
 
     async def go():
@@ -482,57 +520,11 @@ def test_concurrent_requests_do_not_bleed_identity(tmp_path, monkeypatch):
                         headers={**RPC_HEADERS, "Authorization": f"Bearer {token}"},
                     )
                 # alice sleeps longer, so bob's request completes inside her window
-                return await asyncio.gather(call("sk-alice", 0.3, 1), call("sk-bob", 0.05, 2))
+                return await asyncio.gather(call("oauth-alice", 0.3, 1), call("oauth-bob", 0.05, 2))
 
     r_alice, r_bob = asyncio.run(go())
-    assert "alice@x.io|['clickup']" in _result(r_alice)["content"][0]["text"]
-    assert "bob@x.io|[]" in _result(r_bob)["content"][0]["text"]
-
-
-# ---------------------------------------------------------------------------
-# Roster (identity/access.csv) over MCP (unify-access, 0.8.1)
-# ---------------------------------------------------------------------------
-def _add_roster(hub: Path, email: str, groups: str) -> None:
-    (hub / "identity").mkdir(exist_ok=True)
-    (hub / "identity" / "access.csv").write_text(
-        "phone,email,groups\n" f"919800000001,{email},{groups}\n"
-    )
-
-
-def test_roster_grants_restricted_tool_over_mcp(tmp_path, monkeypatch):
-    """A coordinator granted 'clickup' in the roster (not in any OWUI group)
-    can use the restricted tool over MCP — the WhatsApp/OWUI parity fix."""
-    from hubzoid.access.resolver import reset_roster_cache
-
-    reset_roster_cache()
-    hub = _mk_hub(tmp_path)
-    _add_roster(hub, "alice@example.com", "clickup")
-    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # no OWUI groups at all
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    from hubzoid import mcp_server
-
-    app = mcp_server.build_mcp_app(hub)
-    result = _result(_call(
-        app, _rpc("tools/call", {"name": "clickup_echo", "arguments": {"text": "hi"}})
-    ))
-    assert "clickup says: hi" in str(result)
-
-
-def test_roster_cannot_open_mcp_front_door(tmp_path, monkeypatch):
-    """MCP_ACCESS_GROUP is an OWUI-admin boundary: a roster entry naming that
-    group must NOT admit a caller whose OWUI membership lacks it."""
-    from hubzoid.access.resolver import reset_roster_cache
-
-    reset_roster_cache()
-    hub = _mk_hub(tmp_path)
-    _add_roster(hub, "alice@example.com", "sales")  # roster claims the door group
-    db = _mk_owui_db(tmp_path / "webui.db", groups=())  # OWUI does NOT grant sales
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
-    from hubzoid import mcp_server
-
-    app = mcp_server.build_mcp_app(hub)
-    assert _call(app, _rpc("tools/list")).status_code == 401
+    assert _result(r_alice)["content"][0]["text"].startswith("alice@x.io|")
+    assert _result(r_bob)["content"][0]["text"].startswith("bob@x.io|")
 
 
 def test_authenticated_mcp_cannot_read_private_files(hub, mcp_app, monkeypatch):

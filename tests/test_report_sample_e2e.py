@@ -15,6 +15,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.slow  # starts DBOS or another process per test
+
 EXAMPLE = Path(__file__).resolve().parents[1] / "docs" / "examples" / "report"
 ALICE, BOB = "alice@company.com", "bob@company.com"
 
@@ -30,6 +32,7 @@ from hubzoid.access import store_for
 from hubzoid.workflows import runtime
 for who in (%r, %r):
     store_for(sys.argv[1]).upsert_identity(email=who, owui_id="id-" + who)
+    store_for(sys.argv[1]).grant(who, "sales", "use_hub", actor="test")
 runtime.init(sys.argv[1], hub_name="sales")
 runtime.load_workflows(sys.argv[1])
 runtime.launch()

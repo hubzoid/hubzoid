@@ -18,6 +18,8 @@ STABLE_IDS = {
     "exposure.bind", "model.credentials", "backup.age", "scheduler.health",
     "config.layers", "secrets.deployment", "secrets.hub", "secrets.restricted",
     "secrets.names", "auth.google_merge",
+    "ui.mode", "ui.openwebui_extra", "ui.openwebui_data", "exposure.local_mode", "deployment.key",
+    "tools.legacy_management_flag", "access.who", "mcp.access_group",
 }
 
 
@@ -27,7 +29,9 @@ def hub(tmp_path, monkeypatch):
     h.mkdir()
     (h / "AGENTS.md").write_text("---\nname: hub\ndescription: d\nmodel: openrouter/anthropic/claude-haiku-4.5\n---\nbody")
     for k in ("HUBZOID_OPERATIONAL_DB", "HUBZOID_DBOS_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
-              "MODEL", "WEBUI_AUTH", "WEBUI_SECRET_KEY", "HUBZOID_HOST", "BRIDGE_API_KEYS"):
+              "MODEL", "WEBUI_AUTH", "WEBUI_SECRET_KEY", "HUBZOID_HOST", "BRIDGE_API_KEYS",
+              "HUBZOID_UI", "HUBZOID_AUTH", "HUBZOID_SECRET_KEY", "HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK",
+              "HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL", "HUBZOID_PUBLIC_URL", "WEBUI_URL"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     from hubzoid import access, migrations
@@ -48,6 +52,7 @@ def test_ids_are_stable_and_doctor_creates_nothing(hub):
     c = _by_id(checks)
     assert c["db.operational"].status == "info" and "Not created yet" in c["db.operational"].summary
     assert not (hub / ".hubzoid" / "hub.db").exists()  # read only
+    assert not (hub / ".hubzoid" / "secret.key").exists()
     assert c["model.credentials"].status == "ok"
 
 
@@ -62,9 +67,19 @@ def test_unsafe_settings_fail(hub, monkeypatch):
     monkeypatch.setenv("BRIDGE_API_KEYS", "a-properly-long-random-key")
     assert _by_id(doc.run(hub))["auth.bridge_keys"].status == "ok"
 
+    # The web app: an exposed port without sign-in is the local-mode guard.
     monkeypatch.setenv("HUBZOID_HOST", "0.0.0.0")
     c = _by_id(doc.run(hub))
-    assert c["exposure.bind"].status == "warn" and c["auth.chat_signin"].status == "fail"
+    assert c["exposure.bind"].status == "warn" and c["exposure.local_mode"].status == "fail"
+    assert c["auth.chat_signin"].status == "info"
+    monkeypatch.setenv("WEBUI_AUTH", "true")  # the 1.0 name turns Hubzoid sign-in on
+    c = _by_id(doc.run(hub))
+    assert "exposure.local_mode" not in c and c["auth.chat_signin"].status == "warn"  # no first admin
+
+    # Open WebUI mode keeps its 1.0 checks.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    monkeypatch.delenv("WEBUI_AUTH")
+    assert _by_id(doc.run(hub))["auth.chat_signin"].status == "fail"  # off and exposed
     monkeypatch.setenv("WEBUI_AUTH", "true")
     assert _by_id(doc.run(hub))["auth.chat_signin"].status == "fail"  # no secret
     monkeypatch.setenv("WEBUI_SECRET_KEY", "x" * 40)
@@ -145,3 +160,28 @@ def test_old_sqlite_on_python_312_is_a_failure(hub, monkeypatch):
     assert runtime.sqlite_problem("postgresql+psycopg://h/db") is None
     monkeypatch.setattr(sqlite3, "sqlite_version", "3.46.1")
     assert runtime.sqlite_problem("sqlite:///x") is None
+
+
+def test_deprecated_management_flag_warns(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_MANAGEMENT_TOOLS", raising=False)
+    assert "tools.legacy_management_flag" not in _by_id(doc.run(hub))
+    monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "false")  # still a switch, not a warning
+    assert "tools.legacy_management_flag" not in _by_id(doc.run(hub))
+    monkeypatch.setenv("HUBZOID_MANAGEMENT_TOOLS", "true")
+    check = _by_id(doc.run(hub))["tools.legacy_management_flag"]
+    assert check.status == "warn" and "access_tools" in check.summary
+
+
+def test_doctor_says_who_may_use_the_agent(hub, monkeypatch):
+    from hubzoid.access import store_for
+
+    gs = store_for(hub)
+    check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "warn" and "Nobody may use hub" in check.summary
+    gs.provision_owner("owner@example.org", "hub")
+    check = _by_id(doc.run(hub))["access.who"]
+    assert check.status == "info" and "owner@example.org" in check.summary
+    gs.grant("ann@example.org", "hub", "use_hub", actor="t")
+    assert _by_id(doc.run(hub))["access.who"].summary == "2 people may use hub"
+    monkeypatch.setenv("MCP_ACCESS_GROUP", "sales")
+    assert _by_id(doc.run(hub))["mcp.access_group"].status == "warn"

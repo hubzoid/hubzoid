@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hubzoid": {
+      "type": "http",
+      "url": "${HUBZOID_MCP_URL}"
+    }
+  }
+}

@@ -144,12 +144,16 @@ def test_call_jev_is_the_only_name():
 
 def test_call_jev_returns_the_checked_answers(hub_dir, tmp_path, monkeypatch):
     import httpx
+    from hubzoid import jev
 
     reply = {"model": "typesafe/jev-1.13-20260917",
              "answers": {"is_bug": {"type": "noul", "noul": 0.96}},
              "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.000019992}}
     sent = []
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: sent.append(kw) or httpx.Response(200, json=reply))
+    async def fake_post(body, key, timeout):
+        sent.append(body)
+        return httpx.Response(200, json=reply)
+    monkeypatch.setattr(jev, "_post", fake_post)
     monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
     q = {"is_bug": {"type": "noul", "instructions": "Is this a defect?"}}
     eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
@@ -160,7 +164,7 @@ def test_call_jev_returns_the_checked_answers(hub_dir, tmp_path, monkeypatch):
             assert hub.call_jev("blank page", q, model="~typesafe/jev-latest") == hub.call_jev("blank page", q)
     finally:
         wctx._JEV = None
-    assert [s["json"]["model"] for s in sent] == ["typesafe/jev-1.13", "~typesafe/jev-latest",
+    assert [s["model"] for s in sent] == ["typesafe/jev-1.13", "~typesafe/jev-latest",
                                                   "typesafe/jev-1.13"]
     rows = _rows(tmp_path)
     assert {(r["kind"], r["surface"], r["subject"]) for r in rows} == {("jev", "workflow", "workflow:triage")}
@@ -168,10 +172,13 @@ def test_call_jev_returns_the_checked_answers(hub_dir, tmp_path, monkeypatch):
 
 def test_call_jev_never_returns_an_empty_answer(hub_dir, tmp_path, monkeypatch):
     import httpx
+    from hubzoid import jev
 
     from hubzoid.jev import JevResponseError
 
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Response(200, json={"answers": {}}))
+    async def fake_post(body, key, timeout):
+        return httpx.Response(200, json={"answers": {}})
+    monkeypatch.setattr(jev, "_post", fake_post)
     monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
     eng = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
     _wire_real_jev()
@@ -189,14 +196,14 @@ def test_litellm_path_uses_json_mode_and_records_usage(hub_dir, tmp_path, monkey
 
     calls = []
 
-    def fake_completion(**kw):
+    async def fake_completion(**kw):
         calls.append(kw)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content='{"team": "payments", "urgent": true}'))],
             usage=SimpleNamespace(prompt_tokens=120, completion_tokens=15),
         )
 
-    monkeypatch.setattr(litellm, "completion", fake_completion)
+    monkeypatch.setattr(litellm, "acompletion", fake_completion)
     monkeypatch.setattr(litellm, "completion_cost", lambda **kw: 0.0021)
     out = runtime_lib.complete_once(hub_dir, {
         "prompt": "route it", "system": None, "model": "openrouter/anthropic/claude-haiku-4.5",
@@ -237,11 +244,11 @@ def test_claude_local_path_runs_one_turn_with_no_tools(hub_dir, tmp_path, monkey
 
 def test_jev_once_posts_the_decisions_shape(hub_dir, tmp_path, monkeypatch):
     import httpx
-
+    from hubzoid import jev
     sent = {}
 
-    def fake_post(url, json=None, timeout=None, headers=None):
-        sent.update(url=url, body=json, headers=headers)
+    async def fake_post(body, key, timeout):
+        sent.update(url=jev.URL, body=body, headers={"Authorization": f"Bearer {key}"})
         return httpx.Response(200, json={
             "model": "typesafe/jev-1.13-20260917",
             "answers": {"is_bug": {"type": "noul", "noul": 0.96}},
@@ -249,7 +256,7 @@ def test_jev_once_posts_the_decisions_shape(hub_dir, tmp_path, monkeypatch):
         })
 
     monkeypatch.setenv("JEV_OPENROUTER_API_KEY", "sk-or-jev-test")
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     questions = {"is_bug": {"type": "noul", "instructions": "Is this a defect?",
                             "criteria": {"true": "broken", "false": "question"}}}
     data = runtime_lib.jev_once(hub_dir, {"model": "typesafe/jev-1.13",

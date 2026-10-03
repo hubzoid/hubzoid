@@ -161,12 +161,12 @@ def test_model_can_load_promoted_agent_as_skill(runtime):
 
 
 # ---------------------------------------------------------------------------
-# Issue 3 verification: tool activity surfaces in the stream as blockquote
-# status lines, not silent pauses.
+# Issue 3 verification: tool activity surfaces in the stream as tool rows,
+# not silent pauses.
 # ---------------------------------------------------------------------------
 def test_streaming_surfaces_tool_calls_inline(runtime):
-    """Streamed output must contain a `> ↳ **tool_name**` blockquote when
-    the model calls a tool — one line per call, no separate confirm.
+    """Streamed output must contain the chat app's tool row (a `<details
+    type="tool_calls">` block) when the model calls a tool, one per call.
     """
     async def collect():
         chunks: list[str] = []
@@ -175,11 +175,11 @@ def test_streaming_surfaces_tool_calls_inline(runtime):
         return "".join(chunks)
 
     full = asyncio.new_event_loop().run_until_complete(collect())
-    # One ↳ marker per tool call. No 🔧 (collapsed into ↳ at call start).
-    assert "↳" in full, f"no tool-activity marker in stream:\n{full!r}"
+    # One tool row per call. No 🔧 (the old two-line format).
+    assert '<details type="tool_calls"' in full, f"no tool row in stream:\n{full!r}"
     assert "🔧" not in full, f"old two-line format detected:\n{full!r}"
     # The model called read_knowledge, so its short name should appear.
-    assert "read_knowledge" in full
+    assert 'name="read_knowledge"' in full
     # No "returned" / "B returned" / "KB returned" noise.
     assert "returned" not in full
     # And the actual answer should still be there.

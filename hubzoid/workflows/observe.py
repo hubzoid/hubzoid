@@ -13,6 +13,7 @@ administration alone never reveals a person's run results.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,12 +58,15 @@ def _run_owner(client, workflow_id: str) -> dict | None:
         return None
 
 
-def may_see_results(owner: dict | None, viewer: str | None) -> bool:
-    """Whether `viewer` may see what a run produced. Fails closed."""
+def may_see_results(owner: dict | None, viewer: str | None, *,
+                    legacy_visible: bool = True) -> bool:
+    """Whether `viewer` may see what a run produced. Fails closed.
+    `legacy_visible=False` keeps legacy service runs private too: for readers
+    who are not the hub's managers (the agent's workflow tools)."""
     if not owner:
         return False
     if owner.get("source") == "legacy-service":
-        return True          # a hub service run: no person's data or connections
+        return legacy_visible  # a hub service run: no person's data or connections
     subject = (owner.get("subject") or "").strip().lower()
     return bool(viewer) and subject == viewer.strip().lower()
 
@@ -121,14 +125,16 @@ def definitions(hub_dir) -> list[dict]:
                         timezone="UTC",
                         error=None,
                         run_as=None,
+                        webhook=None,
                     )
                     try:
                         args = {
                             k.arg: ast.literal_eval(k.value)
                             for k in dec.keywords
-                            if k.arg in ("schedule", "timezone", "run_as")
+                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook")
                         }
                         row["run_as"] = args.get("run_as")
+                        row["webhook"] = args.get("on_webhook")
                         row["schedule"] = (
                             ast.literal_eval(dec.args[0])
                             if dec.args
@@ -181,6 +187,8 @@ def catalog(hub_dir) -> list[dict]:
             row["state"] = "error"
         elif row["name"] in paused:
             row["state"] = "paused"
+        elif row.get("webhook") and not row["schedule"]:
+            row["state"] = "event"
         elif not row["schedule"]:
             row["state"] = "manual"
         elif not enabled:
@@ -235,6 +243,7 @@ def markdown_catalog(hub_dir) -> list[dict]:
             hub=hub_dir.name.lower(), name=f"md:{t.name}", kind="markdown",
             source=f"schedule/{t.name}.md",
             schedule=(f"on webhook {t.on_webhook}" if t.is_webhook else t.schedule),
+            webhook=t.on_webhook if t.is_webhook else None,
             timezone="server local time", error=None, enabled=on,
             state=("paused" if f"md:{t.name}" in paused else "definition-disabled" if not t.enabled
                    else "disabled" if disabled else "event" if t.is_webhook else "scheduled"),
@@ -256,7 +265,7 @@ def markdown_catalog(hub_dir) -> list[dict]:
 STATUS_BUCKETS = {
     "succeeded": ["SUCCESS"],
     "failed": ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"],
-    "running": ["PENDING", "ENQUEUED"],
+    "running": ["PENDING", "ENQUEUED", "DELAYED"],
     "cancelled": ["CANCELLED"],
 }
 _KNOWN_STATUSES = {
@@ -302,6 +311,17 @@ def resolve_statuses(values) -> list[str] | None:
     return [s for s in out if not (s in seen or seen.add(s))]
 
 
+def _output_text(value, limit: int) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)[:limit]
+        except (TypeError, ValueError):
+            pass
+    return str(value)[:limit]
+
+
 def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = None) -> dict:
     # `created` is the ordering/pagination key: it is what DBOS's own `sort_desc`
     # orders by (created_at), so merging and paginating cross-agent results by the
@@ -327,7 +347,7 @@ def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = No
         started=started,
         completed=completed,
         duration_ms=completed - started if completed and started else None,
-        output=(str(w.output)[:8000] if w.output is not None else None) if visible else None,
+        output=_output_text(w.output, 8000) if visible else None,
         error=(str(w.error)[:8000] if w.error else None) if visible else _error_summary(w.error),
         redacted=(not visible) and w.output is not None,
         run_as=(owner or {}).get("subject"),
@@ -364,13 +384,16 @@ def runs(
     offset=0,
     viewer: str | None = None,
     trusted: bool = False,
+    legacy_visible: bool = True,
 ) -> list[dict]:
     """Single-agent run history. Includes per-step detail when ``run_id`` is set.
     Filters (name/status/date/run-id) are applied by DBOS before pagination.
 
     Results are redacted unless ``viewer`` is the account the run acted as (see
     the module docstring). ``trusted`` is only for the server's own operator
-    (the CLI on the box), who can read the database directly anyway."""
+    (the CLI on the box), who can read the database directly anyway.
+    ``legacy_visible=False`` redacts legacy service runs as well (see
+    ``may_see_results``)."""
     from dbos import DBOSClient
     from .runtime import _app_name
 
@@ -407,7 +430,7 @@ def runs(
         for w in result:
             steps = client.list_workflow_steps(w.workflow_id) if run_id else None
             owner = _identity_of(steps) if run_id else _run_owner(client, w.workflow_id)
-            visible = trusted or may_see_results(owner, viewer)
+            visible = trusted or may_see_results(owner, viewer, legacy_visible=legacy_visible)
             row = _run_row(hub_name, w, visible=visible, owner=owner)
             if run_id:
                 row["steps"] = [_step_row(x, visible) for x in steps]
@@ -426,8 +449,7 @@ def _step_row(x: dict, visible: bool) -> dict:
         completed=x.get("completed_at_epoch_ms"),
         error=(str(x["error"])[:4000] if x.get("error") else None) if shown
         else _error_summary(x.get("error")),
-        output=(str(x["output"])[:4000] if x.get("output") is not None else None)
-        if shown else None,
+        output=_output_text(x.get("output"), 4000) if shown else None,
         redacted=(not shown) and x.get("output") is not None,
     )
 

@@ -35,15 +35,16 @@ edition.
 ## One hub, three ways to work
 
 - **Chat.** Teammates ask questions and take authorized actions using the
-  hub's context. The bundled web chat is Open WebUI. Slack and other
+  hub's context. The bundled web chat is the Hubzoid web app. Slack and other
   channels each have their own setup.
 - **Workflows.** Repeatable work on demand or on a schedule, with recorded
   runs. Markdown tasks live in `schedule/`. Python workflows live in
   `workflows/`.
 - **Personal assistants through MCP.** A supported MCP client, such as
   Claude Code or Codex, connects to the hub and reuses its tools,
-  knowledge, and skills under the hub's access rules. Opt in with
-  `MCP_SERVER=true` in `.env`.
+  knowledge, and skills under the hub's access rules. It is on by default
+  for a local run and for an https public URL; `MCP_SERVER=false` turns it
+  off.
 
 The three share the hub's context. Conversation history, workflow state,
 and permissions stay separate.
@@ -66,8 +67,8 @@ runtime. Provider and channel capabilities still vary. The setup guide is
 
 - **An OpenAI-compatible HTTP API** at `/v1/chat/completions`. Any
   OpenAI client works against it.
-- **A bundled chat surface** (Open WebUI) on `:3080`. Multi-user,
-  history, file uploads.
+- **A web app** on `:3080`. Chat with history and file uploads, and
+  sign-in when a team shares the hub.
 - **An Admin Console** at `/portal/` for agent access, restricted tools,
   and inspecting runs.
 - **Pre-shipped tools.** File reads, knowledge reads, skill loads, HTTP,
@@ -85,12 +86,14 @@ boilerplate. No prompt-engineering scaffolding. The markdown is the IDE.
 ## Defaults
 
 - A fresh interactive `hubzoid init` detects a signed-in Claude or Codex
-  CLI and saves your choice. With no choice made, `MODEL` falls back to
+  CLI and saves your choice, or offers to save an OpenRouter, Anthropic or
+  OpenAI key when there is none. With no choice made, `MODEL` falls back to
   `claude-local`. Neither local runtime needs an API key. The CLI's own
   sign-in and usage limits apply.
-- Open WebUI binds to `127.0.0.1:3080`. Not reachable from outside.
-- Local single-user mode by default. Turn on authentication before a
-  shared deployment.
+- The web app binds to `127.0.0.1:3080`. Not reachable from outside.
+- Local single-user mode by default: sign-in is off, so `hubzoid run`
+  keeps the port on this machine. Turn sign-in on (`HUBZOID_AUTH=true`)
+  before a shared deployment.
 
 ## Scheduled work
 

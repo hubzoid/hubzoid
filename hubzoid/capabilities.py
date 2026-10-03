@@ -1,8 +1,9 @@
 """Capabilities the Admin Console can grant, in one small registry.
 
 A capability is a permission id a person or service can be granted in a hub,
-plus the few facts the Console needs to show it: a label, a group, a help text,
-whether it is sensitive, and which settings it needs before it can run.
+plus the few facts the Console needs to show it: a label, a group (and, inside
+a group, an optional section), a help text, whether it is sensitive, and which
+settings it needs before it can run.
 
 Two questions stay separate:
   * Availability: is the capability implemented, enabled for this hub and are
@@ -39,14 +40,17 @@ from __future__ import annotations
 import importlib
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 log = logging.getLogger(__name__)
 
 #: Drawer groups, in display order. Obsolete grants get their own group last.
 GROUPS = ("hub", "tools", "restricted", "workflows", "admin")
+#: Optional sections inside a group, in display order after the unsectioned
+#: rows. Presentation only: e.g. Hubzoid tools > Workflows, Access control.
+SECTIONS = ("workflows", "access")
 OBSOLETE_GROUP = "obsolete"
 SURFACES = frozenset({"chat", "mcp", "workflow"})
 DEFAULTS = ("grant", "included")
@@ -83,10 +87,14 @@ class Capability:
     surfaces: tuple[str, ...] = ()   # implemented surfaces only: chat, mcp, workflow
     requires: tuple[str, ...] = ()   # setting NAMES that must be present
     missing: str = "Not configured"  # short status when a required setting is absent
-    enabled_by: str = ""             # optional hub switch; present and false -> disabled
+    enabled_by: str | tuple[str, ...] = ""  # optional hub switch(es); any present and false -> disabled
     default: str = "grant"           # grant: explicit grant | included: comes with use_hub
     sensitive: bool = False
     delegate_grantable: bool = True  # False: only organization administrators grant it
+    section: str = ""                # optional sub-heading inside the group (SECTIONS)
+    # Optional hub check, run only when the settings allow it: returns a short
+    # status ("No workflows in this agent") when it can't run here, else "".
+    probe: Callable[[Path], str] | None = field(default=None, compare=False)
 
     def __post_init__(self):
         if not _ID.match(self.permission or ""):
@@ -95,6 +103,8 @@ class Capability:
             raise ValueError(f"capability {self.permission!r} needs a label")
         if self.group not in GROUPS:
             raise ValueError(f"capability {self.permission!r}: group must be one of {', '.join(GROUPS)}")
+        if self.section and self.section not in SECTIONS:
+            raise ValueError(f"capability {self.permission!r}: section must be one of {', '.join(SECTIONS)}")
         if self.default not in DEFAULTS:
             raise ValueError(f"capability {self.permission!r}: default must be grant or included")
         unknown = set(self.surfaces) - SURFACES
@@ -158,6 +168,25 @@ MANAGE_ACCESS = register(Capability(
 
 # ---- configuration status (names only, never values) ----------------------------
 
+def _switches(cap: Capability) -> tuple[str, ...]:
+    return (cap.enabled_by,) if isinstance(cap.enabled_by, str) and cap.enabled_by \
+        else tuple(cap.enabled_by or ())
+
+
+def switched_off(cap: Capability, env=None) -> bool:
+    """Whether a hub switch named by `cap.enabled_by` is present and false in
+    `env` (default: this process's environment). Tool modules use it to leave
+    their tools out entirely; the catalogue reports the same as "Disabled"."""
+    import os
+
+    env = os.environ if env is None else env
+    for switch in _switches(cap):
+        raw = (env.get(switch) or "").strip().lower()
+        if raw and raw not in _TRUTHY:
+            return True
+    return False
+
+
 class _Settings:
     """What this process can see of a hub's settings without fetching a secret:
     the environment before any hub layer, then the hub and restricted files
@@ -185,7 +214,20 @@ class _Settings:
 
     def status(self, cap: Capability) -> tuple[bool | None, str]:
         """(available, short status). available is None when a named secret
-        that was not read could hold what is missing."""
+        that was not read could hold what is missing. A capability's `probe`
+        runs last, only when its settings allow it."""
+        available, status = self._settings_status(cap)
+        if available is not True or cap.probe is None:
+            return available, status
+        try:
+            problem = cap.probe(self.hub_dir) or ""
+        except Exception:  # noqa: BLE001 — report "not checked", never guess
+            log.warning("capabilities: probe for %s failed in %s", cap.permission,
+                        self.hub_dir.name, exc_info=True)
+            return None, NOT_CHECKED
+        return (False, problem) if problem else (True, "")
+
+    def _settings_status(self, cap: Capability) -> tuple[bool | None, str]:
         if not cap.requires and not cap.enabled_by:
             return True, ""
         if self._values is None:
@@ -197,8 +239,8 @@ class _Settings:
                 self._unread = [None]
         from . import config_secrets as cs
 
-        if cap.enabled_by:
-            raw = (self._values.get(cap.enabled_by) or "").strip().lower()
+        for switch in _switches(cap):
+            raw = (self._values.get(switch) or "").strip().lower()
             if raw and raw not in _TRUTHY:
                 return False, DISABLED
         absent = [k for k in cap.requires if not (self._values.get(k) or "").strip()]
@@ -218,8 +260,8 @@ class _Settings:
 def _entry(cap: Capability, available: bool | None, status: str) -> dict:
     return dict(
         permission=cap.permission, label=cap.label, description=cap.description,
-        sensitive=cap.sensitive, group=cap.group, surfaces=list(cap.surfaces),
-        status=status, available=available, default=cap.default,
+        sensitive=cap.sensitive, group=cap.group, section=cap.section,
+        surfaces=list(cap.surfaces), status=status, available=available, default=cap.default,
         delegate_grantable=cap.delegate_grantable, obsolete=False,
     )
 
@@ -268,10 +310,11 @@ def _connectors(hub_dir: Path, taken: set[str]) -> list[dict]:
             continue
         taken.add(pid)
         group = row.get("group") if row.get("group") in GROUPS else "tools"
+        section = row.get("section") if row.get("section") in SECTIONS else ""
         out.append(dict(
             permission=pid, label=row.get("label") or _title(pid),
             description=row.get("description") or "", sensitive=bool(row.get("sensitive", True)),
-            group=group, surfaces=[s for s in row.get("surfaces") or () if s in SURFACES],
+            group=group, section=section, surfaces=[s for s in row.get("surfaces") or () if s in SURFACES],
             status=row.get("status") or "", available=row.get("available", True),
             default="grant", delegate_grantable=bool(row.get("delegate_grantable", True)),
             obsolete=False,
@@ -283,7 +326,7 @@ def _obsolete(permission: str) -> dict:
     return dict(
         permission=permission, label=_title(permission),
         description="This capability no longer exists in this agent. You can remove it, but it can't be granted again.",
-        sensitive=False, group=OBSOLETE_GROUP, surfaces=[], status=NO_LONGER_AVAILABLE,
+        sensitive=False, group=OBSOLETE_GROUP, section="", surfaces=[], status=NO_LONGER_AVAILABLE,
         available=False, default="grant", delegate_grantable=True, obsolete=True,
     )
 
@@ -297,8 +340,10 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
     obsolete entries so they stay visible and removable.
 
     Each entry: permission, label, description, sensitive (the original
-    fields) plus group, surfaces, status, available, default,
-    delegate_grantable and obsolete. Never contains a setting value."""
+    fields) plus group, section, surfaces, status, available, default,
+    delegate_grantable and obsolete. Never contains a setting value.
+    Within a group, unsectioned rows come first, then each section in
+    SECTIONS order."""
     hub_dir = Path(hub_dir)
     settings = _Settings(hub_dir)
     entries: dict[str, dict] = {}
@@ -322,10 +367,21 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
         entries[name] = dict(
             permission=name, label=meta.get("label", _title(name)),
             description=meta.get("description", "Use the restricted tools assigned to this capability."),
-            sensitive=bool(meta.get("sensitive", False)), group="restricted", surfaces=[],
+            sensitive=bool(meta.get("sensitive", False)), group="restricted", section="", surfaces=[],
             status="", available=True, default="grant", delegate_grantable=True, obsolete=False,
         )
     for name in sorted({_norm(g) for g in granted} - set(entries) - {""}):
         entries[name] = _obsolete(name)
     order = {g: i for i, g in enumerate((*GROUPS, OBSOLETE_GROUP))}
-    return sorted(entries.values(), key=lambda e: (order.get(e["group"], len(order)), e["permission"]))
+    sections = {s: i + 1 for i, s in enumerate(SECTIONS)}
+    # Inside a section, built-ins keep the order their module registered them
+    # (e.g. "See workflows and runs" before "Run and control workflows").
+    registered_at = {cap.permission: i for i, cap in enumerate(registered())}
+
+    def key(e):
+        section = e.get("section") or ""
+        return (order.get(e["group"], len(order)), sections.get(section, 0),
+                registered_at.get(e["permission"], len(registered_at)) if section else 0,
+                e["permission"])
+
+    return sorted(entries.values(), key=key)

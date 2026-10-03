@@ -12,6 +12,8 @@ from hubzoid import portal
 
 
 def test_mount_serves_api_and_static(tmp_path, monkeypatch):
+    # The Open WebUI session check: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     eng = db.engine_for(tmp_path)  # real per-hub sqlite under tmp
     access._stores.clear()
 
@@ -24,7 +26,7 @@ def test_mount_serves_api_and_static(tmp_path, monkeypatch):
     assert c.get("/portal/api/me").status_code == 401
 
     # dev user that is an org admin -> 200 (dev override is a two-part opt-in)
-    access.store_for(tmp_path).bootstrap(["dev@corp"], authoritative=True)
+    access.store_for(tmp_path).bootstrap(["dev@corp"])
     monkeypatch.setenv("HUBZOID_PORTAL_DEV_USER", "dev@corp")
     # DEV_USER alone is not trusted without the explicit DEV flag
     monkeypatch.delenv("HUBZOID_PORTAL_DEV", raising=False)

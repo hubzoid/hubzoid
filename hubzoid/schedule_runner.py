@@ -23,7 +23,7 @@ identically. The runner injects two internal tools (`run_git`,
 After a DONE run, the runner — not the agent — captures the result:
 `git add/commit` scoped to the task's declared `commit:` pathspecs only
 (a dirty tree elsewhere is never swept in), then optionally
-`pull --rebase` + `push`.
+`pull --rebase --autostash` + a push of the current branch.
 
 Every step is appended as JSONL to
 `<hub>/.hubzoid/schedule/<task>/runs/<ts>.jsonl` for live tailing and
@@ -202,9 +202,10 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
     A dirty tree elsewhere (raw_data clones, secrets, local edits) is never
     swept in — this is the safety property unattended runs depend on.
 
-    With `push`, integrates the remote first via `pull --rebase` so the push
-    fast-forwards. A rebase conflict is aborted cleanly and raised: the
-    commit stays local, nothing is pushed, a human resolves.
+    With `push`, integrates the remote first (`pull --rebase --autostash`, see
+    `push_head`) so the push fast-forwards. A conflict leaves the checkout as
+    it was and raises: the commit stays local, nothing is pushed, a human
+    resolves.
     """
     hub_dir = Path(hub_dir)
     top = repo_toplevel(hub_dir)
@@ -230,24 +231,98 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
     return sha
 
 
+def _git_run(top: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(top), *args],
+                          capture_output=True, text=True, check=False)
+
+
+def _stash_top(top: Path) -> tuple[str, str]:
+    """(commit, message) of the newest stash entry, or ("", "") when empty.
+    Git stores an autostash it could not put back with the message
+    "autostash" (not translated)."""
+    out = _git_run(top, "stash", "list", "-n", "1", "--format=%H%x00%gs").stdout.strip()
+    sha, _, subject = out.partition("\0")
+    return sha, subject
+
+
+def _push_args(top: Path) -> list[str]:
+    """`push <remote> HEAD:<branch>` for the current branch only, never every
+    matching branch or a tag (whatever `push.default` says). The remote is the
+    one a plain `git push` would use; the branch is the upstream's when pushing
+    to the upstream's remote, else the same name. Falls back to a plain `push`
+    (and its own error) when there is no branch or remote to read."""
+    ref = _git_run(top, "symbolic-ref", "-q", "HEAD").stdout.strip()
+    if not ref:
+        return ["push"]
+    fmt = "%(push:remotename)%00%(upstream:remotename)%00%(upstream:remoteref)"
+    out = _git_run(top, "for-each-ref", f"--format={fmt}", ref).stdout.strip("\n")
+    push_remote, up_remote, up_ref = (out.split("\0") + ["", "", ""])[:3]
+    if not push_remote:
+        return ["push"]
+    dest = up_ref if (up_ref and up_remote == push_remote) else ref
+    return ["push", push_remote, f"HEAD:{dest}"]
+
+
+def _restore_after_autostash(top: Path, head: str, stash: str) -> str:
+    """Put the checkout back as it was before the pull: the branch at `head`
+    (the run's commit, not rebased) and the uncommitted changes the autostash
+    held, staged as they were. Returns "" when restored, else what is left."""
+    reset = _git_run(top, "reset", "-q", "--hard", head)
+    if reset.returncode != 0:
+        return f"could not reset to {head[:10]}: {reset.stderr.strip()}"
+    applied = _git_run(top, "stash", "apply", "-q", "--index", stash)
+    if applied.returncode != 0:
+        _git_run(top, "reset", "-q", "--hard", head)
+        applied = _git_run(top, "stash", "apply", "-q", stash)
+    if applied.returncode != 0:
+        return (f"the uncommitted changes are kept in the stash ({stash[:10]}); "
+                "restore them with `git stash pop`")
+    if _stash_top(top)[0] == stash:
+        _git_run(top, "stash", "drop", "-q")
+    return ""
+
+
 def push_head(hub_dir: Path) -> None:
-    """Integrate the remote (`pull --rebase`) and push. Safe to repeat: pushing
-    an already-pushed branch is a no-op. A rebase conflict is aborted cleanly
-    and raised, leaving the commit local for a human to resolve."""
+    """Integrate the remote and push the current branch. Safe to repeat:
+    pushing an already-pushed branch is a no-op.
+
+    The rebase runs with `--autostash`, so uncommitted changes elsewhere in a
+    shared checkout (another hub's run, a `raw_data/` pull) never block it.
+    They are set aside for the rebase and put back, never committed and never
+    pushed. Only the current branch goes out: `push <remote> HEAD:<branch>`.
+
+    Two failures leave the checkout as it was and raise: a rebase conflict
+    (the rebase is aborted), and uncommitted changes that conflict with what
+    the remote brought in (the branch is reset to the run's commit and the
+    changes are restored). Either way the commit stays local, unpushed."""
     top = repo_toplevel(Path(hub_dir))
     if top is None:
         raise RuntimeError(f"{hub_dir} is not inside a git repository; cannot push.")
-    pr = subprocess.run(["git", "-C", str(top), "pull", "--rebase"],
-                        capture_output=True, text=True, check=False)
+    head = _git_run(top, "rev-parse", "HEAD").stdout.strip()
+    stash_before = _stash_top(top)[0]
+    pr = _git_run(top, "pull", "--rebase", "--autostash")
     if pr.returncode != 0:
-        subprocess.run(["git", "-C", str(top), "rebase", "--abort"],
-                       capture_output=True, text=True, check=False)
+        # Aborting restores the run's commit and re-applies the autostash.
+        _git_run(top, "rebase", "--abort")
+        conflicts = [ln for ln in pr.stdout.splitlines() if ln.startswith("CONFLICT")]
         raise RuntimeError(
             "git pull --rebase failed (conflict?). The commit exists "
-            "locally but was NOT pushed; resolve by hand.\n" + pr.stderr.strip()
+            "locally but was NOT pushed; resolve by hand.\n"
+            + "".join(ln + "\n" for ln in conflicts) + pr.stderr.strip()
         )
-    ps = subprocess.run(["git", "-C", str(top), "push"],
-                        capture_output=True, text=True, check=False)
+    stash_after, subject = _stash_top(top)
+    if stash_after and stash_after != stash_before and subject == "autostash":
+        # Git rebased, but putting the uncommitted changes back conflicted
+        # (it then keeps them in the stash and leaves conflict markers).
+        left = _restore_after_autostash(top, head, stash_after)
+        raise RuntimeError(
+            "uncommitted changes elsewhere in this checkout conflict with changes "
+            "pulled from the remote, so the push was skipped. The checkout is "
+            + ("as it was" if not left else f"back at the run's commit, but {left}")
+            + ". The commit exists locally but was NOT pushed; commit or discard "
+            "those changes, then run the task again."
+        )
+    ps = _git_run(top, *_push_args(top))
     if ps.returncode != 0:
         raise RuntimeError(
             "git push failed. The commit exists locally but was NOT "
@@ -591,11 +666,17 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
                      task.max_rounds, f" (carry: {carry[:80]})" if carry else "")
             t0 = time.monotonic()
             round_status = "error"
+            failure = None
             try:
                 with _request_ctx.chat_scope(None):
                     try:
                         reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
-                        round_status = "error" if "[agent error:" in reply else "ok"
+                        # A usage limit (or refused login, or overload) reads as a
+                        # plain sentence without the marker; the runtime records
+                        # the failure in the request context instead.
+                        failure = _request_ctx.run_failure()
+                        failed = "[agent error:" in reply or failure is not None
+                        round_status = "error" if failed else "ok"
                     finally:
                         _record_round_usage(hub_dir, task, round_status, t0)
             except asyncio.TimeoutError:
@@ -616,14 +697,19 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             rlog.emit(event="round_end", round=round_no, status=status or "missing",
                       note=note, duration_s=dt)
 
-            if "[agent error:" in reply and status is None:
+            if round_status == "error" and status is None:
                 consecutive_errors += 1
-                log.error("schedule[%s] round %d agent error (%d consecutive)",
-                          task.name, round_no, consecutive_errors)
+                kind = (failure or {}).get("kind") or "other"
+                reset_at = (failure or {}).get("reset_at")
+                log.error("schedule[%s] round %d agent error: %s%s (%d consecutive)",
+                          task.name, round_no, kind,
+                          f", resets {reset_at}" if reset_at else "", consecutive_errors)
                 if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
-                    result.error = ("backend erroring repeatedly; aborting run "
-                                    f"after {consecutive_errors} bad rounds")
-                    rlog.emit(event="error", where="agent", error=result.error)
+                    result.error = (f"backend erroring repeatedly ({kind}"
+                                    + (f", resets {reset_at}" if reset_at else "")
+                                    + f"); aborting run after {consecutive_errors} bad rounds")
+                    rlog.emit(event="error", where="agent", error=result.error,
+                              error_kind=kind, reset_at=reset_at)
                     break
                 carry = "CONTINUE — previous round failed with a backend error"
                 continue

@@ -26,7 +26,6 @@ def hub(tmp_path, monkeypatch):
     (root / "AGENTS.md").write_text("---\nname: hub\n---\nSynthetic test")
     (root / "raw_data").mkdir()
     gs = store_for(root)
-    gs.set_authoritative(True, hub="hub")
     for who in (ALICE, BOB):
         gs.upsert_identity(email=who, owui_id=who)
         gs.grant(who, "hub", "use_hub", actor="test")

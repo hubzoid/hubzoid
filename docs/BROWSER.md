@@ -93,3 +93,37 @@ compose file supplies it. In dev/direct mode HubZoid runs the sidecar on
 ```
 pytest -m e2e_browser        # spawns a real sidecar; pooled case needs Docker
 ```
+
+## Pooled without docker-compose (systemd or bare bridges)
+
+Compose is one deployment option. For a hub running in a host virtualenv or a
+systemd unit, run the sidecars separately and set the hub environment explicitly.
+The following matches the pinned Playwright MCP v0.0.81 integration:
+
+```sh
+docker network create hubzoid-browser
+docker run -d --name browserless --network hubzoid-browser \
+  --restart unless-stopped --memory 2g \
+  -e CONCURRENT=2 -e QUEUED=5 -e TIMEOUT=60000 -e TOKEN=hubzoid \
+  ghcr.io/browserless/chromium:latest
+docker run -d --name playwright-mcp --network hubzoid-browser \
+  --restart unless-stopped -p 127.0.0.1:8931:8931 \
+  --entrypoint node mcr.microsoft.com/playwright/mcp:v0.0.81 \
+  /app/cli.js --host=0.0.0.0 --port=8931 --headless \
+  '--cdp-endpoint=ws://browserless:3000?token=hubzoid'
+```
+
+Set these in the hub's `.env` or systemd environment, then restart the bridge:
+
+```dotenv
+HUBZOID_BROWSER=true
+HUBZOID_BROWSER_MCP_URL=http://localhost:8931/mcp
+```
+
+Use `localhost` in the MCP URL: this pinned sidecar validates the HTTP Host
+header, and `127.0.0.1` may be refused. Publishing to loopback keeps the sidecar
+private. The clean `node /app/cli.js` entrypoint avoids the image's local-browser
+flags competing with `--cdp-endpoint`. Do not add `--isolated` in pooled mode.
+A hub-local `.mcp.json` `playwright` entry still overrides this shared browser.
+For reproducible deployments, replace the browserless `latest` tag with your
+validated image digest when provisioning the host.

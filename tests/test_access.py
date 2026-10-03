@@ -1,7 +1,7 @@
 """Tests for hubzoid.access — identity, policy, the tool guard, loader, audit.
 
 Covers the enforcement essence: a restricted tool is hidden from and denied to
-a caller without the matching group, the decision is logged, and a hub with no
+a caller without the matching grant, the decision is logged, and a hub with no
 restricted/ folder is completely unaffected.
 """
 from __future__ import annotations
@@ -22,6 +22,10 @@ from hubzoid.access import guard, loader
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+def _grant(hub_dir, subject: str, permission: str) -> None:
+    access.store_for(hub_dir).grant(subject, Path(hub_dir).name, permission, actor="test")
+
+
 def _invoke(tool, **kwargs) -> str:
     args = json.dumps(kwargs)
     ctx = ToolContext(context=None, tool_name=tool.name, tool_call_id="t", tool_arguments=args)
@@ -66,38 +70,35 @@ def test_identity_scope_sets_and_restores():
 # ---------------------------------------------------------------------------
 # policy
 # ---------------------------------------------------------------------------
-def test_policy_allows_matching_group():
+def test_policy_follows_the_grant_and_never_a_group():
     owner = Identity.make("priya", ["erp"], surface="owui")
-    assert is_allowed(owner, "erp") == (True, "group")
-    assert is_allowed(owner, "ERP")[0] is True  # case-insensitive match
-
-
-def test_policy_denies_without_group():
-    owner = Identity.make("priya", ["erp"], surface="owui")
-    assert is_allowed(owner, "hr") == (False, "no-group")
+    assert is_allowed(owner, "erp", can=lambda: True) == (True, "grant")
+    # A group named like the permission grants nothing.
+    assert is_allowed(owner, "erp", can=lambda: False) == (False, "no-grant")
 
 
 def test_policy_denies_anonymous():
-    assert is_allowed(access.ANONYMOUS, "erp") == (False, "anonymous")
+    assert is_allowed(access.ANONYMOUS, "erp", can=lambda: True) == (False, "anonymous")
 
 
-def test_policy_denies_non_owui_surface_even_with_group():
-    slack = Identity.make("p", ["erp"], surface="slack")
-    allowed, reason = is_allowed(slack, "erp")
+def test_policy_denies_non_owui_surface_even_with_a_grant():
+    slack = Identity.make("p", [], surface="slack")
+    allowed, reason = is_allowed(slack, "erp", can=lambda: True)
     assert allowed is False
     assert reason == "surface:slack"
 
 
 def test_policy_passes_through_unrestricted():
-    assert is_allowed(access.ANONYMOUS, "") == (True, "unrestricted")
+    assert is_allowed(access.ANONYMOUS, "", can=lambda: False) == (True, "unrestricted")
 
 
 # ---------------------------------------------------------------------------
 # guard
 # ---------------------------------------------------------------------------
 def test_guard_allows_and_logs_when_permitted(tmp_path):
+    _grant(tmp_path, "priya", "erp")
     guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
-    with identity_scope(Identity.make("priya", ["erp"], surface="owui")):
+    with identity_scope(Identity.make("priya", [], surface="owui")):
         out = _invoke(guarded, store="BLR")
     assert out == "ran:BLR"
     rows = auditlib.read(tmp_path)
@@ -108,21 +109,22 @@ def test_guard_allows_and_logs_when_permitted(tmp_path):
 
 def test_guard_denies_and_logs_when_not_permitted(tmp_path):
     guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
-    with identity_scope(Identity.make("anjali", ["stock"], surface="owui")):
+    with identity_scope(Identity.make("anjali", ["erp"], surface="owui")):
         out = _invoke(guarded, store="BLR")
     assert "access denied" in out.lower()
     assert "erp" in out
     rows = auditlib.read(tmp_path)
     assert rows[-1]["decision"] == "deny"
-    assert rows[-1]["reason"] == "no-group"
+    assert rows[-1]["reason"] == "no-grant"
 
 
 def test_guard_is_enabled_reflects_identity(tmp_path):
+    _grant(tmp_path, "p", "erp")
     guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     assert guarded.is_enabled(None, None) is False  # anonymous
-    with identity_scope(Identity.make("p", ["erp"], surface="owui")):
+    with identity_scope(Identity.make("p", [], surface="owui")):
         assert guarded.is_enabled(None, None) is True
-    with identity_scope(Identity.make("p", ["hr"], surface="owui")):
+    with identity_scope(Identity.make("q", ["erp"], surface="owui")):
         assert guarded.is_enabled(None, None) is False
 
 
@@ -133,6 +135,7 @@ def test_guard_leaves_original_untouched(tmp_path):
 
 
 def test_restricted_surfaces_env_override(tmp_path, monkeypatch):
+    _grant(tmp_path, "p", "erp")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "kiosk")
     guarded = guard.guard_tool(sample_tool, "erp", tmp_path)
     # owui no longer allowed; kiosk is.
@@ -192,8 +195,9 @@ def test_apply_guards_restricted_tools_end_to_end(tmp_path):
     guarded = registry["erp_sales"]
     # denied anonymous
     assert "access denied" in _invoke(guarded, store="ALL").lower()
-    # allowed for an owner in the erp group
-    with identity_scope(Identity.make("priya", ["erp"], surface="owui")):
+    # allowed for an owner granted erp
+    _grant(tmp_path, "priya", "erp")
+    with identity_scope(Identity.make("priya", [], surface="owui")):
         assert _invoke(guarded, store="ALL") == "sales:ALL"
 
 
@@ -223,39 +227,6 @@ def test_audit_read_missing_is_empty(tmp_path):
 # ---------------------------------------------------------------------------
 # Open WebUI group resolution (email -> groups from OWUI's own DB)
 # ---------------------------------------------------------------------------
-def _make_owui_db(path):
-    import sqlite3
-    con = sqlite3.connect(path)
-    con.executescript(
-        '''
-        CREATE TABLE "user" (id TEXT, email TEXT);
-        CREATE TABLE "group" (id TEXT, name TEXT);
-        CREATE TABLE group_member (id TEXT, group_id TEXT, user_id TEXT);
-        INSERT INTO "user" VALUES ('u1', 'priya@x.com');
-        INSERT INTO "group" VALUES ('g1', 'erp'), ('g2', 'Finance');
-        INSERT INTO group_member VALUES ('m1', 'g1', 'u1'), ('m2', 'g2', 'u1');
-        '''
-    )
-    con.commit()
-    con.close()
-
-
-def test_owui_resolve_groups(tmp_path):
-    from hubzoid.access import owui_groups
-    data = tmp_path / ".openwebui-data"
-    data.mkdir()
-    _make_owui_db(data / "webui.db")
-    # normalized, so "Finance" -> "finance"
-    assert owui_groups.resolve_groups(tmp_path, "priya@x.com") == {"erp", "finance"}
-    assert owui_groups.resolve_groups(tmp_path, "nobody@x.com") == set()
-    assert owui_groups.resolve_groups(tmp_path, None) == set()
-
-
-def test_owui_resolve_missing_db_is_empty(tmp_path):
-    from hubzoid.access import owui_groups
-    assert owui_groups.resolve_groups(tmp_path, "x@y.com") == set()
-
-
 # ---------------------------------------------------------------------------
 # Access management wires restricted tools (Apache-2.0, no license gate)
 # ---------------------------------------------------------------------------

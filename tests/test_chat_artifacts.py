@@ -120,8 +120,13 @@ def test_write_artifact_signed_url_matches_signing_module(ctx, monkeypatch):
     write = _by_name(files_mod.make(ctx), "write_artifact")
     with _request_ctx.chat_scope("chat-X"):
         result = _call(write, filename="data.txt", content="hi")
-    expected = _signing.sign_artifact_path("chat-X", "data.txt", hub_dir=ctx.hub_dir)
-    assert f"?t={expected}" in result
+    # The web app's links carry a 7-day expiry (&e=), covered by the same HMAC.
+    import re
+    from urllib.parse import parse_qs
+
+    query = parse_qs(re.search(r"/artifacts/chat-X/data\.txt\?([^)\s]+)", result).group(1))
+    assert _signing.verify_artifact_token("chat-X", "data.txt", query["t"][0],
+                                          (query.get("e") or [None])[0], hub_dir=ctx.hub_dir)
 
 
 def test_write_artifact_falls_back_to_session_dir_when_no_chat(ctx):
@@ -240,13 +245,17 @@ MINIMAL = FIXTURES / "minimal_hub"
 
 
 @pytest.fixture
-def bridge_env(monkeypatch):
+def bridge_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(MINIMAL))
     monkeypatch.setenv("MODEL", "openrouter/anthropic/claude-haiku-4.5")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BRIDGE_API_KEYS", "test-bridge-key")
     monkeypatch.setenv("MODEL_LABEL", "testbot-label")
     yield
+
+
+from tests.access_helpers import caller  # noqa: E402
 
 
 @pytest.fixture
@@ -311,7 +320,7 @@ def test_chat_completion_derives_chat_id_from_body(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         r = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-bridge-key"},
+            headers=caller(MINIMAL, key="test-bridge-key"),
             json={
                 "model": "testbot-label",
                 "chat_id": "from-body",
@@ -332,7 +341,7 @@ def test_chat_completion_falls_back_to_hash_of_first_message(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         r = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-bridge-key"},
+            headers=caller(MINIMAL, key="test-bridge-key"),
             json={
                 "model": "testbot-label",
                 "messages": [{"role": "user", "content": "stable input"}],
@@ -346,7 +355,7 @@ def test_chat_completion_falls_back_to_hash_of_first_message(client):
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture_run):
         client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-bridge-key"},
+            headers=caller(MINIMAL, key="test-bridge-key"),
             json={
                 "model": "testbot-label",
                 "messages": [
@@ -374,7 +383,7 @@ def test_chat_completion_persists_data_url_attachment(client):
         with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=capture):
             r = client.post(
                 "/v1/chat/completions",
-                headers={"Authorization": "Bearer test-bridge-key"},
+                headers=caller(MINIMAL, key="test-bridge-key"),
                 json={
                     "model": "testbot-label",
                     "chat_id": "with-upload",

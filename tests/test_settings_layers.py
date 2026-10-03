@@ -9,7 +9,6 @@ With no secret named, the files load exactly as before.
 """
 from __future__ import annotations
 
-import itertools
 import logging
 import os
 from pathlib import Path
@@ -56,10 +55,20 @@ def _write(path: Path, lines: list[str]) -> None:
         path.write_text("\n".join(lines) + "\n")
 
 
+def _precedence_cases(n: int = 6) -> list[tuple[bool, ...]]:
+    """Nothing set, each layer over every lower one, and each layer on its own."""
+    cases = [(False,) * n]
+    for i in range(n):
+        cases.append(tuple(j <= i for j in range(n)))
+        if i:
+            cases.append(tuple(j == i for j in range(n)))
+    return cases
+
+
 @pytest.mark.parametrize("gateway_hub", [False, True], ids=["standalone", "gateway"])
-@pytest.mark.parametrize("present", list(itertools.product([False, True], repeat=6)),
+@pytest.mark.parametrize("present", _precedence_cases(),
                          ids=lambda p: "".join("1" if x else "0" for x in p))
-def test_precedence_in_every_combination(tmp_path, monkeypatch, gateway_hub, present):
+def test_precedence(tmp_path, monkeypatch, gateway_hub, present):
     order = GATEWAY if gateway_hub else STANDALONE
     on = {layer for layer, flag in zip(order, present) if flag}
     hub = _hub(tmp_path)

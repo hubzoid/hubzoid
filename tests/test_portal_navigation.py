@@ -40,24 +40,13 @@ def test_admin_panel_handling_is_off_unless_users_are_hidden():
     assert script(False) == SCRIPT
     hidden = script(True)
     assert "const HIDE_USERS = true;" in hidden and "const HIDE_USERS = false;" not in hidden
-    assert "const HIDE_GROUPS = false;" in hidden
-
-
-def test_groups_is_hidden_only_with_the_user_list():
-    both = script(True, hide_groups=True)
-    assert "const HIDE_USERS = true;" in both and "const HIDE_GROUPS = true;" in both
-    # Never Groups alone: while the user list shows, nothing is hidden.
-    assert script(False, hide_groups=True) == SCRIPT
 
 
 def test_the_script_and_the_edge_agree_on_where_the_admin_panel_opens():
     body = script(True)
-    assert f"const ADMIN_LANDING = '{edge.ADMIN_LANDING}';" in body
-    assert f"const GROUPS = '{edge.GROUPS_URL}';" in body
     assert f"const SETTINGS = '{edge.SETTINGS_LANDING}';" in body
-    # Settings > Integrations is Open WebUI's admin-only dialog tab, over Groups.
-    assert edge.ADMIN_LANDING.startswith(edge.GROUPS_URL + "?")
-    assert "settings=admin%3Aintegrations" in edge.ADMIN_LANDING
+    # Settings > Integrations is Open WebUI's admin-only dialog tab.
+    assert "settings=admin%3Aintegrations" in edge.SETTINGS_LANDING
 
 
 def test_links_to_the_user_list_are_taken_before_open_webui_routes_them():
@@ -67,25 +56,23 @@ def test_links_to_the_user_list_are_taken_before_open_webui_routes_them():
     assert "}, true);" in body
     # Modified clicks (new tab) are left to the browser and the edge.
     assert "e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey" in body
-    # The Admin Panel's own Users tab opens Groups; the menu entry opens the landing.
-    assert "!a.closest('nav') ? ADMIN_LANDING : GROUPS" in body
-    # Anything else heading for the list is hidden first, then replaced by Groups.
+    # The Admin Panel's Users tab and the menu entry both open Settings.
+    assert "const to = SETTINGS;" in body
+    # Anything else heading for the list is hidden first, then replaced by Settings.
     assert "html[data-hz-leaving] :has(> #users-tabs-container){visibility:hidden !important;}" in body
-    assert "const AWAY = HIDE_GROUPS ? SETTINGS : GROUPS;" in body
+    assert "const AWAY = SETTINGS;" in body
     assert "go(AWAY, true)" in body
 
 
-def test_with_groups_hidden_the_whole_users_section_opens_settings():
-    """Every agent managed in the Console: the Admin Panel's Users tab and the
-    Groups tab are hidden, and any route under /admin/users, like the Admin
-    Panel entry, opens Settings > Integrations before a Users page renders."""
-    body = script(True, hide_groups=True)
+def test_the_whole_users_section_opens_settings():
+    """The Admin Panel's Users tab and the Groups tab are hidden, and any route
+    under /admin/users, like the Admin Panel entry, opens Settings >
+    Integrations before a Users page renders."""
+    body = script(True)
     # The Users tab links to /admin inside the Admin Panel's nav; the user menu's
     # Admin Panel entry (also /admin, outside a nav) stays.
-    assert "(HIDE_GROUPS ? 'nav a[href=\"/admin\"],a[href^=\"/admin/users\"]{display:none !important;}' : '')" in body
-    assert "const hiddenRoute = (p) => USERS_ROUTES.includes(p) || (HIDE_GROUPS && p.startsWith('/admin/users/'));" in body
-    # Clicks (the menu entry included) and in-app routes both go to Settings.
-    assert "const to = HIDE_GROUPS ? SETTINGS : " in body
+    assert "'nav a[href=\"/admin\"],a[href^=\"/admin/users\"]{display:none !important;}'" in body
+    assert "const hiddenRoute = (p) => USERS_ROUTES.includes(p) || p.startsWith('/admin/users/');" in body
     assert "!hiddenRoute(path(url))" in body and "const away = hiddenRoute(path(location));" in body
     # Settings is not itself a hidden route, so replacing a page cannot loop.
     settings_path = edge.SETTINGS_LANDING.split("?")[0]
@@ -107,10 +94,10 @@ def test_inject_adds_the_script_once():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
-@pytest.mark.parametrize("hide,groups", [(False, False), (True, False), (True, True)])
-def test_the_script_parses(tmp_path, hide, groups):
+@pytest.mark.parametrize("hide", [False, True])
+def test_the_script_parses(tmp_path, hide):
     path = tmp_path / "nav.js"
-    path.write_text(script(hide, hide_groups=groups))
+    path.write_text(script(hide))
     result = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
@@ -122,7 +109,7 @@ def test_a_left_behind_waiting_line_is_hidden_only_on_a_finished_message():
     event = json.loads(_waiting_status("m", done=False).decode().removeprefix("data: "))
     assert event["event"]["data"]["description"] == "Working on it…"
     assert "const WAITING = 'Working on it\\u2026';" in SCRIPT
-    assert "line.textContent.trim() === WAITING" in SCRIPT
+    assert "(text === WAITING || RUNNING.test(text))" in SCRIPT
     # Only while its message shows Open WebUI's Copy action (rendered once done).
     assert "message?.querySelector('.copy-response-button')" in SCRIPT
     # Only the current line's block; re-checked both ways on every change.
@@ -132,3 +119,17 @@ def test_a_left_behind_waiting_line_is_hidden_only_on_a_finished_message():
     assert "scheduleStatus();\n    if (location.pathname" in SCRIPT
     # It never rewrites message content.
     assert "innerHTML" not in SCRIPT.split("function staleStatus")[1].split("function scheduleStatus")[0]
+
+
+def test_a_left_behind_running_tool_line_is_hidden_too():
+    """The bridge's "Running …" lines (tool_events.running_status) are cleared
+    the same way when a turn dies while a tool runs; other lines are not."""
+    import re
+
+    from hubzoid import tool_events
+    js = re.search(r"const RUNNING = /(.+)/;", SCRIPT).group(1)
+    pattern = re.compile(js.replace("\\u2026", "\u2026"))
+    for names in (["check_program"], ["a", "b"], ["a", "b", "c", "d"]):
+        assert pattern.fullmatch(tool_events.running_status(names).description)
+    assert not pattern.fullmatch("Searching the web")
+    assert not pattern.fullmatch("Working on it\u2026")

@@ -39,10 +39,6 @@ def test_bridges_share_grants_via_one_operational_db(tmp_path):
     # an org grant written through bridge A is visible in hub B (bridge B)
     bridge_a.grant("root", ORG, MANAGE_ACCESS)
     assert bridge_b.can("root", "hubB", MANAGE_ACCESS)
-    # per-hub authority set for hubA does NOT flip hubB
-    bridge_a.set_authoritative(True, hub="hubA")
-    assert bridge_b.is_authoritative("hubA") is True
-    assert bridge_b.is_authoritative("hubB") is False
 
 
 def test_workflow_catalog_shared(tmp_path):

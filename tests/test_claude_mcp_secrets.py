@@ -21,7 +21,7 @@ import pytest
 from claude_agent_sdk import ResultMessage
 
 from hubzoid import factory_claude, owui_mcp
-from hubzoid.access import Identity, identity_scope, store_for
+from hubzoid.access import Identity, identity_scope
 from hubzoid.factory_claude import PrivateMcpConfig
 from tests.test_claude_mcp_isolation import _cli
 
@@ -42,7 +42,6 @@ def rt(tmp_path, monkeypatch):
     for k in ("HUBZOID_DEPLOYMENT", "DATABASE_URL", "HUBZOID_BROWSER", "HUBZOID_RESTRICTED_SURFACES"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'ops.db'}")
-    store_for(d).set_authoritative(True, hub="support")
 
     def specs(hub_dir, ident, **_kw):
         who = (ident.user or "").split("@")[0]

@@ -9,6 +9,12 @@ from hubzoid import deployment, portal, webui
 from hubzoid.edge import build_edge_app, EdgeRoute
 
 
+@pytest.fixture(autouse=True)
+def _open_webui_mode(monkeypatch):
+    """These tests cover Open WebUI accounts: the legacy UI mode (HUBZOID_UI=openwebui)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 def test_task_header_is_only_added_to_owned_loopback_connections():
     config = {'1': {'headers': {'Existing': 'kept'}}}
     result = webui._local_task_headers(config, {'OPENAI_API_BASE_URLS': 'http://127.0.0.1:8000/v1;https://provider.example/v1'})
@@ -55,7 +61,8 @@ def test_only_verified_configured_owner_is_provisioned(tmp_path, monkeypatch, ro
 
 @pytest.mark.parametrize('access_status,expected_status', [(200,200),(401,401),(500,503)])
 def test_edge_picker_filters_admins_and_fails_closed(access_status, expected_status):
-    app = build_edge_app(default_base='http://owui', routes=[EdgeRoute('/portal','http://bridge')])
+    app = build_edge_app(default_base='http://owui', routes=[EdgeRoute('/portal','http://bridge')],
+                         web_app=False)  # the Open WebUI picker filter is legacy-only
     async def handle(req):
         if req.url.path == '/api/models':
             return httpx.Response(200, json={'data':[{'id':'allowed'},{'id':'denied'}]})
@@ -94,7 +101,7 @@ def test_chat_access_accepts_the_chat_apps_bearer_credential(tmp_path, monkeypat
 
     monkeypatch.setattr(httpx, 'get', fake_get)
     monkeypatch.setattr(portal, 'store_for', lambda _: __import__('unittest.mock').mock.Mock(
-        is_suspended=lambda s: False, is_authoritative=lambda h: False))
+        is_suspended=lambda s: False))
     monkeypatch.setattr(deployment, 'hubs', lambda _: [])
     app = FastAPI()
     app.include_router(portal.build_router(tmp_path))
@@ -118,7 +125,7 @@ def test_chat_access_says_why_the_agent_list_is_empty(tmp_path, monkeypatch, sus
 
     monkeypatch.setattr(portal, '_verify_owui_session', lambda *a, **k: 'ana@example.org')
     monkeypatch.setattr(portal, 'store_for', lambda _: mock.Mock(
-        is_suspended=lambda s: suspended, is_authoritative=lambda h: True,
+        is_suspended=lambda s: suspended,
         can=lambda s, h, p: h in granted))
     monkeypatch.setattr(deployment, 'hubs', lambda _: [{'key': 'a', 'model_id': 'm-a'},
                                                      {'key': 'b', 'model_id': 'm-b'}])

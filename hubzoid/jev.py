@@ -208,12 +208,21 @@ def _http_error(resp, key: str) -> JevError:
                     retryable=code in _RETRYABLE or code >= 500)
 
 
+async def _post(body, key, timeout):
+    import asyncio
+    import httpx
+    async with asyncio.timeout(timeout):
+        async with httpx.AsyncClient(timeout=min(TIMEOUT_S, timeout)) as client:
+            return await client.post(URL, json=body, headers={"Authorization": f"Bearer {key}"})
+
+
 def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "workflow",
          chat_id: str | None = None) -> dict:
     """One decision request. `spec` holds `state`, `questions` and optionally
     `model` (default typesafe/jev-1.13). Returns the API's reply with its
     `answers` validated. Records one usage row (kind `jev`) per call, retries
     included, attributed to `subject` on `surface`."""
+    import asyncio
     import httpx
 
     from . import usage as usage_lib
@@ -231,16 +240,20 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
             "OPENROUTER_API_KEY and the chat model are never used for Jev.")
     body = {"model": model, "state": spec["state"], "questions": questions}
     started = time.monotonic()
+    from .workflows.deadlines import remaining
+    budget = min(float(spec.get("timeout", 90)), remaining(90))
     data: dict = {}
     status = "error"
     try:
         for attempt in range(1, ATTEMPTS + 1):
+            left = budget - (time.monotonic() - started)
+            if left <= 0:
+                raise JevError("Jev overall deadline exceeded")
             err: JevError
             wait = float(attempt)
             try:
-                resp = httpx.post(URL, json=body, timeout=TIMEOUT_S,
-                                  headers={"Authorization": f"Bearer {key}"})
-            except httpx.TimeoutException:
+                resp = asyncio.run(_post(body, key, min(TIMEOUT_S, left)))
+            except (httpx.TimeoutException, TimeoutError):
                 err = JevError(f"Jev did not answer within {TIMEOUT_S:g}s", retryable=True)
             except httpx.HTTPError as exc:
                 err = JevError(f"could not reach OpenRouter ({type(exc).__name__})", retryable=True)
@@ -273,6 +286,8 @@ def call(hub_dir, spec: dict, *, subject: str | None = None, surface: str = "wor
                     err.args = (f"{err.args[0]}; gave up after {attempt} attempts",)
                 raise err
             log.warning("jev: %s; retrying in %.1fs", err, wait)
+            if wait >= budget - (time.monotonic() - started):
+                raise JevError("Jev overall deadline would be exceeded by retry")
             _sleep(wait)
         raise AssertionError("unreachable")
     finally:

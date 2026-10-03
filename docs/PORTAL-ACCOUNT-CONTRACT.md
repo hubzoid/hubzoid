@@ -11,8 +11,9 @@ Every endpoint accepts either:
 
 - the Open WebUI session cookie, verified server-side with Open WebUI. Writes
   must come from the same origin (`Origin` or `Referer` host equals `Host`).
-- `Authorization: Bearer sk-...`, an Open WebUI API key, verified against Open
-  WebUI's key table. The caller acts as the key's owner. No `Origin` is needed.
+- `Authorization: Bearer sk-...`, an Open WebUI API key, in the legacy Open
+  WebUI mode (`HUBZOID_UI=openwebui`) only, verified against Open WebUI's key
+  table. The Hubzoid web app mode ignores it and uses the `hz_session` cookie. The caller acts as the key's owner. No `Origin` is needed.
   An unknown key gets 401. Any other `Authorization` value (for example HTTP
   Basic added by a reverse proxy) is ignored and the cookie decides.
 
@@ -223,7 +224,7 @@ organization-wide `manage_access`.
 
 ### Change requests
 
-Proposed by the agent tools (`HUBZOID_MANAGEMENT_TOOLS`). Only the proposer can
+Proposed by the agent's access tools (the `access_tools` capability). Only the proposer can
 read, confirm or reject one. Anyone else gets 404.
 
 | Method and path | Body | Notes |

@@ -66,9 +66,6 @@ What happens when something goes wrong:
   internal URL and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`HUBZOID_GATEWAY_ADMIN_PASSWORD`.
   It refuses to write through a public URL. Add user says so until then.
 
-Console account creation works on a deployment whose agents still use legacy
-access. Access for those agents keeps coming from Open WebUI groups.
-
 Add user no longer offers to pre-approve an email that has no account. A grant
 to an email that starts working when someone first signs in with it (for
 example through single sign-on) can still be made with `hubzoid grant <email>
@@ -190,6 +187,9 @@ hover, keyboard focus or tap. Review and confirm before changes are saved.
 | Use this agent (`use_hub`) | Enter the hub through supported authenticated surfaces and use unrestricted tools |
 | A restricted module, such as `erp` | Call that module's tools; agent entry is included |
 | Manage access (`manage_access`) | Review/change access; a direct agent grant includes basic chat, but not restricted tools. Organization-wide admin rights alone do not grant chat |
+| See workflows and runs (`workflows_view`) | List this agent's workflows and recent runs from chat or an assistant ([workflows.md](workflows.md#from-chat-and-assistants)) |
+| Run and control workflows (`workflows_manage`, sensitive) | Start, pause, resume and cancel this agent's workflows from chat or an assistant. Runs act as the workflow's own account |
+| Manage access from chat (`access_tools`, sensitive, admins only) | Use the access tools below in this agent's chat. Has an effect only for people who manage access |
 
 An organization administrator manages access across the deployment. That is not
 a blanket grant to use every agent or every restricted tool. People with no entry
@@ -234,18 +234,31 @@ administrators keep their full scope.
 ## Management API (implemented)
 
 The Console's API under `/portal/api` is also the management API. Besides the
-session cookie, every endpoint accepts `Authorization: Bearer sk-...` with the
-caller's Open WebUI API key. The key is verified against Open WebUI's key table,
+session cookie, in Open WebUI mode (`HUBZOID_UI=openwebui`) only,
+every endpoint accepts `Authorization: Bearer sk-...` with the caller's Open
+WebUI API key. The Hubzoid web app mode ignores these keys. The key is verified against Open WebUI's key table,
 as for the hosted MCP surface, and the caller acts as its owner under the same
 rules. A key caller does not need an Origin header. Cookie callers do, for every
 write. Keys can only be minted where Open WebUI API keys are enabled (Hubzoid
 turns them on with `MCP_SERVER=true`). Endpoints and response fields are listed
 in [PORTAL-ACCOUNT-CONTRACT.md](PORTAL-ACCOUNT-CONTRACT.md).
 
-## Proposals from chat, WhatsApp and MCP (implemented, off by default)
+## Access tools in chat, WhatsApp and MCP (implemented, off until granted)
 
-Set `HUBZOID_MANAGEMENT_TOOLS=true` in a hub's `.env` to give its agent three
-tools: `my_management_scope`, `propose_access_change` and `propose_new_account`.
+An agent can help managers see access and propose changes. An organization
+administrator turns this on per person: **Agents → the agent → Access**, then
+**Hubzoid tools → Access control → Manage access from chat** (`access_tools`).
+Delegates can't grant it. It has an effect only for people who manage access,
+and what they can see or propose stays within what they manage.
+
+| Tool | What it does |
+|---|---|
+| `my_management_scope` | The agents you manage and what you can grant in each |
+| `who_has_access` | People with access to one agent you manage, their capabilities and account state |
+| `explain_access` | One person's effective access in the agents you manage, and why: a direct grant, everyone signed in, or organization administration |
+| `propose_access_change` | Propose granting or removing capabilities for one person in one agent |
+| `propose_new_account` | Propose a chat account for a new person with access to one agent |
+
 They work only on an agent whose access is managed in the Console.
 
 - The acting person is always the signed-in caller. No tool takes an actor.
@@ -261,6 +274,13 @@ They work only on an agent whose access is managed in the Console.
 - `change_proposed`, `change_confirmed`, `change_rejected`, `change_expired` and
   `change_failed` are audited with the surface and request id. The grants made
   by a confirmed request carry the same request id.
+- `HUBZOID_ACCESS_TOOLS=false` in a hub's `.env` removes the tools from that
+  agent, and the Console shows the capability as disabled.
+- Upgrading from 1.0.x: `HUBZOID_MANAGEMENT_TOOLS=true` keeps its old meaning
+  (every manager gets the tools without a grant) for one more release, with a
+  warning in the log and in `hubzoid doctor`. Grant `access_tools` to the
+  managers who should keep them, then remove the setting.
+  `HUBZOID_MANAGEMENT_TOOLS=false` still turns the tools off.
 
 ## First owner
 
@@ -273,8 +293,7 @@ On an unbootstrapped deployment the owner receives organization administration,
 with entry provisioned once per configured hub. An existing administration
 bootstrap is preserved. Adding a hub never restores a revoked organization role.
 Removing access later is intentional and
-is not undone on the next sign-in. Fresh hubs become authoritative; existing hubs
-keep their prior access mode until explicitly migrated.
+is not undone on the next sign-in.
 
 See [administration](ADMINISTRATION.md) for recovery and migration commands.
 
@@ -304,10 +323,7 @@ refuse it.
 
 An agent that already had one keeps it, and it keeps working:
 
-- It is carried over only by `hubzoid access migrate` when legacy access was
-  demonstrably public (an Open WebUI model open to all users, or
-  `--standalone-public`). The migration report says
-  `Everyone signed in (carried over)`.
+- It exists only on agents that had it before 1.1. Nothing creates a new one.
 - The agent's Access list shows an **Everyone signed in** row with Use this
   agent. It cannot be edited, only removed.
 - Only an organization administrator can remove it. Delegates see it read-only.
@@ -334,9 +350,9 @@ do, in groups. Empty groups are hidden.
 | Group | What it holds |
 |---|---|
 | Hub access | Use this agent (`use_hub`) |
-| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities |
+| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities. Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`) and **Access control** (`access_tools`) |
 | Custom restricted tools | `restricted/<capability>.py` modules |
-| Workflows | Workflow-only capabilities (none today) |
+| Workflows | Workflow-only capabilities (none today; the workflow tools live under Hubzoid tools) |
 | Administration | Manage access (`manage_access`): change access to this agent and create chat accounts for it, within your own access |
 | No longer available | A grant whose capability no longer exists. Remove it; it can't be granted again |
 
@@ -397,8 +413,14 @@ Then add the module to `capabilities.REGISTRANTS`.
 - `sensitive=True` marks it for review when granted.
   `delegate_grantable=False` lets only organization administrators grant it. The
   service enforces both; the Console only explains them.
-- `enabled_by="SOME_SWITCH"`: when that setting is present and false, the status
-  is "Disabled for this hub".
+- `enabled_by="SOME_SWITCH"` (or a tuple of names): when a named setting is
+  present and false, the status is "Disabled for this hub". The tool module
+  checks `capabilities.switched_off(CAP)` to leave its tools out.
+- `section="workflows"` or `"access"` shows the row under that sub-heading
+  inside its group. Rows without a section come first.
+- `probe=fn` (`fn(hub_dir) -> str`) reports why the capability can't run in a
+  hub, for example "No workflows in this agent". It runs only when the
+  settings allow the capability, and a failing probe reads "Not checked".
 - Keep `guard_tool` as the only gate: it hides the tool from callers without the
   grant and refuses a call that reaches it anyway, on every runtime.
 - Workflow APIs are not chat exposure. A workflow's `hub.call_jev` stays
@@ -444,8 +466,7 @@ the hub's `JEV_OPENROUTER_API_KEY`. Without that key a granted call fails with
 a message that names it.
 
 Each call writes a usage row (kind `jev`) naming the person, their channel and
-the chat, and an access log entry. On a hub that has not been migrated, an Open
-WebUI group named `jev` grants it instead.
+the chat, and an access log entry.
 
 Where Jev is available today:
 
@@ -465,14 +486,24 @@ of the tools the agent is shown for anyone who may not use it, on every runtime
 is answered as an unknown tool, and the guard also refuses and logs any call
 that reaches it another way.
 
-## Existing hubs
+## One access model
 
-Unmigrated hubs retain their legacy group/roster rules. The Console labels this
-mode and does not pretend its draft grants have replaced the old authority.
-Follow the backup, dry-run and activation procedure in [ADMINISTRATION.md](ADMINISTRATION.md).
-The older mechanics remain documented in [legacy-access.md](legacy-access.md)
-for migration and diagnosis only. Do not use that guide to configure a new
-managed hub.
+Every agent's access is managed here, whatever the chat UI (the Hubzoid web
+app or Open WebUI). A person may use an agent, or one of its controlled tools,
+only with a grant. There is no other source:
+
+- Open WebUI groups, Hubzoid groups and roster groups (`identity/access.csv`)
+  grant nothing. A roster still says who a WhatsApp or Telegram sender is.
+- A hub deployed from git, with no `.hubzoid/` folder, is managed like any
+  other. Nobody can use it until someone is granted access.
+- The configured owner gets the owner's grants on their first verified sign-in
+  as an administrator (the web app, an Open WebUI session or chat, or MCP
+  sign-in). With sign-in off, the local owner owns every hub from the first
+  start. An API key never provisions anyone.
+- A call to the bridge without a verified person is refused, as on any managed
+  agent.
+- `hubzoid doctor` warns about an agent nobody may use and notes one only its
+  owner may use (`access.who`).
 
 ## Hiding the Open WebUI Users page (implemented)
 
@@ -481,15 +512,10 @@ On by default for a gateway set up fresh with Console accounts (recorded as
 explicit `HUBZOID_HIDE_OWUI_USERS=true|false` in the environment of the process
 that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
-- Opening Open WebUI's user list (`/admin/users/overview`) lands on Console
-  **People**.
-- When every agent in the deployment is managed in the Console, Open WebUI's
-  groups decide nothing, so its whole Users section is hidden: the Admin Panel
-  (`/admin`) and every `/admin/users` page, Groups included, open **Settings →
-  Integrations** before anything renders, and the Admin Panel shows no Users
-  link. This is checked on each request, so it follows a hub's migration.
-- While any agent still uses legacy access, the Users section opens Groups,
-  and Groups stays.
+- Open WebUI's groups decide nothing, so its whole Users section is hidden: the
+  Admin Panel (`/admin`) and every `/admin/users` page, the user list and Groups
+  included, open **Settings → Integrations** before anything renders, and the
+  Admin Panel shows no Users link.
 - Settings, Evaluations and Functions are unchanged.
 - Browser writes to Open WebUI's account admin API get 403: `POST
   /api/v1/auths/add`, `POST /api/v1/users/{id}/update` and `DELETE

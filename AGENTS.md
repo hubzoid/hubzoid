@@ -53,13 +53,14 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/` | The installable Python package. |
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
-| `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
+| `hubzoid/templates/operations/` | Default `hubzoid init` template. A runnable operations assistant with a stock-check example. |
+| `hubzoid/templates/minimal/` | Small runnable hub, selected with `--template minimal`. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
-| `edge.py` | Reverse-proxy bound to the public port: `/artifacts`→bridge, else→Open WebUI (so artifact downloads work behind one exposed port). |
-| `gateway.py` | Plans one shared Open WebUI over many hub bridges (`hubzoid gateway`). |
+| `edge.py` | Public reverse proxy: the native chat app and Console by default; Open WebUI and bridge routes in Open WebUI mode. |
+| `gateway.py` | Plans one deployment over many hub bridges (`hubzoid gateway`), for either chat UI. |
 | `scheduling.py` | Scheduled-task declarations: cron parsing, `<hub>/schedule/*.md` loader, fire-state, run lock. |
 | `scheduler.py` | In-process tick loop (started by the bridge lifespan) that fires due tasks while the hub is idle. |
 | `schedule_runner.py` | Executes one task: fresh-context rounds via the hub Runtime until `STATUS: DONE`, then scoped commit/push. |
@@ -67,10 +68,20 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `evals/` | Hub-owned behavioural checks (`<hub>/evals/*.md`): format, free assertions, runner, judge, report, optional Langfuse push. |
 | `evals/schedule.py` | Second task source for `scheduler.py` — a due eval case runs the deterministic runner, not the agent harness. |
 | `cli.py` | Typer-based CLI. |
-| `factory.py` | `build_agent(hub_dir)`. composes everything. |
+| `factory.py`, `factory_claude.py`, `factory_codex.py`, `runtime.py` | Runtime adapters; SDK construction belongs here. |
+| `chat/`, `auth/`, `webapp_gateway.py` | Native conversations, sign-in and the shared gateway app. |
+| `workflows/` | Durable execution, observation, identity and controls over DBOS. |
 
 ## Editing rules
 
+- DBOS is pinned (`dbos==3.1.0`). Workflow ownership loss depends on DBOS
+  recording only `Exception` outcomes: `ownership.OwnershipLost` is a
+  `BaseException`, so a run that meets an ownership guard stays recoverable
+  instead of failing. Before changing the pin, read DBOS's step and workflow
+  outcome handling again and run `pytest -m ""
+  tests/test_postgres_acceptance.py::test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable`
+  (with the rest of `tests/test_workflow*.py`). It must pass unchanged. It is
+  marked `slow`, so a plain `pytest` skips it.
 - The hub structure is the contract. Adding required files or fields is a
   breaking change for every existing hub. Avoid.
 - Folder names are case- and plural-insensitive (see `hubzoid/_fs.py`). Any new
@@ -80,7 +91,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 - Pre-shipped tools must scope writes to `<hub>/output/<session>/`. Reads
   may go anywhere under the hub directory. No filesystem access outside the
   hub root.
-- Open WebUI is a required dep but is invoked as a subprocess; the package
+- Open WebUI (Open WebUI mode) is an optional extra invoked as a subprocess; the package
   must not `import open_webui` at module load (keeps cold-start fast and lets
   the bridge run headless via `--no-ui`).
 - **Runtime neutrality (load-bearing rule).** Hubzoid supports multiple
@@ -108,7 +119,19 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 - Every loader + tool factory needs a unit test in `tests/`.
 - Real-LLM tests live in `tests/e2e/` and are marked `e2e`. They must
   auto-skip when no provider key is set.
-- Run the full suite before opening a PR: `pytest`.
+- During implementation, run focused tests for the changed behavior. Do not
+  repeatedly run the full suite after small edits. Rerun checks only when a
+  relevant change, failure, or unresolved risk justifies it.
+- Keep tests lean: cover distinct behavior, compatibility, and failure risks.
+  Prefer extending existing tests; avoid redundant cases and tests that merely
+  mirror the implementation. Reversible documentation or cosmetic edits need
+  no new tests.
+- Run one broader regression check before the final release/PR handoff, after
+  focused checks pass. Choose its scope for the change; a cross-cutting release
+  warrants the full suite (`pytest -m ""`) once, not on every implementation step.
+- Commands: `pytest tests/test_x.py -k name` (focused) · `pytest` (fast default,
+  ~80 s; skips `slow` and `e2e*`) · `pytest -m ""` (everything, as CI runs it).
+  Mark any new test that starts DBOS, Postgres or a subprocess `@pytest.mark.slow`.
 - The eval runner (`hubzoid/evals/`) must stay model-free in its logic: the
   judge's model call and the runner's judge are both injected seams, so the
   whole suite path is testable with no model and no network. Keep it that way.

@@ -2,24 +2,26 @@
 an app (for example Gmail), confirms the verified result on a browser page and
 back in the chat that asked. Pages live under `/portal/connect/`.
 
-An app is connected through the OAuth 2.1 MCP server registered for it in Open
-WebUI (``OWUI_NATIVE_MCP``). An app with no such server is not available to
-connect.
+An app is connected through its Hubzoid connector (``hubzoid.connectors``, the
+default UI mode), or in Open WebUI mode through the OAuth 2.1 MCP
+server registered for it in Open WebUI (``OWUI_NATIVE_MCP``). An app with no
+such connector or server is not available to connect.
 
 The journey, end to end:
 
   1. The agent calls ``connect_account(app)`` (`tools/connect_tools.py`). The
-     tool resolves the one Open WebUI server for the app, checks the
-     ``connector_<app>`` capability through ``guard.decide`` (surface gate
-     included) and asks Open WebUI whether the caller is connected already.
+     tool resolves the one connector (or Open WebUI server) for the app, checks
+     the ``connector_<app>`` capability through ``guard.decide`` (surface gate
+     included) and asks the provider whether the caller is connected already.
      If not, :func:`start` records a short-lived journey bound to the trusted
      caller and returns ``<public>/portal/connect/<id>``, never a provider URL.
-  2. The link page requires a signed-in Open WebUI session whose email is the
-     journey's subject (`web.py`). ``Start`` sends the browser to Open WebUI's
+  2. The link page requires a signed-in session (Hubzoid's, or Open WebUI's in
+     Open WebUI mode) whose email is the journey's subject (`web.py`). ``Start``
+     begins the authorization: Hubzoid's own OAuth flow, or Open WebUI's
      authorize route.
   3. After consent the browser returns to ``/portal/connect/<id>/done``, which
-     asks Open WebUI whether *this* journey connected. Callback parameters
-     are never read.
+     asks the provider whether *this* journey connected. Callback parameters
+     are never read there.
   4. The originating hub's inbound process confirms the result in WhatsApp,
      once (`notify.py`), and may offer a one-use "Reply YES" continuation.
 
@@ -122,13 +124,18 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
 
 
 def permissions(hub_dir: Path) -> list[dict]:
-    """Connector capabilities (`connector_<app>`) this hub offers: one per Open
-    WebUI OAuth MCP server when ``OWUI_NATIVE_MCP`` is on (a managed hub needs
-    these grants for per-turn injection too)."""
-    from .. import owui_mcp
+    """Connector capabilities (`connector_<app>`) this hub offers (a managed
+    hub needs these grants for per-turn injection too): one per registered
+    Hubzoid connector in the default UI mode, or one per Open WebUI OAuth MCP
+    server when ``OWUI_NATIVE_MCP`` is on in Open WebUI mode."""
+    from .. import appmode, owui_mcp
     from ..access import owui_tool_servers as servers
 
     hub_dir = Path(hub_dir)
+    if not appmode.is_openwebui(hub_dir):
+        from ..connectors import registry
+
+        return registry.permissions(hub_dir)
     out: dict[str, dict] = {}
     if owui_mcp.enabled():
         for c in servers.list_mcp_connections(hub_dir):
@@ -151,8 +158,7 @@ def _perm(app: str, name: str) -> dict:
 # ---------------------------------------------------------------------------
 def may_start(hub_dir, ident, app: str) -> tuple[bool, str]:
     """May this caller start a journey for ``app`` here? ``guard.decide`` on
-    ``connector_<app>``: the surface gate, then the Console grant (managed hub)
-    or the legacy group of the same name."""
+    ``connector_<app>``: the surface gate, then the Console grant."""
     from ..access.guard import decide
 
     return decide(Path(hub_dir), ident, capability(app))
@@ -175,16 +181,6 @@ def _denied_message(hub_dir, app: str, reason: str) -> str:
         return _SURFACE_REASONS[reason]
     if reason.startswith("surface:"):
         return f"Connecting {label(app)} is not available on this channel."
-    try:
-        from ..access import store_for
-
-        managed = store_for(Path(hub_dir)).is_authoritative(Path(hub_dir).name.lower())
-    except Exception:  # noqa: BLE001 — wording only
-        managed = True
-    if not managed:
-        # Legacy hubs still grant through a chat-app group of the capability's name.
-        return (f"You do not have permission to connect {label(app)} here. Ask your administrator "
-                f"to add you to the chat-app group {capability(app)}.")
     return (f"You do not have permission to connect {label(app)} here. Ask an administrator "
             f"of this agent to grant you \"{_capability_label(hub_dir, app)}\" in the Admin Console.")
 

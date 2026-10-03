@@ -20,7 +20,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(tmp_path)
-    gs.set_authoritative(True)
     # Writes are authorized by the access service from the store, not from the
     # injected resolver, so the test administrator is a real org admin there.
     gs.grant("root", "*", "manage_access", actor="test")
@@ -46,11 +45,12 @@ def test_me_and_forbidden(client):
     assert client.get("/portal/api/me").status_code == 403
 
 
-def test_permissions_and_hubs(client):
+def test_permissions_and_hubs(client, tmp_path):
     r = client.get("/portal/api/permissions", params={"hub": client.hub})
     perms = {p["permission"] for p in r.json()["permissions"]}
     assert {"use_hub", "manage_access"} <= perms
     assert client.hub in {h["key"] for h in client.get("/portal/api/hubs").json()["hubs"]}
+    assert client.get("/portal/api/hubs").json()["hubs"][0]["path"] == str(tmp_path.resolve())
 
 
 def test_grant_revoke_via_api(client):
@@ -61,7 +61,6 @@ def test_grant_revoke_via_api(client):
     acc = client.get("/portal/api/access", params={"hub": hub}).json()
     alice = [row for row in acc["rows"] if row["subject"] == "alice"][0]
     assert set(alice["perms"]) == {"prod_in", "use_hub"}   # implication surfaced
-    assert acc["editable"] is True
 
     r = client.post("/portal/api/access/revoke",
                     json={"subject": "alice", "hub": hub, "permission": "prod_in"})
@@ -74,7 +73,7 @@ def test_grant_revoke_via_api(client):
 def test_unavailable_account_can_be_offboarded(client):
     """An unavailable (chat-account-gone) person can have retained grants REMOVED and be
     explicitly blocked (offboarded), but must not receive NEW grants or be reactivated
-    here (review finding). The hub is authoritative in this fixture."""
+    here (review finding)."""
     hub = client.hub
     client.gs.grant("ghost@example.org", hub, "prod_in")  # retained grant (implies use_hub)
     with client.gs._engine.begin() as conn:
@@ -92,31 +91,6 @@ def test_unavailable_account_can_be_offboarded(client):
     r = client.post("/portal/api/people/block", json={"subject": "ghost@example.org", "suspended": True})
     assert r.status_code == 200
     assert not [g for g in client.gs.list_grants(hub) if g[0] == "ghost@example.org"]
-
-
-def test_legacy_hub_is_read_only_in_api(client):
-    """A hub whose access is not yet dashboard-managed (Casbin not authoritative) is
-    read-only: `/access` reports editable=false and every hub-scoped edit is refused,
-    so a legacy agent's permissions can neither appear effective nor be silently
-    overwritten by a later migration. Org-admin management stays available."""
-    hub = client.hub
-    client.gs.set_authoritative(False)  # make the hub legacy
-    acc = client.get("/portal/api/access", params={"hub": hub}).json()
-    assert acc["editable"] is False and acc["authoritative"] is False
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "alice", "hub": hub, "permission": "prod_in"}).status_code == 409
-    assert client.post("/portal/api/access/revoke",
-                       json={"subject": "alice", "hub": hub, "permission": "prod_in"}).status_code == 409
-    assert client.post("/portal/api/access/apply", json={
-        "subject": "alice", "hub": hub,
-        "operations": [{"action": "grant", "permission": "prod_in"}],
-    }).status_code == 409
-    # Public toggle (a hub-scoped grant to '*') is refused too.
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "*", "hub": hub, "permission": "use_hub"}).status_code == 409
-    # But org-admin management is not hub-scoped and remains available.
-    assert client.post("/portal/api/access/grant",
-                       json={"subject": "newadmin@example.org", "hub": "*", "permission": "manage_access"}).status_code == 200
 
 
 def test_apply_atomic_change_set(client):
@@ -301,7 +275,7 @@ def test_overview_and_workflows_and_audit(client):
     client.post("/portal/api/access/grant",
                 json={"subject": "alice", "hub": client.hub, "permission": "prod_in"})
     ov = client.get("/portal/api/overview").json()
-    assert ov["authoritative"] is True and ov["grants"] >= 1
+    assert ov["grants"] >= 1
     assert "workflows" in client.get("/portal/api/workflows").json()
     assert "rows" in client.get("/portal/api/audit").json()
 
@@ -354,3 +328,47 @@ def test_audit_filters_before_pagination(client, tmp_path):
     assert len(denied) == 1 and denied[0]["decision"] == "deny"  # found beyond page 1
     payroll = client.get("/portal/api/audit", params={"tool": "payroll_run", "limit": 200}).json()["rows"]
     assert payroll and all(r["tool"] == "payroll_run" for r in payroll)
+
+
+def test_webhook_view_shows_counts_and_failures_never_payloads(client, tmp_path, monkeypatch):
+    import json
+    import time
+
+    from sqlalchemy import text
+
+    from hubzoid.workflows import events
+
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org")
+    (tmp_path / "workflows" / "tickets").mkdir(parents=True)
+    (tmp_path / "workflows" / "settings.yaml").write_text(
+        "webhooks:\n  ticket-created:\n    verify: hmac\n    timestamp_header: X-Ts\n")
+    (tmp_path / "workflows" / "tickets" / "main.py").write_text(
+        "from hubzoid import workflow\n\n@workflow(on_webhook='ticket-created')\n"
+        "def triage():\n    return 'ok'\n")
+    now = time.time()
+    with events._engine(tmp_path).begin() as conn:
+        for i, (state, created) in enumerate([("succeeded", now), ("retrying", now),
+                                              ("failed", now), ("failed", now - 3 * 86400)]):
+            conn.execute(text(
+                "INSERT INTO hz_workflow_events (id, hub, webhook, workflow, digest, payload, "
+                "state, created, updated, attempt, redrive, error) VALUES (:i, :h, "
+                "'ticket-created', 'triage', 'DIGEST-SECRET', :p, :s, :c, :c, 3, 0, 'RuntimeError')"),
+                {"i": f"ev{i}", "h": client.hub, "s": state, "c": created,
+                 "p": json.dumps({"body": {"token": "PAYLOAD-SECRET"},
+                                  "headers": {"authorization": "HEADER-SECRET"}})})
+    r = client.get("/portal/api/webhooks", params={"hub": client.hub})
+    assert r.status_code == 200, r.text
+    (hook,) = r.json()["webhooks"]
+    from hubzoid.inbound.routing import hub_slug
+    assert hook["url"] == f"https://hub.example.org/webhooks/{hub_slug(client.hub)}/ticket-created"
+    assert hook["verify"] == "hmac" and hook["workflows"] == ["triage"]
+    assert hook["last_24h"] == {"accepted": 0, "running": 1, "succeeded": 1, "failed": 1}
+    assert [f["id"] for f in hook["failures"]] == ["ev2", "ev3"]
+    assert hook["failures"][0]["redrive"] == f"hubzoid schedule redrive ev2 --hub {tmp_path.resolve()}"
+    for secret in ("PAYLOAD-SECRET", "HEADER-SECRET", "DIGEST-SECRET"):
+        assert secret not in r.text
+    (row,) = [w for w in client.get("/portal/api/workflows", params={"hub": client.hub}).json()["workflows"]
+              if w["name"] == "triage"]
+    assert row["webhook"] == "ticket-created" and row["state"] == "event"
+    client.admin["who"] = None
+    assert client.get("/portal/api/webhooks", params={"hub": client.hub}).status_code == 403

@@ -10,9 +10,11 @@ import {
   Table,
   Tag,
   Typography,
+  Tooltip,
+  message,
 } from "antd";
-import { RefreshCw } from "lucide-react";
-import { query, type Hub, type Run, type Workflow } from "../api";
+import { RefreshCw, Copy } from "lucide-react";
+import { query, type Hub, type Run, type Webhook, type Workflow } from "../api";
 import { useData } from "../hooks/useData";
 import { agentHref, href } from "../hooks/useRoute";
 import {
@@ -21,11 +23,22 @@ import {
   RunStatusTag,
   When,
   WorkflowStateTag,
+  InfoHelp as Help,
 } from "../components/common";
 import { describeCron, prettyOutput, formatDuration, formatTime, workflowState } from "../lib/format";
+import { WorkflowResult } from "../components/WorkflowResult";
+import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
 
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
+function CopyCommand({ command, label }: { command: string; label: string }) {
+  return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
+    <Button size="small" icon={<Copy size={14} />} onClick={async () => {
+      try { await navigator.clipboard.writeText(command); message.success("Command copied"); }
+      catch { message.error("Could not copy. Check clipboard permission."); }
+    }}>{label}</Button>
+  </Tooltip>;
+}
 
 const runsHref = (hub: Hub, workflow?: string, run?: string) =>
   href(
@@ -96,10 +109,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={2}>Workflows in {hub.name}</Title>
-          <Paragraph type="secondary">
-            Scheduled and manual workflows defined in this agent, with their next run.
-          </Paragraph>
+          <Title level={2}>Workflows <Help text={`Scheduled and manual workflows in ${hub.name}. Open a workflow to see its runs.`} /></Title>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
           Refresh
@@ -123,10 +133,9 @@ function WorkflowList({ hub }: { hub: Hub }) {
             <Empty
               description={
                 <>
-                  <div>No workflows defined in {hub.name}.</div>
-                  <Text type="secondary">
-                    Start with a <a href="https://hubzoid.com/docs/guides/markdown-tasks">Markdown scheduled task</a> for a plain-language brief. For Python steps, run <Text code copyable>hubzoid new workflow my-workflow &lt;hub-folder&gt;</Text>, then follow the printed run command.
-                  </Text>
+                  <div>No workflows yet <Help text="Use a Markdown task for a plain-language brief, or create a Python workflow with the server command." /></div>
+                  <Space><Button href="https://hubzoid.com/docs/guides/markdown-tasks" target="_blank" rel="noopener noreferrer">Guide</Button>
+                  <CopyCommand label="Copy create command" command={createWorkflowCommand(hub.path || hub.key)} /></Space>
                 </>
               }
             />
@@ -151,13 +160,15 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "Schedule",
             key: "schedule",
             render: (_, w) =>
-              w.schedule ? (
+              w.webhook ? (
+                <>
+                  <div>On webhook</div>
+                  <Text code>{w.webhook}</Text>
+                </>
+              ) : w.schedule ? (
                 <>
                   <div>{describeCron(w.schedule)}</div>
-                  <Text code>{w.schedule}</Text>
-                  <div>
-                    <Text type="secondary">{w.timezone}</Text>
-                  </div>
+                  <Space size={6}><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{w.timezone}</Text><Help text={`Cron: ${w.schedule}`} /></Space>
                 </>
               ) : (
                 <Text type="secondary">On demand</Text>
@@ -169,11 +180,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
             render: (_, w) => (
               <>
                 <WorkflowStateTag state={w.state} />
-                <div>
-                  <Text type="secondary" className="hint">
-                    {workflowState(w.state).hint}
-                  </Text>
-                </div>
+                <Help text={workflowState(w.state).hint} />
               </>
             ),
           },
@@ -190,11 +197,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ) : (
                 <>
                   <Text className="identity">{w.runs_as.account}</Text>
-                  <div>
-                    <Text type="secondary" className="hint">
-                      {w.runs_as.via}
-                    </Text>
-                  </div>
+                  {w.runs_as.via && <Help text={w.runs_as.via} />}
                 </>
               ),
           },
@@ -217,7 +220,104 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "",
             key: "runs",
             align: "right",
-            render: (_, w) => <Button href={runsHref(hub, w.name)}>View runs</Button>,
+            render: (_, w) => <Space wrap>{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
+          },
+        ]}
+      />
+      <Webhooks hub={hub} />
+    </div>
+  );
+}
+
+const WEBHOOK_STATES = [
+  ["accepted", "Waiting", "default"],
+  ["running", "Running", "blue"],
+  ["succeeded", "Succeeded", "green"],
+  ["failed", "Failed", "red"],
+] as const;
+
+// Read-only: the webhooks this agent declares, their last day of events and the
+// latest failures. Redriving stays a server command an operator runs.
+function Webhooks({ hub }: { hub: Hub }) {
+  const data = useData<{ webhooks: Webhook[]; error?: string }>("/webhooks" + query({ hub: hub.key }));
+  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
+  const { webhooks, error } = data.data;
+  if (!webhooks.length && !error) return null;
+  return (
+    <div className="section">
+      <Title level={5}>Webhooks</Title>
+      {error && <Alert className="notice" type="error" showIcon message={`Webhook settings could not be read: ${error}`} />}
+      <Table<Webhook>
+        rowKey="name"
+        size="middle"
+        dataSource={webhooks}
+        pagination={false}
+        scroll={{ x: 720 }}
+        expandable={{
+          rowExpandable: (h) => h.failures.length > 0,
+          expandedRowRender: (h) => (
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              {h.failures.map((f) => (
+                <div key={f.id}>
+                  <Text strong>{f.workflow}</Text>{" "}
+                  <Text type="secondary">
+                    · failed {formatTime(f.updated)} after {f.attempt}{" "}
+                    {f.attempt === 1 ? "attempt" : "attempts"}
+                  </Text>
+                  {f.error && (
+                    <div>
+                      <Text type="danger">{f.error}</Text>
+                    </div>
+                  )}
+                  <div>
+                    <CopyCommand label="Copy redrive command" command={f.redrive} />
+                  </div>
+                </div>
+              ))}
+            </Space>
+          ),
+        }}
+        columns={[
+          {
+            title: "Webhook",
+            key: "name",
+            render: (_, h) => (
+              <>
+                <div>{h.name}</div>
+                <Text code copyable className="hint">
+                  {h.url}
+                </Text>
+              </>
+            ),
+          },
+          {
+            title: "Starts",
+            key: "workflows",
+            render: (_, h) =>
+              h.workflows.length ? (
+                h.workflows.map((w) => (
+                  <div key={w}>
+                    <a href={runsHref(hub, w)}>{w}</a>
+                  </div>
+                ))
+              ) : (
+                <Text type="secondary">No workflow</Text>
+              ),
+          },
+          { title: "Verification", key: "verify", render: (_, h) => <Text>{h.verify}</Text> },
+          {
+            title: "Last 24 hours",
+            key: "last_24h",
+            render: (_, h) => (
+              <Space size={4} wrap>
+                {WEBHOOK_STATES.filter(([k]) => h.last_24h[k] > 0).map(([k, label, color]) => (
+                  <Tag key={k} color={color} style={{ marginInlineEnd: 0 }}>
+                    {h.last_24h[k]} {label.toLowerCase()}
+                  </Tag>
+                ))}
+                {WEBHOOK_STATES.every(([k]) => !h.last_24h[k]) && <Text type="secondary">No events</Text>}
+              </Space>
+            ),
           },
         ]}
       />
@@ -243,7 +343,6 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
           <Title level={2}>
             Runs of {workflow} <Text type="secondary">· {hub.name}</Text>
           </Title>
-          <Paragraph type="secondary">Most recent first. Open a run to see its result and steps.</Paragraph>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload}>
           Refresh
@@ -271,10 +370,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               <Empty
                 description={
                   <>
-                    <div>No recorded runs of {workflow} yet.</div>
-                    <Text type="secondary">
-                      Runs appear here after the schedule fires or the workflow is started manually with the CLI.
-                    </Text>
+                    <div>No runs yet <Help text="Runs appear after the schedule fires or an operator starts the workflow on the server." /></div>
                   </>
                 }
               />
@@ -286,7 +382,7 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               key: "id",
               render: (_, r) => (
                 <a href={runsHref(hub, workflow, r.id)} className="identity run-id-link" title={r.id}>
-                  {r.id}
+                  {shortRunId(r.id)}
                 </a>
               ),
             },
@@ -330,9 +426,9 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
                     {r.error}
                   </Text>
                 ) : r.output ? (
-                  <Text ellipsis>{r.output}</Text>
+                  <Text ellipsis>{resultSummary(r.output)}</Text>
                 ) : r.redacted ? (
-                  <Text type="secondary">Private to {r.run_as || "the run's account"}</Text>
+                  <Text type="secondary">Private <Help text={`Only ${r.run_as || "the run's account"} can see this result.`} /></Text>
                 ) : (
                   <Text type="secondary">—</Text>
                 ),
@@ -348,12 +444,14 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
   const data = useData<{ runs: Run[] }>(
     "/runs" + query({ hub: hub.key, workflow, run_id: run }),
   );
+  const catalog = useData<{ workflows: Workflow[] }>("/workflows" + query({ hub: hub.key }));
+  const definition = catalog.data?.workflows.find((w) => w.name === workflow);
   const crumbs = (
     <Breadcrumb
       items={[
         { title: <a href={runsHref(hub)}>Workflows</a> },
         { title: <a href={runsHref(hub, workflow)}>{workflow}</a> },
-        { title: <span className="identity">{run}</span> },
+        { title: <span className="identity" title={run}>{shortRunId(run)}</span> },
       ]}
     />
   );
@@ -401,7 +499,7 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         size="small"
         column={{ xs: 1, sm: 2, lg: 4 }}
         items={[
-          { key: "id", label: "Run id", children: <Text className="identity" copyable>{r.id}</Text> },
+          { key: "id", label: "Run id", children: <Text className="identity" title={r.id} copyable={{ text: r.id }}>{shortRunId(r.id)}</Text> },
           { key: "started", label: "Started", children: formatTime(r.started) },
           { key: "completed", label: "Completed", children: formatTime(r.completed) },
           { key: "duration", label: "Duration", children: formatDuration(r.duration_ms) },
@@ -417,11 +515,10 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         {r.error ? (
           <Alert type="error" showIcon title="The run failed" description={<pre className="output">{r.error}</pre>} />
         ) : r.output ? (
-          <pre className="output">{prettyOutput(r.output)}</pre>
+          <WorkflowResult output={r.output} />
         ) : r.redacted ? (
           <Text type="secondary">
-            This run produced a result, and it is private to {r.run_as || "the account the run acted as"}. Only
-            that account can see it.
+            Private <Help text={`Only ${r.run_as || "the account the run acted as"} can see this result. Managing the hub does not grant access.`} />
           </Text>
         ) : (
           <Text type="secondary">
@@ -464,6 +561,8 @@ function RunDetail({ hub, workflow, run }: { hub: Hub; workflow: string; run: st
         )}
       </div>
       <Space>
+        {/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <CopyCommand label="Copy cancel command" command={workflowCommand("cancel", r.id, hub.path || hub.key)} />}
+        {definition && !definition.webhook && !/PENDING|ENQUEUED|DELAYED/i.test(r.status) && <><CopyCommand label="Copy run again command" command={workflowCommand("run", workflow, hub.path || hub.key)} /><Help text="Starts a new run using the current workflow and account settings. Completed side effects are not undone." /></>}
         <Button href={runsHref(hub, workflow)}>Back to runs</Button>
         <Button href={agentHref(hub.key, "activity")}>Agent activity</Button>
       </Space>

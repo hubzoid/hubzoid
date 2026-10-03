@@ -121,16 +121,21 @@ Environment variables explicitly supported:
                          how Claude's thinking is surfaced in chat. Opus already
                          thinks by default but hides the text, leaving a dead
                          spinner during the reasoning gap.
-                           indicator (default) -> show a "Thinking…" panel for
-                             the reasoning duration, without exposing the text.
+                           indicator (default) -> the chat app's "Thinking…"
+                             panel before the first output, then the status
+                             line "Thinking…" between tool rounds. The text
+                             is never exposed.
                            full -> stream the summarized reasoning text.
                            off -> surface nothing (legacy behaviour).
                          Aliases: true->full, false->off. Independent of
                          REASONING_EFFORT (which only sets how *much* it thinks).
   SHOW_TOOLS             off | compact | full. Controls how tool-call activity
                          (e.g. `read_knowledge`, `grep_data`) is surfaced.
-                           compact (default) -> a collapsible dropdown per call
-                             on the web UI; hidden on Slack.
+                           compact (default) -> the chat app's own tool rows:
+                             a "Running <tool>…" status line while a call
+                             runs, then a ✓/✗ row per call, folded into one
+                             "Explored …" line. Hidden on Slack, WhatsApp
+                             and Telegram.
                            full -> the legacy inline `> ↳ tool` blockquote on
                              every surface (verbose; useful for debugging).
                            off -> emit nothing.
@@ -138,15 +143,12 @@ Environment variables explicitly supported:
   MCP_SERVER             true | false (default). Serve this hub as a hosted
                          MCP server at /mcp on the bridge (exposed publicly by
                          the edge). External MCP clients (Claude Code, Cursor)
-                         authenticate with the caller's own Open WebUI API key
-                         and get the hub's tools + knowledge under the same
-                         per-group access rules as chat. See docs/mcp-server.md.
-  MCP_ACCESS_GROUP       Optional OWUI group name gating the WHOLE /mcp
-                         surface: only members get past auth (401 otherwise).
-                         Essential in gateway mode, where one shared user DB
-                         backs every hub — without it, any logged-in user of
-                         any team can reach this hub's unrestricted tools and
-                         knowledge. Unset = every authenticated OWUI user.
+                         sign in and give OAuth consent, and get the hub's tools
+                         and knowledge under the same grants as chat (Console ->
+                         Agents -> Access). See docs/mcp-server.md.
+  MCP_PUBLIC_URL         Full HTTPS public MCP URL required when MCP_SERVER=true:
+                         https://host/mcp or https://host/b/<slug>/mcp.
+                         OAuth only: login in Open WebUI, then Hubzoid consent.
   SLACK_IDENTITY_MAPPING true | false (default). When true, the Slack adapter
                          resolves each sender's verified Slack profile email
                          (needs the `users:read.email` manifest scope) and
@@ -280,13 +282,25 @@ Environment variables explicitly supported:
                          Internal. Set by `hubzoid gateway` on the bridges it
                          launches, which then use the deployment values the
                          gateway passed instead of fetching the secret again.
+  HUBZOID_ACCESS_TOOLS
+                         Hub. false removes the access tools (my_management_scope,
+                         who_has_access, explain_access, propose_access_change,
+                         propose_new_account) from this agent. Unset: they are
+                         there but hidden until an organization administrator
+                         grants "Manage access from chat" (access_tools).
+                         Effective only on managed hubs. A proposal applies only
+                         after the same manager confirms it in the Console.
   HUBZOID_MANAGEMENT_TOOLS
-                         Hub. true | false (default). Registers the agent tools
-                         that propose access changes and new accounts
-                         (my_management_scope, propose_access_change,
-                         propose_new_account). Effective only on managed hubs. A
-                         proposal applies only after the same manager confirms
-                         it in the Console.
+                         Hub. Deprecated. true keeps the 1.0.x meaning for one
+                         release: every manager gets the access tools without
+                         the access_tools grant (doctor warns). false turns the
+                         access tools off, like HUBZOID_ACCESS_TOOLS=false.
+  HUBZOID_WORKFLOW_TOOLS
+                         Hub. false removes the workflow tools (list_workflows,
+                         workflow_runs, run_workflow, pause_workflow,
+                         resume_workflow, cancel_workflow_run) from this agent.
+                         Unset: they are there but hidden until granted
+                         (workflows_view, workflows_manage).
   HUBZOID_CHANGE_REQUEST_TTL
                          Seconds a proposed access change waits for
                          confirmation in the Console. Default 900.
@@ -330,8 +344,8 @@ class Settings:
     reasoning_effort: str | None = None
     thinking_mode: str = "indicator"
     show_tools: str = "compact"
+    mcp_public_url: str = ""
     mcp_server: bool = False
-    mcp_access_group: str | None = None
     slack_identity_mapping: bool = False
     otel_endpoint: str | None = None
     otel_normalize: bool = False
@@ -416,8 +430,8 @@ def load(hub_dir: Path, *, secrets: bool = True) -> Settings:
         reasoning_effort=reasoninglib.normalize(os.environ.get("REASONING_EFFORT")),
         thinking_mode=reasoninglib.normalize_thinking(os.environ.get("SHOW_THINKING")),
         show_tools=reasoninglib.normalize_tools(os.environ.get("SHOW_TOOLS")),
+        mcp_public_url=(os.environ.get("MCP_PUBLIC_URL") or "").strip(),
         mcp_server=truthy(os.environ.get("MCP_SERVER")),
-        mcp_access_group=(os.environ.get("MCP_ACCESS_GROUP") or "").strip() or None,
         slack_identity_mapping=truthy(os.environ.get("SLACK_IDENTITY_MAPPING")),
         otel_endpoint=(os.environ.get("HUBZOID_OTEL_ENDPOINT") or "").strip() or None,
         otel_normalize=truthy(os.environ.get("HUBZOID_OTEL_NORMALIZE")),

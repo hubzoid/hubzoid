@@ -105,9 +105,11 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
     for key in ("HUBZOID_OPERATIONAL_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
                 "OWUI_INTERNAL_URL", "WEBUI_URL", "HUBZOID_PUBLIC_URL",
                 "HUBZOID_GATEWAY_ADMIN_EMAIL", "HUBZOID_GATEWAY_ADMIN_PASSWORD",
-                "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS",
+                "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS", "HUBZOID_ACCESS_TOOLS",
                 "HUBZOID_CHANGE_REQUEST_TTL", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER"):
         monkeypatch.delenv(key, raising=False)
+    # An Open WebUI deployment: the legacy UI mode (HUBZOID_UI=openwebui).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     access._stores.clear()
     dirs = {}
     for name, perms in (("finance", ("ledger", "payroll")), ("ops", ("inventory",))):
@@ -125,8 +127,6 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
     )
     gs = access.store_for(dirs["finance"])
     gs.bootstrap([ROOT])
-    for n in dirs:
-        gs.set_authoritative(True, hub=n)
     gs.grant(DELEGATE, "finance", "manage_access", actor="test")
     gs.grant(DELEGATE, "finance", "ledger", actor="test")
     owui = owui or FakeOwui()
@@ -162,7 +162,8 @@ def test_scope_from_store_only(dep):
 
 def test_ceiling_matrix(dep):
     svc, gs = dep.svc, dep.gs
-    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev"}
+    full = {"use_hub", "manage_access", "curator", "ledger", "payroll", "share_public_links", "jev",
+            "access_tools", "workflows_view", "workflows_manage"}
     assert svc.ceiling(actor(ROOT), "finance") == full
     # A delegate: what they hold, never manage_access.
     assert svc.ceiling(actor(DELEGATE), "finance") == {"use_hub", "ledger"}
@@ -177,12 +178,6 @@ def test_ceiling_matrix(dep):
     with pytest.raises(Denied):
         svc.ceiling(actor(DELEGATE), "finance")
     assert svc.grantable(actor(DELEGATE)) == {}
-
-
-def test_grantable_reports_legacy_hubs_as_empty(dep):
-    dep.gs.set_authoritative(False, hub="ops")
-    g = dep.svc.grantable(actor(ROOT))
-    assert g["ops"] == [] and "payroll" in g["finance"]
 
 
 # ---- delegate rules -------------------------------------------------------------
@@ -279,12 +274,8 @@ def test_org_admin_keeps_scope(dep):
     assert e.value.status == 409
 
 
-def test_legacy_blocked_and_stale_revision(dep):
+def test_blocked_and_stale_revision(dep):
     svc, gs = dep.svc, dep.gs
-    gs.set_authoritative(False, hub="ops")
-    with pytest.raises(Denied) as e:
-        svc.apply_access_change(actor(ROOT), "ann@x.org", "ops", [("grant", "use_hub")])
-    assert (e.value.status, e.value.code) == (409, "legacy")
     gs.suspend("ann@x.org", actor="test")
     with pytest.raises(Denied) as e:
         svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
@@ -316,3 +307,142 @@ def test_store_failure_fails_closed(dep, monkeypatch):
     with pytest.raises(Denied) as e:
         dep.svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
     assert e.value.status == 503
+
+
+def test_only_organization_administrators_grant_access_tools(dep):
+    svc, gs = dep.svc, dep.gs
+    with pytest.raises(Denied) as e:
+        svc.apply_access_change(actor(DELEGATE), "ann@x.org", "finance", [("grant", "access_tools")])
+    assert e.value.code == "outside_ceiling"
+    svc.apply_access_change(actor(ROOT), DELEGATE, "finance", [("grant", "access_tools")])
+    assert gs.can(DELEGATE, "finance", "access_tools")
+    # Holding it does not let a delegate pass it on.
+    assert "access_tools" not in svc.ceiling(actor(DELEGATE), "finance")
+    with pytest.raises(Denied) as e:
+        svc.apply_access_change(actor(DELEGATE), "ann@x.org", "finance", [("grant", "access_tools")])
+    assert e.value.code == "outside_ceiling" and "Only organization administrators" in e.value.message
+    assert not gs.can("ann@x.org", "finance", "access_tools")
+
+
+# ---- reading access ----------------------------------------------------------------
+
+def _unavailable(gs, subject):
+    from sqlalchemy import text
+
+    with gs.engine.begin() as conn:
+        conn.execute(text("INSERT INTO hz_meta(k, v) VALUES(:k, '1') "
+                          "ON CONFLICT (k) DO UPDATE SET v='1'"),
+                     {"k": "account_unavailable:" + subject})
+
+
+def test_hub_access_rows(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "finance", "ledger", actor="test")
+    gs.upsert_identity(email="ann@x.org", owui_id="u-ann", display="Ann A")
+    gs.set_attr("finance", "ann@x.org", "center", "Chennai")
+    gs.grant("workflow:close", "finance", "ledger", actor="test")
+    gs.grant("gone@x.org", "finance", "use_hub", actor="test")
+    _unavailable(gs, "gone@x.org")
+    gs.grant("cy@x.org", "ops", "inventory", actor="test")
+    view = svc.hub_access(actor(DELEGATE), "finance")
+    assert (view["hub"], view["revision"]) == ("finance", gs.revision())
+    by = {r["subject"]: r for r in view["rows"]}
+    assert list(by) == sorted(by)
+    assert set(by) == {"ann@x.org", DELEGATE, ROOT, "workflow:close", "gone@x.org"}
+    ann = by["ann@x.org"]
+    assert (ann["display"], ann["status"], ann["kind"], ann["center"]) == (
+        "Ann A", "active", "person", "Chennai")
+    assert sorted(ann["perms"]) == ["ledger", "use_hub"] and ann["effective"] == ["ledger", "use_hub"]
+    assert (by[ROOT]["perms"], by[ROOT]["inherited"]) == ([], ["manage_access"])
+    assert (by["workflow:close"]["kind"], by["workflow:close"]["status"]) == ("service", "service")
+    gone = by["gone@x.org"]  # grants kept, nothing effective while unavailable
+    assert gone["perms"] == ["use_hub"] and gone["effective"] == []
+    assert gone["account_unavailable"] and gone["blocked"] and not gone["suspended"]
+    assert (view["public"], view["public_reliant"]) == (False, 0)
+    # Everyone signed in: an approved account without its own grant relies on it.
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    gs.upsert_identity(email="dan@x.org", owui_id="u-dan", display="Dan")
+    view = svc.hub_access(actor(ROOT), "finance")
+    assert (view["public"], view["public_reliant"]) == (True, 1)
+    assert {r["subject"]: r for r in view["rows"]}["*"]["status"] == "everyone"
+
+
+@pytest.mark.parametrize("who,hub,status", [
+    (DELEGATE, "ops", 403),
+    (DELEGATE, "nope", 403),  # scope first: no hint whether it exists
+    ("ann@x.org", "finance", 403),
+    (ROOT, "nope", 404),
+])
+def test_hub_access_is_scoped(dep, who, hub, status):
+    with pytest.raises(Denied) as e:
+        dep.svc.hub_access(actor(who), hub)
+    assert e.value.status == status
+
+
+def test_person_access_explains_sources(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "finance", "ledger", actor="test")
+    gs.grant("ann@x.org", "ops", "inventory", actor="test")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    view = svc.person_access(actor(ROOT), "Ann@X.org")
+    assert (view["subject"], view["organization_admin"], view["status"]) == (
+        "ann@x.org", False, "awaiting-signup")
+    by = {h["hub"]: {c["permission"]: c["sources"] for c in h["capabilities"]} for h in view["hubs"]}
+    assert by == {"finance": {"ledger": ["direct"], "use_hub": ["direct", "everyone"]},
+                  "ops": {"inventory": ["direct"], "use_hub": ["direct"]}}
+    assert view["hubs"][0]["effective"] == ["ledger", "use_hub"]
+    root = svc.person_access(actor(ROOT), ROOT, "finance")
+    assert root["organization_admin"] and [h["hub"] for h in root["hubs"]] == ["finance"]
+    assert {c["permission"]: c["sources"] for c in root["hubs"][0]["capabilities"]} == {
+        "manage_access": ["organization"], "use_hub": ["everyone"]}
+
+
+def test_person_access_stays_in_scope(dep):
+    gs, svc = dep.gs, dep.svc
+    gs.grant("ann@x.org", "ops", "inventory", actor="test")
+    view = svc.person_access(actor(DELEGATE), "ann@x.org")
+    assert [h["hub"] for h in view["hubs"]] == ["finance"]
+    assert view["hubs"][0]["capabilities"] == []
+    gs.grant("gone@x.org", "finance", "use_hub", actor="test")
+    _unavailable(gs, "gone@x.org")
+    gone = svc.person_access(actor(DELEGATE), "gone@x.org", "finance")
+    assert gone["blocked"] and gone["hubs"][0]["capabilities"] and gone["hubs"][0]["effective"] == []
+    for who, subject, hub, status in ((DELEGATE, "ann@x.org", "ops", 403),
+                                      ("ann@x.org", DELEGATE, None, 403),
+                                      (ROOT, "*", None, 422)):
+        with pytest.raises(Denied) as e:
+            svc.person_access(actor(who), subject, hub)
+        assert e.value.status == status
+
+
+def test_person_access_hides_people_outside_a_delegates_agents(dep):
+    """"Everyone signed in" in a hub the delegate manages must not expose a
+    person who only has access elsewhere: no name, account state or role."""
+    gs, svc = dep.gs, dep.svc
+    gs.grant("carol@x.org", "ops", "inventory", actor="test")
+    gs.upsert_identity(email="carol@x.org", owui_id="u-carol", display="Carol Secret")
+    gs.grant("*", "finance", "use_hub", actor="test", carry_over_public=True)
+    view = svc.person_access(actor(DELEGATE), "carol@x.org")
+    assert view["known"] is False
+    assert (view["display"], view["status"], view["blocked"], view["organization_admin"]) == (
+        None, None, None, None)
+    assert [(h["hub"], h["capabilities"]) for h in view["hubs"]] == [
+        ("finance", [{"permission": "use_hub", "sources": ["everyone"]}])]
+    # An organization administrator sees the person; so does a delegate once
+    # the person holds a grant of their own in one of the delegate's agents.
+    assert svc.person_access(actor(ROOT), "carol@x.org")["display"] == "Carol Secret"
+    gs.grant("carol@x.org", "finance", "use_hub", actor="test")
+    seen = svc.person_access(actor(DELEGATE), "carol@x.org")
+    assert seen["known"] is True and seen["display"] == "Carol Secret"
+
+
+def test_person_access_never_shows_an_outsiders_own_grants(dep):
+    """An organization administrator with no grant in a delegate's agents is
+    an outsider to that delegate: none of their own grants are listed."""
+    gs, svc = dep.gs, dep.svc
+    gs.grant("boss@x.org", "*", "manage_access", actor="test")
+    view = svc.person_access(actor(DELEGATE), "boss@x.org")
+    assert view["known"] is False and view["organization_admin"] is None
+    assert all(h["capabilities"] == [] for h in view["hubs"])
+
+

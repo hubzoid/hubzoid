@@ -12,10 +12,11 @@ import { RefreshCw } from "lucide-react";
 import { query, type Hub, type Run } from "../api";
 import { useData } from "../hooks/useData";
 import { useHashQuery, href } from "../hooks/useRoute";
-import { LoadState, RunStatusTag, When } from "../components/common";
+import { LoadState, RunStatusTag, When, InfoHelp } from "../components/common";
 import { formatDuration, formatTime, relativeTime } from "../lib/format";
+import { resultSummary, shortRunId } from "../lib/results";
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Title } = Typography;
 const PAGE = 50;
 const RANGES: Record<string, number> = { "1d": 86400, "7d": 604800, "30d": 2592000 };
 const REFRESH_MS = 10000;
@@ -165,12 +166,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
     <div className="panel">
       <div className="panel-heading">
         <div>
-          <Title level={1} style={{ fontSize: 28 }}>Runs across your agents</Title>
-          <Paragraph type="secondary">
-            Every workflow run from the agents you manage, newest first. Filter, then
-            open a run to see its result and steps. Scheduler health lives on each
-            agent’s Runs &amp; schedules tab.
-          </Paragraph>
+          <Title level={1} style={{ fontSize: 28 }}>Runs <InfoHelp text="Workflow runs across the agents you manage, newest first. Filter to find a run. Each agent's workflows show scheduler health." /></Title>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={data.reload} loading={data.refreshing}>
           Refresh
@@ -295,7 +291,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
               key: "id",
               render: (_, r) => (
                 <a href={detailHref(r)} className="identity run-id-link" title={r.id}>
-                  {r.id}
+                  {shortRunId(r.id)}
                 </a>
               ),
             },
@@ -334,7 +330,7 @@ export function AllRunsScreen({ hubs }: { hubs: Hub[] }) {
                     {r.error}
                   </Text>
                 ) : r.output ? (
-                  <Text ellipsis>{r.output}</Text>
+                  <Text ellipsis>{resultSummary(r.output)}</Text>
                 ) : r.redacted ? (
                   <Text type="secondary">Private to {r.run_as || "the run's account"}</Text>
                 ) : (

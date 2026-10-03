@@ -65,6 +65,12 @@ def hub_client(tmp_path, monkeypatch):
     return hub, TestClient(build_app())
 
 
+def caller(hub):
+    from tests.access_helpers import caller as signed
+
+    return signed(hub)
+
+
 def test_blocking_envelope_has_usage(hub_client):
     hub, client = hub_client
 
@@ -75,7 +81,7 @@ def test_blocking_envelope_has_usage(hub_client):
 
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.run", new=fake_run):
         r = client.post("/v1/chat/completions",
-                        headers={"Authorization": "Bearer dev"},
+                        headers=caller(hub),
                         json={"model": "testbot-label",
                               "messages": [{"role": "user", "content": "ping"}]})
     assert r.status_code == 200
@@ -94,7 +100,7 @@ def test_streaming_emits_usage_chunk(hub_client):
 
     with patch("hubzoid.runtime.OpenAIAgentsRuntime.stream", new=fake_stream):
         r = client.post("/v1/chat/completions",
-                        headers={"Authorization": "Bearer dev"},
+                        headers=caller(hub),
                         json={"model": "testbot-label", "stream": True,
                               "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200

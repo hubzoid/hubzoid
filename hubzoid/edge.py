@@ -1,5 +1,26 @@
 """Edge router — the single public front door for `hubzoid run` / `gateway`.
 
+Web app mode (`HUBZOID_UI` unset or `hubzoid`, the default): there is no Open
+WebUI. The default upstream is a bridge (the hub's own, or a gateway's first
+bridge, with the others as fallbacks), and routes send `/b/<slug>/...` to that
+hub's bridge with the prefix stripped and `X-Forwarded-Prefix: /b/<slug>` added.
+None of the Open WebUI rewrites described below run: no Users-page hiding or
+redirects, no account-write blocks, no model-ACL or access-UI locks, no
+`/api/models` filtering, no portal navigation script or HTML injection, no
+OAuth client-callback rewrite. What stays: routing, streaming, stripping
+client-sent `X-Hubzoid-*` / `X-OpenWebUI-*` headers, refusing dot segments,
+never keeping cookies between visitors and asserting the public scheme. The
+bridge's internal API (`/v1`, `/uploads`, `/otel`) stays loopback-only, as in
+1.0.x: the edge answers 404 for it.
+
+In both modes an upstream receives exactly the path the edge checked: the
+decoded path is encoded again, so `%25` escapes are never decoded twice
+(`/%256ftel/...` reaches a bridge as `/%6ftel/...`, not `/otel/...`). With
+fallback upstreams, only a small request body is held in memory for a retry on
+the next upstream; a larger one streams to the first.
+
+Open WebUI mode (`HUBZOID_UI=openwebui`) is 1.0.x, unchanged:
+
 The reverse proxy / load balancer in front of a hub points at ONE port
 (Open WebUI's `PORT`, default 3080). But artifact download links are served
 by the FastAPI bridge on a different, loopback-only port (`BRIDGE_PORT`,
@@ -36,12 +57,10 @@ Two optional behaviours sit on the same front door:
     with Evaluations, Functions and Settings), and refuses browser writes to
     Open WebUI's account-admin API (create, update, delete a user). Hubzoid's
     own service calls go to Open WebUI's internal URL and never pass this edge.
-    When every hub in the deployment is also managed in the Console (each is
-    authoritative in the access store), Open WebUI's groups decide nothing about
-    agents, so Groups is hidden as well: `/admin` and every `/admin/users` page
-    open Settings > Integrations over Evaluations. A deployment with any hub
-    still on Open WebUI groups keeps Groups. In-app navigation is handled the
-    same way by `portal_navigation`.
+    Access is decided in the Console, so Open WebUI's groups decide nothing
+    about agents and Groups is hidden as well: `/admin` and every `/admin/users`
+    page open Settings > Integrations over Evaluations. In-app navigation is
+    handled the same way by `portal_navigation`.
   * A connection journey (`/portal/connect/<id>`) sets an `hz_connect` cookie
     before sending the browser through Open WebUI's OAuth client flow. When the
     client callback redirects, the edge sends the browser to the journey's done
@@ -55,6 +74,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 from pathlib import Path
 from dataclasses import dataclass
 from http.cookiejar import CookieJar, DefaultCookiePolicy
@@ -63,7 +83,6 @@ import httpx
 import websockets
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -87,6 +106,77 @@ _HOP_BY_HOP = frozenset({
 # no business sending them, so the edge drops them before forwarding anything.
 _IDENTITY_PREFIXES = ("x-hubzoid-", "x-openwebui-")
 
+# The bridge's own API for Hubzoid processes on loopback. Never public: in the
+# web app mode the edge's default upstream is a bridge, so these are refused.
+_BRIDGE_INTERNAL = ("/v1", "/uploads", "/otel")
+_FORWARDED_PREFIX = "x-forwarded-prefix"
+
+# What a path may carry unescaped (RFC 3986 pchar and "/"). Everything else,
+# "%" included, is percent-encoded on the way to an upstream.
+_PATH_SAFE = "/:@!$&'()*+,;="
+
+# With fallback upstreams (a gateway's other bridges), a body of up to this
+# many bytes is held so a refused connection can be retried on the next one. A
+# longer body streams to the first upstream only: the edge never buffers a
+# request without bound, before any sign-in or endpoint limit has run.
+_RETRY_BODY_LIMIT = 64 * 1024
+
+
+def web_app_mode(env) -> bool:
+    """True unless the deployment runs Open WebUI mode: HUBZOID_UI,
+    else the mode the gateway recorded in its manifest (HUBZOID_DEPLOYMENT)."""
+    from . import appmode
+
+    raw = (env.get("HUBZOID_UI") or "").strip()
+    if not raw and env.get("HUBZOID_DEPLOYMENT"):
+        try:
+            raw = str(json.loads(Path(env["HUBZOID_DEPLOYMENT"]).read_text()).get("ui_mode") or "")
+        except (OSError, ValueError):
+            raw = ""
+    return not appmode.is_openwebui(env={"HUBZOID_UI": raw})
+
+
+def _upstream_path(path: str) -> str:
+    """`path` as the edge checked it (decoded) encoded for the upstream URL, so
+    the upstream's one decoding gives back exactly that path. Forwarding the
+    decoded path as it was let an escaped escape be decoded twice:
+    `/%256ftel/v1/traces` passed the checks as `/%6ftel/v1/traces` and reached
+    the bridge as `/otel/v1/traces`."""
+    return quote(path, safe=_PATH_SAFE)
+
+
+async def _retry_body(request: Request):
+    """(content, retryable) for a request that may be retried on a fallback.
+
+    A body of at most `_RETRY_BODY_LIMIT` bytes is read whole (a refused
+    connection delivered nothing, so it can be sent again). A longer one,
+    declared or found while reading a chunked body, is forwarded as a stream of
+    what was read followed by the rest, to one upstream only."""
+    declared = request.headers.get("content-length", "").strip()
+    stream = request.stream()
+    if declared.isdigit() and int(declared) > _RETRY_BODY_LIMIT:
+        return stream, False
+    held: list[bytes] = []
+    size = 0
+    async for chunk in stream:
+        held.append(chunk)
+        size += len(chunk)
+        if size > _RETRY_BODY_LIMIT:
+            return _chain(held, stream), False
+    return b"".join(held), True
+
+
+async def _chain(held: list[bytes], rest):
+    for chunk in held:
+        yield chunk
+    async for chunk in rest:
+        yield chunk
+
+
+def _is_bridge_internal(path: str) -> bool:
+    path = _clean_path(path)
+    return any(path == p or path.startswith(p + "/") for p in _BRIDGE_INTERNAL)
+
 
 def _has_dot_segment(path: str) -> bool:
     """`.` or `..` path segments. The prefix checks below run on the path as
@@ -105,22 +195,14 @@ DEFAULT_ARTIFACT_PREFIX = "/artifacts"
 _OWUI_LOCK_DEFAULT = ("/api/v1/groups",)
 
 
-# Open WebUI's admin Users page (a single-page-app route). The Groups tab
-# (/admin/users/groups) stays: legacy hubs still use Open WebUI groups.
-_USERS_PAGES = frozenset({"/admin/users/overview"})
-# The Users section's own page opens on its user list; send it to Groups instead.
-_USERS_SECTION = "/admin/users"
-GROUPS_URL = "/admin/users/groups"
-PEOPLE_URL = "/portal/#/people"
-# The Admin Panel itself (the user menu's entry) opens on the user list too. Open
-# it on Settings > Integrations, over Groups, instead. Open WebUI 0.11 shows its
+# Open WebUI's admin Users section (its user list and Groups) and the Admin
+# Panel, which opens on the user list. People and access are managed in the
+# Console, so these open Settings > Integrations over Evaluations (the Admin
+# Panel page that stays, with Functions and Settings). Open WebUI 0.11 shows its
 # admin settings in a dialog opened by `?settings=admin:<tab>` on any page, and
 # only for administrators. `portal_navigation.SCRIPT` uses the same address.
+_USERS_SECTION = "/admin/users"
 _ADMIN_PANEL = "/admin"
-ADMIN_LANDING = "/admin/users/groups?settings=admin%3Aintegrations"
-# When every hub is managed in the Console, Groups is hidden too: the Admin Panel
-# and every /admin/users page open Settings > Integrations over Evaluations (the
-# Admin Panel page that stays, with Functions and Settings).
 SETTINGS_LANDING = "/admin/evaluations/leaderboard?settings=admin%3Aintegrations"
 # Open WebUI account-admin writes. `/api/v1/users/user/...` is the signed-in
 # user's own settings, never blocked.
@@ -157,35 +239,10 @@ def _hide_owui_users(env) -> bool:
         return False
 
 
-def _fully_managed(env) -> bool:
-    """Every hub in the deployment is managed in the Console (authoritative in
-    the access store), so Open WebUI groups decide nothing about any agent.
-    Read on each use, because a hub moves to Console access while the gateway
-    runs. False without a manifest (a standalone `hubzoid run`), with no hubs,
-    or when the store cannot be read: Groups then stays."""
-    if not env.get("HUBZOID_DEPLOYMENT"):
-        return False
-    try:
-        from . import deployment
-        from .access import store_for
-
-        hubs = deployment.read(Path("."), env, require_hub=False).get("hubs") or []
-        return bool(hubs) and all(
-            store_for(Path(h["path"])).is_authoritative(h["key"]) for h in hubs)
-    except Exception:  # noqa: BLE001 - navigation only; keep Groups
-        log.warning("Cannot read how hubs manage access; Open WebUI Groups stays",
-                    exc_info=True)
-        return False
-
-
 def _clean_path(path: str) -> str:
     """Collapse repeated slashes and drop a trailing one, for matching only."""
     path = re.sub(r"/{2,}", "/", path)
     return path.rstrip("/") or "/"
-
-
-def _is_users_page(path: str) -> bool:
-    return _clean_path(path) in _USERS_PAGES
 
 
 def _is_users_section(path: str) -> bool:
@@ -265,7 +322,7 @@ def _forward_target(
 
 
 def _request_headers(
-    request: Request, public_scheme: str = ""
+    request: Request, public_scheme: str = "", *, forwarded_prefix: str | None = None,
 ) -> list[tuple[bytes, bytes]]:
     """Forward the client's headers upstream, minus hop-by-hop and identity headers.
 
@@ -282,6 +339,10 @@ def _request_headers(
     An inbound `X-Forwarded-Proto` from a fronting TLS proxy always wins, and
     with no declared scheme nothing is added, so plain-http localhost is
     untouched. OWUI's uvicorn honours `X-Forwarded-Proto` from loopback.
+
+    `forwarded_prefix` (web app mode only; None leaves 1.0.x behaviour) drops a
+    client-sent `X-Forwarded-Prefix` and, when non-empty, sends the prefix the
+    edge stripped (`/b/<slug>`), so a bridge knows the call is hub-scoped.
     """
     headers = [
         (k, v)
@@ -289,6 +350,12 @@ def _request_headers(
         if k.decode("latin-1").lower() not in _HOP_BY_HOP
         and not k.decode("latin-1").lower().startswith(_IDENTITY_PREFIXES)
     ]
+    if forwarded_prefix is not None:
+        headers = [(k, v) for k, v in headers
+                   if k.decode("latin-1").lower() != _FORWARDED_PREFIX]
+        if forwarded_prefix:
+            headers.append((_FORWARDED_PREFIX.encode("latin-1"),
+                            forwarded_prefix.encode("latin-1")))
     if public_scheme and not any(
         k.decode("latin-1").lower() == "x-forwarded-proto" for k, _ in headers
     ):
@@ -319,25 +386,38 @@ def build_edge_app(
     default_base: str,
     routes: tuple[EdgeRoute, ...] | list[EdgeRoute] = (),
     public_scheme: str = "",
+    web_app: bool | None = None,
+    default_fallbacks: tuple[str, ...] | list[str] = (),
+    workflow_hubs: tuple[str, ...] | list[str] = (),
 ) -> Starlette:
-    """A Starlette reverse proxy: `routes` go to their bridge, the rest to OWUI.
+    """A Starlette reverse proxy: `routes` go to their bridge, the rest to the
+    default upstream (Open WebUI in Open WebUI mode, a bridge in the web app mode).
 
     Args:
-        default_base: Open WebUI base, e.g. "http://127.0.0.1:43080". Receives
-            every path not matched by a route, plus all websockets.
+        default_base: the default upstream, e.g. "http://127.0.0.1:43080".
+            Receives every path not matched by a route, plus all websockets.
         routes: prefix rules sending artifact paths to the right bridge.
         public_scheme: the operator's public scheme ("https"), asserted as
             `X-Forwarded-Proto` when the inbound request carries none. Empty
             (the default) leaves the scheme untouched - correct for localhost.
+        web_app: the web app mode (no Open WebUI rewrites, see the module
+            docstring). None reads it from the environment (`web_app_mode`).
+        default_fallbacks: upstreams tried in order when the default one can't
+            be reached (a gateway's other bridges, which share its database).
     """
     default_base = default_base.rstrip("/")
     norm_routes = tuple(
         EdgeRoute(r.prefix, r.upstream.rstrip("/"), r.strip_prefix,
                   tuple(f.rstrip("/") for f in r.fallbacks)) for r in routes
     )
+    default_bases = (default_base, *(f.rstrip("/") for f in default_fallbacks))
     owui_ws_base = "ws://" + default_base.split("://", 1)[-1]
-    locked_prefixes = _owui_lock_prefixes(os.environ)
-    hide_users = _hide_owui_users(os.environ)
+    if web_app is None:
+        web_app = web_app_mode(os.environ)
+    # Every Open WebUI rewrite is Open WebUI mode only.
+    owui_rewrites = not web_app
+    locked_prefixes = _owui_lock_prefixes(os.environ) if owui_rewrites else ()
+    hide_users = _hide_owui_users(os.environ) if owui_rewrites else False
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -352,52 +432,59 @@ def build_edge_app(
             follow_redirects=False,
             cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
         )
+        monitor_task = None
+        app.state.workflow_health = {str(h): False for h in workflow_hubs}
+        if workflow_hubs:
+            from .workflows.monitor import poll
+            monitor_task = asyncio.create_task(poll(workflow_hubs, app.state.workflow_health))
         try:
             yield
         finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
+        if request.url.path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
+            from starlette.responses import JSONResponse
+            states = getattr(request.app.state, 'workflow_health', {})
+            healthy = bool(states) and all(states.values())
+            return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
         if _has_dot_segment(request.url.path):
             return Response("Bad request", status_code=400)
-        portal_enabled = any(r.prefix == '/portal' for r in norm_routes)
+        if web_app and _is_bridge_internal(request.url.path):
+            return Response("Not found", status_code=404)
+        portal_enabled = owui_rewrites and any(r.prefix == '/portal' for r in norm_routes)
         if portal_enabled and request.url.path == '/hubzoid-portal-navigation.js':
             from .portal_navigation import script
-            # Whether Groups is hidden changes as hubs move to the Console.
-            managed = hide_users and await run_in_threadpool(_fully_managed, os.environ)
-            return Response(script(hide_users=hide_users, hide_groups=managed),
+            return Response(script(hide_users=hide_users),
                             media_type='application/javascript',
                             headers={'cache-control': 'no-cache'})
-        # Accounts are managed in the Console: Open WebUI's Users page lands on
-        # People, and browser writes to its account-admin API are refused. With
-        # every hub managed there, its whole Users section (Groups too) opens
-        # Settings instead.
+        # People and access are managed in the Console: Open WebUI's Users
+        # section (Groups too) opens Settings, and browser writes to its
+        # account-admin API are refused.
         if hide_users and _match(request.url.path, norm_routes) is None:
-            if (request.method in ("GET", "HEAD") and _is_users_section(request.url.path)
-                    and await run_in_threadpool(_fully_managed, os.environ)):
+            if request.method in ("GET", "HEAD") and _is_users_section(request.url.path):
                 return Response(status_code=302, headers={"location": SETTINGS_LANDING})
-            if request.method in ("GET", "HEAD") and _is_users_page(request.url.path):
-                return Response(status_code=302, headers={"location": PEOPLE_URL})
-            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _USERS_SECTION:
-                return Response(status_code=302, headers={"location": GROUPS_URL})
-            if request.method in ("GET", "HEAD") and _clean_path(request.url.path) == _ADMIN_PANEL:
-                return Response(status_code=302, headers={"location": ADMIN_LANDING})
             if _is_account_write(request.method, request.url.path):
                 return Response("Manage accounts in the Console (People).", status_code=403)
-        # Only model ACLs for migrated hubs are locked. Shared groups still serve
-        # unmigrated hubs and OWUI's other resources during partial cutover.
-        if os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
+        # Agent model ACLs are Hubzoid's (the visibility mirror): browser edits
+        # to a registered hub's model access are refused.
+        if owui_rewrites and os.environ.get('HUBZOID_DEPLOYMENT') and request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/v1/models/'):
             from . import deployment
-            from .access import store_for
             try:
                 cfg = deployment.read(Path('.'), require_hub=False)
                 body = await request.body()
                 payload = json.loads(body) if body else {}
                 model_id = payload.get('id') or request.query_params.get('id')
                 for h in cfg['hubs']:
-                    if h['model_id'] == model_id and store_for(Path(h['path'])).is_authoritative(h['key']):
+                    if h['model_id'] == model_id:
                         if payload.get('access_grants') is not None or 'delete' in request.url.path or request.method == 'DELETE':
-                            return Response('Agent access is managed at /portal/. Open WebUI accounts and legacy groups remain available.', status_code=403)
+                            return Response('Agent access is managed at /portal/.', status_code=403)
             except Exception:
                 log.exception('Cannot verify managed model access')
                 return Response('Access configuration unavailable; retry later.',status_code=503)
@@ -420,18 +507,28 @@ def build_edge_app(
             )
         upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
         matched = _match(request.url.path, norm_routes)
-        bases = matched.upstreams() if matched is not None else (upstream,)
+        bases = matched.upstreams() if matched is not None else default_bases
         query = "?" + request.url.query if request.url.query else ""
+        # Web app mode: tell a bridge which /b/<slug> prefix was stripped (and
+        # never pass a client's own claim on). Legacy: headers as in 1.0.x.
+        prefix = None
+        if web_app:
+            prefix = matched.strip_prefix if matched is not None and matched.strip_prefix else ""
 
         client: httpx.AsyncClient = request.app.state.client
-        # With fallbacks, buffer the (small) body so a refused connection can be
-        # retried on the next bridge. A refused connection delivered nothing.
-        content = await request.body() if len(bases) > 1 else request.stream()
+        # With fallbacks, hold a small body so a refused connection can be
+        # retried on the next bridge. A larger body goes to the first only.
+        if len(bases) > 1:
+            content, retryable = await _retry_body(request)
+            if not retryable:
+                bases = bases[:1]
+        else:
+            content = request.stream()
         for i, base in enumerate(bases):
             upstream_req = client.build_request(
                 request.method,
-                base + fwd_path + query,
-                headers=_request_headers(request, public_scheme),
+                base + _upstream_path(fwd_path) + query,
+                headers=_request_headers(request, public_scheme, forwarded_prefix=prefix),
                 content=content,
             )
             try:
@@ -475,7 +572,7 @@ def build_edge_app(
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 return Response("Agent access is unavailable. Try again.", status_code=503)
 
-        done = _connect_done(request, resp.status_code) if matched is None else None
+        done = _connect_done(request, resp.status_code) if matched is None and owui_rewrites else None
         if done:
             await resp.aclose()
             headers = {k: v for k, v in _response_headers(resp).items()
@@ -520,7 +617,7 @@ def build_edge_app(
         if _has_dot_segment(websocket.url.path):
             await websocket.close(code=1008)
             return
-        target = owui_ws_base + websocket.url.path
+        target = owui_ws_base + _upstream_path(websocket.url.path)
         if websocket.url.query:
             target += "?" + websocket.url.query
         await websocket.accept()
@@ -549,20 +646,51 @@ def build_edge_app(
     return app
 
 
+def _redact_oauth_callback_logs() -> None:
+    """The edge's access log sees the same addresses as the bridge: one-time
+    sign-in links (``/auth/set-password?token=``, ``/api/auth/link/<token>``),
+    sign-in callbacks and connection callbacks all carry single-use secrets.
+    Install the same redaction the bridge uses; never fail to start over it."""
+    try:
+        from .auth import logredact
+
+        logredact.install()
+    except Exception:  # noqa: BLE001 - logging hygiene must not stop the front door
+        log.warning("edge: could not install sign-in log redaction", exc_info=True)
+    try:
+        from .connectors import routes as connector_routes
+    except ImportError:
+        return
+    redact = getattr(connector_routes, "redact_oauth_callback_logs", None)
+    if redact is None:
+        return
+    try:
+        redact()
+    except Exception:  # noqa: BLE001 — logging hygiene must not stop the front door
+        log.warning("edge: could not install OAuth callback log redaction", exc_info=True)
+
+
 def _factory() -> Starlette:
     """uvicorn factory: ``uvicorn hubzoid.edge:_factory --factory``.
 
     Reads the routing table from the environment so `hubzoid run` / `gateway`
     launch it the same way they launch the bridge:
 
-      HUBZOID_EDGE_DEFAULT        Open WebUI base URL (catch-all + websockets).
+      HUBZOID_EDGE_DEFAULT        The default upstream (catch-all + websockets):
+                                  Open WebUI in Open WebUI mode, a bridge in the
+                                  web app mode.
+      HUBZOID_EDGE_DEFAULT_FALLBACKS  JSON list of upstreams tried when the
+                                  default can't be reached (optional).
       HUBZOID_EDGE_ROUTES         JSON: [{"prefix","upstream","strip_prefix","fallbacks"}, ...].
       HUBZOID_EDGE_PUBLIC_SCHEME  Public scheme ("https") asserted upstream as
                                   X-Forwarded-Proto when the request has none.
+      HUBZOID_UI                  The mode (see `web_app_mode`; the manifest's
+                                  record when unset).
     """
     default_base = os.environ.get("HUBZOID_EDGE_DEFAULT")
     if not default_base:
         raise RuntimeError("edge factory needs HUBZOID_EDGE_DEFAULT in the environment.")
+    _redact_oauth_callback_logs()
     raw = os.environ.get("HUBZOID_EDGE_ROUTES", "[]")
     try:
         spec = json.loads(raw)
@@ -578,8 +706,16 @@ def _factory() -> Starlette:
         for r in spec
     ]
     public_scheme = os.environ.get("HUBZOID_EDGE_PUBLIC_SCHEME", "").strip().lower()
+    kwargs = {"workflow_hubs": json.loads(os.environ.get("HUBZOID_EDGE_WORKFLOW_HUBS", "[]"))}
+    raw_fallbacks = os.environ.get("HUBZOID_EDGE_DEFAULT_FALLBACKS", "").strip()
+    if raw_fallbacks:
+        try:
+            fallbacks = json.loads(raw_fallbacks)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"HUBZOID_EDGE_DEFAULT_FALLBACKS is not valid JSON: {exc}") from exc
+        kwargs["default_fallbacks"] = tuple(str(f) for f in fallbacks)
     return build_edge_app(
-        default_base=default_base, routes=routes, public_scheme=public_scheme
+        default_base=default_base, routes=routes, public_scheme=public_scheme, **kwargs
     )
 
 

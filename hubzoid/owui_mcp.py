@@ -25,10 +25,8 @@ see only their own data, whichever backend the hub runs on.
 Entirely no-op (empty result) when the switch ``OWUI_NATIVE_MCP`` is not set,
 the caller is anonymous, the caller's surface may not carry personal tokens
 (``HUBZOID_RESTRICTED_SURFACES``, the restricted-tool rule), or they have
-connected nothing. On a hub whose access is managed in the Console, each server
-also needs the caller's ``connector_<app>`` capability (``app`` is the server's
-id, see :func:`app_key`). Legacy hubs keep today's behaviour apart from the
-surface rule. A server whose key would replace a hub MCP server is skipped for
+connected nothing. Each server also needs the caller's ``connector_<app>``
+capability (``app`` is the server's id, see :func:`app_key`). A server whose key would replace a hub MCP server is skipped for
 that turn, so a personal server never shadows a hub tool.
 
 Token freshness (expiry + refresh) is delegated to ``owui_refresh``, so a server
@@ -127,25 +125,10 @@ def _hub_server_keys(hub_dir) -> set[str]:
 
 
 def _connector_gate(hub_dir, identity):
-    """A per-server check for this caller, or None to refuse every server.
-
-    Managed hub (Console-authoritative): each server needs ``connector_<app>``
-    through ``guard.decide``. Legacy hub: no extra check. Fails closed when the
-    access store cannot say which kind the hub is.
-    """
-    from pathlib import Path
-
-    from .access import store_for
+    """A per-server check for this caller: each server needs ``connector_<app>``
+    in this hub, through ``guard.decide`` (fails closed)."""
     from .access.guard import decide
 
-    hub = Path(hub_dir).name
-    try:
-        managed = store_for(hub_dir).is_authoritative(hub)
-    except Exception:  # noqa: BLE001
-        log.warning("owui-mcp: access store unavailable; no personal servers this turn")
-        return None
-    if not managed:
-        return lambda app: True
     return lambda app: decide(hub_dir, identity, capability(app))[0]
 
 
@@ -155,7 +138,17 @@ def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> 
     ``reserved`` are server keys that must not be replaced (defaults to the
     hub's own MCP server keys). Empty on every refusal path, never raises for
     a missing DB, key or row.
+
+    In the default UI mode Hubzoid owns personal connections, so this answers
+    from ``hubzoid.connectors`` instead (same shape, same rules). Only the
+    Open WebUI mode reads Open WebUI's connections below.
     """
+    from . import appmode
+
+    if not appmode.is_openwebui(hub_dir):
+        from .connectors.per_user import per_user_servers as hubzoid_servers
+
+        return hubzoid_servers(hub_dir, identity, reserved=reserved)
     if not enabled() or identity is None or getattr(identity, "is_anonymous", True):
         return []
     # A personal token follows the same surface rule as restricted tools: a
@@ -171,8 +164,6 @@ def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> 
     if not connected:
         return []
     permitted = _connector_gate(hub_dir, identity)
-    if permitted is None:
-        return []
 
     reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)
     by_id = {c["id"]: c for c in servers.list_mcp_connections(hub_dir)}

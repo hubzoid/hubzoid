@@ -5,11 +5,11 @@ A restricted tool requires a permission (its file's normalized stem). A caller
 is allowed to run it only when both hold:
 
   1. the caller's surface may reach restricted tools at all, and
-  2. the caller is in a group whose normalized name equals the permission.
+  2. the access store grants the caller that permission in the hub.
 
 Surfaces that do not carry a per-person verified login (slack, telegram) are
 not in the allowed set, so a restricted door is never reachable from them,
-regardless of groups. That is the "Slack cannot use restricted tools" rule,
+whatever their grants. That is the "Slack cannot use restricted tools" rule,
 enforced rather than assumed. Scheduled workflows run on the `workflow` surface
 as their own service identity and reach only the restricted tools they were
 granted (see DEFAULT_RESTRICTED_SURFACES).
@@ -42,7 +42,7 @@ def is_allowed(
     permission: str,
     *,
     allowed_surfaces: frozenset[str] = DEFAULT_RESTRICTED_SURFACES,
-    can=None,
+    can,
 ) -> tuple[bool, str]:
     """Return (allowed, reason). `reason` is a short tag for the audit log.
 
@@ -54,12 +54,8 @@ def is_allowed(
     on a surface not in `allowed_surfaces` is denied before any permission check,
     so a grant is necessary but never sufficient.
 
-    Permission decision:
-      * if `can` is given (a zero-arg callable returning bool), it is the
-        authority — the Casbin store's ``can(subject, hub, permission)``. This is
-        used once a hub's access has been migrated to Casbin.
-      * otherwise fall back to the legacy membership check
-        (``permission in identity.groups``), for hubs not yet migrated.
+    `can` (a zero-arg callable returning bool) is the permission decision:
+    the access store's ``can(subject, hub, permission)``.
     """
     perm = normalize(permission)
     if not perm:
@@ -68,8 +64,4 @@ def is_allowed(
         return False, "anonymous"
     if identity.surface not in allowed_surfaces:
         return False, f"surface:{identity.surface}"
-    if can is not None:
-        return (True, "grant") if can() else (False, "no-grant")
-    if perm in identity.groups:
-        return True, "group"
-    return False, "no-group"
+    return (True, "grant") if can() else (False, "no-grant")

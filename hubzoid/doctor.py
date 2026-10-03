@@ -23,7 +23,7 @@ from pathlib import Path
 
 FORMAT = 1
 _PACKAGES = ("hubzoid", "open-webui", "dbos", "litellm", "openai-agents", "claude-agent-sdk",
-             "alembic", "sqlalchemy", "casbin", "fastmcp")
+             "alembic", "sqlalchemy", "casbin", "fastmcp", "pwdlib", "authlib")
 _BACKUP_WARN_DAYS = 7
 
 
@@ -92,9 +92,9 @@ def _hub_checks(hub: Path) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         out.append(Check("access.restricted", "fail", f"Restricted tools do not load: {exc}"))
     try:
-        from .access.resolver import load_resolver
+        from .access.resolver import hub_roster
 
-        if load_resolver(hub) is not None:
+        if hub_roster(hub) is not None:
             out.append(Check("identity.resolver", "info", "Roster resolver present (identity/access)"))
     except Exception as exc:  # noqa: BLE001
         out.append(Check("identity.resolver", "fail", f"Identity roster does not load: {exc}"))
@@ -225,7 +225,7 @@ def _schema(hub: Path) -> list[Check]:
         if _sqlite_missing(url):
             out.append(Check(check_id, "info", "Not created yet; created at first start"))
             continue
-        engine = create_engine(url)
+        engine = create_engine(db.sqlalchemy_url(url))
         try:
             cur, head = migrations.current(engine, store), migrations.head(store)
         except Exception as exc:  # noqa: BLE001
@@ -250,7 +250,8 @@ def _schema(hub: Path) -> list[Check]:
     return out
 
 
-def _auth() -> list[Check]:
+def _auth(hub: Path | None = None) -> list[Check]:
+    from . import appmode
     from .webui import _TRUTHY, _validate_auth_env
 
     out = []
@@ -265,6 +266,9 @@ def _auth() -> list[Check]:
     else:
         out.append(Check("auth.bridge_keys", "ok", f"{len(keys)} bridge key(s) set"))
 
+    if not appmode.is_openwebui(hub):
+        out.append(_web_app_signin(hub))
+        return out
     auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in _TRUTHY
     if auth_on:
         try:
@@ -280,6 +284,32 @@ def _auth() -> list[Check]:
     return out
 
 
+def _web_app_signin(hub: Path | None) -> Check:
+    """Sign-in for the Hubzoid web app (HUBZOID_AUTH, or the 1.0 name WEBUI_AUTH).
+    Exposure without sign-in is the `exposure.local_mode` check."""
+    from . import appmode, upgrade
+
+    if not appmode.auth_enabled(hub):
+        return Check("auth.chat_signin", "info",
+                     "Sign-in is off: local mode, whoever opens the web app is the hub's owner "
+                     "(admin@localhost). Fine on this machine.", {"mode": "local"})
+    try:
+        accounts = upgrade.hubzoid_accounts(hub) if hub is not None else 0
+    except upgrade.AccountsUnreadable as exc:
+        return Check("auth.chat_signin", "warn",
+                     f"Sign-in is on, but the Hubzoid accounts could not be read ({exc}). "
+                     "See the db.operational check.", {"mode": "accounts", "accounts": None})
+    bootstrap = any((os.environ.get(k) or "").strip()
+                    for k in ("HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL"))
+    detail = {"mode": "accounts", "accounts": accounts, "first_admin_configured": bootstrap}
+    if not accounts and not bootstrap:
+        return Check("auth.chat_signin", "warn",
+                     "Sign-in is on but there is no Hubzoid account yet and no first administrator "
+                     "configured: set HUBZOID_ADMIN_EMAIL and HUBZOID_ADMIN_PASSWORD for the first "
+                     "start (see `hubzoid admin --help`)", detail)
+    return Check("auth.chat_signin", "ok", "Sign-in is on: people sign in with Hubzoid accounts", detail)
+
+
 def _exposed() -> bool:
     return os.environ.get("HUBZOID_HOST", "127.0.0.1").strip() in ("0.0.0.0", "::", "")
 
@@ -292,6 +322,123 @@ def _exposure() -> Check:
                      {"host": host, "bridge": "127.0.0.1"})
     return Check("exposure.bind", "ok", f"The public port listens on {host}; bridges stay on 127.0.0.1",
                  {"host": host, "bridge": "127.0.0.1"})
+
+
+def _app_checks(hub: Path) -> list[Check]:
+    """The web experience: which one runs, what it needs, and what an upgrade
+    from Open WebUI still has to do. Read-only like every check."""
+    from . import appmode
+
+    summary = appmode.mode_summary(hub)
+    owui = summary["ui_mode"] == appmode.UI_OPENWEBUI
+    source = ("HUBZOID_UI" if (os.environ.get("HUBZOID_UI") or "").strip()
+              else "deployment record" if owui else "default")
+    out = [Check("ui.mode", "info",
+                 "Chat UI: Open WebUI (Open WebUI mode)" if owui
+                 else "Chat UI: Hubzoid web app", {**summary, "source": source})]
+    if owui:
+        out.append(_openwebui_extra())
+    else:
+        found = _openwebui_data(hub, auth_on=summary["auth"])
+        if found:
+            out.append(found)
+        out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out.append(_deployment_key(hub))
+    return [c for c in out if c is not None]
+
+
+def _openwebui_extra() -> Check:
+    import importlib.util
+
+    from . import webui
+
+    binary = webui._find_binary()
+    if binary and importlib.util.find_spec("open_webui") is not None:
+        return Check("ui.openwebui_extra", "ok", "The openwebui extra is installed", {"binary": binary})
+    return Check("ui.openwebui_extra", "fail",
+                 'HUBZOID_UI=openwebui needs the openwebui extra: pip install "hubzoid[openwebui]" '
+                 "(or remove HUBZOID_UI to use the Hubzoid web app)")
+
+
+def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
+    """An Open WebUI install (1.0.x) whose people are not in Hubzoid yet."""
+    from . import upgrade
+
+    found = upgrade.openwebui_accounts(hub)
+    if found is None:
+        return None
+    where, people = found
+    detail = {"where": where, "openwebui_accounts": people}
+    try:
+        if upgrade.hubzoid_accounts(hub):
+            return None
+    except upgrade.AccountsUnreadable as exc:
+        # Unknown, not zero: say so rather than send a moved install back to
+        # the migration. `hubzoid run` stops in this case with sign-in on.
+        detail["hubzoid_accounts"] = None
+        unread = f"Open WebUI has {people} account(s) ({where}) and the Hubzoid accounts could not be read ({exc})"
+        if auth_on:
+            return Check("ui.openwebui_data", "fail",
+                         f"{unread}: hubzoid run stops until the operational database can be read", detail)
+        return Check("ui.openwebui_data", "warn",
+                     f"{unread}: whether its chats were imported is unknown", detail)
+    if auth_on:
+        return Check("ui.openwebui_data", "fail",
+                     f"Open WebUI has {people} account(s) ({where}) and Hubzoid has none: hubzoid run "
+                     "stops until you run `hubzoid migrate openwebui` or set HUBZOID_UI=openwebui", detail)
+    return Check("ui.openwebui_data", "info",
+                 f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
+
+
+def _local_mode_guard(*, auth_on: bool) -> Check | None:
+    """`hubzoid run` keeps local mode (sign-in off) on loopback."""
+    from . import appmode, settings as settingslib
+
+    if auth_on:
+        return None
+    host = os.environ.get("HUBZOID_HOST", "127.0.0.1").strip()
+    detail = {"host": host}
+    if appmode.is_loopback_host(host):
+        return Check("exposure.local_mode", "ok", f"Local mode: the web app stays on {host}", detail)
+    if settingslib.truthy(os.environ.get("HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK")):
+        return Check("exposure.local_mode", "warn",
+                     f"Sign-in is off and the web app listens on {host}: anyone who can reach it acts "
+                     "as the hub's owner (HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true)", detail)
+    return Check("exposure.local_mode", "fail",
+                 f"Sign-in is off and HUBZOID_HOST={host}: hubzoid run refuses to start. Turn sign-in on "
+                 "(HUBZOID_AUTH=true) or bind 127.0.0.1", detail)
+
+
+def _deployment_key(hub: Path) -> Check:
+    """The key that encrypts stored credentials and signs assertions. Reported
+    by fingerprint only, and never created here."""
+    from . import secretbox
+
+    if (os.environ.get("HUBZOID_SECRET_KEY") or "").strip():
+        try:
+            count, fingerprint = len(secretbox.keys(hub)), secretbox.fingerprint(hub)
+        except secretbox.SecretKeyError as exc:
+            return Check("deployment.key", "fail", str(exc), {"source": "HUBZOID_SECRET_KEY"})
+        return Check("deployment.key", "ok", f"Deployment key from HUBZOID_SECRET_KEY, fingerprint {fingerprint}",
+                     {"source": "HUBZOID_SECRET_KEY", "fingerprint": fingerprint, "keys": count})
+    path = secretbox.key_path(hub)
+    if not path.exists():
+        return Check("deployment.key", "info",
+                     f"No deployment key yet; one is created in {path} when first needed. "
+                     "Back it up apart from the data.",
+                     {"source": "file", "path": str(path)})
+    try:
+        count, fingerprint = len(secretbox.keys(hub)), secretbox.fingerprint(hub)
+    except (secretbox.SecretKeyError, OSError) as exc:
+        return Check("deployment.key", "fail", f"The deployment key in {path} cannot be read: {exc}",
+                     {"source": "file", "path": str(path)})
+    detail = {"source": "file", "path": str(path), "fingerprint": fingerprint, "keys": count}
+    mode = path.stat().st_mode & 0o777
+    if mode & 0o077:
+        return Check("deployment.key", "warn",
+                     f"Deployment key {path} (fingerprint {fingerprint}) is readable by others: chmod 600 it",
+                     {**detail, "mode": oct(mode)})
+    return Check("deployment.key", "ok", f"Deployment key in {path}, fingerprint {fingerprint}", detail)
 
 
 def _model(hub: Path) -> Check:
@@ -329,6 +476,14 @@ def _meta(engine, key: str, default=None):
     return json.loads(row[0]) if row and row[0] else default
 
 
+def _meta_text(engine, key: str) -> str | None:
+    from sqlalchemy import text
+
+    with engine.connect() as c:
+        row = c.execute(text("SELECT v FROM hz_meta WHERE k=:k"), {"k": key}).fetchone()
+    return row[0] if row else None
+
+
 def _store_checks(hub: Path) -> list[Check]:
     """Checks that read the operational store. Skipped when it does not exist yet."""
     from sqlalchemy import create_engine, inspect
@@ -341,7 +496,7 @@ def _store_checks(hub: Path) -> list[Check]:
         return []
     if _sqlite_missing(url):
         return []
-    engine = create_engine(url)
+    engine = create_engine(db.sqlalchemy_url(url))
     out: list[Check | None] = []
     try:
         if not inspect(engine).has_table("hz_meta"):
@@ -354,9 +509,35 @@ def _store_checks(hub: Path) -> list[Check]:
             out.append(Check("backup.age", "warn" if days > _BACKUP_WARN_DAYS else "ok",
                              f"Last backup {days:.1f} days ago", last))
         out.append(_scheduler(hub, engine))
+        if inspect(engine).has_table("hz_grants"):
+            out.append(_who_may_use(hub, engine))
     finally:
         engine.dispose()
     return [c for c in out if c is not None]
+
+
+def _who_may_use(hub: Path, engine) -> Check:
+    """Access is decided only by grants in the Console. An agent nobody may use
+    (or only its owner) is usually an access setup still to do."""
+    from sqlalchemy import text
+
+    from .access.identity import normalize
+
+    key = normalize(hub.name)
+    with engine.connect() as conn:
+        holders = sorted({s for (s,) in conn.execute(text(
+            "SELECT subject FROM hz_grants WHERE (hub=:h OR hub='*') "
+            "AND (permission='use_hub' OR permission='*')"), {"h": key})})
+    owner = _meta_text(engine, "initial_owner:" + key)
+    if not holders:
+        return Check("access.who", "warn", f"Nobody may use {key}. Grant \"Use this agent\" "
+                     "in the Console (Agents, Access), or sign in once as the configured owner.")
+    if "*" in holders:
+        return Check("access.who", "ok", f"Everyone signed in may use {key}")
+    if holders == [owner]:
+        return Check("access.who", "info", f"Only the owner ({owner}) may use {key} so far. "
+                     "Add people in the Console (Agents, Access).")
+    return Check("access.who", "ok", f"{len(holders)} people may use {key}")
 
 
 def _scheduler(hub: Path, engine) -> Check | None:
@@ -385,6 +566,28 @@ def _scheduler(hub: Path, engine) -> Check | None:
     return Check("scheduler.health", "ok", "Scheduled work is not held or paused", detail)
 
 
+def _mcp_access_group() -> Check | None:
+    """MCP_ACCESS_GROUP gated /mcp by an Open WebUI group. It is no longer read."""
+    if not (os.environ.get("MCP_ACCESS_GROUP") or "").strip():
+        return None
+    return Check("mcp.access_group", "warn",
+                 "MCP_ACCESS_GROUP is no longer read: who may use an agent over MCP is its "
+                 "\"Use this agent\" grant in the Console. Remove the setting.")
+
+
+def _legacy_management_flag() -> Check | None:
+    """`HUBZOID_MANAGEMENT_TOOLS=true` still gives every manager the access tools
+    without the `access_tools` grant (1.0.x behaviour, this release only)."""
+    from .settings import truthy
+
+    if not truthy(os.environ.get("HUBZOID_MANAGEMENT_TOOLS")):
+        return None
+    return Check("tools.legacy_management_flag", "warn",
+                 "HUBZOID_MANAGEMENT_TOOLS=true gives every manager the access tools without a "
+                 "grant. It is deprecated: grant \"Manage access from chat\" (access_tools) in "
+                 "the Console to the managers who use them, then remove the setting.")
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -404,11 +607,15 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if sqlite_check:
             checks.append(sqlite_check)
         checks += _schema(hub)
-        checks += _auth()
+        checks += _auth(hub)
+        checks += _app_checks(hub)
         google = _google_merge(deployment_values)
         if google:
             checks.append(google)
         checks.append(_exposure())
+        for optional in (_legacy_management_flag(), _mcp_access_group()):
+            if optional:
+                checks.append(optional)
         try:
             checks.append(_model(hub))
         except Exception as exc:  # noqa: BLE001

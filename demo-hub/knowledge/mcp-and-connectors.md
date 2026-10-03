@@ -67,17 +67,18 @@ working.
 
 `connectors/.mcp.json` is the hub consuming MCP servers. The reverse also
 exists: a hub can serve its own tools and knowledge to a personal
-assistant such as Claude Code or Codex. Opt in with `MCP_SERVER=true` in
-`.env`. Each user connects with their own credential, and the hub's
-access rules apply.
+assistant such as Claude Code or Codex. It is on by default for a local
+run and for an https public URL (`MCP_SERVER=false` turns it off). Each
+user connects with their own credential, and the hub's access rules apply.
 
 ## Hub-wide versus per-user
 
 - Servers in `connectors/.mcp.json` are hub-wide. Every user of the hub
   reaches them with the same credential.
-- For tools where each user must act as themselves, an operator can opt
-  in to per-user MCP servers registered in Open WebUI
-  (`OWUI_NATIVE_MCP=true`). Each user connects their own account there.
-  See `docs/mcp.md` in the repository before enabling it.
+- For tools where each user must act as themselves, an administrator
+  registers the MCP server and each user connects their own account in
+  the web app (Account, Connections). In Open WebUI mode,
+  per-user MCP servers registered in Open WebUI (`OWUI_NATIVE_MCP=true`)
+  do this. See `docs/mcp.md` in the repository before enabling it.
 - Hubzoid does not store `.mcp.json` OAuth tokens. They live wherever the
   MCP server holds them (Composio, an external service, a local file).

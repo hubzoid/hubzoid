@@ -46,35 +46,7 @@ def test_postgres_concurrent_admin_revocation_and_policy_refresh(postgres_url):
             e.dispose()
 
 
-def test_postgres_migration_atomicity_and_hub_isolation(postgres_url):
-    engine = create_engine(postgres_url)
-    try:
-        gs = GrantStore(engine)
-        gs.grant("retained", "other", "use_hub")
-        barrier = threading.Barrier(2)
-
-        def cutover(hub):
-            barrier.wait()
-            gs.apply_migration([(hub + "@example.com", hub, "ledger")], [], [hub])
-
-        with ThreadPoolExecutor(2) as pool:
-            futures = [pool.submit(cutover, hub) for hub in ("alpha", "beta")]
-            for f in futures:
-                f.result(timeout=15)
-        assert gs.can("alpha@example.com", "alpha", "ledger")
-        assert not gs.can("alpha@example.com", "beta", "ledger")
-        assert gs.can("retained", "other", "use_hub")
-        snapshot = gs.snapshot(["alpha"])
-        gs.restore(snapshot, actor="test")
-        assert gs.snapshot(["alpha"]) == snapshot
-        with engine.connect() as conn:
-            assert (
-                conn.execute(text("SELECT count(*) FROM hz_access_audit")).scalar() > 0
-            )
-    finally:
-        engine.dispose()
-
-
+@pytest.mark.slow
 def test_postgres_dbos_recovers_after_process_exit(postgres_url, tmp_path):
     import os
     import sys
@@ -137,6 +109,14 @@ print('RECOVERED', flush=True)
         first.kill()
         first.communicate(timeout=10)
         gate.touch()
+        # A dropped session frees the advisory lock at once, but the killed
+        # owner's lease still runs: no new owner starts until it lapses.
+        early = subprocess.run([sys.executable, "-c", script, str(tmp_path)], env=env,
+                               capture_output=True, text=True, timeout=45)
+        assert early.returncode != 0 and "lease ends in" in early.stderr
+        with create_engine(postgres_url).begin() as conn:
+            conn.execute(text("UPDATE hz_workflow_owner SET expires=0 WHERE hub=:h"),
+                         {"h": tmp_path.name})
         second = subprocess.run(
             [sys.executable, "-c", script, str(tmp_path)],
             env=env,
@@ -151,6 +131,98 @@ print('RECOVERED', flush=True)
         if first.poll() is None:
             first.kill()
         first.communicate()
+
+
+_LOSS_SCRIPT = """import asyncio, os, sys, time
+from pathlib import Path
+from sqlalchemy import text
+from hubzoid.workflows import boot, runtime
+hub = Path(sys.argv[1])
+boot.OWNER_RETRY_SECONDS = 1
+
+def statuses(ids):
+    from dbos import DBOS
+    return {w.workflow_id: w.status for w in DBOS.list_workflows(workflow_ids=ids, load_input=False, load_output=False)}
+
+async def main():
+    sup = await boot.start(hub)
+    first = sup.dispatcher
+    pid = first.owner.lock.execute(text('SELECT pg_backend_pid()')).scalar()
+    first.owner.lock.commit()
+    ids = [(await asyncio.to_thread(runtime.start, 'slow')).get_workflow_id() for _ in range(5)]
+    (hub / 'ids').write_text('\\n'.join(ids))
+    print('PID', pid, flush=True)
+    await asyncio.wait_for(first.lost.wait(), 30)
+    print('LOST', flush=True)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if sup.dispatcher is not None and runtime._LAUNCHED:
+            done = await asyncio.to_thread(statuses, ids)
+            if all(v == 'SUCCESS' for v in done.values()) and len(done) == 5:
+                print('ALL_DONE', flush=True)
+                break
+            assert 'ERROR' not in done.values(), done
+        await asyncio.sleep(0.2)
+    else:
+        print('TIMED_OUT', flush=True)
+    await sup.stop()
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.slow
+def test_postgres_owner_loss_stops_claiming_and_keeps_work_recoverable(postgres_url, tmp_path):
+    """The lock session dies mid-run: no run is failed at an ownership guard,
+    the backlog is not drained, and the bridge regains ownership and finishes
+    every run once. The process (chat) stays up throughout."""
+    import os
+    import sys
+    import time
+
+    effects, started, gate = (tmp_path / n for n in ("effects", "started", "gate"))
+    workflow = tmp_path / "workflows" / "slow"
+    workflow.mkdir(parents=True)
+    (workflow / "main.py").write_text(f"""import time
+from pathlib import Path
+from hubzoid import workflow, step
+@step()
+def mark():
+    with open({str(effects)!r}, 'a') as f: f.write('done\\n')
+@workflow(concurrency=1)
+def slow():
+    Path({str(started)!r}).touch()
+    while not Path({str(gate)!r}).exists(): time.sleep(0.05)
+    mark()
+""")
+    env = {k: v for k, v in os.environ.items() if k not in ("HUBZOID_DEPLOYMENT", "DATABASE_URL")}
+    env.update(HUBZOID_DBOS_DB=postgres_url, HUBZOID_OPERATIONAL_DB=postgres_url,
+               HUBZOID_SCHEDULES="1")
+    proc = subprocess.Popen([sys.executable, "-c", _LOSS_SCRIPT, str(tmp_path)], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        pid = None
+        until = time.monotonic() + 60
+        while pid is None or not started.exists():
+            assert proc.poll() is None, proc.communicate()
+            assert time.monotonic() < until, "first run did not start"
+            if pid is None:
+                line = proc.stdout.readline()
+                if line.startswith("PID "):
+                    pid = int(line.split()[1])
+            else:
+                time.sleep(0.05)
+        with create_engine(postgres_url).begin() as conn:
+            assert conn.execute(text("SELECT pg_terminate_backend(:p)"), {"p": pid}).scalar()
+        gate.touch()   # the in-flight run now reaches its guarded step
+        out, err = proc.communicate(timeout=120)
+        assert proc.returncode == 0, out + err[-4000:]
+        assert "LOST" in out and "ALL_DONE" in out, out + err[-4000:]
+        assert effects.read_text() == "done\n" * 5
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
 
 
 def test_postgres_access_history_retains_timestamp_precision(postgres_url):
@@ -170,27 +242,7 @@ def test_postgres_access_history_retains_timestamp_precision(postgres_url):
         engine.dispose()
 
 
-def test_postgres_same_hub_cutovers_do_not_merge_plans(postgres_url):
-    engine = create_engine(postgres_url)
-    try:
-        store = GrantStore(engine)
-        barrier = threading.Barrier(2)
-
-        def cutover(subject):
-            barrier.wait()
-            store.apply_migration(
-                [(subject, "concurrent-hub", "ledger")], [], ["concurrent-hub"]
-            )
-
-        with ThreadPoolExecutor(2) as pool:
-            futures = [pool.submit(cutover, s) for s in ("migration-a", "migration-b")]
-            for future in futures:
-                future.result(timeout=15)
-        assert len({s for s, _, _ in store.list_grants("concurrent-hub")}) == 1
-    finally:
-        engine.dispose()
-
-
+@pytest.mark.slow
 def test_postgres_same_named_workflows_are_hub_scoped(postgres_url, tmp_path):
     import os
     import sys
@@ -349,54 +401,3 @@ def _seed_owui_sqlite(path, users, grants):
     con.close()
 
 
-def test_explicit_migration_on_postgres_operational_store(postgres_url, tmp_path, monkeypatch):
-    """The EXPLICIT migration path (the manual maintenance procedure's cutover) on a
-    PostgreSQL operational store: plan_from_owui + apply(authoritative=True) preserves
-    allowed/denied access and the per-hub authority marker; snapshot/restore rolls it
-    back to legacy. This is the real cutover primitive on the real storage config."""
-    from sqlalchemy import create_engine as _ce
-
-    import hubzoid.access as access
-    from hubzoid.access import migrate
-
-    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", postgres_url)
-    for var in ("HUBZOID_OWUI_DB", "HUBZOID_OWUI_DB_URL", "HUBZOID_DEPLOYMENT", "WEBUI_URL"):
-        monkeypatch.delenv(var, raising=False)
-    # Virgin operational store: other tests share this one Postgres DB.
-    eng = create_engine(postgres_url)
-    with eng.begin() as conn:
-        tables = conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'hz\\_%'")).scalars().all()
-        for t in tables:  # every Hubzoid table, including ones added by later migrations
-            conn.execute(text(f"DROP TABLE IF EXISTS {t} CASCADE"))
-    eng.dispose()
-    access._stores.clear()
-    from hubzoid import migrations
-
-    migrations._done.clear()
-
-    d = tmp_path / "pghub"
-    (d / "restricted").mkdir(parents=True)
-    _seed_owui_sqlite(
-        d / ".openwebui-data" / "webui.db",
-        [("uadmin", "admin@pg.io", "admin"), ("uann", "ann@pg.io", "user"), ("udan", "dan@pg.io", "user")],
-        [("model", "m1", "user", "uann", "read")],
-    )
-    gs = access.store_for(d)
-    gs.bootstrap(["admin@pg.io"], authoritative=False)  # dashboard admin, explicit
-    source = _ce(f"sqlite:///{(d / '.openwebui-data' / 'webui.db').resolve()}")
-    try:
-        plan = migrate.plan_from_owui(source, "pghub", model_id="m1", permissions=["use_hub"])
-    finally:
-        source.dispose()
-    snap_before = gs.snapshot(["pghub"])  # backup for rollback
-    migrate.apply(gs, plan, authoritative=True)  # the cutover
-    assert gs.is_authoritative("pghub")
-    assert gs.can("ann@pg.io", "pghub", "use_hub")      # allowed preserved
-    assert not gs.can("dan@pg.io", "pghub", "use_hub")  # denied preserved
-    assert gs.can("admin@pg.io", "*", "manage_access")  # dashboard admin
-    # Rollback to legacy via the snapshot; restart (new store) leaves it rolled back.
-    gs.restore(snap_before, actor="operator-rollback")
-    assert gs.is_authoritative("pghub") is False
-    access._stores.clear()
-    assert access.store_for(d).is_authoritative("pghub") is False

@@ -49,6 +49,7 @@ def hub(tmp_path, monkeypatch, servers):
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
     monkeypatch.delenv("HUBZOID_RESTRICTED_SURFACES", raising=False)
+    h.grant(hub, X, Y, permissions=("connector_mail", "connector_cal"))
     return hub
 
 
@@ -290,13 +291,13 @@ async def test_whatsapp_listed_as_restricted_surface_reaches_all_three(hub, monk
 
 
 @pytest.mark.asyncio
-async def test_managed_hub_needs_the_connector_grant_on_every_runtime(hub, monkeypatch):
+async def test_each_runtime_needs_the_connector_grant(hub, monkeypatch):
     import agents
 
     import hubzoid.access as access
 
     gs = access.store_for(hub)
-    gs.set_authoritative(True, hub=hub.name)
+    gs.revoke(X, hub.name, owui_mcp.capability("mail"), actor="test")
     gs.grant(X, hub.name, "use_hub")
     specs, _ = await _claude_surface(hub, _who(X))
     assert specs == {}

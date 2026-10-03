@@ -1,31 +1,35 @@
 # Administering a multi-hub deployment
 
 Hubzoid has two audiences: builders configure agents, tools and workflows;
-end users sign in and use the agents they have been granted. Open WebUI owns
-accounts and authentication. Hubzoid owns agent/tool permissions and execution
-inspection. The Admin Console is at `/portal/`. Organization administrators and people with
-Manage access see **Admin Console** above their profile in the Open WebUI sidebar
-when using the Hubzoid edge. The collapsed sidebar shows an icon with a tooltip.
+end users sign in and use the agents they have been granted. In the default
+mode, Hubzoid owns accounts, authentication and conversations. Open WebUI mode
+uses Open WebUI's accounts and chat. Both use Hubzoid's agent/tool permissions
+and execution inspection. Open **Admin Console** from the web app's account
+menu, or visit `/portal/`. In Open WebUI mode it appears above the profile in
+the sidebar for administrators and people with Manage access.
 
 ## One deployment, several agents
 
 ```bash
-export WEBUI_AUTH=true
-export HUBZOID_GATEWAY_ADMIN_EMAIL=operator@example.com
-export HUBZOID_GATEWAY_ADMIN_PASSWORD='your-service-account-password'
+export HUBZOID_AUTH=true
+export HUBZOID_ADMIN_EMAIL=operator@example.com
+export HUBZOID_ADMIN_PASSWORD='your-strong-bootstrap-password'
 hubzoid gateway ./finance ./operations --data-dir ./gateway-data
 ```
 
-The OWUI service account must be an OWUI administrator. Use the same credentials
-in the gateway service environment for provisioning, account lookup and visibility
-sync. No email or invitation is sent by the Console. OWUI signup/OIDC and account
-approval continue to work as configured in OWUI.
+On a fresh default-mode deployment this creates the first administrator.
+Sign in with that account, then add people in the Console. It gives one-time
+sign-in links and sends no email. See [authentication](auth.md).
+To keep Open WebUI instead, install `hubzoid[openwebui]`, set
+`HUBZOID_UI=openwebui`, and configure an Open WebUI administrator through
+`HUBZOID_GATEWAY_ADMIN_EMAIL` and `HUBZOID_GATEWAY_ADMIN_PASSWORD`, plus
+`WEBUI_AUTH=true` and a stable `WEBUI_SECRET_KEY`.
 
 The gateway writes `gateway-data/deployment.json` and a discovery pointer at
 `<hub>/.hubzoid/deployment.json`. All registered hubs—including those with no
 grants—appear in the portal. CLI commands find the same operational database
 through these pointers. They do not require repeating the database URL.
-The internal OWUI authentication URL is discovered from the same manifest.
+In Open WebUI mode, the internal authentication URL is discovered from the same manifest.
 Protect this file: a database URL can contain credentials (files are mode 0600).
 
 **Hub folder names must be unique (case-insensitively) within one deployment.**
@@ -44,8 +48,8 @@ Default SQLite layout:
 
 | Data | Owner | Location |
 |---|---|---|
-| Accounts, sessions, chats, model visibility | OWUI | `gateway-data/webui.db` |
-| Grants, identities, change history, workflow state | Hubzoid | `gateway-data/hubzoid-operational.db` |
+| Accounts, sessions, conversations, grants, identities, connector credentials, change history, workflow state | Hubzoid | `gateway-data/hubzoid-operational.db` |
+| Accounts, chats and model visibility (Open WebUI mode only) | Open WebUI | `gateway-data/webui.db` |
 | Workflow execution history and checkpoints | DBOS | `<hub>/.hubzoid/dbos.db` per hub |
 | Tool decisions, usage | Hubzoid | `gateway-data/hubzoid-operational.db` |
 
@@ -64,47 +68,47 @@ duplicate scheduled-slot suppression against an initialized database, not safe
 concurrent first-time SQLite schema creation or production high availability.
 Use PostgreSQL for multiple production workers and rehearse deployment upgrades.
 
-## Fresh installation
+## The owner and first access
 
-New hubs created with `hubzoid init` carry an optional local installation marker.
-At the first verified owner session, Hubzoid grants organization administration
-and entry and activates managed access for those fresh hubs. On a local,
-auth-disabled standalone hub this is `admin@localhost`. On a shared deployment,
-set `WEBUI_ADMIN_EMAIL` or `HUBZOID_GATEWAY_ADMIN_EMAIL` to the intended Open WebUI
-administrator. Sign in with that account and open chat or `/portal/`.
+Every agent's access is managed in the Console: a person may use an agent only
+with a grant, however the hub was created or deployed. The configured owner
+gets organization administration and entry on every hub at their first verified
+sign-in as an administrator: in the web app, in Open WebUI (a Console visit or
+their first chat) or through MCP sign-in. With sign-in off, the local owner
+(`admin@localhost`) owns every hub from the first start. On a shared
+deployment, set `HUBZOID_ADMIN_EMAIL` (web app) or `WEBUI_ADMIN_EMAIL` /
+`HUBZOID_GATEWAY_ADMIN_EMAIL` (Open WebUI mode) to the intended administrator.
 
-The verified account must have Open WebUI's admin role and match the configured
-email. Other admins and ordinary users receive no automatic grants. The
-provisioning marker is durable: a later login does not restore revoked access.
+The verified account must be an administrator and match the configured email.
+Other admins and ordinary users receive no automatic grants. Provisioning
+happens once per hub: a later login does not restore revoked access.
 Organization administration is bootstrapped once per store. Existing chosen
 administrators are preserved, including when another hub joins the gateway.
-Existing hubs keep their authority mode until migration; initializing an existing
-hub does not mark it fresh. Never copy `.hubzoid/` state into a new deployment.
+`hubzoid doctor` warns about an agent nobody may use. Never copy `.hubzoid/`
+state into a new deployment.
 
 For headless operation or recovery, explicit bootstrap remains available:
 
 ```bash
 hubzoid access bootstrap --admin operator@example.com ./finance
-# Activate only a fresh hub, or use the migration procedure for an existing hub.
-hubzoid access bootstrap --authoritative ./finance
 ```
 
 Bootstrap administration does not imply every tool capability. Check **Use this
-agent** separately for chat. Keep `WEBUI_AUTH=true` on shared deployments.
-Credentials and sign-in stay in Open WebUI; there is no second Console
-credential. The Console creates and changes accounts through Open WebUI's admin
-API. Nothing sends an invitation: share the chat URL and, for an account you
-created, its sign-in details yourself.
+agent** separately for chat. Keep `HUBZOID_AUTH=true` on shared deployments.
+The chat app and Console share one sign-in. Share the chat URL and a new
+person's one-time sign-in link; nothing is emailed. In Open WebUI mode, account
+changes use its admin API and you share the new account's sign-in details.
 
 ## Grant access and verify the end-user experience
 
 1. Open the agent and go to its **Access** tab. For someone without an
-   account, select **Add user** and enter their name, email and a password you
-   type or generate. For an existing user, select **Edit access** on their row,
+   account, select **Add user** and enter their name and email. In the default
+   mode they choose their password through a one-time sign-in link. Open
+   WebUI mode asks for a password. For an existing user, select **Edit access** on their row,
    or open them under **People** and use **Add an agent**.
 2. Tick the capabilities they need (a tool capability includes agent entry
    automatically), then review and save (**Create account** for a new user).
-   A new user's sign-in details are shown once to copy.
+   A new user's one-time link (or Open WebUI sign-in details) is shown once to copy.
 3. The permission check changes immediately. The chat app's model picker reflects
    the new access within about 30 seconds; the portal retries that projection on
    its own and only surfaces it if it keeps failing.
@@ -147,8 +151,8 @@ chat accounts rely on it alone. See
 To offboard someone, an organization administrator opens them under People
 and uses **…** → **Delete user**. That removes every grant, then the chat
 account and its chats; Activity history, usage records and published artifacts
-are kept. The person's Open WebUI API keys stop working with the account. Open
-WebUI keeps its stored connection tokens for a deleted account in its database.
+are kept. In Open WebUI mode, the person's API keys stop working with the
+account, but Open WebUI keeps its stored connection tokens for that account.
 The last administrator cannot be made a User or deleted. The Console no longer
 offers Block or Reactivate; a user blocked in an earlier release stays blocked
 (see [blocked users](access-management.md#blocked-users)).
@@ -203,9 +207,12 @@ operator-controlled. See [authentication](auth.md).
 
 Implemented in this release. Account management is always available to
 organization administrators and delegates once the server is configured for it.
-Nothing about existing accounts or legacy agents changes until someone uses it.
+Nothing about existing accounts changes until someone uses it.
 
-Requirements:
+Default mode needs no Open WebUI service account or internal URL. Accounts
+and access use the Hubzoid operational store.
+
+Additional requirements in **Open WebUI mode**:
 
 - the chat app's internal URL: the gateway manifest's `owui_url`, or
   `OWUI_INTERNAL_URL` under `hubzoid run` (set automatically). A public
@@ -221,7 +228,7 @@ What managers can do:
 | Create a user (role `user`) with initial access | Org admins, and delegates within their ceiling | Agent → Access → Add user, or People → Add user |
 | Change an existing user's access | Org admins, and delegates within their ceiling | Agent → Access → Edit access, or People → the user → Edit access / Add an agent |
 | Approve a pending signup | Org admins | People → the user → Role |
-| Reset a password (shown once) | Org admins | People → the user → Reset password |
+| Issue a one-time password-reset link (a new password in Open WebUI mode) | Org admins | People → the user → Reset password |
 | Make someone an Administrator, or a User again | Org admins | People → the user → Role |
 | Delete a user | Org admins | People → the user → … → Delete user |
 
@@ -230,7 +237,7 @@ Every action is audited in **Activity → Access changes** (`account_create`,
 without the password. Changing an account's email is not offered. Create a new
 account instead, because grants are keyed on the email.
 
-Creating an account and granting its access touch two systems that cannot
+In Open WebUI mode, creating an account and granting access touch two systems that cannot
 commit together. If access fails after the account exists, the Console says the
 account was created without access, keeps its sign-in details on screen, and
 **Try again** grants to that account. A duplicate email changes nothing: the
@@ -242,20 +249,30 @@ accounts and deletion are in
 [access management](access-management.md#add-a-user-implemented).
 
 Organization administrators cannot change their own role or account, or the
-service account, from the Console. For those, use Open WebUI's own settings or
-the server.
+service account, from the Console. Use `hubzoid admin` for supported operator
+recovery, or Open WebUI's own settings in that mode.
 
-### Proposals from agents
+### Access and workflows from chat
 
-With `HUBZOID_MANAGEMENT_TOOLS=true` in a hub's `.env` (default off), that hub's
-agent can propose access changes and new accounts on behalf of the signed-in
-manager, from chat, MCP, WhatsApp or Telegram. It replies with a link to
-`/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
-change and confirms it. Nothing applies before that. Links expire after
-`HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
-[access management](access-management.md#proposals-from-chat-whatsapp-and-mcp-implemented-off-by-default).
+Two families of agent tools are off for everyone until granted in the Console,
+under **Hubzoid tools**:
 
-### Hiding the Open WebUI Users page
+- **Access control → Manage access from chat** (`access_tools`, organization
+  administrators grant it). A manager can ask the agent who has access, why a
+  person has it, and propose access changes and new accounts, from chat, MCP,
+  WhatsApp or Telegram. The agent replies with a link to
+  `/portal/#/confirm/<id>`. The manager signs in on the web, reviews the exact
+  change and confirms it. Nothing applies before that. Links expire after
+  `HUBZOID_CHANGE_REQUEST_TTL` seconds (default 900) and work once. See
+  [access management](access-management.md#access-tools-in-chat-whatsapp-and-mcp-implemented-off-until-granted).
+- **Workflows → See workflows and runs** and **Run and control workflows**
+  (`workflows_view`, `workflows_manage`). See
+  [workflows](workflows.md#from-chat-and-assistants).
+
+`HUBZOID_ACCESS_TOOLS=false` or `HUBZOID_WORKFLOW_TOOLS=false` in a hub's
+`.env` removes a family from that agent.
+
+### Hiding the Open WebUI Users page (Open WebUI mode only)
 
 A gateway set up fresh with Console accounts (no earlier `deployment.json` or
 chat-app database, `WEBUI_AUTH=true`, and the service account above) hides Open
@@ -266,16 +283,14 @@ nothing and keeps the Users page, so nothing changes on upgrade. An explicit
 environment overrides the recorded value; set `true` on an existing deployment
 once Console account management is verified there.
 
-When hidden, Open WebUI's user list (`/admin/users/overview`) opens Console
-People. When every agent is managed in the Console, the whole Users section is
-hidden too: the Admin Panel and every `/admin/users` page, Groups included,
-open **Settings → Integrations**. While any agent still uses legacy access, the
-Users section lands on Groups, which stays. Evaluations, Functions and Settings
-are unchanged. Browser writes to Open WebUI's account admin API
+When hidden, Open WebUI's whole Users section is hidden: the Admin Panel and
+every `/admin/users` page, the user list and Groups included, open **Settings →
+Integrations**. Open WebUI groups decide nothing about agents. Evaluations,
+Functions and Settings are unchanged. Browser writes to Open WebUI's account admin API
 (`POST /api/v1/auths/add`, `POST /api/v1/users/{id}/update`,
 `DELETE /api/v1/users/{id}`) are refused. Public sign-up stays closed either way.
 
-### Open WebUI APIs Hubzoid relies on
+### Open WebUI APIs Hubzoid relies on (Open WebUI mode only)
 
 These must stay reachable on the internal URL. None of them passes the edge.
 
@@ -288,167 +303,19 @@ These must stay reachable on the internal URL. None of them passes the edge.
 | `GET /api/v1/users/{id}` | Reading an account before changing it |
 | `POST /api/v1/users/{id}/update` | Approve, reset password, the chat app's side of the Administrator role |
 | `DELETE /api/v1/users/{id}` | Delete user |
-| `/api/v1/groups/...` | Group provisioning and the legacy visibility mirror |
+| `/api/v1/groups/...` | A gateway's first-boot model provisioning |
 | `/api/v1/models/...` | Model registration and the visibility mirror |
 
 Open WebUI API keys are read from its database (read-only) to verify MCP and
 management API callers.
 
-## Migrate existing customers
+## Open WebUI model visibility
 
-Migration keeps the existing preview and atomic cutover. Start with a clone.
-Keep the current gateway version/database backups until end-user checks pass.
-
-1. Back up with `hubzoid backup <hub>` (it covers the whole gateway: manifest,
-   OWUI database, operational database and each hub's state). For PostgreSQL,
-   also take a `pg_dump`. See [BACKUP.md](BACKUP.md).
-2. On the clone, export any function-backed access roster to an explicit CSV;
-   remove the live access function before migrating. Computed permissions cannot
-   be safely enumerated automatically.
-3. Preview each hub with its specific OWUI model ID:
-
-```bash
-hubzoid access migrate ./finance \
-  --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance
-```
-
-The model ID is the gateway's configured model label, not necessarily the folder
-name. The OWUI 0.11 adapter reads `group_member` and `access_grant`; supported older
-JSON schemas are recognized explicitly. Unknown schemas are refused. Import combines
-CSV and OWUI tool groups, intersected with existing model visibility. It checks a
-before/after permission matrix containing both permitted and denied users before
-activation. Preview prints the number of legacy decisions checked and any
-differences. A CSV-only preview warns that model visibility has not been verified, and
-`--apply` refuses an unverified plan. For a legacy standalone hub where signed-in
-entry was public, pass `--standalone-public` explicitly. Public legacy entry
-is preserved as an "Everyone signed in" grant, and the report says
-`Everyone signed in (carried over)`. It is the only way such a grant is still
-written. It checks tool permissions
-against the existing CSV resolver and automatically includes the local OWUI group
-source when present; `--from-owui` can specify a different source copy. Registered
-gateways require model ACL evidence and reject standalone bypass. Disabled models are refused rather than implicitly enabled.
-It does not translate legacy groups into administrator privileges.
-
-4. Freeze access edits, rerun the preview against the live source, then cut over:
-
-```bash
-hubzoid access migrate ./finance \
-  --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance --apply
-hubzoid access sync ./finance
-hubzoid access diff ./finance \
-  --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance
-```
-
-`--apply` automatically writes a mode-0600 pre-cutover access snapshot under
-`<hub>/.hubzoid/backups/`. Grants and activation change in one transaction.
-Test representative end users' agent entry and restricted tools immediately.
-The static diff compares the imported plan with stored grants; it supplements,
-not replaces, the effective access checks and real user checks.
-
-5. If needed, restore the printed snapshot:
-
-```bash
-hubzoid access rollback /absolute/finance/.hubzoid/backups/access-....json ./finance
-```
-
-Rollback restores that hub's grants, attributes and previous authority state.
-For an OWUI-based migration, the snapshot also retains the original model ACL.
-Rollback to legacy restores it through OWUI's API, preserving current model
-settings. Pause the visibility sync worker and access edits during rollback so an
-in-flight projection cannot overwrite the restored ACL. If OWUI is unavailable,
-the command reports partial restoration and exits unsuccessfully: keep maintenance
-open, fix connectivity/credentials, then rerun the same rollback. Older or CSV-only
-snapshots lack that ACL; the command explicitly requires restoring it from your
-pre-cutover deployment backup. For a previously managed hub, run `access sync`.
-Rollback does not undo account changes or replace a full deployment backup.
-
-Migrate one hub at a time. Shared OWUI groups remain editable for unmigrated hubs
-and non-agent resources. Migrated models' ACL writes are blocked at the edge and
-redirect operators to the portal. Chat permissions always come from the authority
-for the selected hub; OWUI visibility is only a mirror. OWUI's own administrators
-may retain its privileged model visibility, but Hubzoid still checks agent entry.
-
-## Planned maintenance upgrade (the whole deployment)
-
-The upgrade is a short, explicit maintenance window run by an operator — there is no
-automatic migration on startup. It reuses the commands above (`access migrate`,
-`access sync`, `access diff`, `access rollback`) in this sequence. Do it once, per hub,
-with all access writers stopped.
-
-Prerequisites you must have to hand:
-- The OWUI source database for each hub (SQLite file path, or a PostgreSQL URL if OWUI
-  runs on Postgres) and each hub's **OWUI model ID** (the gateway's configured model
-  label, not necessarily the folder name).
-- The gateway admin email/password (`HUBZOID_GATEWAY_ADMIN_EMAIL` / `_PASSWORD`) so the
-  visibility sync can sign in to OWUI.
-- The email(s) of the existing OWUI administrator(s) who will own the dashboard.
-
-Procedure:
-
-1. **Stop the writers, but keep Open WebUI reachable.** Stop all bridges and the
-   visibility projector (nothing should edit access or project during the window). The
-   gateway normally supervises the OWUI subprocess, so stopping the gateway also stops
-   OWUI — but `access sync` and rollback's visibility restore call OWUI's API. So run
-   **OWUI privately** for the window: start it on its own, bound to loopback
-   (`127.0.0.1`), with `OWUI_INTERNAL_URL`/`WEBUI_URL` and `HUBZOID_GATEWAY_ADMIN_EMAIL`
-   / `_PASSWORD` set so the CLI can sign in — but with the bridges and projector down so
-   no chat traffic or projection races the migration.
-2. **Back up.** Run `hubzoid backup <hub>` and keep the archive in a protected location.
-   For PostgreSQL, also take a `pg_dump` ([BACKUP.md](BACKUP.md)).
-   (`access migrate --apply` also writes its own 0600 pre-cutover snapshot under
-   `<hub>/.hubzoid/backups/`, but keep your full backup too — it is the verification and
-   rollback baseline, and it captures the ORIGINAL OWUI model visibility before any sync.)
-3. **Establish dashboard admins**, once, explicitly (audited):
-   ```bash
-   hubzoid access bootstrap --admin admin@example.org ./finance
-   ```
-4. **Preview, migrate, and verify BEFORE projecting**, per hub. Preview is a dry-run; it
-   checks a before/after matrix of permitted AND denied users and refuses an unverified or
-   empty plan. Run the confirming `diff` **immediately after `--apply`, before `sync`** —
-   `diff` rebuilds its baseline by reading the OWUI source, and `sync` will rewrite that
-   source's model visibility (replacing "public" with explicit per-user grants), so a
-   `--from-owui` diff run *after* sync compares against a changed baseline and can report
-   a false mismatch even though Hubzoid's permissions are unchanged.
-   ```bash
-   hubzoid access migrate ./finance \
-     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance           # preview (dry-run)
-   hubzoid access migrate ./finance \
-     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance --apply    # cut over (+ 0600 backup)
-   hubzoid access diff ./finance \
-     --from-owui sqlite:////absolute/gateway-data/webui.db --model-id finance            # verify: expect 0 missing, 0 extra
-   ```
-   Re-running `--apply` on an already-migrated hub is refused (it would overwrite edits
-   made since migration); `--remigrate` overrides that only if you intend to discard them.
-5. **Project visibility, then verify the projection separately** (not with another
-   `--from-owui` diff — see above). `sync` is idempotent, so a clean second run is the
-   check that projection converged:
-   ```bash
-   hubzoid access sync ./finance   # projects Casbin → OWUI model visibility
-   hubzoid access sync ./finance   # run again: it should report state "ok" and change nothing
-   ```
-6. **Restart** the gateway and bridges (which resumes the normal visibility loop).
-7. **Smoke-test:** an admin opens the Admin Console (the "Admin Console" link in the chat
-   sidebar) and sees the migrated agent as editable; a permitted user can enter the agent
-   and use its tools in chat; a denied user cannot; an ordinary user still uses chat
-   normally; visibility sync shows `ok`.
-
-**Rollback (if a hub fails verification):** with the bridges/projector still stopped and
-OWUI still running privately (step 1), restore that hub's pre-cutover snapshot — this
-restores grants, authority, AND the original OWUI model visibility saved in the backup.
-Restart leaves the rollback intact (the hub is legacy again). If OWUI is unreachable the
-command reports partial restoration and exits non-zero — keep the window open, fix
-connectivity, rerun the same command.
-```bash
-hubzoid access rollback /absolute/finance/.hubzoid/backups/access-....json ./finance
-```
-
-**After upgrade — where things live:** migrated agents' permissions are managed in the
-dashboard (the portal refuses and hides permission edits for a still-legacy agent, so
-nothing there is misleading or silently overwritten); accounts, sign-in and roles stay
-in Open WebUI. Migration flattens OWUI groups into direct grants, so if onboarding adds
-users to an OWUI group to grant agent access, after migration those new members need an
-explicit dashboard grant instead — confirm whether the deployment relies on group-based
-onboarding before scheduling the window.
+In Open WebUI mode each agent is an Open WebUI model. Hubzoid mirrors who may
+use it into the model's access list, so each person sees only their agents.
+The bridge still checks every turn; the mirror only shapes the picker. Browser
+writes to an agent model's access list are refused at the edge. Run
+`hubzoid access sync` to re-project it if it was ever missed.
 
 ## Workflow execution and inspection
 
@@ -486,7 +353,7 @@ idempotency and code changes. For operators:
 
 | Symptom | Check |
 |---|---|
-| Grant has no effect | Agent still marked legacy? Correct deployment manifest? Matching signup email? |
+| Grant has no effect | Correct deployment manifest? Matching signup email? Account blocked? |
 | Agent not visible | People screen sync status; service-account credentials; `access sync` |
 | Portal denies entry | OWUI sign-in session; Hubzoid `manage_access`; discovered internal OWUI URL |
 | Add user says account management isn't set up | Internal OWUI URL (manifest or `OWUI_INTERNAL_URL`, not only `WEBUI_URL`) and `HUBZOID_GATEWAY_ADMIN_EMAIL`/`_PASSWORD` |

@@ -8,18 +8,27 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node tests/journey.cjs"
+    "test": "node tests/journey.cjs && node tests/connectors.cjs",
+    "test:app": "node --experimental-strip-types --no-warnings tests/app-stream.test.mts && node --experimental-strip-types --no-warnings tests/app-router.test.mts && node --experimental-strip-types --no-warnings tests/app-images.test.mts && node tests/app-journey.cjs",
+    "fixture:app": "node tests/app-fixture-server.cjs",
+    "test:app:real": "node tests/app-real-journey.cjs"
   },
   "dependencies": {
+    "@assistant-ui/react": "0.15.22",
+    "@assistant-ui/react-markdown": "0.14.17",
     "antd": "^6.6.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.44.0",
+    "radix-ui": "^1.6.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.4.3",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",

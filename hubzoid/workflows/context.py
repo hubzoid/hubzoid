@@ -19,7 +19,7 @@ resolved from the active run's context:
                                  Pydantic model), checkpointed as a step
     hub.call_agent(task, ...)    the full agent loop with tools, checkpointed
     hub.call_jev(state, questions) typed decisions with probabilities (Jev via
-                                 OpenRouter; experimental), checkpointed
+                                 OpenRouter; provider endpoint alpha), checkpointed
     hub.user.id / .email / .attrs / .can("perm")   the account the run acts as
 
 Secrets are read INSIDE the run (from env) and never passed as workflow/step
@@ -80,6 +80,8 @@ class RunCtx:
     subject: str = ""                 # the Casbin subject this run acts as
     identity: dict | None = None      # RunIdentity.to_dict() captured at run start
     run_id: str = ""                  # the DBOS workflow id, when there is one
+    event: dict | None = None
+    owner: Any = None
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -99,10 +101,22 @@ def _identity(ctx: RunCtx):
     return RunIdentity(ctx.subject or f"workflow:{ctx.workflow}", None, "legacy-service")
 
 
+def _owned(ctx: RunCtx) -> None:
+    """A process that lost the hub's engine stops before a side effect
+    (ownership.OwnershipLost, which leaves the run recoverable)."""
+    from . import runtime
+    owner = ctx.owner or runtime._OWNER
+    if owner is not None:
+        owner.assert_owned()
+
+
 def _recheck(ctx: RunCtx, what: str) -> None:
     """Before a protected operation: the run's account must still be usable."""
     from .identity import recheck
 
+    from . import deadlines
+    deadlines.remaining()
+    _owned(ctx)
     recheck(ctx.hub_dir, ctx.hub, _identity(ctx), what=what)
 
 
@@ -119,7 +133,7 @@ def publish_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: s
         Path(hub_dir), hub=hub, owner=ident.subject, owner_account=ident.account_id,
         source=Path(request["path"]), title=request.get("title"), workflow=workflow,
         run_id=run_id or None, idem_key=idem_key, audience=request.get("audience") or "owner",
-        share_with=request.get("share_with") or ())
+        share_with=request.get("share_with") or (), key=request.get("key"))
 
 
 def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str,
@@ -186,6 +200,13 @@ class Hub:
     """The per-run proxy. One module-level instance (`hub`); state is per-run."""
 
     @property
+    def event(self):
+        """The verified webhook delivery, or None for manual/scheduled runs."""
+        from types import SimpleNamespace
+        value = _ctx().event
+        return SimpleNamespace(**value) if value else None
+
+    @property
     def name(self) -> str:
         return _ctx().hub
 
@@ -232,14 +253,17 @@ class Hub:
         return path
 
     def publish_artifact(self, path, *, title: str | None = None,
-                         audience: str = "owner", share_with=()) -> dict:
+                         audience: str = "owner", share_with=(), key: str | None = None) -> dict:
         """Publish an existing file as an artifact owned by the run's account and
         return {"id", "url", "title", "filename", "content_type", "size"}.
 
+        `key` (lowercase letters, digits, '-' or '_') adds "latest_url", one
+        bookmark that always opens the newest artifact published with this key
+        in this agent, for anyone who may open that one.
+
         Private to the owner by default. `audience="hub"` (everyone who can use
-        this agent) or `audience="people"` with `share_with=["a@x.com",
-        {"kind": "group", "principal": "finance"}]` shares it explicitly; both
-        need a Console-managed hub. Public links are never made here: the owner
+        this agent) or `audience="people"` with `share_with=["a@x.com"]` shares
+        it explicitly. Public links are never made here: the owner
         creates them in the viewer, with permission. Each call stores a new
         artifact; earlier ones are never overwritten. Checkpointed as a step."""
         ctx = _ctx()
@@ -247,9 +271,11 @@ class Hub:
         if not source.is_absolute():
             source = Path(ctx.hub_dir) / source
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
-                   "share_with": [p if isinstance(p, str) else dict(p) for p in share_with]}
+                   "share_with": [p if isinstance(p, str) else dict(p) for p in share_with],
+                   "key": key}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
+        _owned(ctx)
         if _PUBLISH_STEP is not None:
             return _PUBLISH_STEP(*args)
         return publish_now(*args)
@@ -269,6 +295,7 @@ class Hub:
         request = {"subject": subject, "body": body, "artifacts": ids}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
+        _owned(ctx)
         result = _EMAIL_STEP(*args) if _EMAIL_STEP is not None else email_now(*args)
         if raise_on_failure and result["status"] not in ("accepted", "previewed"):
             raise EmailError(result)
@@ -276,7 +303,7 @@ class Hub:
 
     def call_llm(self, prompt: str, *, response_format: str = "text",
                  response_model=None, model: str | None = None,
-                 system: str | None = None):
+                 system: str | None = None, timeout: float | str = 120):
         """One model call with no tools.
 
         response_format="text" (default) returns a string; "json" returns the
@@ -296,19 +323,22 @@ class Hub:
         if response_model is not None:
             response_format = "json"
             schema = response_model.model_json_schema()
-        spec = {"prompt": prompt, "system": system, "model": model,
+        from .deadlines import remaining
+        spec = {"timeout": remaining(timeout), "prompt": prompt, "system": system, "model": model,
                 "response_format": response_format, "schema": schema}
         ctx = _ctx()
         _recheck(ctx, "A model call")
-        if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
-            result = _LLM_STEP(spec, str(ctx.hub_dir), ctx.subject)
-        else:
-            result = _LLM(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
+        from .deadlines import scope
+        with scope(timeout=spec["timeout"]):
+            if _LLM_STEP is not None:   # checkpointed inside a DBOS workflow
+                result = _LLM_STEP(spec, str(ctx.hub_dir), ctx.subject)
+            else:
+                result = _LLM(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
         if response_format == "text":
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
 
-    def call_agent(self, task: str, *, response_model=None):
+    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
         `response_model`, the agent ends with JSON and a validated instance is
@@ -325,18 +355,20 @@ class Hub:
                 "Respond with only", "Finish your reply with")
         ctx = _ctx()
         _recheck(ctx, "An agent call")
-        if _AGENT_STEP is not None:
-            text = _AGENT_STEP(task, str(ctx.hub_dir), ctx.subject)
-        else:
-            text = _AGENT(task, hub_dir=ctx.hub_dir, subject=ctx.subject)
+        from .deadlines import scope
+        with scope(timeout):
+            if _AGENT_STEP is not None:
+                text = _AGENT_STEP(task, str(ctx.hub_dir), ctx.subject)
+            else:
+                text = _AGENT(task, hub_dir=ctx.hub_dir, subject=ctx.subject)
         if response_model is None:
             return text
         from ..structured import extract_json
 
         return _validated(extract_json(text), response_model, text)
 
-    def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13") -> dict:
-        """Experimental. Typed decisions from TypeSafe's Jev through OpenRouter.
+    def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
+        """Typed decisions from TypeSafe's Jev through OpenRouter.
         Each question is a "noul" (does it hold?), "choice" (which label?) or
         "score" (where on an ordered scale?), with instructions and criteria;
         one request may mix them. Returns {question name: answer}, every answer
@@ -346,7 +378,8 @@ class Hub:
             raise RuntimeError(
                 "hub.call_jev is not configured; call workflows.configure(jev=...) at boot"
             )
-        spec = {"model": model, "state": state, "questions": questions}
+        from .deadlines import remaining
+        spec = {"model": model, "state": state, "questions": questions, "timeout": remaining(timeout)}
         ctx = _ctx()
         _recheck(ctx, "A Jev call")
         if _JEV_STEP is not None:
@@ -381,7 +414,7 @@ hub = Hub()
 @contextmanager
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
-              identity: dict | None = None, run_id: str = "") -> Iterator[None]:
+              identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -392,7 +425,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
     ctx = RunCtx(
         hub=hub, workflow=workflow, hub_dir=Path(hub_dir), engine=engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
-        identity=identity, run_id=run_id or "",
+        identity=identity, run_id=run_id or "", event=event, owner=owner,
     )
     token = _run.set(ctx)
     try:

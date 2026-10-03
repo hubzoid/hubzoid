@@ -16,7 +16,17 @@ import {
   Typography,
 } from "antd";
 import { MoreHorizontal, RefreshCw, Search, UserPlus } from "lucide-react";
-import { ApiError, request, query, type Hub, type Me, type Overview, type Person } from "../api";
+import {
+  ApiError,
+  request,
+  query,
+  type Hub,
+  type Me,
+  type Overview,
+  type Person,
+  type SignInLink,
+  usesSignInLinks,
+} from "../api";
 import { errorText, useData } from "../hooks/useData";
 import { useCatalogs } from "../hooks/useCatalogs";
 import { href, hrefWith, navigate, personHref, useHashQuery } from "../hooks/useRoute";
@@ -34,7 +44,7 @@ import {
   relativeTime,
 } from "../lib/format";
 import { orderCapabilities } from "./access/plan";
-import { AccountDrawer, OneTimePassword, PasswordField } from "./people/AccountDrawer";
+import { AccountDrawer, OneTimeLink, OneTimePassword, PasswordField } from "./people/AccountDrawer";
 import { passwordProblem } from "./people/password";
 
 const { Text, Title, Paragraph } = Typography;
@@ -352,12 +362,6 @@ function SyncStatus({
         Chat app visibility in sync{v.updated ? ` (${relativeTime(v.updated)})` : ""}.
       </Text>
     );
-  if (v.state === "legacy")
-    return (
-      <Text type="secondary" className="sync-note">
-        Chat app visibility isn’t mirrored yet: no agent has been moved to managed access.
-      </Text>
-    );
   return (
     <Text type="secondary" className="sync-note">
       Chat app visibility sync hasn’t run in this session{" "}
@@ -415,6 +419,9 @@ function PersonDrawer({
   const [panel, setPanel] = useState<"" | "password" | "delete">("");
   const [password, setPassword] = useState("");
   const [shown, setShown] = useState("");
+  // Hubzoid accounts: a reset gives a one-time link instead of a password.
+  const links = usesSignInLinks(me);
+  const [shownLink, setShownLink] = useState<SignInLink | null>(null);
   const [touched, setTouched] = useState(false);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -426,7 +433,7 @@ function PersonDrawer({
     [person],
   );
   const addable = hubs.filter(
-    (h) => h.authoritative && h.key in (me.grantable ?? {}) && !access.some(([k]) => k === h.key),
+    (h) => h.key in (me.grantable ?? {}) && !access.some(([k]) => k === h.key),
   );
   const path = person ? `/accounts/${encodeURIComponent(person.subject)}` : "";
   const role = info.data?.administrator;
@@ -436,6 +443,7 @@ function PersonDrawer({
     setPanel("");
     setPassword("");
     setShown("");
+    setShownLink(null);
     setTyped("");
     navigate("/people");
   }
@@ -497,6 +505,25 @@ function PersonDrawer({
       setShown(password);
       setPassword("");
       setTouched(false);
+    }
+  }
+
+  /** Hubzoid accounts: the current password stops working, their sessions
+   *  end, and a one-time link lets them set a new one. */
+  async function resetWithLink() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<SignInLink>(path + "/password", {});
+      setShownLink(result);
+      message.success(`Password reset for ${name}. They were signed out everywhere.`);
+      info.reload();
+      data.reload();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -603,6 +630,24 @@ function PersonDrawer({
               { key: "email", label: "Email", children: <span className="identity">{person.subject}</span> },
               { key: "status", label: "Status", children: <AccountTag status={person.status} /> },
               { key: "role", label: "Role", children: roleControl() },
+              ...(me.org_admin && !isService(person.subject)
+                ? [
+                    {
+                      key: "phone",
+                      label: "Phone",
+                      children: (
+                        <PhoneEditor
+                          subject={person.subject}
+                          phone={person.phone ?? null}
+                          onSaved={() => {
+                            data.reload();
+                            onChanged();
+                          }}
+                        />
+                      ),
+                    },
+                  ]
+                : []),
               ...(manageAccount
                 ? [
                     {
@@ -618,6 +663,7 @@ function PersonDrawer({
                             onClick={() => {
                               setPanel(panel === "password" ? "" : "password");
                               setShown("");
+                              setShownLink(null);
                             }}
                           >
                             Reset password
@@ -629,7 +675,34 @@ function PersonDrawer({
             ]}
           />
 
-          {panel === "password" && (
+          {panel === "password" && links && (
+            <div className="agent-access">
+              {shownLink ? (
+                shownLink.link ? (
+                  <OneTimeLink link={shownLink.link} expiresAt={shownLink.expires_at} />
+                ) : (
+                  <Alert type="warning" showIcon title="The sign-in link couldn’t be made. Try again." />
+                )
+              ) : (
+                <>
+                  <Paragraph style={{ margin: 0 }}>
+                    Their current password stops working and they are signed out everywhere. You get a one-time
+                    sign-in link to share with them, so they can set a new password.
+                  </Paragraph>
+                  <Space wrap>
+                    <Button type="primary" loading={busy} onClick={() => void resetWithLink()}>
+                      Reset and create sign-in link
+                    </Button>
+                    <Button disabled={busy} onClick={() => setPanel("")}>
+                      Cancel
+                    </Button>
+                  </Space>
+                </>
+              )}
+            </div>
+          )}
+
+          {panel === "password" && !links && (
             <div className="agent-access">
               {shown ? (
                 <OneTimePassword password={shown} />
@@ -728,5 +801,79 @@ function PersonDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+
+/** The number a person's WhatsApp and Telegram messages come from: a sender
+ *  with this number is them. Organization administrators only. */
+function PhoneEditor({ subject, phone, onSaved }: {
+  subject: string;
+  phone: string | null;
+  onSaved: () => void;
+}) {
+  const { message } = App.useApp();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<{ phone: string | null }>(
+        `/accounts/${encodeURIComponent(subject)}/phone`, { phone: value });
+      message.success(result.phone ? "Phone number saved." : "Phone number removed.");
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing)
+    return (
+      <Space wrap>
+        {phone ? <span className="identity">+{phone}</span> : <Text type="secondary">None</Text>}
+        <Button
+          size="small"
+          onClick={() => {
+            setValue(phone ? "+" + phone : "");
+            setError("");
+            setEditing(true);
+          }}
+        >
+          {phone ? "Change" : "Add"}
+        </Button>
+      </Space>
+    );
+  return (
+    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Space wrap>
+        <Input
+          aria-label="Phone number"
+          aria-describedby="phone-help"
+          placeholder="+91 98000 00001"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onPressEnter={() => void save()}
+          style={{ maxWidth: 220 }}
+        />
+        <Button type="primary" size="small" loading={busy} onClick={() => void save()}>
+          Save
+        </Button>
+        <Button size="small" disabled={busy} onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </Space>
+      <Text type="secondary" id="phone-help">
+        With the country code. WhatsApp and Telegram messages from this number are theirs. Leave it
+        empty to remove it.
+      </Text>
+      {error && <Text type="danger" role="alert">{error}</Text>}
+    </Space>
   );
 }

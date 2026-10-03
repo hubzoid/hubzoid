@@ -43,6 +43,7 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     monkeypatch.delenv("HUBZOID_CONNECT_TTL", raising=False)
+    h.grant(hub, ALICE, BOB)
     hub.db = db  # type: ignore[attr-defined]
     return hub
 
@@ -95,22 +96,15 @@ def test_ids_are_unguessable_and_malformed_ids_are_never_looked_up(hub):
     assert store.get(hub, "../../etc") is None and store.get(hub, "short") is None
 
 
-def test_legacy_hub_needs_the_legacy_group_of_the_same_name(hub):
-    with _as(ALICE, groups=()):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="gmail")
-    assert err.value.code == "denied" and "connector_gmail" in err.value.message
-    assert (ALICE, "connect:gmail", "deny", "no-group") in _audit(hub)
-
-
-def test_managed_hub_needs_the_console_grant(hub):
+def test_connecting_needs_the_console_grant(hub):
     import hubzoid.access as access
     gs = access.store_for(hub)
-    gs.set_authoritative(True, hub=hub.name)
-    with _as(ALICE):  # a legacy group is no longer enough
+    gs.revoke(ALICE, hub.name, "connector_gmail", actor="test")
+    with _as(ALICE):  # a group of the same name grants nothing
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")
-    assert err.value.code == "denied"
+    assert err.value.code == "denied" and "Connect Gmail" in err.value.message
+    assert (ALICE, "connect:gmail", "deny", "no-grant") in _audit(hub)
     gs.grant(ALICE, hub.name, "connector_gmail")
     with _as(ALICE, groups=()):
         assert connect_journey.start(hub, app="gmail")["state"] == "link"
@@ -263,6 +257,8 @@ def test_two_open_webui_servers_for_one_app_are_a_conflict(hub, tmp_path, monkey
     assert "'gmail'" not in err.value.message and "'Gmail'" not in err.value.message  # ids go to the log
     assert store.open_for(hub, subject=ALICE, app="gmail") == []
     # Someone without the capability learns nothing about the setup.
+    import hubzoid.access as access
+    access.store_for(hub).revoke(ALICE, hub.name, "connector_gmail", actor="test")
     with _as(ALICE, groups=()):
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")

@@ -174,7 +174,11 @@ export function emptyRow(subject = ""): AccessRow {
 
 /** Everything the drawer needs to stage one person's change set. */
 export type Draft = {
-  mode: "add" | "edit";
+  /** "pick": choosing who (an existing person, or a new email); "add": a new
+   *  account; "edit": one person's access in this agent. */
+  mode: "pick" | "add" | "edit";
+  /** Reached from the search in Add user: Back returns to it, with this text. */
+  search?: string;
   /** What the server currently holds (empty for a new person). */
   row: AccessRow;
   /** Identity being edited; editable only in add mode. */
@@ -204,3 +208,9 @@ export function draftFor(row?: AccessRow): Draft {
     progress: 0,
   };
 }
+
+/** Add user starts by choosing who: someone with an account, or a new email. */
+export function pickDraft(search = ""): Draft {
+  return { ...draftFor(), mode: "pick", subject: search, search };
+}
+

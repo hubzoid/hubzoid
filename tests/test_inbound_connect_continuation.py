@@ -48,6 +48,7 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
+    h.grant(hub, ALICE, BOB)
     hub.db = db
     hub.roster = {PHONE: {"email": ALICE, "groups": ["connector_gmail"]},
                   PHONE_B: {"email": BOB, "groups": ["connector_gmail"]}}

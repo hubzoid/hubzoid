@@ -244,6 +244,7 @@ def edge_url():
     app = edge.build_edge_app(
         default_base=f"http://127.0.0.1:{oport}",
         routes=[edge.EdgeRoute(prefix="/artifacts", upstream=f"http://127.0.0.1:{bport}")],
+        web_app=False,  # the Open WebUI topology
     )
     front = _Server(app, eport)
     bridge.start()
@@ -330,7 +331,8 @@ def test_portal_html_injection_preserves_compressed_response_cookies(monkeypatch
 
     monkeypatch.setattr(edge.httpx, 'AsyncClient', lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(upstream)))
-    app = edge.build_edge_app(default_base='http://owui', routes=[edge.EdgeRoute('/portal', 'http://bridge')])
+    app = edge.build_edge_app(default_base='http://owui', routes=[edge.EdgeRoute('/portal', 'http://bridge')],
+                              web_app=False)
     with TestClient(app) as client:
         result = client.get('/')
         assert result.status_code == 200
@@ -407,7 +409,7 @@ def _failover_app(monkeypatch, bridge_answers):
     monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(upstream)))
     route = edge.EdgeRoute("/portal", "http://bridge1", fallbacks=("http://bridge2",))
-    return edge.build_edge_app(default_base="http://owui", routes=[route]), asked
+    return edge.build_edge_app(default_base="http://owui", routes=[route], web_app=False), asked
 
 
 @pytest.mark.parametrize("first", [httpx.ConnectError("refused"), (503, {"detail": "starting"})])

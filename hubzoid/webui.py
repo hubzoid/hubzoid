@@ -4,8 +4,10 @@ We start `open-webui serve` as a child process and point it at the hubzoid
 bridge as its OpenAI-compatible upstream. Per-hub state (SQLite DB, uploads)
 lives under `<hub>/.openwebui-data/` so each hub has isolated history.
 
-`open-webui` is a required dep of hubzoid (`pip install hubzoid` bundles it).
-If the binary is not on PATH we tell the user how to repair the install.
+Open WebUI is a supported chat app (HUBZOID_UI=openwebui, Open WebUI mode) and
+an optional extra: `pip install "hubzoid[openwebui]"`. Nothing on the default
+path imports `open_webui`; when the binary is missing, Open WebUI mode says how to
+install it.
 
 Hubzoid sets ~24 env vars on the OWUI subprocess to strip platform surfaces
 (community sharing, code interpreter, etc.) so the UI looks like a single
@@ -199,17 +201,10 @@ _DEFAULT_OWUI_ENV: dict[str, str] = {
     "ENABLE_ADMIN_EXPORT": _OFF,
 }
 
-# Env flipped on when a hub enables the hosted MCP server (MCP_SERVER=true).
-# Users mint per-user API keys in OWUI (Settings -> Account -> API keys) and
-# present them as Bearer tokens on /mcp. The endpoint-restriction pair with an
-# EMPTY allowlist makes OWUI 403 every API request authenticated by key —
-# verified in OWUI 0.9.6 source (utils/auth.py, get_current_user_by_api_key):
-# the key mints fine but is inert against OWUI itself, so the original
-# "per-user API keys defeat auth" concern stays honored. The key is an
-# identity credential for the MCP surface only (hubzoid.access.owui_api_keys
-# resolves it read-only against OWUI's DB). Both spellings: OWUI renamed the
-# vars in 0.9.6 (plural) but still falls back to the singular forms for the
-# restriction pair. `setdefault` as everywhere — the operator's .env wins.
+# Optional OWUI API-key minting for callers explicitly requesting this feature.
+# Hosted MCP does not enable it and does not accept these keys. The historical
+# constant name is retained for compatibility. Endpoint restrictions keep keys
+# denied inside OWUI unless the operator explicitly changes the allowlist.
 _MCP_API_KEY_ENV: dict[str, str] = {
     "ENABLE_API_KEY": _ON,
     "ENABLE_API_KEYS": _ON,
@@ -479,10 +474,9 @@ def start(
         "OPENAI_API_KEY": api_key,
         "OPENAI_API_KEYS": api_key,
         "DEFAULT_MODELS": model_label,
-        # Forward the logged-in user's identity to the bridge so per-role tool
-        # access can resolve their groups. OWUI sends X-OpenWebUI-User-Email
-        # (+ id/name/role); the bridge maps the email to the user's OWUI groups.
-        # See hubzoid.access.owui_groups.
+        # Forward the logged-in user's identity to the bridge, which decides
+        # their access from the Console's grants. OWUI sends
+        # X-OpenWebUI-User-Email (+ id/name/role).
         "ENABLE_FORWARD_USER_INFO_HEADERS": "true",
     }
     return _spawn_owui(
@@ -575,11 +569,9 @@ def _spawn_owui(
     binary = _find_binary()
     if binary is None:
         raise FileNotFoundError(
-            "open-webui not found next to the running Python or on PATH. "
-            "It is bundled with hubzoid; reinstall to repair:\n"
-            "    pip install --force-reinstall hubzoid\n"
-            "or install it directly:\n"
-            "    pip install open-webui"
+            "open-webui not found next to the running Python or on PATH. The "
+            "Open WebUI chat app (HUBZOID_UI=openwebui) is an optional extra:\n"
+            '    pip install "hubzoid[openwebui]"'
         )
 
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -663,6 +655,10 @@ def _spawn_owui(
     log_path = data_dir / "openwebui.log"
     log_file = log_path.open("ab", buffering=0)
     cmd = [binary, "serve", "--host", ui_host, "--port", str(ui_port)]
-    proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
+    # Run inside the data folder: without WEBUI_SECRET_KEY, `open-webui serve`
+    # writes a generated key to `.webui_secret_key` in its working directory,
+    # which would otherwise be wherever `hubzoid run` started (a git checkout).
+    proc = subprocess.Popen(cmd, env=env, cwd=str(data_dir), stdout=log_file,
+                            stderr=subprocess.STDOUT, start_new_session=True)
     proc._log_path = log_path  # type: ignore[attr-defined]
     return proc

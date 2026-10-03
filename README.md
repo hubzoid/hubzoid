@@ -32,7 +32,17 @@ it needs, then share it with your team using accounts and scoped permissions.
 
 ## Start a hub
 
-Use **Python 3.11 or 3.12** in a virtual environment. Fresh interactive setup detects signed-in Claude or Codex CLIs and saves your choice. Without a selection, the default remains `claude-local`. Prefer an API provider? Configure a model and key in `my-hub/.env` before running. See [providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md).
+Use **Python 3.11 or 3.12**. With [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install hubzoid
+hubzoid init my-hub
+hubzoid run my-hub
+```
+
+Or with pip:
 
 ```bash
 python3.12 -m venv .venv
@@ -42,21 +52,79 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
+`hubzoid init` scaffolds an operations assistant for Kestrel & Oak, a
+fictional home-goods shop, with policy files, a stock export, a `stock_check`
+tool and three suggested prompts. It uses a signed-in Claude Code or Codex CLI
+when it finds one. Otherwise, in a terminal, it offers to save an OpenRouter,
+Anthropic or OpenAI key in `my-hub/.env`. See
+[providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md).
+`--template minimal` gives the small 1.0 starter instead.
+
+`hubzoid run` serves the Hubzoid web app, file downloads and MCP on one port,
+prints one ready line with the address (`http://127.0.0.1:3080` by
+default) and opens it in your browser. Pick a suggested prompt, such as "What should we reorder today, and
+what could run out first?" Edit `my-hub/AGENTS.md` to make the hub yours.
+
+If Hubzoid gave your team a useful agent, a ⭐ on [GitHub](https://github.com/hubzoid/hubzoid) helps others find it.
+
+Sign-in is off by default (**local mode**): you are the hub's owner and the
+port stays on your machine. The ready line also prints a command to connect
+Claude Code to the hub's tools and knowledge:
+
+```bash
+claude mcp add --transport http <hub name> http://127.0.0.1:3080/mcp
+```
+
+Run `/mcp` in Claude Code and approve the connection in your browser (OAuth).
+See [hosted MCP](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md).
+
 **Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
 schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
 Check with the same Python the hub uses:
 `python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
 `hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
 
-Open [localhost:3080](http://localhost:3080), select your agent, and try **“Say hello using the hello skill.”** The minimal template includes a skill, knowledge file, custom tool, and sub-agent you can inspect and change. Edit `my-hub/AGENTS.md` to make the hub yours.
+This branch's changes may be ahead of the package published on PyPI;
+[source installation](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
+tests the checked-out revision.
 
-The default is local single-user mode. For a shared deployment, enable authentication and configure the intended owner before exposing the public port. See [administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md). This branch's changes may be ahead of the package published on PyPI; [source installation](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout) tests the checked-out revision.
+### Turn on sign-in for a team
+
+Before anyone else can reach the hub, turn sign-in on and create the first
+administrator:
+
+```bash
+# in my-hub/.env
+HUBZOID_AUTH=true
+HUBZOID_PUBLIC_URL=https://hub.example.com   # the address people open
+
+hubzoid admin create you@example.com my-hub --owner
+```
+
+`hubzoid admin create` prints a one-time sign-in link. Open it, set a
+password, and add teammates in the Admin Console (**People → Add user**), which
+gives you a link to share with each of them. People can also sign in with
+Google, Microsoft or a standard OpenID Connect provider. Without sign-in,
+`hubzoid run` refuses to listen on a network address. See
+[authentication](https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md)
+and [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md).
+
+### Upgrading from 1.0
+
+Hubzoid 1.1 replaces Open WebUI with its own web app and accounts. A 1.0.x
+deployment with sign-in on does not start until its accounts and chats are
+moved with `hubzoid migrate openwebui` (dry run first, then a backup), or until
+you keep Open WebUI as the chat app with `pip install "hubzoid[openwebui]"`
+and `HUBZOID_UI=openwebui`. Hosted MCP clients now connect with OAuth instead
+of Open WebUI API keys. Read
+[upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
+before you start.
 
 ## One hub, three ways to work
 
 | Experience | Use it for | Start here |
 |---|---|---|
-| **Chat** | Ask questions and take authorized actions using the hub's context | [Web and account setup](https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md), [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md), [other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) |
+| **Chat** | Ask questions and take authorized actions using the hub's context, in the web app or other channels | [Sign-in and accounts](https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md), [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md), [other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) |
 | **Workflows** | Run scheduled reports and checks, inspect their steps, and save the results | [Markdown tasks](https://github.com/hubzoid/hubzoid/blob/main/docs/schedule.md), [Python workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md), [reports and email](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md) |
 | **Your assistant through MCP** | Bring hub tools, knowledge, and skills into a supported personal assistant | [Connect an MCP client](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md) |
 
@@ -97,21 +165,34 @@ example's instructions before connecting real systems or enabling schedules.
 ## Share it with your team
 
 - **Connect existing systems.** Add Python tools and MCP connections. Keep
-  credentials separate from agent-readable files.
+  credentials separate from agent-readable files. Each person can also connect
+  their own accounts (for example their own Jira or Gmail) to remote MCP
+  servers your administrators register. See
+  [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md).
 - **Control who can do what.** Grant agent access and restricted capabilities
-  in the Console. Hubzoid checks permissions before a restricted tool runs.
+  to people in the Console. Hubzoid checks permissions before a
+  restricted tool runs.
 - **See what happened.** Inspect workflow runs, steps, usage, and activity.
   Model cost estimates are guidance; your provider's bill is authoritative.
 - **Choose your runtime.** Use OpenAI Agents, Claude Agent SDK, or local Codex.
   Provider and channel capabilities vary. See [providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md).
 - **Run it yourself.** Deploy one hub, or use `hubzoid gateway` to serve several
-  hubs through a shared chat app. See [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md).
+  hubs behind one web app, where one sign-in covers every agent a person may
+  use. See [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md).
 
-Open WebUI provides chat and account authentication. Hubzoid's **Console** at
-`/portal/` manages access and shows execution details, using the same accounts.
-Administrators can open it from the **Admin Console** link in the chat sidebar.
-For adding teammates, Google sign-in, permissions, and shared deployment setup,
-see [administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md).
+The **web app** at `/` is where people chat: conversations with history,
+search, archive and rename, replies that stream with their tool steps and
+reasoning, stop, edit and resend, regenerate with branches, attachments
+(picker, drag and drop, paste), code and tables, download links for files the
+agent makes, and read-only share links for signed-in colleagues. It has an
+account page, a connections page, light and dark themes, and works on a phone.
+Conversations are stored by Hubzoid in its operational database.
+
+The **Admin Console** at `/portal/` manages people, agent access,
+personal connectors and activity, and shows workflow runs and usage, with the
+same accounts. Administrators open it from **Admin Console** in the web app's
+account menu. For adding teammates, sign-in providers and permissions, see
+[administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md).
 
 ## Try a worked example
 
@@ -156,8 +237,9 @@ pytest
 ```
 
 Real-provider tests are separate and skip without credentials. Changes to the
-Console also require its build and browser checks. CI runs when a GitHub release
-is published, so run the relevant checks locally before pushing. See
+web app or the Console also need their build and browser checks (`portal/`).
+Pull requests and pushes to `main` run the fast checks. The full validation
+runs when a GitHub release is published. See
 [contributing](https://github.com/hubzoid/hubzoid/blob/main/CONTRIBUTING.md) and [publishing a release](https://github.com/hubzoid/hubzoid/blob/main/docs/RELEASING.md).
 
 ## License and help

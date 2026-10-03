@@ -29,12 +29,12 @@ def hub(tmp_path, monkeypatch):
     gs = store_for(d)
     for e in (OWNER, TEAMMATE, OUTSIDER, ADMIN):
         gs.upsert_identity(email=e, owui_id="id-" + e)
+    gs.grant(OWNER, "sales", "use_hub", actor="t")   # the run's account uses the agent
     return d
 
 
 def _managed(hub):
     gs = store_for(hub)
-    gs.set_authoritative(True, hub="sales")
     gs.grant(OWNER, "sales", "use_hub", actor="t")
     gs.grant(TEAMMATE, "sales", "use_hub", actor="t")
     gs.grant(ADMIN, "*", "manage_access", actor="t")   # org admin, no share
@@ -113,27 +113,23 @@ def test_hub_audience_follows_current_membership(hub, tmp_path):
     assert arts.role(hub, arts.get(hub, art.id), TEAMMATE) is None
 
 
-def test_specific_people_and_groups(hub, tmp_path, monkeypatch):
+def test_specific_people(hub, tmp_path):
     gs = _managed(hub)
     gs.grant(OUTSIDER, "sales", "use_hub", actor="t")
     art, _ = _publish(hub, tmp_path)
-    arts.set_audience(hub, art, OWNER, "people",
-                      [{"kind": "user", "principal": TEAMMATE},
-                       {"kind": "group", "principal": "Finance"}])
+    with pytest.raises(arts.ArtifactError) as err:               # groups are gone
+        arts.set_audience(hub, art, OWNER, "people", [{"kind": "group", "principal": "Finance"}])
+    assert err.value.status == 400 and "email" in err.value.message
+    arts.set_audience(hub, art, OWNER, "people", [{"kind": "user", "principal": TEAMMATE}])
     art = arts.get(hub, art.id)
     assert arts.role(hub, art, TEAMMATE) == "viewer"
     assert arts.role(hub, art, OUTSIDER) is None
-    monkeypatch.setattr(arts, "_groups_of", lambda *_: {"finance"})
-    assert arts.role(hub, art, OUTSIDER) == "viewer"
-    gs.suspend(OUTSIDER, actor="t")                              # blocked account
-    assert arts.role(hub, art, OUTSIDER) is None
+    gs.suspend(TEAMMATE, actor="t")                              # blocked account
+    assert arts.role(hub, art, TEAMMATE) is None
 
 
-def test_sharing_checks_eligibility_and_legacy_hubs(hub, tmp_path):
+def test_sharing_checks_eligibility(hub, tmp_path):
     art, _ = _publish(hub, tmp_path)
-    with pytest.raises(arts.ArtifactError) as err:               # legacy: can't verify members
-        arts.set_audience(hub, art, OWNER, "hub")
-    assert err.value.status == 409
     _managed(hub)
     with pytest.raises(arts.ArtifactError):                      # not a member
         arts.set_audience(hub, art, OWNER, "people", [OUTSIDER])
@@ -332,6 +328,28 @@ def test_signed_out_viewer_goes_to_sign_in_and_back(hub, web, tmp_path):
     assert _as(web, None).get(f"/portal/artifacts/{art.id}/download").status_code == 401
 
 
+def test_latest_link_opens_the_newest_artifact_and_never_an_older_one(hub, web, tmp_path,
+                                                                       monkeypatch):
+    _managed(hub)
+    ticks = iter(range(1, 100))
+    monkeypatch.setattr(arts, "_now", lambda: float(next(ticks)))
+    older, _ = _publish(hub, tmp_path, key="board", audience="hub")
+    newest, out = _publish(hub, tmp_path, key="board")  # private to its owner
+    assert out["latest_url"].endswith("/portal/latest/sales/board")
+    assert _as(web, OWNER).get("/portal/latest/sales/board").headers["location"] == \
+        f"/portal/artifacts/{newest.id}"
+    # The teammate may open the older copy, but the link never falls back to it.
+    assert _as(web, TEAMMATE).get("/portal/latest/sales/board").status_code == 404
+    r = _as(web, None).get("/portal/latest/sales/board")
+    assert r.headers["location"] == "/auth?redirect=/portal/latest/sales/board"
+    assert _as(web, OWNER).get("/portal/latest/sales/Board!").status_code == 404
+    arts.delete(hub, newest, OWNER)
+    assert _as(web, TEAMMATE).get("/portal/latest/sales/board").headers["location"] == \
+        f"/portal/artifacts/{older.id}"
+    with pytest.raises(arts.ArtifactError):
+        _publish(hub, tmp_path, key="Q3 board")
+
+
 def test_ordinary_owner_views_and_downloads_without_console_rights(hub, web, tmp_path):
     art, _ = _publish(hub, tmp_path)
     c = _as(web, OWNER)
@@ -492,7 +510,7 @@ def test_report_page_labels_people_and_never_stays_on_loading():
     from hubzoid.artifacts import pages
 
     doc = pages.shell(mode="public", api=None, nonce="n")
-    assert "for:'share-people'" in doc and "People or groups who can view it" in doc
+    assert "for:'share-people'" in doc and "People who can view it" in doc
     assert "Link not available" in doc and "Artifact not available" in doc   # terminal headings
     assert "Who can view this artifact" in doc and "Report" not in doc      # any file type, not only reports
     assert "'Create public link'" in doc                                   # one flow from the main button

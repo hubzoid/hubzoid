@@ -7,8 +7,9 @@ import { useCallback, useEffect, useState } from "react";
  * Routes:
  *   #/home (the default)
  *   #/agents
- *   #/agents/<key>/access | runs | activity
+ *   #/agents/<key>/access | runs | evals | activity
  *   #/agents/<key>/runs/<workflow>[/<run id>]
+ *   #/agents/<key>/evals/<eval run stamp>      (the run's detail drawer)
  *   #/people[/<subject>]
  *   #/activity
  *   #/confirm/<change request id>   (the link an agent tool hands a manager)

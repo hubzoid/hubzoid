@@ -193,11 +193,14 @@ def test_strip_chrome_removes_real_tool_event_output():
     full = tool_events.format_call("read_knowledge", {"name": "policy"}, mode="full")
     compact = tool_events.format_call("http_get", {"url": "x"}, mode="compact")
     err = tool_events.format_error("odoo_info", "connection refused")
-    text = f"The window is 14 days.{full}{compact}{err}"
+    activity = tool_events.ToolActivity("compact")
+    activity.started("c1", "grep_data", {"pattern": "refund"})
+    block = "".join(activity.finished("c1", error=True))
+    text = f"The window is 14 days.{full}{compact}{err}{block}"
 
     clean = assertions.strip_chrome(text)
     assert clean == "The window is 14 days."
-    for noise in ("read_knowledge", "http_get", "odoo_info", "<details>", ">"):
+    for noise in ("read_knowledge", "http_get", "odoo_info", "grep_data", "<details", ">"):
         assert noise not in clean
 
 
@@ -268,6 +271,8 @@ def test_runner_passes_a_green_case(tmp_path, patched_build):
     suite = runner.run_suite(hub, cases.discover(hub))
     assert suite.ok and suite.passed == 1
     assert suite.cases[0].reason == ""
+    assert suite.cases[0].prompt == "say pong"
+    assert SuiteResult.from_dict(suite.to_dict()).cases[0].prompt == "say pong"
 
 
 def test_runner_fails_and_explains(tmp_path, patched_build):
@@ -423,7 +428,7 @@ def test_json_is_valid_and_carries_the_schema(tmp_path):
     hub.mkdir()
     path = report.save(hub, _suite(a=True))
     data = json.loads(path.read_text())
-    assert data["schema"] == 1 and data["passed"] == 1
+    assert data["schema"] == 2 and data["passed"] == 1
 
 
 def test_compare_reports_only_what_moved():
@@ -454,7 +459,7 @@ def test_prune_keeps_the_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(report, "KEEP_RUNS", 3)
     for i in range(6):
         report.save(hub, _suite(a=True), stamp=f"2026010{i}_000000")
-    assert len(list(report.runs_dir(hub).glob("*.json"))) == 3
+    assert len([p for p in report.runs_dir(hub).glob("*.json") if p.name != "index.json"]) == 3
 
 
 def test_load_runs_skips_a_corrupt_file(tmp_path):

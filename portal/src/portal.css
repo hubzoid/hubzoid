@@ -824,6 +824,12 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .review-agent { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .access-review .review-list { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .capability-group-chevron { transition: none; } }
+/* Sub-headings inside a group (Hubzoid tools › Workflows, Access control):
+   quieter than the group title, and they never toggle. Consecutive sections
+   get the same divider the rows use. */
+.capability-section { min-width: 0; }
+.capability-section + .capability-section { border-top: 1px solid var(--subtle-border); }
+.capability-section-title { margin: 0; padding: 14px 0 2px; font-size: 11px; font-weight: 600; line-height: 16px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); overflow-wrap: anywhere; }
 
 /* Add user → Initial access nests Agent → Group → Permission: each level is
    indented under a light guide line. (The access editor's groups aren't
@@ -870,4 +876,100 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   .agent-access-heading a { display: inline-block; padding: 8px 0; }
   .ant-drawer-close { min-width: 40px; min-height: 40px; }
   .stat-hint { width: 32px; height: 32px; }
+}
+
+/* ---- groups ------------------------------------------------------------------ */
+
+.group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-access {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--subtle-border);
+}
+
+.group-access:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* Evals: the score, its trend and each case's recent results. */
+.eval-score { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; margin: 4px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.eval-score-main { display: flex; align-items: center; gap: 12px; }
+.eval-score-value { font-size: 32px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.eval-score-value.good { color: #2f7d4f; }
+.eval-score-value.bad { color: #c0392b; }
+.eval-trend { display: flex; align-items: flex-end; gap: 4px; height: 40px; }
+.eval-bar { display: block; width: 10px; border-radius: 2px; }
+.eval-bar.good, .eval-dot.good { background: #3f9a63; }
+.eval-bar.bad, .eval-dot.bad { background: #d9534f; }
+.eval-score-lists { display: grid; gap: 4px; }
+.eval-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.eval-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* Add user: choose who (an existing person, or a new email). */
+.pick-person {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line, #e7e5e0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pick-list li + li {
+  border-top: 1px solid var(--line, #e7e5e0);
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pick-row:hover,
+.pick-row:focus-visible {
+  background: rgba(127, 127, 127, 0.08);
+  outline: none;
+}
+.pick-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent, #b4451f);
+}
+.pick-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.pick-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px dashed currentColor;
+  opacity: 0.7;
+}
+.inline-link.ant-btn {
+  padding: 0;
+  height: auto;
+  font-size: inherit;
 }

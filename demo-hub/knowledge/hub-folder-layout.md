@@ -44,7 +44,7 @@ demo-hub/
 | `knowledge/` | Reference content. One markdown file per topic. | `read_knowledge(name)` at run time. |
 | `tools_local/` | Python tools. Any `@function_tool` callable. | Auto-discovered at boot. |
 | `connectors/` | `.mcp.json` configuring MCP servers. | Loaded at boot. |
-| `branding/` | Logo, favicon, splash. Used by `hubzoid run`. | Applied to Open WebUI. |
+| `branding/` | Logo and favicon. | Shown by the web app (and Open WebUI in Open WebUI mode). |
 | `output/` | Files the agent writes via `write_artifact`. | Per-session subfolders. |
 
 ## Other optional folders

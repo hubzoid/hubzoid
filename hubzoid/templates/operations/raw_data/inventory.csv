@@ -1,0 +1,22 @@
+sku,product,category,supplier,lead_time_days,case_pack,unit_cost_eur,on_hand,avg_daily_sales,on_order,order_arrives_in_days
+KO-1001,"Stoneware mug, Fog, 350 ml",Tableware,Harbor Ceramics,21,24,3.40,84,9.5,480,12
+KO-1002,"Stoneware mug, Sand, 350 ml",Tableware,Harbor Ceramics,21,24,3.40,212,6.1,0,
+KO-1003,"Espresso cups, set of 4",Tableware,Harbor Ceramics,21,6,9.80,36,0.4,0,
+KO-1010,"Dinner plate, Fog, 27 cm",Tableware,Harbor Ceramics,21,12,5.60,96,5.2,240,12
+KO-1011,"Pasta bowl, Fog, 22 cm",Tableware,Harbor Ceramics,21,12,4.90,40,3.9,0,
+KO-1012,"Side plate, Sand, 20 cm",Tableware,Harbor Ceramics,21,12,3.20,300,2.2,0,
+KO-2001,"Glass kettle, 1.7 l",Small appliances,Fenwick Appliances,10,6,21.00,18,2.4,0,
+KO-2002,"Personal blender, 600 ml",Small appliances,Fenwick Appliances,10,6,24.50,64,1.8,0,
+KO-2003,"Two-slice toaster, Oat",Small appliances,Fenwick Appliances,10,6,19.75,22,1.1,24,4
+KO-2004,"Hand mixer, 5 speeds",Small appliances,Fenwick Appliances,10,6,17.40,9,0.7,0,
+KO-2005,"Electric milk frother",Small appliances,Fenwick Appliances,10,6,14.20,5,1.2,30,3
+KO-3001,"Cotton bath towel, Fog",Bath and bedding,Linden Textiles,28,10,8.90,150,4.8,0,
+KO-3002,"Cotton hand towel, Fog",Bath and bedding,Linden Textiles,28,10,4.10,260,3.1,0,
+KO-3003,"Linen duvet cover, double, Oat",Bath and bedding,Linden Textiles,28,4,38.00,31,1.3,60,20
+KO-3004,"Linen pillowcases, pair, Oat",Bath and bedding,Linden Textiles,28,8,14.50,12,1.6,0,
+KO-4001,"Cast iron skillet, 26 cm",Cookware,Copperline Cookware,14,4,22.80,44,2.0,0,
+KO-4002,"Chef's knife, 20 cm",Cookware,Copperline Cookware,14,6,18.60,27,1.9,0,
+KO-4003,"Stainless saucepan, 18 cm",Cookware,Copperline Cookware,14,4,16.90,58,0.9,0,
+KO-5001,"Soy candle, Fig",Home fragrance,Ember and Wick,7,12,5.10,0,3.4,0,
+KO-5002,"Soy candle, Cedar",Home fragrance,Ember and Wick,7,12,5.10,95,2.6,0,
+KO-5003,"Reed diffuser, Linen",Home fragrance,Ember and Wick,7,6,7.30,17,0.8,0,

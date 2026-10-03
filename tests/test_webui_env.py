@@ -26,8 +26,9 @@ def captured_env(tmp_path, monkeypatch):
     monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     captured: dict[str, str] = {}
 
-    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         captured.update(env or {})
+        captured["__cwd__"] = cwd
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
         return proc
@@ -53,9 +54,9 @@ def _start(captured_env, tmp_path, **overrides):
 
 
 # ---------------------------------------------------------------------------
-# Off-flags
+# Feature defaults
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("flag", [
+_OFF_BY_DEFAULT = [
     "ENABLE_SIGNUP",
     "ENABLE_OAUTH_SIGNUP",
     "ENABLE_COMMUNITY_SHARING",
@@ -79,71 +80,49 @@ def _start(captured_env, tmp_path, **overrides):
     "USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS",
     "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS",
     "USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS",
-])
-def test_strip_flags_default_off(captured_env, tmp_path, flag, monkeypatch):
-    monkeypatch.delenv(flag, raising=False)
+    # Admins cannot read or export other people's chats by default.
+    "ENABLE_ADMIN_CHAT_ACCESS",
+    "ENABLE_ADMIN_EXPORT",
+    # ENABLE_FOLLOW_UP_GENERATION moved off-by-default in v0.3.2 (extra LLM call
+    # per turn, plus another on every chat refresh - too much for the marginal
+    # UX). The other two are off for the same reason.
+    "ENABLE_FOLLOW_UP_GENERATION",
+    "ENABLE_AUTOCOMPLETE_GENERATION",
+    "ENABLE_RETRIEVAL_QUERY_GENERATION",
+]
+_ON_BY_DEFAULT = ["ENABLE_MESSAGE_RATING", "ENABLE_TITLE_GENERATION"]
+
+
+def test_feature_flag_defaults(captured_env, tmp_path, monkeypatch):
+    for flag in _OFF_BY_DEFAULT + _ON_BY_DEFAULT:
+        monkeypatch.delenv(flag, raising=False)
     env = _start(captured_env, tmp_path)
-    assert env[flag] == "False"
+    assert {f: env[f] for f in _OFF_BY_DEFAULT} == dict.fromkeys(_OFF_BY_DEFAULT, "False")
+    assert {f: env[f] for f in _ON_BY_DEFAULT} == dict.fromkeys(_ON_BY_DEFAULT, "True")
+
+
+def test_operator_can_turn_on_admin_chat_access_and_signup(captured_env, tmp_path, monkeypatch):
+    flags = ["ENABLE_ADMIN_CHAT_ACCESS", "ENABLE_ADMIN_EXPORT", "ENABLE_SIGNUP", "ENABLE_OAUTH_SIGNUP"]
+    for flag in flags:
+        monkeypatch.setenv(flag, "True")
+    env = _start(captured_env, tmp_path)
+    assert {f: env[f] for f in flags} == dict.fromkeys(flags, "True")
 
 
 # ---------------------------------------------------------------------------
 # OWUI_NATIVE_MCP: one operator switch expands to the OWUI flags the per-user
 # MCP OAuth flow needs (docs/mcp.md). Opt-in, so off by default.
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("flag", [
-    "ENABLE_PERSISTENT_CONFIG",
-    "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS",
-    "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS",
-    "ENABLE_DIRECT_CONNECTIONS",
-])
-def test_owui_native_mcp_expands_flags(captured_env, tmp_path, flag, monkeypatch):
+def test_owui_native_mcp_expands_flags(captured_env, tmp_path, monkeypatch):
+    flags = [
+        "ENABLE_PERSISTENT_CONFIG",
+        "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS",
+        "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS",
+        "ENABLE_DIRECT_CONNECTIONS",
+    ]
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
     env = _start(captured_env, tmp_path)
-    assert env[flag] == "True"
-
-
-# ---------------------------------------------------------------------------
-# On-flags
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize("flag", [
-    "ENABLE_MESSAGE_RATING",
-    "ENABLE_TITLE_GENERATION",
-])
-def test_ux_flags_default_on(captured_env, tmp_path, flag, monkeypatch):
-    monkeypatch.delenv(flag, raising=False)
-    env = _start(captured_env, tmp_path)
-    assert env[flag] == "True"
-
-
-@pytest.mark.parametrize("flag", ["ENABLE_ADMIN_CHAT_ACCESS", "ENABLE_ADMIN_EXPORT"])
-def test_admins_cannot_read_or_export_other_chats_by_default(
-    captured_env, tmp_path, flag, monkeypatch
-):
-    monkeypatch.delenv(flag, raising=False)
-    env = _start(captured_env, tmp_path)
-    assert env[flag] == "False"
-
-
-@pytest.mark.parametrize("flag", ["ENABLE_ADMIN_CHAT_ACCESS", "ENABLE_ADMIN_EXPORT"])
-def test_admin_chat_access_can_be_enabled(captured_env, tmp_path, flag, monkeypatch):
-    monkeypatch.setenv(flag, "True")
-    env = _start(captured_env, tmp_path)
-    assert env[flag] == "True"
-
-
-# ENABLE_FOLLOW_UP_GENERATION moved off-by-default in v0.3.2 (extra LLM call
-# per turn, plus another on every chat refresh - too much for the marginal UX).
-# ENABLE_AUTOCOMPLETE_GENERATION and ENABLE_RETRIEVAL_QUERY_GENERATION are
-# off for the same reason.
-@pytest.mark.parametrize("flag", [
-    "ENABLE_FOLLOW_UP_GENERATION",
-    "ENABLE_AUTOCOMPLETE_GENERATION",
-    "ENABLE_RETRIEVAL_QUERY_GENERATION",
-])
-def test_generation_flags_default_off(captured_env, tmp_path, flag, monkeypatch):
-    monkeypatch.delenv(flag, raising=False)
-    env = _start(captured_env, tmp_path)
-    assert env[flag] == "False"
+    assert {f: env[f] for f in flags} == dict.fromkeys(flags, "True")
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +346,7 @@ def captured_cmd(tmp_path, monkeypatch):
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     captured: list[list[str]] = []
 
-    def fake_popen(cmd, env=None, stdout=None, stderr=None):
+    def fake_popen(cmd, env=None, cwd=None, stdout=None, stderr=None, start_new_session=False):
         captured.append(list(cmd))
         proc = MagicMock()
         proc._log_path = tmp_path / "log"
@@ -424,11 +403,11 @@ def test_api_keys_stay_off_by_default(captured_env, tmp_path, monkeypatch):
     assert env["ENABLE_API_KEYS"] == "False"
 
 
-@pytest.mark.parametrize("flag", _MCP_KEY_FLAGS)
-def test_enable_api_keys_flips_minting_on(captured_env, tmp_path, flag, monkeypatch):
-    monkeypatch.delenv(flag, raising=False)
+def test_enable_api_keys_flips_minting_on(captured_env, tmp_path, monkeypatch):
+    for flag in _MCP_KEY_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
     env = _start(captured_env, tmp_path, enable_api_keys=True)
-    assert env[flag] == "True"
+    assert {f: env[f] for f in _MCP_KEY_FLAGS} == dict.fromkeys(_MCP_KEY_FLAGS, "True")
 
 
 def test_enable_api_keys_locks_owui_endpoints_to_deny_all(captured_env, tmp_path, monkeypatch):
@@ -447,8 +426,12 @@ def test_operator_env_beats_mcp_key_defaults(captured_env, tmp_path, monkeypatch
     assert env["ENABLE_API_KEYS"] == "False"
 
 
-@pytest.mark.parametrize("flag", ["ENABLE_SIGNUP", "ENABLE_OAUTH_SIGNUP"])
-def test_signup_operator_override_is_preserved(captured_env, tmp_path, monkeypatch, flag):
-    monkeypatch.setenv(flag, "True")
+def test_open_webui_runs_in_its_data_folder(captured_env, tmp_path, monkeypatch):
+    """Without WEBUI_SECRET_KEY, `open-webui serve` writes `.webui_secret_key`
+    into its working directory. Starting it in the data folder keeps that key
+    out of wherever `hubzoid run` was launched, such as a git checkout."""
+    monkeypatch.chdir(tmp_path)
     env = _start(captured_env, tmp_path)
-    assert env[flag] == "True"
+    assert env["__cwd__"] == env["DATA_DIR"]
+    assert Path(env["__cwd__"]).is_relative_to(tmp_path / "my-hub")
+

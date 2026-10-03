@@ -5,12 +5,11 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from typer.testing import CliRunner
 
 from hubzoid import deployment, db
 from hubzoid.access import store_for, audit
-from hubzoid.access import migrate
 from hubzoid.access.store import GrantStore
 from hubzoid.cli import app as cli
 from hubzoid.portal import build_router, PortalAdmin
@@ -47,8 +46,6 @@ def deployment_client(tmp_path, monkeypatch):
     )
     gs = store_for(dirs[0])
     gs.bootstrap(["root"])
-    for p in dirs:
-        gs.set_authoritative(True, hub=p.name)
     gs.grant("ha", "ops", "manage_access")
     gs.grant("alice", "finance", "ledger")
     role = {"user": PortalAdmin("root", True, [])}
@@ -68,7 +65,8 @@ def test_multi_hub_permissions_and_grantless_catalog(deployment_client):
     }
     ps = c.get("/portal/api/permissions?hub=ops").json()["permissions"]
     assert {p["permission"] for p in ps} == {"inventory", "manage_access", "use_hub", "curator",
-                                             "share_public_links", "jev"}
+                                             "share_public_links", "jev", "workflows_view",
+                                             "workflows_manage", "access_tools"}
     assert (
         c.post(
             "/portal/api/access/grant",
@@ -182,47 +180,6 @@ def test_offboarding_denies_public_and_keeps_admin(deployment_client):
     assert not gs.can("alice", "finance", "ledger")
 
 
-def test_migration_current_owui_schema_preserves_tools_and_denials(tmp_path):
-    eng = create_engine(f"sqlite:///{tmp_path}/owui.db")
-    with eng.begin() as c:
-        for sql in [
-            "CREATE TABLE user (id TEXT,email TEXT,role TEXT)",
-            'CREATE TABLE "group" (id TEXT,name TEXT)',
-            "CREATE TABLE group_member (group_id TEXT,user_id TEXT)",
-            "CREATE TABLE model (id TEXT,user_id TEXT)",
-            "CREATE TABLE access_grant (resource_type TEXT,resource_id TEXT,principal_type TEXT,principal_id TEXT,permission TEXT)",
-        ]:
-            c.execute(text(sql))
-        c.execute(
-            text(
-                "INSERT INTO user VALUES ('a','a@x','user'),('b','b@x','user'),('c','c@x','user')"
-            )
-        )
-        c.execute(text("INSERT INTO \"group\" VALUES ('g','ledger')"))
-        c.execute(text("INSERT INTO group_member VALUES ('g','a'),('g','b')"))
-        c.execute(text("INSERT INTO model VALUES ('finance','a')"))
-        c.execute(
-            text(
-                "INSERT INTO access_grant VALUES ('model','finance','user','a','read')"
-            )
-        )
-    plan = migrate.plan_from_owui(
-        eng, "finance", model_id="finance", permissions=["ledger"]
-    )
-    gs = GrantStore(create_engine(f"sqlite:///{tmp_path}/ops.db"))
-    before = gs.snapshot(["finance"])
-    migrate.apply(gs, plan)
-    assert gs.can("a@x", "finance", "ledger")
-    assert not gs.can("b@x", "finance", "use_hub")  # tool group must not open model
-    assert not gs.can("c@x", "finance", "use_hub")
-    assert not migrate.effective_diff(gs, plan)
-    assert gs.read_access_audit()
-    gs.restore(before, actor="operator")
-    assert not gs.is_authoritative("finance")
-    assert not gs.list_grants("finance")
-    assert any(r["action"] == "rollback" for r in gs.read_access_audit())
-
-
 def test_all_grant_paths_have_history_and_identity(tmp_path):
     gs = GrantStore(create_engine(f"sqlite:///{tmp_path}/ops.db"))
     gs.bootstrap(["root"])
@@ -266,6 +223,7 @@ def test_sync_replaces_acl_with_empty_after_last_revoke(deployment_client, monke
     from hubzoid.access.reconcile import sync_owui
     import hubzoid.access.owui as owui
 
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # the Open WebUI picker mirror is legacy-only
     c, gs, role, dirs = deployment_client
     writes = []
 
@@ -306,6 +264,7 @@ def test_sync_replaces_acl_with_empty_after_last_revoke(deployment_client, monke
     assert next(w for w in writes if w["id"] == "finance")["access_grants"] == []
 
 
+@pytest.mark.slow
 def test_real_dbos_run_history_and_duplicate_dispatch(tmp_path):
     import subprocess
     import sys
@@ -350,12 +309,12 @@ print('HISTORY_AND_DEDUP_OK')
     assert p.returncode == 0 and "HISTORY_AND_DEDUP_OK" in p.stdout, p.stdout + p.stderr
 
 
-def test_edge_partial_migration_and_navigation(deployment_client, monkeypatch):
+def test_edge_locks_every_agent_model_acl(deployment_client, monkeypatch):
     from hubzoid.edge import build_edge_app, EdgeRoute
     from hubzoid.portal_navigation import inject
 
     c, gs, role, dirs = deployment_client
-    gs.set_authoritative(False, hub="ops")
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")   # Open WebUI's rewrites
     cfg = __import__("json").loads(
         (dirs[0] / ".hubzoid" / "deployment.json").read_text()
     )["manifest"]
@@ -376,7 +335,7 @@ def test_edge_partial_migration_and_navigation(deployment_client, monkeypatch):
             x.post(
                 "/api/v1/models/model/update", json={"id": "ops", "access_grants": []}
             ).status_code
-            != 403
+            == 403
         )
         assert (
             x.post("/api/v1/groups/create", json={"name": "old-team"}).status_code

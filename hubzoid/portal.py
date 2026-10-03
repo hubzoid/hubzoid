@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 import functools
+import shlex
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
@@ -40,12 +41,15 @@ from . import deployment
 from .access.identity import normalize
 
 from .access import store_for
-from .access.service import (
-    LEGACY_MSG,
+from .access.service import (  # noqa: F401 — the account-state helpers stay importable here
     UNAVAILABLE_MSG,
     AccessService,
     Actor,
     Denied,
+    Scope,
+    _account_flags,
+    _account_state,
+    _account_status,
     deleted_by_console,
 )
 from .access.session import require_same_origin, verified_email
@@ -127,6 +131,8 @@ class AccountCreate(BaseModel):
     sign_in: Literal["password", "google"] = "password"
     password: SecretStr | None = None
     grants: list[AccountGrant] = Field(default_factory=list, max_length=200)
+    # For WhatsApp and Telegram (optional): the number their messages come from.
+    phone: str | None = Field(default=None, max_length=32)
 
 
 class ExistingAccountGrant(BaseModel):
@@ -141,9 +147,21 @@ class PasswordRequest(BaseModel):
     password: SecretStr
 
 
+class LinkPasswordRequest(BaseModel):
+    """Default mode: no password makes a one-time link to set one."""
+    model_config = ConfigDict(extra="forbid")
+    password: SecretStr | None = None
+
+
 class RoleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["user", "admin"]
+
+
+class PhoneRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    # Empty clears it. Digits, spaces, dashes, brackets and a leading +.
+    phone: str = Field(default="", max_length=32)
 
 
 class DeleteAccountRequest(BaseModel):
@@ -239,6 +257,14 @@ def api_key(request: Request) -> str | None:
     scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
     token = token.strip()
     if scheme.lower() == "bearer" and token.startswith("sk-"):
+        from . import appmode
+
+        # Open WebUI's keys belong to Open WebUI mode only. In the web app mode
+        # an old database may still be on disk after the move, and its keys
+        # must not keep opening the Console: the header is ignored and the
+        # request falls back to the session cookie like any other.
+        if not appmode.is_openwebui():
+            return None
         return token
     return None
 
@@ -284,21 +310,12 @@ def _check_mutation(request: Request, admin: PortalAdmin) -> None:
 
 # ---- account state ----------------------------------------------------------
 #
-# The store keeps two independent block markers per subject and `is_suspended`
-# ORs them: `suspended:<subject>` (an admin's explicit block, or an
-# account_replaced safeguard) and `account_unavailable:<subject>` (derived from
-# Open WebUI: the account is pending approval, or vanished from the directory).
-# Only the first is cleared by "reactivate"; the second only clears when OWUI
-# reports the account as approved/present again. The portal exposes them apart
-# so the UI can tell "blocked by an admin" from "blocked by the chat app".
+# The two block markers and the display status live in `access.service`
+# (`_account_state`), shared with the agent tools. The portal exposes the
+# markers apart so the UI can tell "blocked by an admin" from "blocked by the
+# chat app".
 
 _UNAVAILABLE_MSG = UNAVAILABLE_MSG
-
-# A hub whose access is not yet dashboard-managed (Casbin not authoritative) is still
-# governed by the chat app. Editing its access here would neither take effect nor
-# survive migration, so those edits are refused (in the API, not only the UI).
-_LEGACY_MSG = LEGACY_MSG
-
 
 def _account_flags(gs, subject: str) -> dict:
     """Read the store's two block markers separately (read-only). `blocked` is
@@ -332,6 +349,12 @@ def _account_status(subject: str, identity: dict, flags: dict) -> str:
     if flags["account_unavailable"]:
         return "blocked"
     return "active"
+
+
+def _subject_kind(subject: str) -> str:
+    if subject.startswith("workflow:"):
+        return "service"
+    return "person"
 
 
 def _account_state(gs, subject: str, identity: dict | None = None) -> dict:
@@ -418,7 +441,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         denied = []
         hubs = deployment.hubs(hub_dir)
         for h in hubs:
-            if blocked or (gs.is_authoritative(h["key"]) and not gs.can(subject, h["key"], USE_HUB)):
+            if blocked or not gs.can(subject, h["key"], USE_HUB):
                 denied.append(h["model_id"])
         # `blocked` and `allowed` let the chat explain an empty agent list.
         return {"denied": denied, "blocked": blocked, "allowed": len(hubs) - len(denied)}
@@ -433,6 +456,11 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         )
         if brief:  # the chat sidebar link only needs to know the Console opens
             return out
+        # The Hubzoid web app (not Open WebUI) owns sign-in and personal
+        # connections in this mode.
+        from . import appmode
+
+        out["web_app"] = not appmode.is_openwebui(hub_dir)
         from .access import accounts as accountlib
 
         actor = admin.actor()
@@ -455,13 +483,32 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 dict(
                     key=h["key"],
                     name=h["name"],
+                    path=str(Path(h["path"]).resolve()),
                     model_id=h["model_id"],
-                    can_chat=not gs.is_suspended(admin.subject) and (not gs.is_authoritative(h["key"]) or gs.can(admin.subject, h["key"], USE_HUB)),
-                    authoritative=gs.is_authoritative(h["key"]),
+                    can_chat=not gs.is_suspended(admin.subject) and gs.can(admin.subject, h["key"], USE_HUB),
                 )
                 for h in allowed_hubs(admin)
             ]
         }
+
+    @router.get("/openwebui-connectors")
+    @_denied
+    def openwebui_connectors(hub: str, admin=Depends(require_admin)):
+        """Open WebUI mode: the MCP servers registered in Open WebUI, read-only,
+        with the capability that lets a person use theirs in this agent.
+        They are added and changed in Open WebUI's settings."""
+        require_hub(admin, hub)
+        from . import appmode
+
+        if not appmode.is_openwebui(hub_dir):
+            return {"servers": [], "native": False}
+        from .access import owui_tool_servers
+        from .owui_mcp import capability as owui_capability, enabled as native_enabled
+
+        servers = [dict(id=c["id"], name=c["name"], url=c["url"], enabled=c["enabled"],
+                        permission=owui_capability(c["id"]))
+                   for c in owui_tool_servers.list_mcp_connections(hub_dir)]
+        return {"servers": servers, "native": native_enabled()}
 
     @router.get("/permissions")
     @_denied
@@ -479,84 +526,27 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         admin=Depends(require_admin),
     ):
         require_hub(admin, hub)
-        gs = store_for(hub_dir)
-        # One consistent read of (revision, every grant): the returned revision
-        # describes exactly the rows below, so the editor's concurrency guard is
-        # not defeated by new rows arriving under an old revision (or the reverse).
-        revision, all_grants = gs.access_snapshot()
-        rows = {}
-        for subject, domain, perm in all_grants:
-            if domain == hub or (domain == ORG and perm == MANAGE_ACCESS):
-                row = rows.setdefault(
-                    subject,
-                    dict(
-                        subject=subject,
-                        perms=[],
-                        inherited=[],
-                        kind="service" if subject.startswith("workflow:") else "person",
-                    ),
-                )
-                row["perms" if domain == hub else "inherited"].append(perm)
-
-        def effective_for(subject: str) -> list[str]:
-            # Mirrors GrantStore.permissions_for over the same snapshot: direct +
-            # org-wide + public wildcard. Suspended subjects hold nothing.
-            return sorted(
-                {
-                    p
-                    for (s, h, p) in all_grants
-                    if (s == subject or s == EVERYONE) and (h == hub or h == ORG)
-                }
-            )
-
-        for subject, row in rows.items():
-            row["center"] = gs.get_attr(hub, subject, "center")
-            identity = gs.identity(subject) or {}
-            row["display"] = identity.get("display") or subject
-            state = _account_state(gs, subject, identity)
-            row.update(state)
-            # Effective access must match the enforcer: a blocked account (admin
-            # suspension OR an unavailable chat account) holds nothing, though its
-            # direct grants are preserved separately in `perms`.
-            row["effective"] = [] if state["blocked"] else effective_for(subject)
+        # Who has access, from the service; this route adds only what depends
+        # on the viewer (their scope, ceiling and filter) and pagination.
+        view = service.hub_access(admin.actor(), hub,
+                                  scope=Scope(admin.is_org_admin, tuple(admin.manageable)))
         result = [
             r
-            for r in rows.values()
+            for r in view["rows"]
             if q.lower() in (r["subject"] + " " + r["display"]).lower()
         ]
-        result.sort(key=lambda r: r["subject"])
-        public = any(
-            s == EVERYONE and (h == hub or h == ORG) and p == USE_HUB
-            for (s, h, p) in all_grants
-        )
-        # Chat accounts that enter only through "everyone signed in": signed
-        # up, approved, not blocked, and without a direct grant in this hub.
-        # Shown before an administrator removes that grant.
-        public_reliant = 0
-        if public:
-            direct = {s for (s, h, p) in all_grants if h == hub and p == USE_HUB}
-            for ident in gs.identities():
-                subject = ident["subject"]
-                if (ident.get("owui_id") and not ident.get("pending") and subject != EVERYONE
-                        and not subject.startswith("workflow:") and subject not in direct
-                        and not gs.is_suspended(subject)):
-                    public_reliant += 1
         return dict(
             hub=hub,
-            # Editable only once the hub is dashboard-managed. A legacy (un-migrated)
-            # hub is read-only here; its access still lives in the chat app.
-            editable=gs.is_authoritative(hub),
-            authoritative=gs.is_authoritative(hub),
             can_manage_admins=admin.is_org_admin,
             permissions=service.catalog(hub),
             # What this viewer may grant or remove here (a delegate's ceiling).
             # Display only: every write is checked again by the service.
-            grantable=_grantable(admin, hub) if gs.is_authoritative(hub) else [],
+            grantable=_grantable(admin, hub),
             viewer=normalize(admin.subject),
             total=len(result),
-            public=public,
-            public_reliant=public_reliant,
-            revision=revision,
+            public=view["public"],
+            public_reliant=view["public_reliant"],
+            revision=view["revision"],
             rows=result[offset : offset + limit],
         )
 
@@ -633,6 +623,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if q.lower() not in (sub + " " + (person["display"] or "")).lower():
                 continue
             person.update(_account_state(gs, sub, person))
+            if not admin.is_org_admin:
+                person.pop("phone", None)  # personal data: organization administrators
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
             # Filters, applied before pagination.
@@ -683,6 +675,57 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 w for h in selected(admin, hub) for w in catalog(Path(h["path"]))
             ]
         }
+
+    @router.get("/webhooks")
+    @_denied
+    def webhooks(hub: str, admin=Depends(require_admin)):
+        """A hub's webhook workflows: address, verification, the last 24 hours'
+        deliveries by state and the latest failures. Read-only. Never a payload,
+        a digest or a header."""
+        import time
+
+        from sqlalchemy import text
+
+        from .inbound.routing import hub_slug
+        from .artifacts import public_base_url
+        from .workflows import events
+        from .workflows.observe import catalog
+
+        path = Path(require_hub(admin, hub))
+        try:
+            specs = events.declarations(path)
+        except ValueError as exc:
+            return {"webhooks": [], "error": str(exc)}
+        if not specs:
+            return {"webhooks": []}
+        by_webhook: dict[str, list[str]] = {}
+        for w in catalog(path):
+            if w.get("webhook"):
+                by_webhook.setdefault(w["webhook"], []).append(w["name"])
+        base = public_base_url(path)
+        slug = hub_slug(path, {})
+        since = time.time() - 86400
+        out = []
+        with events._engine(path).connect() as conn:  # noqa: SLF001 — read model
+            for name, spec in sorted(specs.items()):
+                counts = {s: 0 for s in ("accepted", "running", "succeeded", "failed")}
+                for state, n in conn.execute(text(
+                        "SELECT state, count(*) FROM hz_workflow_events WHERE hub=:h AND "
+                        "webhook=:w AND created >= :t GROUP BY state"),
+                        {"h": normalize(hub), "w": name, "t": since}):
+                    counts["running" if state == "retrying" else state] = (
+                        counts.get("running" if state == "retrying" else state, 0) + int(n))
+                failures = [dict(r) for r in conn.execute(text(
+                    "SELECT id, workflow, created, updated, attempt, error FROM "
+                    "hz_workflow_events WHERE hub=:h AND webhook=:w AND state='failed' "
+                    "ORDER BY updated DESC LIMIT 5"), {"h": normalize(hub), "w": name}).mappings()]
+                for f in failures:
+                    f["redrive"] = f"hubzoid schedule redrive {shlex.quote(f['id'])} --hub {shlex.quote(str(path.resolve()))}"
+                out.append(dict(
+                    name=name, url=f"{base}/webhooks/{slug}/{name}",
+                    verify=spec.get("verify", "header"), workflows=by_webhook.get(name, []),
+                    last_24h=counts, failures=failures))
+        return {"webhooks": out}
 
     @router.get("/runs")
     def runs(
@@ -822,12 +865,18 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def create_account(request: Request, body: Any = Body(None), admin=Depends(require_admin)):
         _check_mutation(request, admin)
         payload = _validated(AccountCreate, body)
+        if payload.phone:
+            service.require_org_admin(admin.actor(), "Only administrators can set a phone number.")
+            service.check_phone(payload.email, payload.phone)
         created = service.create_account(
             admin.actor(), email=payload.email, name=payload.name,
             password=payload.password.get_secret_value() if payload.password else None,
             sign_in=payload.sign_in,
             grants=[(g.hub, g.permission) for g in payload.grants],
         )
+        if payload.phone:
+            created.update(phone=service.set_phone(admin.actor(), payload.email,
+                                                   payload.phone)["phone"])
         return dict(ok=True, **created)
 
     @router.post("/accounts/grant")
@@ -853,9 +902,21 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     def reset_password(subject: str, request: Request, body: Any = Body(None),
                        admin=Depends(require_admin)):
         _check_mutation(request, admin)
-        payload = _validated(PasswordRequest, body)
-        service.set_password(admin.actor(), subject, payload.password.get_secret_value())
-        return dict(ok=True, subject=normalize(subject))
+        payload = _validated(LinkPasswordRequest if service.links_mode() else PasswordRequest, body)
+        result = service.set_password(
+            admin.actor(), subject,
+            payload.password.get_secret_value() if payload.password else None)
+        # Default mode without a password: the one-time link, shown once.
+        return dict(ok=True, subject=normalize(subject), **(result or {}))
+
+    @router.post("/accounts/{subject}/phone")
+    @_denied
+    def set_phone(subject: str, request: Request, payload: PhoneRequest,
+                  admin=Depends(require_admin)):
+        """The number a person's WhatsApp and Telegram messages come from.
+        Organization administrators; an empty number clears it."""
+        _check_mutation(request, admin)
+        return dict(ok=True, **service.set_phone(admin.actor(), subject, payload.phone))
 
     @router.post("/accounts/{subject}/approve")
     @_denied
@@ -989,19 +1050,17 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         for h in hs:
             key = h["key"]
             u = usage["hubs"].get(key, {})
-            managed = gs.is_authoritative(key)
             subjects = {g[0] for g in grants if g[1] == key and not g[0].startswith("workflow:")}
             r = runs.get(key, {"runs": 0, "failed": 0, "cancelled": 0}) if runs_ok else None
             rows.append(dict(
-                key=key, name=h.get("name") or key, managed=managed,
+                key=key, name=h.get("name") or key,
                 chats=u.get("chats", 0), messages=u.get("messages", 0),
                 active_users=u.get("active_users", 0),
                 input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
                 cost_usd=u.get("cost_usd"), unpriced=u.get("unpriced", 0),
                 last_activity=u.get("last_activity"),
-                # Legacy hubs keep access in the chat app's groups: unknown here.
-                users_with_access=len(subjects - {"*"}) if managed else None,
-                everyone="*" in subjects if managed else None,
+                users_with_access=len(subjects - {"*"}),
+                everyone="*" in subjects,
                 denials=denials.get(normalize(Path(h["path"]).name), 0),
                 has_workflows=key in work_keys,
                 runs=r["runs"] if r and key in work_keys else None,
@@ -1048,17 +1107,15 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         hs = allowed_hubs(admin)
         keys = {h["key"] for h in hs}
         grants = [g for g in gs.list_grants() if g[1] in keys]
-        managed = sum(gs.is_authoritative(h) for h in keys)
         return dict(
             hubs=len(hs),
             grants=len(grants),
             people=len({g[0] for g in grants if g[0] != "*"}),
-            authoritative=managed == len(hs),
-            managed=managed,
-            legacy=len(hs) - managed,
             visibility=sync_status(hub_dir),
         )
 
+    from . import portal_evals
+    portal_evals.register(router, hub_dir, require_admin=require_admin, require_hub=require_hub)
     return router
 
 

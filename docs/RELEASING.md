@@ -1,8 +1,10 @@
 # Publishing a release
 
-Starting with 1.0.2, CI runs only when a GitHub release is published. Branch
-pushes, pull requests, and tag pushes alone do not run CI. Run tests locally
-before pushing changes.
+Pull requests and pushes to `main` run the fast checks
+(`.github/workflows/tests.yml`), and every push and pull request is scanned for
+secrets (`.github/workflows/secrets.yml`). The full validation, the image
+builds and publishing run only when a GitHub release is published
+(`.github/workflows/ci.yml`).
 
 1. Update `pyproject.toml` and `CHANGELOG.md` to the new version and push main.
 2. In GitHub, open **Releases → Draft a new release**.

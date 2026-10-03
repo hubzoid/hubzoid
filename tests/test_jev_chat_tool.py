@@ -17,7 +17,7 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, text
 
-from hubzoid import _request_ctx
+from hubzoid import _request_ctx, jev
 from hubzoid.access import Identity, identity_scope, store_for
 from hubzoid.tools import call_jev as jev_tool
 
@@ -50,14 +50,14 @@ def jev_http(monkeypatch):
     """A fake Decisions API answering whatever it is asked. Returns the requests."""
     sent = []
 
-    def fake_post(url, json=None, timeout=None, headers=None):
-        sent.append({"url": url, "body": json, "auth": headers.get("Authorization")})
+    async def fake_post(body, key, timeout):
+        sent.append({"url": jev.URL, "body": body, "auth": f"Bearer {key}"})
         return httpx.Response(200, json={
             "id": f"gen-dec-{len(sent)}", "model": "typesafe/jev-1.13-20260917", "provider": "TypeSafe",
-            "answers": {n: _answer(q) for n, q in json["questions"].items()},
+            "answers": {n: _answer(q) for n, q in body["questions"].items()},
             "usage": {"input_tokens": 300, "output_tokens": 20, "cost": 0.0000126}})
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     return sent
 
 
@@ -73,7 +73,6 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setenv("JEV_OPENROUTER_API_KEY", KEY)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-used")
     gs = store_for(d)
-    gs.set_authoritative(True, hub="support")
     gs.grant(ALLOWED, "support", "jev", actor="test")
     gs.grant(PLAIN, "support", "use_hub", actor="test")
     gs.grant(MANAGER, "support", "manage_access", actor="test")
@@ -209,21 +208,6 @@ def test_naming_the_hidden_tool_does_not_run_it(hub, jev_http, tmp_path):
     assert (PLAIN, TOOL, "deny") in [tuple(r) for r in rows]
 
 
-def test_legacy_hub_uses_the_jev_group(tmp_path, monkeypatch, jev_http):
-    from hubzoid.factory_claude import build_claude_runtime
-
-    d = tmp_path / "legacy"
-    d.mkdir()
-    (d / "AGENTS.md").write_text("---\nname: legacy\ndescription: d\n---\nbody\n")
-    monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", f"sqlite:///{tmp_path / 'legacy-ops.db'}")
-    monkeypatch.setenv("JEV_OPENROUTER_API_KEY", KEY)
-    rt = build_claude_runtime(d)
-    for groups, allowed in ((["jev"], True), (["sales"], False)):
-        with identity_scope(Identity.make("dee@example.org", groups, surface="owui")):
-            listed = asyncio.run(_claude_list(_claude_server(rt._options_for_turn())))
-        assert (TOOL in listed) is allowed
-
-
 # --- the same tool everywhere ------------------------------------------------------
 def test_same_name_schema_and_result_on_every_runtime(hub, jev_http):
     from hubzoid.factory_claude import build_claude_runtime
@@ -303,12 +287,12 @@ def test_failures_are_readable_and_never_show_the_key(hub, monkeypatch, caplog, 
     replies = {"401": httpx.Response(401, json={"error": {"code": 401, "message": f"User not found. {KEY}"}}),
                "empty": httpx.Response(200, json={"answers": {}})}
 
-    def fake_post(url, json=None, timeout=None, headers=None):
+    async def fake_post(body, key, timeout):
         if setup == "boom":
             raise KeyError("upstream")
         return replies[setup]
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(jev, "_post", fake_post)
     raw = args if isinstance(args, str) else json.dumps(args)
     out = _call_as_allowed(hub, raw)
     assert out.startswith(f"[{TOOL} failed: ") and expected in out

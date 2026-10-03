@@ -262,3 +262,15 @@ def test_no_inventory_omits_the_section_entirely(tmp_path):
     fn, ask = _judge(hub, '{"score": 9}')
     asyncio.run(fn(case, "answer", ["whoami"], []))
     assert "<tools_this_hub_has>" not in ask.seen[1]
+
+
+def test_local_judge_uses_the_tool_free_runtime_adapter(monkeypatch):
+    from hubzoid import factory_claude
+    seen = {}
+    async def complete(prompt, **kwargs):
+        seen.update(prompt=prompt, **kwargs)
+        return '{"score": 9}', {'input_tokens': 1}
+    monkeypatch.setattr(factory_claude, 'claude_complete', complete)
+    assert asyncio.run(judge_lib._ask_claude_local('claude-local/sonnet', 'Grade this')) == '{"score": 9}'
+    assert seen == {'prompt': 'Grade this', 'system': judge_lib._SYSTEM,
+                    'model_setting': 'claude-local/sonnet'}

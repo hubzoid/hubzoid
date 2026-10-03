@@ -36,6 +36,12 @@ from tests.test_access_service import (  # noqa: F401 — shared fixture and hel
 PASSWORD = "Correct-Horse-7-battery"
 
 
+@pytest.fixture(autouse=True)
+def _open_webui_mode(monkeypatch):
+    """These tests cover Open WebUI accounts: the legacy UI mode (HUBZOID_UI=openwebui)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 def _adapter(fake):
     return OwuiAccounts("http://owui.internal", SERVICE, "svc-secret",
                         transport=httpx.MockTransport(fake))
@@ -620,6 +626,8 @@ def test_new_access_reaches_the_chat_picker_at_once(dep, monkeypatch):
     visibility straight away."""
     from hubzoid.access import reconcile
 
+    # The Open WebUI picker mirror runs in Open WebUI mode only.
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     calls = []
     monkeypatch.setattr(reconcile, "sync_owui", lambda hub_dir: calls.append(hub_dir) or {"state": "ok"})
     dep.svc.create_account(actor(ROOT), email="new@x.org", name="New", password=PASSWORD,

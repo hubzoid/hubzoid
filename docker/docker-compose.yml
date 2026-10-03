@@ -1,15 +1,32 @@
 # docker-compose for hubzoid: one hub, SQLite (the default profile).
 #
-# Mount your hub folder at /hub. Its databases, chat data and runtime state
-# live inside that folder (.hubzoid/, .openwebui-data/), so they persist on the
-# host and `hubzoid backup` covers them:
+# Mount your hub folder at /hub. Its databases, chat history and runtime state
+# live inside that folder (.hubzoid/), so they persist on the host and
+# `hubzoid backup` covers them:
 #
 #   HUB_PATH=/path/to/your/hub docker compose -f docker/docker-compose.yml up -d
 #
+# The published port is reachable from other machines, so sign-in is on
+# (HUBZOID_AUTH below). Before the first start, put the first administrator in
+# the hub's .env, and remove both lines after it:
+#   HUBZOID_ADMIN_EMAIL=you@example.com
+#   HUBZOID_ADMIN_PASSWORD=<a long password>
+# Behind a proxy, or for Google sign-in, also set
+#   HUBZOID_PUBLIC_URL=https://hub.example.com
+# The hub's .env wins over the values below.
+#
+# Try it without sign-in, reachable from this machine only:
+#   HUB_PATH=... HUBZOID_AUTH=false HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true \
+#     HUBZOID_PUBLISH=127.0.0.1:3080 docker compose -f docker/docker-compose.yml up
+#
 # For PostgreSQL, add the override file (see docker-compose.postgres.yml).
 #
-# Only the edge port (3080: chat UI, artifact downloads, portal, MCP) is
-# published. The bridge stays on 127.0.0.1 inside the container.
+# Legacy Open WebUI chat app (this release only): set HUBZOID_UI=openwebui in
+# the hub's .env and build the image with the openwebui extra:
+#   HUBZOID_WITH_OPENWEBUI=true docker compose -f docker/docker-compose.yml up -d --build
+#
+# Only the edge port (3080: the web app, artifact downloads, MCP) is published.
+# The bridge stays on 127.0.0.1 inside the container.
 
 services:
   hubzoid:
@@ -17,6 +34,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        WITH_OPENWEBUI: ${HUBZOID_WITH_OPENWEBUI:-false}
     ports:
       - "${HUBZOID_PUBLISH:-3080}:3080"
     volumes:
@@ -24,4 +43,6 @@ services:
     environment:
       PORT: 3080
       BRIDGE_PORT: 8000
+      HUBZOID_AUTH: ${HUBZOID_AUTH:-true}
+      HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK: ${HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK:-false}
     restart: unless-stopped

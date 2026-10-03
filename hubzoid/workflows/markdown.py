@@ -22,9 +22,16 @@ A run is split into checkpointed steps:
   4. finish - record the result; archive the webhook events the run handled.
 
 All tasks share one registered DBOS workflow (`hz_markdown_task`); the run's
-workflow id `md:<task>:<slot>` carries the task name, so tasks added or edited
-while the hub runs work without re-registering, and the same slot can never be
-enqueued twice.
+workflow id `md:<task>:<slot>@<hub>` carries the task name, so tasks added or
+edited while the hub runs work without re-registering, and the same slot can
+never be enqueued twice.
+
+Run ids are namespaced by the hub (its DBOS application name) because a workflow
+id is global in a DBOS system database: hubs sharing one PostgreSQL database
+used to collide on `md:<task>:<slot>` and `eval:<cases>:<slot>`, and the second
+hub silently got the first hub's run and result. Ids written before the
+namespace (`md:<task>:<slot>`) are still read, so runs queued or running across
+an upgrade are listed, re-queued and cancelled as before.
 """
 from __future__ import annotations
 
@@ -40,13 +47,38 @@ EVAL_WORKFLOW = "hz_eval_suite"
 _FNS: dict = {}
 
 
-def run_id(task_name: str, slot: str) -> str:
-    return f"md:{task_name}:{slot}"
+def hub_namespace(hub_name: str | None = None) -> str:
+    """The hub's part of a run id: its DBOS application name (lowercase letters,
+    digits and hyphens, unique per hub name). Defaults to the hub this process's
+    workflow engine was initialised for."""
+    from . import runtime
+
+    name = hub_name or runtime._HUB_NAME
+    if not name:
+        raise RuntimeError("workflows.init(hub_dir) must run before markdown work is queued")
+    return runtime._app_name(name)
+
+
+def run_id(task_name: str, slot: str, hub_name: str | None = None) -> str:
+    """`md:<task>:<slot>@<hub>`: one run of a task for one slot in one hub."""
+    return f"md:{task_name}:{slot}@{hub_namespace(hub_name)}"
+
+
+def run_prefix(task_name: str) -> str:
+    """The id prefix every run of a task shares, namespaced or not. Lists scope
+    it to this hub by DBOS application."""
+    return f"md:{task_name}:"
+
+
+def eval_run_id(names: list[str], slot: str, hub_name: str | None = None) -> str:
+    """`eval:<case,case>:<slot>@<hub>`: one scheduled eval suite run in one hub."""
+    return f"eval:{','.join(sorted(names))}:{slot}@{hub_namespace(hub_name)}"
 
 
 def task_name_from_id(workflow_id: str) -> str | None:
-    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>`,
-    plus `:requeued` for each time a code change re-queued it."""
+    """The markdown task a run belongs to, from its workflow id: `md:<task>:<slot>@<hub>`
+    (or `md:<task>:<slot>` before hub namespaces), plus `:requeued` for each time a
+    code change re-queued it."""
     if not workflow_id.startswith("md:"):
         return None
     rest = workflow_id[3:]
@@ -55,10 +87,40 @@ def task_name_from_id(workflow_id: str) -> str | None:
     return rest.rsplit(":", 1)[0] if ":" in rest else rest
 
 
+def slot_from_id(workflow_id: str) -> str | None:
+    """The slot part of `md:<task>:<slot>@<hub>[:requeued...]`: a schedule slot
+    (`20260101T0900`), `manual-...` (CLI, Console, live owner) or `events-...`
+    (a legacy markdown webhook task)."""
+    if not workflow_id.startswith("md:"):
+        return None
+    rest = workflow_id[3:]
+    while rest.endswith(":requeued"):
+        rest = rest[: -len(":requeued")]
+    if ":" not in rest:
+        return None
+    return rest.rsplit(":", 1)[1].split("@", 1)[0]
+
+
+def is_scheduled_slot(slot: str | None) -> bool:
+    """Whether a run's slot is a cron slot, the only kind a schedule pause counts."""
+    import re
+
+    return bool(slot and re.fullmatch(r"\d{8}T\d{4}", slot))
+
+
 def register(DBOS, hub_dir: Path, hub_name: str) -> None:
     """Register the markdown-task and eval-suite workflows (called by init)."""
     from .. import schedule_runner as runner
     from .. import scheduling as sch
+    from . import runtime
+
+    owner = runtime._OWNER   # the engine owner these definitions belong to
+
+    def _guard():
+        # Before each side effect: a process that lost ownership stops here,
+        # and the run stays recoverable (ownership.OwnershipLost).
+        if owner is not None:
+            owner.assert_owned()
 
     def _task(task_name: str, overrides: dict):
         tasks, _ = sch.load_tasks(hub_dir)
@@ -130,6 +192,7 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
 
     @DBOS.workflow(name=MD_WORKFLOW)
     def md_task(task_name: str, claimed: list[str], overrides: dict) -> dict:
+        _guard()
         run = DBOS.workflow_id
         started = datetime.now().isoformat(timespec="seconds")
         try:
@@ -139,21 +202,25 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
                        "run_log": None}
             finish(task_name, outcome, claimed, started)
             raise   # the IdentityError itself: its fix is shown to the hub's managers
+        _guard()
         outcome = work(task_name, overrides, run, claimed, identity)
         if outcome["result"] == "done":
             task = _task(task_name, overrides)
             if task.commit:
                 try:
+                    _guard()
                     sha = commit(task_name, overrides, outcome["summary"], started)
                     outcome["commit_sha"] = sha
                     # Push only this run's commit: with nothing committed, a
                     # push would publish whatever else is unpushed locally.
                     if task.push and sha:
+                        _guard()
                         push()
                         outcome["pushed"] = True
                 except Exception as exc:  # noqa: BLE001 — a git failure fails the run
                     outcome["result"] = "error"
                     outcome["error"] = f"{type(exc).__name__}: {exc}"
+        _guard()
         finish(task_name, outcome, claimed, started)
         if outcome["result"] == "error":
             raise RuntimeError(outcome.get("error") or "scheduled task failed")
@@ -173,7 +240,11 @@ def register(DBOS, hub_dir: Path, hub_name: str) -> None:
 
     @DBOS.workflow(name=EVAL_WORKFLOW)
     def eval_suite(names: list[str], now_iso: str) -> dict:
-        return run_evals(names, now_iso)
+        _guard()
+        result = run_evals(names, now_iso)
+        if result.get("failed"):
+            raise RuntimeError("Eval suite failed")
+        return result
 
     _FNS["md_task"] = md_task
     _FNS["eval_suite"] = eval_suite
@@ -193,11 +264,13 @@ def enqueue_task(task_name: str, slot: str, claimed: list[str] | None = None,
 
 
 def active_runs(task_name: str) -> list[str]:
-    """Ids of this task's runs that are queued or running."""
+    """Ids of this task's runs that are queued or running, in this hub. The
+    prefix matches ids from before hub namespaces too; DBOS scopes the list to
+    this hub's application."""
     from dbos import DBOS
 
     return [w.workflow_id for w in DBOS.list_workflows(
-        workflow_id_prefix=run_id(task_name, ""), status=["PENDING", "ENQUEUED"],
+        workflow_id_prefix=run_prefix(task_name), status=["PENDING", "ENQUEUED", "DELAYED"],
         load_input=False, load_output=False)]
 
 
@@ -207,5 +280,5 @@ def enqueue_evals(names: list[str], now: datetime):
     from . import runtime
 
     slot = now.strftime("%Y%m%dT%H%M")
-    with SetWorkflowID(f"eval:{','.join(sorted(names))}:{slot}"):
+    with SetWorkflowID(eval_run_id(names, slot)):
         return runtime._MD_QUEUE.enqueue(_FNS["eval_suite"], list(names), now.isoformat())

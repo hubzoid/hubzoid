@@ -18,11 +18,18 @@ import signal
 import subprocess
 import tempfile
 
-from . import __version__, _request_ctx, tool_events
+from . import __version__, _request_ctx, agent_errors, run_events, tool_events
 
 log = logging.getLogger(__name__)
 SUPPORTED_CODEX_VERSION = "0.147.0"
 _usage_rollup: ContextVar[list | None] = ContextVar("codex_usage_rollup", default=None)
+# What `_exchange` yields: typed run events when `_stream` asks for them (every
+# turn does), the 1.0.x text otherwise (a direct caller, such as a protocol
+# test, gets exactly what it always got).
+_typed_exchange: ContextVar[bool] = ContextVar("codex_typed_exchange", default=False)
+# What the Codex model is told when a Hubzoid tool raises (the chat shows
+# run_events.TOOL_FAILED instead).
+_TOOL_FAILED = "Tool failed. Check the hub server logs."
 # In addition to environments=[], turn off every optional native tool source.
 _DISABLED_FEATURES = (
     "shell_tool", "unified_exec", "apply_patch_freeform", "view_image", "apps",
@@ -36,6 +43,38 @@ _DISABLED_FEATURES = (
     "external_migration", "external_agent_memory_import", "request_permissions_tool",
     "default_mode_request_user_input", "realtime_conversation",
 )
+
+
+# A failed turn's structured error class (`turn.error.codexErrorInfo`) that the
+# person sees as a plain sentence (see agent_errors). Only the class is read: raw
+# protocol text stays out of chat.
+_ERROR_KINDS = {"usageLimitExceeded": agent_errors.USAGE_LIMIT,
+                "rateLimitExceeded": agent_errors.USAGE_LIMIT,
+                "serverOverloaded": agent_errors.OVERLOADED,
+                "unauthorized": agent_errors.AUTH}
+
+
+class CodexTurnError(RuntimeError):
+    """A turn Codex reported as failed. ``error_kind`` is its agent_errors class
+    when the turn's structured error has one."""
+
+    def __init__(self, message: str, error_kind: str | None = None):
+        super().__init__(message)
+        self.error_kind = error_kind
+
+
+def _turn_error_kind(turn: dict) -> str | None:
+    error = turn.get("error") if isinstance(turn, dict) else None
+    info = error.get("codexErrorInfo") if isinstance(error, dict) else None
+    if isinstance(info, str):
+        return _ERROR_KINDS.get(info)
+    if isinstance(info, dict):  # e.g. {"httpConnectionFailed": {"httpStatusCode": 429}}
+        for value in info.values():
+            status = value.get("httpStatusCode") if isinstance(value, dict) else None
+            kind = agent_errors.classify("", status=status)
+            if kind in agent_errors.PLAIN:
+                return kind
+    return None
 
 
 def codex_binary() -> str:
@@ -118,10 +157,15 @@ class CodexRuntime:
     async def run(self, prompt):
         return "".join([part async for part in self.stream(prompt)])
 
-    async def stream(self, prompt):
-        """Run one turn. When the caller connected personal MCP servers in Open
-        WebUI (see `owui_mcp`), their tools join a per-turn copy of the
-        registry for this turn only. The shared registry never changes."""
+    def stream(self, prompt):
+        """The 1.0.x text of one turn (the typed stream, rendered)."""
+        return run_events.as_text(self.stream_events(prompt), tool_mode=self.tool_mode)
+
+    async def stream_events(self, prompt):
+        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
+        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
+        their tools join a per-turn copy of the registry for this turn only.
+        The shared registry never changes."""
         personal = self._personal_servers()
         if not personal:
             async for part in self._stream(prompt, self.registry):
@@ -182,6 +226,7 @@ class CodexRuntime:
         parent_usage = _usage_rollup.get()
         records = parent_usage if parent_usage is not None else []
         rollup_token = _usage_rollup.set(records)
+        typed_token = _typed_exchange.set(True)
         try:
             binary = await asyncio.to_thread(codex_binary)
             auth = _auth_file()
@@ -218,9 +263,10 @@ class CodexRuntime:
                     start_new_session=True, limit=8 * 1024 * 1024)
                 self._processes.add(proc)
                 try:
-                    async with asyncio.timeout(300):
+                    from .workflows.deadlines import remaining
+                    async with asyncio.timeout(remaining(600)):
                         async for part in self._exchange(proc, prompt, tmp, usage, **turn_tools):
-                            shown.append(part)
+                            shown.append(run_events.text_of(part))
                             yield part
                 finally:
                     await _stop(proc)
@@ -231,8 +277,14 @@ class CodexRuntime:
         except Exception as exc:
             self._error.set(exc)
             log.warning("Codex request failed (%s)", type(exc).__name__)
-            yield f"\n\n[Codex could not complete this request: {exc}]"
+            kind = getattr(exc, "error_kind", None)
+            if kind in agent_errors.PLAIN:
+                yield agent_errors.notice(f"{type(exc).__name__}: {exc}", kind=kind)
+            else:
+                yield run_events.Notice(kind="error", text=f"Codex could not complete this request: {exc}",
+                                        legacy=f"\n\n[Codex could not complete this request: {exc}]")
         finally:
+            _reset_quietly(_typed_exchange, typed_token)
             if usage:
                 records.append(usage)
             _usage_rollup.reset(rollup_token)
@@ -242,10 +294,11 @@ class CodexRuntime:
             return  # The outer request owns artifact delivery and usage accounting.
         footer = tool_events.format_artifact_footer(_request_ctx.drain_artifacts(), "".join(shown))
         if footer:
-            yield footer
+            yield run_events.Notice(kind="artifacts", text=footer, legacy=footer)
 
     async def _exchange(self, proc, prompt, cwd, usage, registry=None):
         registry = self.registry if registry is None else registry
+        typed = _typed_exchange.get()
 
         async def send(message):
             proc.stdin.write((json.dumps(message) + "\n").encode())
@@ -273,8 +326,9 @@ class CodexRuntime:
         await send({"method": "initialized", "params": {}})
         # Gated tools this caller may not use are left out, the same decision
         # the access guard makes at call time (Codex does not consult is_enabled).
-        from .access.guard import visible
-        shown = {n: t for n, t in registry.items() if visible(t)}
+        from .access.guard import visible_map
+        vis = visible_map(registry)
+        shown = {n: t for n, t in registry.items() if vis[n]}
         params = {"cwd": cwd, "ephemeral": True, "environments": [],
                   "selectedCapabilityRoots": [], "runtimeWorkspaceRoots": [],
                   "approvalPolicy": "never", "sandbox": "read-only",
@@ -317,7 +371,10 @@ class CodexRuntime:
                     raise RuntimeError("Codex reached the configured tool-call limit.")
                 name, arguments = p.get("tool"), p.get("arguments", {})
                 tool = shown.get(name) if not p.get("namespace") else None
+                finished = None
                 if tool is None:
+                    # Not offered to this caller: answered like an unknown tool
+                    # and not shown, so its existence is not disclosed.
                     result, success = "Tool is not available in this hub.", False
                 else:
                     from agents import RunConfig
@@ -326,17 +383,28 @@ class CodexRuntime:
                     ctx = ToolContext(context=None, tool_name=name, tool_call_id=p["callId"], tool_arguments=args_json, run_config=RunConfig())
                     _request_ctx.record_tool_call(name, arguments)
                     display = tool_events.format_call(name, arguments, mode=self.tool_mode)
-                    if display:
+                    call_id = str(p.get("callId") or "")
+                    if typed:
+                        yield run_events.ToolCall(id=call_id, name=name, args=arguments, legacy=display)
+                    elif display:
                         yield display
                     try:
                         result = await tool.on_invoke_tool(ctx, args_json)
-                        success = True
+                        success = not tool_events.failed_output(result)
                     except Exception:
-                        result, success = "Tool failed. Check the hub server logs.", False
+                        result, success = _TOOL_FAILED, False
                         log.exception("Codex tool %s failed", name)
+                    # 1.0.x printed nothing for a Codex tool result, failed or not.
+                    finished = run_events.ToolResult(id=call_id, name=name, ok=success,
+                                                     message=None if success else run_events.TOOL_FAILED)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
+                if tool is not None:
+                    # For an eval's result preview; a no-op in chat.
+                    _request_ctx.record_tool_result(call_id, result)
                 await send({"id": msg["id"], "result": {"contentItems": [{"type": "inputText", "text": result}], "success": success}})
+                if typed and finished is not None:
+                    yield finished
             elif "id" in msg and method:
                 # No native approvals, elicitation or unconfigured callbacks.
                 await send({"id": msg["id"], "error": {"code": -32601, "message": "Unsupported by Hubzoid"}})
@@ -351,9 +419,21 @@ class CodexRuntime:
                 total = p.get("tokenUsage", {}).get("total", {})
                 usage.update(input_tokens=total.get("inputTokens", 0), output_tokens=total.get("outputTokens", 0))
             elif method == "turn/completed":
-                if p.get("turn", {}).get("status") != "completed":
-                    raise RuntimeError("Codex turn failed or was interrupted. Check login, model availability and usage limits.")
+                turn = p.get("turn") or {}
+                if turn.get("status") != "completed":
+                    raise CodexTurnError("Codex turn failed or was interrupted. Check login, model availability and usage limits.",
+                                         _turn_error_kind(turn))
                 break
+
+
+def _reset_quietly(var, token) -> None:
+    """Reset a ContextVar set inside a generator. A generator the event loop
+    finalises (never exhausted or closed by its consumer) runs in another
+    context, where the token no longer applies and the value is moot."""
+    try:
+        var.reset(token)
+    except ValueError:
+        pass
 
 
 def _combine_usage(records):
@@ -418,7 +498,7 @@ async def _stop(proc):
 
 def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_override=None):
     from . import access, connections, memory, settings
-    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool, _add_jev_tool
+    from .factory import HubContext, _compose_instructions, _load_skills_and_delegates, _with_core_skills, _add_curator_tool, _add_jev_tool, load_mcp_servers
     from .loaders import agents, knowledge, tools_local, mcp
     from .tools import make_all
     hub_dir = Path(hub_dir).resolve()
@@ -451,6 +531,7 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
             params_json_schema={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"], "additionalProperties": False}, on_invoke_tool=invoke)
     return CodexRuntime(name=main.spec.name, instructions=_compose_instructions(main.instructions, ctx, backend="codex-local"),
                         registry=registry, model_setting=model, hub_dir=hub_dir,
-                        max_turns=max_turns, tool_mode=config.show_tools, mcp_servers=mcp.load_all(hub_dir),
+                        max_turns=max_turns, tool_mode=config.show_tools,
+                        mcp_servers=load_mcp_servers(mcp.load_all_raw(hub_dir)),
                         vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
                         personal_mcp=True)

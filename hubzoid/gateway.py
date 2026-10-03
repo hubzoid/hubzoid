@@ -1,5 +1,16 @@
-"""Gateway planning — one Open WebUI fronting many hub bridges.
+"""Gateway planning — many hub bridges behind one front door.
 
+Web app mode (the default): `hubzoid gateway` runs N bridges and one edge, no
+Open WebUI. Every bridge serves the Hubzoid web app and shares the operational
+store (sessions, accounts, conversations, groups, grants), so any bridge can
+answer a deployment-wide call. The edge sends `/b/<slug>/api/*`,
+`/b/<slug>/artifacts/*`, `/b/<slug>/mcp` and `/b/<slug>/branding/*` to that
+hub's bridge with the prefix stripped (`edge_routes(web_app=True)`),
+`/webhooks/<slug>/*` to that hub's inbound server, and everything else to the
+first bridge. The chat app calls hub-scoped routes at `${api_base}/api/...`
+with `api_base` = `/b/<slug>`.
+
+Open WebUI mode (`HUBZOID_UI=openwebui`, 1.0.x, unchanged below):
 `hubzoid run` is one bridge + one Open WebUI per hub. That is full isolation
 but N heavy OWUI processes. For a team-of-teams deployment (sales hub, support
 hub, …) where the weight matters and per-team *access* — not per-team URLs —
@@ -35,8 +46,8 @@ class GatewayBackend:
     bridge_port: int
     api_key: str       # the bridge's first BRIDGE_API_KEYS entry
     model_label: str   # what /v1/models reports (best-effort, for display)
+    mcp_public_url: str = ""
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
-    mcp_access_group: str = ""  # OWUI group gating this hub's /mcp ("" = any user)
     # WhatsApp/Telegram inbound: True when this hub's .env configures a webhook
     # surface. The gateway edge then forwards /webhooks/* to its loopback inbound
     # server; without it the webhook falls through to Open WebUI's catch-all.
@@ -85,16 +96,18 @@ class GatewayPlan:
             env["DEFAULT_MODELS"] = labels[0]
         return env
 
-    def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
+    def edge_routes(self, *, artifact_prefix: str = "/artifacts", web_app: bool = False) -> list[dict]:
         """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
         /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
+        With `web_app` (the web app mode) also /b/<slug>/api and
+        /b/<slug>/branding, the hub-scoped web app calls.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
-        `/artifacts/...` (or `/mcp`) path. Only MCP-enabled hubs get an /mcp
-        route — the bridge wouldn't serve it anyway, but the edge should not
-        even forward the path. The /webhooks/<slug> route (no strip) reaches the
-        hub's own inbound server; every inbound hub gets one, so several can run
-        behind one front door.
+        `/artifacts/...` (or `/mcp`, `/api/...`, `/branding/...`) path. Only
+        MCP-enabled hubs get an /mcp route — the bridge wouldn't serve it anyway,
+        but the edge should not even forward the path. The /webhooks/<slug>
+        route (no strip) reaches the hub's own inbound server; every inbound hub
+        gets one, so several can run behind one front door.
         """
         routes = []
         for b in self.backends:
@@ -104,12 +117,25 @@ class GatewayPlan:
                 "upstream": f"http://127.0.0.1:{b.bridge_port}",
                 "strip_prefix": base,
             })
+            routes.append({"prefix": base + "/portal/api",
+                           "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                           "strip_prefix": base})
+            if web_app:
+                for part in ("/api", "/branding"):
+                    routes.append({
+                        "prefix": base + part,
+                        "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                        "strip_prefix": base,
+                    })
             if b.mcp:
                 routes.append({
                     "prefix": base + "/mcp",
                     "upstream": f"http://127.0.0.1:{b.bridge_port}",
                     "strip_prefix": base,
                 })
+                for prefix in (f"/.well-known/oauth-protected-resource{base}/mcp",
+                               f"/.well-known/oauth-authorization-server{base}/mcp/oauth"):
+                    routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{b.bridge_port}"})
             # Inbound surfaces (WhatsApp/Telegram/generic webhook): the hub's
             # inbound server owns /webhooks/<slug>/* (e.g. /webhooks/<slug>/whatsapp)
             # on a loopback port, each POST signature-, secret-, or HMAC-verified
@@ -119,6 +145,10 @@ class GatewayPlan:
             # global /webhooks meant only the first inbound hub could be reached).
             # No strip_prefix — the inbound app serves the full /webhooks/<slug>/...
             # path, matching the slug it derives from its own hub folder.
+            from .workflows.events import route_declarations
+            for name in route_declarations(b.hub_dir):
+                routes.append({"prefix": f"/webhooks/{b.slug}/{name}",
+                               "upstream": f"http://127.0.0.1:{b.bridge_port}"})
             if b.inbound:
                 routes.append({
                     "prefix": f"/webhooks/{b.slug}",
@@ -128,9 +158,7 @@ class GatewayPlan:
 
     @property
     def any_mcp(self) -> bool:
-        """True when at least one fronted hub serves /mcp — the gateway then
-        enables OWUI per-user API-key minting (locked to deny-all inside
-        OWUI; see webui._MCP_API_KEY_ENV)."""
+        """True when at least one fronted hub serves OAuth-protected MCP."""
         return any(b.mcp for b in self.backends)
 
     def branding_source(self, gw_data: Path, override: str | None = None) -> Path:
@@ -216,6 +244,14 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
         seen_slugs[base_slug] = n + 1
         slug = base_slug if n == 0 else f"{base_slug}-{n + 1}"
 
+        mcp_public_url = _own_env_value(hub_dir, "MCP_PUBLIC_URL")
+        if _mcp_enabled(hub_dir):
+            from urllib.parse import urlsplit
+            from .mcp_oauth import validate_public_url
+            mcp_public_url = validate_public_url(mcp_public_url)
+            if urlsplit(mcp_public_url).path != f"/b/{slug}/mcp":
+                raise ValueError(f"MCP_PUBLIC_URL for {hub_dir.name} must end in /b/{slug}/mcp")
+
         meta = _agent_meta(hub_dir)
         label = s.model_label or _bridge_model_label(meta["fm_name"], hub_dir)
         if label in seen_labels:
@@ -250,8 +286,8 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             bridge_port=s.bridge_port,
             api_key=s.first_api_key,
             model_label=label,
+            mcp_public_url=mcp_public_url,
             mcp=_mcp_enabled(hub_dir),
-            mcp_access_group=_own_env_value(hub_dir, "MCP_ACCESS_GROUP"),
             inbound=inbound_on,
             inbound_port=inbound_port,
             display_name=meta["fm_name"] or hub_dir.name,

@@ -13,6 +13,7 @@ Four kinds of check:
 
   * `contains` / `not_contains` — substring, case-insensitive (see below)
   * `expect_tools` / `forbid_tools` — did the agent actually call it
+  * `expect_tool_args`            — did it call it with the right arguments
   * `timeout`                     — hard bound, exceeded = fail
   * (errors)                      — the run itself blew up
 
@@ -25,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..tool_events import short_name
+from . import calls as calls_lib
 
 
 @dataclass
@@ -48,7 +50,8 @@ class Check:
 # tool line rather than the prose) and false failures (`not_contains` tripping
 # over the agent's own reasoning). So we assert against the answer only.
 #
-# The patterns below mirror `tool_events.format_call` / `format_error` and the
+# The patterns below mirror `tool_events.format_call` / `format_error` /
+# `format_tool_block` and the
 # Claude `_ThinkWriter`. `tests/test_evals.py` feeds real output from those
 # functions through `strip_chrome`, so a format change breaks a test rather
 # than silently corrupting eval verdicts.
@@ -56,6 +59,9 @@ class Check:
 _THINK_RE = re.compile(r"<think>.*?(?:</think>|\Z)", re.DOTALL | re.IGNORECASE)
 _DETAILS_RE = re.compile(r"<details>\s*<summary>\s*[✓↳⚠].*?(?:</details>|\Z)",
                          re.DOTALL | re.IGNORECASE)
+# `tool_events.format_tool_block`: the chat app's tool-call block.
+_TOOL_BLOCK_RE = re.compile(r'<details\s+type="tool_calls"[^>]*>.*?(?:</details>|\Z)',
+                            re.DOTALL | re.IGNORECASE)
 _TOOL_LINE_RE = re.compile(r"^[ \t]*>[ \t]*[✓↳⚠].*$", re.MULTILINE)
 _BLANK_RUN_RE = re.compile(r"\n{3,}")
 
@@ -67,6 +73,7 @@ def strip_chrome(text: str) -> str:
     blockquote form, and both before blank-line collapsing.
     """
     out = _THINK_RE.sub("", text or "")
+    out = _TOOL_BLOCK_RE.sub("", out)
     out = _DETAILS_RE.sub("", out)
     out = _TOOL_LINE_RE.sub("", out)
     return _BLANK_RUN_RE.sub("\n\n", out).strip()
@@ -118,12 +125,43 @@ def check_expect_tools(tool_calls: list[str], expected: list[str]) -> list[Check
     return out
 
 
-def check_forbid_tools(tool_calls: list[str], forbidden: list[str]) -> list[Check]:
+def check_forbid_tools(tool_calls: list[str], forbidden: list[str],
+                       tools: list | None = None) -> list[Check]:
+    """`tools` (call records with arguments), when given, puts the offending
+    call's key arguments in the failure reason."""
     called = {_norm_tool(t) for t in tool_calls}
     out: list[Check] = []
     for banned in forbidden:
         hit = _norm_tool(banned) in called
-        out.append(Check("forbid_tools", not hit, f"forbidden tool called: {banned}" if hit else ""))
+        detail = ""
+        if hit:
+            detail = f"forbidden tool called: {banned}"
+            call = next((c for c in tools or [] if _norm_tool(c.name) == _norm_tool(banned)), None)
+            shown = calls_lib.key_args(call.args) if call is not None else ""
+            if shown:
+                detail += f" ({shown})"
+        out.append(Check("forbid_tools", not hit, detail))
+    return out
+
+
+def check_expect_tool_args(tools: list, expected: dict) -> list[Check]:
+    """One check per tool in `expected`: at least one call of that tool has
+    every listed argument containing the expected value (case-insensitive
+    substring for text, equality otherwise). `tools` are call records."""
+    out: list[Check] = []
+    for want, args in expected.items():
+        mine = [c for c in tools if _norm_tool(c.name) == _norm_tool(want)]
+        ok = any(calls_lib.args_match(c.raw_args if c.raw_args is not None else c.args, args)
+                 for c in mine)
+        detail = ""
+        if not ok:
+            detail = f"no {want} call with {calls_lib.expected_text(args)}"
+            if mine:
+                seen = "; ".join(calls_lib.key_args(c.args) or "(no arguments)" for c in mine[:3])
+                detail += f" (called with: {seen}{'; …' if len(mine) > 3 else ''})"
+            else:
+                detail += f" (never called: {want})"
+        out.append(Check("expect_tool_args", ok, detail))
     return out
 
 
@@ -132,15 +170,24 @@ def run_free_checks(
     *,
     response: str,
     tool_calls: list[str],
+    tools: list | None = None,
 ) -> list[Check]:
     """Every model-free assertion declared on `case`, in table order.
 
     `response` must already be `strip_chrome`-ed — the runner does that once
-    and reuses the clean text for the judge too.
+    and reuses the clean text for the judge too. `tools` are the call records
+    (with arguments) behind `tool_calls`; when absent they are built from the
+    names, with no arguments. Tool checks look at every call of the case
+    (every turn of a conversation); text checks look at the final reply.
     """
+    if tools is None:
+        from .results import ToolCallRecord
+
+        tools = [ToolCallRecord(name=n) for n in tool_calls]
     checks: list[Check] = []
     checks += check_expect_tools(tool_calls, case.expect_tools)
-    checks += check_forbid_tools(tool_calls, case.forbid_tools)
+    checks += check_forbid_tools(tool_calls, case.forbid_tools, tools)
+    checks += check_expect_tool_args(tools, getattr(case, "expect_tool_args", None) or {})
     checks += check_contains(response, case.contains)
     checks += check_not_contains(response, case.not_contains)
     return checks

@@ -8,20 +8,22 @@ Publishing is separate from generating: `publish` copies an existing file into
 the legacy `/artifacts/<chat>/<file>` route, included in backups) and records
 owner, hub, workflow, run, content type, size, hash, storage and audience in
 `hz_artifacts`. Every publish gets a new id, so a later run never overwrites an
-earlier artifact even when the file names match.
+earlier artifact even when the file names match. A publish may carry a latest
+key: `/portal/latest/<hub>/<key>` opens the newest artifact with that key, for a
+viewer who may open that one (never an older copy).
 
 Who may open an artifact is decided here, in `role`, and nowhere else:
 
   * owner     the account the run acted as. View, download, share, revoke, delete.
   * viewer    view and download only, when the audience allows it:
                 owner   only the owner (the default)
-                people  listed accounts or groups who can currently use the hub
+                people  listed accounts who can currently use the hub
                 hub     anyone who can currently use the hub
                 link    anyone holding an unexpired, unrevoked public link
   * nobody else. Organization admins and workflow managers get nothing extra.
 
-`people` and `hub` need a Console-managed hub, whose membership Hubzoid can
-check. A public link needs the owner to hold `share_public_links` in the hub,
+`people` and `hub` follow the agent's current access in the Console. A public
+link needs the owner to hold `share_public_links` in the hub,
 when it is created and every time it is opened. Link tokens are 256-bit random
 values stored only as a SHA-256 hash. A workflow or model can never create one.
 """
@@ -64,6 +66,8 @@ SHARE_PUBLIC = register(Capability(
 AUDIENCES = ("owner", "people", "hub", "link")
 STORE_DIR = ".hubzoid/artifacts"
 ID_RE = re.compile(r"^a[A-Za-z0-9_-]{16,40}$")
+KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+HUB_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 DEFAULT_LINK_DAYS = 7
 MAX_LINK_DAYS = 90
@@ -113,6 +117,8 @@ class Artifact:
     @property
     def kind(self) -> str:
         return kind_for(self.filename)
+
+    latest_key: str | None = None
 
 
 def kind_for(filename: str) -> str:
@@ -168,6 +174,10 @@ def viewer_url(artifact_id: str, hub_dir=None) -> str:
     return f"{public_base_url(hub_dir)}/portal/artifacts/{artifact_id}"
 
 
+def latest_url(hub: str, key: str, hub_dir=None) -> str:
+    return f"{public_base_url(hub_dir)}/portal/latest/{hub}/{key}"
+
+
 def _safe_filename(name: str) -> str:
     name = (name or "").replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "").strip()
     name = re.sub(r"[\r\n\t\"]", "_", name)
@@ -181,7 +191,7 @@ def _row(r) -> Artifact:
 
 
 _COLS = ("id, hub, owner, owner_account, workflow, run_id, title, filename, content_type, "
-         "size, sha256, storage, audience, created, updated, deleted")
+         "size, sha256, storage, audience, created, updated, deleted, latest_key")
 
 
 def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact | None:
@@ -196,6 +206,18 @@ def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact
     if art.deleted and not include_deleted:
         return None
     return art
+
+
+def latest(hub_dir, hub: str, key: str) -> Artifact | None:
+    """The newest artifact published in `hub` with latest key `key`, or None.
+    Who may open it is still `role`'s decision."""
+    if not HUB_RE.match(hub or "") or not KEY_RE.match(key or ""):
+        return None
+    with _engine(hub_dir).connect() as c:
+        r = c.execute(text(f"SELECT {_COLS} FROM hz_artifacts WHERE hub=:h AND latest_key=:k "
+                           "AND deleted IS NULL ORDER BY created DESC, id DESC LIMIT 1"),
+                      {"h": hub, "k": key}).fetchone()
+    return _row(r) if r is not None else None
 
 
 def content_path(hub_dir, art: Artifact) -> Path:
@@ -220,10 +242,11 @@ def content_path(hub_dir, art: Artifact) -> Path:
 def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source: Path,
             title: str | None = None, workflow: str | None = None, run_id: str | None = None,
             idem_key: str | None = None, audience: str = "owner",
-            share_with=()) -> dict:
+            share_with=(), key: str | None = None) -> dict:
     """Store `source` as a new artifact owned by `owner` and return
-    {id, url, title, filename, content_type, size}. The caller has already
-    established `owner` from the run's identity, never from an argument.
+    {id, url, title, filename, content_type, size} (and `latest_url` with a
+    `key`). The caller has already established `owner` from the run's identity,
+    never from an argument.
 
     `idem_key` makes a retried publish (a DBOS step re-run after a crash) return
     the artifact the first attempt stored instead of storing it twice."""
@@ -231,6 +254,9 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
 
     hub = normalize(hub)
     owner = normalize(owner)
+    if key is not None and not KEY_RE.match(key):
+        raise ArtifactError(400, "A latest key is 1 to 64 lowercase letters, digits, '-' or '_', "
+                                 "starting with a letter or digit.")
     eng = _engine(hub_dir)
     if idem_key:
         with eng.connect() as c:
@@ -266,13 +292,14 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
                workflow=workflow, run_id=run_id, idem_key=idem_key,
                title=(title or source.stem)[:300], filename=filename,
                content_type=content_type, size=size, sha256=digest.hexdigest(),
-               storage=rel, audience="owner", created=now, updated=now)
+               storage=rel, audience="owner", created=now, updated=now, latest_key=key)
     with eng.begin() as c:
         c.execute(text(
             "INSERT INTO hz_artifacts (id, hub, owner, owner_account, workflow, run_id, idem_key, "
-            "title, filename, content_type, size, sha256, storage, audience, created, updated) "
-            "VALUES (:id, :hub, :owner, :owner_account, :workflow, :run_id, :idem_key, :title, "
-            ":filename, :content_type, :size, :sha256, :storage, :audience, :created, :updated)"),
+            "title, filename, content_type, size, sha256, storage, audience, created, updated, "
+            "latest_key) VALUES (:id, :hub, :owner, :owner_account, :workflow, :run_id, :idem_key, "
+            ":title, :filename, :content_type, :size, :sha256, :storage, :audience, :created, "
+            ":updated, :latest_key)"),
             row)
     art = get(hub_dir, artifact_id)
     if audience != "owner":
@@ -284,28 +311,22 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
 
 
 def _summary(art: Artifact, hub_dir=None) -> dict:
-    return dict(id=art.id, url=viewer_url(art.id, hub_dir), title=art.title, filename=art.filename,
-                content_type=art.content_type, size=art.size, audience=art.audience)
+    out = dict(id=art.id, url=viewer_url(art.id, hub_dir), title=art.title, filename=art.filename,
+               content_type=art.content_type, size=art.size, audience=art.audience)
+    if art.latest_key:
+        out["latest_url"] = latest_url(art.hub, art.latest_key, hub_dir)
+    return out
 
 
 # ---- who may open it ------------------------------------------------------------
 
 
-def hub_managed(hub_dir, hub: str) -> bool:
-    try:
-        return bool(_store(hub_dir).is_authoritative(hub))
-    except Exception:  # noqa: BLE001 — unknown means unmanaged (fail closed)
-        log.exception("artifacts: access store unavailable")
-        return False
-
-
 def hub_member(hub_dir, hub: str, subject: str) -> bool:
-    """Can `subject` currently use `hub`? Only answerable for managed hubs."""
+    """Can `subject` currently use `hub`?"""
     from ..access.store import USE_HUB
 
     try:
-        gs = _store(hub_dir)
-        return bool(gs.is_authoritative(hub) and gs.can(subject, hub, USE_HUB))
+        return bool(_store(hub_dir).can(subject, hub, USE_HUB))
     except Exception:  # noqa: BLE001 — fail closed
         log.exception("artifacts: membership check failed")
         return False
@@ -348,10 +369,9 @@ def _local_owner(hub_dir, subject: str) -> bool:
 def _owner_current(hub_dir, art: Artifact) -> bool:
     """Is the artifact's recorded owner still that owner, now? The same chat-app
     account it was published under (an email reused by a replacement account
-    inherits nothing), not blocked, and on a Console-managed hub still able to
-    use the hub. An artifact recorded without an account id is honoured only for
-    the local quickstart account. Legacy hubs keep their membership in the chat
-    app, so only the account checks apply there."""
+    inherits nothing), not blocked, and still able to use the hub. An artifact
+    recorded without an account id is honoured only for the local quickstart
+    account."""
     owner = art.owner
     if not _active(hub_dir, owner):
         return False
@@ -360,23 +380,9 @@ def _owner_current(hub_dir, art: Artifact) -> bool:
             return False
     elif not _local_owner(hub_dir, owner):
         return False
-    if hub_managed(hub_dir, art.hub) and not hub_member(hub_dir, art.hub, owner):
+    if not hub_member(hub_dir, art.hub, owner):
         return False
     return True
-
-
-def _groups_of(hub_dir, hub: str, subject: str) -> set[str]:
-    from .. import deployment
-    from ..access import effective_groups, normalize
-
-    try:
-        path = deployment.hub_path(Path(hub_dir), hub)
-    except KeyError:
-        return set()
-    try:
-        return {normalize(g) for g in effective_groups(path, email=subject)}
-    except Exception:  # noqa: BLE001 — a failed lookup grants nothing
-        return set()
 
 
 def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
@@ -398,9 +404,6 @@ def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
         # A share names the account it was made for: a replacement account under
         # the same email is not that person.
         if any(not s["account"] or s["account"] == _account_of(hub_dir, subject) for s in mine):
-            return "viewer"
-        wanted = {s["principal"] for s in listed if s["kind"] == "group"}
-        if wanted and wanted & _groups_of(hub_dir, art.hub, subject):
             return "viewer"
     return None
 
@@ -424,7 +427,7 @@ def _audit(hub_dir, hub: str, action: str, target: str, actor: str) -> None:
 def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
                  people=()) -> None:
     """Change who can view `art`. Only the owner. `people` is a list of
-    {"kind": "user"|"group", "principal": ...} (or plain emails)."""
+    account emails (or {"kind": "user", "principal": ...})."""
     from ..access import normalize
 
     art = _require_owner(hub_dir, art, actor)
@@ -432,33 +435,31 @@ def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
         raise ArtifactError(400, "Choose only you, specific people, or everyone in this hub. "
                                  "Public links have their own action.")
     entries: list[tuple[str, str]] = []
-    if audience in ("people", "hub") and not hub_managed(hub_dir, art.hub):
-        raise ArtifactError(409, "This agent's access is still managed in the chat app, so "
-                                 "Hubzoid cannot check who belongs to it. Only you, or a "
-                                 "public link, are available until it is migrated.")
     if audience == "people":
         for p in list(people or [])[:MAX_SHARES + 1]:
             kind, principal = ("user", p) if isinstance(p, str) else (p.get("kind"), p.get("principal"))
             principal = normalize(principal or "")
-            if kind not in ("user", "group") or not principal:
-                raise ArtifactError(400, "Each person needs an account email or a group name.")
-            if kind == "user":
-                if "@" not in principal:
-                    raise ArtifactError(400, f"{principal!r} is not an account email.")
-                if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
-                    raise ArtifactError(409, f"{principal} cannot use this agent, so the "
-                                             "artifact cannot be shared with them.")
+            if kind == "group":
+                raise ArtifactError(400, "Share with people by their account email. "
+                                         "Groups are no longer available.")
+            if kind != "user" or not principal:
+                raise ArtifactError(400, "Each person needs an account email.")
+            if "@" not in principal:
+                raise ArtifactError(400, f"{principal!r} is not an account email.")
+            if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
+                raise ArtifactError(409, f"{principal} cannot use this agent, so the "
+                                         "artifact cannot be shared with them.")
             entries.append((kind, principal))
         entries = sorted(set(entries))
         if len(entries) > MAX_SHARES:
-            raise ArtifactError(400, f"Share with at most {MAX_SHARES} people or groups.")
+            raise ArtifactError(400, f"Share with at most {MAX_SHARES} people.")
         if not entries:
-            raise ArtifactError(400, "Add at least one person or group.")
+            raise ArtifactError(400, "Add at least one person.")
     now = _now()
     with _engine(hub_dir).begin() as c:
         c.execute(text("DELETE FROM hz_artifact_shares WHERE artifact_id=:a"), {"a": art.id})
         for kind, principal in entries:
-            account = _account_of(hub_dir, principal) if kind == "user" else None
+            account = _account_of(hub_dir, principal)
             c.execute(text("INSERT INTO hz_artifact_shares (artifact_id, kind, principal, "
                            "account, added_by, added) VALUES (:a, :k, :p, :acc, :b, :t)"),
                       {"a": art.id, "k": kind, "p": principal, "acc": account, "b": actor,

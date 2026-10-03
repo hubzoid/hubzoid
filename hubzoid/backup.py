@@ -12,9 +12,15 @@ Not in the archive:
     git repository.
   - PostgreSQL databases. The backup names them; docs/BACKUP.md has the
     pg_dump route.
-  - secrets (`.env`, `.hubzoid/artifact_secret`, `.webui_secret_key`) and the
-    database passwords in the gateway's `deployment.json` (saved as `***`),
-    unless asked for with `include_secrets`.
+  - secrets (`.env`, `.hubzoid/artifact_secret`, the deployment key
+    `secret.key`, `.webui_secret_key`) and the database passwords in the
+    gateway's `deployment.json` (saved as `***`), unless asked for with
+    `include_secrets`. The deployment key is backed up separately from the data
+    it protects (see hubzoid.secretbox). Only those locations hold secrets: a
+    chat attachment or an agent's file with one of those names is data, and is
+    saved like any other.
+  - temporary files (Hubzoid's half-written `.tmp` files) and SQLite journals
+    beside a database, which the database's copy already includes.
 
 A backup holds new scheduled runs and waits for running ones to finish. Chat
 keeps working throughout. Due runs fire when the hold ends.
@@ -22,6 +28,8 @@ keeps working throughout. Due runs fire when the hold ends.
 Restore puts each saved directory back where it was, or under a new prefix
 (`moves`), and rewrites the absolute paths Hubzoid and Open WebUI store.
 Whatever was at a target is kept beside it as `<name>.pre-restore-<stamp>`.
+Secret files the archive does not hold stay as they were at the target, so
+restoring data in place never replaces the deployment key or the link secret.
 """
 from __future__ import annotations
 
@@ -45,8 +53,9 @@ FORMAT = 1
 INDEX = "hubzoid-backup.json"
 STATE_DIRS = (".hubzoid", ".inbound", "logs", "output")
 UI_DIR = ".openwebui-data"
-SECRET_FILES = {".env", "artifact_secret", ".webui_secret_key", ".admin_token"}
-_SKIP_SUFFIXES = ("-wal", "-shm", "-journal", ".tmp", ".part")
+SECRET_FILES = {".env", "artifact_secret", "secret.key", ".webui_secret_key", ".admin_token"}
+_TEMP_SUFFIXES = (".tmp", ".part")
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 # Enough to cover a long copy. The hold is cleared when the backup ends, and
 # expires on its own if the backup process dies.
@@ -123,7 +132,16 @@ def plan(hub_dir: Path, *, include_secrets: bool = False) -> Plan:
         if include_secrets and (path / ".env").is_file():
             add(path / ".env", "file", key)
     if manifest:
-        gw_data = Path(manifest["owui_db"]).resolve().parent
+        # The gateway's data folder holds its manifest (and, in Open WebUI mode,
+        # Open WebUI's database). The web app mode records no Open WebUI path.
+        located = deployment.manifest_path(hub_dir)
+        if located is not None:
+            gw_data = located.resolve().parent
+        elif manifest.get("owui_db"):
+            gw_data = Path(manifest["owui_db"]).resolve().parent
+        else:
+            raise BackupError("Cannot find this gateway's data folder. Set HUBZOID_DEPLOYMENT "
+                              "to its deployment.json and run hubzoid backup again.")
         if any(gw_data == h or gw_data in h.parents for _, h in hubs):
             raise BackupError(f"The gateway data directory {gw_data} contains a hub. "
                               "Give the gateway its own --data-dir to use hubzoid backup.")
@@ -165,17 +183,42 @@ def _is_sqlite(path: Path) -> bool:
         return False
 
 
+def _people_files(rel: Path, root: Root) -> bool:
+    """Under a folder of files that people attached or the agent made: a
+    conversation's folder (`.hubzoid/chats/<id>/`), the agent's `output`, and
+    Open WebUI's `uploads`. Their names are chosen by people and the agent."""
+    first = rel.parts[:1]
+    if root.kind == "ui":
+        return first == ("uploads",)
+    return root.path.name == "output" or (root.path.name == ".hubzoid" and first == ("chats",))
+
+
+def _credential(rel: Path, root: Root) -> bool:
+    """A credential file where Hubzoid and Open WebUI keep one: the top of a
+    hub's `.hubzoid` (the link secret, the deployment key) or of a chat UI or
+    gateway data folder (the deployment key next to the manifest, `.env`,
+    Open WebUI's key files). The same name anywhere else is data."""
+    return (rel.name in SECRET_FILES and len(rel.parts) == 1
+            and (root.kind == "ui" or root.path.name == ".hubzoid"))
+
+
 def _skip(rel: Path, root: Root, include_secrets: bool) -> bool:
     name = rel.name
-    if name.endswith(_SKIP_SUFFIXES) or name.startswith(".hubzoid-restore-"):
-        return True
-    if name in SECRET_FILES and not include_secrets:
-        return True
-    parts = rel.parts
-    if "__pycache__" in parts:
+    if name.startswith(".hubzoid-restore-") or "__pycache__" in rel.parts:
         return True
     # Open WebUI's model cache is large and rebuilt on demand.
-    return root.kind == "ui" and parts[:1] == ("cache",)
+    if root.kind == "ui" and rel.parts[:1] == ("cache",):
+        return True
+    # Half-written files from Hubzoid's atomic writes. Among people's files only
+    # hidden ones are Hubzoid's (an artifact being written): uploaded names
+    # never start with a dot.
+    if name.endswith(_TEMP_SUFFIXES) and (name.startswith(".") or not _people_files(rel, root)):
+        return True
+    # A journal beside a SQLite database: the database's copy includes it.
+    if name.endswith(_SQLITE_SIDECARS) and _is_sqlite(
+            (root.path / rel).with_name(name.rsplit("-", 1)[0])):
+        return True
+    return not include_secrets and _credential(rel, root)
 
 
 def _without_passwords(path: Path) -> bytes | None:
@@ -277,7 +320,10 @@ class _Store:
     def __init__(self, url: str):
         from sqlalchemy import create_engine, inspect
 
-        self.engine = create_engine(url)
+        from . import db
+
+        # postgresql:// means psycopg (3), as for every engine of Hubzoid's own.
+        self.engine = create_engine(db.sqlalchemy_url(url))
         self.ok = inspect(self.engine).has_table("hz_meta")
 
     def put(self, key: str, value: dict) -> None:
@@ -352,7 +398,8 @@ def backup(hub_dir: Path, out: Path, *, include_secrets: bool = False, wait: flo
 def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
     from . import __version__
 
-    exclude = {out}
+    part = out.with_name(out.name + ".part")
+    exclude = {out, part}  # never the archive itself, wherever it is written
     index = {
         "format": FORMAT,
         "hubzoid": __version__,
@@ -364,7 +411,6 @@ def _write_archive(p: Plan, out: Path, include_secrets: bool) -> dict:
         "secrets": include_secrets,
         "redacted": [],  # files saved with their database passwords as ***
     }
-    part = out.with_name(out.name + ".part")
     # Chat UI databases hold password hashes and connection keys: owner-only.
     private = lambda path, flags: os.open(path, flags, 0o600)  # noqa: E731
     try:
@@ -564,6 +610,7 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
             if not src.exists():
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
+            aside = None
             if target.exists():
                 aside = target.with_name(f"{target.name}.pre-restore-{stamp}")
                 os.replace(target, aside)
@@ -573,6 +620,8 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
                     if stale.exists():
                         os.replace(stale, Path(str(aside) + side))
             shutil.move(str(src), str(target))
+            if aside is not None and root["kind"] != "file":
+                _keep_secrets(aside, target, Root(root["id"], Path(root["path"]), root["kind"]))
             say(f"Restored {target}")
 
     if any(a != b for a, b in moves):
@@ -582,6 +631,22 @@ def restore(archive: Path, moves: list[tuple[str, str]] = (), *, say=log.info) -
     return {"restored": [str(t) for t in targets.values()], "kept": kept,
             "not_included": index.get("not_included", []),
             "redacted": [str(p) for p in redacted if p.is_file()]}
+
+
+def _keep_secrets(previous: Path, restored: Path, root: Root) -> None:
+    """Copy credential files the archive did not hold (a backup made without
+    secrets) from the directory the restore replaced. Restoring data must not
+    swap the deployment key or the artifact link secret for new ones. Only the
+    credential locations (`_credential`): a chat attachment of the same name
+    is data, and is not carried over."""
+    if not previous.is_dir():
+        return
+    for path in previous.iterdir():
+        if not _credential(Path(path.name), root) or path.is_symlink() or not path.is_file():
+            continue
+        dest = restored / path.name
+        if not dest.exists():
+            shutil.copy2(path, dest)
 
 
 def _rewrite_paths(index: dict, targets: dict[str, Path], move_text) -> None:

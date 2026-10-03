@@ -73,6 +73,9 @@ def owui_env(monkeypatch, db, secret):
     monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
     monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
+    # Open WebUI connections exist only in the legacy UI mode; the default mode
+    # uses Hubzoid's own (tests/test_connectors_*).
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     tok._fernet_cache.clear()
 
 
@@ -88,6 +91,16 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: eng)
     access._stores.clear()
     return eng
+
+
+def grant(hub, *emails, permissions=("connector_gmail", "connector_wiki")) -> None:
+    """Give each person the connector capabilities in this hub (Console grants)."""
+    import hubzoid.access as access
+
+    gs = access.store_for(hub)
+    for email in emails:
+        for permission in permissions:
+            gs.grant(email, hub.name, permission, actor="test")
 
 
 def _free_port() -> int:

@@ -11,6 +11,14 @@ from sqlalchemy import create_engine, text
 from hubzoid import _request_ctx
 
 
+@pytest.fixture(autouse=True)
+def _legacy_ui(monkeypatch):
+    """These tests pin Open WebUI mode (HUBZOID_UI=openwebui), where the bridge
+    trusts Open WebUI's forwarded identity; the web app mode is covered by
+    tests/test_assertions*.py."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     hub = tmp_path / "sales"
@@ -22,6 +30,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("BRIDGE_API_KEYS", "k-usage")
     monkeypatch.delenv("HUBZOID_OPERATIONAL_DB", raising=False)
     from hubzoid.server import build_app
+    from tests.access_helpers import allow
+
+    allow(hub, "ann@example.org", "bo@example.org")
     return TestClient(build_app()), hub
 
 

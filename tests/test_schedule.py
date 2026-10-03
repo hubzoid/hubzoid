@@ -286,6 +286,7 @@ def test_state_survives_corrupt_file(tmp_path):
     assert state.get("x").get("first_seen_at")
 
 
+@pytest.mark.slow
 def test_state_writes_are_safe_across_threads_and_processes(tmp_path):
     """The scheduler and the run executor write the state file from different
     threads, and a manual run writes it from another process: no write may
@@ -737,6 +738,7 @@ def fresh_dbos_logging():
     yield
 
 
+@pytest.mark.slow
 def test_cli_schedule_run_executes_and_reports(tmp_path, monkeypatch, fresh_dbos_logging):
     hub = tmp_path / "hub"
     _write_task(hub, "job", 'schedule: "0 3 * * *"')
@@ -749,8 +751,19 @@ def test_cli_schedule_run_executes_and_reports(tmp_path, monkeypatch, fresh_dbos
     res = CliRunner().invoke(cli.app, ["schedule", "run", str(hub), "job"])
     assert res.exit_code == 0, res.output
     assert "done in 2 round(s)" in res.output and "all synced" in res.output
+    # A manual run is in the access audit like one started from chat.
+    from sqlalchemy import text
+
+    from hubzoid.access import store_for
+
+    with store_for(hub).engine.connect() as c:
+        rows = c.execute(text("SELECT actor, action, subject, permission, surface "
+                              "FROM hz_access_audit WHERE action='run_start'")).fetchall()
+    assert len(rows) == 1 and rows[0][0].startswith("cli:") and rows[0][3] == "md:job"
+    assert rows[0][2].startswith("md:job:manual-") and rows[0][4] == "cli"
 
 
+@pytest.mark.slow
 def test_cli_schedule_run_failure_exits_nonzero(tmp_path, monkeypatch, fresh_dbos_logging):
     hub = tmp_path / "hub"
     _write_task(hub, "job", 'schedule: "0 3 * * *"')

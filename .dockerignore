@@ -14,11 +14,15 @@ dist
 
 .openwebui-data
 output/
+**/.webui_secret_key
+**/secret.key
 
 tests/
 HubzoidTests/
 demo-hub/.env
 demo-hub/.openwebui-data
+
+portal/node_modules
 
 .DS_Store
 .idea

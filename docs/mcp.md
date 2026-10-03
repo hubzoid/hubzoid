@@ -86,7 +86,136 @@ credentials in the process list. Limits:
 - A secret written into a stdio server's `args` is still visible in that
   server's own process arguments. Pass secrets to stdio servers in `env`.
 
+## Personal connections (default UI mode)
+
+In the default UI mode (`HUBZOID_UI` unset or `hubzoid`) Hubzoid runs personal
+MCP connections itself: no Open WebUI and no `OWUI_NATIVE_MCP` switch. Each
+person connects their own account to a remote MCP server, and every chat turn
+and workflow run reaches that server as them. Open WebUI mode (below) keeps its
+own connections.
+
+A connector is registered once for the deployment (one OAuth client, one
+connection per person) and offered in the agents that list it. Its capability
+`connector_<id>` exists only in those agents, and a person's connection is used
+in a turn only when the agent offers the connector and the person holds the
+capability there.
+
+### Add a server (organization administrators, in the Console)
+
+**Console → Agents → the agent → Connectors → Add connector** registers it and
+offers it in that agent. **Offer an existing connector** offers one another
+agent already has. **Stop offering in <agent>** takes it out of that agent only
+and removes its grants there; people's connections and other agents stay.
+**Remove from every agent** deletes it:
+
+- **Name** and **ID**. The ID is a short slug such as `gmail`. It is also the
+  capability `connector_<id>` and cannot be changed later.
+- **Server URL**: the MCP endpoint. HTTPS is required. Plain HTTP is accepted
+  only on this computer (`localhost`, `127.0.0.1`, `::1`) for development.
+- **Sign-in**: *Each person signs in (OAuth)*, or *No sign-in* for a server
+  that needs no account (people still turn it on for themselves).
+- Optional: a **client ID** and **client secret** registered with the provider
+  in advance, **scopes**, and **allowed tools**.
+
+**Test** reads the server's metadata and changes nothing. It shows the
+authorization server, whether Hubzoid can register itself, and the redirect URI
+to register with a provider that needs a client created in advance:
+`<public origin>/oauth/connectors/<id>/callback`.
+
+Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
+whenever people reach Hubzoid at an address other than this computer. Redirect
+URIs are built only on a configured address or on localhost, never on the Host
+a request happens to carry. With sign-in off, the connection routes answer only
+requests addressed to this computer unless a public address is configured.
+
+The registered server names its own authorization server and endpoints, so
+Hubzoid limits where they may point. Public addresses are fine. A private,
+loopback or link-local address is used only on the registered server's own
+host (an internal MCP server and its own sign-in), anywhere on this computer
+when the server is on this computer, or on a host you list:
+
+```bash
+# an internal identity provider on another host (names or addresses, comma separated)
+HUBZOID_CONNECTOR_PRIVATE_HOSTS=sso.corp.example.com,10.20.0.15
+```
+
+Cloud metadata addresses (169.254.169.254 and the like) are never used, even
+when listed. Names are checked on the addresses they resolve to, and Hubzoid
+connects only to the addresses it checked. The Console test names a refused
+host. Each operation (discovery, a code exchange, a refresh) also has one
+overall time limit.
+
+Changing a connector's URL or sign-in method removes everyone's connection to
+it, so a token is never sent to a server other than the one that issued it.
+Removing a connector removes the connections too. Grants of its capability stay
+listed as no longer available until you remove them. Agent managers who are not
+organization administrators see the tab but cannot change it.
+
+### Connect (each person)
+
+From the web app's connections page, or from a link the agent sends with the
+connection journey (below). The HTTP API behind it:
+
+| Call | Result |
+|---|---|
+| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed` |
+| `POST /api/connections/<id>/connect` | `{authorize_url}`; the browser goes there |
+| `DELETE /api/connections/<id>` | revokes at the provider when it can, then removes the connection |
+
+After the provider's consent page the browser returns to
+`/oauth/connectors/<id>/callback`, which sends it on to the page the connect
+call named (`return_to`) or to `/account/connections?connected=<id>`. A
+failure goes to the same place with `?error=<code>`.
+
+### How it works
+
+- **Discovery**: the server's 401 challenge and RFC 9728 protected resource
+  metadata, then RFC 8414 (or OpenID) authorization server metadata, with the
+  issuer checked against where it was found.
+- **Client**: the pre-registered one, else Hubzoid registers itself (RFC 7591)
+  once per redirect URI and reuses that client for everyone.
+- **Authorization**: PKCE S256, the RFC 8707 `resource` indicator when the
+  server publishes resource metadata, and RFC 9207 `iss` checked. The request
+  is bound to the signed-in account, single use, and valid for 10 minutes.
+  Only a digest of its `state` is stored.
+- **Tokens** are encrypted with the deployment key (`HUBZOID_SECRET_KEY` or the
+  key file, see `hubzoid/secretbox.py`). They are refreshed 60 seconds before
+  they expire, one refresh per connection at a time across every process of
+  the deployment, so a rotating refresh token is never spent twice. A refresh
+  the provider refuses marks the connection **expired** and the person
+  reconnects. A provider that cannot be reached marks it **error** and the next
+  turn tries again.
+- **Per turn**, the same rules as Open WebUI mode: restricted surfaces only, an
+  agent that offers the connector, `connector_<id>` in that agent, the allowed
+  tools, never a server that would replace a hub MCP server. In Claude the tools are named
+  `mcp__my_<id>__<tool>`.
+
+### Limits
+
+- A provider that offers neither dynamic client registration nor a client
+  registered in advance with `client_secret_basic`, `client_secret_post` or no
+  secret (PKCE) cannot be connected. `private_key_jwt` is not supported.
+- A server that publishes no OAuth authorization server metadata cannot be
+  connected with OAuth.
+- An access token without an expiry is not checked between turns. If the
+  provider revokes it, the person reconnects.
+- Through an outbound proxy from the environment (`HTTPS_PROXY`), the proxy
+  makes the connection: Hubzoid checks the addresses a name resolves to on
+  this computer, and leaves a name it cannot resolve to the proxy's own rules.
+- A new authorization never keeps the refresh token of an earlier one, since
+  nothing shows it is for the same remote account. A provider that issues a
+  refresh token on the first consent only leaves a reconnect without one: the
+  connection then expires with its access token. Disconnect, then connect, to
+  grant it again.
+- Disconnecting cancels a sign-in that is still finishing: its tokens are
+  revoked, not saved.
+- Provider-specific authorization parameters (for example Google's
+  `access_type=offline`) cannot be configured yet.
+
 ## Per-user MCP via Open WebUI (native OAuth)
+
+Open WebUI mode only (`HUBZOID_UI=openwebui`). The agent's **Connectors** tab in
+the Console lists these servers read-only, with the capability each needs.
 
 The `.mcp.json` connectors above are hub-wide: one credential shared by every
 user. For tools where each user must act as **themselves** (their own Jira,
@@ -204,12 +333,9 @@ Implemented. Each OAuth MCP server is a connector app named by its server ID
 turned into `_`). A server registered as `gmail` is the app `gmail` and the
 capability `connector_gmail`.
 
-- **Managed hubs** (access managed in the Console): a personal server is
-  injected only when the caller holds `connector_<app>` in that hub. Grant it
-  like any other capability.
-- **Legacy hubs** (Open WebUI groups): injection is unchanged, apart from the
-  surface rule above. Starting a connection from chat (below) needs an Open
-  WebUI group named `connector_<app>`.
+- A personal server is injected only when the caller holds `connector_<app>`
+  in that agent. Grant it in the Console like any other capability. Open WebUI
+  groups grant nothing.
 - If the access store cannot be read, no personal server is injected that turn.
 
 ## Connect from chat (connection journey)
@@ -219,10 +345,15 @@ example "connect my Gmail") in web chat or WhatsApp. The agent sends a
 personal link. The person approves access in the browser, a Hubzoid page shows
 the verified result, and WhatsApp gets a confirmation.
 
-The journey uses Open WebUI native MCP only: an app is connectable when an
-OAuth 2.1 MCP server is registered for it in OWUI. The optional Composio
-integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is unchanged and is not part of
-the journey.
+In the default UI mode an app is connectable when a switched-on connector has
+that ID (see [personal connections](#personal-connections-default-ui-mode)):
+the link page uses the Hubzoid sign-in, **Continue** starts Hubzoid's own
+authorization, and the provider returns straight to the done page. A refused
+authorization ends the journey as not connected at once. In Open WebUI mode the
+journey uses Open WebUI native MCP, as described in the rest of this section:
+an app is connectable when an OAuth 2.1 MCP server is registered for it in
+OWUI. The optional Composio integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is
+unchanged and is not part of the journey.
 
 ### Turn it on
 
@@ -239,8 +370,7 @@ backend. It also needs:
 - an app to connect: an OAuth 2.1 MCP server registered in OWUI, with
   `OWUI_NATIVE_MCP=true`. For any other app the tool says it is not available
   to connect on this hub.
-- the `connector_<app>` capability for the person (Console grant on a managed
-  hub, OWUI group of that name on a legacy hub).
+- the `connector_<app>` capability for the person (a Console grant).
 - the surface in `HUBZOID_RESTRICTED_SURFACES`. Add `whatsapp` for WhatsApp.
 - `WEBUI_URL` set to the public address people open (the link is
   `<WEBUI_URL>/portal/connect/<id>`).

@@ -222,6 +222,13 @@ def build_app(
     # serve many inbound hubs. `slug` is the hub's own slug; the gateway edge
     # routes /webhooks/<slug> here and this app serves the full path.
     base = "/webhooks/" + slug.strip("/") if slug.strip("/") else "/webhooks"
+    if dispatch_fn is default_dispatch:
+        # The real bridge call signs the roster identity for this hub, which
+        # the bridge requires in the web app mode (hubzoid.assertions). An
+        # injected dispatcher is used as given.
+        import functools
+
+        dispatch_fn = functools.partial(default_dispatch, hub_dir=Path(hub_dir))
     inbound_dir = Path(hub_dir) / ".inbound"
     dedup = Dedup(inbound_dir / "dedup")
     history = History(db.engine_for(hub_dir), max_messages=history_max,

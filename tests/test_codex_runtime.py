@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from agents import function_tool
 
-from hubzoid import _request_ctx
-from hubzoid.factory_codex import CodexRuntime
+from hubzoid import _request_ctx, run_events
+from hubzoid.factory_codex import CodexRuntime, _typed_exchange
 
 
 class Process:
@@ -297,3 +297,58 @@ def test_delegate_usage_is_combined_without_pricing_as_the_wrong_model(monkeypat
     assert _combine_usage(rows) == {"model": None, "input_tokens": 30, "output_tokens": 5, "cost_usd": .03}
     rows[1]["model"] = "unknown"
     assert _combine_usage(rows)["cost_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_compact_tools_show_a_status_then_a_finished_block():
+    """SHOW_TOOLS=compact: a Status while the call runs, then the chat app's
+    tool-call block (✓, or ✗ when the tool raised)."""
+    from hubzoid.tool_events import Status
+
+    @function_tool
+    def lookup(event_id: int) -> str:
+        """Look up an event."""
+        return "ok"
+
+    @function_tool
+    def broken() -> str:
+        """Always fails."""
+        raise RuntimeError("down")
+
+    proc = Process(events(
+        {"method": "item/tool/call", "id": 10, "params": {"tool": "lookup", "arguments": {"event_id": 1556}, "callId": "c1", "threadId": "thread"}},
+        {"method": "item/tool/call", "id": 11, "params": {"tool": "broken", "arguments": {}, "callId": "c2", "threadId": "thread"}},
+        {"method": "item/agentMessage/delta", "params": {"itemId": "a", "delta": "Done"}},
+    ))
+    rt = CodexRuntime(name="demo", instructions="", registry={"lookup": lookup, "broken": broken},
+                      tool_mode="compact")
+    token = _typed_exchange.set(True)
+    try:
+        parts = [x async for x in run_events.as_text(
+            rt._exchange(proc, "hi", "/tmp/empty", {}), tool_mode="compact")]
+    finally:
+        _typed_exchange.reset(token)
+    statuses = [p.description for p in parts if isinstance(p, Status)]
+    assert statuses == ["Running lookup…", None, "Running broken…", None]
+    text = "".join(parts)
+    first, second = text.index('name="lookup"'), text.index('name="broken"')
+    assert first < second < text.index("Done")
+    assert text.count('<details type="tool_calls" done="true"') == 2
+    assert 'id="c2" name="broken" arguments="{}" status="failed"' in text
+    assert "&quot;event_id&quot;: 1556" in text
+
+
+def test_build_codex_keeps_neutral_connector_specs(tmp_path, monkeypatch):
+    from hubzoid.factory_codex import build_codex_runtime
+    (tmp_path / 'AGENTS.md').write_text('---\nname: demo\nmodel: codex-local\n---\nHello')
+    connectors = tmp_path / 'connectors'
+    connectors.mkdir()
+    (connectors / '.mcp.json').write_text(json.dumps({'mcpServers': {
+        'example': {'transport': 'streamable-http', 'url': 'https://example.org/mcp',
+                    'headers': {'X-Test': 'value'}, 'client_session_timeout_seconds': 42}}}))
+    monkeypatch.delenv('MODEL', raising=False)
+    built = build_codex_runtime(tmp_path)
+    server = next(s for s in built._servers if s.name == 'example')
+    assert server.params['url'] == 'https://example.org/mcp'
+    assert server.params['headers'] == {'X-Test': 'value'}
+    assert server.client_session_timeout_seconds == 42

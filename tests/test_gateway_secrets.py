@@ -35,8 +35,12 @@ def _clean(monkeypatch):
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
+    monkeypatch.setattr(cli, "_wait_any", lambda procs, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", lambda procs, **k: list(procs))
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
-    with clean_process_env():
+    # These pin the Open WebUI gateway (HUBZOID_UI=openwebui).
+    with clean_process_env(HUBZOID_UI="openwebui"):
         yield
 
 
@@ -243,11 +247,15 @@ def test_deployment_secret_wins_over_hub_env_compatibility_keys(tmp_path, monkey
 
 
 def test_standalone_run_keeps_hub_only_layers_out_of_open_webui_and_edge(tmp_path, monkeypatch, launched):
+    # This test replaces every service process; it must not inspect real ports.
+    monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     hub = tmp_path / "solo"
     (hub / "restricted").mkdir(parents=True)
     (hub / "AGENTS.md").write_text("---\nname: solo\n---\nbody")
+    # Open WebUI mode; tests/test_cli_run_webapp.py covers the web app's edge.
     (hub / ".env").write_text("BRIDGE_API_KEYS=solo-bridge-key-long-enough\nAWS_SECRET_NAME=dep\n"
-                              "AWS_REGION=eu-west-1\nHUBZOID_HUB_SECRET_NAME=solo-hub\nSHARED=hub\n")
+                              "AWS_REGION=eu-west-1\nHUBZOID_HUB_SECRET_NAME=solo-hub\nSHARED=hub\n"
+                              "HUBZOID_UI=openwebui\n")
     (hub / "restricted" / ".env").write_text("SOLO_TOOL_TOKEN=solo-tool-token\nSHARED=restricted\n"
                                              "HUBZOID_RESTRICTED_SECRET_NAME=solo-restricted\n")
     install(monkeypatch, {"dep": {"WEBUI_SECRET_KEY": "deployment-signing-key", "WEBUI_AUTH": "true"},

@@ -3,8 +3,11 @@
 The same contract every surface converges on: POST ``/v1/chat/completions`` with
 ``stream=true`` and forward the resolved identity as headers
 (``X-OpenWebUI-User-Email`` / ``X-Hubzoid-Groups`` / ``X-Hubzoid-Surface``) —
-exactly what the Slack adapter does. Webhook surfaces can't stream-edit a
-message, so we collect the whole reply into one string and send it once.
+exactly what the Slack adapter does. In the web app mode the identity is also
+signed (``X-Hubzoid-Assertion``, see ``hubzoid.assertions``) when the hub is
+known, because the bridge trusts identity headers only with a valid assertion.
+Webhook surfaces can't stream-edit a message, so we collect the whole reply
+into one string and send it once.
 """
 from __future__ import annotations
 
@@ -32,22 +35,32 @@ def dispatch(
     on_delta=None,
     http_client: "httpx.Client | None" = None,
     timeout: "float | None" = None,
+    hub_dir=None,
 ) -> str:
     """POST to the bridge and return the full assembled reply text.
 
     `bridge_url` is the `/v1` base (e.g. http://127.0.0.1:8000/v1). Identity
     headers are sent only when present, so an anonymous surface stays anonymous.
+    `hub_dir` (the bridge's hub) lets the identity be signed for the web app
+    mode; without it no assertion is attached (the bridge then treats the call
+    as anonymous in that mode).
     """
     client = http_client or httpx.Client(timeout=timeout if timeout is not None else _DEFAULT_TIMEOUT)
     owns = http_client is None
     body: "dict[str, Any]" = {"model": model, "messages": messages, "stream": True}
     if chat_id:
         body["chat_id"] = chat_id
-    headers = {"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": surface}
-    if user_email:
-        headers["X-OpenWebUI-User-Email"] = user_email
-    if groups:
-        headers["X-Hubzoid-Groups"] = ",".join(groups)
+    if hub_dir is not None:
+        from ..assertions import identity_headers
+
+        headers = {"Authorization": f"Bearer {api_key}",
+                   **identity_headers(hub_dir, surface=surface, email=user_email, groups=groups)}
+    else:
+        headers = {"Authorization": f"Bearer {api_key}", "X-Hubzoid-Surface": surface}
+        if user_email:
+            headers["X-OpenWebUI-User-Email"] = user_email
+        if groups:
+            headers["X-Hubzoid-Groups"] = ",".join(groups)
 
     parts: "list[str]" = []
     try:

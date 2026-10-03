@@ -68,10 +68,11 @@ def test_init_gives_a_clean_sample(sample):
                 "raw_data/events/metrics.jsonl", "raw_data/samples/broken.jsonl", "knowledge/watchtower.md"):
         assert (hub / rel).is_file(), rel
     assert not list(hub.rglob("__pycache__"))
-    assert {p.name for p in (hub / ".hubzoid").iterdir()} == {"fresh-install"}
+    assert not (hub / ".hubzoid").exists()
     assert "synthetic" in (hub / "raw_data" / "README.md").read_text().lower()
 
 
+@pytest.mark.slow
 def test_a_run_detects_explains_and_remembers(sample):
     hub, env = sample
     result, err = _run(hub, env)
@@ -86,6 +87,7 @@ def test_a_run_detects_explains_and_remembers(sample):
     assert again["out"]["new"] == 0 and again["calls"] == 0
 
 
+@pytest.mark.slow
 def test_thresholds_come_from_settings(sample):
     hub, env = sample
     (hub / "workflows" / "settings.yaml").write_text("watchtower:\n  p95_ms: 5000\n  error_rate: 0.5\n")
@@ -93,6 +95,7 @@ def test_thresholds_come_from_settings(sample):
     assert result["out"] == {"breaches": 0, "new": 0, "report": None}
 
 
+@pytest.mark.slow
 def test_the_controlled_failure_names_the_bad_line(sample):
     hub, env = sample
     (hub / "raw_data" / "events" / "broken.jsonl").write_text(

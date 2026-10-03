@@ -62,9 +62,6 @@ def gateway(tmp_path):
                     hubs=[dict(key=h.name, name=h.name, path=str(h), model_id=h.name) for h in (alpha, beta)],
                     operational_url=f"sqlite:///{tmp_path / 'gw' / 'ops.db'}",
                     owui_url="http://127.0.0.1:9", owui_db=str(tmp_path / "gw" / "webui.db"))
-    gs = access.store_for(alpha)
-    for h in ("alpha", "beta"):
-        gs.set_authoritative(True, hub=h)
     return alpha, beta
 
 
@@ -87,7 +84,14 @@ def _request(**headers) -> Request:
 # ------------------------------------------------------------------ cross-hub
 
 
-def test_a_grant_in_one_hub_never_opens_another(gateway):
+@pytest.fixture
+def legacy_ui(monkeypatch):
+    """Open WebUI's forwarded email is trusted as sent only in Open WebUI mode;
+    the web app mode needs a signed assertion (tests/test_assertions*.py)."""
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+
+
+def test_a_grant_in_one_hub_never_opens_another(gateway, legacy_ui):
     alpha, beta = gateway
     gs = access.store_for(alpha)
     gs.grant("alice@example.org", "alpha", "ledger", actor="test")
@@ -146,7 +150,7 @@ def test_identity_headers_need_the_bridge_key(tmp_path, monkeypatch):
 # --------------------------------------------------------------- blocked user
 
 
-def test_a_blocked_person_is_refused_everywhere(gateway):
+def test_a_blocked_person_is_refused_everywhere(gateway, legacy_ui):
     alpha, _ = gateway
     gs = access.store_for(alpha)
     gs.grant("bob@example.org", "alpha", "ledger", actor="test")

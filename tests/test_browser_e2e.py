@@ -82,7 +82,8 @@ def _skip_if_browser_missing(text: str) -> None:
 
 def _playwright_server(tmp_path):
     """Build the auto-injected `playwright` MCP server object via the loader."""
-    servers = mcp_loader.load_all(tmp_path)
+    from hubzoid.factory import load_mcp_servers
+    servers = load_mcp_servers(mcp_loader.load_all_raw(tmp_path))
     matches = [s for s in servers if getattr(s, "name", None) == "playwright"]
     assert matches, "loader did not inject a `playwright` MCP server"
     return matches[0]

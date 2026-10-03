@@ -15,10 +15,10 @@ import pytest
 
 TEST_HUB = Path(__file__).resolve().parents[2] / "HubzoidTestHub" / "test-hub"
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.slow, pytest.mark.skipif(
     not (TEST_HUB / "workflows" / "review-prs" / "main.py").exists(),
     reason="HubzoidTestHub workflow not present",
-)
+)]
 
 _SCRIPT = '''
 import os, tempfile

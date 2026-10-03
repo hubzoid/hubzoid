@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import {
   Alert,
   App,
@@ -10,6 +10,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { Plus, Search } from "lucide-react";
 import {
   ApiError,
   request,
@@ -21,6 +22,7 @@ import {
   type Hub,
   type Me,
   type Permission,
+  type Person,
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
@@ -35,6 +37,7 @@ import {
   isService,
   normalizeSubject,
   personName,
+  splitSections,
   toCatalog,
   type Catalog,
 } from "../../lib/format";
@@ -44,6 +47,7 @@ import {
   draftFor,
   emptyRow,
   lockFor,
+  pickDraft,
   planOperations,
   toggle,
   type Draft,
@@ -51,11 +55,12 @@ import {
 } from "./plan";
 import {
   CapabilityGroup,
+  CapabilitySection,
   HelpText,
   HelpToggle,
   LegacyServiceTag,
-  type AddKind,
 } from "./AccessParts";
+import { editDraft, loadAccessRow } from "./load";
 import { NewUserSignIn, OneTimePassword, SignInDetails } from "../people/AccountDrawer";
 import { asApiError, emailProblem, googleDomainProblem, partialDetail } from "../people/accountRules";
 import { passwordProblem } from "../people/password";
@@ -96,6 +101,7 @@ function selectionProblems(
       continue;
     }
     const lock = lockFor(p, row, access, selected, meta);
+    // Entry is added with others.
     if (lock && lock.label !== "Required") out[p] = lock.reason;
   }
   return out;
@@ -202,9 +208,9 @@ export function AccessDrawer({
   const [expanded, setExpanded] = useState<string[]>([]);
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [aboutOpen, setAboutOpen] = useState(false);
-  // Add user always creates a new user; existing users are edited instead.
-  const kind: AddKind = "new";
   const [newName, setNewName] = useState("");
+  // Optional: the number their WhatsApp and Telegram messages come from.
+  const [newPhone, setNewPhone] = useState("");
   const [signIn, setSignIn] = useState<SignIn>("password");
   // Held only while this drawer is open; never stored anywhere else.
   const [password, setPassword] = useState("");
@@ -223,8 +229,9 @@ export function AccessDrawer({
     [access.permissions, draft],
   );
   const subject = draft ? normalizeSubject(draft.subject) : "";
+  const picking = draft?.mode === "pick";
   const adding = draft?.mode === "add";
-  const isNew = adding && kind === "new";
+  const isNew = adding;
   const canCreate = !!me?.can_create_accounts && me.accounts_configured !== false;
   const createBlocked =
     me?.accounts_configured === false
@@ -241,13 +248,32 @@ export function AccessDrawer({
   const subjectError = adding ? newProblems.email : null;
   const changes = draft ? diff(draft.row.perms, draft.selected) : { added: [], removed: [] };
   const hasChanges = changes.added.length > 0 || changes.removed.length > 0;
+  // The new email already has an account: edit that person instead.
+  const [lookup, setLookup] = useState<{ subject: string; person: Person | null } | null>(null);
+  const existing = adding && lookup?.subject === subject ? lookup.person : null;
+  useEffect(() => {
+    if (!adding || emailProblem(subject)) return;
+    let live = true;
+    const t = setTimeout(() => {
+      request<{ people: Person[] }>("/people" + query({ q: subject, limit: 20 }))
+        .then((r) => live && setLookup({ subject, person: r.people.find((p) => p.subject === subject) ?? null }))
+        .catch(() => undefined); // the create re-checks it
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [adding, subject]);
   const dirty =
     !!draft &&
+    !picking &&
     !outcome &&
     draft.step !== "failed" &&
     (adding
-      ? draft.subject.trim() !== "" ||
+      ? // The email chosen in the search is not unsaved work of its own.
+        normalizeSubject(draft.subject) !== normalizeSubject(draft.search ?? "") ||
         !!newName ||
+        !!newPhone ||
         !!password ||
         // Use this agent is chosen for a new user by default; anything else is a choice.
         draft.selected.length !== 1 ||
@@ -262,38 +288,41 @@ export function AccessDrawer({
     setProblems({});
     setAboutOpen(false);
     setNewName("");
+    setNewPhone("");
     setSignIn("password");
     setPassword("");
     setOutcome(null);
     setRetryError(null);
     setAfterUncertain(false);
+    setLookup(null);
     setDraft(null);
   }, [setDraft]);
 
+  /** Open one person's access here, from the search or an existing email. */
+  async function openPerson(target: string, known?: Person, keep: string[] = []) {
+    if (!draft) return;
+    const search = draft.search ?? (draft.mode === "add" ? draft.subject : undefined);
+    setChecking(true);
+    try {
+      const row = await loadAccessRow(access.hub, normalizeSubject(target), known);
+      const next = editDraft(row, search);
+      setOutcome(null);
+      setNewName("");
+      setNewPhone("");
+      setPassword("");
+      setTouched(false);
+      setProblems({});
+      setDraft({ ...next, selected: [...new Set([...next.selected, ...keep])] });
+    } finally {
+      setChecking(false);
+    }
+  }
+
   /** The email belongs to an existing user: edit their access in this agent
-   *  instead, starting from what they hold here plus what was chosen. Nothing
-   *  is saved until reviewed. */
+   *  instead, keeping what was chosen. Nothing is saved until reviewed. */
   async function editExisting() {
     if (!draft) return;
-    const chosenPerms = draft.selected;
-    let row = emptyRow(subject);
-    try {
-      const current = await request<Access>("/access" + query({ hub: access.hub, q: subject, limit: 200 }));
-      row = current.rows.find((r) => r.subject === subject) ?? row;
-    } catch {
-      /* start from no access; the save re-checks everything */
-    }
-    const base = draftFor(row);
-    setOutcome(null);
-    setNewName("");
-    setPassword("");
-    setTouched(false);
-    setDraft({
-      ...base,
-      mode: "edit",
-      selected: [...new Set([...base.selected, ...chosenPerms])],
-      notice: `${personName(subject, row.display)} already exists. Their current access is shown with your choices added; review before saving.`,
-    });
+    await openPerson(subject, existing ?? undefined, draft.selected);
   }
 
   const open = !!draft;
@@ -394,6 +423,7 @@ export function AccessDrawer({
         name: newName.trim(),
         sign_in: google ? "google" : "password",
         ...(google ? {} : { password }),
+        ...(me?.org_admin && newPhone.trim() ? { phone: newPhone.trim() } : {}),
         grants: accountGrants(d),
       });
       setOutcome({ type: "created", created });
@@ -449,7 +479,7 @@ export function AccessDrawer({
     if (!draft || draft.step !== "review" || busy) return;
     const { operations } = draft;
     const target = access.hub; // the loaded response's agent, never the route
-    if (adding && kind === "new") {
+    if (adding) {
       await createAccount(draft);
       return;
     }
@@ -499,9 +529,13 @@ export function AccessDrawer({
             ? draft.uncertain
               ? "Save not confirmed"
               : "Nothing was saved"
-            : draft?.mode === "add"
+            : draft?.mode === "pick"
               ? "Add user"
-              : "Edit access";
+              : draft?.mode === "add"
+                ? "New account"
+                : draft && !draft.row.perms.length && !draft.row.inherited.length
+                  ? "Give access"
+                  : "Edit access";
 
   const footer = (() => {
     if (!draft) return null;
@@ -567,6 +601,12 @@ export function AccessDrawer({
           </Button>
         </Space>
       );
+    if (draft.mode === "pick")
+      return (
+        <Space className="drawer-actions">
+          <Button onClick={close}>Cancel</Button>
+        </Space>
+      );
     if (draft.step === "review") {
       const removesEntry = changes.removed.includes(USE_HUB);
       const lines = changes.added.length + changes.removed.length;
@@ -586,9 +626,19 @@ export function AccessDrawer({
         </Space>
       );
     }
+    const back = draft.search !== undefined && (
+      <Button onClick={() => {
+        setTouched(false);
+        setProblems({});
+        setDraft(pickDraft(draft.search));
+      }}>
+        Back
+      </Button>
+    );
     return (
       <Space className="drawer-actions" wrap>
         <Button onClick={close}>Cancel</Button>
+        {back}
         {draft.mode === "edit" && canRemoveAll(draft.row, access) && (
           <Button
             danger
@@ -609,6 +659,7 @@ export function AccessDrawer({
           loading={checking}
           disabled={
             !hasChanges ||
+            (adding && !!existing) ||
             (adding &&
               touched &&
               (!!subjectError || (isNew && !!(newProblems.name || newProblems.password))))
@@ -652,7 +703,22 @@ export function AccessDrawer({
           />
         </div>
       )}
-      {draft && !outcome && (
+      {draft && !outcome && picking && (
+        <div className="drawer-body">
+          <PickPerson
+            hubKey={access.hub}
+            search={draft.subject}
+            canCreate={canCreate}
+            busy={checking}
+            onSearch={(text) => setDraft({ ...draft, subject: text, search: text })}
+            onPick={(p) => void openPerson(p.subject, p)}
+            onCreate={(email) =>
+              setDraft({ ...draftFor(), subject: email, search: draft.subject })
+            }
+          />
+        </div>
+      )}
+      {draft && !outcome && !picking && (
         <div className="drawer-body">
           {draft.failure && draft.step !== "failed" && (
             <Alert type="error" showIcon title={draft.failure} />
@@ -695,10 +761,37 @@ export function AccessDrawer({
                       status={touched && newProblems.email ? "error" : undefined}
                       onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
                     />
-                    <Text type={touched && newProblems.email ? "danger" : "secondary"} className="field-help">
-                      {touched && newProblems.email ? newProblems.email : "They sign in with this email."}
-                    </Text>
+                    {existing ? (
+                      <Text className="field-help">
+                        {subject} already has an account.{" "}
+                        <Button type="link" size="small" className="inline-link" onClick={() => void editExisting()}>
+                          Edit their access
+                        </Button>
+                      </Text>
+                    ) : (
+                      <Text type={touched && newProblems.email ? "danger" : "secondary"} className="field-help">
+                        {touched && newProblems.email ? newProblems.email : "They sign in with this email."}
+                      </Text>
+                    )}
                   </div>
+                  {me?.org_admin && (
+                    <div className="field">
+                      <label className="field-label" htmlFor="new-account-phone">
+                        Phone <Text type="secondary">(optional)</Text>
+                      </label>
+                      <Input
+                        id="new-account-phone"
+                        autoComplete="off"
+                        inputMode="tel"
+                        placeholder="+91 98000 00001"
+                        value={newPhone}
+                        onChange={(e) => setNewPhone(e.target.value)}
+                      />
+                      <Text type="secondary" className="field-help">
+                        With the country code. Their WhatsApp and Telegram messages come from this number.
+                      </Text>
+                    </div>
+                  )}
                   <NewUserSignIn
                     id="new-account-password"
                     signIn={signIn}
@@ -710,7 +803,12 @@ export function AccessDrawer({
                   />
                 </>
               ) : (
-                <Identity row={draft.row} name={name} />
+                <>
+                  <Identity row={draft.row} name={name} />
+                  {!draft.row.perms.length && !draft.row.inherited.length && !access.public && (
+                    <Text type="secondary">No access to {hub.name} yet. Choose what they can do.</Text>
+                  )}
+                </>
               )}
 
               {draft.row.suspended && (
@@ -759,7 +857,8 @@ export function AccessDrawer({
                     const isChecked = (p: Permission) =>
                       p.default === "included"
                         ? entry
-                        : draft.selected.includes(p.permission) || draft.row.inherited.includes(p.permission);
+                        : draft.selected.includes(p.permission) ||
+                          draft.row.inherited.includes(p.permission);
                     const collapsible = !ALWAYS_OPEN.has(g.key);
                     return (
                       <CapabilityGroup
@@ -779,32 +878,38 @@ export function AccessDrawer({
                         unconfigured={g.items.filter((p) => !p.obsolete && p.available === false && isChecked(p)).length}
                         problems={g.items.filter((p) => problems[p.permission]).length}
                       >
-                        {g.items.map((p) => {
-                          const inherited = draft.row.inherited.includes(p.permission);
-                          return (
-                            <CapabilityRow
-                              key={p.permission}
-                              p={p}
-                              checked={isChecked(p)}
-                              lock={lockFor(p.permission, draft.row, access, draft.selected, p)}
-                              publicOnly={
-                                p.permission === USE_HUB &&
-                                access.public &&
-                                !draft.selected.includes(USE_HUB) &&
-                                !inherited
-                              }
-                              problem={problems[p.permission]}
-                              onChange={(on) => {
-                                if (problems[p.permission]) {
-                                  const rest = { ...problems };
-                                  delete rest[p.permission];
-                                  setProblems(rest);
-                                }
-                                setDraft({ ...draft, selected: toggle(draft.selected, p.permission, on) });
-                              }}
-                            />
-                          );
-                        })}
+                        {/* Sub-headings (Workflows, Access control) only group
+                            rows for reading; counts stay with the group. */}
+                        {splitSections(g.items).map((s) => (
+                          <CapabilitySection key={s.key} id={`${g.key}-${s.key}`} title={s.title}>
+                            {s.items.map((p) => {
+                              const inherited = draft.row.inherited.includes(p.permission);
+                              return (
+                                <CapabilityRow
+                                  key={p.permission}
+                                  p={p}
+                                  checked={isChecked(p)}
+                                  lock={lockFor(p.permission, draft.row, access, draft.selected, p)}
+                                  publicOnly={
+                                    p.permission === USE_HUB &&
+                                    access.public &&
+                                    !draft.selected.includes(USE_HUB) &&
+                                    !inherited
+                                  }
+                                  problem={problems[p.permission]}
+                                  onChange={(on) => {
+                                    if (problems[p.permission]) {
+                                      const rest = { ...problems };
+                                      delete rest[p.permission];
+                                      setProblems(rest);
+                                    }
+                                    setDraft({ ...draft, selected: toggle(draft.selected, p.permission, on) });
+                                  }}
+                                />
+                              );
+                            })}
+                          </CapabilitySection>
+                        ))}
                       </CapabilityGroup>
                     );
                   })}
@@ -840,8 +945,12 @@ export function AccessDrawer({
   );
 }
 
-/** Who is being edited: name, identity and account state. */
+/** Who is being edited: a person (name, identity and account state). */
 function Identity({ row, name }: { row: AccessRow; name: string }) {
+  return <PersonIdentity row={row} name={name} />;
+}
+
+function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
   const service = isService(row.subject);
   const [open, setOpen] = useState(false);
   const helpId = useId();
@@ -858,7 +967,7 @@ function Identity({ row, name }: { row: AccessRow; name: string }) {
               </Text>
             )}
             {service && <LegacyServiceTag />}
-            {(!service || row.status !== "service") && <AccountTag status={row.status} />}
+            {row.status && (!service || row.status !== "service") && <AccountTag status={row.status} />}
             {service && (
               <HelpToggle label="legacy service identities" open={open} controls={helpId} onToggle={() => setOpen((o) => !o)} />
             )}
@@ -1096,4 +1205,125 @@ function NewAccountOutcome({
       />
     );
   return <Alert type="error" showIcon title="Nothing was created" description={outcome.error.message} />;
+}
+
+/**
+ * Add user, step one: choose who. Search people who already have an account
+ * (picking one opens their access here), or enter a new email to create one.
+ */
+function PickPerson({
+  hubKey,
+  search,
+  canCreate,
+  busy,
+  onSearch,
+  onPick,
+  onCreate,
+}: {
+  hubKey: string;
+  search: string;
+  canCreate: boolean;
+  busy: boolean;
+  onSearch: (text: string) => void;
+  onPick: (person: Person) => void;
+  onCreate: (email: string) => void;
+}) {
+  const [found, setFound] = useState<{ q: string; people: Person[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const q = search.trim();
+  useEffect(() => {
+    if (!q) return;
+    let live = true;
+    const t = setTimeout(() => {
+      request<{ people: Person[] }>("/people" + query({ q, limit: 8 }))
+        .then((r) => {
+          if (!live) return;
+          setFound({ q, people: r.people.filter((p) => !isService(p.subject)) });
+          setError(null);
+        })
+        .catch((e) => live && setError(errorText(e)));
+    }, 200);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  const people = q && found?.q === q ? found.people : [];
+  const email = normalizeSubject(q);
+  const offerCreate = canCreate && !emailProblem(q) && found?.q === q && !people.some((p) => p.subject === email);
+  const choices = [
+    ...people.map((p) => () => onPick(p)),
+    ...(offerCreate ? [() => onCreate(email)] : []),
+  ];
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && choices.length) {
+      e.preventDefault();
+      choices[0]();
+    }
+  };
+
+  return (
+    <div className="pick-person">
+      <div className="field">
+        <label className="field-label" htmlFor="pick-person">
+          Name or email
+        </label>
+        <Input
+          id="pick-person"
+          autoFocus
+          autoComplete="off"
+          prefix={<Search size={16} aria-hidden />}
+          placeholder={canCreate ? "Search people, or enter a new email" : "Search people"}
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          onKeyDown={onKeyDown}
+          disabled={busy}
+        />
+      </div>
+      {error && <Alert type="error" showIcon title={error} />}
+      {!q && (
+        <Text type="secondary">
+          {canCreate ? "Pick someone to give access, or enter a new email to create their account." : "Pick someone to give access."}
+        </Text>
+      )}
+      {q && found?.q === q && !people.length && !offerCreate && (
+        <Text type="secondary">
+          No one matches “{q}”.{canCreate && emailProblem(q) ? " Enter their full email to create an account." : ""}
+        </Text>
+      )}
+      {(people.length > 0 || offerCreate) && (
+        <ul className="pick-list" aria-label="Matching people">
+          {people.map((p) => {
+            const here = (p.access?.[hubKey] ?? []).length > 0;
+            return (
+              <li key={p.subject}>
+                <button type="button" className="pick-row" disabled={busy} onClick={() => onPick(p)}>
+                  <PersonAvatar subject={p.subject} display={p.display ?? ""} size={32} />
+                  <span className="pick-text">
+                    <Text strong>{personName(p.subject, p.display ?? "")}</Text>
+                    {p.display && <Text type="secondary" className="identity">{p.subject}</Text>}
+                  </span>
+                  {here ? <Tag style={{ marginInlineEnd: 0 }}>Has access</Tag> : p.status !== "active" && <AccountTag status={p.status} />}
+                </button>
+              </li>
+            );
+          })}
+          {offerCreate && (
+            <li>
+              <button type="button" className="pick-row" disabled={busy} onClick={() => onCreate(email)}>
+                <span className="pick-new" aria-hidden>
+                  <Plus size={16} />
+                </span>
+                <span className="pick-text">
+                  <Text strong>Create an account</Text>
+                  <Text type="secondary" className="identity">{email}</Text>
+                </span>
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
 }

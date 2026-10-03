@@ -33,7 +33,6 @@ def guarded_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(TEST_HUB)
-    gs.set_authoritative(True)
     guarded = access.apply(TEST_HUB, {})
     assert "testers_secret" in guarded, "restricted tool not loaded"
     return guarded["testers_secret"], gs

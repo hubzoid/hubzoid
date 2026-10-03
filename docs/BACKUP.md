@@ -13,8 +13,8 @@ hubzoid restore /var/backups/hubzoid-2026-09-25.tar.gz
 
 | Saved | Where it comes from |
 |---|---|
-| Every SQLite database | The operational store (access grants, audit, usage, workflow state), each hub's DBOS run history, Open WebUI's `webui.db` and vector store. Copied with SQLite's online backup, so the copy is consistent even while the hub is running. |
-| Chat UI data | Open WebUI uploads and settings (`<hub>/.openwebui-data`, or the gateway's `--data-dir`). Its model cache is left out because it is rebuilt on demand. |
+| Every SQLite database | The operational store (accounts, sessions, conversations, grants, audit, usage, workflow state and encrypted personal connector credentials), and each hub's DBOS run history. In Open WebUI mode, also `webui.db` and its vector store. Each database is copied with SQLite's online backup. |
+| Chat UI data | Hubzoid uploads under each hub's `.hubzoid/chats/`. In Open WebUI mode, also uploads and settings in `<hub>/.openwebui-data` or the gateway's `--data-dir`; its model cache is rebuilt on demand. |
 | Hub runtime state | Each hub's `.hubzoid`, `.inbound`, `logs` and `output` (files the agent made for users). |
 
 A hub that belongs to a gateway is backed up with the whole gateway: every hub
@@ -25,12 +25,14 @@ Not saved:
 
 - **Hub content.** `AGENTS.md`, skills, knowledge and tools belong in the
   hub's git repository.
-- **Secrets.** Each `.env`, the artifact signing key
+- **Secrets.** Each `.env`, the deployment encryption key (`secret.key` in
+  the gateway data directory, or `<hub>/.hubzoid/secret.key`), the artifact signing key
   (`.hubzoid/artifact_secret`) and `.webui_secret_key` are left out unless you
   pass `--include-secrets`. So are the database passwords in the gateway's
   `deployment.json`, which is saved with each password replaced by `***`.
-  Keep your `.env` files somewhere safe on their own. Without the signing
-  key, old download links stop working after a restore.
+  Keep those files, or the configured `HUBZOID_SECRET_KEY`, protected separately.
+  Without the deployment key, restored personal connector credentials cannot
+  be decrypted. Without the artifact signing key, old download links stop working.
 - **PostgreSQL databases.** The backup names them. Use `pg_dump` (below).
 
 The archive is written with owner-only permissions. It still holds user
@@ -90,7 +92,8 @@ hubzoid restore backup.tar.gz --move /root/Hubs=/srv/hubs
 Restore then rewrites the absolute paths that Hubzoid and Open WebUI store:
 the gateway's deployment manifest, each hub's pointer to it, the schedule
 state and Open WebUI's uploaded-file paths. Check out the hubs' git
-repositories at the new paths, copy back each `.env`, then start.
+repositories at the new paths, copy back each `.env` and the separately saved
+deployment encryption and artifact signing keys, then start.
 
 After a restore, run `hubzoid doctor` and open the Console to check access
 and recent runs.

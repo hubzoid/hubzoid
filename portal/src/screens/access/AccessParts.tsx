@@ -103,6 +103,30 @@ export function CapabilityGroup({
   );
 }
 
+/**
+ * A sub-heading inside a capability group (e.g. Hubzoid tools › Workflows).
+ * Presentation only: counts and the open/closed state belong to the group.
+ * The unsectioned block (empty title) renders its rows with no heading.
+ */
+export function CapabilitySection({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: ReactNode;
+}) {
+  if (!title) return <>{children}</>;
+  const titleId = `capability-section-${id}`;
+  return (
+    <div className="capability-section" role="group" aria-labelledby={titleId}>
+      <h4 className="capability-section-title" id={titleId}>{title}</h4>
+      {children}
+    </div>
+  );
+}
+
 /** A `workflow:<name>` identity from before workflows ran as user accounts. */
 export function LegacyServiceTag() {
   return (

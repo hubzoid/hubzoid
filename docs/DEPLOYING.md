@@ -1,14 +1,14 @@
 # Deploying Hubzoid to production
 
 For the current account, owner and permission flow, start with
-[ADMINISTRATION.md](ADMINISTRATION.md). The group/model-ACL procedures later in
-this guide describe legacy or manually wired deployments; managed hub permissions
-are changed in the Console. Test a copied deployment before a production upgrade.
+[ADMINISTRATION.md](ADMINISTRATION.md). Choose the default Hubzoid web app or
+Open WebUI mode explicitly. Agent permissions are changed in the Console in
+both modes. Test a copied deployment before a production upgrade.
 
 
 `hubzoid run <hub>` is the production entry point. Wrap it in `systemd`
 (or your container orchestrator of choice), and for any public
-deployment put a reverse proxy in front of Open WebUI's port to handle
+deployment put a reverse proxy in front of Hubzoid's public port to handle
 TLS. The reverse proxy is your choice; the rest of the walkthrough is
 the same regardless.
 
@@ -21,7 +21,7 @@ deployments get short notes at the end.
 | Path | Use when |
 |---|---|
 | A. Native venv + systemd + a reverse proxy of your choice | 1-3 agents on a single Linux box. Cheapest and simplest. |
-| B. Docker | The `pip install` dance fails on your target OS (PyAV build issues, Python-version traps, missing system libraries). |
+| B. Docker | `pip install` fails on your target OS (Python-version traps, missing system libraries), or you want the reviewed dependency set. |
 | C. ECS / Kubernetes / other orchestrators | Your org mandates IaC or a managed orchestrator. The image from Path B is the entry point; the wiring is yours. |
 
 If you don't have a reason to pick B or C, pick A.
@@ -30,7 +30,7 @@ If you don't have a reason to pick B or C, pick A.
 
 | Topology | Databases | Notes |
 |---|---|---|
-| One hub on one machine (`hubzoid run`) | SQLite files under `<hub>/.hubzoid/` and `<hub>/.openwebui-data/` | The quick start. Back up with `hubzoid backup`. |
+| One hub on one machine (`hubzoid run`) | SQLite files under `<hub>/.hubzoid/`; Open WebUI mode also uses `<hub>/.openwebui-data/` | The quick start. Back up with `hubzoid backup`. |
 | Several hubs behind one chat app on one machine (`hubzoid gateway`) | One shared SQLite operational database in the gateway's `--data-dir`, one SQLite DBOS file per hub | The common production shape. |
 | Either of the above with PostgreSQL | `DATABASE_URL` for Hubzoid and DBOS (and Open WebUI if you choose) | For production that needs managed backups or a separate database server. |
 | The Docker image | Either SQLite on a volume or PostgreSQL | See Path B. |
@@ -49,6 +49,15 @@ own folder. It suits one machine and a single bridge per hub. Choose PostgreSQL
 when you want a managed database, point-in-time backups, or processes on more
 than one machine.
 
+The supported SQLite production envelope is one host with durable local
+storage, one bridge per hub, one shared operational database and separate
+per-hub DBOS databases. Do not add bridge replicas or put these files on NFS.
+Size the machine for the actual workload: there is no certified maximum hub
+or user count. Before rollout, rehearse backup/restore and killing a workflow
+mid-step on a copy of the deployment; completed steps must remain checkpointed
+and interrupted side effects must be idempotent. Watch disk space, backup age,
+workflow health and lock errors. See [backup and restore](BACKUP.md).
+
 ```bash
 pip install "hubzoid[postgres]"
 # in the environment of the hub, or of the gateway and every bridge:
@@ -58,22 +67,18 @@ DATABASE_URL=postgresql+psycopg://hubzoid:<password>@db.internal:5432/hubzoid
 Use the `postgresql+psycopg://` form. Hubzoid installs the psycopg 3 driver
 only, and Open WebUI reads the same `DATABASE_URL`.
 
-MCP API-key authentication, Open WebUI group memberships and connected MCP
-OAuth credentials are read from that same database. `DATABASE_SCHEMA`, when
-set, selects Open WebUI's schema for these lookups. The gateway records both
-values in its deployment manifest; conflicting bridge settings deny lookup
-instead of reading another store. Read connections enforce read-only access;
-only the OAuth refresh path writes a renewed encrypted token. A connection
-failure never falls back to an older local `webui.db`.
-
-With `DATABASE_URL` set, three sets of tables share that database, each
-upgraded by its owner at start:
+In the default mode, accounts, sessions, conversations, permissions and
+personal MCP connector credentials use Hubzoid's operational database. Hosted
+MCP authenticates through Hubzoid OAuth. Open WebUI mode additionally uses
+Open WebUI's database for accounts, chats and its personal connectors;
+`DATABASE_SCHEMA` selects its schema. Registered bridges fail on conflicting
+database settings instead of falling back to another store.
 
 | Tables | Owner | Upgraded by |
 |---|---|---|
-| `hz_*` (access, audit, usage, workflow state) | Hubzoid | Hubzoid's migrations |
+| `hz_*` (accounts, chats, connectors, access, audit, usage, workflow state) | Hubzoid | Hubzoid migrations |
 | schema `dbos` (runs and checkpoints) | DBOS | DBOS |
-| accounts, chats, files | Open WebUI | Open WebUI |
+| accounts, chats, files (Open WebUI mode only) | Open WebUI | Open WebUI |
 
 To keep them apart, set `HUBZOID_OPERATIONAL_DB` and `HUBZOID_DBOS_DB` to
 other databases. Moving an existing SQLite deployment's data to PostgreSQL is
@@ -230,7 +235,7 @@ Values are read once, when a process starts. After rotating a secret, restart:
 - a hub secret: that hub's bridge, inbound and Slack processes
 - a restricted secret: that hub's bridge
 
-Rotating `WEBUI_SECRET_KEY` signs everyone out. It also makes the stored
+In Open WebUI mode, rotating `WEBUI_SECRET_KEY` signs everyone out. It also makes the stored
 connected-tool tokens (`oauth_session`) undecryptable, so every personal
 connection must be made again. Rotate it only on purpose.
 
@@ -270,13 +275,13 @@ agent; 4 GB comfortable for 2-3 agents on the same box.
 
 ```bash
 sudo apt update && sudo apt install -y \
-  python3.12 python3.12-venv pkg-config ffmpeg build-essential git curl
+  python3.12 python3.12-venv build-essential git curl
 sudo useradd -r -m -d /opt/hubzoid -s /bin/bash hubzoid
 ```
 
-`pkg-config` and `ffmpeg` are the PyAV dependencies that most often bite
-a fresh box. Reverse-proxy install comes in step 6 once you've picked
-one.
+Only Open WebUI mode (`pip install "hubzoid[openwebui]"`) also
+needs `pkg-config` and `ffmpeg` for its PyAV dependency. Reverse-proxy
+install comes in step 6 once you've picked one.
 
 ### 2. Firewall / security group
 
@@ -325,12 +330,15 @@ Required for production:
   per-token API billing. `claude-local` works in non-interactive prod via a
   long-lived subscription token — no interactive laptop login required. See
   [§5b "Running claude-local in production"](#5b-running-claude-local-in-production-subscription-no-api-key).
-- `WEBUI_AUTH=true` plus the auth block from
-  [docs/auth.md](auth.md).
-- `WEBUI_SECRET_KEY=` set to a random 32-char value (`openssl rand -hex 32`).
-  Hubzoid refuses to boot with `WEBUI_AUTH=true` and an unset secret.
-- `WEBUI_URL=https://devops.agents.example.com`. Required behind a
-  reverse proxy; OAuth callbacks are built from this.
+- `HUBZOID_AUTH=true`, with an administrator created before users arrive:
+  `hubzoid admin create you@example.com <hub> --owner`. Open its one-time
+  sign-in link and choose a password. See [authentication](auth.md).
+- `HUBZOID_PUBLIC_URL=https://devops.agents.example.com`, the HTTPS address
+  people open. Keep the generated deployment `secret.key` protected and
+  backed up separately ([backup](BACKUP.md)).
+- **Open WebUI mode only:** install `hubzoid[openwebui]`, set
+  `HUBZOID_UI=openwebui`, `WEBUI_AUTH=true`, a stable random `WEBUI_SECRET_KEY`
+  (`openssl rand -hex 32`), and `WEBUI_URL` to the public HTTPS address.
 - `PORT=3080`. Unique per hub on the same box.
 - `BRIDGE_PORT=8000`. Unique per hub on the same box.
 
@@ -360,6 +368,8 @@ ExecStart=/opt/hubzoid/agents/.venv/bin/hubzoid run %i
 Environment=PATH=/opt/hubzoid/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=10s
+KillMode=control-group
+OOMPolicy=stop
 TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
@@ -500,7 +510,7 @@ caddy` then `sudo systemctl reload caddy`; the equivalent in nginx is a
 and on ALB it is the default behavior on HTTP/1.1 target groups.
 
 Whichever proxy you use, visit `https://devops.agents.example.com`
-after starting it; you should see the OWUI login screen (assuming auth
+after starting it; you should see your chosen chat app's sign-in screen (assuming auth
 is on per [docs/auth.md](auth.md)).
 
 ### 7. Backup
@@ -525,7 +535,7 @@ find /var/backups -name 'hubzoid-*.tar.gz' -mtime +14 -delete
 ```
 
 Restore: stop the service, `hubzoid restore <archive>`, start. Keep
-`WEBUI_SECRET_KEY` stable across restores; changing it signs everyone out.
+the deployment encryption key stable across restores. In Open WebUI mode also keep `WEBUI_SECRET_KEY` stable.
 See [BACKUP.md](BACKUP.md) for what is saved, moving to a new machine and
 PostgreSQL.
 
@@ -589,140 +599,100 @@ app install, troubleshooting) is in [docs/slack.md](slack.md).
 |---|---|
 | Anything | Run `hubzoid doctor <hub>` first. |
 | Scheduled tasks never run; log says the workflow engine did not start | `hubzoid doctor` `deps.sqlite`: on Python 3.12 the engine needs SQLite 3.42+. Use a Python build with a newer SQLite (python.org, uv, Homebrew, Debian 13, Ubuntu 24.04) or PostgreSQL. |
-| `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the OWUI ready line. hubzoid disables Open WebUI's local embedding model, so boot is quick (tens of seconds), not the minutes it would take while fetching that model. |
+| `systemctl start` succeeds but the UI is not reachable | `journalctl -u hubzoid@<name> -f` for the ready line and startup errors. Open WebUI mode disables its local embedding model. |
 | Boot fails with `WEBUI_AUTH=true requires WEBUI_SECRET_KEY` | Hubzoid is refusing to start with an unsafe config; set the key in `.env`. |
 | Boot fails with `OAuth client IDs are set but WEBUI_URL is not` | Set `WEBUI_URL=https://your.host` in `.env`. |
 | TLS certificate never issues | DNS for the hostname is not yet propagated, or the box can't reach the certificate issuer; check your reverse proxy's logs (e.g. `journalctl -u caddy`, `/var/log/nginx/error.log`). |
 | Multiple agents conflict on startup | Each hub's `.env` must have a unique `PORT` and `BRIDGE_PORT`. |
-| User chats vanish after upgrade | `webui.db` schema migration ran; restore from the pre-upgrade backup and report. |
+| User chats vanish after upgrade | Check the deployment database and chosen UI mode. Old Open WebUI chats need migration to the default app; keep the pre-upgrade backup. |
 | Slack adapter loops on restart | `journalctl -u hubzoid-slack@<name>` — usually a missing token or a stale bot token after re-installing the app. See [docs/slack.md](slack.md). |
 
-## Multi-hub on one Open WebUI (`hubzoid gateway`)
+## Multi-hub on one address (`hubzoid gateway`)
 
-`hubzoid run` is one Open WebUI per hub — full isolation, but N heavy OWUI
-processes. When you have a hub per team (sales, support, …) on one box, want them
-**light**, share branding, and need per-team *access* (not per-team URLs),
-run one shared Open WebUI over many headless bridges instead:
+The default gateway serves one Hubzoid web app, with one sign-in and one
+Console across all agents. Set unique `BRIDGE_PORT` values in each hub's
+`.env` (for example 8000, 8001 and 8002), then configure the gateway's own
+environment:
 
 ```bash
+export HUBZOID_AUTH=true
+export HUBZOID_ADMIN_EMAIL=admin@example.com
+export HUBZOID_ADMIN_PASSWORD='a-strong-bootstrap-password'
 hubzoid gateway sales-agent support-agent finance-agent \
   --host 0.0.0.0 --port 3080 \
-  --public-url https://hub.example.com
+  --public-url https://hub.example.com --data-dir ./gateway-data
 ```
 
-This launches one headless bridge per hub (`hubzoid run <hub> --no-ui`, each
-on its hub's `BRIDGE_PORT` — keep them unique), then one Open WebUI connected
-to all of them, fronted by the edge router. Each hub becomes a selectable
-model. If the bridges already run as their own systemd units, add
-`--no-bridges` so the gateway only starts the shared UI — and set
-`HUBZOID_OWUI_DB=<data-dir>/webui.db` in each bridge's environment yourself
-(the gateway injects it automatically for bridges it launches). SQLite identity
-lookups discover the shared path from the deployment manifest, with this
-variable as the fallback for unregistered bridges. With PostgreSQL, use the
-registered manifest or the same `DATABASE_URL` and `DATABASE_SCHEMA` as the
-shared Open WebUI; database lookup does not use the SQLite path. The path also
-tells the bridge where OWUI stored uploaded files (they sit in
-`<data-dir>/uploads` next to the DB) — without it, chat attachments resolve
-against a per-hub dir that never fills in gateway mode and every upload is
-reported "unreadable". The gateway forwards the
-logged-in user's identity headers to bridges by default (access control
-needs them); set `ENABLE_FORWARD_USER_INFO_HEADERS=false` in the gateway's
-environment if your external bridges must not receive user emails.
+On a fresh deployment, sign in with the configured administrator. Add people
+and grant **Use this agent** and restricted capabilities through the Console.
+Administration alone does not grant every agent or every tool. Agent folder
+names, model ids and bridge ports must be unique; collisions stop startup with
+an explanation. A newly initialized hub still defaults to bridge port 8000,
+so change its `.env` before adding it to the gateway.
 
-**Where deployment settings live.** Settings for the shared chat app and sign-in
-(`WEBUI_AUTH`, `WEBUI_SECRET_KEY`, `WEBUI_URL`, `DEFAULT_USER_ROLE`,
-`ENABLE_SIGNUP`, OAuth settings) belong in the gateway's own environment. Each
-hub's `.env` is read for that hub only. For deployments upgraded from 0.9.x, the
-gateway still takes those sign-in settings from the hub `.env` files when its own
-environment does not set them, and lists the keys at start (when hubs disagree,
-the last hub listed wins). Nothing else from a hub `.env` reaches the shared
-chat app. `WEBUI_NAME` comes from `--name`. To keep these settings in AWS
-Secrets Manager instead, see
-[Configuration layers and AWS secrets](#configuration-layers-and-aws-secrets).
+Settings for shared sign-in, the public URL, deployment secrets and database
+belong in the gateway's environment. Tool/provider settings belong in each
+hub's `.env`. The gateway records the deployment manifest and a discovery
+pointer in each hub; CLI commands and bridges use those to find shared access
+and accounts. Each SQLite hub keeps its own DBOS file.
 
-**One shared access database.** The bridges share `hubzoid-operational.db` in
-the data directory (or your `HUBZOID_OPERATIONAL_DB` / PostgreSQL). The gateway
-records it in each hub's `.hubzoid/deployment.json` when it starts. With
-`--no-bridges`, restart the bridges once after the gateway's first start. Any
-bridge can then serve the Console at `/portal/`. The edge asks the next bridge
-when one is down or restarting, so restarting one hub does not empty the agent
-picker for everyone.
+For independently supervised bridges, use `--no-bridges`. On the first
+deployment, start the gateway to record its manifest, then start or restart the
+bridges while the gateway waits for their health checks. On later upgrades,
+upgrade/restart the bridges first and the gateway last. Keep each bridge's
+`MODEL_LABEL` consistent with the hub configuration read by the gateway. The
+bridge paths and databases must be accessible to all those processes. Do not
+point a bridge at a conflicting operational database.
+See [administration](ADMINISTRATION.md) for owner bootstrap and inspection.
 
-**Auto-provisioning (recommended).** Give the gateway an admin login and it
-sets each hub up in Open WebUI by itself, on every boot:
+When the gateway launches bridges, it supervises one deployment: any owned
+bridge, edge or chat process exiting ends the gateway with status 1 and stops
+its remaining children. A service manager restarts the complete unit. Use
+separate bridge units with `--no-bridges` for independent per-hub restarts; the
+gateway leaves those independently managed bridges running.
+
+SIGTERM or Ctrl-C performs bounded child cleanup, including during startup.
+SIGKILL and OOM can prevent the CLI from cleaning up its child process groups.
+For production use the systemd unit above, including `KillMode=control-group`
+and `OOMPolicy=stop`, or a container supervisor that owns the complete process
+lifecycle. These systemd settings stop the unit's remaining processes after a
+stop or OOM failure ([KillMode](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml),
+[OOMPolicy](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml#L1244)).
+After force-killing a manual run, identify and stop the processes it started
+before launching it again. The occupied-port check deliberately leaves an
+unknown listener running; it never kills a process merely to reclaim a port.
+
+### Open WebUI mode
+
+Install `hubzoid[openwebui]` and set `HUBZOID_UI=openwebui` in the gateway's
+environment. For its account API and automatic model provisioning, configure:
 
 ```bash
-# in the environment the `hubzoid gateway` process inherits
-WEBUI_AUTH=true                 # required — see docs/auth.md for the full block
-WEBUI_SECRET_KEY=<openssl rand -hex 32>
-HUBZOID_GATEWAY_ADMIN_EMAIL=admin@example.com
-HUBZOID_GATEWAY_ADMIN_PASSWORD=<strong password>
+export WEBUI_AUTH=true
+export WEBUI_SECRET_KEY='<stable random key>'
+export HUBZOID_GATEWAY_ADMIN_EMAIL=admin@example.com
+export HUBZOID_GATEWAY_ADMIN_PASSWORD='<Open WebUI administrator password>'
 ```
 
-Provisioning **requires `WEBUI_AUTH=true`** (with auth off, Open WebUI
-ignores credentials and would mint its default `admin@localhost` account —
-hubzoid refuses to provision in that mode and says so at boot). On a fresh
-data dir the configured account is created as the first (admin) user; on an
-established gateway the same credentials sign in — a wrong password fails
-loudly rather than creating stray accounts. Once Open WebUI is up, the
-gateway then creates for every hub:
+These are Open WebUI service credentials. The gateway creates that first
+administrator on a fresh data directory; on an existing one, use its actual
+administrator credentials. It provisions agent model entries, suggestions and
+avatars from each hub, and refreshes display metadata at boot. Console grants
+control who may use an agent. Open WebUI groups and hand-edited model ACLs do
+not grant Hubzoid access; manage people through **Console → Agents → Access**.
 
-* its **model entry** — picker name and `description:` from `AGENTS.md`,
-  quick-start **`suggestions:`** from `AGENTS.md`, and its avatar from
-  `<hub>/branding/logo.png` (raster formats only; SVG is not accepted as an
-  avatar) — so each agent looks like itself instead of a bare model id;
-* a **team group** named after the hub (its slug), with **read access** to
-  that model only.
+Open WebUI stores accounts, chats and uploads in the gateway's data directory
+(or its configured PostgreSQL database). Registered bridges discover that
+store and its internal URL from the manifest. Existing personal connections
+stay in Open WebUI in this mode. Moving to the default app requires the
+separate [upgrade and migration procedure](UPGRADING.md).
 
-For new managed hubs, grant people **Use this agent** and tool capabilities in
-**Console → Agents → Access**. For an unmigrated hub, its existing team group
-continues to apply until the explicit migration in [ADMINISTRATION.md](ADMINISTRATION.md). New hub in the command line → provisioned
-on next boot. Provisioning is idempotent and deliberately conservative:
-identity fields (name, description, suggestions, avatar) are refreshed from
-the hub every boot — including removals, so deleting a `suggestions:` block
-or a logo clears it in Open WebUI too — but **access is only seeded when the
-model is first created**: ACL changes you make in the UI are never
-overwritten. It is also fail-safe: if provisioning can't run (bad
-credentials, OWUI hiccup), the gateway logs a warning and boots normally.
-Leave both variables unset to skip provisioning entirely.
+### Gateway branding
 
-Every hub must surface as a **unique model id** (from its `AGENTS.md`
-`name:` or its `.env` `MODEL_LABEL`) — the gateway refuses to start when two
-hubs collide, because they would otherwise share one model entry and one
-team's chats could route to the other team's agent.
-
-**Manual setup (no admin credentials).** The same result by hand:
-
-1. Turn on auth (`WEBUI_AUTH=true` + the block from [docs/auth.md](auth.md))
-   on the gateway — set these in the environment the `hubzoid gateway`
-   process inherits.
-2. In **Admin Panel → Users → Groups**, create a group per team (`Sales`,
-   `Support`, …) and add members.
-3. In **Workspace → Models**, open each agent's model, set **Access Control
-   → Private**, and assign its team's group. Users outside the group won't
-   see it.
-
-These ACLs live in the shared OWUI database, so they survive restarts
-independently of `ENABLE_PERSISTENT_CONFIG`.
-
-**Model access control is forced on.** The gateway keeps
-`BYPASS_MODEL_ACCESS_CONTROL=False` so per-team ACLs are enforced — and it
-now *forces* that even if `BYPASS_MODEL_ACCESS_CONTROL=True` is in the
-inherited environment (that setting is the single-hub fix for the non-admin
-empty-model-list problem and must not leak into a gateway, where it would
-show every team every other team's agent; the gateway warns when it
-overrides). If you truly want an open gateway, set
-`HUBZOID_GATEWAY_ALLOW_BYPASS=1`. Single-hub `hubzoid run` is unchanged: it
-defaults the bypass to `True`, since a lone hub has one model and nothing to
-scope.
-
-**Gateway branding.** The shared chrome (login page, favicon, tab title) is
-org-level — one look for the whole gateway. Drop the same files a hub's
-`branding/` folder takes (see [docs/branding.md](branding.md)) into
-`<data-dir>/branding/` (default `./.hubzoid-gateway/branding/`). Unlike the
-single-hub chrome, the gateway keeps the **Workspace** nav visible — that is
-where admins manage groups and model access. Per-hub logos appear as each
-agent's avatar (from auto-provisioning above), not in the shared chrome.
+Shared login, favicon and tab chrome are deployment-wide. Put branding files
+in `<data-dir>/branding/`, or select a source with
+`HUBZOID_GATEWAY_BRANDING`. Per-agent names and avatars identify agents in the
+picker. See [branding](branding.md).
 
 **Artifact downloads** route per hub: each bridge advertises
 `<public-url>/b/<hub-slug>` so its download links come back through the edge
@@ -733,12 +703,12 @@ instances; the gateway shares one login surface by design.)
 
 ## Path B: Docker
 
-If `pip install hubzoid` fails on your target OS (PyAV build issues,
-Python-version traps, missing system libraries), build the Docker image
-from the `Dockerfile` at the repo root and run it instead. It installs the
-checked-out source with the reviewed dependency set in `requirements.lock`,
-so the image version is the version you checked out. hubzoid disables
-Open WebUI's local embedding model, so first boot is fast regardless.
+If `pip install hubzoid` fails on your target OS (Python-version traps,
+missing system libraries), build the Docker image from the `Dockerfile` at
+the repo root and run it instead. It installs the checked-out source with
+the reviewed dependency set in `requirements.lock`, so the image version is
+the version you checked out. `--build-arg WITH_OPENWEBUI=true` builds the
+Open WebUI image.
 
 ```bash
 git checkout v<version>          # the release you want
@@ -798,10 +768,9 @@ The image from Path B is the entry point. Wiring it into your
 orchestrator is your responsibility. Two constraints to know before you
 start:
 
-- **Run one task / pod per hub, not multiple.** Open WebUI uses SQLite.
-  Multiple concurrent writers on the same database produce lock
-  corruption. Each agent should be its own service with desired count 1
-  and no horizontal autoscaling.
+- **Run one bridge process per hub with SQLite.** Use durable local disks,
+  one supervised instance and no horizontal autoscaling. Use PostgreSQL for
+  multiple machines and rehearse workflow recovery and upgrades.
 - **SQLite on a network filesystem is not safe.** On ECS Fargate
   specifically, do not put `webui.db` on EFS - file locking semantics
   over NFS will eventually corrupt the DB. The two workable patterns are
@@ -812,8 +781,8 @@ start:
 
 Beyond those, the image behaves like a standard FastAPI / Uvicorn
 service: it listens on the env-var `PORT` (default 3080), accepts
-`.env`-style config as container env vars, and exposes Open WebUI's
-`/health` endpoint for liveness probes.
+`.env`-style config as container env vars, and exposes `/healthz` for the
+default app. Open WebUI mode also has its `/health` endpoint.
 
 For multi-hub setup, account ownership, migration preview, cutover and rollback,
 see [Administration](ADMINISTRATION.md).

@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from hubzoid import cli
 from hubzoid import scheduler as scheduler_lib
 from hubzoid import scheduling as sch
+from hubzoid.workflows import markdown
 
 
 @pytest.fixture
@@ -126,15 +127,17 @@ _QUEUE_BLOCKED = textwrap.dedent('''
 ''')
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="uses a background process")
 def test_cancel_a_queued_run(hub, tmp_path):
     (hub / "schedule" / "slow.md").write_text('---\nschedule: "0 4 * * *"\nrun: "sleep 60"\n---\n\nx\n')
     proc = subprocess.Popen([sys.executable, "-c", _QUEUE_BLOCKED, str(hub)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=dict(os.environ))
+    run = markdown.run_id("daily", "s2", hub.name)
     try:
         assert proc.stdout.readline().startswith("QUEUED")
-        r = CliRunner().invoke(cli.app, ["schedule", "cancel", str(hub), "md:daily:s2"])
+        r = CliRunner().invoke(cli.app, ["schedule", "cancel", str(hub), run])
         assert r.exit_code == 0, r.output
         from dbos import DBOSClient
 
@@ -143,10 +146,10 @@ def test_cancel_a_queued_run(hub, tmp_path):
 
         client = DBOSClient(system_database_url=db.dbos_url(hub), application_name=_app_name(hub.name))
         try:
-            assert client.retrieve_workflow("md:daily:s2").get_status().status == "CANCELLED"
+            assert client.retrieve_workflow(run).get_status().status == "CANCELLED"
         finally:
             client.destroy()
-        assert ("run_cancel", "md:daily:s2") in [(a[1], a[3]) for a in _audit(tmp_path)]
+        assert ("run_cancel", run) in [(a[1], a[3]) for a in _audit(tmp_path)]
     finally:
         proc.kill()
         proc.wait(timeout=30)

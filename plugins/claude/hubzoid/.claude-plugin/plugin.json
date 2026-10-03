@@ -1,0 +1,7 @@
+{
+  "name": "hubzoid",
+  "version": "0.1.0",
+  "description": "Connect Claude Code to your Hubzoid tools and shared context over MCP.",
+  "author": {"name": "Hubzoid"},
+  "license": "Apache-2.0"
+}

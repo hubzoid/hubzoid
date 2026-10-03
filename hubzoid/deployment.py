@@ -39,6 +39,20 @@ def read(hub_dir: Path, env=None, *, require_hub: bool = True) -> dict:
     return data
 
 
+def manifest_path(hub_dir: Path, env=None) -> Path | None:
+    """Where this hub's deployment manifest lives (the gateway's data folder
+    holds it), or None for a standalone hub."""
+    env = os.environ if env is None else env
+    manifest = env.get("HUBZOID_DEPLOYMENT")
+    pointer = Path(hub_dir) / ".hubzoid" / "deployment.json"
+    if not manifest and pointer.exists():
+        try:
+            manifest = json.loads(pointer.read_text()).get("manifest")
+        except (OSError, ValueError):
+            manifest = None
+    return Path(manifest) if manifest else None
+
+
 def _write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(f".{os.getpid()}.tmp")
@@ -53,6 +67,9 @@ def save(
     deployment_secret: dict | None = None, owner: str | None = None,
     public_url: str | None = None, workflow_user: str | None = None,
     hide_owui_users: bool | None = None, sign_in: dict | None = None,
+    ui_mode: str | None = None, auth: bool | None = None,
+    allowed_origins: list[str] | None = None, name: str | None = None,
+    branding_dir: str | None = None,
 ) -> None:
     """Write the manifest and each hub's pointer to it.
 
@@ -66,7 +83,14 @@ def save(
 
     `deployment_secret` ({"name", "region"}) names the gateway's AWS secret so
     external bridges can fetch it. Only the name and region are stored, never a
-    value. The key is omitted when there is no deployment secret."""
+    value. The key is omitted when there is no deployment secret.
+
+    `ui_mode` ("hubzoid" or "openwebui"), `auth` (sign-in on) and
+    `allowed_origins` record how the whole deployment runs, so bridges started
+    separately (`gateway --no-bridges`) behave like the gateway
+    (`hubzoid.appmode`). `name` is the deployment's display name and
+    `branding_dir` the folder its page chrome comes from (the web app serves
+    it at /branding/*). Each is omitted when None."""
     _validate_hub_keys(hubs)
     path = path.resolve()
     data = dict(
@@ -90,6 +114,16 @@ def save(
         data["hide_owui_users"] = bool(hide_owui_users)
     if sign_in is not None:
         data["sign_in"] = _flags_only(sign_in)
+    if ui_mode is not None:
+        data["ui_mode"] = str(ui_mode)
+    if auth is not None:
+        data["auth"] = bool(auth)
+    if allowed_origins is not None:
+        data["allowed_origins"] = [str(o) for o in allowed_origins]
+    if name:
+        data["name"] = str(name)
+    if branding_dir:
+        data["branding_dir"] = str(branding_dir)
     if deployment_secret and deployment_secret.get("name"):
         data["deployment_secret"] = {"name": str(deployment_secret["name"]),
                                      "region": deployment_secret.get("region") or None}

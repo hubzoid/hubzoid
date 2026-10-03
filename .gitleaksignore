@@ -1,0 +1,11 @@
+# Findings already dealt with. Format: <commit>:<file>:<rule>:<line>.
+
+# Open WebUI's local-development key, committed at the repository root in May 2026
+# and removed on 1 October 2026. No known deployment used it, and Hubzoid now starts
+# Open WebUI inside its data folder, so it is not written into a checkout again.
+35bb7d1711770330d88902e121a74260fff028b6:.webui_secret_key:key-file:0
+bb8783c54601f014a021f57f33ebd7107f13cdfd:.webui_secret_key:key-file:0
+ca03e0d18ba256e3c4e771df215abb7382efe8fb:.webui_secret_key:key-file:0
+
+# A fake OpenRouter-style key in a test fixture (it spells "test" and "SECRET").
+80b463fc1ca3662a729998adea57bf198d3c68c3:tests/test_workflow_jev.py:generic-api-key:23

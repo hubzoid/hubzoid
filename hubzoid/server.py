@@ -62,6 +62,15 @@ def _hub_dir() -> Path:
 def build_app() -> FastAPI:
     hub_dir = _hub_dir()
     settings = settingslib.load(hub_dir)
+    logging.getLogger("alembic").setLevel(
+        logging.DEBUG if settings.log_level.lower() == "debug" else logging.WARNING)
+    # A hub in a gateway's deployment serves only in the mode and sign-in the
+    # gateway recorded; settings that disagree stop the bridge before it serves.
+    from . import appmode
+
+    conflicts = appmode.deployment_conflicts(hub_dir)
+    if conflicts:
+        raise RuntimeError(" ".join(conflicts))
     # Bring Hubzoid's own tables to the current schema before serving anything;
     # a schema this version can't use stops the bridge here, loudly.
     from . import db as dblib
@@ -131,7 +140,9 @@ def build_app() -> FastAPI:
         app.state.workflows = wf_dispatcher
         from .workflows import runtime as _wf_runtime
         sched = scheduler_lib.Scheduler(hub_dir, is_busy=inflight.busy)
-        if _wf_runtime._LAUNCHED:
+        if _wf_runtime._LAUNCHED or wf_dispatcher is not None:
+            # Also while the engine waits for ownership: a slot that cannot be
+            # queued yet is not stamped, so it fires once the engine is back.
             sched.start()   # no-op when <hub>/schedule/ is empty or disabled
         elif wf_boot.markdown_work(hub_dir):
             log.error("scheduled markdown tasks are not running: the workflow engine "
@@ -220,7 +231,7 @@ def build_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
-        return {"status": "ok", "hub": hub_dir.name, "agent": rt.name}
+        return {"status": "ok", "hub": hub_dir.name, "agent": rt.name, "model": model_label}
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> JSONResponse:
@@ -229,7 +240,7 @@ def build_app() -> FastAPI:
             {
                 "object": "list",
                 "data": [
-                    {"id": model_label, "object": "model", "created": int(time.time()), "owned_by": "hubzoid"}
+                    {"id": model_label, "name": rt.name, "object": "model", "created": int(time.time()), "owned_by": "hubzoid"}
                 ],
             }
         )
@@ -251,9 +262,8 @@ def build_app() -> FastAPI:
         # don't send an id still get a consistent directory.
         chat_id = _derive_chat_id(body, request, messages)
         identity = _derive_identity(body, request, hub_dir)
-        # Hub-entry gate: once Casbin is authoritative, a caller must hold
-        # `use_hub` (verified identity) to chat at all — read knowledge, use even
-        # unrestricted tools. Fail-closed; skipped for un-migrated hubs.
+        # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
+        # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
         _enforce_use_hub(request, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
@@ -308,11 +318,28 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Per-chat artifact + upload routes.
     # ------------------------------------------------------------------
+    from . import appmode
+
+    web_app = not appmode.is_openwebui(hub_dir)
+    if web_app and not appmode.auth_enabled(hub_dir):
+        # Sign-in off: the local owner is the only person, and owns every hub
+        # from the first start, before any page is opened. Best effort: a store
+        # problem never stops the bridge, whose access checks fail closed.
+        from .access.session import LOCAL_OWNER
+        from .auth.users import provision_owner
+
+        try:
+            provision_owner(hub_dir, LOCAL_OWNER)
+        except Exception:  # noqa: BLE001
+            log.warning("access: the local owner could not be provisioned yet", exc_info=True)
+
     @app.get("/artifacts/{chat_id}/{filename:path}")
     async def get_artifact(chat_id: str, filename: str, request: Request):
         # Browsers click links without a Bearer header. We accept either:
         #   * a signed token in `?t=<hex>` (the link Hubzoid writes into
         #     chat by default — see hubzoid._signing), OR
+        #   * in the web app, the signed-in owner of that conversation (their
+        #     session cookie), so an expired link still works for them, OR
         #   * a real Bearer api key (for curl / SDK callers). This route is
         #     public behind the edge, so the default "dev" key is not accepted.
         safe_chat = _require_safe_chat_id(chat_id)
@@ -321,7 +348,9 @@ def build_app() -> FastAPI:
         expires = request.query_params.get("e")
         if not _signing.verify_artifact_token(
             safe_chat, safe_name, token, expires, hub_dir=hub_dir
-        ):
+        ) and not (web_app and await asyncio.to_thread(
+            _owns_conversation, request, hub_dir, safe_chat
+        )):
             auth = request.headers.get("authorization", "")
             if auth[7:].strip() == "dev" and auth.lower().startswith("bearer "):
                 raise HTTPException(status_code=401, detail="invalid or expired link")
@@ -378,6 +407,20 @@ def build_app() -> FastAPI:
     from .artifacts import web as artifacts_web
 
     app.include_router(artifacts_web.build_router(hub_dir))
+    from .workflows.webhooks import build_router as workflow_webhooks
+    app.include_router(workflow_webhooks(hub_dir))
+
+    # The Hubzoid web app (default UI mode): sign-in, conversations, personal
+    # connections, agents and the page shell. Registered before the portal's
+    # static mount so /portal/api/... routes it adds are not shadowed. The legacy
+    # Open WebUI mode (HUBZOID_UI=openwebui) keeps the 1.0.x surface unchanged.
+    from . import appmode
+
+    if not appmode.is_openwebui(hub_dir):
+        from . import webapp
+
+        webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
+                     model_label=model_label)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
@@ -425,7 +468,7 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
     if inflight:
         inflight.enter()
     started = time.monotonic()
-    waiting = False
+    shown = None  # the status line on screen ("Working on it…", "Running X…"), or None
     try:
         # Role chunk first (OpenAI convention).
         first = _chunk("", model=model)
@@ -435,18 +478,26 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         # the chat app's own cue for that is faint. Show its status line until
         # the first content arrives, then hide it. Status is message metadata,
         # never message content.
-        yield _waiting_status(model, done=False)
-        waiting = True
+        shown = _WAITING
+        yield _status_event(model, shown)
 
         # Set chat scope so tools resolve to this chat's dirs, and bind the
         # caller's identity so the access guard sees who is running each tool.
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        from .tool_events import THINKING, Status
+
         with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
             async for delta in rt.stream(prompt):
+                if isinstance(delta, Status):
+                    # A running tool's line ("Running X…"), or None to clear it.
+                    if delta.description != shown:
+                        shown = delta.description
+                        yield _status_event(model, shown)
+                    continue
                 if delta:
-                    if waiting:
-                        waiting = False
-                        yield _waiting_status(model, done=True)
+                    if shown in (_WAITING, THINKING):  # the answer has started
+                        shown = None
+                        yield _status_event(model, None)
                     yield f"data: {json.dumps(_chunk(delta, model=model))}\n\n".encode()
             # Drain usage while still inside chat_scope (the runtime set it
             # there); build the OpenAI usage envelope for the final chunk.
@@ -454,9 +505,9 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
             usage = _usage_envelope(raw_usage)
         await _record_turn(hub_dir, identity, chat_id, raw_usage, started)
 
-        if waiting:
-            waiting = False
-            yield _waiting_status(model, done=True)
+        if shown is not None:
+            shown = None
+            yield _status_event(model, None)
         yield f"data: {json.dumps(_chunk(None, finish_reason='stop', model=model))}\n\n".encode()
         # Final usage chunk (OpenAI `stream_options.include_usage` convention):
         # empty choices + top-level usage. Open WebUI reads this to populate its
@@ -472,21 +523,30 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
         yield b"data: [DONE]\n\n"
     except Exception:
-        # A failed turn must not leave the waiting line behind its error.
-        if waiting:
-            yield _waiting_status(model, done=True)
+        # A failed turn must not leave a status line behind its error.
+        if shown is not None:
+            yield _status_event(model, None)
         raise
     finally:
         if inflight:
             inflight.leave()
 
 
+_WAITING = "Working on it…"
+
+
 def _waiting_status(model: str, *, done: bool) -> bytes:
     """Open WebUI status event (top-level `event` on a chunk with no choices).
     Open WebUI shows it as a status line and stores it as message metadata;
     other clients see an empty chunk, like the usage chunk."""
-    data = {"description": "Working on it…", "done": done}
-    if done:
+    return _status_event(model, None if done else _WAITING)
+
+
+def _status_event(model: str, description: str | None) -> bytes:
+    """The chat app's status line: `description` while work runs, hidden when
+    None (the line disappears; the chat app keeps the history as metadata)."""
+    data = {"description": description or _WAITING, "done": description is None}
+    if description is None:
         data["hidden"] = True
     chunk = {"object": "chat.completion.chunk", "created": int(time.time()), "model": model,
              "choices": [], "event": {"type": "status", "data": data}}
@@ -540,14 +600,41 @@ def _usage_envelope(raw: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Identity derivation
 # ---------------------------------------------------------------------------
-def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
-    """Once Casbin is authoritative, require `use_hub` to enter the hub at all.
+_UNSET = object()
 
-    Uses ONLY the verified identity from the trusted front headers
-    (`X-OpenWebUI-User-Email` / `X-Hubzoid-User`) — never the caller-controlled
-    `body.user` — so an authoritative hub cannot be entered anonymously or under
-    a spoofed subject. Fail-closed: a store error denies (503). Un-migrated hubs
-    pass through (legacy)."""
+
+def _trust(request: Request, hub_dir: Path | None):
+    """(openwebui, vouched) for this request, computed once.
+
+    Open WebUI mode: identity headers are trusted as sent, because only
+    holders of the bridge key (Open WebUI, the adapters) reach the bridge.
+    Web app mode: only what a valid `X-Hubzoid-Assertion` covers exactly
+    (`hubzoid.assertions`); `vouched` is None for an anonymous request."""
+    state = getattr(request, "state", None)
+    cached = getattr(state, "hubzoid_trust", _UNSET) if state is not None else _UNSET
+    if cached is not _UNSET:
+        return cached
+    from . import appmode, assertions
+
+    openwebui = appmode.is_openwebui(hub_dir)
+    vouched = None if openwebui else assertions.vouched(hub_dir, request.headers)
+    result = (openwebui, vouched)
+    if state is not None:
+        try:
+            state.hubzoid_trust = result
+        except AttributeError:
+            pass
+    return result
+
+
+def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
+    """Require `use_hub` to enter the hub at all.
+
+    Uses ONLY the verified identity — never the caller-controlled `body.user` —
+    so a hub cannot be entered anonymously or under a spoofed subject. Open
+    WebUI mode: the trusted front headers (`X-OpenWebUI-User-Email` /
+    `X-Hubzoid-User`). Web app mode: the email a valid identity assertion
+    vouches for. Fail-closed: a store error denies (503)."""
     if hub_dir is None:
         return
     from .access import store_for
@@ -555,17 +642,23 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
 
     try:
         gs = store_for(hub_dir)
-        authoritative = gs.is_authoritative(hub_dir.name)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub check unavailable for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
-    verified = (
-        request.headers.get("x-openwebui-user-email")
-        or request.headers.get("x-hubzoid-user")
-        or ""
-    ).strip().lower()
-    try:
+    openwebui, vouched = _trust(request, hub_dir)
+    if openwebui:
+        verified = (
+            request.headers.get("x-openwebui-user-email")
+            or request.headers.get("x-hubzoid-user")
+            or ""
+        ).strip().lower()
         account_id = request.headers.get('x-openwebui-user-id')
+    else:
+        # No Open WebUI in this mode: its account id header means nothing and
+        # is never used to rebind an identity.
+        verified = vouched.email if vouched is not None else ""
+        account_id = None
+    try:
         if verified and account_id:
             gs.upsert_identity(email=verified, owui_id=account_id)
         blocked = bool(verified and gs.is_suspended(verified))
@@ -573,8 +666,6 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         raise HTTPException(503, detail="access check unavailable")
     if blocked:
         raise HTTPException(403, detail="Your agent access is blocked. Contact your administrator.")
-    if not authoritative:
-        return
     if not verified:
         raise HTTPException(
             status_code=403,
@@ -582,6 +673,14 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         )
     try:
         ok = gs.can(verified, hub_dir.name, USE_HUB)
+        # Open WebUI mode: the configured owner may chat before ever opening the
+        # Console. Provision them here exactly as a Console sign-in would (same
+        # owner and administrator match, once per hub, never after a revoke).
+        if not ok and openwebui and request.headers.get("x-openwebui-user-role") == "admin":
+            from .access.session import configured_owner
+
+            if verified == configured_owner(hub_dir) and gs.provision_owner(verified, hub_dir.name):
+                ok = gs.can(verified, hub_dir.name, USE_HUB)
     except Exception:  # noqa: BLE001
         log.exception("access: use_hub can() failed for %s", hub_dir.name)
         raise HTTPException(status_code=503, detail="access check unavailable")
@@ -620,30 +719,32 @@ def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | Non
          resolver or trusted front (e.g. the inbound WhatsApp/Telegram bridge),
          merged on top rather than overriding.
 
-    A request with no groups reaches no restricted tool (fail-closed). A
-    non-Open-WebUI surface (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``)
-    is refused restricted tools regardless. ``body["user"]`` is only a display
-    fallback for the user id; it never carries groups.
+    Groups describe the person; they authorize nothing. Restricted tools need a
+    grant in the access store, and a surface that does not verify a person
+    (e.g. Slack, which sets ``X-Hubzoid-Surface: slack``) is refused them
+    regardless. ``body["user"]`` is never an identity.
+
+    That is Open WebUI mode. In the web app mode the headers count
+    only when a valid ``X-Hubzoid-Assertion`` covers exactly their values
+    (``hubzoid.assertions``); the groups are then the roster's and the
+    asserted ones (descriptive only). Without one the request is anonymous
+    on the ``api`` surface, and ``body["user"]`` is ignored.
     """
+    openwebui, vouched = _trust(request, hub_dir)
+    if not openwebui:
+        if vouched is None:
+            return access.Identity.make(user=None, groups=None, surface="api")
+        email = vouched.email or None
+        surface = vouched.surface or "api"
+        groups = access.effective_groups(
+            hub_dir, email=email, surface=surface, header_groups=list(vouched.groups),
+        )
+        return access.Identity.make(user=email, groups=groups, surface=surface)
     headers = request.headers
     owui_email = headers.get("x-openwebui-user-email")
     user = headers.get("x-hubzoid-user") or owui_email
-    if not user:
-        # `body.user` is caller-controlled (the OpenAI-API `user` field), so it is
-        # NOT trusted as an authz subject on an authoritative hub — that would let
-        # a bridge-key caller assert any grantee. Kept as the identity only for
-        # legacy (un-migrated) hubs, where it carries no groups anyway.
-        u = body.get("user")
-        candidate = u if isinstance(u, str) and u.strip() else None
-        if candidate and hub_dir is not None:
-            try:
-                from .access import store_for
-
-                if store_for(hub_dir).is_authoritative(hub_dir.name):
-                    candidate = None
-            except Exception:  # noqa: BLE001 — fail closed: drop the untrusted id
-                candidate = None
-        user = candidate
+    # `body.user` (the OpenAI-API `user` field) is caller-controlled, so it is
+    # never an identity: that would let a bridge-key caller assert any grantee.
 
     # Groups are the UNION of every store that applies to this surface: the
     # user's Open WebUI groups, the hub roster keyed by the same email, and any
@@ -705,6 +806,27 @@ def _require_safe_chat_id(raw: str) -> str:
     if not safe:
         raise HTTPException(status_code=400, detail="invalid chat_id")
     return safe
+
+
+def _owns_conversation(request: Request, hub_dir: Path, chat_id: str) -> bool:
+    """True when the signed-in person (web app session) owns the conversation
+    whose files live under this chat id (its ``chat.store.chat_key``: ``web-<id>``,
+    or the Open WebUI id of an imported one). Another surface's chat (Slack,
+    Telegram, WhatsApp, an Open WebUI chat) is never a conversation's,
+    even when a conversation has the same id. Any failure is a no."""
+    try:
+        from . import auth
+        from .chat import store as chat_store
+
+        user = auth.current_user(request, hub_dir)
+        if user is None:
+            return False
+        conv = chat_store.for_hub(hub_dir).conversation_for_chat_key(chat_id)
+        return (conv is not None and conv["owner_id"] == user.id
+                and conv["hub"] == Path(hub_dir).name.lower())
+    except Exception:  # noqa: BLE001 — fall back to the token and key checks
+        log.warning("artifacts: session check failed", exc_info=True)
+        return False
 
 
 # ---------------------------------------------------------------------------

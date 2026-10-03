@@ -104,3 +104,115 @@ def test_short_name_strips_mcp_hubzoid_prefix():
     assert tool_events.short_name("read_file") == "read_file"
     assert tool_events.short_name("mcp__other__tool") == "mcp__other__tool"
 
+
+
+
+# ---------------------------------------------------------------------------
+# ToolActivity: the chat app's native tool-call blocks and status line.
+# ---------------------------------------------------------------------------
+import html as _html
+import json as _json
+import re as _re
+
+
+def _attrs(block: str) -> dict:
+    head = block[block.index("<details"):block.index(">", block.index("<details"))]
+    return {k: _html.unescape(v) for k, v in _re.findall(r'(\w+)="([^"]*)"', head)}
+
+
+def test_compact_shows_a_status_while_running_and_a_block_when_finished():
+    act = tool_events.ToolActivity("compact")
+    started = act.started("toolu_1", "check_program", {"event_id": 1556, "listing_url": ""})
+    assert len(started) == 1 and isinstance(started[0], tool_events.Status)
+    assert started[0] == "" and started[0].description == "Running check_program…"
+    block, cleared = act.finished("toolu_1")
+    attrs = _attrs(block)
+    # Exactly the shape Open WebUI parses: type first, done, id, name, JSON args.
+    assert block.lstrip().startswith('<details type="tool_calls" done="true"')
+    assert attrs["id"] == "toolu_1" and attrs["name"] == "check_program"
+    assert _json.loads(attrs["arguments"]) == {"event_id": 1556, "listing_url": ""}
+    assert "status" not in attrs and "<summary>Tool Executed</summary>" in block
+    assert block.rstrip().endswith("</details>")
+    assert isinstance(cleared, tool_events.Status) and cleared.description is None
+
+
+def test_a_failed_call_is_marked_failed_with_short_text_only():
+    act = tool_events.ToolActivity("compact")
+    act.started("c1", "finance_review_report", {"id": 3})
+    block, _ = act.finished("c1", error=True)
+    assert _attrs(block)["status"] == "failed"
+    assert tool_events.FAILED_TEXT in block
+    assert "> ⚠" not in block  # no separate quoted error line any more
+
+
+def test_parallel_calls_keep_the_status_on_what_is_still_running():
+    act = tool_events.ToolActivity("compact")
+    act.started("a", "check_program", {})
+    act.started("b", "finance_review_report", {})
+    act.started("c", "draft_sl_from_event", {})
+    assert act._status().description == "Running check_program, finance_review_report and 1 more…"
+    _, status = act.finished("a")
+    assert status.description == "Running finance_review_report and draft_sl_from_event…"
+    _, status = act.finished("c")
+    assert status.description == "Running finance_review_report…"
+    assert act.finished("unknown") == []
+    flushed = act.flush()  # the turn ended with b unresolved
+    assert "finance_review_report" in flushed[0] and flushed[-1].description is None
+    assert act.flush() == []
+
+
+def test_long_arguments_never_land_whole_in_chat():
+    act = tool_events.ToolActivity("compact")
+    act.started("c1", "write_artifact", {"filename": "r.html", "content": "x" * 50_000})
+    block, _ = act.finished("c1")
+    args = _json.loads(_attrs(block)["arguments"])
+    assert args["filename"] == "r.html" and len(args["content"]) <= 120
+    assert len(block) < 900  # it is sent back with later messages too
+
+
+def test_attribute_values_are_escaped():
+    act = tool_events.ToolActivity("compact")
+    act.started("c1", 'evil"><script>', {"q": '"/><img src=x>'})
+    block, _ = act.finished("c1")
+    head = block[block.index("<details"):block.index(">", block.index("<details")) + 1]
+    assert "<script" not in head and "<img" not in head
+    assert _attrs(block)["arguments"] == _json.dumps({"q": '"/><img src=x>'})
+
+
+def test_full_mode_keeps_the_legacy_lines_and_off_shows_nothing():
+    full = tool_events.ToolActivity("full")
+    assert full.started("c1", "grep_data", {"pattern": "x"})[0].startswith("\n\n> ↳ ")
+    assert full.finished("c1") == []
+    assert full.finished("c1", error=True)[0].startswith("\n\n> ⚠ **grep_data**")
+    off = tool_events.ToolActivity("off")
+    assert off.started("c1", "grep_data", {}) == [] and off.finished("c1", error=True) == []
+    assert off.flush() == []
+
+
+def test_status_is_invisible_to_text_consumers():
+    status = tool_events.Status("Running x…")
+    assert "".join(["a", status, "b"]) == "ab" and not status
+
+
+
+def test_failed_output_is_the_same_rule_on_every_runtime():
+    assert tool_events.failed_output("An error occurred while running the tool. Please try again.")
+    assert tool_events.failed_output("[access denied: 'x' requires the y permission]")
+    assert tool_events.failed_output([{"type": "text", "text": "[access denied: no"}])
+    assert not tool_events.failed_output("Ledger balanced.")
+    assert not tool_events.failed_output(None)
+
+
+
+def test_blocks_in_a_run_touch_and_text_starts_a_new_run():
+    act = tool_events.ToolActivity("compact")
+    act.started("a", "one", {})
+    act.started("b", "two", {})
+    first = act.finished("a")[0]
+    second = act.finished("b")[0]
+    assert first.startswith("\n\n<details") and first.endswith("</details>\n")
+    assert second.startswith("<details")  # right after the first: one group
+    assert act.text("Some text") == "Some text"
+    act.started("c", "three", {})
+    assert act.finished("c")[0].startswith("\n\n<details")  # a new paragraph after text
+    assert act.text("") == ""  # empty text changes nothing

@@ -52,18 +52,42 @@ pip install -e '.[dev]'
 pytest
 ```
 
+The Open WebUI chat app is the optional `openwebui` extra. Its tests
+need it installed (it brings PyTorch, so use the CPU index):
+`pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'`.
+
 ## Running tests
 
-CI runs only when a GitHub release is published. Pushes and pull requests do
-not start automated checks; run the relevant tests locally before pushing.
-Maintainers: see [publishing a release](docs/RELEASING.md).
+Every pull request and every push to `main` runs
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml): the unit tests on
+SQLite, without Open WebUI, browsers, live models or Docker, and the web app's
+lint (`npm run lint` in `portal/`). A pull request runs the fast default, which
+skips tests marked `slow`. A push to `main` runs the slow tests too. The same
+commands work locally:
 
 ```bash
-pytest                       # unit + integration (no LLM calls)
+pytest -q                                                               # pull request
+pytest -q -m 'not e2e and not e2e_llm and not e2e_ui and not e2e_browser'  # main
+(cd portal && npm ci && npm run lint)
+```
+
+Publishing a GitHub release runs the full validation in `ci.yml`: the whole
+suite with the `openwebui` extra, the Console journeys in a browser, a clean
+wheel install and both native Docker images. Maintainers: see
+[publishing a release](docs/RELEASING.md).
+
+```bash
+pytest                       # fast default: no LLM calls, skips `slow` DBOS/Postgres tests
+pytest -m ""                 # everything, as CI runs it
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
 pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker
 ```
+
+CI also scans every push and pull request for secrets with gitleaks
+(`.gitleaks.toml`). Run it before pushing with
+`gitleaks git --config .gitleaks.toml --redact .` A fake key a test needs gets a
+`# gitleaks:allow` comment on its line.
 
 The shared browser (`HUBZOID_BROWSER`) gives every agent one shared,
 resource-limited Playwright browser — see [docs/BROWSER.md](docs/BROWSER.md).
@@ -73,7 +97,8 @@ provider. They are skipped automatically if no provider key is set.
 
 ## Code conventions
 
-- Python 3.11+. Upper bound is whatever open-webui supports today.
+- Python 3.11+. The `openwebui` extra caps it at whatever open-webui supports
+  today (3.12).
 - Keep the public API small. The blast radius of a breaking change in
   `factory.build_agent` or the CLI is large.
 - Loaders go in `hubzoid/loaders/`, tools in `hubzoid/tools/`.
@@ -85,8 +110,8 @@ provider. They are skipped automatically if no provider key is set.
 ## Runtime neutrality (important)
 
 Hubzoid runs hub folders through more than one backend (today: OpenAI Agents
-SDK, Claude Agent SDK via `MODEL=claude-local`). The same hub must produce
-the same observable surface — tool names, schemas, skills, knowledge,
+SDK, Claude Agent SDK via `MODEL=claude-local`, and Codex app-server). The same
+hub must produce the same observable surface — tool names, schemas, skills, knowledge,
 sub-agents — under any backend. Manual testing is done against one backend
 at a time; divergence creates bug-report magnets.
 
@@ -99,10 +124,10 @@ To keep the invariant:
   four exposed fields (`name`, `description`, `params_json_schema`,
   `on_invoke_tool`).
 - Runtime construction (`Agent(...)`, `ClaudeAgentOptions(...)`, runners,
-  `query(...)`) lives only in `factory.py`, `factory_claude.py`,
+  `query(...)`) lives only in `factory.py`, `factory_claude.py`, `factory_codex.py`,
   `runtime.py`, `server.py`, `cli.py`.
-- When adding a tool or loader, sanity-check both backends. New tools
-  should not rely on OpenAI-SDK-specific behavior the Claude adapter
+- When adding a tool or loader, sanity-check every supported backend. New tools
+  should not rely on OpenAI-SDK-specific behavior the other runtime adapters
   can't replicate.
 
 ## License

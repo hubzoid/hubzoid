@@ -25,7 +25,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     access._stores.clear()
     gs = access.store_for(tmp_path)
-    gs.set_authoritative(True)
     # a second org admin so blocking "root" style subjects never trips LastAdminError
     gs.grant("root", "*", "manage_access", actor="test")
 

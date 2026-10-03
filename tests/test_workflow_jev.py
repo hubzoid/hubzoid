@@ -18,9 +18,10 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")
+pytestmark = [pytest.mark.slow,
+              pytest.mark.skipif(os.name == "nt", reason="uses SIGKILL")]
 
-KEY = "sk-or-v1-dbos-test-SECRET-9876543210"
+KEY = "sk-or-v1-dbos-test-SECRET-9876543210"  # gitleaks:allow (a fake key for the test)
 
 _WORKFLOW = textwrap.dedent('''
     import os, time
@@ -55,13 +56,14 @@ _BOOT = textwrap.dedent('''
     import httpx
     CALLS = Path(os.environ["JEV_TEST_DIR"]) / "calls.jsonl"
 
-    def fake_post(url, json=None, timeout=None, headers=None):
+    async def fake_post(body, key, timeout):
         with CALLS.open("a") as f:
-            f.write(__import__("json").dumps({"url": url, "auth_set": bool(headers.get("Authorization"))}) + "\\n")
+            f.write(__import__("json").dumps({"url": jev.URL, "auth_set": bool(key)}) + "\\n")
         reply = __import__("json").loads(os.environ["REPLY"])
         return httpx.Response(reply["status"], json=reply["body"])
 
-    httpx.post = fake_post
+    from hubzoid import jev
+    jev._post = fake_post
     from dbos import DBOS
     from hubzoid import runtime as agent_rt
     from hubzoid.workflows import context, runtime

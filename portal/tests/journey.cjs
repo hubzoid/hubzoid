@@ -53,7 +53,7 @@ function step(name) {
             request.method(),
             endpoint,
             Object.fromEntries(url.searchParams),
-            ["POST", "DELETE"].includes(request.method()) ? request.postDataJSON() : undefined,
+            ["POST", "PATCH", "DELETE"].includes(request.method()) ? request.postDataJSON() : undefined,
           );
           return route.fulfill({ json: data });
         } catch (e) {
@@ -160,7 +160,6 @@ function step(name) {
     for (const name of ["Finance Assistant", "Support Assistant", "IT Ops Assistant"])
       await page.getByRole("link", { name, exact: true }).waitFor();
     // Simplified landing: attention shows only as per-card tags, no alerts/counts.
-    await page.getByText("Legacy access").waitFor();
     await page.getByText("Scheduler stopped").waitFor();
     await page.getByRole("textbox", { name: "Search agents" }).fill("supp");
     assert.equal(await page.getByRole("link", { name: "Finance Assistant", exact: true }).count(), 0);
@@ -341,29 +340,69 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
 
-    // ---- Add user: always a new user; existing users are edited instead ---------------------
-    const addUser = async () => {
+    // ---- Add user: pick someone with an account, or create one for a new email -------------
+    const who = () => drawer().getByRole("textbox", { name: "Name or email" });
+    /** Add user → a new email → Create an account: the new-account form. */
+    const addUser = async (email = "someone.new@addusers.local") => {
       await page.getByRole("button", { name: "Add user", exact: true }).click();
-      await drawer().getByRole("textbox", { name: "Name" }).waitFor();
+      await who().fill(email);
+      await drawer().getByRole("button", { name: /^Create an account/ }).click();
+      await drawer().getByRole("textbox", { name: "Name", exact: true }).waitFor();
     };
     const newAccount = async ({ name, email, password }) => {
-      await drawer().getByRole("textbox", { name: "Name" }).fill(name);
+      await drawer().getByRole("textbox", { name: "Name", exact: true }).fill(name);
       await drawer().getByRole("textbox", { name: "Email address" }).fill(email);
       if (password === "generate") await drawer().getByRole("button", { name: "Generate" }).click();
       else if (password) await page.locator("#new-account-password").fill(password);
       return password ? page.locator("#new-account-password").inputValue() : "";
     };
 
-    step("Add user creates a new user only: no account picker or tabs, and no service identities");
-    await addUser();
-    assert.equal(await drawer().getByRole("radiogroup").count(), 0, "no existing/new choice");
-    assert.equal(await drawer().getByRole("textbox", { name: "Account" }).count(), 0, "no account picker");
-    assert.equal(await drawer().getByText(/workflow:|Service identity/).count(), 0, "nothing suggests a workflow identity");
+    step("Add user finds people with an account and opens their access here; a new email creates one");
+    await page.getByRole("button", { name: "Add user", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "pick-person");
+    // Never a workflow's service identity.
+    await who().fill("monthly");
+    await drawer().getByText("No one matches “monthly”.", { exact: false }).waitFor();
+    // Someone who already has access here: their editor, as it is.
+    await who().fill("priya");
+    await drawer().getByRole("button", { name: /Priya Natarajan/ }).getByText("Has access").waitFor();
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-pick.png"), fullPage: true });
+    await drawer().getByRole("button", { name: /Priya Natarajan/ }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Priya Natarajan").first().waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
+    await drawer().getByRole("button", { name: "Back" }).click();
+    assert.equal(await who().inputValue(), "priya", "Back keeps the search");
+    // Someone with an account but no access here: nothing is ticked until chosen.
+    await who().fill("mei lin");
+    await drawer().getByRole("button", { name: /Mei Lin Chen/ }).click();
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("Mei Lin Chen").first().waitFor();
+    await drawer().getByText("No access to Finance Assistant yet.", { exact: false }).waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), false);
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Use this agent").waitFor();
+    assert.equal(state.mutations.length, 0, "review writes nothing");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    // A new email offers a new account, already filled in.
+    await addUser("new.colleague@addusers.local");
+    assert.equal(await drawer().getByRole("textbox", { name: "Email address" }).inputValue(), "new.colleague@addusers.local");
     assert.equal(
       await drawer().getByRole("checkbox", { name: "Google sign-in only" }).isDisabled(),
       true,
       "Google sign-in only is offered beside the password, disabled until it is set up",
     );
+    // An email that already has an account says so in place and opens their access.
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("priya.natarajan@example.org");
+    await drawer().getByText("priya.natarajan@example.org already has an account.").waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
+    await drawer().getByRole("button", { name: "Edit their access" }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Priya Natarajan").first().waitFor();
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
@@ -418,7 +457,10 @@ function step(name) {
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "only the refused create; nothing else is written");
     assert.ok(!state.accountsCreated.includes("sam.okoro@addusers.local"));
     await drawer().getByRole("button", { name: "Edit their access" }).click();
-    await drawer().getByText("Their current access is shown with your choices added", { exact: false }).waitFor();
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("sam.okoro@addusers.local").first().waitFor();
+    assert.equal(await drawer().getByText("Not signed up yet").count(), 0, "no account state is guessed");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), true, "the choices made are kept");
     assert.equal(state.mutations.length, 1, "switching to their editor writes nothing");
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await answer("Discard");
@@ -536,6 +578,24 @@ function step(name) {
     await tools.focus();
     await page.keyboard.press("Enter");
     assert.equal(await tools.getAttribute("aria-expanded"), "true");
+    // Agent tools sit under sub-headings inside Hubzoid tools: unsectioned rows
+    // first (whatever the catalogue order), then Workflows, then Access control.
+    const toolsPanel = await controlled(tools);
+    assert.deepEqual(
+      await toolsPanel.getByRole("heading", { level: 4 }).allTextContents(),
+      ["Workflows", "Access control"],
+      "Hubzoid tools shows its two sub-sections in order",
+    );
+    assert.deepEqual(
+      await toolsPanel.locator(".capability").evaluateAll((nodes) => nodes.map((n) => n.dataset.permission)),
+      ["curator", "jev", "email_me", "workflows_view", "workflows_manage", "access_tools"],
+    );
+    const workflowsSection = toolsPanel.getByRole("group", { name: "Workflows", exact: true });
+    await workflowsSection.getByRole("checkbox", { name: /See workflows and runs/ }).waitFor();
+    await workflowsSection.getByRole("checkbox", { name: /Run and control workflows/ }).waitFor();
+    await toolsPanel.getByRole("group", { name: "Access control", exact: true })
+      .getByRole("checkbox", { name: /Manage access from chat/ }).waitFor();
+    await drawer().screenshot({ path: path.join(shots, "hubzoid-portal-capability-sections.png") });
     const jevBox = drawer().getByRole("checkbox", { name: /Ask Jev for decisions/ });
     assert.equal(await jevBox.isDisabled(), false, "an unconfigured capability can still be granted");
     await drawer().getByText("Jev key missing", { exact: true }).waitFor();
@@ -619,12 +679,12 @@ function step(name) {
     step("A blocked user can't be given access; the reason shows before saving");
     await go("/agents/finance/access?edit=tomas.herrera@example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("One selected capability can’t be granted", { exact: false }).waitFor();
-    await drawer().getByText("Blocked by an administrator", { exact: false }).first().waitFor();
+    await drawer().getByText("This person is blocked by an administrator").waitFor();
+    // Nothing can be ticked, so there is nothing to review.
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
-    await answer("Discard");
     await drawer().waitFor({ state: "hidden" });
     // The server refuses it too, for any caller.
     await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
@@ -787,15 +847,6 @@ function step(name) {
     state.mutations.length = 0;
     await go("/agents/finance/access");
 
-    // ---- legacy (un-migrated) hub is read-only in the dashboard -------------------------
-    step("A legacy agent shows access read-only (managed in the chat app), with edits disabled");
-    await go("/agents/itops/access"); // itops is not authoritative in the fixture
-    await page.getByText("access is managed in the chat app", { exact: false }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add user" }).isDisabled(), true,
-      "legacy hub must not offer Add user");
-    assert.equal(await page.getByRole("switch").count(), 0);
-    assert.equal(state.mutations.length, 0);
-
     // ---- runs & schedules ---------------------------------------------------------------
     step("Runs & schedules explains workflow state, opens runs and run details with steps");
     await go("/agents/finance/runs");
@@ -803,7 +854,8 @@ function step(name) {
     const close = page.getByRole("row").filter({ hasText: "monthly_close" });
     await close.getByText("Scheduled", { exact: true }).waitFor();
     await close.getByText("Asia/Kolkata").waitFor();
-    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByText("No schedule; runs only when started explicitly.").waitFor();
+    // Explanations sit behind a "?" help button, named by its text.
+    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByRole("button", { name: "No schedule; runs only when started explicitly." }).waitFor();
     await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByText("Manual", { exact: true }).waitFor();
     await close.getByRole("link", { name: "View runs" }).click();
     await page.getByRole("heading", { name: /Runs of monthly_close/ }).waitFor();
@@ -823,12 +875,12 @@ function step(name) {
     await page.getByText("Scheduler not running", { exact: false }).first().waitFor();
     await page.getByText("2 scheduled runs missed while the scheduler was down", { exact: false }).waitFor();
     await go("/agents/support/runs/ticket_digest");
-    await page.getByText("No recorded runs of ticket_digest yet.").waitFor();
+    await page.getByText("No runs yet", { exact: true }).waitFor();
 
     // ---- cross-agent runs ----------------------------------------------------------------
     step("Runs across agents: cross-agent list, ordered, filtered before paging, URL-persisted");
     await go("/runs");
-    await page.getByRole("heading", { name: "Runs across your agents" }).waitFor();
+    await page.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
     // Runs from more than one agent are shown together, each labelled by agent.
     await page.getByRole("row").filter({ hasText: "mc-2026-09-01" }).getByText("Finance Assistant").waitFor();
     await page.getByRole("row").filter({ hasText: "td-2026-09-15" }).getByText("Support Assistant").waitFor();
@@ -910,7 +962,7 @@ function step(name) {
 
     // (a) Fires exactly once per interval (the in-flight guard prevents overlap).
     await cpage.goto(`${ORIGIN}/portal/#/runs?auto=1`);
-    await cpage.getByRole("heading", { name: "Runs across your agents" }).waitFor();
+    await cpage.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
     await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
     let n = runsGets;
     let resP = cpage.waitForResponse((x) => x.url().includes("/portal/api/runs"));
@@ -980,6 +1032,20 @@ function step(name) {
     await change.getByText("allowed", { exact: true }).waitFor();
     // The saves made earlier in this run are recorded with the viewer as actor.
     await page.getByRole("row").filter({ hasText: "Sam Whitfield" }).filter({ hasText: "Run payroll" }).first().waitFor();
+    // A run control from an agent tool says who, which workflow, where from, and the run.
+    const started = page.getByRole("row").filter({ hasText: "started the monthly_close workflow" });
+    await started.getByText("Aisha Rahman").waitFor();
+    assert.match((await started.locator(".sentence").textContent()).replace(/\s+/g, " "),
+      /Aisha Rahman started the monthly_close workflow in Finance Assistant over MCP\s*Run mc-2026-10-01/);
+    await page.getByRole("combobox", { name: "Action" }).click();
+    await page.locator(".ant-select-item-option").filter({ hasText: "Started a workflow" }).click();
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll("tbody tr.ant-table-row")];
+      return rows.length > 0 && rows.every((tr) => (tr.textContent || "").includes("started"));
+    });
+    assert.ok((await hash()).includes("action=run_start"), await hash());
+    await go("/agents/finance/activity");
+    await page.getByText("allowed").first().waitFor();
     // antd Segmented hides the radio input; click the visible label.
     await page.locator(".ant-segmented-item-label", { hasText: "Tool decisions" }).click();
     const denied = page.getByRole("row").filter({ hasText: "payroll_run" });
@@ -1154,7 +1220,9 @@ function step(name) {
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Support Assistant" }).click();
     assert.ok((await hash()).startsWith("#/agents/support/access"), await hash());
     await drawer().getByText("Priya Natarajan").first().waitFor();
-    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
+    await drawer().getByText("No access to Support Assistant yet.", { exact: false }).waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), false);
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByRole("button", { name: "Save change" }).click();
     await saved();
@@ -1217,7 +1285,7 @@ function step(name) {
     await go("/agents/payroll-bot/access");
     await page.getByText("Agent not found").waitFor();
     await go("/agents/finance/settings");
-    await page.getByText("has Access, Runs & schedules and Activity").waitFor();
+    await page.getByText("has Access, Connectors, Runs & schedules, Evals and Activity").waitFor();
     await go("/agents/finance/runs");
     // Target the agent's own Activity tab, not the org-level sidebar link.
     await page.locator(".ant-tabs").getByRole("link", { name: "Activity", exact: true }).click();
@@ -1281,6 +1349,13 @@ function step(name) {
     await expand("Restricted tools");
     assert.equal(await drawer().getByRole("checkbox", { name: /Run payroll/ }).isDisabled(), true);
     await drawer().locator('[data-permission="payroll"]').getByText("Outside your access").waitFor();
+    // Manage access from chat is for organization administrators to give.
+    await expand("Hubzoid tools");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage access from chat/ }).isDisabled(), true);
+    await drawer().getByRole("group", { name: "Access control", exact: true })
+      .locator('[data-permission="access_tools"]').getByText("Admins only", { exact: true }).waitFor();
+    await drawer().locator('[data-permission="workflows_manage"]').getByText("Outside your access").waitFor();
+    await group("Hubzoid tools").click(); // closed again, so "Manage access" below is unambiguous
     await expand("Administration");
     assert.equal(await drawer().getByRole("checkbox", { name: /Manage access/ }).isDisabled(), true, "never an administrator");
     // Refused by the server as well, whatever the page allows.
@@ -1307,6 +1382,14 @@ function step(name) {
     await drawer().locator(".capability-row").filter({ hasText: "Run payroll" }).getByText("Outside your access").waitFor();
     await group("Restricted tools").click();
     assert.equal(await headerText("Restricted tools"), "Restricted tools", "nothing selected yet");
+    // The same sub-sections appear when creating an account.
+    await expand("Hubzoid tools");
+    const newTools = await controlled(group("Hubzoid tools"));
+    assert.deepEqual(await newTools.getByRole("heading", { level: 4 }).allTextContents(), ["Workflows", "Access control"]);
+    await newTools.getByRole("group", { name: "Workflows", exact: true }).getByRole("checkbox", { name: /See workflows and runs/ }).waitFor();
+    await newTools.getByRole("group", { name: "Access control", exact: true })
+      .locator(".capability-row").filter({ hasText: "Manage access from chat" }).getByText("Admins only").waitFor();
+    await group("Hubzoid tools").click();
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
     await drawer().getByRole("textbox", { name: "Email address" }).fill("new.person@addusers.local");
     await drawer().getByRole("textbox", { name: "Name" }).fill("New Person");
@@ -1416,6 +1499,29 @@ function step(name) {
     await tpage.locator(`[id="${await thelp.getAttribute("aria-controls")}"]`).getByText("View accounting entries and balances.").waitFor();
     await touchCtx.close();
     await page.setViewportSize({ width: 1440, height: 950 });
+
+    // ---- sign out --------------------------------------------------------------------------
+    step("Sign out ends Open WebUI's session in Open WebUI mode, the Hubzoid web app's in the default mode");
+    const signOuts = [];
+    await context.route(`${ORIGIN}/api/v1/auths/signout`, (route) => {
+      signOuts.push(`openwebui ${route.request().method()}`);
+      return route.fulfill({ json: { status: true, redirect_url: "/auth" } });
+    });
+    await context.route(`${ORIGIN}/api/auth/logout`, (route) => {
+      signOuts.push(`hubzoid ${route.request().method()}`);
+      return route.fulfill({ status: 204 });
+    });
+    await context.route(`${ORIGIN}/auth`, (route) => route.fulfill({ body: "<title>Sign in</title>", contentType: "text/html" }));
+    await go("/people");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL(`${ORIGIN}/auth`);
+    const legacySignIn = state.signIn;
+    state.signIn = { ...legacySignIn, links: true }; // /me in the default mode: Hubzoid accounts
+    await go("/people");
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL(`${ORIGIN}/auth`);
+    assert.deepEqual(signOuts, ["openwebui POST", "hubzoid POST"]);
+    state.signIn = legacySignIn;
 
     // ---- ordinary user -----------------------------------------------------------------------
     step("An ordinary user is turned away without seeing any administration UI");

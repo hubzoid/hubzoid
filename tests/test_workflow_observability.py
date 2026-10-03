@@ -208,6 +208,9 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
     monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
     monkeypatch.setattr(boot.Dispatcher, "prepare", lambda self: 1)
     monkeypatch.setattr(boot.Dispatcher, "start_loop", lambda self: None)
+    ready_records = []
+    monkeypatch.setattr(runtime, "_OWNER", SimpleNamespace(heartbeat=ready_records.append))
+    monkeypatch.setattr(runtime, "ready_record", lambda: {"version": "fixture"})
     monkeypatch.setattr(
         runtime,
         "_REGISTRY",
@@ -221,3 +224,20 @@ def test_downtime_at_start_is_logged_by_date(monkeypatch, tmp_path):
     down = health["downtime"]
     assert down["missed"] in (10, 11)  # 11 only if a minute turns during the call
     assert health["missed_log"] == [[down["until"], down["missed"]]]
+    assert ready_records and all(record == {"version": "fixture"} for record in ready_records)
+
+
+def test_structured_results_and_steps_preserve_json_without_revealing_private_data():
+    import json
+    value = {'title': 'Weekly report', 'artifact': {
+        'id': 'a12345678901234567', 'url': '/portal/artifacts/a12345678901234567'},
+        'ready': True, 'notes': None}
+    run = SimpleNamespace(created_at=1000, dequeued_at=1000, completed_at=1100,
+                          name='weekly', workflow_id='run-1', status='SUCCESS',
+                          output=value, error=None)
+    assert json.loads(observe._run_row('team', run, visible=True)['output']) == value
+    private = observe._run_row('team', run, visible=False)
+    assert private['output'] is None and private['redacted']
+    step = {'function_name': 'publish_report', 'output': value}
+    assert json.loads(observe._step_row(step, True)['output']) == value
+    assert observe._step_row(step, False)['output'] is None
