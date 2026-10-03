@@ -436,3 +436,13 @@ def test_localhost_addresses_get_no_account_or_link(hub, owner):
     with pytest.raises(Denied) as exc:
         service.create_account(actor(), email="x@app.localhost", name="X", grants=[])
     assert exc.value.code == "rejected"
+
+
+def test_a_sign_in_link_opens_at_the_site_root():
+    """In a gateway the hub's public URL ends in /b/<hub>; the sign-in pages
+    are served at the site root, so the link drops that path."""
+    from hubzoid.auth import links
+
+    assert links.url("t1", "https://hub.example.org/b/finance") == "https://hub.example.org/auth/set-password?token=t1"
+    assert links.url("t1", "http://127.0.0.1:3300/") == "http://127.0.0.1:3300/auth/set-password?token=t1"
+    assert links.url("t1") == "/auth/set-password?token=t1"

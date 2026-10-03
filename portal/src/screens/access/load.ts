@@ -1,5 +1,4 @@
 import { request, query, type Access, type AccessRow, type Person } from "../../api";
-import { USE_HUB } from "../../lib/format";
 import { draftFor, emptyRow, type Draft } from "./plan";
 
 /**
@@ -28,9 +27,7 @@ export async function loadAccessRow(hubKey: string, subject: string, known?: Per
   };
 }
 
-/** The editor for one person: their access here, or Use this agent to start. */
+/** The editor for one person, starting from exactly what they hold here. */
 export function editDraft(row: AccessRow, search?: string): Draft {
-  const base = draftFor(row);
-  const selected = row.effective.includes(USE_HUB) || row.perms.length ? base.selected : [USE_HUB];
-  return { ...base, selected, search };
+  return { ...draftFor(row), search };
 }

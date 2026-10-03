@@ -41,9 +41,14 @@ def lifetime_seconds() -> int:
 
 
 def url(token: str, base: str = "") -> str:
-    """The link a person opens. ``base`` is the public origin, or '' for a
-    same-origin path."""
-    return f"{base.rstrip('/')}{PATH}?token={token}"
+    """The link a person opens. ``base`` is the public URL, or '' for a
+    same-origin path. Only its origin is used: the sign-in pages live at the
+    site root, also when a gateway gives the hub a ``/b/<hub>`` public URL."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(base.strip())
+    origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else base.rstrip("/")
+    return f"{origin}{PATH}?token={token}"
 
 
 def create(hub_dir: Path, user_id: str, *, purpose: str = "set_password",

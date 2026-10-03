@@ -373,11 +373,15 @@ function step(name) {
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
     await drawer().getByRole("button", { name: "Back" }).click();
     assert.equal(await who().inputValue(), "priya", "Back keeps the search");
-    // Someone with an account but no access here: Use this agent to start.
+    // Someone with an account but no access here: nothing is ticked until chosen.
     await who().fill("mei lin");
     await drawer().getByRole("button", { name: /Mei Lin Chen/ }).click();
     await page.getByRole("dialog", { name: "Give access" }).waitFor();
     await drawer().getByText("Mei Lin Chen").first().waitFor();
+    await drawer().getByText("No access to Finance Assistant yet.", { exact: false }).waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), false);
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByRole("list", { name: "Adding" }).getByText("Use this agent").waitFor();
     assert.equal(state.mutations.length, 0, "review writes nothing");
@@ -675,12 +679,12 @@ function step(name) {
     step("A blocked user can't be given access; the reason shows before saving");
     await go("/agents/finance/access?edit=tomas.herrera@example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    await drawer().getByRole("button", { name: "Review changes" }).click();
-    await drawer().getByText("One selected capability can’t be granted", { exact: false }).waitFor();
-    await drawer().getByText("Blocked by an administrator", { exact: false }).first().waitFor();
+    await drawer().getByText("This person is blocked by an administrator").waitFor();
+    // Nothing can be ticked, so there is nothing to review.
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
-    await answer("Discard");
     await drawer().waitFor({ state: "hidden" });
     // The server refuses it too, for any caller.
     await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
@@ -1215,7 +1219,9 @@ function step(name) {
     await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Support Assistant" }).click();
     assert.ok((await hash()).startsWith("#/agents/support/access"), await hash());
     await drawer().getByText("Priya Natarajan").first().waitFor();
-    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
+    await drawer().getByText("No access to Support Assistant yet.", { exact: false }).waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), false);
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByRole("button", { name: "Save change" }).click();
     await saved();

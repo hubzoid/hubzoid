@@ -803,7 +803,12 @@ export function AccessDrawer({
                   />
                 </>
               ) : (
-                <Identity row={draft.row} name={name} />
+                <>
+                  <Identity row={draft.row} name={name} />
+                  {!draft.row.perms.length && !draft.row.inherited.length && !access.public && (
+                    <Text type="secondary">No access to {hub.name} yet. Choose what they can do.</Text>
+                  )}
+                </>
               )}
 
               {draft.row.suspended && (
