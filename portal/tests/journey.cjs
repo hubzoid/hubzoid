@@ -340,29 +340,65 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
 
-    // ---- Add user: always a new user; existing users are edited instead ---------------------
-    const addUser = async () => {
+    // ---- Add user: pick someone with an account, or create one for a new email -------------
+    const who = () => drawer().getByRole("textbox", { name: "Name or email" });
+    /** Add user → a new email → Create an account: the new-account form. */
+    const addUser = async (email = "someone.new@addusers.local") => {
       await page.getByRole("button", { name: "Add user", exact: true }).click();
-      await drawer().getByRole("textbox", { name: "Name" }).waitFor();
+      await who().fill(email);
+      await drawer().getByRole("button", { name: /^Create an account/ }).click();
+      await drawer().getByRole("textbox", { name: "Name", exact: true }).waitFor();
     };
     const newAccount = async ({ name, email, password }) => {
-      await drawer().getByRole("textbox", { name: "Name" }).fill(name);
+      await drawer().getByRole("textbox", { name: "Name", exact: true }).fill(name);
       await drawer().getByRole("textbox", { name: "Email address" }).fill(email);
       if (password === "generate") await drawer().getByRole("button", { name: "Generate" }).click();
       else if (password) await page.locator("#new-account-password").fill(password);
       return password ? page.locator("#new-account-password").inputValue() : "";
     };
 
-    step("Add user creates a new user only: no account picker or tabs, and no service identities");
-    await addUser();
-    assert.equal(await drawer().getByRole("radiogroup").count(), 0, "no existing/new choice");
-    assert.equal(await drawer().getByRole("textbox", { name: "Account" }).count(), 0, "no account picker");
-    assert.equal(await drawer().getByText(/workflow:|Service identity/).count(), 0, "nothing suggests a workflow identity");
+    step("Add user finds people with an account and opens their access here; a new email creates one");
+    await page.getByRole("button", { name: "Add user", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "pick-person");
+    // Never a workflow's service identity.
+    await who().fill("monthly");
+    await drawer().getByText("No one matches “monthly”.", { exact: false }).waitFor();
+    // Someone who already has access here: their editor, as it is.
+    await who().fill("priya");
+    await drawer().getByRole("button", { name: /Priya Natarajan/ }).getByText("Has access").waitFor();
+    await page.screenshot({ path: path.join(shots, "hubzoid-portal-add-user-pick.png"), fullPage: true });
+    await drawer().getByRole("button", { name: /Priya Natarajan/ }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Priya Natarajan").first().waitFor();
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isChecked(), true);
+    await drawer().getByRole("button", { name: "Back" }).click();
+    assert.equal(await who().inputValue(), "priya", "Back keeps the search");
+    // Someone with an account but no access here: Use this agent to start.
+    await who().fill("mei lin");
+    await drawer().getByRole("button", { name: /Mei Lin Chen/ }).click();
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("Mei Lin Chen").first().waitFor();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("list", { name: "Adding" }).getByText("Use this agent").waitFor();
+    assert.equal(state.mutations.length, 0, "review writes nothing");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await answer("Discard");
+    await drawer().waitFor({ state: "hidden" });
+    // A new email offers a new account, already filled in.
+    await addUser("new.colleague@addusers.local");
+    assert.equal(await drawer().getByRole("textbox", { name: "Email address" }).inputValue(), "new.colleague@addusers.local");
     assert.equal(
       await drawer().getByRole("checkbox", { name: "Google sign-in only" }).isDisabled(),
       true,
       "Google sign-in only is offered beside the password, disabled until it is set up",
     );
+    // An email that already has an account says so in place and opens their access.
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("priya.natarajan@example.org");
+    await drawer().getByText("priya.natarajan@example.org already has an account.").waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
+    await drawer().getByRole("button", { name: "Edit their access" }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Priya Natarajan").first().waitFor();
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await drawer().waitFor({ state: "hidden" });
     assert.equal(state.mutations.length, 0);
@@ -417,7 +453,10 @@ function step(name) {
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "only the refused create; nothing else is written");
     assert.ok(!state.accountsCreated.includes("sam.okoro@addusers.local"));
     await drawer().getByRole("button", { name: "Edit their access" }).click();
-    await drawer().getByText("Their current access is shown with your choices added", { exact: false }).waitFor();
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("sam.okoro@addusers.local").first().waitFor();
+    assert.equal(await drawer().getByText("Not signed up yet").count(), 0, "no account state is guessed");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), true, "the choices made are kept");
     assert.equal(state.mutations.length, 1, "switching to their editor writes nothing");
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await answer("Discard");

@@ -18,7 +18,6 @@ import {
   type AccessRow,
   type Hub,
   type Me,
-  type Person,
 } from "../../api";
 import { errorText, useData } from "../../hooks/useData";
 import {
@@ -29,8 +28,9 @@ import {
 } from "../../components/common";
 import { useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
-import { draftFor, emptyRow, orderCapabilities, type Draft } from "./plan";
+import { draftFor, orderCapabilities, pickDraft, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
+import { editDraft, loadAccessRow } from "./load";
 import { LegacyServiceTag } from "./AccessParts";
 
 const { Text, Title, Paragraph } = Typography;
@@ -60,26 +60,6 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const announce = (text: string) => setNotice((prev) => ({ text, n: prev.n + 1 }));
   const [removingEveryone, setRemovingEveryone] = useState(false);
 
-  /** The access row of a user with no access to this agent yet: who they are
-   *  and their account state (a blocked user shows as blocked before saving). */
-  async function personRow(subject: string): Promise<AccessRow> {
-    try {
-      const res = await request<{ people: Person[] }>("/people" + query({ q: subject, limit: 20 }));
-      const p = res.people.find((x) => x.subject === subject);
-      if (p)
-        return {
-          ...emptyRow(subject),
-          display: p.display ?? "",
-          status: p.status,
-          suspended: p.suspended,
-          account_unavailable: p.account_unavailable,
-        };
-    } catch {
-      // Unknown here: the server re-checks the account when saving.
-    }
-    return emptyRow(subject);
-  }
-
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
   // open that person's editor directly instead of the whole access list.
   const [q] = useHashQuery();
@@ -90,24 +70,9 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     if (!edit || draft || openedEdit.current === token) return;
     openedEdit.current = token;
     let cancelled = false;
-    void (async () => {
-      try {
-        const res = await request<Access>(
-          "/access" + query({ hub: hub.key, q: edit, limit: 200 }),
-        );
-        if (cancelled) return;
-        const row = res.rows.find((r) => r.subject === edit);
-        if (row) {
-          setDraft(draftFor(row));
-          return;
-        }
-        // A user with no access here yet: edit them, starting with entry.
-        const person = await personRow(edit);
-        if (!cancelled) setDraft({ ...draftFor(person), selected: [USE_HUB] });
-      } catch {
-        if (!cancelled) setDraft({ ...draftFor(emptyRow(edit)), selected: [USE_HUB] });
-      }
-    })();
+    void loadAccessRow(hub.key, edit).then((row) => {
+      if (!cancelled) setDraft(editDraft(row));
+    });
     return () => {
       cancelled = true;
     };
@@ -247,7 +212,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
             type="primary"
             icon={<Plus size={16} />}
             disabled={locked}
-            onClick={() => setDraft(draftFor())}
+            onClick={() => setDraft(pickDraft())}
           >
             Add user
           </Button>
@@ -312,7 +277,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
               }
             >
               {!search && (
-                <Button type="primary" disabled={locked} onClick={() => setDraft(draftFor())}>
+                <Button type="primary" disabled={locked} onClick={() => setDraft(pickDraft())}>
                   Add the first user
                 </Button>
               )}

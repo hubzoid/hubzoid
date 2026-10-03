@@ -58,6 +58,10 @@ upgrade requirements and its known limits.
 - The first administrator can come from `HUBZOID_ADMIN_EMAIL` and
   `HUBZOID_ADMIN_PASSWORD` on a deployment with no accounts.
 - Sign-in events appear in the Console's Activity.
+- An agent's **Add user** starts with one search: pick someone who already has
+  an account to give or edit their access in that agent (their current access
+  is filled in), or enter a new email to create an account. An email that
+  already has an account is caught as you type, with a link to their access.
 
 ### Chat backend
 - Runtimes emit typed run events (text, tool calls and results, reasoning,

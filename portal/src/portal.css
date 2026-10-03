@@ -912,3 +912,64 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 .eval-score-lists { display: grid; gap: 4px; }
 .eval-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
 .eval-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* Add user: choose who (an existing person, or a new email). */
+.pick-person {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line, #e7e5e0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pick-list li + li {
+  border-top: 1px solid var(--line, #e7e5e0);
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pick-row:hover,
+.pick-row:focus-visible {
+  background: rgba(127, 127, 127, 0.08);
+  outline: none;
+}
+.pick-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent, #b4451f);
+}
+.pick-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.pick-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px dashed currentColor;
+  opacity: 0.7;
+}
+.inline-link.ant-btn {
+  padding: 0;
+  height: auto;
+  font-size: inherit;
+}
