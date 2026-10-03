@@ -486,6 +486,11 @@ def _flatten(values, prefix=""):
 async def _stop(proc):
     if proc.returncode is not None:
         return
+    # killpg(1) means kill(-1): every process this user owns.
+    if type(proc.pid) is not int or proc.pid <= 1:
+        proc.kill()
+        await proc.wait()
+        return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
         await asyncio.wait_for(proc.wait(), timeout=5)

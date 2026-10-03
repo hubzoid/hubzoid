@@ -108,38 +108,53 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
     runs = "\n".join(s.get("run", "") for job in config["jobs"].values() for s in job["steps"])
     assert "pip install -e '.[dev]'" in runs and "openwebui" not in runs  # the core install
     assert "npm run lint" in runs
-    # Pull requests run the fast default; pushes to main add the slow tests.
-    steps = {s.get("if"): s.get("run", "") for s in config["jobs"]["unit"]["steps"] if "pytest" in s.get("run", "")}
-    assert steps["github.event_name == 'pull_request'"].strip() == "pytest -q --no-header"
-    assert "not e2e and not e2e_llm and not e2e_ui and not e2e_browser" in steps["github.event_name != 'pull_request'"]
+    # Only the fast default, spread over two machines: no -m override.
+    unit = config["jobs"]["unit"]
+    assert unit["strategy"]["matrix"]["group"] == ["1", "2"]
+    pytest_runs = [s["run"] for s in unit["steps"] if "pytest" in s.get("run", "")]
+    assert pytest_runs == ["pytest -q --no-header --splits 2 --group ${{ matrix.group }}"]
     assert "playwright install" not in runs and "docker" not in runs
     assert config["jobs"]["web-lint"]["env"]["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
 
 
 def test_release_validation_covers_legacy_mode_and_a_core_only_install():
-    steps = {s.get("name"): s.get("run", "") for s in WORKFLOW["jobs"]["validate"]["steps"]}
-    assert ".[dev,openwebui]" in steps["Full test suite (Open WebUI mode included)"]
-    clean = steps["Clean install of the wheel works and serves the Console"]
+    jobs = WORKFLOW["jobs"]
+    suite = next(s["run"] for s in jobs["tests"]["steps"] if "pytest" in s.get("run", ""))
+    install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
+    assert ".[dev,openwebui]" in install and '-m "not heavy"' in suite and "--splits 2" in suite
+    assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
+    clean = next(s["run"] for s in jobs["package"]["steps"]
+                 if s.get("name") == "Clean install of the wheel works and serves the Console")
     assert "pip install dist/*.whl" in clean and 'import open_webui"' in clean
-    smoke = next(s["run"] for s in WORKFLOW["jobs"]["image"]["steps"] if s.get("name") == "Check the image starts")
+    smoke = next(s["run"] for s in jobs["image"]["steps"] if s.get("name") == "Check the image starts")
     assert 'test "$refused" = 2' in smoke and "HUBZOID_AUTH=true" in smoke
     assert "/healthz" in smoke and 'import open_webui"' in smoke
 
 
 def test_all_release_checks_gate_publishing_and_publish_jobs_retry_independently():
     jobs = WORKFLOW["jobs"]
-    assert set(jobs["publish-image"]["needs"]) == {"validate", "image"}
+    assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image"}
     assert jobs["publish-pypi"]["needs"] == "publish-image"
     assert jobs["github-release"]["needs"] == "publish-pypi"
     for name in ("publish-image", "publish-pypi", "github-release"):
         assert "if" not in jobs[name]  # retain GitHub's dependency-success gate
-    checks = "\n".join(s.get("run", "") for s in jobs["validate"]["steps"])
+    checks = "\n".join(s.get("run", "") for name in ("tests", "console", "package")
+                       for s in jobs[name]["steps"])
     for required in ("pytest", "npm run lint", "npm test", "verify_install.py"):
         assert required in checks
     assert jobs["publish-pypi"]["environment"]["name"] == "pypi"
     assert jobs["publish-pypi"]["permissions"]["id-token"] == "write"
     assert all("docker/" not in s.get("uses", "")
                for name in ("publish-pypi", "github-release") for s in jobs[name]["steps"])
+
+
+def test_every_test_has_a_recorded_duration_for_splitting():
+    """CI spreads tests over machines by .test_durations; a test missing from
+    it still runs, so this only guards the file's shape."""
+    import json
+    durations = json.loads((ROOT / ".test_durations").read_text())
+    assert durations and all(k.startswith("tests/") and "::" in k for k in durations)
+    assert all(isinstance(v, (int, float)) and v >= 0 for v in durations.values())
 
 
 def test_both_native_architectures_are_smoke_tested_and_caches_reach_publisher():

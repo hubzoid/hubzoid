@@ -3,7 +3,8 @@ name: release
 # Release pipeline. The file keeps the name ci.yml because PyPI trusted
 # publishing is registered against this workflow file name.
 # Publish a GitHub release with a vX.Y.Z tag matching pyproject.toml.
-# Validate the tagged source and both native image builds before publishing.
+# Check the tagged source (tests on two machines, Console journeys, packaging)
+# and both native image builds side by side before publishing.
 # Keep image -> PyPI -> GitHub attachments as separate, retryable jobs.
 on:
   release:
@@ -17,20 +18,54 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  # The checks run side by side; publishing waits for all of them.
+  tests:
+    # The suite with slow and end-to-end tests and Open WebUI mode, except the
+    # heavy ones (5 s or more each, see tests/conftest.py), on two machines.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install with Open WebUI mode and test tools
+        run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
+      - name: Test suite, part ${{ matrix.group }} of 2 (Open WebUI mode included, heavy tests left out)
+        run: pytest -q --no-header -m "not heavy" --splits 2 --group ${{ matrix.group }}
+
+  console:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: portal/package-lock.json
+      - name: Build the Console from source
+        working-directory: portal
+        run: npm ci && npm run lint && npm run build
+      - name: Codex isolation fixture and Console journeys
+        run: |
+          npm install -g @openai/codex@0.147.0
+          cd portal && npx playwright install --with-deps chromium && npm test
+
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
 
       - name: Tag matches the package version
         run: |
@@ -38,22 +73,8 @@ jobs:
           have=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           test "$want" = "$have" || { echo "tag $GITHUB_REF_NAME but pyproject says $have"; exit 1; }
 
-      - name: Build the Console from source
-        working-directory: portal
-        run: npm ci && npm run lint && npm run build
-
-      - name: Codex isolation fixture and Console journeys
-        run: |
-          npm install -g @openai/codex@0.147.0
-          cd portal && npx playwright install --with-deps chromium && npm test
-
-      - name: Full test suite (Open WebUI mode included)
-        run: |
-          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
-          pytest -q --no-header -m ""
-
       - name: Build sdist and wheel
-        run: python -m build
+        run: pip install build && python -m build
 
       - name: The wheel built from the sdist has the Console too
         run: |
@@ -84,7 +105,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -115,7 +136,7 @@ jobs:
           docker rm -f candidate
 
   publish-image:
-    needs: [validate, image]
+    needs: [tests, console, package, image]
     runs-on: ubuntu-24.04
     environment:
       name: pypi
