@@ -405,6 +405,8 @@ def test_history_keeps_legacy_service_runs_private_and_reads_queued(hub, monkeyp
     monkeypatch.setattr(observe, "runs", lambda *a, **k: seen.update(k) or [])
     control.history(hub, viewer="ann@x.org", status="queued")
     assert seen["legacy_visible"] is False and seen["statuses"] == ["ENQUEUED"]
+    control.history(hub, viewer="ann@x.org", status="running")
+    assert seen["statuses"] == ["PENDING", "ENQUEUED", "DELAYED"]
     legacy = {"source": "legacy-service", "subject": "workflow:x"}
     assert observe.may_see_results(legacy, "ann@x.org") is True  # the Console's managers
     assert observe.may_see_results(legacy, "ann@x.org", legacy_visible=False) is False
@@ -423,3 +425,16 @@ def test_each_manual_start_is_a_new_run_even_within_a_second(hub, env, tmp_path)
     assert re.fullmatch(r"md:quick:manual-\d{8}T\d{6}-[0-9a-f]{6}@" + _app_name("alpha"), second["run_id"])
     assert [r["subject"] for r in _audit(tmp_path) if r["action"] == "run_start"] == [
         first["run_id"], second["run_id"]]
+
+
+def test_cancel_accepts_delayed_run(tmp_path, monkeypatch):
+    from hubzoid.workflows import control
+    from unittest.mock import Mock
+    monkeypatch.setattr(control.observe, 'runs', lambda *a, **k: [{'name':'report','id':'delayed-run','status':'DELAYED'}])
+    monkeypatch.setattr(control, '_engine_here', lambda *a: True)
+    monkeypatch.setattr(control, '_audit', lambda *a, **k: None)
+    import hubzoid.workflows.runtime as runtime
+    fake = Mock()
+    monkeypatch.setattr(runtime, '_DBOS', fake)
+    control.cancel(tmp_path, 'delayed-run', actor='admin@localhost', surface='cli')
+    fake.cancel_workflow.assert_called_once_with('delayed-run')

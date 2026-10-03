@@ -7,7 +7,7 @@
 # Build:
 #   docker build -t hubzoid .
 #
-# The legacy Open WebUI chat app (HUBZOID_UI=openwebui, this release only) adds
+# The Open WebUI chat app (HUBZOID_UI=openwebui) adds
 # Open WebUI, PyTorch (CPU build) and ffmpeg, several GB more:
 #   docker build --build-arg WITH_OPENWEBUI=true -t hubzoid:openwebui .
 #

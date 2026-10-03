@@ -53,7 +53,8 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/` | The installable Python package. |
 | `hubzoid/loaders/` | Walks a hub directory and loads markdown into objects. |
 | `hubzoid/tools/` | Pre-shipped tool factories. Each module exposes `make(ctx) -> list[FunctionTool]`. |
-| `hubzoid/templates/minimal/` | Default `hubzoid init` template. One worked example per file type, runnable immediately. |
+| `hubzoid/templates/operations/` | Default `hubzoid init` template. A runnable operations assistant with a stock-check example. |
+| `hubzoid/templates/minimal/` | Small runnable hub, selected with `--template minimal`. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |

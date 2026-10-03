@@ -110,8 +110,8 @@ provider. They are skipped automatically if no provider key is set.
 ## Runtime neutrality (important)
 
 Hubzoid runs hub folders through more than one backend (today: OpenAI Agents
-SDK, Claude Agent SDK via `MODEL=claude-local`). The same hub must produce
-the same observable surface — tool names, schemas, skills, knowledge,
+SDK, Claude Agent SDK via `MODEL=claude-local`, and Codex app-server). The same
+hub must produce the same observable surface — tool names, schemas, skills, knowledge,
 sub-agents — under any backend. Manual testing is done against one backend
 at a time; divergence creates bug-report magnets.
 
@@ -124,10 +124,10 @@ To keep the invariant:
   four exposed fields (`name`, `description`, `params_json_schema`,
   `on_invoke_tool`).
 - Runtime construction (`Agent(...)`, `ClaudeAgentOptions(...)`, runners,
-  `query(...)`) lives only in `factory.py`, `factory_claude.py`,
+  `query(...)`) lives only in `factory.py`, `factory_claude.py`, `factory_codex.py`,
   `runtime.py`, `server.py`, `cli.py`.
-- When adding a tool or loader, sanity-check both backends. New tools
-  should not rely on OpenAI-SDK-specific behavior the Claude adapter
+- When adding a tool or loader, sanity-check every supported backend. New tools
+  should not rely on OpenAI-SDK-specific behavior the other runtime adapters
   can't replicate.
 
 ## License

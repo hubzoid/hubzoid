@@ -29,8 +29,10 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import secrets
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -41,6 +43,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from .. import memory as memlib
+
+log = logging.getLogger(__name__)
 
 metadata = sa.MetaData()
 
@@ -194,6 +198,30 @@ def _message(row) -> dict:
     d["content"] = _loads(d.get("content"), [])
     d["usage"] = _loads(d.get("usage"), None)
     return d
+
+
+def remove_chat_files(hub_dir: Path, key: str) -> None:
+    """Delete the conversation's files folder (its ``store.chat_key``), only
+    ever inside the hub's chats folder."""
+    base = (Path(hub_dir) / memlib.CHATS_DIRNAME).resolve()
+    target = memlib.chat_root(Path(hub_dir), key)
+    if not target.exists():
+        return
+    resolved = target.resolve()
+    if (not base.is_relative_to(Path(hub_dir).resolve())
+            or resolved.parent != base or target.is_symlink()):
+        log.warning("chat: refused to delete %s (outside %s)", target, base)
+        return
+    shutil.rmtree(resolved, ignore_errors=True)
+
+
+def delete_owner_in(conn, owner_id: str) -> None:
+    """Remove native chat data in the account deletion transaction."""
+    owned = sa.select(conversations.c.id).where(conversations.c.owner_id == owner_id)
+    conn.execute(messages.delete().where(messages.c.conversation_id.in_(owned)))
+    conn.execute(shares.delete().where(sa.or_(shares.c.owner_id == owner_id,
+                                             shares.c.conversation_id.in_(owned))))
+    conn.execute(conversations.delete().where(conversations.c.owner_id == owner_id))
 
 
 class ConversationStore:
@@ -403,7 +431,14 @@ class ConversationStore:
 
     def get_share(self, share_id: str) -> dict | None:
         with self.engine.connect() as conn:
-            row = conn.execute(shares.select().where(shares.c.id == share_id)).first()
+            # A share whose conversation was deleted (including a racing late
+            # snapshot write) must never make the deleted history readable.
+            row = conn.execute(shares.select().where(
+                shares.c.id == share_id,
+                sa.exists(sa.select(conversations.c.id).where(
+                    conversations.c.id == shares.c.conversation_id,
+                    conversations.c.owner_id == shares.c.owner_id)),
+            )).first()
         if row is None:
             return None
         d = dict(row._mapping)

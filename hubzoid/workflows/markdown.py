@@ -270,7 +270,7 @@ def active_runs(task_name: str) -> list[str]:
     from dbos import DBOS
 
     return [w.workflow_id for w in DBOS.list_workflows(
-        workflow_id_prefix=run_prefix(task_name), status=["PENDING", "ENQUEUED"],
+        workflow_id_prefix=run_prefix(task_name), status=["PENDING", "ENQUEUED", "DELAYED"],
         load_input=False, load_output=False)]
 
 

@@ -351,9 +351,12 @@ class UserStore:
                          .values(last_login_at=time.time() if now is None else now))
 
     def delete(self, user_id: str) -> bool:
-        """Delete the account with its sessions, identities and links."""
+        """Delete the account, its sign-in data, conversations and shares atomically."""
         user_id = str(user_id)
+        from ..chat.store import delete_owner_in
+
         with self.engine.begin() as conn:
+            delete_owner_in(conn, user_id)
             conn.execute(sessions.delete().where(sessions.c.user_id == user_id))
             conn.execute(identities.delete().where(identities.c.user_id == user_id))
             conn.execute(links.delete().where(links.c.user_id == user_id))
@@ -509,9 +512,21 @@ def set_status(hub_dir: Path, user_id: str, status: str) -> bool:
 def delete(hub_dir: Path, user_id: str) -> bool:
     """Delete an account (``UserStore.delete``) and its personal connection
     tokens when the connections part is installed."""
-    done = store(hub_dir).delete(user_id)
+    from .. import deployment
+    from ..chat.store import conversations, chat_key, remove_chat_files
+
+    st = store(hub_dir)
+    with st.engine.connect() as conn:
+        chats = [dict(row._mapping) for row in conn.execute(
+            conversations.select().where(conversations.c.owner_id == str(user_id)))]
+    done = st.delete(user_id)
     if done:
         _drop_connector_tokens(Path(hub_dir), str(user_id))
+        for chat in chats:
+            try:
+                remove_chat_files(deployment.hub_path(Path(hub_dir), chat["hub"]), chat_key(chat))
+            except (OSError, ValueError, KeyError):
+                log.warning("auth: files of a deleted conversation could not be removed")
     return done
 
 

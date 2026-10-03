@@ -11,6 +11,7 @@ and the bridge's internal API stays off the public port."""
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import signal
 import socket
@@ -175,3 +176,100 @@ def test_the_manifest_and_key_describe_the_deployment(live):
         assert manifest["ui_mode"] == "hubzoid" and manifest["auth"] is False
         assert [h["slug"] for h in manifest["hubs"]] == ["sales", "support"]
         assert (gw / "secret.key").is_file()
+
+
+@pytest.mark.parametrize('journey', ['standalone-edge-exit', 'gateway-startup-stop'])
+def test_service_failure_and_startup_stop_release_owned_processes(tmp_path, journey):
+    """Exercise the real CLI and uvicorn children, without a provider call."""
+    ports = []
+    holders = []
+    for _ in range(3):
+        sock = socket.socket()
+        sock.bind(('127.0.0.1', 0))
+        holders.append(sock)
+        ports.append(sock.getsockname()[1])
+    for sock in holders:
+        sock.close()
+    edge, first, second = ports
+    hubs = [_hub(tmp_path, name, port) for name, port in [('one', first), ('two', second)]]
+    env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'LANG', 'TMPDIR', 'USER')}
+    env.update(PYTHONPATH=str(REPO), MODEL='hubzoid-test/scripted', HUBZOID_TEST_RUNTIME='1',
+               HUBZOID_AUTH='false', HUBZOID_DISABLE_SCHEDULE='true', MCP_SERVER='false')
+    # Hub .env wins over process defaults; use the scripted adapter explicitly.
+    for hub, port in zip(hubs, [first, second]):
+        (hub / '.env').write_text(f'MODEL=hubzoid-test/scripted\nBRIDGE_PORT={port}\n'
+                                  'HUBZOID_TEST_RUNTIME=1\nBRIDGE_API_KEYS=local-review-key\n')
+    marker = tmp_path / 'children.jsonl'
+    harness = '''import json, subprocess, sys, time
+from pathlib import Path
+from hubzoid import cli
+original = subprocess.Popen
+marker = Path(sys.argv[1])
+class Record(original):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        with marker.open('a') as f:
+            f.write(json.dumps({'pid': self.pid, 'command': a[0]}) + '\\n')
+subprocess.Popen = Record
+if sys.argv[2] == 'gateway-startup-stop':
+    # Hold readiness while a real headless bridge starts. SIGTERM must unwind
+    # this startup wait and clean up that bridge's process group.
+    cli._wait_for_bridge = lambda *a, **kw: time.sleep(120)
+sys.argv = [sys.argv[0], *sys.argv[3:]]
+cli.app()
+'''
+    args = (['run', str(hubs[0]), '--port', str(edge), '--bridge-port', str(first), '--no-open']
+            if journey == 'standalone-edge-exit' else
+            ['gateway', *map(str, hubs), '--port', str(edge), '--data-dir', str(tmp_path / 'gateway')])
+    log_path = tmp_path / 'process.log'
+    with log_path.open('w') as log:
+        proc = subprocess.Popen([sys.executable, '-c', harness, str(marker), journey, *args],
+                                cwd=tmp_path, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        children = []
+        try:
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                children = [json.loads(line) for line in marker.read_text().splitlines()] if marker.exists() else []
+                assert proc.poll() is None, log_path.read_text()[-4000:]
+                if journey == 'gateway-startup-stop' and children:
+                    try:
+                        if httpx.get(f'http://127.0.0.1:{first}/healthz', timeout=.5).status_code == 200:
+                            break
+                    except httpx.HTTPError:
+                        pass
+                if journey == 'standalone-edge-exit' and len(children) == 2:
+                    try:
+                        if httpx.get(f'http://127.0.0.1:{edge}/healthz', timeout=.5).status_code == 200:
+                            break
+                    except httpx.HTTPError:
+                        pass
+                time.sleep(.1)
+            else:
+                pytest.fail('Startup timed out: ' + log_path.read_text()[-4000:])
+            if journey == 'standalone-edge-exit':
+                os.kill(children[-1]['pid'], signal.SIGTERM)
+                expected = 1
+            else:
+                os.kill(proc.pid, signal.SIGTERM)
+                expected = 0
+            assert proc.wait(timeout=30) == expected, log_path.read_text()[-4000:]
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if all(_free(port) for port in ports):
+                    break
+                time.sleep(.1)
+            assert all(_free(port) for port in ports), log_path.read_text()[-4000:]
+            for child in children:
+                # No children in the owned groups, even if their leader exited.
+                with pytest.raises(ProcessLookupError):
+                    os.killpg(child['pid'], 0)
+        finally:
+            if proc.poll() is None:
+                os.kill(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=30)
+            for child in children:
+                try:
+                    os.killpg(child['pid'], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass

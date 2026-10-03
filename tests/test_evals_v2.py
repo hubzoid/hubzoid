@@ -122,3 +122,29 @@ def test_gateway_eval_reads_redirect_to_the_registered_slug(api, tmp_path):
                               follow_redirects=False)
     assert reply.status_code in (302, 307)
     assert reply.headers["location"].startswith("/b/ops-2/portal/api/evals/runs?")
+
+
+def test_historical_run_does_not_reveal_current_private_prompt(api):
+    hub = api.hub_dir
+    folder = hub / 'evals'
+    folder.mkdir()
+    (folder / 'case.md').write_text('Old shared question')
+    saved = save(hub, SuiteResult(hub='finance', cases=[CaseResult(name='case', response='Old shared answer')]))
+    (folder / 'case.md').write_text('---\nrun_as: dele@x.org\n---\nNEW PRIVATE PROMPT')
+    overview = api.as_(ROOT).get('/portal/api/evals', params={'hub':'finance'})
+    assert 'NEW PRIVATE PROMPT' not in overview.text
+    detail = api.as_(ROOT).get('/portal/api/evals/runs/' + saved.stem, params={'hub':'finance'})
+    assert detail.status_code == 200
+    assert 'NEW PRIVATE PROMPT' not in detail.text, detail.text
+
+
+def test_historical_prompt_is_a_saved_snapshot(api):
+    hub = api.hub_dir
+    (hub / 'evals').mkdir()
+    (hub / 'evals' / 'case.md').write_text('Changed definition')
+    saved = save(hub, SuiteResult(hub='finance', cases=[
+        CaseResult(name='case', prompt='Recorded question', response='Recorded answer')]))
+    response = api.as_(ROOT).get('/portal/api/evals/runs/' + saved.stem,
+                                params={'hub': 'finance'})
+    assert response.status_code == 200
+    assert response.json()['cases'][0]['prompt'] == 'Recorded question'

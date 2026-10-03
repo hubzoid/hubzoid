@@ -76,6 +76,7 @@ def test_run_propagates_bridge_port_to_bridge_env(monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_wait_any", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
 
     cli.run(hub=MINIMAL, port=None, bridge_port=8010,

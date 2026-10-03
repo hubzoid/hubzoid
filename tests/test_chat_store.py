@@ -213,3 +213,16 @@ def test_for_hub_uses_the_operational_engine(tmp_path, monkeypatch):
     s = store_mod.for_hub(hub)
     assert s is store_mod.for_hub(hub)
     assert str(s.engine.url).endswith("shared.db")
+
+
+def test_remove_chat_files_does_not_follow_a_chats_directory_symlink(tmp_path):
+    hub = tmp_path / 'hub'
+    outside = tmp_path / 'outside'
+    hub.mkdir()
+    (hub / '.hubzoid').mkdir()
+    (outside / 'web-c_first0001').mkdir(parents=True)
+    keep = outside / 'web-c_first0001' / 'keep.txt'
+    keep.write_text('keep')
+    (hub / '.hubzoid' / 'chats').symlink_to(outside, target_is_directory=True)
+    store_mod.remove_chat_files(hub, 'web-c_first0001')
+    assert keep.read_text() == 'keep'

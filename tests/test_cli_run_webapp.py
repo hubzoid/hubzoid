@@ -21,6 +21,7 @@ from hubzoid import branding, cli, webui
 from tests._fake_secrets import clean_process_env
 
 ROOT = Path(__file__).resolve().parents[1]
+_WAIT_ANY = cli._wait_any
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,8 @@ def _isolated(monkeypatch):
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, strip: None)
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.setattr(cli, "_wait_for", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "_wait_any", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_stop_groups", cli._stop_processes)
     monkeypatch.setattr(cli, "_ensure_port_available", lambda *a: None)
     monkeypatch.setattr(cli.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_open_browser", lambda url: None)
@@ -458,6 +461,8 @@ _NO_OWUI = textwrap.dedent('''
     from hubzoid import cli
     subprocess.Popen = fake_popen
     cli._wait_for = lambda *a, **k: True
+    cli._wait_any = lambda *a, **k: None
+    cli._stop_groups = cli._stop_processes
     cli._ensure_port_available = lambda *a: None
     cli.signal.signal = lambda *a, **k: None
     result = CliRunner().invoke(cli.app, ["run", sys.argv[1], "--port", "3811",
@@ -496,6 +501,8 @@ _LIGHT = textwrap.dedent('''
 
     subprocess.Popen = FakePopen
     cli._wait_for = lambda *a, **k: True
+    cli._wait_any = lambda *a, **k: None
+    cli._stop_groups = cli._stop_processes
     cli._ensure_port_available = lambda *a: None
     result = CliRunner().invoke(cli.app, ["run", sys.argv[1], "--port", "3813",
                                           "--bridge-port", "3814", "--no-open"])
@@ -540,16 +547,21 @@ def test_a_slow_bridge_is_waited_for(tmp_path, monkeypatch):
     assert cli._wait_for_bridge(proc, "http://127.0.0.1:3802/healthz", timeout=60) is True
 
 
-def test_bridge_exit_after_readiness_is_a_failure(tmp_path, monkeypatch, launched):
+@pytest.mark.parametrize("dead,code", [("hubzoid.server:build_app", 1),
+                                       ("hubzoid.server:build_app", 0),
+                                       ("hubzoid.edge:_factory", 1),
+                                       ("hubzoid.edge:_factory", 0)])
+def test_service_exit_after_readiness_is_a_failure(tmp_path, monkeypatch, launched, dead, code):
     original = subprocess.Popen
 
     def failing_bridge(cmd, *args, **kwargs):
         proc = original(cmd, *args, **kwargs)
-        if "hubzoid.server:build_app" in cmd:
-            proc.wait.return_value = 1
+        if dead in cmd:
+            proc.poll.side_effect = [None, None, code, code]
         return proc
 
     monkeypatch.setattr(subprocess, "Popen", failing_bridge)
+    monkeypatch.setattr(cli, "_wait_any", _WAIT_ANY)
     assert _run(_hub(tmp_path)).exit_code == 1
 
 
@@ -575,3 +587,30 @@ def test_occupied_port_refuses_start_without_launching_children(tmp_path, monkey
     assert result.exit_code == 1, result.output
     assert "unavailable" in result.output and option in result.output
     assert not started
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_openwebui_exit_after_readiness_fails_the_standalone_run(tmp_path, monkeypatch, launched, code):
+    original = subprocess.Popen
+
+    def failing_ui(cmd, *args, **kwargs):
+        proc = original(cmd, *args, **kwargs)
+        if cmd[0] == "/fake/open-webui":
+            proc.poll.side_effect = [None, None, code, code, code]
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", failing_ui)
+    monkeypatch.setattr(cli, "_wait_any", _WAIT_ANY)
+    result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"))
+    assert result.exit_code == 1, result.output
+
+
+@pytest.mark.parametrize("mode", ["hubzoid", "openwebui"])
+def test_public_service_readiness_timeout_is_a_failure(tmp_path, monkeypatch, launched, mode):
+    def readiness(proc, url, **kwargs):
+        return kwargs.get('label', 'bridge') == 'bridge'
+
+    monkeypatch.setattr(cli, '_wait_for_bridge', readiness)
+    result = _run(_hub(tmp_path, f"HUBZOID_UI={mode}\n"))
+    assert result.exit_code == 1, result.output
+    assert 'Hubzoid is ready' not in result.output

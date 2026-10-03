@@ -27,7 +27,7 @@ from . import observe
 log = logging.getLogger("hubzoid.workflows")
 
 #: DBOS states of a run that is queued or running (cancellable, "already running").
-ACTIVE = ("PENDING", "ENQUEUED")
+ACTIVE = ("PENDING", "ENQUEUED", "DELAYED")
 #: Most runs one history read returns.
 MAX_RUNS = 25
 

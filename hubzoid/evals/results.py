@@ -119,6 +119,7 @@ class CaseResult:
     tools: list[ToolCallRecord] = field(default_factory=list)
     turns: list[TurnRecord] | None = None     # None for a single-prompt case
     run_as: str | None = None     # the account the case ran as
+    prompt: str | None = None     # recorded input; never read from a later definition
 
     @property
     def free_passed(self) -> bool:
@@ -161,6 +162,7 @@ class CaseResult:
             "tools": [t.to_dict() for t in self.tools],
             "turns": [t.to_dict() for t in self.turns] if self.turns is not None else None,
             "run_as": self.run_as,
+            "prompt": self.prompt,
         }
 
     @classmethod
@@ -186,6 +188,7 @@ class CaseResult:
             turns=([TurnRecord.from_dict(t) for t in turns if isinstance(t, dict)]
                    if isinstance(turns, list) else None),
             run_as=d.get("run_as"),
+            prompt=d.get("prompt"),
         )
 
 

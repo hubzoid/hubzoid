@@ -265,7 +265,7 @@ def markdown_catalog(hub_dir) -> list[dict]:
 STATUS_BUCKETS = {
     "succeeded": ["SUCCESS"],
     "failed": ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"],
-    "running": ["PENDING", "ENQUEUED"],
+    "running": ["PENDING", "ENQUEUED", "DELAYED"],
     "cancelled": ["CANCELLED"],
 }
 _KNOWN_STATUSES = {

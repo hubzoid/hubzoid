@@ -82,3 +82,44 @@ full suite was not repeated, as requested. The browser viewport override did
 not take effect (it remained 1280 pixels), so no real-phone claim is made.
 Customer SSO/integrations, real Codex acceptance and a human new-password
 journey remain deployment acceptance checks, not completed by these fixtures.
+
+## Approved launch follow-up · 3 October 2026
+
+The owner authorized fixing and committing the independent branch review's
+remaining findings. Record eval prompts with their run instead of joining live
+case definitions; delete native account chat history and shares transactionally;
+supervise standalone public services and handle gateway shutdown during startup;
+enforce canonical phone ownership with a database uniqueness migration; accept
+delayed workflow cancellation; reconcile operating notes with these behaviors.
+No new required hub fields or runtime-specific loader behavior is introduced.
+The phone migration stops on ambiguous existing assignments rather than choosing
+an owner. Repeat focused privacy, SQLite/PostgreSQL concurrency and process
+failure checks; the owner requested no further full suite run.
+
+## Launch follow-up completed
+
+All seven independent findings (A01–A07) are addressed. Eval history uses saved
+inputs; native deletion removes chat records and shares in the account
+transaction, cleans registered chat files, and denies legacy orphan links.
+Standalone and gateway services now have consistent readiness, failure and
+shutdown handling. The new `op_0017` migration enforces unique canonical phone
+ownership on SQLite and PostgreSQL. Delayed workflow runs are active across
+controls and status filters. Release and contributor documentation matches the
+implemented behavior.
+
+| Focused check | Result |
+|---|---|
+| Eval privacy, native deletion, chat stores, migrations, access and workflow controls | 190 passed, including SQLite and PostgreSQL |
+| CLI and both gateway modes | 141 passed |
+| Phone concurrency/upsert and standalone Open WebUI exit/readiness checks | 7 passed (overlaps the access checks above) |
+| Invalid phone input preserves the existing assignment | 3 passed |
+| Actual occupied-port refusal | 2 passed |
+| Real standalone edge failure and gateway SIGTERM after bridge startup | 2 passed; expected exit codes and all owned groups/ports released |
+| Installed Open WebUI history/markup migration | 39 passed |
+| Console account/phone routes, native account adapter and channel identity | 64 passed |
+
+No full suite rerun, customer deployment or publishing was performed. The
+concise frontend and earlier human browser review remain in the preceding
+hardening commit. Customer sign-in and integrations need deployment acceptance;
+real phone viewport, live SSO, authenticated Codex and release-image checks
+remain unverified, as recorded above.

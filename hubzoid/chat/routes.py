@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from . import titles
 from .common import ChatContext, api_bases, db, error, message_json, not_found
 from .history import build_prompt
 from .runs import RunManager
+from .store import remove_chat_files as _remove_chat_dir
 from .store import (IdConflict, StoreError, chat_key, new_id, valid_conversation_id,
                     valid_message_id)
 from .stream import HEADERS
@@ -65,20 +65,6 @@ async def _body(request: Request) -> dict:
 
 def _store_error(exc: StoreError):
     return error(409 if isinstance(exc, IdConflict) else 400, exc.code, exc.message)
-
-
-def _remove_chat_dir(hub_dir: Path, key: str) -> None:
-    """Delete the conversation's files folder (its ``store.chat_key``), only
-    ever inside the hub's chats folder."""
-    base = (Path(hub_dir) / memlib.CHATS_DIRNAME).resolve()
-    target = memlib.chat_root(Path(hub_dir), key)
-    if not target.exists():
-        return
-    resolved = target.resolve()
-    if resolved.parent != base or target.is_symlink():
-        log.warning("chat: refused to delete %s (outside %s)", target, base)
-        return
-    shutil.rmtree(resolved, ignore_errors=True)
 
 
 def _message_parts(ctx: ChatContext, key: str, message: dict) -> list[dict]:

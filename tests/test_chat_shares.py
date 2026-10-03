@@ -12,6 +12,10 @@ from tests.chat_helpers import as_people, build_app, chat_body, make_hub, wait_t
 def setup(tmp_path, monkeypatch):
     hub = make_hub(tmp_path, monkeypatch, SHOW_THINKING="full")
     as_people(monkeypatch)
+    from hubzoid.auth import users
+    from tests.chat_helpers import PEOPLE
+    for person in PEOPLE.values():
+        users.create(hub, email=person.email, id=person.id, name=person.name)
     app = build_app()
     client = TestClient(app)
     agent = app.state.chat.model_label
@@ -131,3 +135,38 @@ def test_share_url_uses_the_public_address(setup, monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org/")
     url = client.post("/api/conversations/c_share0001/share", headers=who("ana")).json()["url"]
     assert url.startswith("https://hub.example.org/s/")
+
+
+def test_deleted_account_share_is_not_readable(setup):
+    from hubzoid.auth import users
+    app, client = setup
+    hub = app.state.chat.hub_dir
+    owner = users.get(hub, 'u_ana')
+    share = client.post('/api/conversations/c_share0001/share', headers=who('ana')).json()['share_id']
+    from hubzoid.access.accounts import HubzoidAccounts
+    # The production adapter called by Console deletion.
+    HubzoidAccounts(hub).delete(owner['id'])
+    from hubzoid.access import store_for
+    store_for(hub).revoke_all('ana@example.org', actor='admin@localhost')
+    store_for(hub).mark_account_removed('ana@example.org', actor='admin@localhost')
+    assert users.store(hub).get('u_ana') is None
+    response = client.get('/api/shares/' + share, headers=who('ben'))
+    assert response.status_code == 404, response.text
+    from sqlalchemy import text
+    with app.state.chat.store.engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM hz_conversations WHERE owner_id='u_ana'")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM hz_messages WHERE conversation_id='c_share0001'")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM hz_shares WHERE owner_id='u_ana'")).scalar() == 0
+    # Native uploads and chat artifacts are removed too.
+    assert not (hub / '.hubzoid' / 'chats' / 'web-c_share0001').exists()
+
+
+
+def test_legacy_share_with_deleted_owner_stays_closed(setup):
+    from sqlalchemy import text
+    app, client = setup
+    share = client.post('/api/conversations/c_share0001/share', headers=who('ana')).json()['share_id']
+    # Simulate an orphan left by an older version, before transactional cleanup.
+    with app.state.chat.store.engine.begin() as conn:
+        conn.execute(text("DELETE FROM hz_users WHERE id='u_ana'"))
+    assert client.get('/api/shares/' + share, headers=who('ben')).status_code == 404

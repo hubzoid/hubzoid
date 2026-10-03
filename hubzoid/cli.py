@@ -65,6 +65,21 @@ def _stop_processes(procs, *, timeout: float = 8.0) -> None:
             p.wait()
 
 
+def _install_shutdown_handlers():
+    def shutdown(signum, frame):  # noqa: ARG001
+        console.print("\n[cyan]shutting down...[/cyan]")
+        # Unwind blocking calls before waiting in finally; waiting inside a
+        # signal handler can re-enter Popen's non-reentrant lock.
+        sys.exit(0)
+
+    return (signal.signal(signal.SIGINT, shutdown), signal.signal(signal.SIGTERM, shutdown))
+
+
+def _restore_shutdown_handlers(previous):
+    signal.signal(signal.SIGINT, previous[0])
+    signal.signal(signal.SIGTERM, previous[1])
+
+
 def _load_settings(hub: Path):
     """settings.load for a command, turning an unreadable AWS secret into a
     clear message and exit status 1 (the message never carries a value)."""
@@ -465,7 +480,16 @@ def run(
     # child. Refuse occupied ports before starting anything or routing to it.
     _ensure_port_available("127.0.0.1", br_port, "Bridge", "--bridge-port")
     if not no_ui:
+        if br_port == ui_port:
+            console.print("[red]Bridge and public ports must be different.[/red]")
+            raise typer.Exit(2)
         _ensure_port_available(host, ui_port, "Public", "--port")
+        if openwebui and os.environ.get("HUBZOID_DISABLE_EDGE", "").lower() not in ("1", "true", "yes"):
+            internal = _owui_internal_port(ui_port)
+            if internal in (br_port, ui_port):
+                console.print("[red]Open WebUI internal, bridge and public ports must be different.[/red]")
+                raise typer.Exit(2)
+            _ensure_port_available("127.0.0.1", internal, "Open WebUI", "HUBZOID_OWUI_PORT")
 
     if openwebui and not no_ui:
         os.environ["OWUI_INTERNAL_URL"] = f"http://127.0.0.1:{_owui_internal_port(ui_port) if os.environ.get('HUBZOID_DISABLE_EDGE', '').lower() not in ('1', 'true', 'yes') else ui_port}"
@@ -498,19 +522,13 @@ def run(
         "--host", "127.0.0.1", "--port", str(br_port),
         "--log-level", settings.log_level,
     ]
-    def _shutdown(signum, frame):  # noqa: ARG001
-        console.print("\n[cyan]shutting down...[/cyan]")
-        # Unwind Popen.wait before waiting for children in finally. Waiting
-        # inside the signal handler can re-enter Popen's non-reentrant lock.
-        sys.exit(0)
-
-    # Every child is stopped however run ends, including Ctrl-C or SIGTERM
-    # while the others are still starting.
+    # Headless bridges inherit the gateway-owned group. A standalone UI owns
+    # separate groups so cleanup also reaches Open WebUI's worker processes.
     children: list = []
-    previous = (signal.signal(signal.SIGINT, _shutdown), signal.signal(signal.SIGTERM, _shutdown))
+    previous = _install_shutdown_handlers()
     try:
         console.print(f"[cyan]→ bridge[/cyan]  http://127.0.0.1:{br_port}  (hub: {hub.name})")
-        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env)
+        bridge_proc = subprocess.Popen(bridge_cmd, env=bridge_env, start_new_session=not no_ui)
         children.append(bridge_proc)
 
         # 2. Wait for the bridge to come up before starting the public port.
@@ -553,7 +571,7 @@ def run(
                 console.print(f"[yellow]→ slack [/yellow]  skipping: {warn}")
             else:
                 slack_cmd = [sys.executable, "-m", "hubzoid", "slack", "run", str(hub)]
-                children.append(subprocess.Popen(slack_cmd, env=bridge_env))
+                children.append(subprocess.Popen(slack_cmd, env=bridge_env, start_new_session=not no_ui))
                 console.print("[cyan]→ slack [/cyan]  starting (Socket Mode)")
 
         # Optional: the inbound surfaces (WhatsApp/Telegram/generic webhook) as one
@@ -577,18 +595,17 @@ def run(
             start_wh = webhook and not missing_webhook_vars(os.environ)
             if start_wa or start_tg or start_wh:
                 inbound_cmd = [sys.executable, "-m", "hubzoid", "inbound", "run", str(hub)]
-                children.append(subprocess.Popen(inbound_cmd, env=bridge_env))
+                children.append(subprocess.Popen(inbound_cmd, env=bridge_env, start_new_session=not no_ui))
                 surfaces = "+".join(s for s, on in (("whatsapp", start_wa), ("telegram", start_tg), ("webhook", start_wh)) if on)
                 console.print(f"[cyan]→ inbound[/cyan]  starting ({surfaces}, /webhooks/<hub>)")
 
-        # Block on the bridge process; its exit ends the CLI.
-        if bridge_proc.wait() != 0:
-            raise typer.Exit(1)
+        _wait_any(children)
     finally:
         # The public side first, the bridge last (it holds the databases).
-        _stop_processes(children[::-1])
-        signal.signal(signal.SIGINT, previous[0])
-        signal.signal(signal.SIGTERM, previous[1])
+        try:
+            (_stop_processes if no_ui else _stop_groups)(children[::-1])
+        finally:
+            _restore_shutdown_handlers(previous)
 
 
 # ---------------------------------------------------------------------------
@@ -837,18 +854,20 @@ def _start_web_app_edge(hub: Path, settings, *, host: str, ui_port: int, br_port
         "--host", host, "--port", str(ui_port),
         "--log-level", settings.log_level,
     ]
-    edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+    edge_proc = subprocess.Popen(edge_cmd, env=edge_env, start_new_session=True)
     started.append(edge_proc)
     probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host.strip("[]")
     probe = f"[{probe}]" if ":" in probe else probe
-    ready = _wait_for(f"http://{probe}:{ui_port}/healthz", timeout=30)
+    ready = _wait_for_bridge(edge_proc, f"http://{probe}:{ui_port}/healthz", timeout=30,
+                             label="web app")
     if edge_proc.poll() is not None:
         console.print(f"[red]The web app could not open port {ui_port} on {escape(host)}. Is another "
                       "program using it? Choose another with --port.[/red]")
         return None
     if not ready:
-        console.print(f"[yellow]→ web app[/yellow]  not answering yet on port {ui_port}; "
+        console.print(f"[red]→ web app[/red]  failed to become ready on port {ui_port}; "
                       "check the log above")
+        return None
     return edge_proc
 
 
@@ -943,7 +962,11 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
 
         # Wait for OWUI on its (now possibly internal) bind before fronting it.
         owui_probe = "127.0.0.1" if owui_host in ("0.0.0.0", "::") else owui_host
-        owui_ready = _wait_for(f"http://{owui_probe}:{owui_port}/", timeout=240)
+        owui_ready = _wait_for_bridge(ui_proc, f"http://{owui_probe}:{owui_port}/", timeout=240,
+                                       label="Open WebUI")
+        if not owui_ready:
+            console.print("[red]Open WebUI failed to become ready; check its log.[/red]")
+            raise typer.Exit(1)
 
         probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
         display_url = f"http://{host}:{ui_port}"
@@ -996,21 +1019,23 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
             ]
             edge_paths = "/artifacts + /mcp" if settings.mcp_server else "/artifacts"
             console.print(f"[cyan]→ edge  [/cyan]  http://{host}:{ui_port}  ({edge_paths} → bridge :{br_port}, else → owui :{owui_port})")
-            edge_proc = subprocess.Popen(edge_cmd, env=edge_env)
+            edge_proc = subprocess.Popen(edge_cmd, env=edge_env, start_new_session=True)
             started.append(edge_proc)
-            edge_ready = _wait_for(f"http://{probe_host}:{ui_port}/", timeout=30)
+            edge_ready = _wait_for_bridge(edge_proc, f"http://{probe_host}:{ui_port}/", timeout=30,
+                                          label="web app")
             if owui_ready and edge_ready and edge_proc.poll() is None:
                 console.print(f"[green]→ webui [/green]  ready    {display_url}")
             else:
-                console.print(f"[yellow]→ webui [/yellow]  did not become ready in time; check log above. URL: {display_url}")
+                console.print(f"[red]→ webui [/red]  failed to become ready; check log above. URL: {display_url}")
+                raise typer.Exit(1)
         else:
             if owui_ready:
                 console.print(f"[green]→ webui [/green]  ready    {display_url}")
             else:
                 console.print(f"[yellow]→ webui [/yellow]  did not become ready in 4 min; check log above. URL: {display_url}")
     except FileNotFoundError as exc:
-        console.print(f"[yellow]{exc}[/yellow]")
-        console.print("Bridge only. Curl http://127.0.0.1:" + str(br_port) + "/v1/chat/completions to chat.")
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1257,7 @@ def gateway(
     fresh_owui_db = not (gw_data / "webui.db").exists()
 
     procs: list[subprocess.Popen] = []
+    previous = _install_shutdown_handlers()
 
     try:
         # Native MCP is gateway-wide: the shared OWUI holds one tool-server registry
@@ -1428,16 +1454,13 @@ def gateway(
         else:
             console.print(f"[green]→ gateway[/green]  ready    {display_url}" if owui_ready else "[yellow]→ gateway[/yellow]  OWUI not ready; check logs.")
 
-        def _shutdown(signum, frame):  # noqa: ARG001
-            console.print("\n[cyan]shutting down gateway...[/cyan]")
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, _shutdown)
-        signal.signal(signal.SIGTERM, _shutdown)
         _wait_any(procs)
 
     finally:
-        _stop_groups(reversed(procs))
+        try:
+            _stop_groups(reversed(procs))
+        finally:
+            _restore_shutdown_handlers(previous)
 
 
 def _gateway_mode_conflicts(hub_dirs: list[Path], *, auth_on: bool, env, conflicts: dict) -> list[str]:
@@ -1545,7 +1568,7 @@ def _wait_any(procs: list, *, interval: float = 0.5) -> None:
         for p in procs:
             code = p.poll()
             if code is not None:
-                console.print(f"[red]A gateway service exited unexpectedly (status {code}).[/red]")
+                console.print(f"[red]A service exited unexpectedly (status {code}).[/red]")
                 raise typer.Exit(1)
         time.sleep(interval)
 
@@ -1673,6 +1696,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
         raise typer.Exit(2)
 
     procs: list[subprocess.Popen] = []
+    previous = _install_shutdown_handlers()
     bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
     try:
         _gateway_web_app_serve(gp=gp, procs=procs, bridges=bridges, process_env=process_env,
@@ -1681,7 +1705,10 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
                                log_level=log_level, shared_op_url=shared_op_url,
                                launch_bridges=launch_bridges)
     finally:
-        _stop_groups(reversed(procs))
+        try:
+            _stop_groups(reversed(procs))
+        finally:
+            _restore_shutdown_handlers(previous)
 
 
 def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_values, auth_on,
@@ -1760,12 +1787,6 @@ def _gateway_web_app_serve(*, gp, procs, bridges, process_env, dep_secret, dep_v
         console.print(f"[red]→ gateway[/red]  failed to start. Check logs. URL: {display_url}")
         raise typer.Exit(1)
 
-    def _shutdown(signum, frame):  # noqa: ARG001
-        console.print("\n[cyan]shutting down gateway...[/cyan]")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
     # Any child exiting ends the gateway: a deployment with a dead bridge or
     # edge must be restarted by its supervisor, not limp on.
     _wait_any(procs)

@@ -20,6 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from .. import appmode
+from ..auth import users
 from .common import ChatContext, db, error, not_found
 
 
@@ -104,7 +105,8 @@ def register(app: FastAPI, ctx: ChatContext) -> None:
     async def read_share(share_id: str, request: Request):
         await ctx.user(request)
         share = await db(store.get_share, share_id) if 8 <= len(share_id) <= 64 else None
-        if share is None or _disabled_import(share):
+        if (share is None or _disabled_import(share)
+                or await db(users.get, ctx.hub_dir, share["owner_id"]) is None):
             raise not_found("shared conversation")
         snap = share.get("snapshot") or {}
         return {"title": snap.get("title"), "agent": snap.get("agent"),

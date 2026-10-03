@@ -174,7 +174,7 @@ def test_upsert_identity(store):
     # idempotent + fills missing fields without clobbering
     store.upsert_identity(email="alice@corp", phone="+15551234")
     row = store.identity(subj)
-    assert row["owui_id"] == "u1" and row["phone"] == "+15551234"
+    assert row["owui_id"] == "u1" and row["phone"] == "15551234"
 
 
 def test_bootstrap_grants_org_admins_once(store):
@@ -237,3 +237,54 @@ def test_owner_setup_respects_existing_admin_bootstrap(store):
     store.bootstrap(["ops@example.com"])
     store.provision_owner("owner@example.com", "finance")
     assert not store.can("owner@example.com", ORG, MANAGE_ACCESS)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_same_phone_cannot_be_assigned_concurrently(postgres_url, tmp_path, backend):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import create_engine, event, text
+    from hubzoid.access.store import GrantStore, PhoneTaken
+    engine = create_engine(postgres_url if backend == "postgres" else f"sqlite:///{tmp_path / 'phones.db'}")
+    gs = GrantStore(engine)
+    for email in ('one@example.org','two@example.org'):
+        gs.upsert_identity(email=email)
+    barrier = threading.Barrier(2)
+    def synchronize(conn, cursor, statement, parameters, context, executemany):
+        if 'INSERT INTO hz_identities' in statement:
+            barrier.wait(timeout=5)
+    event.listen(engine, 'before_cursor_execute', synchronize)
+    def assign(email):
+        try:
+            gs.set_phone(email, '+15550001111', actor='admin@example.org')
+            return 'saved'
+        except PhoneTaken:
+            return 'refused'
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results=list(executor.map(assign, ('one@example.org','two@example.org')))
+    finally:
+        event.remove(engine, 'before_cursor_execute', synchronize)
+    with engine.connect() as conn:
+        rows=conn.execute(text("SELECT subject FROM hz_identities WHERE phone='15550001111'")).fetchall()
+    assert len(rows) == 1, (results, rows)
+
+    assert sorted(results) == ['refused', 'saved']
+    engine.dispose()
+
+
+def test_upsert_cannot_bypass_phone_ownership(store):
+    from hubzoid.access.store import PhoneTaken
+    store.upsert_identity(email='one@example.org', phone='+1 555 000 1111')
+    with pytest.raises(PhoneTaken):
+        store.upsert_identity(email='two@example.org', phone='15550001111')
+    assert store.subject_for_phone('+1-555-000-1111') == 'one@example.org'
+
+
+@pytest.mark.parametrize('invalid', ['not a number', '+', '123'])
+def test_invalid_phone_does_not_clear_an_existing_assignment(store, invalid):
+    store.upsert_identity(email='one@example.org', phone='+15550001111')
+    with pytest.raises(ValueError):
+        store.set_phone('one@example.org', invalid, actor='admin@example.org')
+    assert store.subject_for_phone('15550001111') == 'one@example.org'

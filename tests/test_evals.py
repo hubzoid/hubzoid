@@ -271,6 +271,8 @@ def test_runner_passes_a_green_case(tmp_path, patched_build):
     suite = runner.run_suite(hub, cases.discover(hub))
     assert suite.ok and suite.passed == 1
     assert suite.cases[0].reason == ""
+    assert suite.cases[0].prompt == "say pong"
+    assert SuiteResult.from_dict(suite.to_dict()).cases[0].prompt == "say pong"
 
 
 def test_runner_fails_and_explains(tmp_path, patched_build):

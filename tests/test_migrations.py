@@ -273,3 +273,44 @@ def test_existing_connectors_stay_offered_in_every_known_agent(tmp_path):
     with eng.connect() as c:
         offers = set(c.execute(text("SELECT connector_id, hub FROM hz_connector_agents")))
     assert offers == {("gmail", "sales"), ("gmail", "ops")}
+
+
+def _previous_phone_schema(engine):
+    migrations.upgrade(engine, "operational")
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX hz_identities_phone_unique"))
+        conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
+    migrations._done.clear()
+
+
+def test_phone_upgrade_normalizes_and_allows_unassigned_people(tmp_path):
+    eng = _sqlite(tmp_path)
+    _previous_phone_schema(eng)
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO hz_identities (subject,phone,pending,created) VALUES "
+                          "('one@example.org','+1 555 000 1111',0,0),"
+                          "('two@example.org','',0,0),('three@example.org',NULL,0,0)"))
+    migrations.upgrade(eng, "operational")
+    with eng.connect() as conn:
+        assert dict(conn.execute(text("SELECT subject,phone FROM hz_identities")).all()) == {
+            'one@example.org': '15550001111', 'two@example.org': None, 'three@example.org': None}
+    assert migrations.current(eng, 'operational') == migrations.head('operational')
+
+
+@pytest.mark.parametrize('other,problem', [('15550001111', 'more than one'), ('123', 'invalid')])
+def test_ambiguous_phone_upgrade_stops_without_changing_assignments(tmp_path, other, problem):
+    eng = _sqlite(tmp_path)
+    _previous_phone_schema(eng)
+    with eng.begin() as conn:
+        conn.execute(text("INSERT INTO hz_identities (subject,phone,pending,created) VALUES "
+                          "('one@example.org','+1 555 000 1111',0,0),"
+                          "('two@example.org',:p,0,0)"), {'p': other})
+    with pytest.raises(SchemaError, match=problem):
+        migrations.upgrade(eng, "operational")
+    with eng.connect() as conn:
+        assert conn.execute(text("SELECT phone FROM hz_identities WHERE subject='one@example.org'")).scalar() == '+1 555 000 1111'
+    assert migrations.current(eng, 'operational') == 'op_0016'
+    with eng.begin() as conn:
+        conn.execute(text("UPDATE hz_identities SET phone=NULL WHERE subject='two@example.org'"))
+    migrations.upgrade(eng, "operational")
+    assert migrations.current(eng, 'operational') == migrations.head('operational')

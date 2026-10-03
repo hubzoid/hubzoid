@@ -175,7 +175,24 @@ def test_delete_removes_sessions_identities_and_links(store):
     with store.engine.begin() as conn:
         conn.execute(text("INSERT INTO hz_auth_links (token_hash, user_id, purpose, created_at, "
                           "expires_at) VALUES (:h, :u, 'set_password', 1, 2)"), {"h": "e" * 64, "u": uid})
+    from hubzoid.chat.store import ConversationStore
+    chat = ConversationStore(store.engine)
+    other = store.create(email="keep@example.com")
+    for owner, cid, mid in [(uid, "c_deleted01", "m_deleted01"),
+                            (other["id"], "c_retained1", "m_retained1")]:
+        chat.create_conversation(conv_id=cid, owner_id=owner, owner_email="e@example.com",
+                                 hub="sales", agent="sales")
+        chat.insert_message(message_id=mid, conversation_id=cid, parent_id=None,
+                            role="user", content=[{"type": "text", "text": "private"}])
+        chat.save_share(conversation_id=cid, owner_id=owner, title=None, agent="sales",
+                        snapshot={"messages": ["private"]})
     assert store.delete(uid) is True
+    assert chat.get_conversation("c_deleted01") is None
+    assert chat.get_message("m_deleted01") is None
+    assert chat.share_for("c_deleted01") is None
+    assert chat.get_conversation("c_retained1") is not None
+    assert chat.get_message("m_retained1") is not None
+    assert chat.share_for("c_retained1") is not None
     assert store.get(uid) is None and store.find_identity("https://idp", "s1") is None
     with store.engine.connect() as conn:
         for table in ("hz_sessions", "hz_auth_links"):

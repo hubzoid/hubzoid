@@ -37,6 +37,7 @@ import casbin
 from casbin.persist import Adapter
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from . import db_tables
 from .identity import normalize
@@ -129,6 +130,13 @@ NO_NEW_EVERYONE = (
 )
 
 
+def _phone_conflict(exc: IntegrityError) -> bool:
+    """Recognize only the phone constraint; preserve unrelated integrity errors."""
+    return (getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            == "hz_identities_phone_unique"
+            or "UNIQUE constraint failed: hz_identities.phone" in str(exc.orig))
+
+
 class PhoneTaken(ValueError):
     """The phone number already belongs to someone else (the message is safe
     to show)."""
@@ -140,7 +148,7 @@ def phone_digits(phone: str | None) -> str:
     from ..inbound.normalize import normalize_phone
 
     digits = normalize_phone(phone)
-    if digits and not 6 <= len(digits) <= 15:
+    if str(phone or "").strip() and not 6 <= len(digits) <= 15:
         raise ValueError("Enter the full number with its country code, for example +91 98000 00001.")
     return digits
 
@@ -799,57 +807,63 @@ class GrantStore:
         hardening. Idempotent."""
         import time
 
+        digits = phone_digits(phone)
         email_n = normalize(email) if email else None
         subject = email_n or normalize(owui_id) or normalize(phone)
         if not subject:
             raise ValueError("need at least one of email/owui_id/phone")
-        with self._engine.begin() as conn:
-            row = conn.execute(
-                text("SELECT subject, owui_id FROM hz_identities WHERE subject=:s"),
-                {"s": subject},
-            ).fetchone()
-            fields = {
-                "s": subject,
-                "e": email_n,
-                "o": (owui_id or None),
-                "p": (phone or None),
-                "d": (display or None),
-                "pend": 1 if pending else 0,
-                "t": time.time(),
-            }
-            if row and owui_id and row[1] and row[1] != owui_id:
-                # A new account reusing an email must not inherit the old owner's
-                # direct grants, including administrator rights.
-                conn.execute(
-                    text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
-                )
-                self._meta_set(conn, "suspended:" + subject, "1")
-                self._audit(
-                    conn, "owui-identity", "account_replaced", subject, ORG, None
-                )
-                self._bump_revision(conn)
-            if owui_id:
-                self._meta_set(
-                    conn, "account_unavailable:" + subject, "1" if pending else "0"
-                )
-            if row:
-                conn.execute(
-                    text(
-                        "UPDATE hz_identities SET "
-                        "email=COALESCE(:e, email), owui_id=COALESCE(:o, owui_id), "
-                        "phone=COALESCE(:p, phone), display=COALESCE(:d, display), "
-                        "pending=:pend WHERE subject=:s"
-                    ),
-                    fields,
-                )
-            else:
-                conn.execute(
-                    text(
-                        "INSERT INTO hz_identities (subject, email, owui_id, phone, "
-                        "display, pending, created) VALUES (:s, :e, :o, :p, :d, :pend, :t)"
-                    ),
-                    fields,
-                )
+        try:
+            with self._engine.begin() as conn:
+                row = conn.execute(
+                    text("SELECT subject, owui_id FROM hz_identities WHERE subject=:s"),
+                    {"s": subject},
+                ).fetchone()
+                fields = {
+                    "s": subject,
+                    "e": email_n,
+                    "o": (owui_id or None),
+                    "p": (digits or None),
+                    "d": (display or None),
+                    "pend": 1 if pending else 0,
+                    "t": time.time(),
+                }
+                if row and owui_id and row[1] and row[1] != owui_id:
+                    # A new account reusing an email must not inherit the old owner's
+                    # direct grants, including administrator rights.
+                    conn.execute(
+                        text("DELETE FROM hz_grants WHERE subject=:s"), {"s": subject}
+                    )
+                    self._meta_set(conn, "suspended:" + subject, "1")
+                    self._audit(
+                        conn, "owui-identity", "account_replaced", subject, ORG, None
+                    )
+                    self._bump_revision(conn)
+                if owui_id:
+                    self._meta_set(
+                        conn, "account_unavailable:" + subject, "1" if pending else "0"
+                    )
+                if row:
+                    conn.execute(
+                        text(
+                            "UPDATE hz_identities SET "
+                            "email=COALESCE(:e, email), owui_id=COALESCE(:o, owui_id), "
+                            "phone=COALESCE(:p, phone), display=COALESCE(:d, display), "
+                            "pending=:pend WHERE subject=:s"
+                        ),
+                        fields,
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            "INSERT INTO hz_identities (subject, email, owui_id, phone, "
+                            "display, pending, created) VALUES (:s, :e, :o, :p, :d, :pend, :t)"
+                        ),
+                        fields,
+                    )
+        except IntegrityError as exc:
+            if _phone_conflict(exc):
+                raise PhoneTaken("This number already belongs to someone else.") from exc
+            raise
         return subject
 
     def set_phone(self, subject: str, phone: str | None, *, actor: str,
@@ -861,18 +875,17 @@ class GrantStore:
         if not subject or subject == EVERYONE or "@" not in subject:
             raise ValueError("a person is required")
         digits = phone_digits(phone)
-        with self._engine.begin() as conn:
-            if digits:
-                other = conn.execute(
-                    text("SELECT subject FROM hz_identities WHERE phone=:p AND subject<>:s"),
-                    {"p": digits, "s": subject}).fetchone()
-                if other:
-                    raise PhoneTaken("This number already belongs to someone else.")
-            self._ensure_identity(conn, subject)
-            conn.execute(text("UPDATE hz_identities SET phone=:p WHERE subject=:s"),
-                         {"p": digits or None, "s": subject})
-            self._audit(conn, actor, "phone_set" if digits else "phone_clear", subject, ORG,
-                        None, surface, request_id)
+        try:
+            with self._engine.begin() as conn:
+                self._ensure_identity(conn, subject)
+                conn.execute(text("UPDATE hz_identities SET phone=:p WHERE subject=:s"),
+                             {"p": digits or None, "s": subject})
+                self._audit(conn, actor, "phone_set" if digits else "phone_clear", subject, ORG,
+                            None, surface, request_id)
+        except IntegrityError as exc:
+            if _phone_conflict(exc):
+                raise PhoneTaken("This number already belongs to someone else.") from exc
+            raise
         return digits
 
     def subject_for_phone(self, phone: str | None) -> str | None:
@@ -884,9 +897,9 @@ class GrantStore:
         if not digits:
             return None
         with self._engine.connect() as conn:
-            row = conn.execute(text("SELECT subject FROM hz_identities WHERE phone=:p"),
-                               {"p": digits}).fetchone()
-        return row[0] if row else None
+            rows = conn.execute(text("SELECT subject FROM hz_identities WHERE phone=:p"),
+                                {"p": digits}).fetchmany(2)
+        return rows[0][0] if len(rows) == 1 else None
 
     def identity(self, subject: str) -> dict | None:
         with self._engine.connect() as conn:

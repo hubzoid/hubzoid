@@ -237,7 +237,7 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                    hub_dir: Path | None = None,
                    run_as: str | None = None) -> CaseResult:
     """Run a single case to a verdict. Never raises — failures become results."""
-    result = CaseResult(name=case.name, tags=list(case.tags))
+    result = CaseResult(name=case.name, tags=list(case.tags), prompt=case.prompts[0])
     started = time.monotonic()
     hub_dir = Path(hub_dir) if hub_dir is not None else Path(".")
 

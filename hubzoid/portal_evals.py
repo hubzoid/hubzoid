@@ -249,7 +249,7 @@ def _turns(raw_case: dict) -> list[dict] | None:
             for t in turns if isinstance(t, dict)]
 
 
-def _case_detail(raw_case: dict, result, prompt: str | None) -> dict:
+def _case_detail(raw_case: dict, result) -> dict:
     judge = None
     if result.judge is not None:
         j = result.judge
@@ -266,7 +266,7 @@ def _case_detail(raw_case: dict, result, prompt: str | None) -> dict:
         checks=[c.to_dict() for c in result.checks],
         judge=judge,
         answer=result.response,
-        prompt=prompt,
+        prompt=result.prompt,
         turns=_turns(raw_case),
         tools=_tools(raw_case, result),
         run_as=run_as if isinstance(run_as, str) else None,
@@ -374,14 +374,12 @@ def register(router: APIRouter, hub_dir: Path, *, require_admin: Callable,
         if loaded is None:
             raise HTTPException(404, 'Eval run not found')
         raw, suite = loaded
-        _, current, _ = read_cases(path)
-        prompts = {c.name: c.prompt for c in current}
         details = []
         for rc, result in zip(_raw_cases(raw), suite.cases):
             owner = rc.get('run_as') or raw.get('run_as')
             visible = not owner or normalize(owner) == normalize(admin.subject)
             if visible:
-                detail = _case_detail(rc, result, prompts.get(result.name))
+                detail = _case_detail(rc, result)
             else:
                 detail = dict(name=result.name, passed=result.passed, duration=result.duration,
                     tags=[], reason='', error=None, checks=[dict(kind='check', passed=c.passed, detail='') for c in result.checks],
