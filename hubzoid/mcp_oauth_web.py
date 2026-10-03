@@ -10,6 +10,7 @@ from __future__ import annotations
 import hmac
 import secrets
 import time
+from datetime import datetime, timezone
 from html import escape
 from urllib.parse import quote, urlsplit
 
@@ -79,14 +80,24 @@ font:600 18px/1 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;bac
 .consent .actions{justify-content:center;margin-top:24px}
 .consent .actions button{min-width:140px}
 .fine{margin:22px 0 0;font-size:12.5px;color:var(--mute);line-height:1.5}
-.fine a{color:inherit}"""
+.fine a{color:inherit}
+a.mark{text-decoration:none}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.button{display:inline-block;padding:9px 16px;border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none}
+.help{display:inline-block;position:relative;margin-left:4px;vertical-align:middle}
+.help button{width:24px;height:24px;padding:0;border-color:var(--line);border-radius:50%;background:transparent;color:var(--mute);font:600 12px system-ui}
+.tooltip{display:none;position:absolute;z-index:1;top:calc(100% + 6px);right:0;width:250px;
+padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:13px;text-align:left}
+.help:hover .tooltip,.help:focus-within .tooltip{display:block}
+details{margin-top:16px;text-align:left;font-size:13px}summary{cursor:pointer;color:var(--mute)}
+article p{margin:4px 0 0}
+@media(max-width:600px){.tooltip{position:fixed;top:auto;bottom:24px;left:24px;right:24px;width:auto}}"""
 
 
 def page(title, body, status=200, *, own_heading=False):
     heading = "" if own_heading else f"<h1>{escape(title)}</h1>"
     return HTMLResponse(
         f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · Hubzoid</title>
-<style>{_STYLE}</style></head><body><header><span class="mark" role="img" aria-label="Hubzoid"><b>/</b>hubzoid</span></header>
+<style>{_STYLE}</style></head><body><header><a class="mark" href="/" aria-label="Hubzoid home"><b>/</b>hubzoid</a></header>
 <main id="main"><div class="card">{heading}{body}</div></main></body></html>""",
         status_code=status,
         headers=HEADERS,
@@ -101,6 +112,22 @@ def _agent_name(hub_dir) -> str:
         return agents.load_main(hub_dir).spec.name or hub_dir.name
     except Exception:  # noqa: BLE001 — a page still renders with the folder name
         return hub_dir.name
+
+
+def _info(label, text, identifier):
+    return (f'<span class="help"><button type="button" aria-label="{escape(label)}" '
+            f'aria-describedby="{identifier}">?</button><span class="tooltip" '
+            f'id="{identifier}" role="tooltip">{escape(text)}</span></span>')
+
+
+def _notice(title, message, status=200, *, path="/", action="Back to Hubzoid"):
+    return page(title, f'<p>{escape(message)}</p><p><a class="button" '
+                f'href="{escape(path)}">{escape(action)}</a></p>', status)
+
+
+def _date(timestamp):
+    value = datetime.fromtimestamp(timestamp, timezone.utc)
+    return f'<time datetime="{value.isoformat()}">{value:%d %b %Y} UTC</time>'
 
 
 def browser_routes(provider):
@@ -163,9 +190,9 @@ def browser_routes(provider):
         with store.engine.connect() as c:
             pending = store.get(c, ticket, "pending")
         if not pending or pending["_used"]:
-            return page(
+            return _notice(
                 "Connection expired",
-                "<p>Start connecting again from your assistant.</p>",
+                "Start connecting again from your assistant.",
             )
         who = await run_in_threadpool(viewer, request)
         if not who:
@@ -173,17 +200,17 @@ def browser_routes(provider):
                 provider.public_path + "/consent?ticket=" + quote(ticket, safe="")
             )
         if not allowed(provider.hub_dir, who["email"]):
-            return page(
-                "No access",
-                f"<p><strong>{escape(who['email'])}</strong> can’t use {escape(_agent_name(provider.hub_dir))}. "
-                "Ask an administrator for access, then connect again.</p>",
+            return _notice(
+                "Hub access needed",
+                f"{who['email']} does not have access to {_agent_name(provider.hub_dir)}. "
+                "Ask an administrator for access, then reconnect from your assistant.",
                 403,
             )
         client = await provider.get_client(pending["client_id"])
         if not client:
-            return page(
+            return _notice(
                 "Connection expired",
-                "<p>Start connecting again from your assistant.</p>",
+                "Start connecting again from your assistant.",
                 400,
             )
         params = pending["params"]
@@ -205,6 +232,7 @@ def browser_routes(provider):
             back = urlsplit(str(params["redirect_uri"]))
             yes = '<svg class="yes" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
             no = '<svg class="no" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+            name_help = _info("About the app name", "The client supplies this name. Hubzoid does not verify it; check the return address before connecting.", "client-help")
             body = f"""<div class="consent">
 <div class="parties" aria-hidden="true"><span class="tile">{escape(app_name[:1].upper())}</span><span class="link"><i></i><i></i><i></i></span><span class="tile hub"><b>/</b>{escape(agent[:1].lower())}</span></div>
 <h1>{escape(app_name)} wants to use {escape(agent)}</h1>
@@ -221,7 +249,9 @@ def browser_routes(provider):
 </ul>
 <form method="post" class="actions"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary" name="decision" value="deny">Cancel</button><button name="decision" value="allow">Allow connection</button></form>
 <p class="fine">Access lasts up to 30 days. You can revoke it any time in <a href="{escape(provider.public_path)}/connections">your connections</a>.<br>
-Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netloc or str(params['redirect_uri']))}</code>. The assistant names itself, so allow this only if you started it.</p>
+Returns to <code>{escape(back.netloc or str(params['redirect_uri']))}</code>. The assistant names itself, so allow this only if you started it.{name_help}</p>
+<details><summary>Connection details</summary><dl><dt>MCP server</dt><dd><code>{escape(provider.resource)}</code></dd>
+<dt>Return address</dt><dd><code>{escape(str(params['redirect_uri']))}</code></dd></dl></details>
 </div>"""
             response = page(f"Connect {app_name}", body, own_heading=True)
             response.headers.update(consent_headers)
@@ -231,9 +261,9 @@ Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netl
             if not valid_csrf(
                 request, form, who, "consent:" + ticket, c
             ) or not store.consume(c, ticket, "pending"):
-                return page(
+                return _notice(
                     "Couldn’t confirm",
-                    "<p>This approval expired or was already used. Start connecting again from your assistant.</p>",
+                    "This approval expired or was already used. Start connecting again from your assistant.",
                     403,
                 )
             decision = form.get("decision")
@@ -292,7 +322,8 @@ Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netl
             form = await request.form()
             with store.engine.begin() as c:
                 if not valid_csrf(request, form, who, "connections", c):
-                    return page("Couldn’t confirm", "<p>Reload the page and try again.</p>", 403)
+                    return _notice("Couldn’t confirm", "Reload the page and try again.", 403,
+                                   path=provider.public_path + "/connections", action="Reload connections")
                 grant = str(form.get("grant", ""))
                 g = store.get(c, grant, "grant")
                 if (
@@ -300,7 +331,8 @@ Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netl
                     or g["account_id"] != who["account_id"]
                     or g["email"] != who["email"]
                 ):
-                    return page("Connection not found", "<p>It may already be revoked.</p>", 404)
+                    return _notice("Connection not found", "It may already be revoked.", 404,
+                                   path=provider.public_path + "/connections", action="Reload connections")
                 store.revoke(c, grant)
             return RedirectResponse(
                 provider.public_path + "/connections", status_code=303, headers=HEADERS
@@ -314,10 +346,11 @@ Returns to <code title="{escape(str(params['redirect_uri']))}">{escape(back.netl
             ]
         body = (f'<p>Assistants using <strong>{escape(_agent_name(provider.hub_dir))}</strong> as '
                 f'<strong>{escape(who["email"])}</strong>, with your current access.</p>')
-        for g in grants:
-            body += f'<article><strong>{escape(g["client_name"])}</strong><form method="post"><input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="grant" value="{escape(g["id"])}"><button class="secondary">Revoke connection</button></form></article>'
+        body += f'<p class="muted">Revoke a connection to stop future access.{_info("About revoking access", "Revoking does not undo actions or remove data already shared with the assistant.", "revoke-help")}</p>'
+        for g in sorted(grants, key=lambda g: g["created"], reverse=True):
+            body += f'<article><div><strong>{escape(g["client_name"])}</strong><p class="muted">Connected {_date(g["created"])} · Expires {_date(g["_expires"])}</p></div><form method="post"><input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="grant" value="{escape(g["id"])}"><button class="secondary">Revoke connection</button></form></article>'
         if not grants:
-            body += "<p class='muted'>No assistants are connected.</p>"
+            body += "<p class='muted'>No assistants are connected. Start a connection from your assistant’s MCP settings.</p>"
         return set_cookie(page("Your assistant connections", body), csrf)
 
     return [

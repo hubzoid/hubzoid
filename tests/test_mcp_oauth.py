@@ -53,11 +53,11 @@ def app_for(hub):
     return mcp_server.build_mcp_app(hub, settings=settingslib.load(hub))
 
 
-async def register(c, redirect=REDIRECT):
+async def register(c, redirect=REDIRECT, *, name="Claude Test"):
     r = await c.post(
         "/mcp/oauth/register",
         json={
-            "client_name": "Claude Test",
+            "client_name": name,
             "redirect_uris": [redirect],
             "token_endpoint_auth_method": "none",
             "grant_types": ["authorization_code", "refresh_token"],
@@ -226,6 +226,35 @@ def test_login_csrf_deny_and_unsafe_redirect(setup):
             },
         )
         assert r.status_code >= 400
+
+    run_flow(hub, flow)
+
+
+def test_consent_escapes_names_and_preserves_denied_access(setup):
+    hub, _ = setup
+    (hub / "AGENTS.md").write_text("---\nname: Finance & Payroll\n---\nHelp.\n")
+
+    async def flow(c):
+        client = await register(c, name='<script>alert("client")</script>')
+        r = await c.get("/mcp/oauth/authorize", params={
+            "client_id": client, "redirect_uri": REDIRECT, "response_type": "code",
+            "code_challenge": CHALLENGE, "code_challenge_method": "S256", "resource": RESOURCE,
+        })
+        url = r.headers["location"]
+        r = await c.get(url)
+        assert r.status_code == 200
+        assert "Finance &amp; Payroll" in r.text and "&lt;script&gt;" in r.text
+        assert "<script>" not in r.text
+        assert "default-src 'none'" in r.headers["content-security-policy"]
+        assert r.headers["cache-control"] == "no-store"
+        from hubzoid.access import store_for
+
+        store_for(hub).revoke("alice@example.com", hub.name, "use_hub", actor="test")
+        r = await c.get(url)
+        assert r.status_code == 403
+        assert r.headers["content-type"].startswith("text/html")
+        assert "Hub access needed" in r.text and 'value="allow"' not in r.text
+        assert 'href="/"' in r.text
 
     run_flow(hub, flow)
 

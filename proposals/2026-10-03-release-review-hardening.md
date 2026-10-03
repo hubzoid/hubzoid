@@ -176,3 +176,48 @@ No full suite rerun, customer deployment, push or publishing was performed. The
 separate default suite review supplied broader regression evidence before these
 focused corrections. Customer sign-in and integration acceptance, and the
 previously recorded real-device/SSO/Codex/release-image limits, remain unchanged.
+
+## Approved MCP consent UX follow-up
+
+The owner requested a human review of the MCP OAuth pages within the authorized
+release UX cleanup. The isolated browser rehearsal confirmed a dated, prose-heavy
+consent page, an internal folder name in place of the agent name, no direct
+revocation navigation, and unstyled browser errors. Keep the server-rendered page
+and the existing FastMCP protocol, sign-in dispatch, resource scope, CSRF checks,
+grant lifetime and revocation logic. Reuse the MCP agent's display name and the
+chat app's visual tokens. Present the assistant, account, hub, action permissions
+and callback host clearly; keep the client-name trust warning visible and move
+technical explanations into keyboard/touch-accessible help and native details.
+Style expired, denied and invalid-request states with local recovery navigation.
+Show creation/expiry dates on assistant connections. No external client logo,
+JavaScript, new permission, new credential handling or extra UI dependency.
+Run the existing OAuth and account-dispatch checks, extend security-relevant
+metadata/error coverage, and recheck consent, cancellation, connections and
+expired/denied states in the isolated browser fixture. Commit the verified fix.
+
+## MCP consent UX completed
+
+The consent and connection pages now match Hubzoid's current visual tokens and
+show the same agent name as the MCP server. The assistant identity, signed-in
+account, action permissions, callback host and client-name trust warning remain
+visible. Secondary explanations use keyboard-accessible question-mark help;
+full endpoint details use a native disclosure. Consent actions fit the reviewed
+desktop viewport. Assistant connections show creation/expiry dates and revocation
+guidance. Browser errors preserve their status and security headers while adding
+useful local recovery links. No protocol, token, grant or sign-in policy changed.
+
+Validation: 63 focused tests passed across OAuth lifecycle, metadata escaping,
+denied access, native/Open WebUI account dispatch, MCP authorization and grant
+reconciliation. The isolated browser verified sign-in returning to consent,
+keyboard help, cancellation, the revocation link and dates, revocation of a
+synthetic connection, and expired/denied recovery pages. No real assistant was
+authorized and no customer account or endpoint was touched. No full suite was
+rerun. Real-device/dark-theme and customer integration acceptance remain outside
+this focused browser check.
+
+During final push, the release branch had acquired a concurrent MCP consent
+redesign. Integration retains that newer permission summary and visual layout,
+adding this follow-up's recovery navigation, accessible technical details and
+connection dates. The 63-test and browser results above describe the follow-up
+before this integration; no additional tests or browser runs were performed
+after the owner's explicit request to close and push without further tests.
