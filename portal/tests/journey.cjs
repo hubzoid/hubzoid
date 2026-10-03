@@ -854,7 +854,8 @@ function step(name) {
     const close = page.getByRole("row").filter({ hasText: "monthly_close" });
     await close.getByText("Scheduled", { exact: true }).waitFor();
     await close.getByText("Asia/Kolkata").waitFor();
-    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByText("No schedule; runs only when started explicitly.").waitFor();
+    // Explanations sit behind a "?" help button, named by its text.
+    await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByRole("button", { name: "No schedule; runs only when started explicitly." }).waitFor();
     await page.getByRole("row").filter({ hasText: "reissue_invoice" }).getByText("Manual", { exact: true }).waitFor();
     await close.getByRole("link", { name: "View runs" }).click();
     await page.getByRole("heading", { name: /Runs of monthly_close/ }).waitFor();
@@ -874,12 +875,12 @@ function step(name) {
     await page.getByText("Scheduler not running", { exact: false }).first().waitFor();
     await page.getByText("2 scheduled runs missed while the scheduler was down", { exact: false }).waitFor();
     await go("/agents/support/runs/ticket_digest");
-    await page.getByText("No recorded runs of ticket_digest yet.").waitFor();
+    await page.getByText("No runs yet", { exact: true }).waitFor();
 
     // ---- cross-agent runs ----------------------------------------------------------------
     step("Runs across agents: cross-agent list, ordered, filtered before paging, URL-persisted");
     await go("/runs");
-    await page.getByRole("heading", { name: "Runs across your agents" }).waitFor();
+    await page.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
     // Runs from more than one agent are shown together, each labelled by agent.
     await page.getByRole("row").filter({ hasText: "mc-2026-09-01" }).getByText("Finance Assistant").waitFor();
     await page.getByRole("row").filter({ hasText: "td-2026-09-15" }).getByText("Support Assistant").waitFor();
@@ -961,7 +962,7 @@ function step(name) {
 
     // (a) Fires exactly once per interval (the in-flight guard prevents overlap).
     await cpage.goto(`${ORIGIN}/portal/#/runs?auto=1`);
-    await cpage.getByRole("heading", { name: "Runs across your agents" }).waitFor();
+    await cpage.getByRole("heading", { name: /^Runs\b/, level: 1 }).waitFor();
     await cpage.getByRole("row").filter({ hasText: "ri-2026-09-18" }).waitFor();
     let n = runsGets;
     let resP = cpage.waitForResponse((x) => x.url().includes("/portal/api/runs"));

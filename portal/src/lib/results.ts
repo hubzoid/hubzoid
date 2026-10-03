@@ -1,6 +1,11 @@
 /** Presentation of workflow values. Only published artifacts become actions. */
 export type ResultArtifact = { url: string; title: string };
-export const shortRunId = (id: string) => id.split("@")[0]!.slice(-8);
+/** A run id people can scan: long generated ids keep their last 8 characters;
+ *  short, readable ids (such as "mc-2026-09-01") stay whole. */
+export const shortRunId = (id: string) => {
+  const local = id.split("@")[0]!;
+  return local.length > 20 ? local.slice(-8) : local;
+};
 export function resultValue(raw: string): unknown {
   try { return JSON.parse(raw); } catch { return raw; }
 }

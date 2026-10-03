@@ -15,6 +15,7 @@ console.log('Workflow result and command checks passed');
 
 assert.equal(shortRunId('manual:5b5e27d62e4144e09f588847ae01b0a8@hz-finance-eab762a0'), 'ae01b0a8');
 assert.equal(shortRunId('manual:d24c19affcfd4d56940f0a55e49f1191@hz-finance-eab762a0'), 'e49f1191');
+assert.equal(shortRunId('mc-2026-09-01'), 'mc-2026-09-01');
 
 assert.equal(workflowCommand('run', 'md:weekly', '/srv/hubs/finance'), "hubzoid schedule run '/srv/hubs/finance' 'md:weekly'");
 assert.equal(createWorkflowCommand('/srv/hubs/Finance Hub'), "hubzoid new workflow my-workflow '/srv/hubs/Finance Hub'");
