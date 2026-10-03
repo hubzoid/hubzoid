@@ -14,6 +14,10 @@ successful attempt back off the address's counter (failures by others from
 the same address keep counting, so a valid account cannot be used to reset a
 password-spraying limit).
 
+Self sign-up has a separate ``signup:<address>`` counter. It counts every
+sign-up and is never refunded, so a run of successful sign-ups from one
+address still hits the same window limit. Sign-in success does not touch it.
+
 Counters live in the shared operational store, so every bridge of a gateway
 enforces the same limits, on SQLite and PostgreSQL.
 
@@ -74,6 +78,15 @@ def keys(*, ip: str | None = None, email: str | None = None) -> list[str]:
     return [k for k in (_ip_key(ip), _email_key(email)) if k]
 
 
+def _signup_key(ip: str | None) -> str | None:
+    """Per-address sign-up counter. Same address rules as ``_ip_key`` (loopback
+    is not counted), but a distinct key so a successful sign-up cannot refund it."""
+    ip_key = _ip_key(ip)
+    if not ip_key:
+        return None
+    return "signup:" + ip_key[len("ip:"):]
+
+
 def _wait(conn, wanted: list[str], now: float) -> int:
     rows = conn.execute(sa.select(attempts.c.locked_until).where(
         attempts.c.key.in_(wanted), attempts.c.locked_until > now)).fetchall()
@@ -101,6 +114,20 @@ def admit(hub_dir: Path, *, ip: str | None = None, email: str | None = None,
     wanted = keys(ip=ip, email=email)
     if not wanted:
         return 0
+    return _admit_keys(hub_dir, wanted, now)
+
+
+def admit_signup(hub_dir: Path, *, ip: str | None = None, now: float | None = None) -> int:
+    """Count one sign-up against the address. Unlike sign-in, this counter is
+    never refunded on success, so an address cannot create accounts without
+    limit. Returns 0 to go ahead, or the seconds to wait when locked."""
+    key = _signup_key(ip)
+    if not key:
+        return 0
+    return _admit_keys(hub_dir, [key], now)
+
+
+def _admit_keys(hub_dir: Path, wanted: list[str], now: float | None) -> int:
     now = time.time() if now is None else now
     table = attempts.name
     locked = f"({table}.locked_until IS NOT NULL AND {table}.locked_until > :now)"

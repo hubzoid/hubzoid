@@ -284,6 +284,11 @@ store, so every bridge enforces the same limits.
   address or the email is locked for 15 minutes. The tenth failure answers
   `429 rate_limited` with `Retry-After`.
 - Password sign-in, password changes and self sign-up are counted.
+- Self sign-up also has its own per-address counter (`signup:<address>`).
+  Every sign-up counts, including a successful one, and success does not
+  clear it. After the same window limit, further sign-ups from that address
+  are refused with `429 rate_limited`. A successful sign-in still clears only
+  the sign-in counters.
 - Loopback addresses are not counted per address, so a missing client address
   never locks everyone out. The per-email limit always applies.
 - The client address comes from `X-Forwarded-For`. Behind a TLS proxy that

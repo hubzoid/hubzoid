@@ -320,6 +320,11 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise error(422, "invalid_password", exc.message)
         ip = sessionlib.client_ip(request)
         try:
+            # Sign-up is counted on its own key and never refunded, before the
+            # shared address counter (which a success still takes back).
+            wait = ratelimit.admit_signup(hub_dir, ip=ip)
+            if wait:
+                raise _rate_limited(wait)
             wait = ratelimit.admit(hub_dir, ip=ip)
             if wait:
                 raise _rate_limited(wait)
