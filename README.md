@@ -65,6 +65,8 @@ prints one ready line with the address (`http://127.0.0.1:3080` by
 default) and opens it in your browser. Pick a suggested prompt, such as "What should we reorder today, and
 what could run out first?" Edit `my-hub/AGENTS.md` to make the hub yours.
 
+If Hubzoid gave your team a useful agent, a ⭐ on [GitHub](https://github.com/hubzoid/hubzoid) helps others find it.
+
 Sign-in is off by default (**local mode**): you are the hub's owner and the
 port stays on your machine. The ready line also prints a command to connect
 Claude Code to the hub's tools and knowledge:

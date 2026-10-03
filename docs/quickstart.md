@@ -59,6 +59,8 @@ a suggested prompt such as "What should we reorder today, and what could run
 out first?". The agent answers from the hub's files and its `stock_check`
 tool, and you see each tool step as it runs.
 
+If Hubzoid gave your team a useful agent, a ⭐ on [GitHub](https://github.com/hubzoid/hubzoid) helps others find it.
+
 ## Local mode
 
 Sign-in is off by default. You are the hub's owner, `admin@localhost`, an
