@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -249,3 +253,172 @@ def test_monitor_emits_one_stale_and_one_recovered_event(hub, monkeypatch):
     assert monitor.inspect(hub)
     assert monitor.inspect(hub)
     assert [row.kind for row in _rows(hub)] == ["engine_stale", "engine_recovered"]
+
+
+@pytest.mark.parametrize("stage", ["overdue", "scan", "schedules"])
+def test_reconciliation_dispatches_queued_alerts_when_a_check_fails(hub, monkeypatch, stage):
+    from dbos import DBOS
+
+    dispatch = alerts.dispatch
+    _reconcile_with(hub, monkeypatch, [])
+    monkeypatch.setattr(runtime, "_APP_VERSION", "test-version")
+    monkeypatch.setattr(alerts, "dispatch", dispatch)
+    alerts.record(hub, hub.name, "run_failed", "queued", {"workflow": "check", "run_id": "queued"})
+    with events._engine(hub).connect() as conn:
+        aid = conn.execute(text("SELECT id FROM hz_workflow_alerts")).scalar_one()
+    enqueued = []
+    monkeypatch.setattr(DBOS, "enqueue_workflow_with_options",
+                        lambda options, alert_id: enqueued.append(alert_id))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("broken check")
+
+    target, name = {"overdue": (alerts, "overdue"), "scan": (DBOS, "list_workflows"),
+                    "schedules": (alerts, "check_schedules")}[stage]
+    monkeypatch.setattr(target, name, fail)
+    with pytest.raises(RuntimeError, match="broken check"):
+        alerts.reconcile(hub, hub.name)
+    assert enqueued == [aid]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_reconciliation_stops_dispatching_when_ownership_is_lost(hub, monkeypatch, raises):
+    from dbos import DBOS
+    from hubzoid.workflows.ownership import OwnershipLost
+
+    dispatch = alerts.dispatch
+    _reconcile_with(hub, monkeypatch, [])
+    monkeypatch.setattr(runtime, "_APP_VERSION", "test-version")
+    monkeypatch.setattr(alerts, "dispatch", dispatch)
+    alerts.record(hub, hub.name, "run_failed", "queued", {"workflow": "check", "run_id": "queued"})
+    enqueued = []
+    monkeypatch.setattr(DBOS, "enqueue_workflow_with_options",
+                        lambda options, alert_id: enqueued.append(alert_id))
+    lost = False
+
+    def assert_owned():
+        if lost:
+            raise OwnershipLost("lost during check")
+
+    def lose(*args):
+        nonlocal lost
+        lost = True
+        if raises:
+            raise OwnershipLost("lost during check")
+
+    monkeypatch.setattr(runtime, "_OWNER", SimpleNamespace(assert_owned=assert_owned))
+    monkeypatch.setattr(alerts, "check_schedules", lose)
+    with pytest.raises(OwnershipLost, match="lost during check"):
+        alerts.reconcile(hub, hub.name)
+    assert enqueued == []
+
+
+@pytest.mark.parametrize("history", ["empty", "manual"])
+def test_schedule_check_does_not_treat_manual_runs_as_scheduled(hub, monkeypatch, history):
+    from dbos import DBOS
+    from hubzoid import access
+
+    monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
+    monkeypatch.setattr(access, "store_for", lambda _: _Store())
+    monkeypatch.setattr(runtime, "registry", lambda: [
+        SimpleNamespace(name="check", schedule="* * * * *", timezone="UTC")])
+    now = time.time()
+    rows = [] if history == "empty" else [_run("check", "manual", "SUCCESS", now, "manual")]
+    if rows:
+        rows[0].dequeued_at = int(now * 1000)
+
+    def list_workflows(**kwargs):
+        # Behave like DBOS on a backend supporting the old attribute filter.
+        return [] if kwargs.get("attributes") else rows
+
+    monkeypatch.setattr(DBOS, "list_workflows", list_workflows)
+    alerts.check_schedules(hub, hub.name, {"dispatch:check": now - 20 * 60})
+    assert [row.kind for row in _rows(hub)] == ["schedule_stopped"]
+
+
+@pytest.mark.parametrize("mode", ["disabled", "paused", "held"])
+def test_schedule_check_respects_schedule_controls(hub, monkeypatch, mode):
+    from dbos import DBOS
+    from hubzoid import access
+
+    monkeypatch.setenv("HUBZOID_SCHEDULES", "0" if mode == "disabled" else "1")
+    monkeypatch.delenv("HUBZOID_GATEWAY", raising=False)
+    store = _Store()
+    store.paused = {"check"} if mode == "paused" else set()
+    monkeypatch.setattr(store, "schedule_hold", lambda: mode == "held")
+    monkeypatch.setattr(access, "store_for", lambda _: store)
+    monkeypatch.setattr(runtime, "registry", lambda: [
+        SimpleNamespace(name="check", schedule="* * * * *", timezone="UTC")])
+
+    def unexpected_query(**kwargs):
+        raise AssertionError("An inactive schedule must not query DBOS")
+
+    monkeypatch.setattr(DBOS, "list_workflows", unexpected_query)
+    alerts.check_schedules(hub, hub.name, {"dispatch:check": time.time() - 20 * 60})
+    assert _rows(hub) == []
+
+
+_SQLITE_RECONCILE = r'''
+import os
+import sys
+import time
+from pathlib import Path
+from dbos import DBOS
+from sqlalchemy import text
+from hubzoid.workflows import alerts, events, runtime
+from hubzoid.workflows.state import WorkflowState
+
+hub = Path(sys.argv[1])
+os.environ['HUBZOID_OPERATIONAL_DB'] = f'sqlite:///{hub / "ops.db"}'
+os.environ['HUBZOID_DBOS_DB'] = f'sqlite:///{hub / "dbos.db"}'
+os.environ['HUBZOID_SCHEDULES'] = '1'
+os.environ['HUBZOID_AUTH'] = 'false'
+for key in ('DATABASE_URL', 'HUBZOID_DEPLOYMENT', 'HUBZOID_GATEWAY'):
+    os.environ.pop(key, None)
+delivered = []
+
+async def sender(_, row):
+    delivered.append(row['id'])
+
+alerts.send = sender
+runtime.init(hub, hub_name='alert-test')
+try:
+    @runtime.workflow('* * * * *', timezone='UTC')
+    def check():
+        return 'done'
+
+    runtime.launch()
+    scheduled = runtime.start('check', scheduled_at='test-slot')
+    assert scheduled.get_result() == 'done'
+    scheduled_run = DBOS.get_workflow_status(scheduled.get_workflow_id())
+    assert scheduled_run.attributes == {'trigger': 'schedule'}
+    assert runtime.start('check').get_result() == 'done'
+    # A queued failure alert must be dispatched despite a schedule being present.
+    alerts.record(hub, 'alert-test', 'run_failed', 'failed-run',
+                  {'workflow': 'check', 'run_id': 'failed-run'})
+    alerts.reconcile(hub, 'alert-test')
+    state = WorkflowState(events._engine(hub), 'alert-test', '__alerts__')
+    assert state['dispatch:check'] == scheduled_run.dequeued_at / 1000
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        with events._engine(hub).connect() as conn:
+            rows = conn.execute(text('SELECT kind,state FROM hz_workflow_alerts')).all()
+        if rows == [('run_failed', 'sent')]:
+            break
+        time.sleep(0.05)
+    assert rows == [('run_failed', 'sent')], rows
+    assert len(delivered) == 1
+    alerts.reconcile(hub, 'alert-test')
+    assert len(delivered) == 1
+finally:
+    runtime.shutdown()
+'''
+
+
+@pytest.mark.slow
+def test_sqlite_reconciliation_recognizes_scheduled_runs_and_delivers_alerts(hub):
+    # DBOS is a process-global singleton; isolate the real engine from other tests.
+    proc = subprocess.run([sys.executable, "-c", _SQLITE_RECONCILE, str(hub)],
+                          capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-6000:]
