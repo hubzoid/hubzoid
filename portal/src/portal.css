@@ -106,17 +106,27 @@ body {
 /* ---- shell ---------------------------------------------------------------- */
 
 .shell {
-  min-height: 100vh;
+  /* Keep navigation in view; each column owns its overflow. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .sider {
   border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100%;
   padding: 28px 12px 20px;
 }
 
@@ -227,6 +237,7 @@ body .ant-alert .ant-alert-icon {
 
 .topbar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   height: 56px;

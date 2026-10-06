@@ -102,6 +102,68 @@ function step(name) {
       assert.equal(await page.getByText(/about 30 seconds/).count(), 0, "no implementation detail on success");
     };
 
+    // ---- scrolling ---------------------------------------------------------
+    step("Long agent lists scroll independently of desktop and mobile navigation");
+    const manyHubs = Array.from({ length: 30 }, (_, i) => ({
+      key: `agent-${i + 1}`, path: `/srv/hubs/agent-${i + 1}`, name: `Agent ${i + 1}`,
+    }));
+    const longList = (route) => route.fulfill({ json: { hubs: [...state.hubs, ...manyHubs] } });
+    await page.route(`${ORIGIN}/portal/api/hubs`, longList);
+    try {
+      for (const view of [
+        { width: 1440, height: 950, theme: "light", nav: ".sider" },
+        { width: 1024, height: 640, theme: "dark", nav: ".sider" },
+        { width: 390, height: 844, theme: "light", nav: ".topbar" },
+      ]) {
+        await page.setViewportSize({ width: view.width, height: view.height });
+        await go("/agents");
+        await page.evaluate(theme => localStorage.setItem("hz-theme", theme), view.theme);
+        await page.reload();
+        await page.getByRole("link", { name: "Agent 30", exact: true }).waitFor();
+        const navigation = page.locator(view.nav);
+        const content = page.locator(".shell > .content");
+        const before = await navigation.boundingBox();
+        const firstCard = await page.locator(".agent-card").first().boundingBox();
+        await content.hover();
+        await page.mouse.wheel(0, 700);
+        await page.waitForFunction(() =>
+          document.querySelector(".content").scrollTop > 0 || document.scrollingElement.scrollTop > 0);
+        const after = await navigation.boundingBox();
+        assert.ok(Math.abs(after.y - before.y) < 1, `${view.width}px navigation stays in place`);
+        assert.ok(Math.abs(after.height - before.height) < 1, "Navigation does not grow with the cards");
+        assert.ok((await page.locator(".agent-card").first().boundingBox()).y < firstCard.y - 100,
+          "The agent list actually moves when scrolled");
+        assert.ok(await content.evaluate(el => el.scrollTop > 0), "The content owns scrolling");
+        assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
+        const lastCard = page.locator(".agent-card").last();
+        await lastCard.scrollIntoViewIfNeeded();
+        const lastBox = await lastCard.boundingBox();
+        assert.ok(lastBox.y >= after.y + (view.nav === ".topbar" ? after.height : 0)
+          && lastBox.y + lastBox.height <= view.height, "The last agent remains reachable");
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+          "The long list does not cause sideways scrolling");
+        if (view.nav === ".topbar") {
+          await page.getByRole("button", { name: "Open navigation" }).click();
+          await page.getByRole("dialog").getByRole("link", { name: "People" }).waitFor();
+          await page.keyboard.press("Escape");
+          await page.getByRole("dialog").waitFor({ state: "hidden" });
+        }
+      }
+
+      await page.setViewportSize({ width: 1024, height: 320 });
+      await go("/agents");
+      const sidebar = page.locator(".sider");
+      await sidebar.getByRole("button", { name: "Sign out", exact: true }).focus();
+      const footer = await sidebar.getByRole("button", { name: "Sign out", exact: true }).boundingBox();
+      assert.ok(footer.y >= 0 && footer.y + footer.height <= 320,
+        "Sidebar controls are reachable on a short or zoomed viewport");
+      assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
+    } finally {
+      await page.unroute(`${ORIGIN}/portal/api/hubs`, longList);
+      await page.evaluate(() => localStorage.setItem("hz-theme", "light"));
+      await page.setViewportSize({ width: 1440, height: 950 });
+    }
+
     // ---- landing -----------------------------------------------------------
     step("The landing page combines five totals and agent cards, with compact navigation");
     await go("");
