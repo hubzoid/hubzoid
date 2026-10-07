@@ -1494,9 +1494,13 @@ function step(name) {
     assert.equal(await hash(), "#/agents/finance/access?edit=ravi.menon%40example.org");
     await page.getByRole("dialog", { name: "Give access" }).waitFor();
     await drawer().getByText("ravi.menon@example.org").first().waitFor();
-    await drawer().getByRole("button", { name: "Cancel" }).click();
-    await drawer().waitFor({ state: "hidden" });
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "opening Give access writes nothing");
+    // …and they can finish there: the access is given in their agent.
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: /^Save/ }).click();
+    await drawer().waitFor({ state: "hidden" });
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/access/apply"]);
     state.mutations.length = 0;
 
     step("As an administrator, a duplicate names the person, says why and opens their details");

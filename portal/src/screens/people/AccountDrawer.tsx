@@ -860,8 +860,10 @@ export function AccountDrawer({
             )}
             {afterUncertain && !google && links && (
               <Paragraph style={{ margin: 0 }}>
-                It may be the account your earlier attempt created. Open their details and use Reset password to
-                make a sign-in link for them.
+                It may be the account your earlier attempt created.{" "}
+                {me.org_admin
+                  ? "Open their details and use Reset password to make a sign-in link for them."
+                  : "Ask an Administrator to reset its password to make a sign-in link for them."}
               </Paragraph>
             )}
           </>
