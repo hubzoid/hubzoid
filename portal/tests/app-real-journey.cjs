@@ -1135,8 +1135,8 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await consoleDrawer().waitFor({ state: "hidden" });
   await page.getByText("Access updated", { exact: true }).waitFor();
 
-  step("After a reload the agent is there for them");
-  await invited.page.reload();
+  step("Try again opens the agent for them, without a page reload");
+  await invited.page.getByRole("button", { name: "Try again" }).click();
   await invited.page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
   const chatAsNoor = ctx.chat(invited.page);
   await chatAsNoor.settled();
