@@ -837,7 +837,9 @@ function step(name) {
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    state.revision += 1; // another administrator changed access after this drawer loaded
+    // Another administrator gave Kai Manage invoices after this drawer loaded.
+    state.grants.push(["kai.moreno@addusers.local", "finance", "invoices"]);
+    state.revision += 1;
     await drawer().getByRole("button", { name: "Save change" }).click();
     await drawer().getByText("Nothing was saved").waitFor();
     await drawer().getByText("Access changed since you loaded it", { exact: false }).waitFor();
@@ -849,13 +851,14 @@ function step(name) {
     await drawer().getByText("Kai Moreno").first().waitFor();
     await expand("Restricted tools");
     assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), false, "the refused change isn’t kept");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage invoices/ }).isChecked(), true, "Reopen shows their current access");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
     await drawer().getByRole("button", { name: "Save change" }).click();
     await saved();
     assert.equal(await page.getByRole("link", { name: /^Back to / }).count(), 0, "not opened from a person, so no way back");
     assert.ok(state.grants.some(([s, , p]) => s === "kai.moreno@addusers.local" && p === "ledger"), "the retry saved");
-    state.grants = state.grants.filter(([s, , p]) => !(s === "kai.moreno@addusers.local" && p === "ledger"));
+    state.grants = state.grants.filter(([s, , p]) => !(s === "kai.moreno@addusers.local" && (p === "ledger" || p === "invoices")));
     state.revision += 1;
     state.mutations.length = 0;
 

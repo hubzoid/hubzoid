@@ -301,8 +301,15 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         onReload={data.reload}
         onSaved={(text) => {
           // This callback closed over the draft just saved. Opened from that
-          // person's details (?edit=), the notice leads back to them.
-          const from = draft && q.edit && normalizeSubject(q.edit) === normalizeSubject(draft.subject) ? draft : null;
+          // person's details (?edit=), the notice leads back to them, unless an
+          // agent administrator just removed the access that let them see them.
+          const from =
+            draft &&
+            q.edit &&
+            normalizeSubject(q.edit) === normalizeSubject(draft.subject) &&
+            (me.data?.org_admin || draft.selected.length > 0)
+              ? draft
+              : null;
           announce(
             text || "Access updated",
             from ? { subject: normalizeSubject(from.subject), name: personName(from.subject, from.row.display) } : undefined,
