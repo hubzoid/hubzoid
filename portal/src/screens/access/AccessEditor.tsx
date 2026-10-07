@@ -127,7 +127,11 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         <PersonCell
           subject={r.subject}
           display={r.display}
-          link={r.subject === EVERYONE || isService(r.subject) ? undefined : personHref(r.subject)}
+          link={
+            r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup"
+              ? undefined
+              : personHref(r.subject)
+          }
         />
       ),
     },

@@ -239,6 +239,13 @@ function step(name) {
     await priyaRow.getByText("Active", { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
     await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
+    // Not signed up yet: access waits for an account, and People has no page for it.
+    assert.equal(await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByRole("link").count(), 0, "no profile before sign-up");
+    await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
+    await drawer().getByText("Not signed up yet", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile before sign-up");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
     await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);

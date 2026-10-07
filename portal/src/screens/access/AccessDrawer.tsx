@@ -969,7 +969,8 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
             )}
             {service && <LegacyServiceTag />}
             {row.status && (!service || row.status !== "service") && <AccountTag status={row.status} />}
-            {!service && row.subject !== EVERYONE && (
+            {/* Not signed up yet: no account, so no details page to open. */}
+            {!service && row.subject !== EVERYONE && row.status !== "awaiting-signup" && (
               <Button type="link" size="small" className="inline-link" href={personHref(row.subject)}>
                 View profile
               </Button>
