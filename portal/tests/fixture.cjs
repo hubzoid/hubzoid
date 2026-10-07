@@ -44,7 +44,7 @@ function resolveStatuses(value) {
 
 function createFixture() {
   const state = {
-    role: "org", // 'org' | 'hub' | 'user'
+    role: "org", // 'org' | 'hub' | 'user' | 'none' (signed out)
     viewer: "admin@example.org",
     mutations: [], // every POST body, in order
     delays: {}, // endpoint -> ms (e.g. { "/access": 700 })
@@ -306,6 +306,7 @@ function createFixture() {
   }
 
   async function handle(method, endpoint, params, body) {
+    if (state.role === "none") throw error(401, "Sign in to continue.");
     const a = admin();
     if (!a) throw error(403, "Sign in with an account allowed to manage agent access.");
     if (state.delays[endpoint]) await new Promise((r) => setTimeout(r, state.delays[endpoint]));

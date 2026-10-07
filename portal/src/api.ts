@@ -263,6 +263,14 @@ export class ApiError extends Error {
   }
 }
 
+/** True while the Console API's last answer was 401: signed out, or the
+ *  session expired. Error views then offer Sign in. */
+export let signedOut = false;
+
+/** The sign-in page, coming back to this Console page afterwards. */
+export const signInHref = () =>
+  `/auth?redirect=${encodeURIComponent(location.pathname + location.hash)}`;
+
 export type ChangeRequest = {
   id: string;
   status: "pending" | "applying" | "confirmed" | "rejected" | "expired" | "failed";
@@ -325,6 +333,7 @@ export async function request<T>(
       0,
     );
   }
+  signedOut = response.status === 401;
   if (!response.ok) {
     let message = `${response.status} — Request failed`;
     let code: string | undefined;
@@ -446,6 +455,7 @@ export async function connectorsRequest<T>(
   } catch (e) {
     throw new ApiError(e instanceof Error && e.message ? e.message : "Network error", 0);
   }
+  signedOut = response.status === 401;
   if (!response.ok) {
     let message = `${response.status}: Request failed`;
     let code: string | undefined;
