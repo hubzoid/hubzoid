@@ -26,7 +26,7 @@ import {
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { useNavigationGuard } from "../../hooks/useRoute";
+import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
   USE_HUB,
@@ -587,9 +587,12 @@ export function AccessDrawer({
     }
     if (draft.step === "failed")
       return (
-        <Space className="drawer-actions">
-          <Button type="primary" onClick={finish}>
+        <Space className="drawer-actions" wrap>
+          <Button disabled={checking} onClick={finish}>
             Done
+          </Button>
+          <Button type="primary" loading={checking} onClick={() => void openPerson(subject)}>
+            Reopen {name}
           </Button>
         </Space>
       );
@@ -700,6 +703,7 @@ export function AccessDrawer({
             afterUncertain={afterUncertain}
             retryError={retryError}
             catalog={catalog}
+            onDone={close}
           />
         </div>
       )}
@@ -1128,6 +1132,7 @@ function NewAccountOutcome({
   afterUncertain,
   retryError,
   catalog,
+  onDone,
 }: {
   outcome: Outcome;
   email: string;
@@ -1138,6 +1143,8 @@ function NewAccountOutcome({
   afterUncertain: boolean;
   retryError: ApiError | null;
   catalog: Catalog;
+  /** Closes the drawer, as Done does. */
+  onDone: () => void;
 }) {
   const retry = retryError && (
     <Alert type="error" showIcon title="Access wasn’t granted" description={retryError.message} />
@@ -1159,6 +1166,9 @@ function NewAccountOutcome({
           }
         />
         <SignInDetails email={outcome.created.subject} password={password} signIn={outcome.created.sign_in ?? signIn} />
+        <a href={personHref(outcome.created.subject)} onClick={onDone}>
+          Open their details
+        </a>
       </>
     );
   }

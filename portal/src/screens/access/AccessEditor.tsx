@@ -26,7 +26,7 @@ import {
   LoadState,
   PersonCell,
 } from "../../components/common";
-import { useHashQuery } from "../../hooks/useRoute";
+import { personHref, useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, pickDraft, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
@@ -56,8 +56,13 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   const me = useData<Me>("/me");
   const [draft, setDraft] = useState<Draft | null>(null);
   // Each result is a new alert (keyed), so a repeated "Access updated" is announced again.
-  const [notice, setNotice] = useState({ text: "", n: 0 });
-  const announce = (text: string) => setNotice((prev) => ({ text, n: prev.n + 1 }));
+  // `back` is the person a ?edit= deep link came from, to return to after saving.
+  const [notice, setNotice] = useState<{ text: string; n: number; back?: { subject: string; name: string } }>({
+    text: "",
+    n: 0,
+  });
+  const announce = (text: string, back?: { subject: string; name: string }) =>
+    setNotice((prev) => ({ text, n: prev.n + 1, back }));
   const [removingEveryone, setRemovingEveryone] = useState(false);
 
   // Deep link from Person → Edit access (#/agents/<hub>/access?edit=<subject>):
@@ -225,6 +230,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
           type="success"
           showIcon
           title={notice.text}
+          action={notice.back && <a href={personHref(notice.back.subject)}>Back to {notice.back.name}</a>}
           closable={{ onClose: () => setNotice((prev) => ({ ...prev, text: "" })) }}
         />
       )}
@@ -294,7 +300,13 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         setDraft={setDraft}
         onReload={data.reload}
         onSaved={(text) => {
-          announce(text || "Access updated");
+          // This callback closed over the draft just saved. Opened from that
+          // person's details (?edit=), the notice leads back to them.
+          const from = draft && q.edit && normalizeSubject(q.edit) === normalizeSubject(draft.subject) ? draft : null;
+          announce(
+            text || "Access updated",
+            from ? { subject: normalizeSubject(from.subject), name: personName(from.subject, from.row.display) } : undefined,
+          );
           data.reload();
         }}
       />
