@@ -26,7 +26,7 @@ import {
   LoadState,
   PersonCell,
 } from "../../components/common";
-import { useHashQuery } from "../../hooks/useRoute";
+import { personHref, useHashQuery } from "../../hooks/useRoute";
 import { EVERYONE, USE_HUB, isService, normalizeSubject, personName, toCatalog } from "../../lib/format";
 import { draftFor, orderCapabilities, pickDraft, type Draft } from "./plan";
 import { AccessDrawer } from "./AccessDrawer";
@@ -123,7 +123,13 @@ export function AccessEditor({ hub }: { hub: Hub }) {
     {
       title: "Person",
       key: "person",
-      render: (_: unknown, r: AccessRow) => <PersonCell subject={r.subject} display={r.display} />,
+      render: (_: unknown, r: AccessRow) => (
+        <PersonCell
+          subject={r.subject}
+          display={r.display}
+          link={r.subject === EVERYONE || isService(r.subject) ? undefined : personHref(r.subject)}
+        />
+      ),
     },
     {
       title: "Capabilities",

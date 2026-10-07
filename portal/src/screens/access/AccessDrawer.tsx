@@ -26,9 +26,10 @@ import {
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { useNavigationGuard } from "../../hooks/useRoute";
+import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
+  EVERYONE,
   USE_HUB,
   capabilityLabel,
   capabilityNotes,
@@ -968,6 +969,11 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
             )}
             {service && <LegacyServiceTag />}
             {row.status && (!service || row.status !== "service") && <AccountTag status={row.status} />}
+            {!service && row.subject !== EVERYONE && (
+              <Button type="link" size="small" className="inline-link" href={personHref(row.subject)}>
+                View profile
+              </Button>
+            )}
             {service && (
               <HelpToggle label="legacy service identities" open={open} controls={helpId} onToggle={() => setOpen((o) => !o)} />
             )}
