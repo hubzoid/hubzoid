@@ -219,42 +219,48 @@ def reconcile(hub_dir, hub):
     from ..access import store_for
     from .state import WorkflowState
     from .deadlines import seconds
-    runtime._OWNER.assert_owned()
-    overdue()
-    cfg = events.settings(hub_dir).get('alerts', {})
-    threshold = int(cfg.get('failures_in_a_row', 3))
-    pause = int(cfg.get('pause_after_failures', 20))
-    cooldown = seconds(cfg.get('cooldown', '1h'))
-    state = WorkflowState(events._engine(hub_dir), hub, '__alerts__')
-    now_ms = time.time() * 1000
-    cursor = state.get('cursor') or {'t': now_ms - FIRST_LOOKBACK_MS, 'recent': {}}
-    t, recent = cursor['t'], dict(cursor['recent'])
-    gs = store_for(hub_dir)
-    lo = t - OVERLAP_MS
-    for _ in range(WINDOWS_PER_PASS):
-        hi = lo + WINDOW_MS
-        last = hi >= now_ms
-        rows = DBOS.list_workflows(status=TERMINAL_RUNS, completed_after=_iso(lo),
-                                   completed_before=None if last else _iso(hi),
-                                   load_input=False, load_output=False,
-                                   application_name=runtime._app_name(hub))
-        rows = [r for r in rows if r.completed_at is not None]
-        fresh = sorted((r for r in rows if r.workflow_id not in recent),
-                       key=lambda r: (r.completed_at, r.workflow_id))
-        streaks = {}
-        for run in fresh:
-            _observe(hub_dir, hub, run, state, gs, streaks, threshold, pause, cooldown)
-        for name, value in streaks.items():
-            state['streak:'+name] = value
-        recent.update({r.workflow_id: r.completed_at for r in rows if _counted(r)})
-        t = max([t, *(r.completed_at for r in rows)] + ([hi] if not last else []))
-        recent = {rid: at for rid, at in recent.items() if at >= t - OVERLAP_MS}
-        state['cursor'] = {'t': t, 'recent': recent}
-        if last:
-            break
-        lo = hi
-    check_schedules(hub_dir, hub, state)
-    dispatch(hub_dir, hub)
+    owner = runtime._OWNER
+    owner.assert_owned()
+    try:
+        overdue()
+        cfg = events.settings(hub_dir).get('alerts', {})
+        threshold = int(cfg.get('failures_in_a_row', 3))
+        pause = int(cfg.get('pause_after_failures', 20))
+        cooldown = seconds(cfg.get('cooldown', '1h'))
+        state = WorkflowState(events._engine(hub_dir), hub, '__alerts__')
+        now_ms = time.time() * 1000
+        cursor = state.get('cursor') or {'t': now_ms - FIRST_LOOKBACK_MS, 'recent': {}}
+        t, recent = cursor['t'], dict(cursor['recent'])
+        gs = store_for(hub_dir)
+        lo = t - OVERLAP_MS
+        for _ in range(WINDOWS_PER_PASS):
+            hi = lo + WINDOW_MS
+            last = hi >= now_ms
+            rows = DBOS.list_workflows(status=TERMINAL_RUNS, completed_after=_iso(lo),
+                                       completed_before=None if last else _iso(hi),
+                                       load_input=False, load_output=False,
+                                       application_name=runtime._app_name(hub))
+            rows = [r for r in rows if r.completed_at is not None]
+            fresh = sorted((r for r in rows if r.workflow_id not in recent),
+                           key=lambda r: (r.completed_at, r.workflow_id))
+            streaks = {}
+            for run in fresh:
+                _observe(hub_dir, hub, run, state, gs, streaks, threshold, pause, cooldown)
+            for name, value in streaks.items():
+                state['streak:'+name] = value
+            recent.update({r.workflow_id: r.completed_at for r in rows if _counted(r)})
+            t = max([t, *(r.completed_at for r in rows)] + ([hi] if not last else []))
+            recent = {rid: at for rid, at in recent.items() if at >= t - OVERLAP_MS}
+            state['cursor'] = {'t': t, 'recent': recent}
+            if last:
+                break
+            lo = hi
+        check_schedules(hub_dir, hub, state)
+    finally:
+        # A broken health check must not strand queued alerts. Fence the same
+        # owner again: a check may have noticed ownership loss or stopped DBOS.
+        owner.assert_owned()
+        dispatch(hub_dir, hub)
 
 
 def _counted(run):
@@ -343,11 +349,14 @@ def check_schedules(hub_dir, hub, state):
         key = 'dispatch:'+wf.name
         last = state.get(key)
         from dbos import DBOS
-        started = DBOS.list_workflows(name=wf.name, attributes={'trigger':'schedule'},
+        # SQLite returns attributes but cannot filter by them. Select the
+        # newest scheduled run from recent history without counting manual runs.
+        recent = DBOS.list_workflows(name=wf.name,
             status=['PENDING','SUCCESS','ERROR','MAX_RECOVERY_ATTEMPTS_EXCEEDED'],
-            limit=1, sort_desc=True, load_input=False, load_output=False, application_name=runtime._app_name(hub))
-        if started and started[0].dequeued_at:
-            last = max(last or 0, started[0].dequeued_at/1000)
+            limit=20, sort_desc=True, load_input=False, load_output=False, application_name=runtime._app_name(hub))
+        started = next((run for run in recent if _scheduled(run)), None)
+        if started and started.dequeued_at:
+            last = max(last or 0, started.dequeued_at/1000)
             state[key] = last
         if last is None:
             state[key] = time.time()
