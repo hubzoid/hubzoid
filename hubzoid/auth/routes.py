@@ -149,13 +149,29 @@ def _audit(hub_dir: Path, actor: str, action: str, *, subject: str | None = None
         log.warning("auth: could not record %s in Activity", action)
 
 
+def _console(hub_dir: Path, user: AuthUser) -> bool:
+    """Whether this person can open the Console: the Console's own entry check
+    (organization-wide or any agent's Manage access). False when the check
+    fails, so the session still answers; the Console checks again itself."""
+    try:
+        from ..access.identity import normalize
+        from ..access.service import AccessService, Actor
+
+        return AccessService(hub_dir).scope(Actor(normalize(user.email), "console", "session")).any
+    except Exception:  # noqa: BLE001 — only hides a menu item
+        log.warning("auth: could not check Console access")
+        return False
+
+
 def _user_view(hub_dir: Path, user: AuthUser) -> dict:
     """The signed-in person for the web app: the public fields, how this
-    session signed in, and whether there is a password to change."""
+    session signed in, whether there is a password to change, and whether the
+    Console opens for them."""
     row = users.get(hub_dir, user.id) or {}
     return {**user.public(), "method": user.method,
             "password_enabled": bool(row.get("password_enabled")),
-            "has_password": bool(row.get("has_password"))}
+            "has_password": bool(row.get("has_password")),
+            "console": _console(hub_dir, user)}
 
 
 def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:  # noqa: ARG001 — ctx is for other parts

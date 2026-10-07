@@ -116,6 +116,8 @@ function seed() {
     users: [
       { id: "u_ada00001", email: "ada@example.com", name: "Ada Okafor", role: "admin", password: PASSWORD, status: "active" },
       { id: "u_sam00001", email: "sam@example.com", name: "Sam Rivera", role: "user", password: PASSWORD, status: "active" },
+      // Manage access on one agent: not an Administrator, but the Console opens.
+      { id: "u_mia00001", email: "mia@example.com", name: "Mia Chen", role: "user", password: PASSWORD, status: "active", console: true },
       { id: "u_pend0001", email: "pending@example.com", name: "Pat Pending", role: "user", password: PASSWORD, status: "pending" },
       { id: "u_susp0001", email: "suspended@example.com", name: "Sue Spended", role: "user", password: PASSWORD, status: "suspended" },
       { id: "u_local001", email: "admin@localhost", name: "admin@localhost", role: "admin", password: null, status: "active" },
@@ -275,7 +277,7 @@ function createApp(options = {}) {
   if (options.mode) state.mode = options.mode;
   const dist = options.dist || DIST;
 
-  const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name || u.email, role: u.role });
+  const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name || u.email, role: u.role, ...(u.console ? { console: true } : {}) });
   const userById = (id) => state.users.find((u) => u.id === id);
   const userByEmail = (email) => state.users.find((u) => u.email.toLowerCase() === String(email || "").toLowerCase());
 
