@@ -1210,7 +1210,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Reactivate" }).click();
     await modalTitle("Reactivate Tomás Herrera?").waitFor();
-    await modal().getByText("Access removed when they were blocked isn’t restored.", { exact: false }).waitFor();
+    await modal().getByText("Access removed when they were blocked isn’t restored: give it again per agent.", { exact: false }).waitFor();
     await answer("Reactivate");
     await page.getByText("Tomás Herrera is active again.").waitFor();
     assert.deepEqual(lastMutation(), { endpoint: "/people/block", subject: TOMAS, suspended: false });

@@ -169,12 +169,14 @@ deletion:
 
 ### Blocked users
 
-The Console no longer offers Block or Reactivate. A user blocked in an earlier
-release stays blocked: they show as **Blocked**, and new access for them is
-refused. Delete them, or unblock them through the management API
-(`POST /portal/api/people/block` with `{"subject": "<email>", "suspended":
-false}`, as an organization administrator). Unblocking does not restore the
-grants the block removed.
+The Console doesn't offer Block. Someone can still be blocked: a block from an
+earlier release, one carried over by `hubzoid migrate`, or, in Open WebUI mode,
+a new account that reused an earlier account's email. They show as **Blocked**,
+and new access for them is refused. An organization administrator opens their
+details and chooses **Reactivate** in the "…" menu (or calls
+`POST /portal/api/people/block` with `{"subject": "<email>", "suspended":
+false}`), or deletes them. Reactivating does not restore the grants the block
+removed.
 
 The capability picker shows names and compact Inherited, Required or Locked
 labels. Question-mark buttons expose descriptions and restriction details on

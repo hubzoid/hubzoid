@@ -525,7 +525,7 @@ function PersonDrawer({
     modal.confirm({
       title: `Reactivate ${name}?`,
       content:
-        "They can sign in again and use agents open to everyone. Access removed when they were blocked isn’t restored. Give it again per agent.",
+        "The access they still hold works again. Access removed when they were blocked isn’t restored: give it again per agent.",
       okText: "Reactivate",
       onOk: () => reactivate(),
     });
