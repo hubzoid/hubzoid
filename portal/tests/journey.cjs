@@ -741,13 +741,15 @@ function step(name) {
     step("A blocked user can't be given access; the reason shows before saving");
     await go("/agents/finance/access?edit=tomas.herrera@example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    await drawer().getByText("This person is blocked by an administrator").waitFor();
+    await drawer().getByText("This person is blocked", { exact: true }).waitFor();
     // Nothing can be ticked, so there is nothing to review.
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
     assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0);
-    await drawer().getByRole("button", { name: "Cancel" }).click();
-    await drawer().waitFor({ state: "hidden" });
+    // Their details are where an Administrator reactivates them.
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
+    await drawer().getByText("Blocked. Reactivate them to give access.").waitFor();
     // The server refuses it too, for any caller.
     await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
       email: "tomas.herrera@example.org", grants: [{ hub: "finance", permission: "use_hub" }],
@@ -1191,13 +1193,43 @@ function step(name) {
     await page.getByRole("link", { name: "Details for Tomás Herrera" }).click();
     assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    for (const gone of ["Reactivate", "Block access", "Deactivate", "Make organization administrator"])
+    for (const gone of ["Block access", "Deactivate", "Make organization administrator"])
       assert.equal(await drawer().getByRole("button", { name: gone }).count(), 0, `no ${gone} in the user details`);
     assert.equal(await drawer().getByText(/Chat account/).count(), 0, "no separate chat account section");
     assert.equal(await drawer().getByRole("combobox", { name: "Add an agent" }).count(), 0, "a blocked user isn't given access here");
     await page.goBack();
     await drawer().waitFor({ state: "hidden" });
     assert.equal(await hash(), "#/people");
+    state.mutations.length = 0;
+
+    step("An Administrator reactivates a blocked user after a confirmation, and can give them access again");
+    // Blocked automatically, e.g. an Open WebUI account replaced (account_replaced).
+    const TOMAS = "tomas.herrera@example.org";
+    await go(`/people/${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("Blocked. Reactivate them to give access.").waitFor();
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "Reactivate" }).click();
+    await modalTitle("Reactivate Tomás Herrera?").waitFor();
+    await modal().getByText("Access removed when they were blocked isn’t restored.", { exact: false }).waitFor();
+    await answer("Reactivate");
+    await page.getByText("Tomás Herrera is active again.").waitFor();
+    assert.deepEqual(lastMutation(), { endpoint: "/people/block", subject: TOMAS, suspended: false });
+    await drawer().getByText("Active", { exact: true }).waitFor();
+    assert.equal(await drawer().getByText("Blocked. Reactivate them to give access.").count(), 0);
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "Delete user" }).waitFor();
+    assert.equal(await page.getByRole("menuitem", { name: "Reactivate" }).count(), 0, "offered only while blocked");
+    assert.equal(await page.getByRole("menuitem", { name: /Block/ }).count(), 0, "Block isn't offered");
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await drawer().getByRole("combobox", { name: "Add an agent" }).click();
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Finance Assistant" }).click();
+    assert.ok((await hash()).startsWith("#/agents/finance/access"), await hash());
+    await drawer().getByText("Tomás Herrera").first().waitFor();
+    assert.equal(await drawer().getByText("This person is blocked", { exact: true }).count(), 0);
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    state.suspended.add(TOMAS);
     state.mutations.length = 0;
 
     step("User details: name, email, status, role, access by agent, reset password; Delete is in the … menu");
@@ -1403,6 +1435,20 @@ function step(name) {
     assert.equal(await page.getByRole("button", { name: "Refresh accounts" }).count(), 0);
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agent-admin.png"), fullPage: true });
     state.mutations.length = 0;
+
+    step("An agent administrator sees why a blocked user can't be given access, and can't reactivate them");
+    // A block carried over by migration keeps their access, so they are listed.
+    state.grants.push([TOMAS, "finance", "ledger"]);
+    await go(`/people/${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("Blocked. Ask an Administrator to reactivate them.").waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "More actions" }).count(), 0);
+    await go(`/agents/finance/access?edit=${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("This person is blocked", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    state.grants = state.grants.filter(([s]) => s !== TOMAS);
+    assert.equal(state.mutations.length, 0);
 
     // ---- a delegate adds users, within their own access ------------------------------------
     step("A delegate's Add user on an agent locks capabilities they don't hold");

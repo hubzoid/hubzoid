@@ -26,7 +26,7 @@ import {
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { useNavigationGuard } from "../../hooks/useRoute";
+import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
   USE_HUB,
@@ -815,8 +815,10 @@ export function AccessDrawer({
                 <Alert
                   type="warning"
                   showIcon
-                  title="This person is blocked by an administrator"
+                  title="This person is blocked"
                   description="They can’t be given new access. Existing access can still be removed."
+                  // Administrators reactivate them there. Others may not see them under People.
+                  action={me?.org_admin && <a href={personHref(draft.row.subject)}>Open their details</a>}
                 />
               )}
               {draft.row.account_unavailable && !draft.row.suspended && (
