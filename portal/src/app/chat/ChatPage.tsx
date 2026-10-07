@@ -128,7 +128,11 @@ export default function ChatPage({
   if (!initial.agent)
     return (
       <PageFrame title={t.agents.noneTitle}>
-        <StateMessage icon={<Lock size={28} aria-hidden />} title={t.agents.noneTitle}>
+        <StateMessage
+          icon={<Lock size={28} aria-hidden />}
+          title={t.agents.noneTitle}
+          action={<Button onClick={app.agents.reload}>{t.retry}</Button>}
+        >
           {t.agents.none}
         </StateMessage>
       </PageFrame>

@@ -1115,7 +1115,7 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await invited.page.waitForURL(`${ctx.BASE}/`);
 
   step("Without access to any agent they see how to get access");
-  await invited.page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then reload this page.").waitFor();
+  await invited.page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then try again.").waitFor();
   await ctx.shot(invited.page, "25-no-agents");
   assert.equal((await ctx.apiGet(invited.context, "/api/agents")).json.agents.length, 0);
 
