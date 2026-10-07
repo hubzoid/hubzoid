@@ -413,6 +413,8 @@ function createFixture() {
         if (!a.org && !grants.length) throw error(422, "Choose access in at least one agent you manage.", "grant_required");
         if (state.suspended.has(email)) throw error(409, "This person is blocked, so they can't be given access.", "blocked");
         const known = state.identities[email];
+        if (known && known.owui_id && known.pending)
+          throw error(409, "This person already signed up and is awaiting approval. Approve the account instead.", "account_exists");
         if (known && known.owui_id && !state.unavailable.has(email))
           throw error(409, "A user with this email already exists. Nothing was changed: edit that user's access instead.", "account_exists", { subject: email });
         checkGrants(a, email, grants);
