@@ -82,16 +82,15 @@ export function LoadState({
         title="Couldn’t load this view"
         description={error}
         action={
-          <Space>
+          signedOut ? (
+            <Button size="small" type="primary" href={signInHref()}>
+              Sign in
+            </Button>
+          ) : (
             <Button size="small" onClick={retry}>
               Try again
             </Button>
-            {signedOut && (
-              <Button size="small" type="primary" href={signInHref()}>
-                Sign in
-              </Button>
-            )}
-          </Space>
+          )
         }
       />
     );
