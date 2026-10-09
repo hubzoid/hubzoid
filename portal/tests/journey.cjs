@@ -749,7 +749,7 @@ function step(name) {
     // Their details are where an Administrator reactivates them.
     await drawer().getByRole("link", { name: "Open their details" }).click();
     assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
-    await drawer().getByText("Blocked. Reactivate them to give access.").waitFor();
+    await drawer().getByText("Blocked. Reactivate to give access.").waitFor();
     // The server refuses it too, for any caller.
     await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
       email: "tomas.herrera@example.org", grants: [{ hub: "finance", permission: "use_hub" }],
@@ -1206,16 +1206,16 @@ function step(name) {
     // Blocked automatically, e.g. an Open WebUI account replaced (account_replaced).
     const TOMAS = "tomas.herrera@example.org";
     await go(`/people/${encodeURIComponent(TOMAS)}`);
-    await drawer().getByText("Blocked. Reactivate them to give access.").waitFor();
+    await drawer().getByText("Blocked. Reactivate to give access.").waitFor();
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Reactivate" }).click();
     await modalTitle("Reactivate Tomás Herrera?").waitFor();
-    await modal().getByText("Access removed when they were blocked isn’t restored: give it again per agent.", { exact: false }).waitFor();
+    await modal().getByText("Access removed by the block isn’t restored.", { exact: false }).waitFor();
     await answer("Reactivate");
     await page.getByText("Tomás Herrera is active again.").waitFor();
     assert.deepEqual(lastMutation(), { endpoint: "/people/block", subject: TOMAS, suspended: false });
     await drawer().getByText("Active", { exact: true }).waitFor();
-    assert.equal(await drawer().getByText("Blocked. Reactivate them to give access.").count(), 0);
+    assert.equal(await drawer().getByText("Blocked. Reactivate to give access.").count(), 0);
     await drawer().getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Delete user" }).waitFor();
     assert.equal(await page.getByRole("menuitem", { name: "Reactivate" }).count(), 0, "offered only while blocked");
@@ -1440,7 +1440,7 @@ function step(name) {
     // A block carried over by migration keeps their access, so they are listed.
     state.grants.push([TOMAS, "finance", "ledger"]);
     await go(`/people/${encodeURIComponent(TOMAS)}`);
-    await drawer().getByText("Blocked. Ask an Administrator to reactivate them.").waitFor();
+    await drawer().getByText("Blocked. An Administrator can reactivate them.").waitFor();
     assert.equal(await drawer().getByRole("button", { name: "More actions" }).count(), 0);
     await go(`/agents/finance/access?edit=${encodeURIComponent(TOMAS)}`);
     await drawer().getByText("This person is blocked", { exact: true }).waitFor();

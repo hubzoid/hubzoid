@@ -525,7 +525,7 @@ function PersonDrawer({
     modal.confirm({
       title: `Reactivate ${name}?`,
       content:
-        "The access they still hold works again. Access removed when they were blocked isn’t restored: give it again per agent.",
+        "Access removed by the block isn’t restored.",
       okText: "Reactivate",
       onOk: () => reactivate(),
     });
@@ -835,8 +835,8 @@ function PersonDrawer({
             {person.suspended && (
               <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
                 {canReactivate
-                  ? "Blocked. Reactivate them to give access."
-                  : "Blocked. Ask an Administrator to reactivate them."}
+                  ? "Blocked. Reactivate to give access."
+                  : "Blocked. An Administrator can reactivate them."}
               </Paragraph>
             )}
           </div>
