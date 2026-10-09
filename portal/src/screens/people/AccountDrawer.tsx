@@ -829,7 +829,8 @@ export function AccountDrawer({
               type="info"
               showIcon
               title={`${subject} already has an account`}
-              description={failure?.message}
+              // The server's reason only when it adds something (awaiting approval).
+              description={failure?.data.subject ? "Nothing was changed." : failure?.message}
             />
             {/* Their details only for those who see everyone; Give access in each agent chosen. */}
             <Space wrap>

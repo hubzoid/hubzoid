@@ -1483,7 +1483,7 @@ function step(name) {
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByRole("button", { name: "Create account" }).click();
     await drawer().getByText("ravi.menon@example.org already has an account").waitFor();
-    await drawer().getByText("A user with this email already exists. Nothing was changed: edit that user's access instead.").waitFor();
+    await drawer().getByText("Nothing was changed.", { exact: true }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Grant access instead" }).count(), 0);
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
     assert.ok(!state.accountsCreated.includes("ravi.menon@example.org"));
