@@ -239,7 +239,7 @@ export const en = {
     all: "All agents",
     chooseHelp: "Each agent has its own knowledge and tools.",
     change: "Change agent",
-    none: "You don't have access to an agent yet. Ask an administrator to give you access, then try again.",
+    none: "Ask an administrator for access.",
     noneTitle: "No agents yet",
     loadError: "Couldn't load your agents.",
     greeting: (name: string) => `What can ${name} help with?`,

@@ -877,7 +877,7 @@ function chartPng(width = 160, height = 100) {
       step("Someone with no agents is told how to get access, and Try again opens the agent once granted");
       await fetch(`${BASE}/__fixture/flag/no_agents/true`);
       await page.goto(`${BASE}/`);
-      await page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then try again.").waitFor();
+      await page.getByText("Ask an administrator for access.").waitFor();
       await page.getByRole("button", { name: "Try again" }).waitFor();
       await shot(page, "app-24-no-agents");
       await page.evaluate(() => (window.__sameDocument = true));
