@@ -1046,15 +1046,8 @@ function ReviewList({
               ? "Couldn’t confirm whether the changes were saved"
               : "No changes were saved"
           }
-          description={
-            <>
-              {draft.failure}
-              <br />
-              {draft.uncertain
-                ? `Reloading the current access. Reopen ${name} to see what actually applies now before trying again.`
-                : `Reloading the current access. Reopen ${name} to try again.`}
-            </>
-          }
+          // Reopen <name> below says what to do next.
+          description={draft.failure}
         />
       )}
 
