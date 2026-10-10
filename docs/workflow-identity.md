@@ -104,15 +104,15 @@ asking, unless an explicit, authorized delegation exists.
 | A markdown task's scratch folder | The run's account: `.hubzoid/schedule/<task>@<person>/`. |
 | `hub.publish_artifact(...)` | The run's account. See [reports-and-email.md](reports-and-email.md). |
 | `hub.send_email(...)` | Goes only to the run's account. |
-| Personal connections (Open WebUI native MCP) | That account's own, used through `hub.call_agent`. |
+| Personal connections (Console connectors) | That account's own, used through `hub.call_agent`. |
 
 State written before this release (`hub.state` rows and a markdown task's
 `.hubzoid/schedule/<task>/` folder) is kept exactly as it was and belongs to no
 one. A person's state starts empty. To carry it over deliberately, copy the old state
 file into the person's folder before their first run.
 
-A personal connection (for example Gmail through the chat app's native MCP
-support) is used by the agent: `hub.call_agent(...)` acts as the run's account,
+A personal connection (for example Gmail through a Console connector) is used
+by the agent: `hub.call_agent(...)` acts as the run's account,
 so its tools use that person's connection, never the workflow author's or an
 administrator's. If the person has not connected, or their connection expired
 or was revoked, the agent has no such tool and the call says so; the person

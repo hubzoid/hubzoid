@@ -984,3 +984,80 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   height: auto;
   font-size: inherit;
 }
+
+/* ---- connectors: catalog and server tools ---------------------------------- */
+
+.catalog-grid {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.catalog-grid li + li { border-top: 1px solid var(--subtle-border); }
+.catalog-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.catalog-card:hover { background: var(--subtle); }
+.catalog-card:hover .catalog-name { color: var(--accent); }
+.catalog-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.catalog-tile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--avatar-bg);
+  color: var(--avatar-ink);
+  font-weight: 650;
+}
+.catalog-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.catalog-name { font-weight: 600; font-size: 14px; }
+.catalog-about { color: var(--mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-auth {
+  flex: none;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--avatar-bg);
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.catalog-auth.client { color: var(--accent); }
+.catalog-back { padding-inline: 0; }
+.field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tool-option { display: flex; flex-direction: column; min-width: 0; }
+.tool-option .ant-typography { font-size: 12px; white-space: normal; }
+.server-tools { display: flex; flex-direction: column; gap: 8px; }
+.server-tools-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 8px; }
+.server-tools-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--subtle-border);
+}
+.server-tools-list li:first-child { border-top: 0; }
+.server-tool-about { flex-basis: 100%; font-size: 12px; }
+@media (max-width: 420px) {
+  .catalog-about { display: none; }
+}

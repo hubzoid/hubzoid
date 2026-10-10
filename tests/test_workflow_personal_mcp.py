@@ -88,9 +88,10 @@ class _Probe:
 
             async def stream_events(self):
                 probe.surfaces.append(current_identity().surface)
-                probe.servers.append(sorted(s.name for s in agent.mcp_servers))
-                for t in await agent.get_mcp_tools(RunContextWrapper(context=None)):
-                    if t.name == "whoami":
+                connector = [t for t in agent.tools if t.name.startswith("mcp__")]
+                probe.servers.append(sorted({t.name.split("__")[1] for t in connector}))
+                for t in connector:
+                    if t.name.endswith("__whoami"):
                         ctx = ToolContext(context=None, tool_name=t.name, tool_call_id="c1",
                                           tool_arguments="{}", run_config=RunConfig())
                         out = await t.on_invoke_tool(ctx, "{}")
@@ -136,7 +137,7 @@ def test_each_run_reaches_only_its_own_account(team, probe):
     with _run_as(hub_dir, BOB):
         wf_hub.call_agent("check my mail")
     assert probe.surfaces == ["workflow", "workflow"]
-    assert probe.servers == [["owui_mail"], ["owui_mail"]]
+    assert probe.servers == [["my_mail"], ["my_mail"]]
     # The MCP server saw alice's own token in her run and bob's in his.
     assert probe.seen == [ALICE, BOB]
 
@@ -147,7 +148,7 @@ def test_revoking_the_connector_grant_denies_the_next_run(team, probe):
         wf_hub.call_agent("check my mail")
         gs.revoke(ALICE, hub_dir.name, owui_mcp.capability("mail"), actor="admin@example.org")
         wf_hub.call_agent("check my mail")                        # same run, next call
-    assert probe.servers == [["owui_mail"], []]
+    assert probe.servers == [["my_mail"], []]
     assert probe.seen == [ALICE]
     with _run_as(hub_dir, BOB):                                   # bob is unaffected
         wf_hub.call_agent("check my mail")
@@ -155,18 +156,15 @@ def test_revoking_the_connector_grant_denies_the_next_run(team, probe):
 
 
 def test_a_disconnected_session_is_not_used(team, probe):
-    import sqlite3
+    from hubzoid.connectors import tokens
 
-    hub_dir, _, db, _ = team
-    con = sqlite3.connect(db)
-    con.execute("DELETE FROM oauth_session WHERE user_id='ua'")   # alice disconnected
-    con.commit()
-    con.close()
+    hub_dir, _, _db, _ = team
+    tokens.disconnect(hub_dir, "ua", "mail", revoke_tokens=False)  # alice disconnected
     with _run_as(hub_dir, ALICE):
         wf_hub.call_agent("check my mail")
     with _run_as(hub_dir, BOB):
         wf_hub.call_agent("check my mail")
-    assert probe.servers == [[], ["owui_mail"]]
+    assert probe.servers == [[], ["my_mail"]]
     assert probe.seen == [BOB]                                    # never bob's for alice
 
 
@@ -197,8 +195,8 @@ async def test_claude_and_codex_select_the_same_account_on_the_workflow_surface(
         with identity_scope(Identity.make(who, surface="workflow")):
             specs, allowed = owui_mcp.per_user_specs(hub_dir, Identity.make(who, surface="workflow"))
             servers = owui_mcp.per_user_servers(hub_dir, Identity.make(who, surface="workflow"))
-        assert set(specs) == {"owui_mail"} and allowed == ["mcp__owui_mail__*"]
-        assert specs["owui_mail"]["headers"]["Authorization"] == f"Bearer {token}"
+        assert set(specs) == {"my_mail"} and allowed == ["mcp__my_mail__*"]
+        assert specs["my_mail"]["headers"]["Authorization"] == f"Bearer {token}"
         assert [s.headers["Authorization"] for s in servers] == [f"Bearer {token}"]
     gs.revoke(BOB, hub_dir.name, owui_mcp.capability("mail"), actor="admin@example.org")
     assert owui_mcp.per_user_specs(hub_dir, Identity.make(BOB, surface="workflow")) == ({}, [])

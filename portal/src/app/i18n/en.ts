@@ -193,7 +193,7 @@ export const en = {
   connections: {
     title: "Connections",
     intro:
-      "Connect your own accounts so agents can use them on your behalf. Only you can use your connections.",
+      "Connect your accounts so agents can use them for you. Only you can use your connections.",
     connect: "Connect",
     connecting: "Opening…",
     reconnect: "Reconnect",
@@ -203,8 +203,13 @@ export const en = {
     needsAttention: "Needs attention",
     notAllowed: "Not available to you",
     notAllowedHelp: "Ask an administrator for access to use this connection.",
+    lostAccessHelp: "You no longer have access. Disconnect to remove it.",
+    shared: "Shared",
+    sharedHelp: "Set up by your administrator",
     since: (when: string) => `Connected ${when}`,
-    connectedToast: (name: string) => `Connected to ${name}.`,
+    usedBy: (agents: string[]) => `Used by ${agents.join(", ")}`,
+    connectedToast: (name: string) => `${name} connected.`,
+    notConnectedNote: (name: string) => `${name} was not connected. Try again.`,
     failed: (name: string, code: string) => {
       switch (code) {
         case "access_denied":
@@ -221,10 +226,11 @@ export const en = {
           return `Connecting ${name} didn't work. Try again, and if it keeps failing, ask an administrator.`;
       }
     },
-    disconnectedToast: (name: string) => `Disconnected from ${name}.`,
+    disconnectedToast: (name: string) => `${name} disconnected.`,
     disconnectTitle: (name: string) => `Disconnect ${name}?`,
-    disconnectBody: "Agents won't be able to use this account for you until you connect it again.",
-    empty: "No connections are set up yet. An administrator can add them in the Admin Console.",
+    disconnectBody: (agents: string[]) =>
+      `${agents.length ? agents.join(", ") : "Your agents"} will stop using it for you.`,
+    empty: "Nothing to connect yet. Ask your administrator for an app to connect.",
     loadError: "Couldn't load your connections.",
   },
 

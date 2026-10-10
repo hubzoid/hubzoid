@@ -113,16 +113,14 @@ def test_operator_can_turn_on_admin_chat_access_and_signup(captured_env, tmp_pat
 # OWUI_NATIVE_MCP: one operator switch expands to the OWUI flags the per-user
 # MCP OAuth flow needs (docs/mcp.md). Opt-in, so off by default.
 # ---------------------------------------------------------------------------
-def test_owui_native_mcp_expands_flags(captured_env, tmp_path, monkeypatch):
-    flags = [
-        "ENABLE_PERSISTENT_CONFIG",
-        "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS",
-        "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS",
-        "ENABLE_DIRECT_CONNECTIONS",
-    ]
+def test_owui_native_mcp_is_ignored(captured_env, tmp_path, monkeypatch):
+    """Retired in 1.2: connectors are added in the Console. The switch no longer
+    turns on Open WebUI's persistent config or its tool servers for people."""
     monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
     env = _start(captured_env, tmp_path)
-    assert {f: env[f] for f in flags} == dict.fromkeys(flags, "True")
+    assert env["ENABLE_PERSISTENT_CONFIG"] == "False"
+    assert env.get("USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS") != "True"
+    assert env["ENABLE_DIRECT_CONNECTIONS"] == "False"
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,74 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.2.0]
+
+Every MCP connector is managed in the Console, in both UI modes, and the pages
+people connect from are redesigned. Upgrading: read
+[Upgrading to 1.2](docs/UPGRADING.md#upgrading-to-12-mcp-connectors-in-the-console)
+first. Open WebUI's own MCP servers are no longer read, and connector tool
+names change on OpenAI Agents and Codex.
+
+### Connectors
+- Organization administrators add, test and offer connectors in
+  **Console → Agents → the agent → Connectors** in Open WebUI mode too.
+  Hubzoid holds each person's connection and refreshes it.
+- A new sign-in kind, **Shared key**: one company key, sent as a header, stored
+  encrypted and never shown again. Nobody connects; the agents that offer it
+  use it for the people granted **Use …**.
+- **Add connector** opens on a searchable list of 16 popular remote MCP
+  servers, each labelled by how people sign in (Each person signs in, Needs an
+  OAuth app, No sign-in), or a custom server.
+- **Test** lists the server's tools and marks which reach agents. Allowed tools
+  are picked from that list (**Load from server**).
+- The hub folder's `connectors/.mcp.json` is listed read-only under the
+  connectors: names and missing settings, never values.
+- Connector tools are named `mcp__my_<id>__<tool>` on every runtime, as Claude
+  already named them. A name with characters OpenAI refuses ends in a short
+  hash, so two tools never share a name.
+- `connect_account` is on by default. Called with no app, it lists what the
+  person can connect.
+
+### Connection pages
+- The link, done and Your connections pages use Hubzoid's design, in light and
+  dark and on phones.
+- The link page shows the account and the server before anything happens, with
+  the details behind a **?**. The done, failed, cancelled and expired pages lead
+  **Back to chat**, to the conversation the link came from.
+- **Your connections** (`/portal/connections` in Open WebUI mode) lists each app
+  with its status, the agents that use it and since when. Disconnect asks first,
+  and the note after a connect or disconnect comes from the person's records,
+  never from the address alone. In the web app, Settings → Connections names the
+  agents too, and an app someone lost access to can still be disconnected.
+- In Open WebUI mode a connection belongs to the verified Open WebUI account, not
+  only to the email, and each chat turn carries that account.
+
+### Open WebUI mode
+- `OWUI_NATIVE_MCP` is ignored and logged once at start. The edge refuses Open
+  WebUI tool-server changes and config imports that carry tool servers, and
+  points to the Console.
+
+### Console and chat
+- Add user with an email that already exists is no longer a dead end, with a
+  next step that fits the viewer's role.
+- A person opens from an agent's Access tab; the Access drawer's results lead
+  back to the person; a blocked person is reactivated from their details.
+- When signed out, one **Sign in** button that returns to the page.
+- Agent administrators see **Admin Console** in the chat. The "No agents yet"
+  state is shorter and offers **Try again**.
+- The Console keeps its navigation visible while the content scrolls, and its
+  light-theme alerts use the Studio status colours.
+
+### Fixed
+- A Shared key connector moved to a new URL needs its key again: the stored key
+  is never sent to a new address.
+- The people connect API refuses Shared key connectors (nothing to connect).
+- Listing a server's tools never reads an unbounded reply and always closes the
+  MCP session.
+- Every successful sign-up counts against the per-address limit (they were
+  refunded, so one address could create accounts without bound).
+- Workflow alerts on SQLite recognize scheduled runs and deliver their alerts.
+
 ## [1.1.1]
 
 The first published Hubzoid 1.1 release. 1.1.0 was tagged but never published:

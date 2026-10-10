@@ -689,7 +689,7 @@ function chartPng(width = 160, height = 100) {
       await page.waitForURL(/__fixture\/provider\/github/);
       await page.getByRole("link", { name: "Allow" }).click();
       await page.waitForURL(`${BASE}/account/connections`);
-      await page.getByText("Connected to GitHub.").waitFor();
+      await page.getByText("GitHub connected.").waitFor();
       await github.getByText("Connected", { exact: true }).waitFor();
       await page.getByTestId("connection-notion").getByRole("button", { name: "Disconnect Notion" }).click();
       await page.getByRole("alertdialog", { name: "Disconnect Notion?" }).getByRole("button", { name: "Disconnect" }).click();
@@ -806,7 +806,7 @@ function chartPng(width = 160, height = 100) {
     await noHorizontalScroll(mobile, "phone account");
     await mobile.goto(`${BASE}/account/connections`);
     await mobile.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
-    await mobile.getByText(/Connect your own accounts/).waitFor();
+    await mobile.getByText(/Connect your accounts so agents/).waitFor();
     await noHorizontalScroll(mobile, "phone connections");
     await shot(mobile, "app-22-phone-connections");
     await phone.close();
@@ -1002,8 +1002,10 @@ function chartPng(width = 160, height = 100) {
       await cp.goto(`${BASE}/mcp/oauth/consent?ticket=t-123`);
       await cp.waitForURL(/\/auth\?redirect=%2Fmcp%2Foauth%2Fconsent%3Fticket%3Dt-123$/);
       await signIn(cp);
-      await cp.waitForURL(`${BASE}/mcp/oauth/consent?ticket=t-123`);
+      // Wait for the page, not the URL: an intermediate navigation can be aborted
+      // on the way (ERR_ABORTED), which waitForURL reports as a failure.
       await cp.getByRole("heading", { name: "Allow Claude to use Hubzoid Guide?" }).waitFor();
+      assert.equal(cp.url(), `${BASE}/mcp/oauth/consent?ticket=t-123`);
       await consent.close();
 
       step("External sign-in returns to the page that asked; cancelling it says so");

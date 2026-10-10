@@ -12,7 +12,7 @@ import json
 import time
 
 import pytest
-from agents import Agent, FunctionTool, RunContextWrapper, function_tool
+from agents import Agent, FunctionTool, function_tool
 
 from hubzoid import owui_mcp
 from hubzoid.access import Identity, identity_scope, store_for
@@ -90,22 +90,90 @@ def test_owui_mcp_dispatches_here_in_the_default_mode(hub, servers):
     assert allowed == ["mcp__my_mail__*"]
 
 
-def test_open_webui_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monkeypatch, servers):
-    from tests import connect_helpers as h
+def test_open_webui_mode_uses_the_console_connectors(hub, monkeypatch):
+    """Open WebUI mode reads the same Console connectors, keyed by the verified
+    Open WebUI account (bound from Open WebUI's forwarded headers each turn).
+    A new account that takes the email over inherits nothing."""
+    from hubzoid.access.session import bind_owui_account
 
-    db = tmp_path / "webui.db"
-    h.seed_owui(db, users=[("ox", X)], secret="legacy",
-                servers=[{"id": "odoo", "name": "Odoo", "url": servers["mail"]}])
-    h.connect(db, user_id="ox", server_id="odoo", secret="legacy", access_token="tok-x")
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("WEBUI_SECRET_KEY", "legacy")
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
-    store_for(hub).grant(X, hub.name, "connector_odoo", actor="test")
-    # Default mode: Open WebUI's connections are not read at all.
-    assert keys(owui_mcp.per_user_servers(hub, who(X))) == ["my_mail"]
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    owui = owui_mcp.per_user_servers(hub, who(X, "owui"))
-    assert keys(owui) == ["owui_odoo"] and owui[0].headers == {"Authorization": "Bearer tok-x"}
+    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")  # retired: changes nothing
+    assert per_user.per_user_servers(hub, who(X, "owui")) == []  # no verified account yet
+    store_for(hub).upsert_identity(email=X, owui_id="u-x")
+    assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
+    # An Open WebUI chat turn must carry that same account id, not only the email.
+    from hubzoid import _request_ctx
+
+    with _request_ctx.owui_account_scope("u-x"):
+        assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
+    for forwarded in (None, "u-someone-else"):
+        with _request_ctx.owui_account_scope(forwarded):
+            assert per_user.per_user_servers(hub, who(X, "owui")) == []
+    bind_owui_account(hub, X, "u-other")
+    assert per_user.per_user_servers(hub, who(X, "owui")) == []
+    assert tokens.for_user(hub, "u-x") == []
+
+
+def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, servers):
+    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
+                          "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
+    f.grant_connector(hub, "team", X)
+    team = {s.key: s for s in per_user.per_user_servers(hub, who(X))}["my_team"]
+    assert team.headers == {"Authorization": "Bearer tok-x"} and "tok-x" not in repr(team)
+    assert "my_team" not in keys(per_user.per_user_servers(hub, who(Y)))
+    assert tokens.get(hub, "u-x", "team") is None
+    assert registry.get(hub, "team").public()["has_shared_secret"] is True
+    assert "tok-x" not in json.dumps(registry.get(hub, "team").public())
+
+
+def test_a_new_url_never_receives_the_stored_shared_key(hub, servers):
+    """The key is write-only: an administrator who does not know it cannot point
+    the connector elsewhere and have the stored key sent there."""
+    from hubzoid.connectors import ConnectorError
+
+    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
+                          "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
+    for change in ({"url": "https://attacker.example.org/mcp"},
+                   {"url": "https://attacker.example.org/mcp", "shared_secret": ""}):
+        with pytest.raises(ConnectorError) as e:
+            registry.update(hub, "team", change, actor="test")
+        assert e.value.code in ("shared_key_required", "invalid_shared_secret")
+        assert e.value.status == 422
+        assert registry.get(hub, "team").url == servers["mail"]
+        assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
+    # Other changes keep the key; a new URL with its own key is fine.
+    registry.update(hub, "team", {"name": "Team"}, actor="test")
+    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
+    registry.update(hub, "team", {"url": servers["cal"], "shared_secret": "tok-y"}, actor="test")
+    assert registry.get(hub, "team").url == servers["cal"]
+    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-y"}
+
+
+@pytest.mark.parametrize("header", ["Host", "cookie", "Content-Length", "Proxy-Authorization",
+                                    "X-Forwarded-For", "bad header", "MCP-Session-Id"])
+def test_a_shared_key_refuses_headers_that_change_the_request(hub, header):
+    from hubzoid.connectors import ConnectorError
+
+    with pytest.raises(ConnectorError) as e:
+        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+                              "auth_type": "shared", "shared_secret": "s",
+                              "shared_header": header}, actor="test")
+    assert e.value.code == "invalid_shared_header"
+
+
+@pytest.mark.parametrize("key", ["kéy-🔑", "tab\tkey"])
+def test_a_shared_key_must_be_a_printable_ascii_header_value(hub, key):
+    from hubzoid.connectors import ConnectorError
+
+    with pytest.raises(ConnectorError) as e:
+        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+                              "auth_type": "shared", "shared_secret": key}, actor="test")
+    assert e.value.code == "invalid_shared_secret"
+
+
+def test_a_shared_slack_channel_never_gets_them_even_when_listed(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "web,slack-channel")
+    assert per_user.per_user_servers(hub, who(X, "slack-channel")) == []
 
 
 # ---------------------------------------------------------------------------
@@ -245,10 +313,11 @@ async def test_openai_turns_run_on_a_clone_with_the_callers_servers(hub, monkeyp
     def probe(agent, run_input, max_turns=None):  # noqa: ARG001
         class Result:
             async def stream_events(self):
-                tools = await agent.get_mcp_tools(RunContextWrapper(context=None))
+                # Connector tools join the clone's own tools, named mcp__<server>__<tool>.
                 seen["servers"] = [s.name for s in agent.mcp_servers]
-                seen["tools"] = sorted(t.name for t in tools)
-                seen["whoami"] = await _call(next(t for t in tools if t.name == "whoami"))
+                seen["tools"] = sorted(t.name for t in agent.tools)
+                seen["whoami"] = await _call(
+                    next(t for t in agent.tools if t.name == "mcp__my_mail__whoami"))
                 if False:  # pragma: no cover - makes this an async generator
                     yield None
         return Result()
@@ -259,8 +328,8 @@ async def test_openai_turns_run_on_a_clone_with_the_callers_servers(hub, monkeyp
     rt = OpenAIAgentsRuntime(agent, hub_dir=hub, vision=(False, 0, 0))
     with identity_scope(who(X)):
         await rt.run("hi")
-    assert seen == {"servers": ["my_mail"], "tools": ["whoami"], "whoami": X}
-    assert rt._agent.mcp_servers == []
+    assert seen == {"servers": [], "tools": ["hub_note", "mcp__my_mail__whoami"], "whoami": X}
+    assert rt._agent.mcp_servers == [] and rt._agent.tools == [hub_note]
 
 
 @pytest.mark.asyncio
@@ -271,7 +340,8 @@ async def test_codex_turns_use_a_per_turn_registry_with_the_callers_tools(hub, m
 
     async def fake_stream(self, prompt, registry_):  # noqa: ARG001
         seen.append({"names": sorted(registry_),
-                     "whoami": await _call(registry_["whoami"]) if "whoami" in registry_ else None})
+                     "whoami": (await _call(registry_["mcp__my_mail__whoami"])
+                                if "mcp__my_mail__whoami" in registry_ else None)})
         yield "ok"
 
     monkeypatch.setattr(CodexRuntime, "_stream", fake_stream)
@@ -279,7 +349,8 @@ async def test_codex_turns_use_a_per_turn_registry_with_the_callers_tools(hub, m
                       personal_mcp=True, tool_mode="off")
     with identity_scope(who(Y)):
         assert await rt.run("hi") == "ok"
-    assert seen[-1] == {"names": ["cal_today", "hub_note", "mail_search", "whoami"], "whoami": Y}
+    assert seen[-1] == {"names": ["hub_note", "mcp__my_cal__cal_today", "mcp__my_mail__mail_search",
+                                  "mcp__my_mail__whoami"], "whoami": Y}
     assert list(rt.registry) == ["hub_note"]
 
 
@@ -297,7 +368,7 @@ async def test_a_connector_without_sign_in_carries_no_credentials(hub):
     assert docs.headers == {} and docs.server_id == "docs"
     async with AsyncExitStack() as stack:
         ((_server, tools),) = await open_personal_mcp(stack, [docs], set())
-        assert await _call(next(t for t in tools if t.name == "whoami")) == "nobody"
+        assert await _call(next(t for t in tools if t.name == "mcp__my_docs__whoami")) == "nobody"
     # Opting out is a disconnect like any other.
     tokens.disconnect(hub, "u-x", "docs")
     assert keys(per_user.per_user_servers(hub, who(X))) == ["my_mail"]

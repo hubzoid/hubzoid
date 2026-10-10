@@ -254,24 +254,16 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
     registry.create(hub, body(name="HR", url="https://hr.example.org/mcp"), actor="test")
     for cid in ("gmail", "docs"):                    # HR is registered but not offered here
         registry.offer(hub, cid, hub.name, actor="test")
-    # An Open WebUI server is not offered in the default mode.
-    from tests import connect_helpers as h
-
-    db = tmp_path / "webui.db"
-    h.seed_owui(db, users=[], secret="s", servers=[
-        {"id": "notion", "name": "Notion", "url": "https://notion.example.org/mcp"}])
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
-    assert "connector_notion" not in rows and "connector_hr" not in rows
+    assert "connector_hr" not in rows
     gmail, docs = rows["connector_gmail"], rows["connector_docs"]
     assert gmail["label"] == "Connect Gmail" and gmail["sensitive"] is True
-    assert gmail["group"] == "tools" and gmail["available"] is True
+    assert gmail["group"] == "connectors" and gmail["available"] is True
     assert docs["available"] is False and docs["status"] == "Switched off"
-    # Open WebUI mode: Open WebUI's servers, not the registry.
+    # Open WebUI mode: the same Console connectors.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     rows = {r["permission"] for r in capabilities.catalog(hub)}
-    assert "connector_notion" in rows and "connector_gmail" not in rows
+    assert "connector_gmail" in rows and "connector_hr" not in rows
 
 
 def test_a_deleted_connector_leaves_its_grants_visible_as_obsolete(hub):
@@ -353,6 +345,8 @@ def test_a_connector_without_sign_in_connects_at_once(hub, tc):
         f.grant_connector(hub, "docs")
         r = tc.post("/portal/api/connectors/docs/test", headers=SAME)
         assert r.json()["ok"] is True and r.json()["requires_auth"] is False
+        # The Test lists what the server offers, for the Console and its tool picker.
+        assert [t["name"] for t in r.json()["tools"]] == ["lookup"]
         r = tc.post("/api/connections/docs/connect", json={}, headers=SAME)
         assert r.json() == {"authorize_url": "/account/connections?connected=docs"}
         r = tc.post("/api/connections/docs/connect", json={"return_to": "/c/abc"}, headers=SAME)
@@ -364,12 +358,26 @@ def test_a_connector_without_sign_in_connects_at_once(hub, tc):
         assert tc.delete("/api/connections/docs", headers=SAME).status_code == 204
 
 
+def test_a_shared_key_connector_has_nothing_to_connect_and_starts_no_sign_in(hub, tc, monkeypatch):
+    from hubzoid.connectors import oauth_flow
+
+    registry.create(hub, body(name="Team", url="https://team.example.org/mcp", auth_type="shared",
+                              shared_secret="k-1"), actor="test")
+    f.grant_connector(hub, "team")
+    started = []
+    monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: started.append(a) or "/x")
+    for path in ("/api/connections/team/connect", "/portal/api/connections/team/connect"):
+        r = tc.post(path, json={}, headers=SAME)
+        assert r.status_code == 409 and detail(r)["code"] == "shared", path
+    assert started == []
+
+
 def test_a_server_that_needs_sign_in_is_reported_for_a_no_auth_connector(hub, tc):
     with f.bearer_mcp("private", {"tok": "x"}, {"lookup": lambda who: who}) as url:
         registry.create(hub, body(name="Private", url=url, auth_type="none"), actor="test")
         r = tc.post("/portal/api/connectors/private/test", headers=SAME).json()
         assert r["ok"] is False and r["requires_auth"] is True
-        assert r["error"]["code"] == "requires_auth"
+        assert r["error"]["code"] == "requires_auth" and "tools" not in r
 
 
 def test_registry_errors_are_connector_errors(hub):

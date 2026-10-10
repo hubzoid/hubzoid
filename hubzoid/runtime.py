@@ -281,8 +281,10 @@ class OpenAIAgentsRuntime:
             live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent))
             agent = self._agent
             if live:
+                # The connector tools join as function tools under their
+                # namespaced names; their servers stay open on `stack`.
                 agent = self._agent.clone(
-                    mcp_servers=[*(self._agent.mcp_servers or []), *(s for s, _ in live)])
+                    tools=[*(self._agent.tools or []), *(t for _, tools in live for t in tools)])
             async for chunk in self._stream(agent, prompt):
                 yield chunk
 
@@ -400,15 +402,46 @@ def personal_mcp_server(srv):
     )
 
 
+_TOOL_NAME_MAX = 64  # OpenAI function names: ^[A-Za-z0-9_-]{1,64}$
+
+
+def connector_tool_name(server_key: str, tool: str) -> str:
+    """A connector tool's name on every runtime: ``mcp__<server key>__<tool>``,
+    what the Claude SDK calls it. Namespaced by server, as Mastra's MCPClient
+    (``server_tool``) and Agno's ``tool_name_prefix`` do, so a connector tool
+    never collides with a hub tool or another connector's.
+
+    OpenAI accepts only letters, digits, ``_`` and ``-`` (64 at most). A tool
+    name with other characters has them replaced by ``_`` and ends in a short
+    hash of the server's own name, so ``issue.get`` and ``issue/get`` stay two
+    tools; an overlong name is cut and ends in a hash too."""
+    import hashlib
+    import re
+
+    def digest(value: str, n: int) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()[:n]
+
+    clean = re.sub(r"[^A-Za-z0-9_-]", "_", tool)
+    if clean != tool:
+        clean += "_" + digest(tool, 6)
+    name = re.sub(r"[^A-Za-z0-9_-]", "_", f"mcp__{server_key}__") + clean
+    if len(name) > _TOOL_NAME_MAX:
+        name = name[:_TOOL_NAME_MAX - 9] + "_" + digest(f"{server_key}\0{tool}", 8)
+    return name
+
+
 async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None) -> list:
     """Connect each personal server on `stack` and list its (allow-listed)
-    tools. Returns ``[(server, tools)]`` for the servers kept.
+    tools, renamed ``mcp__<server key>__<tool>`` (:func:`connector_tool_name`).
+    Returns ``[(server, tools)]`` for the servers kept.
 
     A server that fails to connect is dropped. A server with a tool whose name
     is already in `taken` (a hub tool, or an earlier personal server) is
     skipped for this turn and logged, so a personal tool never shadows a hub
     tool. Must run in the task that later closes `stack`.
     """
+    import dataclasses
+
     from agents import Agent, RunContextWrapper
     from agents.mcp.util import MCPUtil
 
@@ -421,6 +454,15 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
             await stack.enter_async_context(server)
             tools = await MCPUtil.get_function_tools(
                 server, False, RunContextWrapper(context=None), Agent(name="personal-mcp"))
+            # The call still goes to the server's own tool name (bound when the
+            # tool was built); only the name the model sees changes.
+            tools = [dataclasses.replace(t, name=connector_tool_name(srv.key, t.name)) for t in tools]
+            seen: set[str] = set()
+            unique = [t for t in tools if not (t.name in seen or seen.add(t.name))]
+            if len(unique) != len(tools):
+                log.warning("personal MCP server %r lists %d tool(s) twice; the repeats are left out",
+                            srv.key, len(tools) - len(unique))
+            tools = unique
         except Exception as exc:  # noqa: BLE001 — one broken server never sinks the turn
             log.warning("personal MCP server %r unavailable this turn (%s)",
                         srv.key, type(exc).__name__)

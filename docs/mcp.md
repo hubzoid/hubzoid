@@ -64,7 +64,7 @@ credentials with the right scope before adding to `.mcp.json`.
 
 On `claude-local`, the agent sees only the MCP servers Hubzoid passes it: the
 hub's own tools, the servers in its `.mcp.json`, the shared browser, and the
-servers the current person connected in Open WebUI. It never loads the
+Console connectors the current person may use. It never loads the
 connectors of the Claude account the box is signed in to (claude.ai Gmail,
 Drive, Slack and so on) or MCP servers from that account's user or project
 settings. `hub.call_llm` and the eval judge get no tools or servers at all.
@@ -86,24 +86,47 @@ credentials in the process list. Limits:
 - A secret written into a stdio server's `args` is still visible in that
   server's own process arguments. Pass secrets to stdio servers in `env`.
 
-## Personal connections (default UI mode)
+## Connectors in the Console (both UI modes)
 
-In the default UI mode (`HUBZOID_UI` unset or `hubzoid`) Hubzoid runs personal
-MCP connections itself: no Open WebUI and no `OWUI_NATIVE_MCP` switch. Each
-person connects their own account to a remote MCP server, and every chat turn
-and workflow run reaches that server as them. Open WebUI mode (below) keeps its
-own connections.
+Remote MCP servers are added in the Console, in the web app mode and in Open
+WebUI mode alike, and Hubzoid holds each person's connection. Every chat turn
+and workflow run reaches the server as the person (or, for a Shared key, as the
+company account). Open WebUI's own MCP servers are not used: see
+[Open WebUI mode](#open-webui-mode).
 
-A connector is registered once for the deployment (one OAuth client, one
-connection per person) and offered in the agents that list it. Its capability
-`connector_<id>` exists only in those agents, and a person's connection is used
-in a turn only when the agent offers the connector and the person holds the
-capability there.
+A connector is registered once for the deployment and offered in the agents
+that list it. Its capability `connector_<id>` exists only in those agents, and
+a connector is used in a turn only when the agent offers it and the person
+holds the capability there.
+
+Three kinds of sign-in:
+
+| Kind | Who connects | Grant shown as |
+|---|---|---|
+| Each person signs in (`oauth`) | Every person, with their own account | Connect <name> |
+| Shared key (`shared`) | Nobody: one company key, sent as a header | Use <name> |
+| No sign-in (`none`) | Every person switches it on once | Connect <name> |
+
+The Connectors tab also lists the hub folder's own servers (`connectors/.mcp.json`)
+read-only: name, kind (local command or URL) and the environment variable names
+they use, with whether each is set. Never a value, header, command argument or
+URL. Those servers reach everyone who can use the agent. Local command servers
+stay in the file, because adding a command from a browser would let any
+administrator run it on the server.
 
 ### Add a server (organization administrators, in the Console)
 
 **Console → Agents → the agent → Connectors → Add connector** registers it and
-offers it in that agent. **Offer an existing connector** offers one another
+offers it in that agent. It opens on a searchable list of popular remote MCP
+servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub and others), each
+labelled with how people sign in: *Each person signs in*, *Needs an OAuth app*
+(the provider does not let Hubzoid register itself: create an OAuth app there
+with the redirect URI, then enter its client ID and client secret) or *No
+sign-in*. Choosing one fills its name, ID, address and sign-in; **Custom
+server** starts empty. The list holds addresses only, checked with Hubzoid's
+discovery on 2026-10-10; run **Test** before people use one.
+
+**Offer an existing connector** offers one another
 agent already has. **Stop offering in <agent>** takes it out of that agent only
 and removes its grants there; people's connections and other agents stay.
 **Remove from every agent** deletes it:
@@ -112,15 +135,24 @@ and removes its grants there; people's connections and other agents stay.
   capability `connector_<id>` and cannot be changed later.
 - **Server URL**: the MCP endpoint. HTTPS is required. Plain HTTP is accepted
   only on this computer (`localhost`, `127.0.0.1`, `::1`) for development.
-- **Sign-in**: *Each person signs in (OAuth)*, or *No sign-in* for a server
-  that needs no account (people still turn it on for themselves).
+- **Sign-in**: *Each person signs in*, *Shared key* (the key, and optionally
+  the header it goes in: default `Authorization: Bearer <key>`; headers that
+  would change the request, such as `Host`, `Cookie`, `Content-Length` or proxy
+  headers, are refused), or *No sign-in* for a server that needs no account.
 - Optional: a **client ID** and **client secret** registered with the provider
-  in advance, **scopes**, and **allowed tools**.
+  in advance, **scopes**, and **allowed tools**. When editing, **Load from
+  server** lists the saved server's tools to choose from (after changing the
+  URL or sign-in, save first).
 
-**Test** reads the server's metadata and changes nothing. It shows the
+**Test** reads the server's metadata. It registers nothing and changes no
+settings. It shows the
 authorization server, whether Hubzoid can register itself, and the redirect URI
 to register with a provider that needs a client created in advance:
-`<public origin>/oauth/connectors/<id>/callback`.
+`<public origin>/oauth/connectors/<id>/callback`. It also lists the server's
+tools, marking which reach agents when tools are allowed by name. To list them
+it uses the Shared key, no credential for *No sign-in*, or, for *Each person
+signs in*, your own connection: connect your account first to see them. Like
+any use, that may refresh your connection's sign-in.
 
 Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
 whenever people reach Hubzoid at an address other than this computer. Redirect
@@ -146,19 +178,27 @@ host. Each operation (discovery, a code exchange, a refresh) also has one
 overall time limit.
 
 Changing a connector's URL or sign-in method removes everyone's connection to
-it, so a token is never sent to a server other than the one that issued it.
+it, so a token is never sent to a server other than the one that issued it. For
+the same reason a Shared key connector needs its key again when its URL
+changes: the stored key is never sent to a new address.
 Removing a connector removes the connections too. Grants of its capability stay
 listed as no longer available until you remove them. Agent managers who are not
 organization administrators see the tab but cannot change it.
 
 ### Connect (each person)
 
-From the web app's connections page, or from a link the agent sends with the
-connection journey (below). The HTTP API behind it:
+From the link the agent sends (`connect_account`, the connection journey
+below), or from the connections page: **Settings, Connections** in the web
+app, `/portal/connections` in Open WebUI mode. Before anything happens, the
+link's page shows the account, the agent, the server's host and any scopes the
+connector requests (as Agno's consent page shows where credentials go). Both
+pages list each app with its status and the agents that use it for the
+person; Disconnect asks first. The HTTP API behind it (also under
+`/portal/api/connections`):
 
 | Call | Result |
 |---|---|
-| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed` |
+| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed`, `agents` (names of the agents that use it for the person) |
 | `POST /api/connections/<id>/connect` | `{authorize_url}`; the browser goes there |
 | `DELETE /api/connections/<id>` | revokes at the provider when it can, then removes the connection |
 
@@ -187,8 +227,8 @@ failure goes to the same place with `?error=<code>`.
   turn tries again.
 - **Per turn**, the same rules as Open WebUI mode: restricted surfaces only, an
   agent that offers the connector, `connector_<id>` in that agent, the allowed
-  tools, never a server that would replace a hub MCP server. In Claude the tools are named
-  `mcp__my_<id>__<tool>`.
+  tools, never a server that would replace a hub MCP server. On every backend
+  the tools are named `mcp__my_<id>__<tool>`.
 
 ### Limits
 
@@ -212,241 +252,160 @@ failure goes to the same place with `?error=<code>`.
 - Provider-specific authorization parameters (for example Google's
   `access_type=offline`) cannot be configured yet.
 
-## Per-user MCP via Open WebUI (native OAuth)
+## Open WebUI mode
 
-Open WebUI mode only (`HUBZOID_UI=openwebui`). The agent's **Connectors** tab in
-the Console lists these servers read-only, with the capability each needs.
+Since 1.2 Open WebUI mode (`HUBZOID_UI=openwebui`) uses the same Console
+connectors:
 
-The `.mcp.json` connectors above are hub-wide: one credential shared by every
-user. For tools where each user must act as **themselves** (their own Jira,
-Linear, Odoo, ...), Hubzoid instead picks up MCP servers registered in **Open
-WebUI**, where each user connects their own account. **No Hubzoid UI, no
-`.mcp.json`** - OWUI's own admin screen is the source of truth.
+- An administrator adds them in the Console. The Connectors tab is the same in
+  both modes. Open WebUI's admin role alone does not allow it: the Console's
+  organization administrators do.
+- A person connects from the agent's link or `/portal/connections`. Both
+  check the Open WebUI session live and bind the connection to the person's
+  Open WebUI account id. A new account that reuses an email is a different
+  person and inherits nothing.
+- On each turn the bridge uses the account id from Open WebUI's forwarded
+  headers. Without it (`ENABLE_FORWARD_USER_INFO_HEADERS=false` on a gateway)
+  no connector reaches the turn, and the gateway warns at start.
+- The connector's OAuth return (`/oauth/connectors/<id>/callback`) goes to a
+  bridge through the edge, with the same fallbacks as `/portal`. Open WebUI's
+  own `/oauth/` routes are unchanged.
+- Open WebUI's External Tool Servers are not used. The edge refuses saves to
+  them (and to their OAuth client registration) with a message that points to
+  the Console. `OWUI_NATIVE_MCP` is ignored.
+- `hubzoid migrate openwebui` keeps each Open WebUI account id as the Hubzoid
+  account id, so connections carry over to the web app.
 
-### How it works
-
-1. An **admin registers** the MCP server once in OWUI (steps below). OWUI
-   persists it to its database.
-2. Each **user connects** their own account via `+ -> Integrations -> Tools`
-   (an OAuth redirect). OWUI vaults that user's token, encrypted.
-3. On the user's next turn the bridge **reads and decrypts their token** from
-   OWUI's database and calls the MCP server as them. Two users reach the same
-   server as themselves. The connection follows their identity to other
-   surfaces that map to the same OWUI account, but only surfaces allowed to
-   reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`). A shared Slack
-   channel never carries it. All three backends use it (see
-   [Runtimes](#runtimes) below).
-
-### Enable it (operator - one line)
-
-Add to the hub's `.env`:
-
-```dotenv
-OWUI_NATIVE_MCP=true
-```
-
-That single switch turns on the bridge injection **and** configures OWUI for it
-- it expands to `ENABLE_PERSISTENT_CONFIG=True` (so admin-registered servers
-persist to the DB the bridge reads; OWUI keeps that config in memory otherwise)
-plus the tools permissions hubzoid strips by default. It is **opt-in**, so hubs
-that do not use it stay env-authoritative and reproducible.
-
-You also need a fixed **`WEBUI_SECRET_KEY`** in the `.env`: OWUI encrypts the
-tokens with it and the bridge decrypts with the same value (`hubzoid run` hands
-both processes the `.env` value). Generate one with `openssl rand -hex 32`.
-Requires OWUI >= 0.6.31.
-
-**First boot** with the flag does a one-time reseed of OWUI's config from your
-env (a `config`-table-only reset so env is the true default). Users, groups,
-models, access grants and already-registered tool servers are untouched. After
-that, env is the default and admin edits in OWUI persist normally.
-
-**Gateway mode:** set `OWUI_NATIVE_MCP=true` at the **gateway** level - one
-shared OWUI means one tool-server registry and one token store, so it is
-gateway-wide: every hub bridge injects. Hubzoid does not read OWUI's own access
-settings for a tool server. On a managed hub the `connector_<app>` capability is
-the gate (see below). Bridges read the shared gateway DB automatically. The OAuth redirect
-returns to the shared OWUI, so set `WEBUI_URL` / `HUBZOID_PUBLIC_URL` to your
-real public URL or the provider redirect will fail.
-
-### Register a server (admin - once per server, in OWUI)
-
-1. **Admin Panel -> Settings -> Integrations**
-2. **External Tool Servers -> +**
-3. **Type ->** switch to **MCP Streamable HTTP**
-4. Fill **URL** (e.g. `https://mcp.linear.app/mcp`), a **Name**, and
-   **Auth -> OAuth 2.1**
-5. **Register Client** -> wait for **"Registered"** (RFC 7591 dynamic client
-   registration against the server)
-6. **Save** (the dialog), then **Save** (the page)
-
-> The server must support **Dynamic Client Registration**. Linear, Notion,
-> Sentry, and Atlassian do. **GitHub's remote MCP does not** (no `/register`
-> endpoint) - for servers without DCR, use **OAuth 2.1 (Static)** with a
-> pre-created OAuth app instead.
-
-### Connect (each user - once, in a chat)
-
-1. Click **Integrations** (next to the `+`) -> **Tools** -> toggle the server on
-2. Complete the provider's **OAuth** sign-in
-3. Ask the agent to use it. From then on the bridge injects the user's token
-   automatically.
-
-### Notes and limits
-
-- **Governance:** which servers exist is admin-controlled (registered globally
-  in OWUI). A user only connects their own account to them.
-- **Token refresh** is automatic: an expired token is refreshed via its refresh
-  token and written back to OWUI's `oauth_session`, so OWUI and the bridge stay
-  in sync (single source of truth). A user only reconnects if the refresh token
-  itself is revoked or has expired.
-- **Turn it off:** remove `OWUI_NATIVE_MCP` (or set it to `0`).
+Moving from Open WebUI's own MCP servers: see [UPGRADING.md](UPGRADING.md).
 
 ### Runtimes
 
-Implemented. One per-turn source (`hubzoid/owui_mcp.py`, `per_user_servers`)
-feeds all three backends, so a hub behaves the same whichever backend it runs.
+One per-turn source (`hubzoid/connectors/per_user.py`, reached through
+`hubzoid/owui_mcp.py`) feeds all three backends, with the same servers, rules
+and allow-lists.
 
-| Backend | How the caller's servers join a turn | Tool names |
-|---|---|---|
-| Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server | `mcp__owui_<name>__<tool>` |
-| OpenAI Agents | Per-turn Streamable HTTP clients and a per-turn clone of the agent | the MCP tool name |
-| Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools | the MCP tool name |
+| Backend | How the servers join a turn |
+|---|---|
+| Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server |
+| OpenAI Agents | Per-turn Streamable HTTP clients; their tools join a per-turn clone of the agent |
+| Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools |
+
+Tool names are the same on all three: `mcp__my_<id>__<tool>`, as Claude names
+MCP tools (Mastra and Agno prefix the same way). OpenAI accepts only letters,
+digits, `_` and `-`, up to 64 characters, so on OpenAI Agents and Codex a tool
+name with other characters (`issue.get`) has them replaced by `_` and ends in
+a short hash (`mcp__my_jira__issue_get_bd577d`), and a longer name is cut and
+ends in a hash. Two tools never end up with one name; Claude keeps such names
+as the server spells them.
 
 Rules that hold on all three:
 
-- The token rides only in the MCP client's `Authorization` header. It never
+- The credential rides only in the MCP client's request header. It never
   enters the prompt, a log line or a tool result.
-- The admin's per-server tool allow-list applies.
-- A personal tool never shadows a hub tool. On a name clash the personal
-  server is skipped for that turn and a warning is logged. Claude namespaces
-  every server, so there the clash can only be a server key.
+- The connector's tool allow-list applies.
+- A connector never shadows a hub tool. Its tools are namespaced, so a clash
+  can only be a server key; that server is skipped for the turn and a warning
+  is logged.
 - A server that cannot be reached is dropped for that turn. The turn goes on.
-- Only the hub's main agent gets personal servers. Delegates do not.
-- The shared agent, options and registry are never changed. Clients are
-  opened and closed inside the turn.
+- Only the hub's main agent gets connectors. Delegates do not.
+- Only surfaces allowed to reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`)
+  carry them. A shared Slack channel (`slack-channel`) never does, whatever that
+  setting says.
 
-### Connector capability (`connector_<app>`)
+### Connector capability (`connector_<id>`)
 
-Implemented. Each OAuth MCP server is a connector app named by its server ID
-(the ID typed in OWUI when registering it, lowercased, other characters
-turned into `_`). A server registered as `gmail` is the app `gmail` and the
-capability `connector_gmail`.
-
-- A personal server is injected only when the caller holds `connector_<app>`
-  in that agent. Grant it in the Console like any other capability. Open WebUI
-  groups grant nothing.
-- If the access store cannot be read, no personal server is injected that turn.
+A connector is used in a turn only when the caller holds `connector_<id>` in
+that agent. Grant it in the Console like any other capability, in the
+**Connectors** group of the Access drawer. If the access store cannot be read,
+no connector is used that turn.
 
 ## Connect from chat (connection journey)
 
-Implemented, off by default. A person asks the agent to connect an app (for
-example "connect my Gmail") in web chat or WhatsApp. The agent sends a
-personal link. The person approves access in the browser, a Hubzoid page shows
-the verified result, and WhatsApp gets a confirmation.
+On by default. A person asks the agent to connect an app (for example "connect
+my Gmail"), or asks for something an outside app would do, in web chat or
+WhatsApp. The agent sends a personal link in one short line. The person
+approves access in the browser, a Hubzoid page shows the verified result, and
+WhatsApp gets a confirmation. Called with no app, `connect_account` lists what
+this person can connect in this agent, with each one's status.
 
-In the default UI mode an app is connectable when a switched-on connector has
-that ID (see [personal connections](#personal-connections-default-ui-mode)):
-the link page uses the Hubzoid sign-in, **Continue** starts Hubzoid's own
-authorization, and the provider returns straight to the done page. A refused
-authorization ends the journey as not connected at once. In Open WebUI mode the
-journey uses Open WebUI native MCP, as described in the rest of this section:
-an app is connectable when an OAuth 2.1 MCP server is registered for it in
-OWUI. The optional Composio integration (`CONNECTIONS`, `COMPOSIO_API_KEY`) is
-unchanged and is not part of the journey.
+An app is connectable when a switched-on connector with that ID is offered in
+the agent (see [Connectors in the Console](#connectors-in-the-console-both-ui-modes)).
+The link page uses the chat app's sign-in (Hubzoid's, or Open WebUI's in Open
+WebUI mode), **Continue** starts Hubzoid's own authorization, and the provider
+returns straight to the done page. A refused authorization ends the journey as
+not connected at once. A Shared key connector has nothing to connect, and the
+agent says so. The optional Composio integration (`CONNECTIONS`,
+`COMPOSIO_API_KEY`) is unchanged and is not part of the journey.
 
-### Turn it on
+### Turn it off
 
 In the hub's `.env`:
 
 ```dotenv
-HUBZOID_CONNECT_JOURNEY=true
+HUBZOID_CONNECT_JOURNEY=false
 # HUBZOID_CONNECT_TTL=600   # link lifetime in seconds (60 to 3600)
 ```
 
-The agent then has a `connect_account(app, reconnect=false)` tool on every
-backend. It also needs:
+The agent otherwise has a `connect_account(app, reconnect=false)` tool on every
+backend. A link also needs:
 
-- an app to connect: an OAuth 2.1 MCP server registered in OWUI, with
-  `OWUI_NATIVE_MCP=true`. For any other app the tool says it is not available
-  to connect on this hub.
-- the `connector_<app>` capability for the person (a Console grant).
-- the surface in `HUBZOID_RESTRICTED_SURFACES`. Add `whatsapp` for WhatsApp.
-- `WEBUI_URL` set to the public address people open (the link is
-  `<WEBUI_URL>/portal/connect/<id>`).
+- the `connector_<id>` capability for the person (a Console grant);
+- the surface in `HUBZOID_RESTRICTED_SURFACES` (add `whatsapp` for WhatsApp);
+- `WEBUI_URL` or `HUBZOID_PUBLIC_URL` set to the public address people open
+  (the link is `<public>/portal/connect/<id>`).
 
 ### What happens
 
-1. `connect_account` finds the one OWUI server for the app, checks the
-   capability (surface first) and asks OWUI whether the person is connected
-   already. If they are, the agent says so. Otherwise it gets a link to
-   `/portal/connect/<id>`, never a provider URL.
-2. The link page needs a signed-in OWUI session. A signed-out person is sent
-   to the chat app's sign-in page and comes straight back to the link. The
-   email of that session must be the person who asked. Anyone else gets "This
-   link is for another account" (and the attempt is recorded in the access log).
+1. `connect_account` finds the connector, checks the capability (surface
+   first) and whether the person is connected already. If they are, the agent
+   says so. Otherwise it gets a link to `/portal/connect/<id>`, never a
+   provider URL. The link records the person's account id.
+2. The link page needs a signed-in session for that same account. A
+   signed-out person is sent to sign in and comes straight back. Anyone else,
+   including a new account with the same email, gets "This link is for another
+   account" (recorded in the access log).
 3. **Continue** (a same-origin POST) re-checks a block or a revoked grant and
-   sends the browser to OWUI's own authorize route, with a short-lived
-   `hz_connect` cookie. A POST from any other origin, or with `Origin: null`,
-   is refused.
-4. After consent the browser comes back to `/portal/connect/<id>/done`. The
-   page asks OWUI whether this journey connected: a new `oauth_session` row
-   for that person and server, created after the journey started, whose token
-   is usable now. It never reads the parameters on the return URL.
-5. The page shows **connected**, **not connected** or **finishing** (it checks
-   `/status` for up to 30 seconds). WhatsApp gets its confirmation from the
-   hub's inbound process (see [inbound surfaces](inbound-surfaces.md)).
+   sends the browser to the provider's consent page. A POST from any other
+   origin, or with `Origin: null`, is refused.
+4. The provider returns to `/oauth/connectors/<id>/callback`, which stores
+   the tokens encrypted and sends the browser to `/portal/connect/<id>/done`.
+   That page reads the result from Hubzoid's own records, never from the
+   return URL.
+5. The page says **connected** ("Close this tab and carry on in your chat"),
+   **not connected** or **finishing** (it checks `/status` for up to 30
+   seconds). WhatsApp gets its confirmation from the hub's inbound process (see
+   [inbound surfaces](inbound-surfaces.md)).
 
 Other outcomes: **Cancel** on the page, an **expired** link (the TTL), and a
 **newer link** for the same app (the older one stops working). Asking with
-`reconnect=true` replaces the existing connection. OWUI deletes the old session
-itself.
-
-**One server per app.** If two OWUI servers map to the same app, the tool
-refuses and names both, so no one ends up with two connections. Remove one.
-
-The connector capabilities a hub offers are listed by
-`connect_journey.permissions(hub)` for the Console.
-
-### Needs the edge rewrite (or falls back)
-
-OWUI always sends the browser to its own home page after authorization. The
-edge turns that redirect into `/portal/connect/<id>/done` while the
-`hz_connect` cookie is present. Without the edge (`HUBZOID_DISABLE_EDGE`) the
-person lands on the chat home page. The connection still works, WhatsApp still
-gets its confirmation (the inbound process checks the provider), and asking the
-agent again reports "already connected".
+`reconnect=true` replaces the existing connection.
 
 ### Limits
 
 - The WhatsApp confirmation and the YES continuation are WhatsApp only.
-  Telegram and web chat get the link and the done page.
-- The person needs a chat-app account and signs in to it. OWUI's MCP OAuth
-  routes (`/oauth/clients/mcp:<id>/authorize` and its callback) require an OWUI
-  session and store the token against that OWUI user, so a provider link that
-  skips chat-app sign-in is not possible without a new token system. On a
-  deployment with Google sign-in the chat-app sign-in is one more Google click.
-- Verified end to end on OWUI 0.11.4 with a synthetic OAuth 2.1 MCP server
-  (dynamic client registration, consent, token): link, sign-in return,
-  Continue, consent, done page, and the person's tool in the next chat turn.
+  Telegram and web chat get the link and the done page, then the person sends
+  their next message.
+- The person needs a chat-app account and signs in to it in the browser that
+  opens the link, on a phone too.
+- There is no per-chat on/off switch for a connector in Open WebUI. A granted,
+  connected connector is available in every chat with that agent.
 
 ### Check it with real accounts (manual)
 
-Unit tests use fakes. Before relying on it, run once on a test deployment:
+Unit tests use fakes. Before relying on a provider, run once on a test
+deployment:
 
-1. Register a Gmail MCP server that supports OAuth 2.1 in OWUI (ID `gmail`),
-   with a Google OAuth client whose redirect URI is
-   `<WEBUI_URL>/oauth/clients/mcp:gmail/callback`.
-2. Set `OWUI_NATIVE_MCP=true`, `HUBZOID_CONNECT_JOURNEY=true` and add
-   `whatsapp` to `HUBZOID_RESTRICTED_SURFACES`. Grant `connector_gmail`.
-3. From a WhatsApp number in `identity/access.csv`, ask "connect my Gmail".
-   Open the link while signed in as another account (expect 403), then as the
-   right one. Approve in Google.
-4. Expect the done page to say connected, one WhatsApp confirmation, and on
-   YES the waiting request to run once. Check `oauth_session` has one row for
-   that person and server.
+1. Add the provider's MCP server in the Console (for example ID `gmail`). If it
+   needs a client created in advance, register the redirect URI the Console's
+   **Test** shows: `<public>/oauth/connectors/gmail/callback`.
+2. Grant **Connect Gmail**. Add `whatsapp` to `HUBZOID_RESTRICTED_SURFACES` to
+   try it there.
+3. Ask "connect my Gmail". Open the link while signed in as another account
+   (expect 403), then as the right one. Approve at the provider.
+4. Expect the done page to say connected, and `/portal/connections` (or
+   Settings, Connections) to list it as connected.
 5. Ask something that needs Gmail on each backend (`claude-local`, an OpenAI
    model, `codex-local`). The tool must answer with that person's mailbox.
 
 For deployment and upgrade checks, see [administration](ADMINISTRATION.md) and
-[upgrading](UPGRADING.md). Preserve saved tool-server connections when upgrading.
+[upgrading](UPGRADING.md).

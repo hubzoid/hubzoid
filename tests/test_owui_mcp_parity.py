@@ -119,22 +119,31 @@ async def _whoami_over_http(spec: dict, tool: str = "whoami") -> str:
 @pytest.mark.asyncio
 async def test_claude_turn_carries_only_the_callers_servers(hub):
     specs, allowed = await _claude_surface(hub, _who(X))
-    assert set(specs) == {"owui_mail"}
-    assert specs["owui_mail"]["headers"] == {"Authorization": "Bearer tok-x"}
-    assert "mcp__owui_mail__*" in allowed
-    assert await _whoami_over_http(specs["owui_mail"]) == X
+    assert set(specs) == {"my_mail"}
+    assert specs["my_mail"]["headers"] == {"Authorization": "Bearer tok-x"}
+    assert "mcp__my_mail__*" in allowed
+    assert await _whoami_over_http(specs["my_mail"]) == X
 
     specs, _ = await _claude_surface(hub, _who(Y))
-    assert set(specs) == {"owui_mail", "owui_calendar"}
-    assert await _whoami_over_http(specs["owui_mail"]) == Y
+    assert set(specs) == {"my_mail", "my_cal"}
+    assert await _whoami_over_http(specs["my_mail"]) == Y
 
 
 # ---------------------------------------------------------------------------
 # OpenAI Agents: the cloned agent
 # ---------------------------------------------------------------------------
+def _connector_tools(agent):
+    """The connector tools a turn's agent carries: namespaced function tools."""
+    return [t for t in agent.tools if t.name.startswith("mcp__")]
+
+
+def _servers(agent):
+    return sorted({t.name.split("__")[1] for t in _connector_tools(agent)})
+
+
 class _Probe:
     """Stands in for Runner.run_streamed: records the agent it was given and
-    calls its MCP tools while the servers are connected."""
+    calls its connector tools while the servers are connected."""
 
     def __init__(self):
         self.agents = []
@@ -146,11 +155,12 @@ class _Probe:
         class Result:
             async def stream_events(self):
                 probe.agents.append(agent)
-                tools = await agent.get_mcp_tools(RunContextWrapper(context=None))
+                tools = _connector_tools(agent)
                 for t in tools:
-                    if t.name in ("whoami", "cal_today"):
-                        probe.calls[t.name] = _text(await _call(t, t.name))
-                probe.names = sorted(t.name for t in tools)
+                    short = t.name.split("__")[-1]
+                    if short in ("whoami", "cal_today"):
+                        probe.calls[short] = _text(await _call(t, t.name))
+                probe.names = sorted(t.name.split("__")[-1] for t in tools)
                 if False:  # pragma: no cover - makes this an async generator
                     yield None
 
@@ -175,16 +185,18 @@ async def test_openai_turn_runs_on_a_clone_with_only_the_callers_servers(hub, mo
         await rt.run("hi")
     (cloned,) = probe.agents
     assert cloned is not rt._agent
-    assert [s.name for s in cloned.mcp_servers] == ["owui_mail"]
+    assert _servers(cloned) == ["my_mail"]
+    assert sorted(t.name for t in _connector_tools(cloned)) == [
+        "mcp__my_mail__mail_search", "mcp__my_mail__whoami"]  # the names Claude uses too
     assert probe.names == ["mail_search", "whoami"]
     assert probe.calls == {"whoami": X}
-    assert rt._agent.mcp_servers == []  # the shared agent is unchanged
+    assert [t.name for t in rt._agent.tools] == ["hub_note"]  # the shared agent is unchanged
 
     probe2 = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe2)
     with identity_scope(_who(Y)):
         await rt.run("hi")
-    assert sorted(s.name for s in probe2.agents[0].mcp_servers) == ["owui_calendar", "owui_mail"]
+    assert _servers(probe2.agents[0]) == ["my_cal", "my_mail"]
     assert probe2.calls == {"whoami": Y, "cal_today": f"calendar of {Y}"}
 
 
@@ -203,8 +215,9 @@ def _probe_codex(monkeypatch, seen: list):
 
     async def fake_stream(self, prompt, registry):  # noqa: ARG001
         entry = {"names": sorted(registry), "shared": registry is self.registry}
-        if "whoami" in registry:
-            entry["whoami"] = _text(await _call(registry["whoami"], "whoami"))
+        who = "mcp__my_mail__whoami"
+        if who in registry:
+            entry["whoami"] = _text(await _call(registry[who], who))
         seen.append(entry)
         yield "ok"
 
@@ -218,14 +231,15 @@ async def test_codex_turn_uses_a_per_turn_registry_with_only_the_callers_tools(h
     rt = _codex_runtime(hub)
     with identity_scope(_who(X)):
         assert await rt.run("hi") == "ok"
-    assert seen[-1] == {"names": ["hub_note", "mail_search", "whoami"], "shared": False,
+    assert seen[-1] == {"names": ["hub_note", "mcp__my_mail__mail_search", "mcp__my_mail__whoami"], "shared": False,
                         "whoami": X}
     assert list(rt.registry) == ["hub_note"]  # the shared registry is unchanged
     assert rt.last_error is None
 
     with identity_scope(_who(Y)):
         await rt.run("hi")
-    assert seen[-1]["names"] == ["cal_today", "hub_note", "mail_search", "whoami"]
+    assert seen[-1]["names"] == ["hub_note", "mcp__my_cal__cal_today", "mcp__my_mail__mail_search",
+                                 "mcp__my_mail__whoami"]
     assert seen[-1]["whoami"] == Y
     assert list(rt.registry) == ["hub_note"]
 
@@ -275,7 +289,7 @@ async def test_whatsapp_listed_as_restricted_surface_reaches_all_three(hub, monk
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,whatsapp")
     ident = _who(X, "whatsapp")
     specs, _ = await _claude_surface(hub, ident)
-    assert set(specs) == {"owui_mail"}
+    assert set(specs) == {"my_mail"}
 
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
@@ -303,7 +317,7 @@ async def test_each_runtime_needs_the_connector_grant(hub, monkeypatch):
     assert specs == {}
     gs.grant(X, hub.name, owui_mcp.capability("mail"))
     specs, _ = await _claude_surface(hub, _who(X))
-    assert set(specs) == {"owui_mail"}
+    assert set(specs) == {"my_mail"}
 
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
@@ -319,10 +333,10 @@ async def test_each_runtime_needs_the_connector_grant(hub, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_personal_tool_never_shadows_a_hub_tool(hub, monkeypatch):
-    """OpenAI and Codex expose MCP tools by their bare name, so a personal
-    server with a tool named like a hub tool is skipped for the turn. Claude
-    namespaces every server, so its hub tools cannot collide."""
+async def test_a_connector_tool_never_shadows_a_hub_tool(hub, monkeypatch):
+    """Every runtime names connector tools mcp__<server>__<tool>, as Claude
+    does, so a connector tool named like a hub tool sits beside it instead of
+    replacing it or being dropped."""
     import agents
 
     @function_tool
@@ -335,36 +349,38 @@ async def test_a_personal_tool_never_shadows_a_hub_tool(hub, monkeypatch):
     rt = _openai_runtime(hub, tools=(hub_note, whoami))
     with identity_scope(_who(X)):
         await rt.run("hi")
-    assert probe.agents[0].mcp_servers == []
+    names = [t.name for t in probe.agents[0].tools]
+    assert "whoami" in names and "mcp__my_mail__whoami" in names
+    assert probe.calls == {"whoami": X}  # the connector's, as X
 
     seen: list = []
     _probe_codex(monkeypatch, seen)
     with identity_scope(_who(X)):
         await _codex_runtime(hub, {"hub_note": hub_note, "whoami": whoami}).run("hi")
-    assert seen[-1]["names"] == ["hub_note", "whoami"]
+    assert seen[-1]["names"] == ["hub_note", "mcp__my_mail__mail_search", "mcp__my_mail__whoami",
+                                 "whoami"]
 
 
 @pytest.mark.asyncio
 async def test_a_dead_personal_server_never_breaks_the_turn(hub, monkeypatch):
     import agents
 
-    from hubzoid.access import owui_tool_servers as srv
+    import dataclasses
 
-    real = srv.list_mcp_connections
+    from hubzoid.connectors import registry
 
-    def moved(hub_dir):
-        out = real(hub_dir)
-        for c in out:
-            c["url"] = "http://127.0.0.1:9/mcp"  # nothing listens here
-        return out
+    real = registry.list_all
 
-    monkeypatch.setattr(srv, "list_mcp_connections", moved)
+    def moved(hub_dir):  # nothing listens here
+        return [dataclasses.replace(c, url="http://127.0.0.1:9/mcp") for c in real(hub_dir)]
+
+    monkeypatch.setattr(registry, "list_all", moved)
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
     rt = _openai_runtime(hub)
     with identity_scope(_who(X)):
         await rt.run("hi")
-    assert probe.agents[0].mcp_servers == []
+    assert _servers(probe.agents[0]) == []
     assert rt.last_error is None
 
 
@@ -379,3 +395,20 @@ def test_parity_spec_is_the_same_data_for_every_runtime(hub):
     from hubzoid.runtime import personal_mcp_server
     client = personal_mcp_server(srv_)
     assert client.name == srv_.key
+
+
+def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
+    """mcp__<server>__<tool>, as Claude names them: within the 64 characters
+    providers accept, and two long names never collapse into one."""
+    from hubzoid.runtime import connector_tool_name
+
+    import re
+
+    assert connector_tool_name("my_mail", "search") == "mcp__my_mail__search"
+    dotted, slashed = connector_tool_name("my_jira", "issue.get"), connector_tool_name("my_jira", "issue/get")
+    assert dotted != slashed and dotted.startswith("mcp__my_jira__issue_get_")
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in (dotted, slashed))
+    assert connector_tool_name("my_jira", "issue_get") == "mcp__my_jira__issue_get"
+    a = connector_tool_name("my_mail", "x" * 80 + "a")
+    b = connector_tool_name("my_mail", "x" * 80 + "b")
+    assert len(a) == len(b) == 64 and a != b and a.startswith("mcp__my_mail__")

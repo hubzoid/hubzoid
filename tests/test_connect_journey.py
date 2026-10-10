@@ -1,10 +1,6 @@
 """The connection journey without a browser: start checks, state machine,
-Open WebUI verification, duplicate-server refusal, the continuation store and
-the connect_account tool.
-
-Open WebUI verification runs against a seeded, Open WebUI-shaped SQLite
-database.
-"""
+verification against the stored connection, the continuation store and the
+connect_account tool. Open WebUI mode, with the Console connectors."""
 from __future__ import annotations
 
 import json
@@ -85,7 +81,8 @@ def test_start_returns_a_bound_link_and_never_a_provider_url(hub):
     assert "oauth" not in r["url"] and "gmail-mcp" not in r["url"]
     j = store.get(hub, r["id"])
     assert (j["subject"], j["surface"], j["chat_id"], j["handle"]) == (ALICE, "whatsapp", CHAT, "919800000001")
-    assert (j["app"], j["provider"], j["provider_ref"], j["status"]) == ("gmail", "owui_mcp", "gmail", "pending")
+    assert (j["app"], j["provider"], j["provider_ref"], j["status"]) == ("gmail", "hz_connector", "gmail", "pending")
+    assert j["account"] == "ua"  # the link is for Alice's account, not just her email
     assert 590 <= j["expires"] - j["created"] <= 600
     assert (ALICE, "connect:gmail", "allow", "link") in _audit(hub)
 
@@ -140,21 +137,6 @@ def test_anonymous_and_unknown_apps(hub):
             connect_journey.start(hub, app="wiki")
 
 
-def test_the_journey_uses_open_webui_only(hub, monkeypatch):
-    """An app sanctioned only in CONNECTIONS is neither offered nor connected
-    by the journey. Only Open WebUI OAuth MCP servers are."""
-    monkeypatch.setenv("CONNECTIONS", "notion,gmail")
-    (hub / ".env").write_text("HUBZOID_CONNECT_JOURNEY=true\nCONNECTIONS=notion\n")
-    with _as(ALICE, groups=("connector_notion",)):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="notion")
-    assert err.value.code == "unavailable"
-    with _as(ALICE):
-        r = connect_journey.start(hub, app="gmail")
-    assert store.get(hub, r["id"])["provider"] == "owui_mcp"
-    assert [p["permission"] for p in connect_journey.permissions(hub)] == ["connector_gmail"]
-
-
 def test_already_connected_says_so_and_reconnect_makes_a_new_link(hub):
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     with _as(ALICE):
@@ -191,9 +173,9 @@ def _started(hub, email=ALICE, reconnect=False):
     return store.get(hub, r["id"])
 
 
-def test_owui_verify_needs_a_session_created_after_start_with_a_usable_token(hub):
+def test_verify_needs_a_connection_made_after_start_with_a_usable_token(hub):
     j = _started(hub)
-    prov = providers.OwuiMcpProvider(hub, "gmail")
+    prov = providers.ConnectorProvider(hub, "gmail")
     assert prov.verify(j) == "pending"
     # Bob connecting does not connect Alice.
     h.connect(hub.db, user_id="ub", server_id="gmail", secret=SECRET, access_token="AT-b")
@@ -209,13 +191,12 @@ def test_a_session_older_than_the_journey_does_not_count(hub):
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-old",
               created_at=time.time() - 3600, expires_in=7200)
     j = _started(hub, reconnect=True)
-    assert providers.OwuiMcpProvider(hub, "gmail").verify(j) == "pending"
+    assert providers.ConnectorProvider(hub, "gmail").verify(j) == "pending"
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-new")
     assert connect_journey.finalize(hub, j)["status"] == "connected"
-    import sqlite3
-    rows = sqlite3.connect(hub.db).execute(
-        "SELECT count(*) FROM oauth_session WHERE user_id='ua'").fetchone()[0]
-    assert rows == 1  # the reconnect replaced the session, no duplicate
+    from hubzoid.connectors import tokens
+
+    assert len(tokens.for_user(hub, "ua")) == 1  # the reconnect replaced it, no duplicate
 
 
 def test_a_new_but_unusable_token_fails_the_journey(hub):
@@ -245,31 +226,10 @@ def test_state_changes_have_exactly_one_winner(hub):
 # ---------------------------------------------------------------------------
 # Exactly one Open WebUI server per app
 # ---------------------------------------------------------------------------
-def test_two_open_webui_servers_for_one_app_are_a_conflict(hub, tmp_path, monkeypatch):
-    db = tmp_path / "webui2.db"
-    h.seed_owui(db, users=[("ua", ALICE)], secret=SECRET, servers=[
-        {"id": "gmail", "url": "https://a/mcp"}, {"id": "Gmail", "url": "https://b/mcp"}])
-    h.owui_env(monkeypatch, db, SECRET)
-    with _as(ALICE):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="gmail")
-    assert err.value.code == "conflict"
-    assert "'gmail'" not in err.value.message and "'Gmail'" not in err.value.message  # ids go to the log
-    assert store.open_for(hub, subject=ALICE, app="gmail") == []
-    # Someone without the capability learns nothing about the setup.
-    import hubzoid.access as access
-    access.store_for(hub).revoke(ALICE, hub.name, "connector_gmail", actor="test")
-    with _as(ALICE, groups=()):
-        with pytest.raises(connect_journey.JourneyError) as err:
-            connect_journey.start(hub, app="gmail")
-    assert err.value.code == "denied"
+def test_a_switched_off_connector_is_not_offered(hub):
+    from hubzoid.connectors import registry
 
-
-def test_a_switched_off_server_is_not_offered(hub, tmp_path, monkeypatch):
-    db = tmp_path / "webui3.db"
-    h.seed_owui(db, users=[("ua", ALICE)], secret=SECRET, servers=[
-        {"id": "gmail", "url": "https://a/mcp", "enable": False}])
-    h.owui_env(monkeypatch, db, SECRET)
+    registry.update(hub, "gmail", {"enabled": False}, actor="test")
     with _as(ALICE):
         with pytest.raises(connect_journey.JourneyError) as err:
             connect_journey.start(hub, app="gmail")
@@ -296,10 +256,12 @@ def _tool(hub):
     return tool
 
 
-def test_tool_is_absent_unless_the_journey_is_on(hub, monkeypatch):
+def test_tool_is_on_unless_the_journey_is_turned_off(hub, monkeypatch):
     from hubzoid.tools import connect_tools
     assert _tool(hub).name == "connect_account"
     monkeypatch.delenv("HUBZOID_CONNECT_JOURNEY")
+    assert _tool(hub).name == "connect_account"
+    monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "false")
     assert connect_tools.make(types.SimpleNamespace(hub_dir=hub)) == []
 
 
@@ -310,7 +272,7 @@ async def test_tool_links_the_trusted_caller_whatever_the_model_says(hub):
     with _as(ALICE):
         out = await tool.on_invoke_tool(None, json.dumps({"app": "gmail", "user": BOB,
                                                           "subject": BOB}))
-    assert "https://hub.example.org/portal/connect/" in out and ALICE in out
+    assert "https://hub.example.org/portal/connect/" in out
     (j,) = store.open_for(hub, subject=ALICE, app="gmail")
     assert store.open_for(hub, subject=BOB, app="gmail") == []
     assert j["subject"] == ALICE
@@ -411,3 +373,29 @@ def test_an_unopened_link_is_not_marked_connected_by_asking_again(hub):
     with _as(ALICE):
         assert connect_journey.start(hub, app="gmail")["state"] == "connected"
     assert store.get(hub, r["id"])["status"] == "pending"  # never started: ends silently
+
+
+@pytest.mark.asyncio
+async def test_tool_lists_what_this_person_can_connect_here(hub, monkeypatch):
+    """With no app, only connectors this agent offers that the caller may use,
+    with status, and never a URL or secret of the server."""
+    tool = _tool(hub)
+    assert "app" not in tool.params_json_schema.get("required", [])
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+    with _as(ALICE):
+        out = await tool.on_invoke_tool(None, "{}")
+    assert "Gmail (gmail): connected" in out and "/portal/connections" in out
+    assert "gmail-mcp.example.org" not in out and "AT-a" not in out
+    from hubzoid.access import store_for
+
+    store_for(hub).revoke(BOB, hub.name, "connector_gmail", actor="test")
+    with _as(BOB):
+        assert "nothing this user can connect" in await tool.on_invoke_tool(None, "{}")
+
+
+@pytest.mark.asyncio
+async def test_tool_names_what_exists_when_the_app_is_guessed_wrong(hub):
+    tool = _tool(hub)
+    with _as(ALICE):
+        out = await tool.on_invoke_tool(None, json.dumps({"app": "googlemail"}))
+    assert "not available" in out and "Gmail (gmail): not connected" in out

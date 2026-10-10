@@ -85,11 +85,12 @@ def test_catalogue_groups_every_kind_and_keeps_the_old_fields(dep):
         "use_hub": "hub", "curator": "tools", "jev": "tools", "share_public_links": "tools",
         "workflows_view": "tools", "workflows_manage": "tools", "access_tools": "tools",
         "ledger": "restricted", "payroll": "restricted", "manage_access": "admin"}
-    # Display order follows the drawer's groups (no empty Workflows group), and
-    # inside Hubzoid tools the unsectioned rows, then Workflows, then Access control.
+    # Display order follows the drawer's groups (no empty Workflows group): the
+    # agent's own tools first, Hubzoid tools last, and inside Hubzoid tools the
+    # unsectioned rows, then Workflows, then Access control.
     assert [e["permission"] for e in entries] == [
-        "use_hub", "curator", "jev", "share_public_links", "workflows_view", "workflows_manage",
-        "access_tools", "ledger", "payroll", "manage_access"]
+        "use_hub", "ledger", "payroll", "manage_access", "curator", "jev", "share_public_links",
+        "workflows_view", "workflows_manage", "access_tools"]
     assert [by[p]["section"] for p in ("curator", "workflows_view", "access_tools")] == [
         "", "workflows", "access"]
     for e in entries:
@@ -272,8 +273,8 @@ def test_obsolete_grants_stay_visible_and_removable_but_never_grantable(api):
 
 
 def test_connector_apps_appear_as_sensitive_hubzoid_tools(tmp_path, monkeypatch):
-    """An Open WebUI OAuth MCP server offers connector_<app>; the catalogue
-    shows it in Hubzoid tools, sensitive, without a bespoke UI row."""
+    """A connector offered in the agent gives connector_<id>; the catalogue
+    shows it in the Connectors group, sensitive, without a bespoke UI row."""
     from tests import connect_helpers as h
 
     hub = tmp_path / "sales"
@@ -282,10 +283,14 @@ def test_connector_apps_appear_as_sensitive_hubzoid_tools(tmp_path, monkeypatch)
     db = tmp_path / "webui.db"
     h.seed_owui(db, users=[], secret="cap-secret", servers=[
         {"id": "gmail", "name": "Gmail", "url": "https://gmail-mcp.example.org/mcp"}])
-    h.owui_env(monkeypatch, db, "cap-secret")  # OWUI_NATIVE_MCP on
+    h.owui_env(monkeypatch, db, "cap-secret")
+    h.isolated_store(tmp_path, monkeypatch)
+    from hubzoid import connectors
+
+    monkeypatch.setattr(connectors, "existing_engine", lambda hub_dir: connectors.engine(hub_dir))
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
     gmail = rows["connector_gmail"]
-    assert gmail["group"] == "tools" and gmail["sensitive"] is True
+    assert gmail["group"] == "connectors" and gmail["sensitive"] is True
     assert "use_hub" in rows and rows["use_hub"]["group"] == "hub"
 
 

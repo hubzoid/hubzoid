@@ -22,7 +22,6 @@ def _legacy_ui(monkeypatch):
     is covered by tests/test_gateway_app*.py."""
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
-JOURNEY = "abcDEF0123456789_-xyzQ"  # 22 chars, matches the contract pattern
 
 
 class _Body(httpx.AsyncByteStream):
@@ -210,49 +209,28 @@ def test_navigation_script_carries_the_flag(edge):
     assert "const HIDE_USERS = false;" in client2.get("/hubzoid-portal-navigation.js").text
 
 
-# ---- connection-journey callback (edge contract for P2) --------------------------------
+# ---- Open WebUI tool servers: MCP connectors are managed in the Console ----------------
 
-def _set_cookie_values(r):
-    return [v for k, v in r.headers.multi_items() if k.lower() == "set-cookie"]
-
-
-@pytest.mark.parametrize("location", ["/", "/?error=access_denied"])
-def test_callback_redirect_goes_to_the_journey(edge, location):
-    client, upstream = edge()
-    upstream.callback_location = location
-    client.cookies.set("hz_connect", JOURNEY)
-    r = client.get("/oauth/clients/mcp:gmail/callback", params={"code": "c", "state": "s"})
-    assert r.status_code == 307
-    assert r.headers["location"] == f"/portal/connect/{JOURNEY}/done"
-    cookies = _set_cookie_values(r)
-    assert "oauth_session_id=s1; Path=/; HttpOnly" in cookies and "token=t1; Path=/" in cookies
-    assert "hz_connect=; Max-Age=0; Path=/" in cookies
+@pytest.mark.parametrize("path", ["/api/v1/configs/tool_servers", "/api/v1/configs/tool_servers/verify",
+                                  "/api/v1/configs/oauth/clients/register"])
+def test_open_webui_tool_server_saves_are_refused(edge, path):
+    client, _ = edge(hide=False)
+    r = client.post(path, json={})
+    assert r.status_code == 403 and "Console" in r.json()["detail"]
 
 
-def test_callback_untouched_without_a_valid_journey(edge):
-    client, upstream = edge()
-    for cookie in (None, "short", "has spaces in it 1234567", "x" * 65, "bad!chars" * 3):
-        client.cookies.clear()
-        if cookie:
-            client.cookies.set("hz_connect", cookie)
-        r = client.get("/oauth/clients/mcp:gmail/callback")
-        assert r.status_code == 307 and r.headers["location"] == "/", cookie
-        assert not any(v.startswith("hz_connect=") for v in _set_cookie_values(r)), cookie
+def test_a_config_import_carrying_tool_servers_is_refused(edge):
+    client, _ = edge(hide=False)
+    r = client.post("/api/v1/configs/import",
+                    json={"config": {"tool_server.connections": [{"url": "https://x/mcp"}]}})
+    assert r.status_code == 403 and "Console" in r.json()["detail"]
 
 
-def test_callback_untouched_for_other_flows(edge):
-    client, upstream = edge()
-    client.cookies.set("hz_connect", JOURNEY)
-    # Sign-in with Google is a different flow.
-    r = client.get("/oauth/google/callback")
-    assert r.headers["location"] == "/"
-    # A non-redirect response and a non-GET are left alone.
-    upstream.callback_status = 200
-    assert client.get("/oauth/clients/mcp:gmail/callback").status_code == 200
-    upstream.callback_status = 307
-    r = client.post("/oauth/clients/mcp:gmail/callback")
-    assert r.headers["location"] == "/"
-
+def test_open_webui_oauth_routes_pass_through(edge):
+    """Open WebUI's own sign-in and client callbacks are not touched."""
+    client, _ = edge()
+    assert client.get("/oauth/clients/mcp:gmail/callback").headers["location"] == "/"
+    assert client.get("/oauth/google/callback").headers["location"] == "/"
 
 
 @pytest.fixture
