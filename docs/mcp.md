@@ -178,7 +178,9 @@ host. Each operation (discovery, a code exchange, a refresh) also has one
 overall time limit.
 
 Changing a connector's URL or sign-in method removes everyone's connection to
-it, so a token is never sent to a server other than the one that issued it.
+it, so a token is never sent to a server other than the one that issued it. For
+the same reason a Shared key connector needs its key again when its URL
+changes: the stored key is never sent to a new address.
 Removing a connector removes the connections too. Grants of its capability stay
 listed as no longer available until you remove them. Agent managers who are not
 organization administrators see the tab but cannot change it.

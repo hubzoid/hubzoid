@@ -126,6 +126,29 @@ def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, serve
     assert "tok-x" not in json.dumps(registry.get(hub, "team").public())
 
 
+def test_a_new_url_never_receives_the_stored_shared_key(hub, servers):
+    """The key is write-only: an administrator who does not know it cannot point
+    the connector elsewhere and have the stored key sent there."""
+    from hubzoid.connectors import ConnectorError
+
+    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
+                          "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
+    for change in ({"url": "https://attacker.example.org/mcp"},
+                   {"url": "https://attacker.example.org/mcp", "shared_secret": ""}):
+        with pytest.raises(ConnectorError) as e:
+            registry.update(hub, "team", change, actor="test")
+        assert e.value.code in ("shared_key_required", "invalid_shared_secret")
+        assert e.value.status == 422
+        assert registry.get(hub, "team").url == servers["mail"]
+        assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
+    # Other changes keep the key; a new URL with its own key is fine.
+    registry.update(hub, "team", {"name": "Team"}, actor="test")
+    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-x"}
+    registry.update(hub, "team", {"url": servers["cal"], "shared_secret": "tok-y"}, actor="test")
+    assert registry.get(hub, "team").url == servers["cal"]
+    assert registry.shared_headers(hub, "team") == {"Authorization": "Bearer tok-y"}
+
+
 @pytest.mark.parametrize("header", ["Host", "cookie", "Content-Length", "Proxy-Authorization",
                                     "X-Forwarded-For", "bad header", "MCP-Session-Id"])
 def test_a_shared_key_refuses_headers_that_change_the_request(hub, header):

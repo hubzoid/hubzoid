@@ -291,6 +291,10 @@ def build_router(hub_dir: Path) -> APIRouter:
             raise _error(404, "not_found", "No connector has this ID.")
         if not c.enabled:
             raise _error(409, "disabled", f"{c.name} is switched off. Ask your administrator.")
+        if c.auth_type == "shared":
+            # One company key: there is no account to connect, and no sign-in to start.
+            raise _error(409, "shared", f"{c.name} uses a company key, so there is nothing to "
+                                        "connect.")
         if c.id not in per_user.allowed_ids(hub_dir, user.email, [c.id]):
             audit(user.email, c.id, "deny", "not permitted")
             raise _error(403, "not_allowed", f"You do not have permission to connect {c.name}. "
@@ -385,7 +389,8 @@ def _tools(hub_dir: Path, c: registry.Connector, user) -> dict:
         except Exception:  # noqa: BLE001 — the test result stands without the tools
             access = None
         if not access:
-            return {"tools": None, "tools_note": "Connect your own account to see its tools."}
+            return {"tools": None, "tools_note": "Connect your own account on Your connections, "
+                                             "then test again to see its tools."}
         headers = {"Authorization": f"Bearer {access}"}
     try:
         return {"tools": server_tools.list_tools(c.url, headers)}
@@ -413,10 +418,11 @@ def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:
         result.update(ok=ok, requires_auth=probe.requires_auth, status=probe.status)
         if not ok:
             if probe.requires_auth and c.auth_type == "shared":
-                result["error"] = {"code": "key_refused", "message": "The server refused the key."}
+                result["error"] = {"code": "key_refused",
+                                   "message": "The server refused the key. Check the key in Edit."}
             elif probe.requires_auth:
-                result["error"] = {"code": "requires_auth", "message": "The server asks for "
-                                   "sign-in. Set authentication to OAuth."}
+                result["error"] = {"code": "requires_auth", "message": "The server asks people "
+                                   "to sign in. In Edit, choose Each person signs in."}
             else:
                 result["error"] = {"code": "unexpected_status",
                                    "message": f"The server answered with status {probe.status}."}

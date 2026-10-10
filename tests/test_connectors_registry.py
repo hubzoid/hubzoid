@@ -358,6 +358,20 @@ def test_a_connector_without_sign_in_connects_at_once(hub, tc):
         assert tc.delete("/api/connections/docs", headers=SAME).status_code == 204
 
 
+def test_a_shared_key_connector_has_nothing_to_connect_and_starts_no_sign_in(hub, tc, monkeypatch):
+    from hubzoid.connectors import oauth_flow
+
+    registry.create(hub, body(name="Team", url="https://team.example.org/mcp", auth_type="shared",
+                              shared_secret="k-1"), actor="test")
+    f.grant_connector(hub, "team")
+    started = []
+    monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: started.append(a) or "/x")
+    for path in ("/api/connections/team/connect", "/portal/api/connections/team/connect"):
+        r = tc.post(path, json={}, headers=SAME)
+        assert r.status_code == 409 and detail(r)["code"] == "shared", path
+    assert started == []
+
+
 def test_a_server_that_needs_sign_in_is_reported_for_a_no_auth_connector(hub, tc):
     with f.bearer_mcp("private", {"tok": "x"}, {"lookup": lambda who: who}) as url:
         registry.create(hub, body(name="Private", url=url, auth_type="none"), actor="test")

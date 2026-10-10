@@ -500,6 +500,12 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
             changes["client_secret_enc"] = None
         if auth == "shared":
             changes.setdefault("shared_header", row.get("shared_header") or DEFAULT_SHARED_HEADER)
+            if ("url" in changes and changes["url"] != row["url"]
+                    and not changes.get("shared_secret_enc")):
+                # A key belongs to the server it was given for: the stored one is
+                # never sent to a new address.
+                raise ConnectorError("shared_key_required", "A new server needs its own key. "
+                                     "Enter the key again.", 422)
             if not changes.get("shared_secret_enc", row.get("shared_secret_enc")):
                 raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
         else:
