@@ -12,7 +12,7 @@ import json
 import time
 
 import pytest
-from agents import Agent, FunctionTool, RunContextWrapper, function_tool
+from agents import Agent, FunctionTool, function_tool
 
 from hubzoid import owui_mcp
 from hubzoid.access import Identity, identity_scope, store_for
@@ -290,10 +290,11 @@ async def test_openai_turns_run_on_a_clone_with_the_callers_servers(hub, monkeyp
     def probe(agent, run_input, max_turns=None):  # noqa: ARG001
         class Result:
             async def stream_events(self):
-                tools = await agent.get_mcp_tools(RunContextWrapper(context=None))
+                # Connector tools join the clone's own tools, named mcp__<server>__<tool>.
                 seen["servers"] = [s.name for s in agent.mcp_servers]
-                seen["tools"] = sorted(t.name for t in tools)
-                seen["whoami"] = await _call(next(t for t in tools if t.name == "whoami"))
+                seen["tools"] = sorted(t.name for t in agent.tools)
+                seen["whoami"] = await _call(
+                    next(t for t in agent.tools if t.name == "mcp__my_mail__whoami"))
                 if False:  # pragma: no cover - makes this an async generator
                     yield None
         return Result()
@@ -304,8 +305,8 @@ async def test_openai_turns_run_on_a_clone_with_the_callers_servers(hub, monkeyp
     rt = OpenAIAgentsRuntime(agent, hub_dir=hub, vision=(False, 0, 0))
     with identity_scope(who(X)):
         await rt.run("hi")
-    assert seen == {"servers": ["my_mail"], "tools": ["whoami"], "whoami": X}
-    assert rt._agent.mcp_servers == []
+    assert seen == {"servers": [], "tools": ["hub_note", "mcp__my_mail__whoami"], "whoami": X}
+    assert rt._agent.mcp_servers == [] and rt._agent.tools == [hub_note]
 
 
 @pytest.mark.asyncio
@@ -316,7 +317,8 @@ async def test_codex_turns_use_a_per_turn_registry_with_the_callers_tools(hub, m
 
     async def fake_stream(self, prompt, registry_):  # noqa: ARG001
         seen.append({"names": sorted(registry_),
-                     "whoami": await _call(registry_["whoami"]) if "whoami" in registry_ else None})
+                     "whoami": (await _call(registry_["mcp__my_mail__whoami"])
+                                if "mcp__my_mail__whoami" in registry_ else None)})
         yield "ok"
 
     monkeypatch.setattr(CodexRuntime, "_stream", fake_stream)
@@ -324,7 +326,8 @@ async def test_codex_turns_use_a_per_turn_registry_with_the_callers_tools(hub, m
                       personal_mcp=True, tool_mode="off")
     with identity_scope(who(Y)):
         assert await rt.run("hi") == "ok"
-    assert seen[-1] == {"names": ["cal_today", "hub_note", "mail_search", "whoami"], "whoami": Y}
+    assert seen[-1] == {"names": ["hub_note", "mcp__my_cal__cal_today", "mcp__my_mail__mail_search",
+                                  "mcp__my_mail__whoami"], "whoami": Y}
     assert list(rt.registry) == ["hub_note"]
 
 
@@ -342,7 +345,7 @@ async def test_a_connector_without_sign_in_carries_no_credentials(hub):
     assert docs.headers == {} and docs.server_id == "docs"
     async with AsyncExitStack() as stack:
         ((_server, tools),) = await open_personal_mcp(stack, [docs], set())
-        assert await _call(next(t for t in tools if t.name == "whoami")) == "nobody"
+        assert await _call(next(t for t in tools if t.name == "mcp__my_docs__whoami")) == "nobody"
     # Opting out is a disconnect like any other.
     tokens.disconnect(hub, "u-x", "docs")
     assert keys(per_user.per_user_servers(hub, who(X))) == ["my_mail"]

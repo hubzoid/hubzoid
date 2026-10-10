@@ -52,30 +52,40 @@ def allowed_ids(hub_dir, email: str, ids) -> set[str]:
     """Connector ids ``email`` may use somewhere in this deployment: those
     offered in an agent where the person holds their capability. Empty for a
     blocked person or when access cannot be checked."""
+    return {i for i, agents in used_by(hub_dir, email, ids).items() if agents}
+
+
+def used_by(hub_dir, email: str, ids) -> dict[str, list[str]]:
+    """``{connector id: [agent name]}``: for each of ``ids``, the agents that
+    offer it where ``email`` holds its capability (names only of agents the
+    person can use it in). Every list is empty for a blocked person or when
+    access cannot be checked."""
     from .. import deployment
     from ..access import store_for
     from ..access.identity import normalize
 
     ids = set(ids)
     email = normalize(email)
+    out: dict[str, list[str]] = {i: [] for i in ids}
     if not ids or not email:
-        return set()
+        return out
     try:
         gs = store_for(Path(hub_dir))
         if gs.is_suspended(email):
-            return set()
+            return out
         try:
-            hubs = [h["key"] for h in deployment.hubs(Path(hub_dir))]
+            hubs = [(h["key"], h.get("name") or h["key"]) for h in deployment.hubs(Path(hub_dir))]
         except Exception:  # noqa: BLE001 — a standalone hub without a readable manifest
-            hubs = [normalize(Path(hub_dir).name)]
-        out: set[str] = set()
-        for hub in hubs:
+            hubs = [(normalize(Path(hub_dir).name), Path(hub_dir).name)]
+        for hub, name in hubs:
             offered = registry.offered_in(hub_dir, hub)
-            out |= {i for i in ids if i in offered and gs.can(email, hub, capability(i))}
+            for i in ids:
+                if i in offered and gs.can(email, hub, capability(i)):
+                    out[i].append(name)
         return out
     except Exception:  # noqa: BLE001 — fail closed
         log.warning("connectors: access check failed", exc_info=True)
-        return set()
+        return {i: [] for i in ids}
 
 
 def per_user_servers(hub_dir, identity=None, *, reserved: set[str] | None = None, **_kw) -> list:

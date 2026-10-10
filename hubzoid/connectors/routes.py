@@ -245,13 +245,15 @@ def build_router(hub_dir: Path) -> APIRouter:
 
     @router.post("/portal/api/connectors/{connector_id}/test")
     def test_connector(connector_id: str, request: Request):
-        admin(request)
+        user = admin(request)
         same_origin(request)
         c = registry.get(hub_dir, connector_id)
         if c is None:
             raise _error(404, "not_found", "No connector has this ID.")
-        return JSONResponse(_test(hub_dir, c, oauth_flow.origin_for(request, strict=False)),
-                            headers=_NO_STORE)
+        result = _test(hub_dir, c, oauth_flow.origin_for(request, strict=False))
+        if result.get("ok"):
+            result.update(_tools(hub_dir, c, user))
+        return JSONResponse(result, headers=_NO_STORE)
 
     # ---- People: their own connections -----------------------------------------
     @router.get("/api/connections")
@@ -260,7 +262,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         user = person(request)
         mine = {c.connector_id: c for c in tokens.for_user(hub_dir, user.id)}
         listed = [c for c in registry.list_all(hub_dir) if c.enabled or c.id in mine]
-        allowed = per_user.allowed_ids(hub_dir, user.email, [c.id for c in listed if c.enabled])
+        used = per_user.used_by(hub_dir, user.email, [c.id for c in listed if c.enabled])
         out = []
         for c in listed:
             conn = mine.get(c.id)
@@ -268,7 +270,8 @@ def build_router(hub_dir: Path) -> APIRouter:
                 "connector_id": c.id, "name": c.name, "connected": conn is not None,
                 "status": conn.status if conn else "none",
                 "connected_at": conn.connected_at if conn else None,
-                "allowed": c.id in allowed, "auth_type": c.auth_type, "enabled": c.enabled,
+                "allowed": bool(used.get(c.id)), "auth_type": c.auth_type, "enabled": c.enabled,
+                "agents": used.get(c.id, []),
             })
         return JSONResponse(out, headers=_NO_STORE)
 
@@ -363,6 +366,31 @@ def _journey_failed(hub_dir: Path, journey_id: str | None, code: str) -> None:
                            app=j["app"], decision="failed", reason=code)
     except Exception:  # noqa: BLE001 — the journey expires by itself
         log.debug("connectors: could not close journey", exc_info=True)
+
+
+def _tools(hub_dir: Path, c: registry.Connector, user) -> dict:
+    """The server's tools for the Console, as the connector would reach it:
+    with the Shared key, with no credential, or with the administrator's own
+    connection. Without one, a note says how to see them. Never raises."""
+    from . import server_tools
+
+    if c.auth_type == "shared":
+        headers = registry.shared_headers(hub_dir, c.id) or {}
+    elif c.auth_type == "none":
+        headers = {}
+    else:
+        uid = getattr(user, "id", None)
+        try:
+            access = tokens.access_token_for(hub_dir, uid, c.id, url=c.url) if uid else None
+        except Exception:  # noqa: BLE001 — the test result stands without the tools
+            access = None
+        if not access:
+            return {"tools": None, "tools_note": "Connect your own account to see its tools."}
+        headers = {"Authorization": f"Bearer {access}"}
+    try:
+        return {"tools": server_tools.list_tools(c.url, headers)}
+    except ConnectorError as err:
+        return {"tools": None, "tools_note": err.message}
 
 
 def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:

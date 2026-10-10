@@ -88,9 +88,10 @@ class _Probe:
 
             async def stream_events(self):
                 probe.surfaces.append(current_identity().surface)
-                probe.servers.append(sorted(s.name for s in agent.mcp_servers))
-                for t in await agent.get_mcp_tools(RunContextWrapper(context=None)):
-                    if t.name == "whoami":
+                connector = [t for t in agent.tools if t.name.startswith("mcp__")]
+                probe.servers.append(sorted({t.name.split("__")[1] for t in connector}))
+                for t in connector:
+                    if t.name.endswith("__whoami"):
                         ctx = ToolContext(context=None, tool_name=t.name, tool_call_id="c1",
                                           tool_arguments="{}", run_config=RunConfig())
                         out = await t.on_invoke_tool(ctx, "{}")

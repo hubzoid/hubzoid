@@ -103,7 +103,7 @@ async def call_knowledge(srv) -> str:
 
     async with AsyncExitStack() as stack:
         ((_server, tools),) = await open_personal_mcp(stack, [srv], set())
-        tool = next(t for t in tools if t.name == "read_knowledge")
+        tool = next(t for t in tools if t.name.endswith("__read_knowledge"))
         ctx = ToolContext(context=None, tool_name=tool.name, tool_call_id="c1",
                           tool_arguments='{"name": "widgets"}', run_config=RunConfig())
         out = await tool.on_invoke_tool(ctx, '{"name": "widgets"}')
@@ -163,7 +163,7 @@ def test_discovery_registration_pkce_callback_tool_call(hub, tc, server, browser
     mine = tc.get("/api/connections").json()
     assert mine == [{"connector_id": cid, "name": "Team hub", "connected": True, "status": "ok",
                      "connected_at": mine[0]["connected_at"], "allowed": True,
-                     "auth_type": "oauth", "enabled": True}]
+                     "auth_type": "oauth", "enabled": True, "agents": ["clienthub"]}]
 
     # Tokens at rest are encrypted; the API never shows them.
     record = tokens.token_record(hub, owner_id(hub), cid)
