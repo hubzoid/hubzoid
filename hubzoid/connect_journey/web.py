@@ -31,6 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..access.identity import normalize
 from . import store
+from . import pages as ui
 from .providers import JourneyError, label
 
 log = logging.getLogger("hubzoid.connect")
@@ -40,66 +41,29 @@ PAGE = "/portal/connections"
 
 
 def _headers(nonce: str | None = None) -> dict:
-    script = f"'nonce-{nonce}'" if nonce else "'none'"
-    return {
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "same-origin",
-        "X-Frame-Options": "DENY",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": (
-            f"default-src 'none'; style-src 'unsafe-inline'; script-src {script}; "
-            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"),
-    }
+    return ui.headers(nonce)
 
 
-_CSS = """
-:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--muted:#5d5d58;--line:#e2e2dc;
---accent:#1f5fbf;--ok:#1e7a46;--bad:#b3261e}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1d1d1b;--ink:#ededea;
---muted:#a9a9a3;--line:#2f2f2c;--accent:#7fb0ff;--ok:#5fcf8f;--bad:#ff8a80}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
-font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;min-height:100vh;
-align-items:center;justify-content:center;padding:16px}
-main{background:var(--card);border:1px solid var(--line);border-radius:12px;max-width:460px;
-width:100%;padding:28px}h1{font-size:1.35rem;margin:0 0 8px}p{margin:8px 0;color:var(--muted)}
-p.lead{color:var(--ink)}.mark{font-size:2rem;line-height:1;margin-bottom:12px}
-.ok .mark{color:var(--ok)}.bad .mark{color:var(--bad)}
-form{display:inline}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}
-button,a.button{font:inherit;border-radius:8px;padding:10px 18px;border:1px solid var(--line);
-background:transparent;color:var(--ink);cursor:pointer;text-decoration:none}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-@media (prefers-color-scheme:dark){button.primary{color:#0b1a33}}
-.who{font-size:.85rem;color:var(--muted);margin:0 0 4px}
-table{width:100%;border-collapse:collapse;margin-top:14px}td{padding:10px 4px;
-border-top:1px solid var(--line);vertical-align:middle}td:last-child{text-align:right}
-.pill{display:inline-block;font-size:.78rem;padding:2px 9px;border-radius:999px;
-border:1px solid var(--line);color:var(--muted)}.pill.ok{color:var(--ok);border-color:var(--ok)}
-.pill.bad{color:var(--bad);border-color:var(--bad)}
-td button{padding:6px 12px;font-size:.9rem}
-"""
+_TILES = {"ok": ("ok", "check"), "bad": ("bad", "alert"), "warn": ("warn", "alert"),
+          "lock": ("", "lock")}
 
 
 def _page(title: str, paragraphs: list[str], status: int = 200, *, tone: str = "",
           actions: str = "", script: str = "", eyebrow: str = "",
-          extra: str = "") -> HTMLResponse:
-    nonce = secrets.token_urlsafe(12) if script else None
-    mark = {"ok": "&#10003;", "bad": "&#10007;"}.get(tone, "")
-    body = "".join(
-        f'<p class="{"lead" if i == 0 else ""}">{p}</p>' for i, p in enumerate(paragraphs))
-    doc = (
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<meta name=\"robots\" content=\"noindex\">"
-        f"<title>{html.escape(title)}</title><style>{_CSS}</style></head>"
-        f"<body><main class=\"{tone}\" aria-live=\"polite\">"
-        + (f'<div class="mark" aria-hidden="true">{mark}</div>' if mark else "")
-        + (f'<p class="who">{html.escape(eyebrow)}</p>' if eyebrow else "")
-        + f"<h1>{html.escape(title)}</h1>{body}{extra}"
-        + (f'<div class="actions">{actions}</div>' if actions else "")
-        + "</main>"
-        + (f'<script nonce="{nonce}">{script}</script>' if script else "")
-        + "</body></html>")
-    return HTMLResponse(doc, status_code=status, headers=_headers(nonce))
+          extra: str = "", brand: str = "") -> HTMLResponse:
+    """A message page: an icon for the tone, the title, a lead line and any
+    further lines (HTML the caller escaped), and its actions."""
+    tile = _TILES.get(tone)
+    head = (f'<div class="pair"><span class="tile {tile[0]}">{ui.icon(tile[1], 22)}</span></div>'
+            if tile else "")
+    body = "".join(f'<p class="{"lead" if i == 0 else "muted"}">{p}</p>'
+                   for i, p in enumerate(paragraphs))
+    card = (f'<section class="card">{head}'
+            + (f'<p class="eyebrow">{_e(eyebrow)}</p>' if eyebrow else "")
+            + f"<h1>{_e(title)}</h1>{body}{extra}"
+            + (f'<div class="actions">{actions}</div>' if actions else "")
+            + "</section>")
+    return ui.shell(title, card, status=status, brand=brand, script=script)
 
 
 def _e(value) -> str:
@@ -145,8 +109,8 @@ def _sign_in_url(jid: str, page: str = "") -> str:
 def _sign_in(jid: str) -> HTMLResponse:
     return _page("Sign in to continue",
                  ["This link is personal. Sign in with the account that asked for it.",
-                  "You will come back here after signing in."], 401,
-                 actions=f'<a class="button" href="{_sign_in_url(jid)}">Sign in</a>')
+                  "You'll come back here after signing in."], 401, tone="lock",
+                 actions=f'<a class="btn btn-primary" href="{_sign_in_url(jid)}">Sign in</a>')
 
 
 def _redirect_to_sign_in(jid: str, page: str = "") -> RedirectResponse:
@@ -154,23 +118,78 @@ def _redirect_to_sign_in(jid: str, page: str = "") -> RedirectResponse:
                             headers={"Cache-Control": "no-store", "Referrer-Policy": "same-origin"})
 
 
-def _outcome(j: dict, email: str) -> HTMLResponse:
-    app = _e(label(j["app"]))
+def _app_name(hub_dir: Path, app: str) -> str:
+    """The connector's display name, as the Console shows it."""
+    from ..connectors import registry
+
+    try:
+        c = registry.get(Path(hub_dir), app)
+    except Exception:  # noqa: BLE001 — wording only
+        c = None
+    return c.name if c is not None else label(app)
+
+
+def _outcome(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
+    name = _app_name(hub_dir, j["app"])
+    app = _e(name)
+    agent = _agent_name(hub_dir, j["hub"])
     status = j["status"]
     back = ("You'll get a confirmation in WhatsApp." if j.get("surface") == "whatsapp"
             else "Close this tab and carry on in your chat.")
     if status == "connected":
-        return _page(f"{label(j['app'])} connected", [back], 200, tone="ok",
-                     actions=f'<a class="button" href="{PAGE}">Your connections</a>')
+        details = ui.rows([("Account", ui.avatar_chip(email)), ("Agent", _e(agent))])
+        return _page(f"{name} connected", [back], 200, tone="ok", eyebrow="Connected",
+                     brand=agent, extra=details,
+                     actions=f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
     if status == "failed":
-        return _page(f"{label(j['app'])} was not connected",
+        return _page(f"{name} was not connected",
                      [f"The connection to {app} did not complete.",
-                      "Return to the chat and ask again for a new link."], 200, tone="bad")
+                      "Go back to the chat and ask again for a new link."], 200, tone="bad",
+                     brand=agent)
     if status == "cancelled":
         return _page("Connection cancelled",
                      [f"{app} was not connected. You can close this tab.",
-                      "Ask the agent again whenever you are ready."], 200)
+                      "Ask the agent again whenever you're ready."], 200, tone="warn", brand=agent)
     return _gone(j)
+
+
+def _connect_page(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
+    """What is about to happen, before anything does: who connects what, for
+    which agent, at which server, with which access (Agno's consent page lists
+    the scopes and where credentials go; Sim's lists the scopes)."""
+    from urllib.parse import urlsplit
+
+    from ..connectors import registry
+
+    agent = _agent_name(hub_dir, j["hub"])
+    c = registry.get(hub_dir, j["app"])
+    name = c.name if c is not None else label(j["app"])
+    base = f"/portal/connect/{quote(j['id'])}"
+    details = [("Account", ui.avatar_chip(email)), ("Agent", _e(agent))]
+    if c is not None:
+        details.append(("Server", _e(urlsplit(c.url).hostname or c.url)))
+        if c.scopes:
+            details.append(("Access", _e(c.scopes)))
+        if c.tool_allowlist:
+            details.append(("Tools", _e(", ".join(c.tool_allowlist))))
+    pair = (f'<div class="pair"><span class="tile agent" aria-hidden="true"><b style="color:var(--brand)">/</b>'
+            f'{_e(agent[:1].lower())}</span><span class="link">{ui.icon("link", 14)}</span>'
+            f'<span class="tile app" aria-hidden="true">{ui.initial(name)}</span></div>')
+    card = (f'<section class="card">{pair}<p class="eyebrow">Connect an account</p>'
+            f"<h1>Connect {_e(name)}</h1>"
+            f'<p class="lead">{_e(agent)} will use {_e(name)} as you.</p>'
+            + ui.rows(details)
+            + ui.help_text("How this works", [
+                f"You approve access on {_e(name)}'s own page. Hubzoid never sees your password.",
+                f"Hubzoid keeps the sign-in encrypted and uses it only when you work with "
+                f"{_e(agent)}. Disconnect any time on <a href=\"{PAGE}\">Your connections</a>."])
+            + f'<div class="actions"><form method="post" action="{base}/start">'
+              f'<button class="btn btn-primary" type="submit">Continue to {_e(name)} '
+              f'{ui.icon("arrow", 16)}</button></form>'
+              f'<form method="post" action="{base}/cancel">'
+              f'<button class="btn btn-ghost" type="submit">Cancel</button></form></div>'
+            + "</section>")
+    return ui.shell(f"Connect {name}", card, brand=agent)
 
 
 def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
@@ -267,17 +286,8 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return _redirect_to_sign_in(j["id"]) if refusal.status_code == 401 else refusal
         email = who[1]
         if j["status"] not in store.OPEN:
-            return _outcome(j, email)
-        app = _e(label(j["app"]))
-        agent = _e(_agent_name(hub_dir, j["hub"]))
-        base = f"/portal/connect/{quote(jid)}"
-        return _page(f"Connect {label(j['app'])}",
-                     [f"{agent} will use {app} as you.", f"Signed in as {_e(email)}"],
-                     eyebrow=_agent_name(hub_dir, j["hub"]),
-                     actions=(f'<form method="post" action="{base}/start">'
-                              f'<button class="primary" type="submit">Continue</button></form>'
-                              f'<form method="post" action="{base}/cancel">'
-                              f'<button type="submit">Cancel</button></form>'))
+            return _outcome(hub_dir, j, email)
+        return _connect_page(hub_dir, j, email)
 
     @router.post("/portal/connect/{jid}/start")
     def start(jid: str, request: Request):
@@ -300,7 +310,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return refusal
         account, email = who
         if j["status"] not in store.OPEN:
-            return _outcome(j, email)
+            return _outcome(hub_dir, j, email)
         if not still_permitted(j):
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="deny", reason="no longer permitted")
@@ -340,7 +350,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         if store.transition(hub_dir, jid, frm=store.OPEN, to="cancelled"):
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="cancelled", reason="cancelled on the link page")
-        return _outcome(store.get(hub_dir, jid) or j, email)
+        return _outcome(hub_dir, store.get(hub_dir, jid) or j, email)
 
     @router.get("/portal/connect/{jid}/done")
     def done(jid: str, request: Request):
@@ -355,7 +365,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         email = who[1]
         j = fresh(j)
         if j["status"] in store.OPEN:
-            app = _e(label(j["app"]))
+            app = _e(_app_name(hub_dir, j["app"]))
             status_url = f"/portal/connect/{quote(jid)}/status"
             script = (
                 "(function(){var t0=Date.now();function tick(){fetch(" + repr(status_url)
@@ -363,14 +373,16 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                 ".then(function(d){if(d.state&&d.state!=='pending'&&d.state!=='started'){"
                 "location.reload();return}next()}).catch(next)}"
                 "function next(){if(Date.now()-t0<" + str(POLL_SECONDS * 1000) + "){"
-                "setTimeout(tick,2000)}else{var m=document.getElementById('wait');"
-                "if(m){m.textContent='The connection has not completed. If you cancelled "
-                "or closed the sign-in window, ask the agent again for a new link.'}}}"
+                "setTimeout(tick,2000)}else{var m=document.getElementById('wait'),s=document.getElementById('spin');"
+                "if(s){s.remove()}if(m){m.textContent='The connection has not completed. If you "
+                "cancelled or closed the sign-in window, ask the agent again for a new link.'}}}"
                 "setTimeout(tick,1500)})();")
-            return _page("Finishing up",
-                         [f'<span id="wait">Checking your {app} connection…</span>',
-                          "This page updates by itself."], 202, script=script)
-        return _outcome(j, email)
+            waiting = (f'<div class="waiting"><span class="spin" id="spin" aria-hidden="true"></span>'
+                       f'<span id="wait">Checking your {app} connection…</span></div>'
+                       '<p class="muted">This page updates by itself.</p>')
+            return _page("Finishing up", [], 202, eyebrow="Almost done", extra=waiting,
+                         brand=_agent_name(hub_dir, j["hub"]), script=script)
+        return _outcome(hub_dir, j, email)
 
     @router.get("/portal/connect/{jid}/status")
     def status(jid: str, request: Request):
@@ -410,30 +422,10 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         if store_for(hub_dir).is_suspended(email):
             return _page("Your connections", ["Your access is blocked. Contact your administrator."],
                          403, tone="bad")
-        rows = []
-        for c, status, allowed in _mine(hub_dir, account, email):
-            name = _e(c.name)
-            action = ""
-            if status == "shared":
-                pill = '<span class="pill">Shared</span>'
-            elif status == "connected":
-                pill = '<span class="pill ok">Connected</span>'
-                action = _button(f"{PAGE}/{quote(c.id)}/disconnect", "Disconnect")
-            elif not allowed:
-                # Still connected somewhere it is no longer granted: only remove it.
-                pill = '<span class="pill">Not available</span>'
-                action = _button(f"{PAGE}/{quote(c.id)}/disconnect", "Disconnect")
-            elif status == "expired":
-                pill = '<span class="pill bad">Expired</span>'
-                action = _button(f"{PAGE}/{quote(c.id)}/connect", "Reconnect", primary=True)
-            else:
-                pill = '<span class="pill">Not connected</span>'
-                action = _button(f"{PAGE}/{quote(c.id)}/connect", "Connect", primary=True)
-            rows.append(f"<tr><td><b>{name}</b></td><td>{pill}</td><td>{action}</td></tr>")
-        table = f"<table>{''.join(rows)}</table>" if rows else ""
-        return _page("Your connections",
-                     [f"Signed in as {_e(email)}"] if rows else
-                     ["Nothing to connect yet.", f"Signed in as {_e(email)}"], extra=table)
+        mine = _mine(hub_dir, account, email)
+        return ui.shell("Your connections",
+                        _connections_body(mine, request.query_params),
+                        brand=_deployment_name(hub_dir), wide=True, account=email)
 
     @router.post(PAGE + "/{connector_id}/connect")
     def connect_from_page(connector_id: str, request: Request):
@@ -477,32 +469,135 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         except HTTPException:
             return _page("Request refused", ["Open Your connections and try again."], 403,
                          tone="bad")
-        if account:
-            tokens.disconnect(hub_dir, account, connector_id)
-        return RedirectResponse(PAGE, status_code=303, headers={"Cache-Control": "no-store"})
+        if account and tokens.disconnect(hub_dir, account, connector_id):
+            store.audit(hub_dir, hub="", subject=email, surface="web", app=connector_id,
+                        decision="disconnected", reason="on Your connections")
+        return RedirectResponse(f"{PAGE}?disconnected={quote(connector_id)}", status_code=303,
+                                headers={"Cache-Control": "no-store"})
 
     return router
 
 
-def _button(action: str, text: str, *, primary: bool = False) -> str:
-    cls = ' class="primary"' if primary else ""
-    return (f'<form method="post" action="{action}"><button{cls} type="submit">'
-            f"{html.escape(text)}</button></form>")
+def _button(action: str, text: str, *, kind: str = "secondary", label_: str = "") -> str:
+    aria = f' aria-label="{_e(label_)}"' if label_ else ""
+    return (f'<form method="post" action="{action}"><button class="btn btn-{kind} btn-sm" '
+            f'type="submit"{aria}>{_e(text)}</button></form>')
+
+
+def _deployment_name(hub_dir: Path) -> str:
+    """The agent's name when the deployment has one agent, else "" (Hubzoid)."""
+    from .. import deployment
+
+    try:
+        hubs = deployment.hubs(Path(hub_dir))
+    except Exception:  # noqa: BLE001 — wording only
+        return ""
+    return (hubs[0].get("name") or hubs[0].get("key") or "") if len(hubs) == 1 else ""
+
+
+def _date(ts: float | None) -> str:
+    if not ts:
+        return ""
+    t = time.localtime(ts)
+    return f"{t.tm_mday} {time.strftime('%b %Y', t)}"
+
+
+_BADGES = {"connected": ("ok", "Connected"), "expired": ("warn", "Needs reconnecting"),
+           "none": ("", "Not connected"), "shared": ("info", "Shared"),
+           "blocked": ("", "Not available")}
+
+
+def _connections_body(mine: list, query) -> str:
+    """The list on Your connections: each app with its status, the agents that
+    use it, and one action. A note after a connect or disconnect is read from
+    the person's own records, never from the query alone."""
+    names = {c.id: c.name for c, *_ in mine}
+    state = {c.id: status for c, status, *_ in mine}
+    banner = ""
+    done, gone = query.get("connected"), query.get("disconnected")
+    failed = query.get("connector") if query.get("error") else None
+    if done in names and state.get(done) == "connected":
+        banner = ("ok", "check", f"{_e(names[done])} connected.")
+    elif done in names or failed in names:
+        banner = ("bad", "alert", f"{_e(names[done or failed])} was not connected. Try again.")
+    elif gone in names and state.get(gone) != "connected":
+        banner = ("ok", "check", f"{_e(names[gone])} disconnected.")
+    banner_html = (f'<div class="banner {banner[0]}" role="status">{ui.icon(banner[1], 16)}'
+                   f"<span>{banner[2]}</span></div>") if banner else ""
+    items = []
+    for c, status, allowed, agents, since in mine:
+        kind = "blocked" if not allowed and status != "shared" else status
+        tone, text = _BADGES[kind]
+        dot = '<span class="dot" aria-hidden="true"></span>' if kind == "connected" else ""
+        used = f"Used by {_e(', '.join(agents))}" if agents else ""
+        if kind == "blocked":
+            meta = "No longer offered to you. Disconnect to remove it."
+        elif kind == "shared":
+            meta = " · ".join(x for x in ("Set up by your administrator", used) if x)
+        elif kind == "connected":
+            meta = " · ".join(x for x in (used, f"Since {_date(since)}" if since else "") if x)
+        else:
+            meta = used
+        cid = quote(c.id)
+        if kind in ("connected", "blocked"):
+            action = _confirm_disconnect(c.name, agents, f"{PAGE}/{cid}/disconnect")
+        elif kind == "expired":
+            action = (_confirm_disconnect(c.name, agents, f"{PAGE}/{cid}/disconnect", ghost=True)
+                      + _button(f"{PAGE}/{cid}/connect", "Reconnect", kind="primary",
+                                label_=f"Reconnect {c.name}"))
+        elif kind == "none":
+            action = _button(f"{PAGE}/{cid}/connect", "Connect", kind="primary",
+                             label_=f"Connect {c.name}")
+        else:
+            action = ""
+        items.append(
+            f'<li class="item" data-connector="{_e(c.id)}">'
+            f'<span class="tile sm app" aria-hidden="true">{ui.initial(c.name)}</span>'
+            f'<div class="item-main"><div class="item-title">{_e(c.name)}'
+            f'<span class="badge {tone}">{dot}{text}</span></div>'
+            + (f'<div class="item-meta">{meta}</div>' if meta else "")
+            + f'</div><div class="row-actions">{action}</div></li>')
+    if items:
+        listing = f'<ul class="list" aria-label="Your connections" style="list-style:none;padding:0">{"".join(items)}</ul>'
+    else:
+        listing = ('<div class="list"><div class="empty">'
+                   f'<span class="tile sm" aria-hidden="true">{ui.icon("plug", 18)}</span>'
+                   '<p style="margin:0;color:var(--ink);font-weight:600">Nothing to connect yet</p>'
+                   "<p>When your administrator adds an app for your agents, it shows here.</p>"
+                   "</div></div>")
+    head = ('<p class="eyebrow">Account</p><h1>Your connections</h1>'
+            '<p class="lead">Apps your agents use as you.</p>')
+    help_ = ui.help_text("About connections", [
+        "A connection is yours alone: an agent uses it only when you're the one asking.",
+        "Disconnect to stop at once. You can connect again any time."])
+    return head + banner_html + listing + help_
+
+
+def _confirm_disconnect(name: str, agents: list[str], action: str, *, ghost: bool = False) -> str:
+    """Disconnect behind a confirmation, with no script (a details popover)."""
+    who = ", ".join(agents) if agents else "Your agents"
+    return (f'<details class="confirm"><summary class="btn btn-{"ghost" if ghost else "secondary"} btn-sm" '
+            f'aria-label="Disconnect {_e(name)}">Disconnect</summary>'
+            f'<div class="pop" role="dialog" aria-label="Disconnect {_e(name)}">'
+            f"<b>Disconnect {_e(name)}?</b><p>{_e(who)} will stop using it as you.</p>"
+            f'<div class="actions">{_button(action, "Disconnect", kind="danger")}</div></div></details>')
 
 
 def _mine(hub_dir: Path, account: str, email: str) -> list:
-    """``[(connector, status, allowed)]`` the person may use somewhere in this
-    deployment (offered in an agent where they hold its grant), plus any they
-    are still connected to without a grant (``allowed`` False: they can only
-    remove it). Status: connected, expired, none or shared."""
+    """``[(connector, status, allowed, agents, connected_at)]`` the person may use somewhere
+    in this deployment (offered in an agent where they hold its grant), plus
+    any they are still connected to without a grant (``allowed`` False: they
+    can only remove it). Status: connected, expired, none or shared; agents:
+    the names of the agents that use it for them."""
     from ..connectors import per_user, registry, tokens
 
     conns = {c.connector_id: c for c in tokens.for_user(hub_dir, account)} if account else {}
     listed = [c for c in registry.list_all(hub_dir) if c.enabled]
-    allowed = per_user.allowed_ids(hub_dir, email, [c.id for c in listed])
+    used = per_user.used_by(hub_dir, email, [c.id for c in listed])
     out = []
     for c in listed:
-        if c.id not in allowed and c.id not in conns:
+        allowed = bool(used.get(c.id))
+        if not allowed and c.id not in conns:
             continue
         if c.auth_type == "shared":
             status = "shared"
@@ -510,5 +605,6 @@ def _mine(hub_dir: Path, account: str, email: str) -> list:
             status = "expired" if conns[c.id].status == "expired" else "connected"
         else:
             status = "none"
-        out.append((c, status, c.id in allowed))
+        since = conns[c.id].connected_at if c.id in conns else None
+        out.append((c, status, allowed, used.get(c.id, []), since))
     return out
