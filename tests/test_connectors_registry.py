@@ -254,24 +254,16 @@ def test_capabilities_come_from_the_registry(hub, tmp_path, monkeypatch):
     registry.create(hub, body(name="HR", url="https://hr.example.org/mcp"), actor="test")
     for cid in ("gmail", "docs"):                    # HR is registered but not offered here
         registry.offer(hub, cid, hub.name, actor="test")
-    # An Open WebUI server is not offered in the default mode.
-    from tests import connect_helpers as h
-
-    db = tmp_path / "webui.db"
-    h.seed_owui(db, users=[], secret="s", servers=[
-        {"id": "notion", "name": "Notion", "url": "https://notion.example.org/mcp"}])
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
     rows = {r["permission"]: r for r in capabilities.catalog(hub)}
-    assert "connector_notion" not in rows and "connector_hr" not in rows
+    assert "connector_hr" not in rows
     gmail, docs = rows["connector_gmail"], rows["connector_docs"]
     assert gmail["label"] == "Connect Gmail" and gmail["sensitive"] is True
-    assert gmail["group"] == "tools" and gmail["available"] is True
+    assert gmail["group"] == "connectors" and gmail["available"] is True
     assert docs["available"] is False and docs["status"] == "Switched off"
-    # Open WebUI mode: Open WebUI's servers, not the registry.
+    # Open WebUI mode: the same Console connectors.
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
     rows = {r["permission"] for r in capabilities.catalog(hub)}
-    assert "connector_notion" in rows and "connector_gmail" not in rows
+    assert "connector_gmail" in rows and "connector_hr" not in rows
 
 
 def test_a_deleted_connector_leaves_its_grants_visible_as_obsolete(hub):

@@ -50,9 +50,11 @@ function fixture() {
                grantable: { sales: [], support: [] }, account_admin: state.org, can_create_accounts: false,
                accounts_configured: true, sign_in: { password: true, google: false }, web_app: state.webApp };
     if (endpoint === "/hubs") return { hubs: HUBS };
-    if (endpoint === "/openwebui-connectors")
-      return { native: true, servers: [{ id: "odoo", name: "Odoo", url: "https://erp.example.org/mcp", enabled: true,
-                                          permission: "connector_odoo" }] };
+    if (endpoint === "/hub-mcp-servers")
+      return { warning: null, servers: [
+        { name: "filesystem", kind: "command", env: [], source: "file" },
+        { name: "crm", kind: "url", env: [{ name: "CRM_TOKEN", set: false }], source: "file" },
+      ] };
     const m = endpoint.match(/^\/connectors(?:\/([^/]+))?(?:(\/test)|\/agents\/([^/]+))?$/);
     if (!m) throw fail(404, "not_found", "Unknown endpoint");
     if (!state.org) throw fail(403, "forbidden", "Only organization administrators manage connectors.");
@@ -196,6 +198,25 @@ const step = (name) => {
     await drawer().waitFor({ state: "hidden" });
     assert.equal(await page.getByText(SECRET).count(), 0, "a secret is never shown again");
 
+    step("A Shared key connector sends its key once and never shows it");
+    await page.getByRole("button", { name: "Add connector" }).first().click();
+    await drawer().getByLabel("Name").fill("Company API");
+    await drawer().getByLabel("Server URL").fill("https://api.example.org/mcp");
+    await drawer().getByText("Shared key", { exact: true }).click();
+    await drawer().getByRole("button", { name: "Add connector" }).click();
+    await drawer().getByText("Enter the key.").waitFor();
+    await drawer().getByLabel("Key", { exact: true }).fill("company-key-123");
+    await drawer().getByRole("button", { name: "Add connector" }).click();
+    await page.getByText("Company API was added.").waitFor();
+    const shared = [...fx.state.calls].reverse().find((c) => c.method === "POST" && c.endpoint === "/connectors");
+    assert.equal(shared.body.auth_type, "shared");
+    assert.equal(shared.body.shared_secret, "company-key-123");
+    assert.equal(shared.body.shared_header, null);
+    assert.equal("client_id" in shared.body, false);
+    await drawer().getByRole("button", { name: "Close" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    assert.equal(await page.getByText("company-key-123").count(), 0, "a key is never shown again");
+
     step("A refused save keeps the drawer open with the server's reason");
     await page.getByRole("button", { name: "Add connector" }).first().click();
     await drawer().getByLabel("Name").fill("Gmail");
@@ -269,16 +290,23 @@ const step = (name) => {
     step("Agent administrators see where connectors come from but cannot change them");
     fx.state.org = false;
     await page.goto(`${ORIGIN}/portal/?again#/agents/sales/connectors`);
-    await page.getByText("Organization administrators add the remote MCP servers", { exact: false }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0);
+    await page.getByRole("heading", { name: "Connectors", level: 2 }).waitFor();
+    await page.getByText("From the hub folder").waitFor();
+    await page.getByRole("button", { name: "Add connector", exact: true }).waitFor({ state: "detached" });
+    assert.equal(await page.getByRole("button", { name: "Add connector", exact: true }).count(), 0);
 
-    step("In Open WebUI mode the tab lists Open WebUI's servers, read-only");
+    step("In Open WebUI mode the tab is the same: connectors are added here");
     fx.state.org = true;
     fx.state.webApp = false;
     await page.goto(`${ORIGIN}/portal/?owui#/agents/sales/connectors`);
-    await page.getByText("This deployment uses Open WebUI", { exact: false }).waitFor();
-    await page.getByRole("row").filter({ hasText: "Odoo" }).getByText("connector_odoo").waitFor();
-    assert.equal(await page.getByRole("button", { name: "Add connector" }).count(), 0);
+    await page.getByRole("button", { name: "Add connector" }).first().waitFor();
+    await page.getByRole("row").filter({ hasText: "Linear" }).waitFor();
+    assert.equal(await page.getByText("This deployment uses Open WebUI", { exact: false }).count(), 0);
+
+    step("The hub folder's servers are listed read-only, with what they still need");
+    const crm = page.getByRole("row").filter({ hasText: "crm" });
+    await crm.getByText("Missing settings").waitFor();
+    await page.getByRole("row").filter({ hasText: "filesystem" }).getByText("Local command").waitFor();
 
     assert.deepEqual(errors, [], "no page errors");
     console.log(`\nPASS: ${steps.length} connector checks`);

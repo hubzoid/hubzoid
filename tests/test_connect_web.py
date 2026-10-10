@@ -1,10 +1,12 @@
-"""The connection pages under /portal/connect: session binding, same-origin
-start, the Open WebUI authorize redirect and cookie, verification that never
-reads callback parameters, and the success, failure, cancel and expiry pages.
+"""The connection pages under /portal/connect: account binding, same-origin
+start, the redirect to the connector's sign-in, verification that never reads
+callback parameters, and the success, failure, cancel and expiry pages.
 
-The Open WebUI session is stubbed by a header in most tests. One test runs the
-real server-side session check (`access.session.verified_email`) against a
-mocked Open WebUI `/api/v1/auths/`.
+Open WebUI mode with Console connectors. The Open WebUI session is stubbed by a
+header in most tests; one test runs the real server-side session check
+(`access.session.verified_person`) against a mocked Open WebUI `/api/v1/auths/`.
+The connector's own OAuth flow has its suite (tests/test_connectors_flow.py), so
+here its start is a stub that returns the provider's authorize URL.
 """
 from __future__ import annotations
 
@@ -48,8 +50,14 @@ def hub(tmp_path, monkeypatch):
     return hub
 
 
+AUTHORIZE = "https://accounts.example.org/authorize?state=s1"
+
+
 @pytest.fixture
-def client(hub):
+def client(hub, monkeypatch):
+    from hubzoid.connectors import oauth_flow
+
+    monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: AUTHORIZE)
     app = FastAPI()
     app.include_router(connect_journey.build_router(
         hub, session_email=lambda request: request.headers.get("x-test-session", "")))
@@ -165,19 +173,13 @@ def test_a_same_origin_referer_alone_is_accepted(client, hub):
     assert r.status_code == 303
 
 
-def test_start_sends_the_browser_to_open_webui_with_the_journey_cookie(client, hub):
+def test_start_sends_the_browser_to_the_connector_sign_in(client, hub):
     jid = _link(hub)
     r = _start(client, jid)
-    assert r.status_code == 303
-    assert r.headers["location"] == "/oauth/clients/mcp:gmail/authorize"
-    cookie = r.headers["set-cookie"]
-    assert cookie.startswith(f"hz_connect={jid};")
-    for part in ("HttpOnly", "Path=/", "SameSite=lax", "Max-Age=600", "Secure"):
-        assert part in cookie
+    assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
+    assert "set-cookie" not in r.headers  # Hubzoid's own flow returns to the done page
     j = store.get(hub, jid)
     assert j["status"] == "started" and j["started"]
-    assert store.ID_RE.match(jid)  # matches the edge's cookie pattern
-
 
 def test_start_rechecks_a_revoked_grant_on_a_managed_hub(client, hub):
     import hubzoid.access as access
@@ -191,11 +193,11 @@ def test_start_rechecks_a_revoked_grant_on_a_managed_hub(client, hub):
     assert store.get(hub, jid)["status"] == "pending"
 
 
-def test_start_refuses_a_server_the_admin_removed(client, hub, tmp_path, monkeypatch):
+def test_start_refuses_a_connector_the_admin_removed(client, hub):
+    from hubzoid.connectors import registry
+
     jid = _link(hub)
-    db = tmp_path / "webui-empty.db"
-    h.seed_owui(db, users=[("ua", ALICE)], secret=SECRET, servers=[])
-    h.owui_env(monkeypatch, db, SECRET)
+    registry.delete(hub, "gmail", actor="test")
     r = _start(client, jid)
     assert r.status_code == 410 and "no longer available" in r.text
 
@@ -203,22 +205,19 @@ def test_start_refuses_a_server_the_admin_removed(client, hub, tmp_path, monkeyp
 # ---------------------------------------------------------------------------
 # Done and status: verified with the provider only
 # ---------------------------------------------------------------------------
-def test_done_ignores_callback_parameters_and_verifies_with_open_webui(client, hub):
+def test_done_ignores_callback_parameters_and_verifies_the_stored_connection(client, hub):
     jid = _link(hub)
     _start(client, jid)
     # A forged or replayed "success" callback proves nothing.
     r = client.get(f"/portal/connect/{jid}/done?status=success&code=x&state=y", headers=_as(ALICE))
     assert r.status_code == 202 and "Finishing up" in r.text
-    assert "hz_connect=" in r.headers["set-cookie"]  # the cookie is cleared
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "started"
-    # Open WebUI's callback stores the session.
+    # The connector's callback stores the connection.
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "connected"
     r = client.get(f"/portal/connect/{jid}/done", headers=_as(ALICE))
-    assert r.status_code == 200 and "Gmail is connected" in r.text and ALICE in r.text
-    assert "WhatsApp" in r.text
-    assert "AT-a" not in r.text
-
+    assert r.status_code == 200 and "Gmail connected" in r.text and "WhatsApp" in r.text
+    assert "/portal/connections" in r.text and "AT-a" not in r.text
 
 def test_the_finishing_page_polls_status_under_a_nonce(client, hub):
     jid = _link(hub)
@@ -261,8 +260,9 @@ def test_expired_and_superseded_links_are_gone(client, hub):
     assert _start(client, old).status_code == 410
 
 
-def test_reconnect_ends_with_one_session(client, hub):
-    import sqlite3
+def test_reconnect_ends_with_one_connection(client, hub):
+    from hubzoid.connectors import tokens
+
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-old",
               created_at=time.time() - 3600, expires_in=7200)
     jid = _link(hub, reconnect=True)
@@ -270,17 +270,44 @@ def test_reconnect_ends_with_one_session(client, hub):
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "started"
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-new")
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "connected"
-    count = sqlite3.connect(hub.db).execute(
-        "SELECT count(*) FROM oauth_session WHERE user_id='ua'").fetchone()[0]
-    assert count == 1
+    assert len(tokens.for_user(hub, "ua")) == 1
 
+
+def test_a_new_account_with_the_same_email_cannot_use_the_link(client, hub):
+    """The link is bound to the account that asked, not only its email."""
+    from hubzoid.access import store_for
+
+    jid = _link(hub)
+    store_for(hub).upsert_identity(email=ALICE, owui_id="ua-new")  # the email moved
+    for path, method in ((f"/portal/connect/{jid}", "get"), (f"/portal/connect/{jid}/start", "post")):
+        r = getattr(client, method)(path, headers={**_as(ALICE), **_SAME})
+        assert r.status_code == 403 and "another account" in r.text, path
+    assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).status_code == 403
+
+
+def test_your_connections_page_connects_and_disconnects(client, hub):
+    r = client.get("/portal/connections")
+    assert r.status_code == 302 and r.headers["location"] == "/auth?redirect=/portal/connections"
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+    page = client.get("/portal/connections", headers=_as(ALICE)).text
+    assert "Gmail" in page and "Connected" in page and "Disconnect" in page and "AT-a" not in page
+    r = client.post("/portal/connections/gmail/disconnect", headers={**_as(ALICE), **_SAME})
+    assert r.status_code == 303
+    page = client.get("/portal/connections", headers=_as(ALICE)).text
+    assert "Not connected" in page
+    r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
+    assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
+    # Another site's form cannot act for the person.
+    r = client.post("/portal/connections/gmail/connect",
+                    headers={**_as(ALICE), "origin": "https://evil.example"})
+    assert r.status_code == 403
 
 def test_web_chat_journey_says_return_to_the_chat(client, hub):
     jid = _link(hub, surface="owui")
     _start(client, jid)
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     r = client.get(f"/portal/connect/{jid}/done", headers=_as(ALICE))
-    assert "return to the chat" in r.text and "WhatsApp" not in r.text
+    assert "carry on in your chat" in r.text and "WhatsApp" not in r.text
 
 
 # ---------------------------------------------------------------------------

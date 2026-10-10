@@ -119,14 +119,14 @@ async def _whoami_over_http(spec: dict, tool: str = "whoami") -> str:
 @pytest.mark.asyncio
 async def test_claude_turn_carries_only_the_callers_servers(hub):
     specs, allowed = await _claude_surface(hub, _who(X))
-    assert set(specs) == {"owui_mail"}
-    assert specs["owui_mail"]["headers"] == {"Authorization": "Bearer tok-x"}
-    assert "mcp__owui_mail__*" in allowed
-    assert await _whoami_over_http(specs["owui_mail"]) == X
+    assert set(specs) == {"my_mail"}
+    assert specs["my_mail"]["headers"] == {"Authorization": "Bearer tok-x"}
+    assert "mcp__my_mail__*" in allowed
+    assert await _whoami_over_http(specs["my_mail"]) == X
 
     specs, _ = await _claude_surface(hub, _who(Y))
-    assert set(specs) == {"owui_mail", "owui_calendar"}
-    assert await _whoami_over_http(specs["owui_mail"]) == Y
+    assert set(specs) == {"my_mail", "my_cal"}
+    assert await _whoami_over_http(specs["my_mail"]) == Y
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ async def test_openai_turn_runs_on_a_clone_with_only_the_callers_servers(hub, mo
         await rt.run("hi")
     (cloned,) = probe.agents
     assert cloned is not rt._agent
-    assert [s.name for s in cloned.mcp_servers] == ["owui_mail"]
+    assert [s.name for s in cloned.mcp_servers] == ["my_mail"]
     assert probe.names == ["mail_search", "whoami"]
     assert probe.calls == {"whoami": X}
     assert rt._agent.mcp_servers == []  # the shared agent is unchanged
@@ -184,7 +184,7 @@ async def test_openai_turn_runs_on_a_clone_with_only_the_callers_servers(hub, mo
     monkeypatch.setattr(agents.Runner, "run_streamed", probe2)
     with identity_scope(_who(Y)):
         await rt.run("hi")
-    assert sorted(s.name for s in probe2.agents[0].mcp_servers) == ["owui_calendar", "owui_mail"]
+    assert sorted(s.name for s in probe2.agents[0].mcp_servers) == ["my_cal", "my_mail"]
     assert probe2.calls == {"whoami": Y, "cal_today": f"calendar of {Y}"}
 
 
@@ -275,7 +275,7 @@ async def test_whatsapp_listed_as_restricted_surface_reaches_all_three(hub, monk
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,whatsapp")
     ident = _who(X, "whatsapp")
     specs, _ = await _claude_surface(hub, ident)
-    assert set(specs) == {"owui_mail"}
+    assert set(specs) == {"my_mail"}
 
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
@@ -303,7 +303,7 @@ async def test_each_runtime_needs_the_connector_grant(hub, monkeypatch):
     assert specs == {}
     gs.grant(X, hub.name, owui_mcp.capability("mail"))
     specs, _ = await _claude_surface(hub, _who(X))
-    assert set(specs) == {"owui_mail"}
+    assert set(specs) == {"my_mail"}
 
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
@@ -348,17 +348,16 @@ async def test_a_personal_tool_never_shadows_a_hub_tool(hub, monkeypatch):
 async def test_a_dead_personal_server_never_breaks_the_turn(hub, monkeypatch):
     import agents
 
-    from hubzoid.access import owui_tool_servers as srv
+    import dataclasses
 
-    real = srv.list_mcp_connections
+    from hubzoid.connectors import registry
 
-    def moved(hub_dir):
-        out = real(hub_dir)
-        for c in out:
-            c["url"] = "http://127.0.0.1:9/mcp"  # nothing listens here
-        return out
+    real = registry.list_all
 
-    monkeypatch.setattr(srv, "list_mcp_connections", moved)
+    def moved(hub_dir):  # nothing listens here
+        return [dataclasses.replace(c, url="http://127.0.0.1:9/mcp") for c in real(hub_dir)]
+
+    monkeypatch.setattr(registry, "list_all", moved)
     probe = _Probe()
     monkeypatch.setattr(agents.Runner, "run_streamed", probe)
     rt = _openai_runtime(hub)

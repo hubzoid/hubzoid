@@ -402,7 +402,7 @@ def test_a_journey_link_connects_through_hubzoid(hub, tc, server, browser, monke
     r = tc.get(back)
     assert r.headers["location"] == f"/portal/connect/{jid}/done"
     done = tc.get(f"/portal/connect/{jid}/done")
-    assert done.status_code == 200 and "is connected" in done.text
+    assert done.status_code == 200 and " connected</h1>" in done.text
     assert store.get(hub, jid)["status"] == "connected"
     # Asking again says it is connected, by the provider's own records.
     assert _journey(hub, cid)["state"] == "connected"

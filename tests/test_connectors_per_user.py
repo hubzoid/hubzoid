@@ -90,22 +90,49 @@ def test_owui_mcp_dispatches_here_in_the_default_mode(hub, servers):
     assert allowed == ["mcp__my_mail__*"]
 
 
-def test_open_webui_mode_still_reads_open_webui_and_only_it(hub, tmp_path, monkeypatch, servers):
-    from tests import connect_helpers as h
+def test_open_webui_mode_uses_the_console_connectors(hub, monkeypatch):
+    """Open WebUI mode reads the same Console connectors, keyed by the verified
+    Open WebUI account (bound from Open WebUI's forwarded headers each turn).
+    A new account that takes the email over inherits nothing."""
+    from hubzoid.access.session import bind_owui_account
 
-    db = tmp_path / "webui.db"
-    h.seed_owui(db, users=[("ox", X)], secret="legacy",
-                servers=[{"id": "odoo", "name": "Odoo", "url": servers["mail"]}])
-    h.connect(db, user_id="ox", server_id="odoo", secret="legacy", access_token="tok-x")
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("WEBUI_SECRET_KEY", "legacy")
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
-    store_for(hub).grant(X, hub.name, "connector_odoo", actor="test")
-    # Default mode: Open WebUI's connections are not read at all.
-    assert keys(owui_mcp.per_user_servers(hub, who(X))) == ["my_mail"]
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    owui = owui_mcp.per_user_servers(hub, who(X, "owui"))
-    assert keys(owui) == ["owui_odoo"] and owui[0].headers == {"Authorization": "Bearer tok-x"}
+    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")  # retired: changes nothing
+    assert per_user.per_user_servers(hub, who(X, "owui")) == []  # no verified account yet
+    store_for(hub).upsert_identity(email=X, owui_id="u-x")
+    assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
+    bind_owui_account(hub, X, "u-other")
+    assert per_user.per_user_servers(hub, who(X, "owui")) == []
+    assert tokens.for_user(hub, "u-x") == []
+
+
+def test_a_shared_key_reaches_only_people_granted_and_stores_no_token(hub, servers):
+    registry.create(hub, {"id": "team", "name": "Team API", "url": servers["mail"],
+                          "auth_type": "shared", "shared_secret": "tok-x"}, actor="test")
+    f.grant_connector(hub, "team", X)
+    team = {s.key: s for s in per_user.per_user_servers(hub, who(X))}["my_team"]
+    assert team.headers == {"Authorization": "Bearer tok-x"} and "tok-x" not in repr(team)
+    assert "my_team" not in keys(per_user.per_user_servers(hub, who(Y)))
+    assert tokens.get(hub, "u-x", "team") is None
+    assert registry.get(hub, "team").public()["has_shared_secret"] is True
+    assert "tok-x" not in json.dumps(registry.get(hub, "team").public())
+
+
+@pytest.mark.parametrize("header", ["Host", "cookie", "Content-Length", "Proxy-Authorization",
+                                    "X-Forwarded-For", "bad header", "MCP-Session-Id"])
+def test_a_shared_key_refuses_headers_that_change_the_request(hub, header):
+    from hubzoid.connectors import ConnectorError
+
+    with pytest.raises(ConnectorError) as e:
+        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+                              "auth_type": "shared", "shared_secret": "s",
+                              "shared_header": header}, actor="test")
+    assert e.value.code == "invalid_shared_header"
+
+
+def test_a_shared_slack_channel_never_gets_them_even_when_listed(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "web,slack-channel")
+    assert per_user.per_user_servers(hub, who(X, "slack-channel")) == []
 
 
 # ---------------------------------------------------------------------------

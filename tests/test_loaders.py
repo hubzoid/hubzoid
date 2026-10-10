@@ -172,3 +172,33 @@ def test_split_subagents_none_hub_model_all_skills(tmp_path):
     skills, delegates = agents_loader.split_subagents(tmp_path, None)
     assert [a.spec.name for a in skills] == ["opusguy"]
     assert delegates == []
+
+
+def test_hub_mcp_servers_are_described_without_any_value(tmp_path, monkeypatch):
+    """The Console's read-only view of connectors/.mcp.json: names, kind and the
+    env variable names, never a value, header, argument or URL."""
+    import json as _json
+
+    from hubzoid.loaders import mcp as mcp_loader
+
+    hub = tmp_path / "h"
+    (hub / "connectors").mkdir(parents=True)
+    (hub / "connectors" / ".mcp.json").write_text(_json.dumps({"mcpServers": {
+        "files": {"command": "npx", "args": ["server", "--token", "sk-literal"]},
+        "crm": {"url": "https://crm.example.org/mcp?key=${CRM_KEY}",
+                "headers": {"Authorization": "Bearer ${CRM_TOKEN}"}},
+    }}))
+    monkeypatch.setenv("CRM_KEY", "value-1")
+    monkeypatch.delenv("CRM_TOKEN", raising=False)
+    monkeypatch.delenv("HUBZOID_BROWSER", raising=False)
+    out = mcp_loader.describe(hub)
+    assert out["warning"] is None
+    by = {s["name"]: s for s in out["servers"]}
+    assert by["files"]["kind"] == "command" and by["files"]["env"] == []
+    assert by["crm"]["kind"] == "url"
+    assert by["crm"]["env"] == [{"name": "CRM_KEY", "set": True}, {"name": "CRM_TOKEN", "set": False}]
+    text = _json.dumps(out)
+    for secret in ("sk-literal", "value-1", "crm.example.org", "Bearer", "npx"):
+        assert secret not in text
+    (hub / "connectors" / ".mcp.json").write_text("{not json")
+    assert mcp_loader.describe(hub)["warning"]
