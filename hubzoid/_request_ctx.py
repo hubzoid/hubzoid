@@ -104,19 +104,16 @@ UNSET = object()
 _current_owui_account: ContextVar = ContextVar("hubzoid_owui_account", default=UNSET)
 
 
-def set_owui_account(account_id: str | None) -> None:
-    """Record the forwarded account id (None when the header was missing)."""
-    _current_owui_account.set(account_id or None)
-
-
 def get_owui_account():
     """The forwarded account id, None when the request had none, or UNSET."""
     return _current_owui_account.get()
 
 
 @contextmanager
-def owui_account_scope(account_id: str | None) -> Iterator[None]:
-    token = _current_owui_account.set(account_id or None)
+def owui_account_scope(account_id) -> Iterator[None]:
+    """The turn's forwarded account id (None when missing). UNSET leaves the
+    check off: not an Open WebUI request."""
+    token = _current_owui_account.set(account_id if account_id is UNSET else (account_id or None))
     try:
         yield
     finally:
