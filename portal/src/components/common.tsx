@@ -11,7 +11,7 @@ import {
   Typography,
 } from "antd";
 import { ShieldCheck, Sparkle, Workflow, CircleHelp } from "lucide-react";
-import type { Permission } from "../api";
+import { signedOut, signInHref, type Permission } from "../api";
 import {
   accountStatus,
   capabilityLabel,
@@ -82,9 +82,15 @@ export function LoadState({
         title="Couldn’t load this view"
         description={error}
         action={
-          <Button size="small" onClick={retry}>
-            Try again
-          </Button>
+          signedOut ? (
+            <Button size="small" type="primary" href={signInHref()}>
+              Sign in
+            </Button>
+          ) : (
+            <Button size="small" onClick={retry}>
+              Try again
+            </Button>
+          )
         }
       />
     );

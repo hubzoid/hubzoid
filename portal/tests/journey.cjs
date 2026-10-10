@@ -1739,6 +1739,27 @@ function step(name) {
     assert.deepEqual(signOuts, ["openwebui POST", "hubzoid POST"]);
     state.signIn = legacySignIn;
 
+    // ---- signed out or expired ----------------------------------------------------------------
+    step("An expired session offers Sign in that returns to the same Console page");
+    await go("/agents/finance/activity");
+    await page.getByText("allowed").first().waitFor();
+    state.role = "none"; // the session expires while the Console is open
+    await go("/activity");
+    await page.getByText("Couldn’t load this view").waitFor();
+    await page.getByText("Sign in to continue.").waitFor();
+    assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "signed out: Sign in is the one way on");
+    assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).getAttribute("href"),
+      `/auth?redirect=${encodeURIComponent("/portal/#/activity")}`);
+    await go("/agents/finance/runs");
+    await page.reload(); // signed out: the gate
+    await page.getByText("Sign in to continue", { exact: true }).waitFor();
+    const gateSignIn = page.getByRole("link", { name: "Sign in", exact: true });
+    assert.equal(await gateSignIn.getAttribute("href"), `/auth?redirect=${encodeURIComponent("/portal/#/agents/finance/runs")}`);
+    assert.match(await gateSignIn.getAttribute("class"), /ant-btn-primary/);
+    assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "one button when signed out");
+    assert.equal(await page.getByRole("link", { name: "Go to the chat app" }).count(), 0, "one button when signed out");
+    state.role = "org";
+
     // ---- ordinary user -----------------------------------------------------------------------
     step("An ordinary user is turned away without seeing any administration UI");
     state.role = "user";
@@ -1747,6 +1768,7 @@ function step(name) {
     await page.getByText("Console access is not enabled for this account").waitFor();
     assert.equal(await page.getByRole("link", { name: "Agents" }).count(), 0);
     await page.getByRole("link", { name: "Go to the chat app" }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).count(), 0, "a 403 is not a sign-in problem");
 
     // ---- OWUI navigation link reacts to SPA login/logout --------------------------------
     step("OWUI navigation link appears for an admin session and disappears after logout");

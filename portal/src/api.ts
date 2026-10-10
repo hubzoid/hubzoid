@@ -263,6 +263,19 @@ export class ApiError extends Error {
   }
 }
 
+/** Signed out, or the session expired: set by a 401 and cleared only by a
+ *  successful answer, so another request's 403 or network error can't hide
+ *  it. Error views then offer Sign in. */
+export let signedOut = false;
+function noteSession(status: number) {
+  if (status === 401) signedOut = true;
+  else if (status >= 200 && status < 300) signedOut = false;
+}
+
+/** The sign-in page, coming back to this Console page afterwards. */
+export const signInHref = () =>
+  `/auth?redirect=${encodeURIComponent(location.pathname + location.hash)}`;
+
 export type ChangeRequest = {
   id: string;
   status: "pending" | "applying" | "confirmed" | "rejected" | "expired" | "failed";
@@ -325,6 +338,7 @@ export async function request<T>(
       0,
     );
   }
+  noteSession(response.status);
   if (!response.ok) {
     let message = `${response.status} — Request failed`;
     let code: string | undefined;
@@ -446,6 +460,7 @@ export async function connectorsRequest<T>(
   } catch (e) {
     throw new ApiError(e instanceof Error && e.message ? e.message : "Network error", 0);
   }
+  noteSession(response.status);
   if (!response.ok) {
     let message = `${response.status}: Request failed`;
     let code: string | undefined;
