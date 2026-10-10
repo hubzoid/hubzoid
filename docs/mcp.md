@@ -117,7 +117,13 @@ administrator run it on the server.
 ### Add a server (organization administrators, in the Console)
 
 **Console → Agents → the agent → Connectors → Add connector** registers it and
-offers it in that agent. **Offer an existing connector** offers one another
+offers it in that agent. It opens on a searchable list of popular remote MCP
+servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub and others), each
+labelled with how people sign in: *Each person signs in*, *Needs a client ID*
+(the provider does not let Hubzoid register itself, so create an OAuth app
+there first) or *No sign-in*. Choosing one fills its name, ID, address and
+sign-in; **Custom server** starts empty. The list holds addresses only, checked
+with Hubzoid's discovery on 2026-10-10; run **Test** before people use one. **Offer an existing connector** offers one another
 agent already has. **Stop offering in <agent>** takes it out of that agent only
 and removes its grants there; people's connections and other agents stay.
 **Remove from every agent** deletes it:
@@ -131,12 +137,16 @@ and removes its grants there; people's connections and other agents stay.
   would change the request, such as `Host`, `Cookie`, `Content-Length` or proxy
   headers, are refused), or *No sign-in* for a server that needs no account.
 - Optional: a **client ID** and **client secret** registered with the provider
-  in advance, **scopes**, and **allowed tools**.
+  in advance, **scopes**, and **allowed tools**. When editing, **Load from
+  server** lists the server's tools to choose from.
 
 **Test** reads the server's metadata and changes nothing. It shows the
 authorization server, whether Hubzoid can register itself, and the redirect URI
 to register with a provider that needs a client created in advance:
-`<public origin>/oauth/connectors/<id>/callback`.
+`<public origin>/oauth/connectors/<id>/callback`. It also lists the server's
+tools, marking which reach agents when tools are allowed by name. To list them
+it uses the Shared key, no credential for *No sign-in*, or, for *Each person
+signs in*, your own connection: connect your account first to see them.
 
 Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
 whenever people reach Hubzoid at an address other than this computer. Redirect
@@ -171,12 +181,16 @@ organization administrators see the tab but cannot change it.
 
 From the link the agent sends (`connect_account`, the connection journey
 below), or from the connections page: **Settings, Connections** in the web
-app, `/portal/connections` in Open WebUI mode. The HTTP API behind it (also
-under `/portal/api/connections`):
+app, `/portal/connections` in Open WebUI mode. Before anything happens, the
+link's page shows the account, the agent, the server's host and any scopes the
+connector requests (as Agno's consent page shows where credentials go). Both
+pages list each app with its status and the agents that use it for the
+person; Disconnect asks first. The HTTP API behind it (also under
+`/portal/api/connections`):
 
 | Call | Result |
 |---|---|
-| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed` |
+| `GET /api/connections` | each switched-on connector: `connector_id`, `name`, `connected`, `status` (`ok`, `expired`, `error` or `none`), `connected_at`, `allowed`, `agents` (names of the agents that use it for the person) |
 | `POST /api/connections/<id>/connect` | `{authorize_url}`; the browser goes there |
 | `DELETE /api/connections/<id>` | revokes at the provider when it can, then removes the connection |
 
@@ -205,8 +219,8 @@ failure goes to the same place with `?error=<code>`.
   turn tries again.
 - **Per turn**, the same rules as Open WebUI mode: restricted surfaces only, an
   agent that offers the connector, `connector_<id>` in that agent, the allowed
-  tools, never a server that would replace a hub MCP server. In Claude the tools are named
-  `mcp__my_<id>__<tool>`.
+  tools, never a server that would replace a hub MCP server. On every backend
+  the tools are named `mcp__my_<id>__<tool>`.
 
 ### Limits
 
@@ -262,20 +276,25 @@ One per-turn source (`hubzoid/connectors/per_user.py`, reached through
 `hubzoid/owui_mcp.py`) feeds all three backends, with the same servers, rules
 and allow-lists.
 
-| Backend | How the servers join a turn | Tool names |
-|---|---|---|
-| Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server | `mcp__my_<id>__<tool>` |
-| OpenAI Agents | Per-turn Streamable HTTP clients and a per-turn clone of the agent | the MCP tool name |
-| Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools | the MCP tool name |
+| Backend | How the servers join a turn |
+|---|---|
+| Claude (`claude-local`) | Per-turn copy of the SDK options with an `http` MCP spec per server |
+| OpenAI Agents | Per-turn Streamable HTTP clients; their tools join a per-turn clone of the agent |
+| Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools |
+
+Tool names are the same on all three: `mcp__my_<id>__<tool>`, as Claude names
+MCP tools (Mastra and Agno prefix the same way). Characters other than letters,
+digits, `_` and `-` become `_`, and a name longer than 64 characters is cut and
+ends in a short hash, so two long names never collide.
 
 Rules that hold on all three:
 
 - The credential rides only in the MCP client's request header. It never
   enters the prompt, a log line or a tool result.
 - The connector's tool allow-list applies.
-- A connector never shadows a hub tool. On a name clash it is skipped for that
-  turn and a warning is logged. Claude namespaces every server, so there the
-  clash can only be a server key.
+- A connector never shadows a hub tool. Its tools are namespaced, so a clash
+  can only be a server key; that server is skipped for the turn and a warning
+  is logged.
 - A server that cannot be reached is dropped for that turn. The turn goes on.
 - Only the hub's main agent gets connectors. Delegates do not.
 - Only surfaces allowed to reach restricted tools (`HUBZOID_RESTRICTED_SURFACES`)

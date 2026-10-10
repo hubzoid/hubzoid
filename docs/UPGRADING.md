@@ -33,6 +33,11 @@ WebUI's admin screen while it was on may stop applying, because
 old Open WebUI connections stay in Open WebUI's database until removed there.
 Hubzoid does not read them. Revoke them at the provider if that matters.
 
+**Connector tool names on OpenAI Agents and Codex** change from the server's
+own name (`search`) to `mcp__my_<id>__<tool>` (`mcp__my_gmail__search`), as
+Claude already named them. Update any agent instructions or skills that name a
+connector tool directly. Hub tools and hub-folder servers keep their names.
+
 To go back, restore the backup and reinstall the previous version. This
 release never writes to Open WebUI's database.
 
