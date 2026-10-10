@@ -874,12 +874,17 @@ function chartPng(width = 160, height = 100) {
       await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
       errors.splice(before); // the failed chunk is logged on purpose
 
-      step("Someone with no agents is told how to get access");
+      step("Someone with no agents is told how to get access, and Try again opens the agent once granted");
       await fetch(`${BASE}/__fixture/flag/no_agents/true`);
       await page.goto(`${BASE}/`);
-      await page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then reload this page.").waitFor();
+      await page.getByText("Ask an administrator for access.").waitFor();
+      await page.getByRole("button", { name: "Try again" }).waitFor();
       await shot(page, "app-24-no-agents");
+      await page.evaluate(() => (window.__sameDocument = true));
       await fetch(`${BASE}/__fixture/flag/no_agents/false`);
+      await page.getByRole("button", { name: "Try again" }).click();
+      await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      assert.ok(await page.evaluate(() => window.__sameDocument), "the agent opens without a page reload");
 
       step("With many agents the header menu searches them, recent agents first");
       await fetch(`${BASE}/__fixture/flag/many_agents/true`);
