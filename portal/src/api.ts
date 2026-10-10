@@ -445,7 +445,12 @@ export type ConnectorTest = {
   registration?: "pre-registered" | "dynamic" | "unavailable";
   token_endpoint_auth_methods?: string[] | null;
   notes?: string[];
+  /** What the server lists, when the test could reach it with a credential. */
+  tools?: ConnectorTool[] | null;
+  tools_note?: string;
 };
+
+export type ConnectorTool = { name: string; description?: string | null };
 
 /** Calls under /portal/api/connectors. Their errors are {"detail": {"code", "message"}}. */
 export async function connectorsRequest<T>(

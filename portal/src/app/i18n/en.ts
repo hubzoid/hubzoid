@@ -206,6 +206,7 @@ export const en = {
     shared: "Shared",
     sharedHelp: "One company account. Nothing to connect.",
     since: (when: string) => `Connected ${when}`,
+    usedBy: (agents: string[]) => `Used by ${agents.join(", ")}`,
     connectedToast: (name: string) => `Connected to ${name}.`,
     failed: (name: string, code: string) => {
       switch (code) {

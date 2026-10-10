@@ -137,6 +137,7 @@ export default function ConnectionsPage({
           {items.map((c) => {
             const kind = kindOf(c);
             const since = c.connected && c.connected_at ? formatDate(c.connected_at) : "";
+            const used = c.agents?.length ? t.connections.usedBy(c.agents) : "";
             return (
               <li key={c.connector_id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 sm:px-5" data-testid={`connection-${c.connector_id}`}>
                 <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-line bg-sunken font-mono text-sm font-semibold text-ink">
@@ -153,11 +154,9 @@ export default function ConnectionsPage({
                   <p className="m-0 mt-0.5 text-[13px] text-mute">
                     {kind === "blocked"
                       ? t.connections.notAllowedHelp
-                      : kind === "shared"
-                        ? t.connections.sharedHelp
-                        : since
-                          ? t.connections.since(since)
-                          : " "}
+                      : [kind === "shared" ? t.connections.sharedHelp : "", used, since ? t.connections.since(since) : ""]
+                          .filter(Boolean)
+                          .join(" · ") || "\u00a0"}
                   </p>
                 </div>
                 <div className="flex flex-none gap-2">

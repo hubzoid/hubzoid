@@ -19,13 +19,14 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { FlaskConical, MinusCircle, MoreHorizontal, Pencil, Plug, Trash2 } from "lucide-react";
+import { ArrowLeft, FlaskConical, MinusCircle, MoreHorizontal, Pencil, Plug, Plus, Search, Trash2 } from "lucide-react";
 import {
   ApiError,
   connectorsRequest,
   type Connector,
   type ConnectorInput,
   type ConnectorTest,
+  type ConnectorTool,
   type Hub,
   type HubMcpServer,
   type Me,
@@ -33,6 +34,7 @@ import {
 import { InfoHelp, LoadState } from "../components/common";
 import { useData } from "../hooks/useData";
 import { useNavigationGuard } from "../hooks/useRoute";
+import { CATALOG, catalogAuthLabel, type CatalogEntry } from "./connectorCatalog";
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -510,6 +512,32 @@ function ConnectorDrawer({
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // Adding starts from the catalog of popular servers, or a custom one.
+  const [picking, setPicking] = useState(creating);
+  const [preset, setPreset] = useState<CatalogEntry | null>(null);
+  const [serverTools, setServerTools] = useState<ConnectorTool[] | null>(null);
+  const [toolsBusy, setToolsBusy] = useState(false);
+
+  function pick(entry: CatalogEntry | null) {
+    setPreset(entry);
+    setDraft(entry ? { ...EMPTY, name: entry.name, id: entry.id, url: entry.url, auth: entry.auth } : EMPTY);
+    setTouched(false);
+    setPicking(false);
+  }
+
+  async function loadTools() {
+    if (!existing) return;
+    setToolsBusy(true);
+    try {
+      const r = await connectorsRequest<ConnectorTest>(`/${encodeURIComponent(existing.id)}/test`, "POST");
+      if (r.tools) setServerTools(r.tools);
+      else message.info(r.tools_note ?? r.error?.message ?? "The server listed no tools.");
+    } catch (e) {
+      message.error(errorText(e));
+    } finally {
+      setToolsBusy(false);
+    }
+  }
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const initial = existing ? draftOf(existing) : EMPTY;
@@ -620,14 +648,34 @@ function ConnectorDrawer({
           <Button onClick={close} disabled={busy}>
             Cancel
           </Button>
-          <Button type="primary" loading={busy} disabled={touched && invalid} onClick={() => void save()}>
-            {creating ? "Add connector" : "Save"}
-          </Button>
+          {!picking && (
+            <Button type="primary" loading={busy} disabled={touched && invalid} onClick={() => void save()}>
+              {creating ? "Add connector" : "Save"}
+            </Button>
+          )}
         </Space>
       }
     >
+      {picking ? (
+        <CatalogPicker onPick={pick} />
+      ) : (
       <div className="drawer-body">
+        {creating && (
+          <div>
+            <Button type="link" size="small" icon={<ArrowLeft size={14} />} className="catalog-back" onClick={() => setPicking(true)}>
+              All servers
+            </Button>
+          </div>
+        )}
         {failure && <Alert type="error" showIcon title="Not saved" description={failure} />}
+        {preset?.needsClient && (
+          <Alert
+            type="info"
+            showIcon
+            title={`${preset.name} needs a client ID`}
+            description={`It doesn’t let Hubzoid register itself. Create an OAuth app in ${preset.name} with the redirect URI below, then paste its client ID.`}
+          />
+        )}
         <Field id="connector-name" label="Name" problem={touched ? problems.name : null} help="What people see, for example Gmail.">
           <Input id="connector-name" value={draft.name} maxLength={80} onChange={(e) => set("name", e.target.value)} />
         </Field>
@@ -778,19 +826,38 @@ function ConnectorDrawer({
             </Field>
           </>
         )}
-        <Field id="connector-tools" label="Allowed tools (optional)" help="Only these tools reach agents. Leave empty to allow every tool the server offers.">
+        <div className="field">
+          <div className="field-label-row">
+            <label className="field-label" htmlFor="connector-tools">
+              Allowed tools (optional)
+            </label>
+            {existing && !serverTools && (
+              <Button type="link" size="small" loading={toolsBusy} onClick={() => void loadTools()}>
+                Load from server
+              </Button>
+            )}
+          </div>
           <Select
             id="connector-tools"
             mode="tags"
             value={draft.tools}
             tokenSeparators={[",", " "]}
-            open={false}
-            suffixIcon={null}
-            placeholder="search_threads, get_thread"
+            {...(serverTools ? {} : { open: false, suffixIcon: null })}
+            options={serverTools?.map((t) => ({ value: t.name, label: t.name, title: t.description ?? t.name }))}
+            optionRender={(o) => (
+              <div className="tool-option">
+                <span className="identity">{o.value}</span>
+                {o.data.title && o.data.title !== o.value && <Text type="secondary">{o.data.title}</Text>}
+              </div>
+            )}
+            placeholder={serverTools ? `Choose from ${serverTools.length} ${serverTools.length === 1 ? "tool" : "tools"}` : "search_threads, get_thread"}
             onChange={(v: string[]) => set("tools", v)}
             style={{ width: "100%" }}
           />
-        </Field>
+          <Text type="secondary" className="field-help">
+            Only these tools reach agents. Leave empty to allow every tool the server offers.
+          </Text>
+        </div>
         <div className="field">
           <Space>
             <Switch id="connector-enabled" checked={draft.enabled} onChange={(v) => set("enabled", v)} />
@@ -801,7 +868,59 @@ function ConnectorDrawer({
           </Text>
         </div>
       </div>
+      )}
     </Drawer>
+  );
+}
+
+/** Popular servers to start from, searchable, each with how people sign in. */
+function CatalogPicker({ onPick }: { onPick: (entry: CatalogEntry | null) => void }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = CATALOG.filter((e) => !q || `${e.name} ${e.about}`.toLowerCase().includes(q));
+  return (
+    <div className="drawer-body">
+      <Input
+        autoFocus
+        allowClear
+        aria-label="Search servers"
+        placeholder="Search servers"
+        prefix={<Search size={14} aria-hidden />}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <ul className="catalog-grid" aria-label="Servers">
+        <li>
+          <button type="button" className="catalog-card" onClick={() => onPick(null)}>
+            <span className="catalog-tile" aria-hidden>
+              <Plus size={16} />
+            </span>
+            <span className="catalog-text">
+              <span className="catalog-name">Custom server</span>
+              <span className="catalog-about">Any remote MCP server, by URL</span>
+            </span>
+          </button>
+        </li>
+        {shown.map((e) => (
+          <li key={e.id}>
+            <button type="button" className="catalog-card" onClick={() => onPick(e)} aria-label={`${e.name}: ${catalogAuthLabel(e)}`}>
+              <span className="catalog-tile" aria-hidden>
+                {e.name.slice(0, 1)}
+              </span>
+              <span className="catalog-text">
+                <span className="catalog-name">{e.name}</span>
+                <span className="catalog-about">{e.about}</span>
+              </span>
+              <span className={`catalog-auth${e.auth === "none" ? " none" : e.needsClient ? " client" : ""}`}>{catalogAuthLabel(e)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {shown.length === 0 && <Text type="secondary">No match. Choose Custom server and enter its URL.</Text>}
+      <Text type="secondary" className="field-help">
+        Each server’s address was checked with Hubzoid. Run Test before people use it.
+      </Text>
+    </div>
   );
 }
 
@@ -855,7 +974,7 @@ function TestDrawer({
   const title = connector ? `Test ${connector.name}` : "Test";
   const yesNo = (v: boolean | null | undefined) => (v ? "Yes" : "No");
   const items = result
-    ? result.auth_type === "none"
+    ? result.auth_type !== "oauth"
       ? [
           { key: "status", label: "Server answered", children: result.status ?? "No answer" },
           { key: "auth", label: "Asks for sign-in", children: yesNo(result.requires_auth) },
@@ -908,20 +1027,23 @@ function TestDrawer({
                 description={
                   result.auth_type === "none"
                     ? "The server answers without sign-in. People can turn it on."
-                    : "Discovery succeeded. People can connect with their own account."
+                    : result.auth_type === "shared"
+                      ? "The server accepts the key. Agents that offer it can use it."
+                      : "Discovery succeeded. People can connect with their own account."
                 }
               />
             ) : (
               <Alert type="error" showIcon title="Not ready" description={result.error?.message ?? "The server did not answer as expected."} />
             )}
             {items.length > 0 && <Descriptions column={1} size="small" bordered items={items} />}
+            {result.ok && <ServerTools result={result} allowed={connector?.tool_allowlist ?? null} />}
             {result.notes?.map((n) => (
               <Text key={n} type="secondary" className="field-help">
                 {n}
               </Text>
             ))}
             <Text type="secondary" className="field-help">
-              A test only reads the server’s metadata. Nothing was registered or changed.
+              A test only reads what the server offers. Nothing was registered or changed.
             </Text>
           </>
         )}
@@ -932,5 +1054,43 @@ function TestDrawer({
         )}
       </div>
     </Drawer>
+  );
+}
+
+/** The tools the server lists (as Mastra Studio and Sim show a server's
+ * tools), marking which reach agents when an allow-list is set. */
+function ServerTools({ result, allowed }: { result: ConnectorTest; allowed: string[] | null }) {
+  const [all, setAll] = useState(false);
+  if (!result.tools)
+    return result.tools_note ? (
+      <Alert type="info" showIcon title="Tools" description={result.tools_note} />
+    ) : null;
+  const tools = result.tools;
+  const shown = all ? tools : tools.slice(0, 8);
+  return (
+    <div className="server-tools">
+      <Title level={5} style={{ margin: 0 }}>
+        Tools <Text type="secondary">· {tools.length}</Text>
+        <InfoHelp text="What the server offers. Agents get every tool, or only the allowed ones when you list them in Edit." />
+      </Title>
+      {tools.length === 0 ? (
+        <Text type="secondary">The server lists no tools.</Text>
+      ) : (
+        <ul className="server-tools-list">
+          {shown.map((t) => (
+            <li key={t.name}>
+              <span className="identity">{t.name}</span>
+              {allowed && (allowed.includes(t.name) ? <Tag color="green">Allowed</Tag> : <Tag>Not allowed</Tag>)}
+              {t.description && <Text type="secondary" className="server-tool-about">{t.description}</Text>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {tools.length > 8 && (
+        <Button type="link" size="small" onClick={() => setAll((v) => !v)} style={{ paddingInline: 0 }}>
+          {all ? "Show fewer" : `Show all ${tools.length}`}
+        </Button>
+      )}
+    </div>
   );
 }
