@@ -820,8 +820,10 @@ export function AccessDrawer({
                 <Alert
                   type="warning"
                   showIcon
-                  title="This person is blocked by an administrator"
+                  title="This person is blocked"
                   description="They can’t be given new access. Existing access can still be removed."
+                  // Administrators reactivate them there. Others may not see them under People.
+                  action={me?.org_admin && <a href={personHref(draft.row.subject)}>Open their details</a>}
                 />
               )}
               {draft.row.account_unavailable && !draft.row.suspended && (

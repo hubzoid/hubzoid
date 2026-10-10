@@ -20,6 +20,7 @@ import {
   ApiError,
   request,
   query,
+  type BlockResult,
   type Hub,
   type Me,
   type Overview,
@@ -390,7 +391,7 @@ const MISMATCH: Record<string, string> = {
 
 /**
  * A user's details: who they are, their role, their access by agent, and (for
- * administrators) a password reset and Delete in the "…" menu. Every action is
+ * administrators) a password reset, and Reactivate and Delete in the "…" menu. Every action is
  * re-checked by the server and recorded in Activity.
  */
 function PersonDrawer({
@@ -413,6 +414,9 @@ function PersonDrawer({
   const catalogs = useCatalogs(hubs.map((h) => h.key));
   const manageAccount =
     !!me.account_admin && !!person?.owui_id && !isService(person.subject) && person.subject !== me.subject;
+  // There is no Block here, but a block (an Open WebUI account replaced, one
+  // carried over by migration, or an older one) can be lifted.
+  const canReactivate = me.org_admin && !!person?.suspended;
   const info = useData<AccountInfo>(
     manageAccount && person ? `/accounts/${encodeURIComponent(person.subject)}` : null,
   );
@@ -496,6 +500,34 @@ function PersonDrawer({
       okText: next === "admin" ? "Make Administrator" : "Make User",
       okButtonProps: { danger: next === "admin" },
       onOk: () => setRole(next),
+    });
+
+  async function reactivate() {
+    if (!person) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<BlockResult>("/people/block", { subject: person.subject, suspended: false });
+      // The server says when they still can't use agents (their account is unavailable).
+      if (result.message) message.warning(result.message);
+      else message.success(`${name} is active again.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : errorText(e));
+    } finally {
+      setBusy(false);
+      info.reload();
+      data.reload();
+      onChanged();
+    }
+  }
+
+  const confirmReactivate = () =>
+    modal.confirm({
+      title: `Reactivate ${name}?`,
+      content:
+        "Access removed by the block isn’t restored.",
+      okText: "Reactivate",
+      onOk: () => reactivate(),
     });
 
   async function resetPassword() {
@@ -585,12 +617,15 @@ function PersonDrawer({
         )
       }
       extra={
-        manageAccount && (
+        (manageAccount || canReactivate) && (
           <Dropdown
             trigger={["click"]}
             menu={{
-              items: [{ key: "delete", danger: true, label: "Delete user" }],
-              onClick: () => setPanel("delete"),
+              items: [
+                ...(canReactivate ? [{ key: "reactivate", label: "Reactivate", disabled: busy }] : []),
+                ...(manageAccount ? [{ key: "delete", danger: true, label: "Delete user" }] : []),
+              ],
+              onClick: ({ key }) => (key === "reactivate" ? confirmReactivate() : setPanel("delete")),
             }}
           >
             <Button type="text" aria-label="More actions" icon={<MoreHorizontal size={18} />} />
@@ -796,6 +831,13 @@ function PersonDrawer({
                   }).replace(/^#/, "");
                 }}
               />
+            )}
+            {person.suspended && (
+              <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
+                {canReactivate
+                  ? "Blocked. Reactivate to give access."
+                  : "Blocked. An Administrator can reactivate them."}
+              </Paragraph>
             )}
           </div>
         </div>

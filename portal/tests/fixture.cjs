@@ -484,6 +484,7 @@ function createFixture() {
             effective: gs.permissionsFor(r.subject, hub),
             display: state.identities[r.subject]?.display || r.subject,
             status: identityStatus(r.subject),
+            ...accountFlags(r.subject),
           }))
           .filter((r) => (r.subject + " " + r.display).toLowerCase().includes(q))
           .sort((x, y) => x.subject.localeCompare(y.subject));

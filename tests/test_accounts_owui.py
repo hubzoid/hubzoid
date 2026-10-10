@@ -505,6 +505,23 @@ def test_blocked_email_is_not_recreated(dep):
     assert e.value.code == "blocked"
 
 
+def test_a_replaced_account_is_reactivated_then_given_access(dep):
+    """A new chat account reusing an email is blocked until reviewed. The
+    Console's Reactivate (POST /people/block, suspended false) lifts the block,
+    and access can then be given again; the old account's grants stay gone."""
+    dep.gs.upsert_identity(email="ann@x.org", owui_id="u-old")
+    dep.gs.grant("ann@x.org", "finance", "ledger", actor="test")
+    dep.gs.upsert_identity(email="ann@x.org", owui_id="u-new")  # another account took the email
+    assert not dep.gs.can("ann@x.org", "finance", "use_hub")
+    with pytest.raises(Denied) as e:
+        dep.svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
+    assert e.value.code == "blocked"
+    assert dep.svc.set_blocked(actor(ROOT), "ann@x.org", False) is True
+    dep.svc.apply_access_change(actor(ROOT), "ann@x.org", "finance", [("grant", "use_hub")])
+    assert dep.gs.can("ann@x.org", "finance", "use_hub")
+    assert not dep.gs.can("ann@x.org", "finance", "ledger")
+
+
 @pytest.mark.parametrize("password", ["", "short", "x" * 73])
 def test_password_rules(dep, password):
     with pytest.raises(Denied) as e:
