@@ -954,6 +954,18 @@ function chartPng(width = 160, height = 100) {
       await invited.getByRole("button", { name: "Create account" }).click();
       await invited.waitForURL(`${BASE}/`);
       await invited.getByRole("button", { name: /^Account menu: Noor Haddad/ }).waitFor();
+
+      step("Admin Console in the account menu: an agent administrator sees it, a plain user doesn't");
+      await invited.getByRole("button", { name: /^Account menu: Noor Haddad/ }).click();
+      await invited.getByRole("menuitem", { name: "Connections" }).waitFor();
+      assert.equal(await invited.getByRole("menuitem", { name: "Admin Console" }).count(), 0);
+      await invited.getByRole("menuitem", { name: "Sign out" }).click();
+      await invited.waitForURL(`${BASE}/auth`);
+      await signIn(invited, "mia@example.com");
+      await invited.waitForURL(`${BASE}/`);
+      await invited.getByRole("button", { name: /^Account menu: Mia Chen/ }).click();
+      await invited.getByRole("menuitem", { name: "Admin Console" }).waitFor();
+      await invited.keyboard.press("Escape");
       await fresh.close();
 
       step("A session that ends mid-use goes back to sign-in, then returns to the same chat");

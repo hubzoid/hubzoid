@@ -88,6 +88,42 @@ def test_signed_in_session_describes_the_person(hub):
     assert "password_hash" not in str(c.get("/api/auth/session").json())
 
 
+def test_session_says_whether_the_console_opens(hub, monkeypatch):
+    """The chat app's Admin Console link follows the Console's own entry check
+    (organization-wide or one agent's Manage access), and a failed check hides
+    it without breaking the session."""
+    from hubzoid.access import store_for
+    from hubzoid.access.service import AccessService
+    from hubzoid.access.store import MANAGE_ACCESS, ORG
+
+    people = {"ana@example.com": False, "ben@example.com": True, "cy@example.com": True}
+    for email in people:
+        person(hub, email=email)
+    store_for(hub).grant("ben@example.com", "sales", MANAGE_ACCESS)  # one agent only
+    store_for(hub).grant("cy@example.com", ORG, MANAGE_ACCESS)  # organization administrator
+    seen = {}
+    for email in people:
+        c = client(hub)
+        sign_in(c, email=email)
+        seen[email] = me(c)["console"]
+    assert seen == people
+
+    def unavailable(self, actor):
+        raise RuntimeError("access store down")
+
+    monkeypatch.setattr(AccessService, "scope", unavailable)
+    c = client(hub)
+    sign_in(c, email="cy@example.com")
+    r = c.get("/api/auth/session")
+    assert r.status_code == 200 and r.json()["user"]["console"] is False
+
+
+def test_the_local_owner_can_open_the_console(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_AUTH")
+    users.provision_owner(hub, "admin@localhost")  # as the bridge does when it starts
+    assert me(client(hub))["console"] is True
+
+
 def test_password_sign_in_can_be_turned_off(hub, monkeypatch):
     person(hub)
     monkeypatch.setenv("ENABLE_PASSWORD_AUTH", "false")

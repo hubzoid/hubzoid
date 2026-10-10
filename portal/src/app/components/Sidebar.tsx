@@ -560,7 +560,7 @@ function AccountMenu() {
             <Plug size={15} aria-hidden />
             {t.account.connections}
           </Menu.Item>
-          {app.isAdmin && (
+          {(app.isAdmin || app.user?.console) && (
             <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/")}>
               <ExternalLink size={15} aria-hidden />
               {t.account.console}
