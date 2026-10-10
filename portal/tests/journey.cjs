@@ -239,6 +239,13 @@ function step(name) {
     await priyaRow.getByText("Active", { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
     await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
+    // Not signed up yet: access waits for an account, and People has no page for it.
+    assert.equal(await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByRole("link").count(), 0, "no profile before sign-up");
+    await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
+    await drawer().getByText("Not signed up yet", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile before sign-up");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
     await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
@@ -862,6 +869,40 @@ function step(name) {
     await page.getByRole("heading", { name: "People", exact: true }).waitFor();
     assert.equal(await hash(), "#/people");
     assert.equal(state.mutations.length, 0);
+
+    step("Access names and View profile open the person; unsaved edits ask first");
+    const priyaHref = `#/people/${encodeURIComponent(PRIYA)}`;
+    await go("/agents/finance/access");
+    const priyaLink = page.getByRole("row").filter({ hasText: "Priya Natarajan" }).getByRole("link", { name: "Priya Natarajan" });
+    assert.equal(await priyaLink.getAttribute("href"), priyaHref);
+    assert.equal(await page.getByRole("row").filter({ hasText: "monthly_close" }).getByRole("link").count(), 0, "service identities stay plain text");
+    await page.getByRole("button", { name: "Edit access for workflow:monthly_close" }).click();
+    await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile for a service identity");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    const viewProfile = drawer().getByRole("link", { name: "View profile" });
+    assert.equal(await viewProfile.getAttribute("href"), priyaHref);
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
+    await viewProfile.click();
+    await modalTitle("Leave without saving?").waitFor();
+    await answer("Keep editing");
+    assert.equal(await hash(), "#/agents/finance/access");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage invoices/ }).isChecked(), true);
+    await viewProfile.click();
+    await answer("Discard and leave");
+    await drawer().getByRole("combobox", { name: "Role" }).waitFor();
+    assert.equal(await hash(), priyaHref);
+    assert.equal(state.mutations.length, 0);
+    await go("/agents/finance/access");
+    await priyaLink.click();
+    await drawer().getByText(PRIYA, { exact: true }).waitFor();
+    assert.equal(await hash(), priyaHref);
+    await go("/agents/support/access");
+    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByRole("link").count(), 0, "Everyone signed in stays plain text");
 
     step("Navigation is refused while a save is in flight");
     await go("/agents/finance/access");
