@@ -46,28 +46,10 @@ log = logging.getLogger("hubzoid.webui")
 _OFF = "False"
 _ON = "True"
 
-# One operator switch for OWUI-native per-user MCP. `OWUI_NATIVE_MCP=true` in a
-# hub's .env expands to the OWUI flags the "+ -> Integrations -> Tools" OAuth
-# flow needs: persist config to webui.db (so admin-registered MCP servers land
-# where the bridge reads them - OWUI keeps that config in memory otherwise) plus
-# the tools permissions hubzoid strips by default. Opt-in so existing hubs stay
-# env-authoritative and reproducible; the bridge injection (owui_mcp) reads the
-# same flag. See docs/mcp.md and docs/per-user-tool-connections.html.
-_OWUI_NATIVE_MCP_ENV = {
-    "ENABLE_PERSISTENT_CONFIG": _ON,
-    "USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS": _ON,
-    "USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS": _ON,
-    "ENABLE_DIRECT_CONNECTIONS": _ON,
-}
-
-
-def _seed_owui_config_once(data_dir: Path) -> None:
-    """Retained for compatibility; existing administrator settings are durable.
-
-    Native MCP defaults now seed only absent keys through OWUI itself. Never
-    erase saved configuration just because an integration is enabled.
-    """
-    return None
+# Until 1.1, ``OWUI_NATIVE_MCP=true`` let Open WebUI hold people's MCP
+# connections. Since 1.2 connectors are added in the Console in every mode, so
+# the switch is ignored and Hubzoid's defaults apply: env-authoritative config
+# (ENABLE_PERSISTENT_CONFIG off) and no Open WebUI tool servers for people.
 
 
 def _local_task_headers(configs: dict, connection_env: dict[str, str]) -> dict:
@@ -607,14 +589,11 @@ def _spawn_owui(
         for key, value in _MCP_API_KEY_ENV.items():
             env.setdefault(key, value)
 
-    # 5c. OWUI-native per-user MCP: one switch. Applied BEFORE the strip so its
-    # ENABLE_PERSISTENT_CONFIG=True wins over the strip's default of False.
-    # setdefault throughout, so an operator's explicit .env value still wins.
+    # 5c. OWUI_NATIVE_MCP is retired (see above): say so once, change nothing.
     if os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY:
-        for key, value in _OWUI_NATIVE_MCP_ENV.items():
-            env.setdefault(key, value)
-        # Preserve saved integration settings while enabling native MCP defaults.
-        _seed_owui_config_once(data_dir)
+        log.warning("webui: OWUI_NATIVE_MCP is no longer used. Add MCP connectors in the "
+                    "Console (Agents, then the agent, then Connectors). Settings saved in Open "
+                    "WebUI's admin screen while it was on may no longer apply; set them in .env.")
 
     # 6. The big strip. Apply hubzoid defaults; operator .env wins.
     for key, value in _DEFAULT_OWUI_ENV.items():

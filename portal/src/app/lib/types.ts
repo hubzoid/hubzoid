@@ -119,6 +119,8 @@ export type Connection = {
   status?: string | null;
   connected_at?: Timestamp;
   allowed?: boolean;
+  /** "shared": one company key, nothing for the person to connect. */
+  auth_type?: string;
 };
 
 export type AuthLink = { valid: boolean; purpose?: string; email?: string };

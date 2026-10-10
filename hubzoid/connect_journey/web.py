@@ -1,11 +1,13 @@
-"""The connection pages: `/portal/connect/<id>` and its actions.
+"""The connection pages: `/portal/connect/<id>` and its actions, and
+`/portal/connections`, where a signed-in person sees and manages theirs.
 
-Every page is bound to the journey's subject: it needs a signed-in session
-whose email is the person who asked, checked server-side: a Hubzoid session
-(`hubzoid.auth.current_user`) in the default UI mode, an Open WebUI session
-(`access.session.verified_email`) in Open WebUI mode. A signed-out visitor is
-sent to sign in and brought back to the same page. Another account gets 403
-and the attempt is audited.
+Every link page is bound to the journey's account: it needs a signed-in
+session whose account id and email are the ones that asked, checked
+server-side: a Hubzoid session (`hubzoid.auth.current_user`) in the default UI
+mode, a live Open WebUI session check (`access.session.verified_person`) in
+Open WebUI mode. A signed-out visitor is sent to sign in and brought back to
+the same page. Another account, even one with the same email, gets 403 and the
+attempt is audited.
 Mutations (`start`, `cancel`) also require the same Origin. The pages use
 `Referrer-Policy: same-origin` so the browser sends that Origin on its own form
 posts (with `no-referrer` it sends `Origin: null`, which is refused), while a
@@ -33,8 +35,8 @@ from .providers import JourneyError, label
 
 log = logging.getLogger("hubzoid.connect")
 
-COOKIE = "hz_connect"
 POLL_SECONDS = 30
+PAGE = "/portal/connections"
 
 
 def _headers(nonce: str | None = None) -> dict:
@@ -67,11 +69,19 @@ button,a.button{font:inherit;border-radius:8px;padding:10px 18px;border:1px soli
 background:transparent;color:var(--ink);cursor:pointer;text-decoration:none}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 @media (prefers-color-scheme:dark){button.primary{color:#0b1a33}}
+.who{font-size:.85rem;color:var(--muted);margin:0 0 4px}
+table{width:100%;border-collapse:collapse;margin-top:14px}td{padding:10px 4px;
+border-top:1px solid var(--line);vertical-align:middle}td:last-child{text-align:right}
+.pill{display:inline-block;font-size:.78rem;padding:2px 9px;border-radius:999px;
+border:1px solid var(--line);color:var(--muted)}.pill.ok{color:var(--ok);border-color:var(--ok)}
+.pill.bad{color:var(--bad);border-color:var(--bad)}
+td button{padding:6px 12px;font-size:.9rem}
 """
 
 
 def _page(title: str, paragraphs: list[str], status: int = 200, *, tone: str = "",
-          actions: str = "", script: str = "") -> HTMLResponse:
+          actions: str = "", script: str = "", eyebrow: str = "",
+          extra: str = "") -> HTMLResponse:
     nonce = secrets.token_urlsafe(12) if script else None
     mark = {"ok": "&#10003;", "bad": "&#10007;"}.get(tone, "")
     body = "".join(
@@ -83,7 +93,8 @@ def _page(title: str, paragraphs: list[str], status: int = 200, *, tone: str = "
         f"<title>{html.escape(title)}</title><style>{_CSS}</style></head>"
         f"<body><main class=\"{tone}\" aria-live=\"polite\">"
         + (f'<div class="mark" aria-hidden="true">{mark}</div>' if mark else "")
-        + f"<h1>{html.escape(title)}</h1>{body}"
+        + (f'<p class="who">{html.escape(eyebrow)}</p>' if eyebrow else "")
+        + f"<h1>{html.escape(title)}</h1>{body}{extra}"
         + (f'<div class="actions">{actions}</div>' if actions else "")
         + "</main>"
         + (f'<script nonce="{nonce}">{script}</script>' if script else "")
@@ -111,6 +122,20 @@ def _gone(j: dict) -> HTMLResponse:
                   "Ask the agent again for a new link."], 410, tone="bad")
 
 
+def _agent_name(hub_dir: Path, hub: str) -> str:
+    """The display name of the agent ``hub`` (a gateway's journey can be for
+    another agent than the bridge serving the page)."""
+    from .. import deployment
+
+    try:
+        for h in deployment.hubs(Path(hub_dir)):
+            if normalize(h.get("key", "")) == normalize(hub):
+                return h.get("name") or hub
+    except Exception:  # noqa: BLE001 — wording only
+        log.debug("connect: no agent name for %s", hub, exc_info=True)
+    return hub
+
+
 def _sign_in_url(jid: str, page: str = "") -> str:
     """Open WebUI's sign-in, returning to this journey afterwards. Built only
     from a journey id that exists, never from the request: no open redirect."""
@@ -132,11 +157,11 @@ def _redirect_to_sign_in(jid: str, page: str = "") -> RedirectResponse:
 def _outcome(j: dict, email: str) -> HTMLResponse:
     app = _e(label(j["app"]))
     status = j["status"]
-    back = ("You will get a confirmation in WhatsApp." if j.get("surface") == "whatsapp"
-            else "You can close this tab and return to the chat.")
+    back = ("You'll get a confirmation in WhatsApp." if j.get("surface") == "whatsapp"
+            else "Close this tab and carry on in your chat.")
     if status == "connected":
-        return _page(f"{label(j['app'])} is connected",
-                     [f"{app} is connected for {_e(email)}.", back], 200, tone="ok")
+        return _page(f"{label(j['app'])} connected", [back], 200, tone="ok",
+                     actions=f'<a class="button" href="{PAGE}">Your connections</a>')
     if status == "failed":
         return _page(f"{label(j['app'])} was not connected",
                      [f"The connection to {app} did not complete.",
@@ -149,7 +174,7 @@ def _outcome(j: dict, email: str) -> HTMLResponse:
 
 
 def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
-    router = APIRouter(prefix="/portal/connect")
+    router = APIRouter()
     hub_dir = Path(hub_dir)
 
     def legacy() -> bool:
@@ -157,43 +182,47 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
 
         return appmode.is_openwebui(hub_dir)
 
-    def email_of(request: Request) -> str:
+    def who_of(request: Request) -> tuple[str, str]:
+        """``(account id, email)`` of the signed-in viewer, or ``("", "")``."""
         if session_email is not None:
-            return normalize(session_email(request) or "")
-        if legacy():
-            from ..access.session import verified_email
+            email = normalize(session_email(request) or "")
+            if not email:
+                return "", ""
+            from ..connectors import tokens
 
-            return normalize(verified_email(request, hub_dir) or "")
+            return tokens.user_id_for(hub_dir, email) or "", email
+        if legacy():
+            from ..access.session import verified_person
+
+            who = verified_person(request, hub_dir)
+            return (who[0], normalize(who[1])) if who else ("", "")
         from ..auth import current_user
 
         user = current_user(request, hub_dir)
         request.state.hz_user = user
-        return normalize(user.email) if user else ""
+        return (str(user.id), normalize(user.email)) if user else ("", "")
 
-    def user_of(request: Request, email: str):
-        """The signed-in account behind ``email`` (default mode), for the
-        connector flow. A test's ``session_email`` hook has no account object,
-        so one is resolved the way chat turns resolve it."""
+    def user_of(request: Request, account: str, email: str):
+        """The signed-in account, for the connector flow."""
         user = getattr(request.state, "hz_user", None)
         if user is not None:
             return user
         from ..auth import AuthUser
-        from ..connectors import tokens
 
-        uid = tokens.user_id_for(hub_dir, email)
-        return AuthUser(id=uid, email=email) if uid else None
+        return AuthUser(id=account, email=email) if account else None
 
     def bind(request: Request, j: dict):
-        """(email, None) for the journey's own signed-in subject, else
-        (None, the response to send)."""
+        """((account, email), None) for the journey's own signed-in account,
+        else (None, the response to send). A link made before links recorded
+        their account no longer works: the person asks for a new one."""
         try:
-            email = email_of(request)
+            account, email = who_of(request)
         except HTTPException as exc:
             return None, _page("Try again shortly",
                                ["Your sign-in could not be checked right now."], exc.status_code)
         if not email:
             return None, _sign_in(j["id"])
-        if email != j["subject"]:
+        if email != j["subject"] or not j.get("account") or account != j["account"]:
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="deny", reason="wrong-account")
             return None, _page("This link is for another account",
@@ -202,7 +231,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                                 f"{_e(email)}.",
                                 "Sign in with the account that asked, or ask the agent "
                                 "again from your own chat."], 403, tone="bad")
-        return email, None
+        return (account, email), None
 
     def fresh(j: dict) -> dict:
         from . import finalize
@@ -224,7 +253,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             log.warning("connect: access re-check failed", exc_info=True)
             return False
 
-    @router.get("/{jid}")
+    @router.get("/portal/connect/{jid}")
     def page(jid: str, request: Request):
         j = store.get(hub_dir, jid)
         if j is None:
@@ -232,23 +261,25 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         j = fresh(j)
         if j["status"] in ("expired", "superseded"):
             return _gone(j)
-        email, refusal = bind(request, j)
+        who, refusal = bind(request, j)
         if refusal is not None:
             # Signed out: sign in, then come straight back to this page.
             return _redirect_to_sign_in(j["id"]) if refusal.status_code == 401 else refusal
+        email = who[1]
         if j["status"] not in store.OPEN:
             return _outcome(j, email)
         app = _e(label(j["app"]))
+        agent = _e(_agent_name(hub_dir, j["hub"]))
         base = f"/portal/connect/{quote(jid)}"
         return _page(f"Connect {label(j['app'])}",
-                     [f"Connect {app} for {_e(email)}.",
-                      f"You will be sent to {app} to approve access, then brought back here."],
+                     [f"{agent} will use {app} as you.", f"Signed in as {_e(email)}"],
+                     eyebrow=_agent_name(hub_dir, j["hub"]),
                      actions=(f'<form method="post" action="{base}/start">'
                               f'<button class="primary" type="submit">Continue</button></form>'
                               f'<form method="post" action="{base}/cancel">'
                               f'<button type="submit">Cancel</button></form>'))
 
-    @router.post("/{jid}/start")
+    @router.post("/portal/connect/{jid}/start")
     def start(jid: str, request: Request):
         from ..access.session import require_same_origin
 
@@ -264,9 +295,10 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         j = fresh(j)
         if j["status"] in ("expired", "superseded"):
             return _gone(j)
-        email, refusal = bind(request, j)
+        who, refusal = bind(request, j)
         if refusal is not None:
             return refusal
+        account, email = who
         if j["status"] not in store.OPEN:
             return _outcome(j, email)
         if not still_permitted(j):
@@ -276,33 +308,21 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                          [f"You no longer have permission to connect {_e(label(j['app']))}.",
                           "Ask your administrator."], 403, tone="bad")
         try:
-            if j["provider"] == providers.ConnectorProvider.name:
-                user = user_of(request, email)
-                if user is None:
-                    return _page("Cannot start", ["Your account could not be found. Sign in "
-                                                  "again and reopen the link."], 403, tone="bad")
-                target = providers.begin_url(hub_dir, j, request=request, user=user)
-            else:
-                target = providers.begin_url(hub_dir, j)
+            user = user_of(request, account, email)
+            if user is None:
+                return _page("Cannot start", ["Your account could not be found. Sign in "
+                                              "again and reopen the link."], 403, tone="bad")
+            target = providers.begin_url(hub_dir, j, request=request, user=user)
         except JourneyError as err:
             return _page("Cannot start", [_e(err.message)], 410, tone="bad")
         if not store.mark_started(hub_dir, jid, ttl=ttl()):
             return _gone(store.get(hub_dir, jid) or j)
         store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                     decision="started", reason=j["provider"] or "")
-        resp = RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
+        return RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
                                                                   "Referrer-Policy": "no-referrer"})
-        if j["provider"] == providers.OwuiMcpProvider.name:
-            # The edge sends Open WebUI's post-authorization redirect back to our
-            # done page while this cookie is present (see edge.py). Hubzoid's
-            # own flow returns to the done page by itself.
-            secure = (request.url.scheme == "https"
-                      or request.headers.get("x-forwarded-proto", "").lower() == "https")
-            resp.set_cookie(COOKIE, jid, max_age=ttl(), path="/", httponly=True,
-                            samesite="lax", secure=secure)
-        return resp
 
-    @router.post("/{jid}/cancel")
+    @router.post("/portal/connect/{jid}/cancel")
     def cancel(jid: str, request: Request):
         from ..access.session import require_same_origin
         try:
@@ -313,26 +333,26 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         j = store.get(hub_dir, jid)
         if j is None:
             return _not_found()
-        email, refusal = bind(request, j)
+        who, refusal = bind(request, j)
         if refusal is not None:
             return refusal
+        email = who[1]
         if store.transition(hub_dir, jid, frm=store.OPEN, to="cancelled"):
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="cancelled", reason="cancelled on the link page")
-        resp = _outcome(store.get(hub_dir, jid) or j, email)
-        resp.delete_cookie(COOKIE, path="/")
-        return resp
+        return _outcome(store.get(hub_dir, jid) or j, email)
 
-    @router.get("/{jid}/done")
+    @router.get("/portal/connect/{jid}/done")
     def done(jid: str, request: Request):
         # Query parameters from the provider's redirect are deliberately ignored.
         j = store.get(hub_dir, jid)
         if j is None:
             return _not_found()
-        email, refusal = bind(request, j)
+        who, refusal = bind(request, j)
         if refusal is not None:
             return (_redirect_to_sign_in(j["id"], "/done") if refusal.status_code == 401
                     else refusal)
+        email = who[1]
         j = fresh(j)
         if j["status"] in store.OPEN:
             app = _e(label(j["app"]))
@@ -347,30 +367,141 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                 "if(m){m.textContent='The connection has not completed. If you cancelled "
                 "or closed the sign-in window, ask the agent again for a new link.'}}}"
                 "setTimeout(tick,1500)})();")
-            resp = _page("Finishing up",
+            return _page("Finishing up",
                          [f'<span id="wait">Checking your {app} connection…</span>',
                           "This page updates by itself."], 202, script=script)
-        else:
-            resp = _outcome(j, email)
-        resp.delete_cookie(COOKIE, path="/")
-        return resp
+        return _outcome(j, email)
 
-    @router.get("/{jid}/status")
+    @router.get("/portal/connect/{jid}/status")
     def status(jid: str, request: Request):
         hdrs = {"Cache-Control": "no-store"}
         j = store.get(hub_dir, jid)
         if j is None:
             return JSONResponse({"state": "unknown"}, status_code=404, headers=hdrs)
         try:
-            email = email_of(request)
+            account, email = who_of(request)
         except HTTPException as exc:
             return JSONResponse({"state": "unavailable"}, status_code=exc.status_code, headers=hdrs)
         if not email:
             return JSONResponse({"state": "sign-in"}, status_code=401, headers=hdrs)
-        if email != j["subject"]:
+        if email != j["subject"] or not j.get("account") or account != j["account"]:
             return JSONResponse({"state": "forbidden"}, status_code=403, headers=hdrs)
         j = fresh(j)
         return JSONResponse({"state": j["status"], "app": j["app"],
                              "checked": int(time.time())}, headers=hdrs)
 
+    # ---- Your connections ------------------------------------------------------
+    @router.get(PAGE)
+    def connections(request: Request):
+        """Every connector this person may use, with its status and one action.
+        Open WebUI mode only: the web app has its own Settings → Connections."""
+        if not legacy() and session_email is None:
+            return RedirectResponse("/account/connections", status_code=302)
+        try:
+            account, email = who_of(request)
+        except HTTPException as exc:
+            return _page("Try again shortly", ["Your sign-in could not be checked right now."],
+                         exc.status_code)
+        if not email:
+            return RedirectResponse("/auth?redirect=" + quote(PAGE, safe="/"), status_code=302,
+                                    headers={"Cache-Control": "no-store"})
+        from ..access import store_for
+
+        if store_for(hub_dir).is_suspended(email):
+            return _page("Your connections", ["Your access is blocked. Contact your administrator."],
+                         403, tone="bad")
+        rows = []
+        for c, status in _mine(hub_dir, account, email):
+            name = _e(c.name)
+            action = ""
+            if status == "shared":
+                pill = '<span class="pill">Shared</span>'
+            elif status == "connected":
+                pill = '<span class="pill ok">Connected</span>'
+                action = _button(f"{PAGE}/{quote(c.id)}/disconnect", "Disconnect")
+            elif status == "expired":
+                pill = '<span class="pill bad">Expired</span>'
+                action = _button(f"{PAGE}/{quote(c.id)}/connect", "Reconnect", primary=True)
+            else:
+                pill = '<span class="pill">Not connected</span>'
+                action = _button(f"{PAGE}/{quote(c.id)}/connect", "Connect", primary=True)
+            rows.append(f"<tr><td><b>{name}</b></td><td>{pill}</td><td>{action}</td></tr>")
+        table = f"<table>{''.join(rows)}</table>" if rows else ""
+        return _page("Your connections",
+                     [f"Signed in as {_e(email)}"] if rows else
+                     ["Nothing to connect yet.", f"Signed in as {_e(email)}"], extra=table)
+
+    @router.post(PAGE + "/{connector_id}/connect")
+    def connect_from_page(connector_id: str, request: Request):
+        from ..access.session import require_same_origin
+        from ..connectors import ConnectorError, oauth_flow, registry
+
+        try:
+            require_same_origin(request)
+            account, email = who_of(request)
+        except HTTPException:
+            return _page("Request refused", ["Open Your connections and try again."], 403,
+                         tone="bad")
+        c = registry.get(hub_dir, connector_id)
+        if not email or c is None or not c.enabled or c.auth_type == "shared" or not any(
+                m.id == c.id for m, _ in _mine(hub_dir, account, email)):
+            return _page("Not available", ["Ask your administrator."], 403, tone="bad")
+        user = user_of(request, account, email)
+        back = f"{PAGE}?connected={quote(c.id)}"
+        try:
+            if c.auth_type == "none":
+                oauth_flow.connect_without_auth(hub_dir, c, user)
+                target = back
+            else:
+                target = oauth_flow.start(hub_dir, c, user, origin=oauth_flow.origin_for(request),
+                                          return_to=back)
+        except ConnectorError as err:
+            return _page("Cannot connect", [_e(err.message)], err.status, tone="bad")
+        return RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
+                                                                  "Referrer-Policy": "no-referrer"})
+
+    @router.post(PAGE + "/{connector_id}/disconnect")
+    def disconnect_from_page(connector_id: str, request: Request):
+        from ..access.session import require_same_origin
+        from ..connectors import tokens
+
+        try:
+            require_same_origin(request)
+            account, email = who_of(request)
+        except HTTPException:
+            return _page("Request refused", ["Open Your connections and try again."], 403,
+                         tone="bad")
+        if account:
+            tokens.disconnect(hub_dir, account, connector_id)
+        return RedirectResponse(PAGE, status_code=303, headers={"Cache-Control": "no-store"})
+
     return router
+
+
+def _button(action: str, text: str, *, primary: bool = False) -> str:
+    cls = ' class="primary"' if primary else ""
+    return (f'<form method="post" action="{action}"><button{cls} type="submit">'
+            f"{html.escape(text)}</button></form>")
+
+
+def _mine(hub_dir: Path, account: str, email: str) -> list:
+    """``[(connector, status)]`` the person may use somewhere in this deployment
+    (offered in an agent where they hold its grant), plus any they are still
+    connected to. Status: connected, expired, none or shared."""
+    from ..connectors import per_user, registry, tokens
+
+    conns = {c.connector_id: c for c in tokens.for_user(hub_dir, account)} if account else {}
+    listed = [c for c in registry.list_all(hub_dir) if c.enabled]
+    allowed = per_user.allowed_ids(hub_dir, email, [c.id for c in listed])
+    out = []
+    for c in listed:
+        if c.id not in allowed and c.id not in conns:
+            continue
+        if c.auth_type == "shared":
+            status = "shared"
+        elif c.id in conns:
+            status = "expired" if conns[c.id].status == "expired" else "connected"
+        else:
+            status = "none"
+        out.append((c, status))
+    return out

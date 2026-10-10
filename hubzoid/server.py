@@ -421,6 +421,12 @@ def build_app() -> FastAPI:
 
         webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
                      model_label=model_label)
+    else:
+        # Connectors are managed in the Console in both modes: its API, people's
+        # connections and the OAuth return (the edge routes /oauth/connectors/ here).
+        from .connectors import routes as connector_routes
+
+        connector_routes.mount(app, hub_dir)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
@@ -660,7 +666,9 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         account_id = None
     try:
         if verified and account_id:
-            gs.upsert_identity(email=verified, owui_id=account_id)
+            from .access.session import bind_owui_account
+
+            bind_owui_account(hub_dir, verified, account_id)
         blocked = bool(verified and gs.is_suspended(verified))
     except Exception:
         raise HTTPException(503, detail="access check unavailable")

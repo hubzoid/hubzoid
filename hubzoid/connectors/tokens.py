@@ -96,14 +96,19 @@ def _conn(row) -> Connection:
 # ---------------------------------------------------------------------------
 def user_id_for(hub_dir, email: str | None) -> str | None:
     """The account id tokens are stored under for ``email``, resolved the way
-    sign-in resolves a request: the local owner when sign-in is off, else the
-    active Hubzoid account with that email. None for anyone else, so a deleted
-    account's connections never pass to a new account reusing the email."""
+    sign-in resolves a request: in Open WebUI mode the verified Open WebUI
+    account bound to the email, else the local owner when sign-in is off, else
+    the active Hubzoid account with that email. None for anyone else, so a
+    deleted account's connections never pass to a new account reusing the email.
+    ``hubzoid migrate openwebui`` keeps each Open WebUI account id as the Hubzoid
+    account id, so connections made in Open WebUI mode carry over."""
     from .. import appmode
 
     email = normalize(email)
     if not email:
         return None
+    if appmode.is_openwebui(Path(hub_dir)):
+        return _owui_account_id(hub_dir, email)
     if not appmode.auth_enabled(Path(hub_dir)):
         from ..auth import local_owner
 
@@ -121,6 +126,19 @@ def user_id_for(hub_dir, email: str | None) -> str | None:
     if not row or (row[1] or "active") != "active":
         return None
     return str(row[0])
+
+
+def _owui_account_id(hub_dir, email: str) -> str | None:
+    """The Open WebUI account the bridge last verified for ``email`` (from Open
+    WebUI's forwarded headers on a turn, or a live session check on a page).
+    None while there is none, while it awaits approval, or while it is blocked."""
+    from ..access import store_for
+
+    gs = store_for(Path(hub_dir))
+    ident = gs.identity(email) or {}
+    if not ident.get("owui_id") or ident.get("pending") or gs.is_suspended(email):
+        return None
+    return str(ident["owui_id"])
 
 
 # ---------------------------------------------------------------------------

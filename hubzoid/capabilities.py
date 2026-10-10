@@ -46,8 +46,9 @@ from typing import Callable, Iterable
 
 log = logging.getLogger(__name__)
 
-#: Drawer groups, in display order. Obsolete grants get their own group last.
-GROUPS = ("hub", "tools", "restricted", "workflows", "admin")
+#: Drawer groups, in display order: the agent's own tools first, Hubzoid's
+#: built-ins last. Obsolete grants get their own group after them.
+GROUPS = ("hub", "restricted", "connectors", "workflows", "admin", "tools")
 #: Optional sections inside a group, in display order after the unsectioned
 #: rows. Presentation only: e.g. Hubzoid tools > Workflows, Access control.
 SECTIONS = ("workflows", "access")
@@ -309,7 +310,7 @@ def _connectors(hub_dir: Path, taken: set[str]) -> list[dict]:
         if not pid or pid in taken:
             continue
         taken.add(pid)
-        group = row.get("group") if row.get("group") in GROUPS else "tools"
+        group = row.get("group") if row.get("group") in GROUPS else "connectors"
         section = row.get("section") if row.get("section") in SECTIONS else ""
         out.append(dict(
             permission=pid, label=row.get("label") or _title(pid),

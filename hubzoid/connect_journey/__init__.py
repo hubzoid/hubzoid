@@ -2,32 +2,31 @@
 an app (for example Gmail), confirms the verified result on a browser page and
 back in the chat that asked. Pages live under `/portal/connect/`.
 
-An app is connected through its Hubzoid connector (``hubzoid.connectors``, the
-default UI mode), or in Open WebUI mode through the OAuth 2.1 MCP
-server registered for it in Open WebUI (``OWUI_NATIVE_MCP``). An app with no
-such connector or server is not available to connect.
+An app is connected through its Hubzoid connector (``hubzoid.connectors``),
+added in the Console, in both UI modes. An app with no switched-on connector is
+not available to connect.
 
 The journey, end to end:
 
   1. The agent calls ``connect_account(app)`` (`tools/connect_tools.py`). The
-     tool resolves the one connector (or Open WebUI server) for the app, checks
+     tool resolves the one connector for the app, checks
      the ``connector_<app>`` capability through ``guard.decide`` (surface gate
      included) and asks the provider whether the caller is connected already.
      If not, :func:`start` records a short-lived journey bound to the trusted
-     caller and returns ``<public>/portal/connect/<id>``, never a provider URL.
+     caller's account and returns ``<public>/portal/connect/<id>``, never a
+     provider URL.
   2. The link page requires a signed-in session (Hubzoid's, or Open WebUI's in
-     Open WebUI mode) whose email is the journey's subject (`web.py`). ``Start``
-     begins the authorization: Hubzoid's own OAuth flow, or Open WebUI's
-     authorize route.
+     Open WebUI mode) for the journey's own account and email (`web.py`).
+     ``Start`` begins Hubzoid's own OAuth flow.
   3. After consent the browser returns to ``/portal/connect/<id>/done``, which
      asks the provider whether *this* journey connected. Callback parameters
      are never read there.
   4. The originating hub's inbound process confirms the result in WhatsApp,
      once (`notify.py`), and may offer a one-use "Reply YES" continuation.
 
-Off unless ``HUBZOID_CONNECT_JOURNEY`` is on for the hub (the tool is not
-registered and no journey can be created). The pages are always mounted but
-only ever serve journeys a hub with the switch on created.
+On unless ``HUBZOID_CONNECT_JOURNEY`` is set to false for the hub (then the
+tool is not registered and no journey can be created). The pages are always
+mounted.
 """
 from __future__ import annotations
 
@@ -44,7 +43,6 @@ from .providers import JourneyError, label
 
 log = logging.getLogger("hubzoid.connect")
 
-_TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_TTL = 600
 _SURFACE_REASONS = {
     "anonymous": "Connecting an account needs a signed-in person.",
@@ -54,13 +52,18 @@ _SURFACE_REASONS = {
 
 __all__ = [
     "JourneyError", "attach_continuation", "build_router", "capability", "enabled",
-    "finalize", "label", "link_url", "permissions", "start", "take_continuation",
+    "finalize", "label", "link_url", "list_for", "permissions", "start", "take_continuation",
 ]
 
 
+_FALSY = {"0", "false", "no", "off"}
+
+
 def enabled(env=None) -> bool:
+    """On by default: an agent can always send a connection link for the
+    connectors it offers. ``HUBZOID_CONNECT_JOURNEY=false`` turns it off."""
     env = os.environ if env is None else env
-    return (env.get("HUBZOID_CONNECT_JOURNEY") or "").strip().lower() in _TRUTHY
+    return (env.get("HUBZOID_CONNECT_JOURNEY") or "").strip().lower() not in _FALSY
 
 
 def ttl(env=None) -> int:
@@ -124,33 +127,11 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
 
 
 def permissions(hub_dir: Path) -> list[dict]:
-    """Connector capabilities (`connector_<app>`) this hub offers (a managed
-    hub needs these grants for per-turn injection too): one per registered
-    Hubzoid connector in the default UI mode, or one per Open WebUI OAuth MCP
-    server when ``OWUI_NATIVE_MCP`` is on in Open WebUI mode."""
-    from .. import appmode, owui_mcp
-    from ..access import owui_tool_servers as servers
+    """Connector capabilities (`connector_<id>`) this hub offers: one per
+    connector offered in it (``hubzoid.connectors.registry``), in both modes."""
+    from ..connectors import registry
 
-    hub_dir = Path(hub_dir)
-    if not appmode.is_openwebui(hub_dir):
-        from ..connectors import registry
-
-        return registry.permissions(hub_dir)
-    out: dict[str, dict] = {}
-    if owui_mcp.enabled():
-        for c in servers.list_mcp_connections(hub_dir):
-            if c.get("auth_type") not in servers.OAUTH_AUTH_TYPES:
-                continue
-            app = owui_mcp.app_key(c["id"])
-            if app:
-                out.setdefault(app, _perm(app, c.get("name") or label(app)))
-    return [out[k] for k in sorted(out)]
-
-
-def _perm(app: str, name: str) -> dict:
-    return {"permission": capability(app), "label": f"Connect {name}",
-            "description": f"Connect and use their own {name} account through this agent.",
-            "sensitive": True}
+    return registry.permissions(Path(hub_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +193,7 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
     if not key:
         raise JourneyError("unknown-app", "Name the app to connect, for example Gmail.")
     subject = normalize(ident.user)
-    # An app with no Open WebUI server is simply not available here: say so
+    # An app with no connector is simply not available here: say so
     # before asking for a capability no one could grant. Everything else about
     # the setup (such as a duplicate server) is told only to permitted callers.
     providers.require_available(hub_dir, key)
@@ -222,6 +203,12 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
                     decision="deny", reason=reason)
         raise JourneyError("denied", _denied_message(hub_dir, key, reason))
     provider = providers.for_app(hub_dir, key)
+    from ..connectors import registry
+
+    connector = registry.get(hub_dir, key)
+    if connector is not None and connector.auth_type == "shared":
+        # One company account: there is nothing for the person to connect.
+        return {"state": "shared", "app": key, "label": connector.name}
 
     try:
         status = provider.status(subject)
@@ -243,6 +230,14 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
                 store.claim_notify(hub_dir, j["id"], now=now)
         return {"state": "connected", "app": key, "label": label(key)}
 
+    from ..connectors import tokens
+
+    # The link is for this account, not just this email (a new account that
+    # reuses the email must not be able to use it).
+    account = tokens.user_id_for(hub_dir, subject)
+    if not account:
+        raise JourneyError("unavailable", "Your account could not be confirmed. Sign in to the "
+                                          "chat again, then ask again.")
     handle = None
     if chat_id and surface in ("whatsapp", "telegram") and chat_id.startswith(f"{surface}-"):
         handle = chat_id[len(surface) + 1:]
@@ -251,7 +246,7 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
     _row, superseded = store.create(
         hub_dir, jid=jid, hub=hub, subject=subject, surface=surface, chat_id=chat_id,
         handle=handle, app=key, provider=provider.name, provider_ref=provider.server_id,
-        ttl=life, now=now)
+        ttl=life, now=now, account=account)
     for old in superseded:
         store.audit(hub_dir, hub=old["hub"], subject=subject, surface=old["surface"],
                     app=key, decision="superseded", reason="newer link")
@@ -259,6 +254,35 @@ def start(hub_dir: Path, *, app: str, reconnect: bool = False,
                 decision="allow", reason="reconnect link" if reconnect else "link")
     return {"state": "link", "url": link_url(jid), "id": jid, "app": key,
             "label": label(key), "expires_in": life, "subject": subject}
+
+
+def list_for(hub_dir: Path) -> list[dict]:
+    """What the current caller may connect in this agent, for ``connect_account``
+    with no app: each connector this agent offers that passes the identity,
+    surface, block and grant checks, with its status. Never settings or secrets."""
+    from ..access.identity import current_identity
+    from ..connectors import registry
+    from . import providers
+
+    hub_dir = Path(hub_dir)
+    ident = current_identity()
+    if ident.is_anonymous:
+        raise JourneyError("anonymous", _SURFACE_REASONS["anonymous"])
+    subject = normalize(ident.user)
+    offered = registry.offered_in(hub_dir, hub_dir.name)
+    out = []
+    for c in registry.list_all(hub_dir):
+        if not c.enabled or c.id not in offered or not may_start(hub_dir, ident, c.id)[0]:
+            continue
+        if c.auth_type == "shared":
+            status = "shared"
+        else:
+            try:
+                status = providers.ConnectorProvider(hub_dir, c.id).status(subject)
+            except Exception:  # noqa: BLE001 — unknown is not connected
+                status = "unknown"
+        out.append({"app": c.id, "label": c.name, "status": status})
+    return out
 
 
 def finalize(hub_dir, journey: dict, *, provider=None,

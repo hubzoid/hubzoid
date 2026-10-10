@@ -1,5 +1,7 @@
-"""HTTP for personal connections (default UI mode, mounted by ``hubzoid.webapp``
-before the Console's static files so ``/portal/api/connectors`` is not shadowed).
+"""HTTP for personal connections, in both UI modes (mounted by ``hubzoid.webapp``,
+or by the bridge in Open WebUI mode, before the Console's static files so
+``/portal/api/connectors`` is not shadowed). Who is signed in comes from a live
+check of the session: Hubzoid's, or Open WebUI's in Open WebUI mode.
 
   Console (organization administrators)
     GET    /portal/api/connectors                 the registry, never a secret
@@ -8,7 +10,7 @@ before the Console's static files so ``/portal/api/connectors`` is not shadowed)
     DELETE /portal/api/connectors/{id}            remove, with every connection to it
     POST   /portal/api/connectors/{id}/test       discovery result, changes nothing
 
-  People (signed in)
+  People (signed in; also under /portal/api/connections, which both modes route here)
     GET    /api/connections                       [{connector_id, name, connected, status,
                                                     connected_at, allowed, ...}]
     POST   /api/connections/{id}/connect          {authorize_url}
@@ -40,6 +42,29 @@ log = logging.getLogger("hubzoid.connectors")
 _NO_STORE = {"Cache-Control": "no-store"}
 _REDIRECT_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 ACCOUNT_PAGE = "/account/connections"
+PORTAL_PAGE = "/portal/connections"  # Open WebUI mode has no chat-app account pages
+
+
+def account_page(hub_dir: Path) -> str:
+    """Where a person manages their connections in this UI mode."""
+    from .. import appmode
+
+    return PORTAL_PAGE if appmode.is_openwebui(hub_dir) else ACCOUNT_PAGE
+
+
+def signed_in(request: Request, hub_dir: Path):
+    """The signed-in account (``AuthUser``) or None. In Open WebUI mode it is
+    built from a live check of the Open WebUI session: its account id and
+    email, never an email lookup or a forwarded chat header."""
+    from .. import appmode
+    from ..auth import AuthUser, current_user
+
+    if not appmode.is_openwebui(hub_dir):
+        return current_user(request, hub_dir)
+    from ..access.session import verified_person
+
+    who = verified_person(request, hub_dir)
+    return AuthUser(id=who[0], email=who[1]) if who else None
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -97,10 +122,16 @@ def build_router(hub_dir: Path) -> APIRouter:
                                                 "HUBZOID_PUBLIC_URL to the address people use.")
 
     def person(request: Request):
+        from .. import appmode
         from ..auth import require_user
 
-        trusted_host(request)
-        return require_user(request, hub_dir)
+        if not appmode.is_openwebui(hub_dir):
+            trusted_host(request)
+            return require_user(request, hub_dir)
+        user = signed_in(request, hub_dir)
+        if user is None:
+            raise _error(401, "unauthenticated", "Sign in to continue.")
+        return user
 
     def admin(request: Request):
         """Organization administrators, as the Console decides them: an
@@ -110,10 +141,15 @@ def build_router(hub_dir: Path) -> APIRouter:
         from ..access.service import AccessService, Actor, Denied
         from ..auth import LOCAL_OWNER_EMAIL, require_admin
 
-        trusted_host(request)
-        user = require_admin(request, hub_dir)
-        if not appmode.auth_enabled(hub_dir) and normalize(user.email) == LOCAL_OWNER_EMAIL:
-            return user
+        if appmode.is_openwebui(hub_dir):
+            # Open WebUI's own admin role decides nothing here: the Console's
+            # organization-wide Manage access does, as for everything else.
+            user = person(request)
+        else:
+            trusted_host(request)
+            user = require_admin(request, hub_dir)
+            if not appmode.auth_enabled(hub_dir) and normalize(user.email) == LOCAL_OWNER_EMAIL:
+                return user
         try:
             scope = AccessService(hub_dir).scope(Actor(normalize(user.email), "console", "session"))
         except Denied as exc:
@@ -219,6 +255,7 @@ def build_router(hub_dir: Path) -> APIRouter:
 
     # ---- People: their own connections -----------------------------------------
     @router.get("/api/connections")
+    @router.get("/portal/api/connections")
     def my_connections(request: Request):
         user = person(request)
         mine = {c.connector_id: c for c in tokens.for_user(hub_dir, user.id)}
@@ -236,6 +273,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         return JSONResponse(out, headers=_NO_STORE)
 
     @router.post("/api/connections/{connector_id}/connect")
+    @router.post("/portal/api/connections/{connector_id}/connect")
     def connect(connector_id: str, request: Request, body: Any = Depends(json_body)):
         user = person(request)
         same_origin(request)
@@ -259,7 +297,8 @@ def build_router(hub_dir: Path) -> APIRouter:
                 oauth_flow.connect_without_auth(hub_dir, c, user)
                 audit(user.email, c.id, "connected", "no sign-in needed")
                 return JSONResponse({"authorize_url": return_to or
-                                     f"{ACCOUNT_PAGE}?connected={c.id}"}, headers=_NO_STORE)
+                                     f"{account_page(hub_dir)}?connected={c.id}"},
+                                    headers=_NO_STORE)
             url = oauth_flow.start(hub_dir, c, user, origin=oauth_flow.origin_for(request),
                                    return_to=return_to)
         except ConnectorError as err:
@@ -267,6 +306,7 @@ def build_router(hub_dir: Path) -> APIRouter:
         return JSONResponse({"authorize_url": url}, headers=_NO_STORE)
 
     @router.delete("/api/connections/{connector_id}", status_code=204)
+    @router.delete("/portal/api/connections/{connector_id}", status_code=204)
     def disconnect(connector_id: str, request: Request):
         user = person(request)
         same_origin(request)
@@ -279,12 +319,11 @@ def build_router(hub_dir: Path) -> APIRouter:
     # ---- Browser: the provider sends the person back here ------------------------
     @router.get("/oauth/connectors/{connector_id}/callback")
     def callback(connector_id: str, request: Request):
-        from ..auth import current_user
-
         q = request.query_params
-        fallback = oauth_flow.with_params(ACCOUNT_PAGE, {"connector": connector_id})
+        page = account_page(hub_dir)
+        fallback = oauth_flow.with_params(page, {"connector": connector_id})
         try:
-            user = current_user(request, hub_dir)
+            user = signed_in(request, hub_dir)
         except HTTPException:
             return _redirect(oauth_flow.with_params(fallback, {"error": "unavailable"}))
         if user is None:
@@ -304,7 +343,7 @@ def build_router(hub_dir: Path) -> APIRouter:
             audit(user.email, connector_id, "failed", err.code)
             return _redirect(oauth_flow.with_params(fallback, {"error": err.code}))
         audit(user.email, connector_id, "connected", "authorized with the provider")
-        return _redirect(done.return_to or oauth_flow.with_params(ACCOUNT_PAGE,
+        return _redirect(done.return_to or oauth_flow.with_params(page,
                                                                   {"connected": connector_id}))
 
     return router
@@ -334,20 +373,25 @@ def _test(hub_dir: Path, c: registry.Connector, origin: str) -> dict:
 
     result: dict = {"connector_id": c.id, "auth_type": c.auth_type,
                     "redirect_uri": oauth_flow.redirect_uri(origin, c.id)}
-    if c.auth_type == "none":
+    if c.auth_type in ("none", "shared"):
         try:
             with net.client(c.url) as client:
+                if c.auth_type == "shared":
+                    client.headers.update(registry.shared_headers(hub_dir, c.id) or {})
                 probe = discovery.probe(client, c.url)
         except ConnectorError as err:
             return {**result, "ok": False, "error": {"code": err.code, "message": err.message}}
         ok = probe.requires_auth is False
         result.update(ok=ok, requires_auth=probe.requires_auth, status=probe.status)
         if not ok:
-            result["error"] = (
-                {"code": "requires_auth", "message": "The server asks for sign-in. Set "
-                 "authentication to OAuth."} if probe.requires_auth
-                else {"code": "unexpected_status",
-                      "message": f"The server answered with status {probe.status}."})
+            if probe.requires_auth and c.auth_type == "shared":
+                result["error"] = {"code": "key_refused", "message": "The server refused the key."}
+            elif probe.requires_auth:
+                result["error"] = {"code": "requires_auth", "message": "The server asks for "
+                                   "sign-in. Set authentication to OAuth."}
+            else:
+                result["error"] = {"code": "unexpected_status",
+                                   "message": f"The server answered with status {probe.status}."}
         return result
     try:
         disc = discovery.discover(c.url)

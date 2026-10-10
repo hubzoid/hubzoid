@@ -27,10 +27,10 @@ import {
   type ConnectorInput,
   type ConnectorTest,
   type Hub,
+  type HubMcpServer,
   type Me,
-  type OpenWebUIConnector,
 } from "../api";
-import { LoadState } from "../components/common";
+import { InfoHelp, LoadState } from "../components/common";
 import { useData } from "../hooks/useData";
 import { useNavigationGuard } from "../hooks/useRoute";
 
@@ -60,6 +60,12 @@ function useConnectors() {
 
 /** What people see as the sign-in method. */
 function SignInTag({ c }: { c: Connector }) {
+  if (c.auth_type === "shared")
+    return (
+      <Tooltip title="One company key for everyone. Nobody connects.">
+        <Tag color="purple">Shared key</Tag>
+      </Tooltip>
+    );
   if (c.auth_type === "none")
     return (
       <Tooltip title="No sign-in: people turn it on for themselves and the server sees no account.">
@@ -79,81 +85,69 @@ function SignInTag({ c }: { c: Connector }) {
 }
 
 /**
- * An agent's Connectors tab. In the Hubzoid web app, connectors are registered
- * once for the deployment and offered in the agents that list them; this tab
- * manages the ones this agent offers (organization administrators). In Open
- * WebUI mode the servers are registered in Open WebUI and listed read-only.
+ * An agent's Connectors tab, the same in both UI modes. Connectors are
+ * registered once for the deployment and offered in the agents that list them
+ * (organization administrators). The hub folder's own servers are listed
+ * read-only below.
  */
 export function AgentConnectors({ hub, me }: { hub: Hub; me: Me }) {
-  if (me.web_app === false) return <OpenWebUIConnectors hub={hub} />;
   if (!me.org_admin)
     return (
       <div className="panel">
-        <Title level={2}>Connectors</Title>
-        <Paragraph type="secondary">
-          Organization administrators add the remote MCP servers people connect to in this agent. Who
-          may use each one is in this agent’s access (“Connect &lt;name&gt;”).
-        </Paragraph>
+        <Title level={2}>
+          Connectors
+          <InfoHelp text="Organization administrators add connectors. Who may use each one is in this agent’s Access." />
+        </Title>
+        <HubFolderServers hub={hub} />
       </div>
     );
   return <ConnectorsScreen hub={hub} />;
 }
 
-function OpenWebUIConnectors({ hub }: { hub: Hub }) {
-  const data = useData<{ servers: OpenWebUIConnector[]; native: boolean }>(
-    "/openwebui-connectors?hub=" + encodeURIComponent(hub.key),
+/** The hub folder's connectors/.mcp.json, read-only. Names and settings only. */
+function HubFolderServers({ hub }: { hub: Hub }) {
+  const data = useData<{ servers: HubMcpServer[]; warning: string | null }>(
+    "/hub-mcp-servers?hub=" + encodeURIComponent(hub.key),
   );
+  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
+  const { servers, warning } = data.data;
+  if (!servers.length && !warning) return null;
   return (
-    <div className="panel">
-      <Title level={2}>Connectors</Title>
-      <Paragraph type="secondary">
-        This deployment uses Open WebUI, so its MCP servers are added and changed in Open WebUI
-        (Admin Panel → Settings → Integrations). People connect their own account there. Who may use
-        each one in {hub.name} is this agent’s access: “Connect &lt;name&gt;”.
-      </Paragraph>
-      {!data.data ? (
-        <LoadState error={data.error} retry={data.reload} />
-      ) : (
-        <>
-          {!data.data.native && (
-            <Alert
-              type="info"
-              showIcon
-              title="Personal connections are off"
-              description="Set OWUI_NATIVE_MCP=true for the agent to use the servers people connect in Open WebUI."
-              style={{ marginBottom: 12 }}
-            />
-          )}
-          <Table<OpenWebUIConnector>
-            rowKey="id"
-            size="middle"
-            pagination={false}
-            dataSource={data.data.servers}
-            locale={{ emptyText: <Empty description="No MCP servers are registered in Open WebUI." /> }}
-            columns={[
-              {
-                title: "Server",
-                key: "name",
-                render: (_, c) => (
-                  <div className="connector-cell">
-                    <Text strong>{c.name}</Text>
-                    <Text type="secondary" className="identity" style={{ display: "block" }}>
-                      {c.id} · {c.url}
-                    </Text>
-                  </div>
-                ),
-              },
-              { title: "Capability", key: "permission", render: (_, c) => <span className="identity">{c.permission}</span> },
-              {
-                title: "On",
-                key: "enabled",
-                width: 90,
-                render: (_, c) => (c.enabled ? <Tag color="green">On</Tag> : <Tag>Off</Tag>),
-              },
-            ]}
-          />
-        </>
-      )}
+    <div className="hub-folder-servers" style={{ marginTop: 20 }}>
+      <Title level={4}>
+        From the hub folder
+        <InfoHelp text="Servers in connectors/.mcp.json. Everyone who can use this agent gets them. Change them in the hub folder." />
+      </Title>
+      {warning && <Alert type="warning" showIcon title={warning} style={{ marginBottom: 8 }} />}
+      <Table<HubMcpServer>
+        rowKey="name"
+        size="small"
+        pagination={false}
+        dataSource={servers}
+        columns={[
+          { title: "Server", key: "name", render: (_, s) => <Text strong>{s.name}</Text> },
+          {
+            title: "Kind",
+            key: "kind",
+            render: (_, s) =>
+              s.source === "hubzoid" ? "Added by Hubzoid" : s.kind === "command" ? "Local command" : "URL",
+          },
+          {
+            title: "Settings",
+            key: "env",
+            render: (_, s) =>
+              s.env.length === 0 ? (
+                <Tag color="green">Ready</Tag>
+              ) : s.env.every((e) => e.set) ? (
+                <Tag color="green">Ready</Tag>
+              ) : (
+                <Tooltip title={`Missing in .env: ${s.env.filter((e) => !e.set).map((e) => e.name).join(", ")}`}>
+                  <Tag color="orange">Missing settings</Tag>
+                </Tooltip>
+              ),
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -267,12 +261,10 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <Title level={2}>Connectors</Title>
-            <Paragraph type="secondary">
-              Remote MCP servers people connect with their own account, such as Gmail, to use in{" "}
-              {hub.name}. Each person signs in for themselves, and the agent acts as them. People also
-              need “Connect &lt;name&gt;” in this agent’s access.
-            </Paragraph>
+            <Title level={2}>
+              Connectors
+              <InfoHelp text={`Remote MCP servers ${hub.name} can use. People also need “Connect …” or “Use …” in this agent’s Access.`} />
+            </Title>
           </div>
           <Space wrap>
             {others.length > 0 && (
@@ -420,6 +412,9 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
         }}
       />
       <TestDrawer run={test} onRetry={(c) => void runTest(c)} onClose={() => setTest(null)} />
+      <div className="panel">
+        <HubFolderServers hub={hub} />
+      </div>
     </>
   );
 }
@@ -432,13 +427,15 @@ type Draft = {
   id: string;
   name: string;
   url: string;
-  auth: "oauth" | "none";
+  auth: "oauth" | "none" | "shared";
   clientId: string;
   secret: string;
   dropSecret: boolean;
   scopes: string;
   tools: string[];
   enabled: boolean;
+  header: string;
+  key: string;
 };
 
 const EMPTY: Draft = {
@@ -452,6 +449,8 @@ const EMPTY: Draft = {
   scopes: "",
   tools: [],
   enabled: true,
+  header: "",
+  key: "",
 };
 
 function draftOf(c: Connector): Draft {
@@ -466,6 +465,8 @@ function draftOf(c: Connector): Draft {
     scopes: c.scopes ?? "",
     tools: c.tool_allowlist ?? [],
     enabled: c.enabled,
+    header: c.shared_header ?? "",
+    key: "",
   };
 }
 
@@ -528,6 +529,14 @@ function ConnectorDrawer({
     id: creating && !/^[a-z][a-z0-9_]{1,39}$/.test(id) ? "Use 2 to 40 lowercase letters, digits or _, starting with a letter." : null,
     url: urlProblem(draft.url),
     secret: draft.auth === "oauth" && draft.secret && !draft.clientId.trim() ? "A client secret needs its client ID." : null,
+    key:
+      draft.auth === "shared" && !draft.key && !(existing?.auth_type === "shared" && existing.has_shared_secret)
+        ? "Enter the key."
+        : null,
+    header:
+      draft.auth === "shared" && draft.header.trim() && !/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(draft.header.trim())
+        ? "Use a header name such as Authorization or X-API-Key."
+        : null,
   };
   const invalid = Object.values(problems).some(Boolean);
   const redirect = `${location.origin}/oauth/connectors/${id || "<id>"}/callback`;
@@ -564,6 +573,10 @@ function ConnectorDrawer({
       body.client_id = draft.clientId.trim() || null;
       if (draft.secret) body.client_secret = draft.secret;
       else if (draft.dropSecret || !body.client_id) body.client_secret = null;
+    }
+    if (draft.auth === "shared") {
+      body.shared_header = draft.header.trim() || null;
+      if (draft.key) body.shared_secret = draft.key;
     }
     if (creating) body.id = id;
     setBusy(true);
@@ -658,22 +671,58 @@ function ConnectorDrawer({
           />
         )}
         <div className="field">
-          <span className="field-label" id="connector-auth-label">Sign-in</span>
-          <Segmented<"oauth" | "none">
+          <span className="field-label" id="connector-auth-label">
+            Sign-in
+            <InfoHelp text="Each person signs in: everyone uses their own account. Shared key: one company account for everyone. No sign-in: the server needs no account." />
+          </span>
+          <Segmented<"oauth" | "shared" | "none">
             aria-labelledby="connector-auth-label"
             value={draft.auth}
             onChange={(v) => set("auth", v)}
             options={[
-              { value: "oauth", label: "Each person signs in (OAuth)" },
+              { value: "oauth", label: "Each person signs in" },
+              { value: "shared", label: "Shared key" },
               { value: "none", label: "No sign-in" },
             ]}
           />
-          <Text type="secondary" className="field-help">
-            {draft.auth === "oauth"
-              ? "People authorize with their own account at the provider. Hubzoid stores their tokens encrypted."
-              : "For servers that need no account. People turn it on for themselves."}
-          </Text>
         </div>
+        {draft.auth === "shared" && (
+          <>
+            <Field
+              id="connector-key"
+              label="Key"
+              problem={touched ? problems.key : null}
+              help={
+                existing?.has_shared_secret
+                  ? "A key is stored. Leave empty to keep it."
+                  : "Stored encrypted and never shown again."
+              }
+            >
+              <Input.Password
+                id="connector-key"
+                autoComplete="new-password"
+                value={draft.key}
+                placeholder={existing?.has_shared_secret ? "••••••••" : undefined}
+                onChange={(e) => set("key", e.target.value)}
+              />
+            </Field>
+            <Field
+              id="connector-header"
+              label="Header (optional)"
+              problem={touched ? problems.header : null}
+              help="Default Authorization: Bearer <key>."
+            >
+              <Input
+                id="connector-header"
+                className="identity"
+                value={draft.header}
+                placeholder="Authorization"
+                maxLength={64}
+                onChange={(e) => set("header", e.target.value)}
+              />
+            </Field>
+          </>
+        )}
         {draft.auth === "oauth" && (
           <>
             <Field

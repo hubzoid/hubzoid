@@ -33,6 +33,65 @@ log = logging.getLogger(__name__)
 _VAR_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
+def _mcp_file(hub_dir: Path) -> Path | None:
+    cdir = resolve_bucket(hub_dir, "connectors")
+    if cdir is None:
+        return None
+    for name in (".mcp.json", "mcp.json"):
+        if (cdir / name).is_file():
+            return cdir / name
+    return None
+
+
+def _var_names(value) -> set[str]:
+    if isinstance(value, str):
+        return set(_VAR_RE.findall(value))
+    if isinstance(value, dict):
+        return set().union(*(_var_names(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_var_names(v) for v in value)) if value else set()
+    return set()
+
+
+def describe(hub_dir: Path) -> dict:
+    """What the Console shows of the hub folder's MCP servers, read-only:
+    ``{"servers": [{name, kind, env: [{name, set}], source}], "warning"}``.
+
+    Reads the raw file and never interpolates: no value, header, command
+    argument or URL is returned, because any of them can hold a secret. Only
+    the names of the ``${VAR}`` references and whether each is set. A broken
+    file gives a warning, not an error."""
+    out: list[dict] = []
+    warning = None
+    path = _mcp_file(Path(hub_dir))
+    if path is not None:
+        try:
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+            servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
+            if not isinstance(servers, dict):
+                raise ValueError("mcpServers must be a mapping")
+        except (OSError, ValueError) as exc:
+            servers = {}
+            warning = f"{path.name} could not be read ({type(exc).__name__})."
+        for name, spec in servers.items():
+            if not isinstance(spec, dict):
+                continue
+            names = sorted(_var_names(spec))
+            out.append({"name": str(name), "kind": "command" if spec.get("command") else "url",
+                        "env": [{"name": n, "set": bool(os.environ.get(n))} for n in names],
+                        "source": "file"})
+    from .. import browser as browserlib
+
+    try:
+        entry = browserlib.mcp_config_entry_from_env() or {}
+    except Exception:  # noqa: BLE001 — display only
+        entry = {}
+    for name in entry:
+        if all(s["name"] != name for s in out):
+            out.append({"name": name, "kind": "url", "env": [], "source": "hubzoid"})
+    return {"servers": out, "warning": warning}
+
+
 def load_all_raw(hub_dir: Path) -> dict[str, dict]:
     """Return runtime-neutral MCP server configs: `{name: spec}`.
 

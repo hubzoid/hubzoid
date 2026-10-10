@@ -491,24 +491,14 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             ]
         }
 
-    @router.get("/openwebui-connectors")
+    @router.get("/hub-mcp-servers")
     @_denied
-    def openwebui_connectors(hub: str, admin=Depends(require_admin)):
-        """Open WebUI mode: the MCP servers registered in Open WebUI, read-only,
-        with the capability that lets a person use theirs in this agent.
-        They are added and changed in Open WebUI's settings."""
-        require_hub(admin, hub)
-        from . import appmode
+    def hub_mcp_servers(hub: str, admin=Depends(require_admin)):
+        """The hub folder's MCP servers (connectors/.mcp.json), read-only: names,
+        kind and which environment variables they need. Never a value."""
+        from .loaders import mcp as mcp_loader
 
-        if not appmode.is_openwebui(hub_dir):
-            return {"servers": [], "native": False}
-        from .access import owui_tool_servers
-        from .owui_mcp import capability as owui_capability, enabled as native_enabled
-
-        servers = [dict(id=c["id"], name=c["name"], url=c["url"], enabled=c["enabled"],
-                        permission=owui_capability(c["id"]))
-                   for c in owui_tool_servers.list_mcp_connections(hub_dir)]
-        return {"servers": servers, "native": native_enabled()}
+        return mcp_loader.describe(require_hub(admin, hub))
 
     @router.get("/permissions")
     @_denied

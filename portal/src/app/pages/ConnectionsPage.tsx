@@ -12,10 +12,11 @@ import { toast } from "../components/toast";
 import { Button, ConfirmDialog, Notice, Spinner, cx } from "../components/ui";
 import { SettingsFrame } from "./SettingsFrame";
 
-type Kind = "connected" | "attention" | "off" | "blocked";
+type Kind = "connected" | "attention" | "off" | "blocked" | "shared";
 
 function kindOf(c: Connection): Kind {
   if (c.allowed === false) return "blocked";
+  if (c.auth_type === "shared") return "shared";
   const status = (c.status || "").toLowerCase();
   if (c.connected && ["", "ok", "active", "connected", "valid"].includes(status)) return "connected";
   if (c.connected || ["expired", "error", "revoked", "invalid", "needs_reauth", "reauth", "failed"].includes(status))
@@ -28,6 +29,7 @@ const badge: Record<Kind, { text: string; className: string }> = {
   attention: { text: t.connections.needsAttention, className: "bg-warning-soft text-warning" },
   off: { text: t.connections.notConnected, className: "bg-sunken text-mute" },
   blocked: { text: t.connections.notAllowed, className: "bg-sunken text-mute" },
+  shared: { text: t.connections.shared, className: "bg-sunken text-mute" },
 };
 
 export default function ConnectionsPage({
@@ -149,7 +151,13 @@ export default function ConnectionsPage({
                     </span>
                   </div>
                   <p className="m-0 mt-0.5 text-[13px] text-mute">
-                    {kind === "blocked" ? t.connections.notAllowedHelp : since ? t.connections.since(since) : " "}
+                    {kind === "blocked"
+                      ? t.connections.notAllowedHelp
+                      : kind === "shared"
+                        ? t.connections.sharedHelp
+                        : since
+                          ? t.connections.since(since)
+                          : " "}
                   </p>
                 </div>
                 <div className="flex flex-none gap-2">

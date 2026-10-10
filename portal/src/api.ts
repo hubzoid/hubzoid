@@ -370,10 +370,13 @@ export type Connector = {
   id: string;
   name: string;
   url: string;
-  auth_type: "oauth" | "none";
+  auth_type: "oauth" | "none" | "shared";
   client_id: string | null;
   /** A pre-registered client secret is stored. The secret itself is never sent. */
   has_client_secret: boolean;
+  /** Shared key: the header the key is sent in, and whether a key is stored. */
+  shared_header: string | null;
+  has_shared_secret: boolean;
   scopes: string | null;
   /** Tool names people may use; null allows every tool. */
   tool_allowlist: string[] | null;
@@ -393,23 +396,26 @@ export type Connector = {
   agents: string[];
 };
 
-/** Open WebUI mode: an MCP server registered in Open WebUI (read-only here). */
-export type OpenWebUIConnector = {
-  id: string;
+/** A server from the hub folder's connectors/.mcp.json (read-only). Never a value. */
+export type HubMcpServer = {
   name: string;
-  url: string;
-  enabled: boolean;
-  permission: string;
+  kind: "command" | "url";
+  env: { name: string; set: boolean }[];
+  /** "file", or "hubzoid" for the shared browser Hubzoid adds. */
+  source: "file" | "hubzoid";
 };
 
 export type ConnectorInput = {
   id?: string;
   name?: string;
   url?: string;
-  auth_type?: "oauth" | "none";
+  auth_type?: "oauth" | "none" | "shared";
   client_id?: string | null;
   /** Omit to keep the stored secret; null removes it. */
   client_secret?: string | null;
+  shared_header?: string | null;
+  /** Omit to keep the stored key. */
+  shared_secret?: string;
   scopes?: string | null;
   tool_allowlist?: string[] | null;
   enabled?: boolean;
@@ -418,7 +424,7 @@ export type ConnectorInput = {
 /** POST /connectors/{id}/test: what discovery found. Changes nothing. */
 export type ConnectorTest = {
   connector_id: string;
-  auth_type: "oauth" | "none";
+  auth_type: "oauth" | "none" | "shared";
   ok: boolean;
   redirect_uri: string;
   error?: { code: string; message: string };

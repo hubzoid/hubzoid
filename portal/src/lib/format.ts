@@ -140,10 +140,11 @@ export function capabilityLabel(
 /** Drawer sections in display order. Presentation only: grants never change. */
 export const CAPABILITY_GROUPS = [
   { key: "hub", title: "Hub access" },
-  { key: "tools", title: "Hubzoid tools" },
   { key: "restricted", title: "Restricted tools" },
+  { key: "connectors", title: "Connectors" },
   { key: "workflows", title: "Workflows" },
   { key: "admin", title: "Administration" },
+  { key: "tools", title: "Hubzoid tools" },
   { key: "obsolete", title: "No longer available" },
 ] as const;
 
@@ -155,6 +156,7 @@ export function capabilityGroup(p: Pick<Permission, "permission" | "group" | "ob
   if (p.permission === USE_HUB) return "hub";
   if (p.permission === MANAGE_ACCESS) return "admin";
   if (p.permission === "curator") return "tools";
+  if (p.permission.startsWith("connector_")) return "connectors";
   return p.group ? "tools" : "restricted";
 }
 

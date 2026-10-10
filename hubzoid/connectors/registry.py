@@ -2,7 +2,8 @@
 (``hz_connectors``, in the shared operational store).
 
 A connector is a slug id (also the app of its ``connector_<id>`` capability), a
-display name, the server URL, how people authorize (``oauth`` or ``none``), an
+display name, the server URL, how it signs in (``oauth``: each person with their
+own account, ``shared``: one company key sent as a header, ``none``), an
 optional client registered with the provider in advance (its secret encrypted
 with the deployment key), scopes to request, and an optional tool allow-list.
 A client Hubzoid registers dynamically (RFC 7591) is cached here too, encrypted,
@@ -30,7 +31,18 @@ from . import http as net
 
 log = logging.getLogger("hubzoid.connectors")
 
-AUTH_TYPES = ("oauth", "none")
+AUTH_TYPES = ("oauth", "none", "shared")
+DEFAULT_SHARED_HEADER = "Authorization"
+_HEADER_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
+# Headers a shared key may never set: they would change the request itself
+# (routing, framing, cookies, proxies) or the MCP protocol's own headers.
+_FORBIDDEN_HEADERS = frozenset({
+    "host", "cookie", "set-cookie", "content-length", "content-type", "transfer-encoding",
+    "connection", "keep-alive", "proxy-authorization", "proxy-authenticate",
+    "proxy-connection", "te", "trailer", "upgrade", "accept", "accept-encoding",
+    "mcp-session-id", "mcp-protocol-version", "last-event-id", "forwarded",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip",
+})
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 _TOOL_RE = re.compile(r"^[A-Za-z0-9_.\-/]{1,128}$")
 _SCOPE_TOKEN_RE = re.compile(r"^[\x21\x23-\x5b\x5d-\x7e]{1,200}$")
@@ -40,10 +52,10 @@ _SECRET_MAX = 2048
 _MAX_TOOLS = 200
 _MAX_SCOPES = 50
 _FIELDS = {"id", "name", "url", "auth_type", "client_id", "client_secret", "scopes",
-           "tool_allowlist", "enabled"}
+           "tool_allowlist", "enabled", "shared_header", "shared_secret"}
 _COLUMNS = ("id", "name", "url", "auth_type", "client_id", "client_secret_enc",
             "client_info_enc", "scopes", "tool_allowlist", "enabled", "created_by",
-            "created_at", "updated_at")
+            "created_at", "updated_at", "shared_header", "shared_secret_enc")
 _SELECT = "SELECT " + ", ".join(_COLUMNS) + " FROM hz_connectors"
 
 ORG = "*"  # the access audit's organization-wide scope (access.store.ORG)
@@ -64,6 +76,8 @@ class Connector:
     created_at: float
     updated_at: float
     registered: bool  # a dynamically registered client is cached
+    shared_header: str | None = None  # Shared key: the header it is sent in
+    has_shared_secret: bool = False
 
     @property
     def capability(self) -> str:
@@ -79,6 +93,7 @@ class Connector:
             "enabled": self.enabled, "capability": self.capability,
             "dynamic_client": self.registered, "created_by": self.created_by,
             "created_at": self.created_at, "updated_at": self.updated_at,
+            "shared_header": self.shared_header, "has_shared_secret": self.has_shared_secret,
         }
 
 
@@ -101,6 +116,8 @@ def _connector(row: dict) -> Connector:
         scopes=row["scopes"] or None, tool_allowlist=allow, enabled=bool(row["enabled"]),
         created_by=row["created_by"], created_at=float(row["created_at"] or 0),
         updated_at=float(row["updated_at"] or 0), registered=bool(row["client_info_enc"]),
+        shared_header=row.get("shared_header") or None,
+        has_shared_secret=bool(row.get("shared_secret_enc")),
     )
 
 
@@ -132,8 +149,19 @@ def _name(value) -> str:
 def _auth_type(value) -> str:
     auth = value.strip().lower() if isinstance(value, str) else ""
     if auth not in AUTH_TYPES:
-        raise ConnectorError("invalid_auth_type", "Authentication must be oauth or none.", 422)
+        raise ConnectorError("invalid_auth_type", "Sign-in must be oauth, shared or none.", 422)
     return auth
+
+
+def _shared_header(value) -> str:
+    """A header name a shared key may be sent in (default ``Authorization``)."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return DEFAULT_SHARED_HEADER
+    name = value.strip() if isinstance(value, str) else ""
+    if not _HEADER_RE.match(name) or name.lower() in _FORBIDDEN_HEADERS:
+        raise ConnectorError("invalid_shared_header", "Use a header such as Authorization or "
+                             "X-API-Key. This one can't carry a key.", 422)
+    return name
 
 
 def _optional_text(value, *, code: str, what: str, limit: int) -> str | None:
@@ -223,6 +251,26 @@ def list_all(hub_dir) -> list[Connector]:
     with engine(hub_dir).connect() as conn:
         rows = [_row(r) for r in conn.execute(text(_SELECT + " ORDER BY name, id")).fetchall()]
     return [_connector(r) for r in rows]
+
+
+def shared_headers(hub_dir, cid: str) -> dict | None:
+    """The request header of a Shared key connector, decrypted, or None. A key
+    sent as ``Authorization`` without a scheme is sent as a Bearer token."""
+    with engine(hub_dir).connect() as conn:
+        r = conn.execute(text("SELECT auth_type, shared_header, shared_secret_enc FROM "
+                              "hz_connectors WHERE id = :id"), {"id": cid}).fetchone()
+    if not r or r[0] != "shared" or not r[2]:
+        return None
+    try:
+        key = secretbox.decrypt_text(Path(hub_dir), r[2])
+    except secretbox.SecretKeyError:
+        log.error("connectors: the shared key of %s cannot be decrypted with the deployment key",
+                  cid)
+        return None
+    header = r[1] or DEFAULT_SHARED_HEADER
+    if header.lower() == "authorization" and " " not in key.strip():
+        key = f"Bearer {key.strip()}"
+    return {header: key}
 
 
 def client_secret(hub_dir, cid: str) -> str | None:
@@ -345,12 +393,20 @@ def create(hub_dir, data, *, actor: str) -> Connector:
                                what="The client ID", limit=_CLIENT_ID_MAX)
     secret = _optional_text(data.get("client_secret"), code="invalid_client_secret",
                             what="The client secret", limit=_SECRET_MAX)
-    if auth == "none":
+    shared_header = shared_enc = None
+    if auth in ("none", "shared"):
         client_id = secret = None
+    if auth == "shared":
+        shared_header = _shared_header(data.get("shared_header"))
+        key = _optional_text(data.get("shared_secret"), code="invalid_shared_secret",
+                             what="The key", limit=_SECRET_MAX)
+        if not key:
+            raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
+        shared_enc = secretbox.encrypt(Path(hub_dir), key)
     if secret and not client_id:
         raise ConnectorError("invalid_client_secret", "Enter the client ID that goes with the "
                              "client secret.", 422)
-    scopes = _scopes(data.get("scopes"))
+    scopes = _scopes(data.get("scopes")) if auth == "oauth" else None
     allow = _allowlist(data.get("tool_allowlist"))
     enabled = _enabled(data.get("enabled", True))
     explicit = data.get("id")
@@ -377,7 +433,8 @@ def create(hub_dir, data, *, actor: str) -> Connector:
              "client_info_enc": None, "scopes": scopes,
              "tool_allowlist": json.dumps(allow) if allow else None,
              "enabled": 1 if enabled else 0, "created_by": normalize(actor) or None,
-             "created_at": now, "updated_at": now})
+             "created_at": now, "updated_at": now, "shared_header": shared_header,
+             "shared_secret_enc": shared_enc})
         _audit(conn, hub_dir, actor, "connector_create", cid)
     log.info("connectors: %s added %s (%s)", normalize(actor), cid, auth)
     return get(hub_dir, cid)
@@ -421,10 +478,23 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
             changes["tool_allowlist"] = json.dumps(allow) if allow else None
         if "enabled" in data:
             changes["enabled"] = 1 if _enabled(data["enabled"]) else 0
+        if "shared_header" in data:
+            changes["shared_header"] = _shared_header(data["shared_header"])
+        if "shared_secret" in data:
+            key = _optional_text(data["shared_secret"], code="invalid_shared_secret",
+                                 what="The key", limit=_SECRET_MAX)
+            changes["shared_secret_enc"] = secretbox.encrypt(Path(hub_dir), key) if key else None
         auth = changes.get("auth_type", row["auth_type"])
-        if auth == "none":
+        if auth in ("none", "shared"):
             changes["client_id"] = None
             changes["client_secret_enc"] = None
+        if auth == "shared":
+            changes.setdefault("shared_header", row.get("shared_header") or DEFAULT_SHARED_HEADER)
+            if not changes.get("shared_secret_enc", row.get("shared_secret_enc")):
+                raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
+        else:
+            changes["shared_header"] = None
+            changes["shared_secret_enc"] = None
         client_id = changes.get("client_id", row["client_id"])
         secret_enc = changes.get("client_secret_enc", row["client_secret_enc"])
         if secret_enc and not client_id:
@@ -562,10 +632,14 @@ def permissions(hub_dir) -> list[dict]:
                 if r[0] in offered]
     out = []
     for c in (_connector(r) for r in rows):
+        shared = c.auth_type == "shared"
         out.append({
-            "permission": c.capability, "label": f"Connect {c.name}",
-            "description": f"Connect and use their own {c.name} account through this agent.",
-            "sensitive": True, "surfaces": ["chat", "workflow"],
+            "permission": c.capability,
+            "label": f"Use {c.name}" if shared else f"Connect {c.name}",
+            "description": (f"Use {c.name} through this agent with the company's shared account."
+                            if shared else
+                            f"Connect and use their own {c.name} account through this agent."),
+            "sensitive": True, "surfaces": ["chat", "workflow"], "group": "connectors",
             "available": c.enabled, "status": "" if c.enabled else "Switched off",
         })
     return sorted(out, key=lambda r: r["permission"])

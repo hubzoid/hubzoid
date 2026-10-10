@@ -203,6 +203,8 @@ export const en = {
     needsAttention: "Needs attention",
     notAllowed: "Not available to you",
     notAllowedHelp: "Ask an administrator for access to use this connection.",
+    shared: "Shared",
+    sharedHelp: "One company account. Nothing to connect.",
     since: (when: string) => `Connected ${when}`,
     connectedToast: (name: string) => `Connected to ${name}.`,
     failed: (name: string, code: string) => {
