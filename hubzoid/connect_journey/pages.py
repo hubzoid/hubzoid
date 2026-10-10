@@ -132,7 +132,8 @@ animation:sp 0.8s linear infinite;flex:none}@keyframes sp{to{transform:rotate(36
 @media (prefers-reduced-motion:reduce){.spin{animation:none}}
 .waiting{display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--body)}
 footer{padding:20px;text-align:center;font-size:12px;color:var(--mute)}
-@media (max-width:520px){.card{padding:22px 18px}.item{flex-wrap:wrap}.row-actions{width:100%;justify-content:flex-end}
+@media (max-width:520px){.top{padding:12px 16px;gap:8px}.top-end .chip{padding:3px}
+.top-end .chip span:last-child{display:none}.card{padding:22px 18px}.item{flex-wrap:wrap}.row-actions{width:100%;justify-content:flex-end}
 details.confirm .pop{right:auto;left:auto;right:0}main{padding-top:3vh}}
 """
 
