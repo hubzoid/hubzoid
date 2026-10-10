@@ -1472,7 +1472,7 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     state.mutations.length = 0;
 
-    step("On People, a duplicate changes nothing and points to that user's details");
+    step("On People, a duplicate changes nothing and offers Give access in the agent chosen, never People");
     state.chatOnly.set("ravi.menon@example.org", "Ravi Menon"); // already in the chat app
     await page.getByRole("button", { name: "Add user" }).click();
     await drawer().getByRole("textbox", { name: "Email address" }).fill("ravi.menon@example.org");
@@ -1482,12 +1482,53 @@ function step(name) {
     await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("Nothing was changed. Edit their access from their details.").waitFor();
+    await drawer().getByText("ravi.menon@example.org already has an account").waitFor();
+    await drawer().getByText("Nothing was changed.", { exact: true }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Grant access instead" }).count(), 0);
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
     assert.ok(!state.accountsCreated.includes("ravi.menon@example.org"));
-    await drawer().getByRole("link", { name: "Edit this user" }).click();
-    assert.equal(await hash(), "#/people/ravi.menon%40example.org");
+    // People lists only people in their agents, so nothing points there.
+    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    assert.equal(await drawer().getByRole("link", { name: "Edit this user" }).count(), 0);
+    await drawer().getByRole("link", { name: "Give access in Finance Assistant" }).click();
+    assert.equal(await hash(), "#/agents/finance/access?edit=ravi.menon%40example.org");
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("ravi.menon@example.org").first().waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "opening Give access writes nothing");
+    // …and they can finish there: the access is given in their agent.
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: /^Save/ }).click();
+    await drawer().waitFor({ state: "hidden" });
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/access/apply"]);
+    state.mutations.length = 0;
+
+    step("As an administrator, a duplicate names the person, says why and opens their details");
+    state.role = "org";
+    await page.reload(); // a role change is a fresh session
+    await go("/people");
+    await page.getByRole("button", { name: "Add user" }).click();
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("meilin.chen@example.org");
+    await drawer().getByRole("textbox", { name: "Name" }).fill("Mei Lin");
+    await page.locator("#account-password").fill("Typed-Password-42");
+    await expand("Support Assistant");
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("meilin.chen@example.org already has an account").waitFor();
+    // Awaiting approval: the server's reason, not a fixed text.
+    await drawer().getByText("This person already signed up and is awaiting approval. Approve the account instead.").waitFor();
+    assert.equal(
+      await drawer().getByRole("link", { name: "Give access in Support Assistant" }).getAttribute("href"),
+      "#/agents/support/access?edit=meilin.chen%40example.org",
+    );
+    await drawer().getByRole("link", { name: "Edit this user" }).waitFor();
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/meilin.chen%40example.org");
+    await drawer().getByText("Mei Lin Chen").first().waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
+    state.role = "hub";
+    await page.reload(); // back to the agent administrator
     state.mutations.length = 0;
 
     step("A change proposed from chat is confirmed on its own page, exactly as proposed");
