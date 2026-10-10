@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, type ReactNode } from "react";
 import { Alert, App, Button, ConfigProvider, Spin, Typography } from "antd";
-import type { Hub, Me } from "./api";
+import { signInHref, type Hub, type Me } from "./api";
 import { useData } from "./hooks/useData";
 import { useRoute } from "./hooks/useRoute";
 import { Shell, type Area } from "./components/Shell";
@@ -66,7 +66,6 @@ function Router({
   // A confirmation link from chat or WhatsApp: after signing in, the manager
   // needs to come back to this exact page.
   const confirming = route.parts[0] === "confirm";
-  const signIn = `/auth?redirect=${encodeURIComponent(location.pathname + location.hash)}`;
   if (!me.data || !hubs.data)
     return (
       <div className="gate">
@@ -79,20 +78,22 @@ function Router({
             description={
               <>
                 {status === 401
-                  ? confirming
-                    ? "Sign in to review this change. If you land in the chat app afterwards, open the confirmation link again."
-                    : "Sign in, then return here."
+                  ? confirming &&
+                    "Sign in to review this change. If you land in the chat app afterwards, open the confirmation link again."
                   : status === 403 ? "Ask your hub owner for Manage access. You can still open chat to use the agents available to you." : "Check your connection and try again. Your access has not changed."}
                 <div style={{ marginTop: 12 }}>
-                  <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
-                  {status === 401 && confirming ? (
-                    <Button type="primary" href={signIn}>
+                  {/* Signed out: one way on, back to this page. */}
+                  {status === 401 ? (
+                    <Button type="primary" href={signInHref()}>
                       Sign in
                     </Button>
                   ) : (
-                    <Button type="primary" href="/">
-                      Go to the chat app
-                    </Button>
+                    <>
+                      <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
+                      <Button type="primary" href="/">
+                        Go to the chat app
+                      </Button>
+                    </>
                   )}
                 </div>
               </>

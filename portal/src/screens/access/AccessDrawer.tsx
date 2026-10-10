@@ -26,9 +26,10 @@ import {
   type SignIn,
 } from "../../api";
 import { errorText } from "../../hooks/useData";
-import { useNavigationGuard } from "../../hooks/useRoute";
+import { personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { AccountTag, PersonAvatar } from "../../components/common";
 import {
+  EVERYONE,
   USE_HUB,
   capabilityLabel,
   capabilityNotes,
@@ -587,9 +588,12 @@ export function AccessDrawer({
     }
     if (draft.step === "failed")
       return (
-        <Space className="drawer-actions">
-          <Button type="primary" onClick={finish}>
+        <Space className="drawer-actions" wrap>
+          <Button disabled={checking} onClick={finish}>
             Done
+          </Button>
+          <Button type="primary" loading={checking} onClick={() => void openPerson(subject)}>
+            Reopen {name}
           </Button>
         </Space>
       );
@@ -700,6 +704,7 @@ export function AccessDrawer({
             afterUncertain={afterUncertain}
             retryError={retryError}
             catalog={catalog}
+            onDone={close}
           />
         </div>
       )}
@@ -815,8 +820,10 @@ export function AccessDrawer({
                 <Alert
                   type="warning"
                   showIcon
-                  title="This person is blocked by an administrator"
+                  title="This person is blocked"
                   description="They can’t be given new access. Existing access can still be removed."
+                  // Administrators reactivate them there. Others may not see them under People.
+                  action={me?.org_admin && <a href={personHref(draft.row.subject)}>Open their details</a>}
                 />
               )}
               {draft.row.account_unavailable && !draft.row.suspended && (
@@ -968,6 +975,12 @@ function PersonIdentity({ row, name }: { row: AccessRow; name: string }) {
             )}
             {service && <LegacyServiceTag />}
             {row.status && (!service || row.status !== "service") && <AccountTag status={row.status} />}
+            {/* Not signed up yet: no account, so no details page to open. */}
+            {!service && row.subject !== EVERYONE && row.status !== "awaiting-signup" && (
+              <Button type="link" size="small" className="inline-link" href={personHref(row.subject)}>
+                View profile
+              </Button>
+            )}
             {service && (
               <HelpToggle label="legacy service identities" open={open} controls={helpId} onToggle={() => setOpen((o) => !o)} />
             )}
@@ -1042,15 +1055,8 @@ function ReviewList({
               ? "Couldn’t confirm whether the changes were saved"
               : "No changes were saved"
           }
-          description={
-            <>
-              {draft.failure}
-              <br />
-              {draft.uncertain
-                ? `Reloading the current access. Reopen ${name} to see what actually applies now before trying again.`
-                : `Reloading the current access. Reopen ${name} to try again.`}
-            </>
-          }
+          // Reopen <name> below says what to do next.
+          description={draft.failure}
         />
       )}
 
@@ -1128,6 +1134,7 @@ function NewAccountOutcome({
   afterUncertain,
   retryError,
   catalog,
+  onDone,
 }: {
   outcome: Outcome;
   email: string;
@@ -1138,6 +1145,8 @@ function NewAccountOutcome({
   afterUncertain: boolean;
   retryError: ApiError | null;
   catalog: Catalog;
+  /** Closes the drawer, as Done does. */
+  onDone: () => void;
 }) {
   const retry = retryError && (
     <Alert type="error" showIcon title="Access wasn’t granted" description={retryError.message} />
@@ -1159,6 +1168,9 @@ function NewAccountOutcome({
           }
         />
         <SignInDetails email={outcome.created.subject} password={password} signIn={outcome.created.sign_in ?? signIn} />
+        <a href={personHref(outcome.created.subject)} onClick={onDone}>
+          Open their details
+        </a>
       </>
     );
   }

@@ -153,9 +153,9 @@ and uses **…** → **Delete user**. That removes every grant, then the chat
 account and its chats; Activity history, usage records and published artifacts
 are kept. In Open WebUI mode, the person's API keys stop working with the
 account, but Open WebUI keeps its stored connection tokens for that account.
-The last administrator cannot be made a User or deleted. The Console no longer
-offers Block or Reactivate; a user blocked in an earlier release stays blocked
-(see [blocked users](access-management.md#blocked-users)).
+The last administrator cannot be made a User or deleted. The Console doesn't
+offer Block. An organization administrator can **Reactivate** someone who is
+blocked from the same "…" menu (see [blocked users](access-management.md#blocked-users)).
 
 Scheduled workflows run as ordinary accounts ([workflow-identity.md](workflow-identity.md)),
 granted like anyone else. Older `workflow:<function_name>` subjects are kept but
@@ -379,9 +379,9 @@ pending accounts unavailable; signup grants stay pending until the actual accoun
 exists. The verified OWUI account ID is bound on migration, login and API-key use.
 If a different account reuses an existing email, direct grants are removed and
 agent access is blocked, with an audit event. An organization administrator must
-review the account, then unblock it through the management API
-(`POST /portal/api/people/block` with `"suspended": false`) and grant access
-again, or delete it. The Console has no Reactivate button. An existing
+review the account, then choose **Reactivate** in its details' "…" menu (or
+call `POST /portal/api/people/block` with `"suspended": false`) and grant access
+again, or delete it. An existing
 "Everyone signed in" grant applies after unblocking. This also protects chat and MCP entry before the next sync.
 If the replaced account was the only administrator, use the documented local
 `access bootstrap --admin <new-verified-email>` break-glass path, then verify the

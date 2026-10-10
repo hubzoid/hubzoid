@@ -25,7 +25,7 @@ import {
   usesSignInLinks,
 } from "../../api";
 import { useCatalogs } from "../../hooks/useCatalogs";
-import { personHref, useNavigationGuard } from "../../hooks/useRoute";
+import { hrefWith, personHref, useNavigationGuard } from "../../hooks/useRoute";
 import { MANAGE_ACCESS, USE_HUB, capabilityLabel, formatTime, groupCapabilities, isGrantable, splitSections } from "../../lib/format";
 import { orderCapabilities, toggle } from "../access/plan";
 import { CapabilityGroup, CapabilitySection } from "../access/AccessParts";
@@ -502,9 +502,12 @@ export function AccountDrawer({
     ) : step === "exists" ? (
       <Space className="drawer-actions" wrap>
         <Button disabled={busy} onClick={finish}>Cancel</Button>
-        <Button type="primary" href={personHref(subject)} onClick={finish}>
-          Edit this user
-        </Button>
+        {/* Agent administrators see only people in their agents: no dead end. */}
+        {me.org_admin && (
+          <Button type="primary" href={personHref(subject)} onClick={finish}>
+            Edit this user
+          </Button>
+        )}
       </Space>
     ) : step === "partial" ? (
       <Space className="drawer-actions" wrap>
@@ -825,9 +828,29 @@ export function AccountDrawer({
             <Alert
               type="info"
               showIcon
-              title="This user already exists"
-              description="Nothing was changed. Edit their access from their details."
+              title={`${subject} already has an account`}
+              // The server's reason only when it adds something (awaiting approval).
+              description={failure?.data.subject ? "Nothing was changed." : failure?.message}
             />
+            {/* Their details only for those who see everyone; Give access in each agent chosen. */}
+            <Space wrap>
+              {me.org_admin && (
+                <a href={personHref(subject)} onClick={finish}>
+                  Open their details
+                </a>
+              )}
+              {Object.entries(selected)
+                .filter(([, perms]) => perms.length)
+                .map(([hub]) => (
+                  <a
+                    key={hub}
+                    href={hrefWith(`/agents/${encodeURIComponent(hub)}/access`, { edit: subject })}
+                    onClick={finish}
+                  >
+                    Give access in {hubName(hub)}
+                  </a>
+                ))}
+            </Space>
             {afterUncertain && !google && !links && (
               <>
                 <Paragraph style={{ margin: 0 }}>
@@ -838,8 +861,10 @@ export function AccountDrawer({
             )}
             {afterUncertain && !google && links && (
               <Paragraph style={{ margin: 0 }}>
-                It may be the account your earlier attempt created. Open their details and use Reset password to
-                make a sign-in link for them.
+                It may be the account your earlier attempt created.{" "}
+                {me.org_admin
+                  ? "Open their details and use Reset password to make a sign-in link for them."
+                  : "Ask an Administrator to reset its password to make a sign-in link for them."}
               </Paragraph>
             )}
           </>

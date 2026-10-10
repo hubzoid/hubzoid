@@ -239,6 +239,13 @@ function step(name) {
     await priyaRow.getByText("Active", { exact: true }).waitFor();
     await page.getByRole("row").filter({ hasText: "Aisha Rahman" }).getByText("Manage access · inherited").waitFor();
     await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByText("Not signed up yet").waitFor();
+    // Not signed up yet: access waits for an account, and People has no page for it.
+    assert.equal(await page.getByRole("row").filter({ hasText: "daniel.okafor" }).getByRole("link").count(), 0, "no profile before sign-up");
+    await page.getByRole("button", { name: "Edit access for daniel.okafor@example.org" }).click();
+    await drawer().getByText("Not signed up yet", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile before sign-up");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
     await page.getByRole("row").filter({ hasText: "monthly_close" }).getByText("Legacy service identity", { exact: true }).waitFor();
     assert.equal(await page.getByRole("switch").count(), 0, "no control creates access for everyone");
     assert.equal(await page.getByText("Everyone signed in").count(), 0);
@@ -593,10 +600,15 @@ function step(name) {
       endpoint: "/accounts", email: "kai.moreno@addusers.local", name: "Kai Moreno", sign_in: "google",
       grants: [{ hub: "finance", permission: "use_hub" }],
     }], "no password is sent");
-    await drawer().getByRole("button", { name: "Done" }).click();
-    await drawer().waitFor({ state: "hidden" });
+    // As in People, the result leads to the new person; following it closes this drawer.
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/kai.moreno%40addusers.local");
+    await drawer().getByRole("heading", { name: "Access by agent" }).waitFor();
+    assert.equal(await drawer().count(), 1, "only their details are open");
+    await drawer().getByText("kai.moreno@addusers.local", { exact: true }).waitFor();
     state.signIn = { password: true, google: false };
     state.mutations.length = 0;
+    await go("/agents/finance/access");
     await page.reload();
     step("Optional groups start collapsed with counts; configuration reads apart from permission; toggles and help work by keyboard");
     // Temporary synthetic capabilities: one missing its setting, one included
@@ -741,13 +753,15 @@ function step(name) {
     step("A blocked user can't be given access; the reason shows before saving");
     await go("/agents/finance/access?edit=tomas.herrera@example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    await drawer().getByText("This person is blocked by an administrator").waitFor();
+    await drawer().getByText("This person is blocked", { exact: true }).waitFor();
     // Nothing can be ticked, so there is nothing to review.
     assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), true);
     assert.equal(await drawer().getByRole("button", { name: "Review changes" }).isDisabled(), true);
     assert.equal(state.mutations.length, 0);
-    await drawer().getByRole("button", { name: "Cancel" }).click();
-    await drawer().waitFor({ state: "hidden" });
+    // Their details are where an Administrator reactivates them.
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
+    await drawer().getByText("Blocked. Reactivate to give access.").waitFor();
     // The server refuses it too, for any caller.
     await assert.rejects(fixture.handle("POST", "/accounts/grant", {}, {
       email: "tomas.herrera@example.org", grants: [{ hub: "finance", permission: "use_hub" }],
@@ -832,13 +846,29 @@ function step(name) {
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    state.revision += 1; // another administrator changed access after this drawer loaded
+    // Another administrator gave Kai Manage invoices after this drawer loaded.
+    state.grants.push(["kai.moreno@addusers.local", "finance", "invoices"]);
+    state.revision += 1;
     await drawer().getByRole("button", { name: "Save change" }).click();
     await drawer().getByText("Nothing was saved").waitFor();
     await drawer().getByText("Access changed since you loaded it", { exact: false }).waitFor();
-    await drawer().getByRole("button", { name: /Done/ }).click();
-    await drawer().waitFor({ state: "hidden" });
     assert.equal(state.grants.some(([s, , p]) => s === "kai.moreno@addusers.local" && p === "ledger"), false, "nothing was written");
+    // Reopen loads their current access in place, to try again.
+    await drawer().getByRole("button", { name: "Done" }).waitFor();
+    await drawer().getByRole("button", { name: "Reopen Kai Moreno" }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Kai Moreno").first().waitFor();
+    await expand("Restricted tools");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), false, "the refused change isn’t kept");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage invoices/ }).isChecked(), true, "Reopen shows their current access");
+    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Save change" }).click();
+    await saved();
+    assert.equal(await page.getByRole("link", { name: /^Back to / }).count(), 0, "not opened from a person, so no way back");
+    assert.ok(state.grants.some(([s, , p]) => s === "kai.moreno@addusers.local" && p === "ledger"), "the retry saved");
+    state.grants = state.grants.filter(([s, , p]) => !(s === "kai.moreno@addusers.local" && (p === "ledger" || p === "invoices")));
+    state.revision += 1;
     state.mutations.length = 0;
 
     // ---- navigation guards --------------------------------------------------------------
@@ -862,6 +892,40 @@ function step(name) {
     await page.getByRole("heading", { name: "People", exact: true }).waitFor();
     assert.equal(await hash(), "#/people");
     assert.equal(state.mutations.length, 0);
+
+    step("Access names and View profile open the person; unsaved edits ask first");
+    const priyaHref = `#/people/${encodeURIComponent(PRIYA)}`;
+    await go("/agents/finance/access");
+    const priyaLink = page.getByRole("row").filter({ hasText: "Priya Natarajan" }).getByRole("link", { name: "Priya Natarajan" });
+    assert.equal(await priyaLink.getAttribute("href"), priyaHref);
+    assert.equal(await page.getByRole("row").filter({ hasText: "monthly_close" }).getByRole("link").count(), 0, "service identities stay plain text");
+    await page.getByRole("button", { name: "Edit access for workflow:monthly_close" }).click();
+    await drawer().getByText("Legacy service identity", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "View profile" }).count(), 0, "no profile for a service identity");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Edit access for Priya Natarajan" }).click();
+    const viewProfile = drawer().getByRole("link", { name: "View profile" });
+    assert.equal(await viewProfile.getAttribute("href"), priyaHref);
+    await expand("Restricted tools");
+    await drawer().getByRole("checkbox", { name: /Manage invoices/ }).check();
+    await viewProfile.click();
+    await modalTitle("Leave without saving?").waitFor();
+    await answer("Keep editing");
+    assert.equal(await hash(), "#/agents/finance/access");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage invoices/ }).isChecked(), true);
+    await viewProfile.click();
+    await answer("Discard and leave");
+    await drawer().getByRole("combobox", { name: "Role" }).waitFor();
+    assert.equal(await hash(), priyaHref);
+    assert.equal(state.mutations.length, 0);
+    await go("/agents/finance/access");
+    await priyaLink.click();
+    await drawer().getByText(PRIYA, { exact: true }).waitFor();
+    assert.equal(await hash(), priyaHref);
+    await go("/agents/support/access");
+    await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByText("Public", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("row").filter({ hasText: "Everyone signed in" }).getByRole("link").count(), 0, "Everyone signed in stays plain text");
 
     step("Navigation is refused while a save is in flight");
     await go("/agents/finance/access");
@@ -1191,13 +1255,43 @@ function step(name) {
     await page.getByRole("link", { name: "Details for Tomás Herrera" }).click();
     assert.equal(await hash(), "#/people/tomas.herrera%40example.org");
     await drawer().getByText("Blocked", { exact: true }).waitFor();
-    for (const gone of ["Reactivate", "Block access", "Deactivate", "Make organization administrator"])
+    for (const gone of ["Block access", "Deactivate", "Make organization administrator"])
       assert.equal(await drawer().getByRole("button", { name: gone }).count(), 0, `no ${gone} in the user details`);
     assert.equal(await drawer().getByText(/Chat account/).count(), 0, "no separate chat account section");
     assert.equal(await drawer().getByRole("combobox", { name: "Add an agent" }).count(), 0, "a blocked user isn't given access here");
     await page.goBack();
     await drawer().waitFor({ state: "hidden" });
     assert.equal(await hash(), "#/people");
+    state.mutations.length = 0;
+
+    step("An Administrator reactivates a blocked user after a confirmation, and can give them access again");
+    // Blocked automatically, e.g. an Open WebUI account replaced (account_replaced).
+    const TOMAS = "tomas.herrera@example.org";
+    await go(`/people/${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("Blocked. Reactivate to give access.").waitFor();
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "Reactivate" }).click();
+    await modalTitle("Reactivate Tomás Herrera?").waitFor();
+    await modal().getByText("Access removed by the block isn’t restored.", { exact: false }).waitFor();
+    await answer("Reactivate");
+    await page.getByText("Tomás Herrera is active again.").waitFor();
+    assert.deepEqual(lastMutation(), { endpoint: "/people/block", subject: TOMAS, suspended: false });
+    await drawer().getByText("Active", { exact: true }).waitFor();
+    assert.equal(await drawer().getByText("Blocked. Reactivate to give access.").count(), 0);
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "Delete user" }).waitFor();
+    assert.equal(await page.getByRole("menuitem", { name: "Reactivate" }).count(), 0, "offered only while blocked");
+    assert.equal(await page.getByRole("menuitem", { name: /Block/ }).count(), 0, "Block isn't offered");
+    await drawer().getByRole("button", { name: "More actions" }).click();
+    await drawer().getByRole("combobox", { name: "Add an agent" }).click();
+    await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "Finance Assistant" }).click();
+    assert.ok((await hash()).startsWith("#/agents/finance/access"), await hash());
+    await drawer().getByText("Tomás Herrera").first().waitFor();
+    assert.equal(await drawer().getByText("This person is blocked", { exact: true }).count(), 0);
+    assert.equal(await drawer().getByRole("checkbox", { name: /Use this agent/ }).isDisabled(), false);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    state.suspended.add(TOMAS);
     state.mutations.length = 0;
 
     step("User details: name, email, status, role, access by agent, reset password; Delete is in the … menu");
@@ -1290,9 +1384,14 @@ function step(name) {
     await saved();
     assert.deepEqual(lastMutation().operations, [{ action: "grant", permission: USE_HUB_PERM }]);
     assert.equal(lastMutation().subject, PRIYA);
+    // Saved from their details: the notice leads back to them.
+    await page.getByRole("link", { name: "Back to Priya Natarajan" }).click();
+    assert.equal(await hash(), `#/people/${encodeURIComponent(PRIYA)}`);
+    await drawer().getByText(PRIYA, { exact: true }).waitFor();
     state.grants = state.grants.filter(([s, h]) => !(s === PRIYA && h === "support"));
     state.grants.push(...everyoneSupport);
     state.mutations.length = 0;
+    await go("/people");
 
     step("One Administrator role: confirmed, both sides together, mismatches flagged, the last one protected");
     const pickRole = async (label) => {
@@ -1404,6 +1503,20 @@ function step(name) {
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-agent-admin.png"), fullPage: true });
     state.mutations.length = 0;
 
+    step("An agent administrator sees why a blocked user can't be given access, and can't reactivate them");
+    // A block carried over by migration keeps their access, so they are listed.
+    state.grants.push([TOMAS, "finance", "ledger"]);
+    await go(`/people/${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("Blocked. An Administrator can reactivate them.").waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "More actions" }).count(), 0);
+    await go(`/agents/finance/access?edit=${encodeURIComponent(TOMAS)}`);
+    await drawer().getByText("This person is blocked", { exact: true }).waitFor();
+    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await drawer().waitFor({ state: "hidden" });
+    state.grants = state.grants.filter(([s]) => s !== TOMAS);
+    assert.equal(state.mutations.length, 0);
+
     // ---- a delegate adds users, within their own access ------------------------------------
     step("A delegate's Add user on an agent locks capabilities they don't hold");
     await go("/agents/finance/access");
@@ -1472,7 +1585,7 @@ function step(name) {
     await drawer().waitFor({ state: "hidden" });
     state.mutations.length = 0;
 
-    step("On People, a duplicate changes nothing and points to that user's details");
+    step("On People, a duplicate changes nothing and offers Give access in the agent chosen, never People");
     state.chatOnly.set("ravi.menon@example.org", "Ravi Menon"); // already in the chat app
     await page.getByRole("button", { name: "Add user" }).click();
     await drawer().getByRole("textbox", { name: "Email address" }).fill("ravi.menon@example.org");
@@ -1482,12 +1595,53 @@ function step(name) {
     await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
     await drawer().getByRole("button", { name: "Review" }).click();
     await drawer().getByRole("button", { name: "Create account" }).click();
-    await drawer().getByText("Nothing was changed. Edit their access from their details.").waitFor();
+    await drawer().getByText("ravi.menon@example.org already has an account").waitFor();
+    await drawer().getByText("Nothing was changed.", { exact: true }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Grant access instead" }).count(), 0);
     assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
     assert.ok(!state.accountsCreated.includes("ravi.menon@example.org"));
-    await drawer().getByRole("link", { name: "Edit this user" }).click();
-    assert.equal(await hash(), "#/people/ravi.menon%40example.org");
+    // People lists only people in their agents, so nothing points there.
+    assert.equal(await drawer().getByRole("link", { name: "Open their details" }).count(), 0);
+    assert.equal(await drawer().getByRole("link", { name: "Edit this user" }).count(), 0);
+    await drawer().getByRole("link", { name: "Give access in Finance Assistant" }).click();
+    assert.equal(await hash(), "#/agents/finance/access?edit=ravi.menon%40example.org");
+    await page.getByRole("dialog", { name: "Give access" }).waitFor();
+    await drawer().getByText("ravi.menon@example.org").first().waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "opening Give access writes nothing");
+    // …and they can finish there: the access is given in their agent.
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: /^Save/ }).click();
+    await drawer().waitFor({ state: "hidden" });
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts", "/access/apply"]);
+    state.mutations.length = 0;
+
+    step("As an administrator, a duplicate names the person, says why and opens their details");
+    state.role = "org";
+    await page.reload(); // a role change is a fresh session
+    await go("/people");
+    await page.getByRole("button", { name: "Add user" }).click();
+    await drawer().getByRole("textbox", { name: "Email address" }).fill("meilin.chen@example.org");
+    await drawer().getByRole("textbox", { name: "Name" }).fill("Mei Lin");
+    await page.locator("#account-password").fill("Typed-Password-42");
+    await expand("Support Assistant");
+    await drawer().getByRole("checkbox", { name: /Use this agent/ }).check();
+    await drawer().getByRole("button", { name: "Review" }).click();
+    await drawer().getByRole("button", { name: "Create account" }).click();
+    await drawer().getByText("meilin.chen@example.org already has an account").waitFor();
+    // Awaiting approval: the server's reason, not a fixed text.
+    await drawer().getByText("This person already signed up and is awaiting approval. Approve the account instead.").waitFor();
+    assert.equal(
+      await drawer().getByRole("link", { name: "Give access in Support Assistant" }).getAttribute("href"),
+      "#/agents/support/access?edit=meilin.chen%40example.org",
+    );
+    await drawer().getByRole("link", { name: "Edit this user" }).waitFor();
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/meilin.chen%40example.org");
+    await drawer().getByText("Mei Lin Chen").first().waitFor();
+    assert.deepEqual(state.mutations.map((m) => m.endpoint), ["/accounts"], "nothing but the refused create");
+    state.role = "hub";
+    await page.reload(); // back to the agent administrator
     state.mutations.length = 0;
 
     step("A change proposed from chat is confirmed on its own page, exactly as proposed");
@@ -1585,6 +1739,27 @@ function step(name) {
     assert.deepEqual(signOuts, ["openwebui POST", "hubzoid POST"]);
     state.signIn = legacySignIn;
 
+    // ---- signed out or expired ----------------------------------------------------------------
+    step("An expired session offers Sign in that returns to the same Console page");
+    await go("/agents/finance/activity");
+    await page.getByText("allowed").first().waitFor();
+    state.role = "none"; // the session expires while the Console is open
+    await go("/activity");
+    await page.getByText("Couldn’t load this view").waitFor();
+    await page.getByText("Sign in to continue.").waitFor();
+    assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "signed out: Sign in is the one way on");
+    assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).getAttribute("href"),
+      `/auth?redirect=${encodeURIComponent("/portal/#/activity")}`);
+    await go("/agents/finance/runs");
+    await page.reload(); // signed out: the gate
+    await page.getByText("Sign in to continue", { exact: true }).waitFor();
+    const gateSignIn = page.getByRole("link", { name: "Sign in", exact: true });
+    assert.equal(await gateSignIn.getAttribute("href"), `/auth?redirect=${encodeURIComponent("/portal/#/agents/finance/runs")}`);
+    assert.match(await gateSignIn.getAttribute("class"), /ant-btn-primary/);
+    assert.equal(await page.getByRole("button", { name: "Try again" }).count(), 0, "one button when signed out");
+    assert.equal(await page.getByRole("link", { name: "Go to the chat app" }).count(), 0, "one button when signed out");
+    state.role = "org";
+
     // ---- ordinary user -----------------------------------------------------------------------
     step("An ordinary user is turned away without seeing any administration UI");
     state.role = "user";
@@ -1593,6 +1768,7 @@ function step(name) {
     await page.getByText("Console access is not enabled for this account").waitFor();
     assert.equal(await page.getByRole("link", { name: "Agents" }).count(), 0);
     await page.getByRole("link", { name: "Go to the chat app" }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).count(), 0, "a 403 is not a sign-in problem");
 
     // ---- OWUI navigation link reacts to SPA login/logout --------------------------------
     step("OWUI navigation link appears for an admin session and disappears after logout");

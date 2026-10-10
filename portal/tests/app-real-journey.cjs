@@ -1115,7 +1115,7 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await invited.page.waitForURL(`${ctx.BASE}/`);
 
   step("Without access to any agent they see how to get access");
-  await invited.page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then reload this page.").waitFor();
+  await invited.page.getByText("Ask an administrator for access.").waitFor();
   await ctx.shot(invited.page, "25-no-agents");
   assert.equal((await ctx.apiGet(invited.context, "/api/agents")).json.agents.length, 0);
 
@@ -1135,8 +1135,8 @@ journey("people", "Console People: Add user with a one-time link, access, Reset 
   await consoleDrawer().waitFor({ state: "hidden" });
   await page.getByText("Access updated", { exact: true }).waitFor();
 
-  step("After a reload the agent is there for them");
-  await invited.page.reload();
+  step("Try again opens the agent for them, without a page reload");
+  await invited.page.getByRole("button", { name: "Try again" }).click();
   await invited.page.getByRole("heading", { name: `What can ${AGENT_NAME} help with?` }).waitFor();
   const chatAsNoor = ctx.chat(invited.page);
   await chatAsNoor.settled();

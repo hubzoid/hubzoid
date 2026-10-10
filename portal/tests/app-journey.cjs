@@ -874,12 +874,17 @@ function chartPng(width = 160, height = 100) {
       await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
       errors.splice(before); // the failed chunk is logged on purpose
 
-      step("Someone with no agents is told how to get access");
+      step("Someone with no agents is told how to get access, and Try again opens the agent once granted");
       await fetch(`${BASE}/__fixture/flag/no_agents/true`);
       await page.goto(`${BASE}/`);
-      await page.getByText("You don't have access to an agent yet. Ask an administrator to give you access, then reload this page.").waitFor();
+      await page.getByText("Ask an administrator for access.").waitFor();
+      await page.getByRole("button", { name: "Try again" }).waitFor();
       await shot(page, "app-24-no-agents");
+      await page.evaluate(() => (window.__sameDocument = true));
       await fetch(`${BASE}/__fixture/flag/no_agents/false`);
+      await page.getByRole("button", { name: "Try again" }).click();
+      await page.getByRole("heading", { name: /^What can .+ help with\?$/ }).waitFor();
+      assert.ok(await page.evaluate(() => window.__sameDocument), "the agent opens without a page reload");
 
       step("With many agents the header menu searches them, recent agents first");
       await fetch(`${BASE}/__fixture/flag/many_agents/true`);
@@ -954,6 +959,18 @@ function chartPng(width = 160, height = 100) {
       await invited.getByRole("button", { name: "Create account" }).click();
       await invited.waitForURL(`${BASE}/`);
       await invited.getByRole("button", { name: /^Account menu: Noor Haddad/ }).waitFor();
+
+      step("Admin Console in the account menu: an agent administrator sees it, a plain user doesn't");
+      await invited.getByRole("button", { name: /^Account menu: Noor Haddad/ }).click();
+      await invited.getByRole("menuitem", { name: "Connections" }).waitFor();
+      assert.equal(await invited.getByRole("menuitem", { name: "Admin Console" }).count(), 0);
+      await invited.getByRole("menuitem", { name: "Sign out" }).click();
+      await invited.waitForURL(`${BASE}/auth`);
+      await signIn(invited, "mia@example.com");
+      await invited.waitForURL(`${BASE}/`);
+      await invited.getByRole("button", { name: /^Account menu: Mia Chen/ }).click();
+      await invited.getByRole("menuitem", { name: "Admin Console" }).waitFor();
+      await invited.keyboard.press("Escape");
       await fresh.close();
 
       step("A session that ends mid-use goes back to sign-in, then returns to the same chat");

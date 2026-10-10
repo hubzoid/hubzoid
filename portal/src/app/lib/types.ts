@@ -9,6 +9,8 @@ export type SessionUser = {
   email: string;
   name: string;
   role: Role | string;
+  /** True when the Console opens for this person (Manage access on an agent or more). */
+  console?: boolean;
 };
 
 export type Provider = { id: string; name: string };
