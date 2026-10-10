@@ -391,3 +391,11 @@ async def test_tool_lists_what_this_person_can_connect_here(hub, monkeypatch):
     store_for(hub).revoke(BOB, hub.name, "connector_gmail", actor="test")
     with _as(BOB):
         assert "nothing this user can connect" in await tool.on_invoke_tool(None, "{}")
+
+
+@pytest.mark.asyncio
+async def test_tool_names_what_exists_when_the_app_is_guessed_wrong(hub):
+    tool = _tool(hub)
+    with _as(ALICE):
+        out = await tool.on_invoke_tool(None, json.dumps({"app": "googlemail"}))
+    assert "not available" in out and "Gmail (gmail): not connected" in out

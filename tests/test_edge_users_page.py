@@ -219,6 +219,13 @@ def test_open_webui_tool_server_saves_are_refused(edge, path):
     assert r.status_code == 403 and "Console" in r.json()["detail"]
 
 
+def test_a_config_import_carrying_tool_servers_is_refused(edge):
+    client, _ = edge(hide=False)
+    r = client.post("/api/v1/configs/import",
+                    json={"config": {"tool_server.connections": [{"url": "https://x/mcp"}]}})
+    assert r.status_code == 403 and "Console" in r.json()["detail"]
+
+
 def test_open_webui_oauth_routes_pass_through(edge):
     """Open WebUI's own sign-in and client callbacks are not touched."""
     client, _ = edge()

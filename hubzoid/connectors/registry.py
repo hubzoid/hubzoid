@@ -34,6 +34,7 @@ log = logging.getLogger("hubzoid.connectors")
 AUTH_TYPES = ("oauth", "none", "shared")
 DEFAULT_SHARED_HEADER = "Authorization"
 _HEADER_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
+_SHARED_KEY_RE = re.compile(r"^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$")  # a header value
 # Headers a shared key may never set: they would change the request itself
 # (routing, framing, cookies, proxies) or the MCP protocol's own headers.
 _FORBIDDEN_HEADERS = frozenset({
@@ -151,6 +152,12 @@ def _auth_type(value) -> str:
     if auth not in AUTH_TYPES:
         raise ConnectorError("invalid_auth_type", "Sign-in must be oauth, shared or none.", 422)
     return auth
+
+
+def _check_shared_key(key: str) -> None:
+    if not _SHARED_KEY_RE.match(key):
+        raise ConnectorError("invalid_shared_secret", "A key uses printable ASCII characters "
+                             "only.", 422)
 
 
 def _shared_header(value) -> str:
@@ -402,6 +409,7 @@ def create(hub_dir, data, *, actor: str) -> Connector:
                              what="The key", limit=_SECRET_MAX)
         if not key:
             raise ConnectorError("invalid_shared_secret", "Enter the key.", 422)
+        _check_shared_key(key)
         shared_enc = secretbox.encrypt(Path(hub_dir), key)
     if secret and not client_id:
         raise ConnectorError("invalid_client_secret", "Enter the client ID that goes with the "
@@ -483,6 +491,8 @@ def update(hub_dir, cid: str, data, *, actor: str) -> tuple[Connector, bool]:
         if "shared_secret" in data:
             key = _optional_text(data["shared_secret"], code="invalid_shared_secret",
                                  what="The key", limit=_SECRET_MAX)
+            if key:
+                _check_shared_key(key)
             changes["shared_secret_enc"] = secretbox.encrypt(Path(hub_dir), key) if key else None
         auth = changes.get("auth_type", row["auth_type"])
         if auth in ("none", "shared"):

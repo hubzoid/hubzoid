@@ -411,13 +411,17 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return _page("Your connections", ["Your access is blocked. Contact your administrator."],
                          403, tone="bad")
         rows = []
-        for c, status in _mine(hub_dir, account, email):
+        for c, status, allowed in _mine(hub_dir, account, email):
             name = _e(c.name)
             action = ""
             if status == "shared":
                 pill = '<span class="pill">Shared</span>'
             elif status == "connected":
                 pill = '<span class="pill ok">Connected</span>'
+                action = _button(f"{PAGE}/{quote(c.id)}/disconnect", "Disconnect")
+            elif not allowed:
+                # Still connected somewhere it is no longer granted: only remove it.
+                pill = '<span class="pill">Not available</span>'
                 action = _button(f"{PAGE}/{quote(c.id)}/disconnect", "Disconnect")
             elif status == "expired":
                 pill = '<span class="pill bad">Expired</span>'
@@ -442,9 +446,11 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         except HTTPException:
             return _page("Request refused", ["Open Your connections and try again."], 403,
                          tone="bad")
+        from ..connectors import per_user
+
         c = registry.get(hub_dir, connector_id)
-        if not email or c is None or not c.enabled or c.auth_type == "shared" or not any(
-                m.id == c.id for m, _ in _mine(hub_dir, account, email)):
+        if (not email or not account or c is None or not c.enabled or c.auth_type == "shared"
+                or c.id not in per_user.allowed_ids(hub_dir, email, [c.id])):
             return _page("Not available", ["Ask your administrator."], 403, tone="bad")
         user = user_of(request, account, email)
         back = f"{PAGE}?connected={quote(c.id)}"
@@ -485,9 +491,10 @@ def _button(action: str, text: str, *, primary: bool = False) -> str:
 
 
 def _mine(hub_dir: Path, account: str, email: str) -> list:
-    """``[(connector, status)]`` the person may use somewhere in this deployment
-    (offered in an agent where they hold its grant), plus any they are still
-    connected to. Status: connected, expired, none or shared."""
+    """``[(connector, status, allowed)]`` the person may use somewhere in this
+    deployment (offered in an agent where they hold its grant), plus any they
+    are still connected to without a grant (``allowed`` False: they can only
+    remove it). Status: connected, expired, none or shared."""
     from ..connectors import per_user, registry, tokens
 
     conns = {c.connector_id: c for c in tokens.for_user(hub_dir, account)} if account else {}
@@ -503,5 +510,5 @@ def _mine(hub_dir: Path, account: str, email: str) -> list:
             status = "expired" if conns[c.id].status == "expired" else "connected"
         else:
             status = "none"
-        out.append((c, status))
+        out.append((c, status, c.id in allowed))
     return out

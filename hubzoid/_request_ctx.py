@@ -96,6 +96,33 @@ def schedule_read_scope(hub_dir: Path, scratch_rel: str) -> Iterator[None]:
         _schedule_read_scope.reset(token)
 
 
+# Open WebUI mode: the account id Open WebUI forwarded for this request
+# (X-OpenWebUI-User-Id). Connectors in an Open WebUI chat turn need it to match
+# the account the person's connections belong to.
+# UNSET outside a bridge request (a scheduled run, an internal call).
+UNSET = object()
+_current_owui_account: ContextVar = ContextVar("hubzoid_owui_account", default=UNSET)
+
+
+def set_owui_account(account_id: str | None) -> None:
+    """Record the forwarded account id (None when the header was missing)."""
+    _current_owui_account.set(account_id or None)
+
+
+def get_owui_account():
+    """The forwarded account id, None when the request had none, or UNSET."""
+    return _current_owui_account.get()
+
+
+@contextmanager
+def owui_account_scope(account_id: str | None) -> Iterator[None]:
+    token = _current_owui_account.set(account_id or None)
+    try:
+        yield
+    finally:
+        _current_owui_account.reset(token)
+
+
 def get_chat_id() -> str | None:
     return _current_chat_id.get()
 

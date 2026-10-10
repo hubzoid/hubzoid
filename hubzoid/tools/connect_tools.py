@@ -101,7 +101,14 @@ def make(ctx) -> list:
             # the trusted identity and chat id reach the worker thread.
             result = await asyncio.to_thread(start, app, reconnect)
         except connect_journey.JourneyError as err:
-            return err.message
+            if err.code != "unavailable":
+                return err.message
+            # A guessed name ("gmail" for the connector "mail"): say what exists.
+            try:
+                rows = await asyncio.to_thread(connect_journey.list_for, hub_dir)
+            except Exception:  # noqa: BLE001 — the refusal alone still answers
+                return err.message
+            return err.message + " " + _listing(rows, connect_journey.public_base() + "/portal/connections")
         except Exception:  # noqa: BLE001 — never leak internals to the model
             log.exception("connect_account failed")
             return "The connection could not be started right now. Try again shortly."

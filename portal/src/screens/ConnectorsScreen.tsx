@@ -105,15 +105,15 @@ export function AgentConnectors({ hub, me }: { hub: Hub; me: Me }) {
 }
 
 /** The hub folder's connectors/.mcp.json, read-only. Names and settings only. */
-function HubFolderServers({ hub }: { hub: Hub }) {
+function HubFolderServers({ hub, panel = false }: { hub: Hub; panel?: boolean }) {
   const data = useData<{ servers: HubMcpServer[]; warning: string | null }>(
     "/hub-mcp-servers?hub=" + encodeURIComponent(hub.key),
   );
-  if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
+  if (!data.data) return panel ? null : <LoadState error={data.error} retry={data.reload} />;
   const { servers, warning } = data.data;
   if (!servers.length && !warning) return null;
   return (
-    <div className="hub-folder-servers" style={{ marginTop: 20 }}>
+    <div className={panel ? "panel hub-folder-servers" : "hub-folder-servers"} style={panel ? undefined : { marginTop: 20 }}>
       <Title level={4}>
         From the hub folder
         <InfoHelp text="Servers in connectors/.mcp.json. Everyone who can use this agent gets them. Change them in the hub folder." />
@@ -412,9 +412,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
         }}
       />
       <TestDrawer run={test} onRetry={(c) => void runTest(c)} onClose={() => setTest(null)} />
-      <div className="panel">
-        <HubFolderServers hub={hub} />
-      </div>
+      <HubFolderServers hub={hub} panel />
     </>
   );
 }

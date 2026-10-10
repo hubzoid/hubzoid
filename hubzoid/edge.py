@@ -461,8 +461,12 @@ def build_edge_app(
         # People and access are managed in the Console: Open WebUI's Users
         # section (Groups too) opens Settings, and browser writes to its
         # account-admin API are refused.
-        if (owui_rewrites and _match(request.url.path, norm_routes) is None
-                and _is_tool_server_write(request.method, request.url.path)):
+        if owui_rewrites and _match(request.url.path, norm_routes) is None and (
+                _is_tool_server_write(request.method, request.url.path)
+                or (request.method == "POST"
+                    and _clean_path(request.url.path) == "/api/v1/configs/import"
+                    and b"tool_server" in await request.body())):
+            # A configuration import carrying tool servers is the same save.
             from starlette.responses import JSONResponse
 
             return JSONResponse({"detail": TOOL_SERVERS_MOVED}, status_code=403)

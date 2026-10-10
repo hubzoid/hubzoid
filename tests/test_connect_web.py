@@ -297,6 +297,12 @@ def test_your_connections_page_connects_and_disconnects(client, hub):
     assert "Not connected" in page
     r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
     assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
+    # Without the grant, the page offers only Disconnect and refuses to connect.
+    from hubzoid.access import store_for
+
+    store_for(hub).revoke(ALICE, hub.name, "connector_gmail", actor="test")
+    r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
+    assert r.status_code == 403
     # Another site's form cannot act for the person.
     r = client.post("/portal/connections/gmail/connect",
                     headers={**_as(ALICE), "origin": "https://evil.example"})

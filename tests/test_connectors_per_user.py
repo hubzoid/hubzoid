@@ -101,6 +101,14 @@ def test_open_webui_mode_uses_the_console_connectors(hub, monkeypatch):
     assert per_user.per_user_servers(hub, who(X, "owui")) == []  # no verified account yet
     store_for(hub).upsert_identity(email=X, owui_id="u-x")
     assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
+    # An Open WebUI chat turn must carry that same account id, not only the email.
+    from hubzoid import _request_ctx
+
+    with _request_ctx.owui_account_scope("u-x"):
+        assert keys(per_user.per_user_servers(hub, who(X, "owui"))) == ["my_mail"]
+    for forwarded in (None, "u-someone-else"):
+        with _request_ctx.owui_account_scope(forwarded):
+            assert per_user.per_user_servers(hub, who(X, "owui")) == []
     bind_owui_account(hub, X, "u-other")
     assert per_user.per_user_servers(hub, who(X, "owui")) == []
     assert tokens.for_user(hub, "u-x") == []
@@ -128,6 +136,16 @@ def test_a_shared_key_refuses_headers_that_change_the_request(hub, header):
                               "auth_type": "shared", "shared_secret": "s",
                               "shared_header": header}, actor="test")
     assert e.value.code == "invalid_shared_header"
+
+
+@pytest.mark.parametrize("key", ["kéy-🔑", "tab\tkey"])
+def test_a_shared_key_must_be_a_printable_ascii_header_value(hub, key):
+    from hubzoid.connectors import ConnectorError
+
+    with pytest.raises(ConnectorError) as e:
+        registry.create(hub, {"name": "Key", "url": "https://key.example.org/mcp",
+                              "auth_type": "shared", "shared_secret": key}, actor="test")
+    assert e.value.code == "invalid_shared_secret"
 
 
 def test_a_shared_slack_channel_never_gets_them_even_when_listed(hub, monkeypatch):

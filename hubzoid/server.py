@@ -659,6 +659,7 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
             or ""
         ).strip().lower()
         account_id = request.headers.get('x-openwebui-user-id')
+        _request_ctx.set_owui_account(account_id)
     else:
         # No Open WebUI in this mode: its account id header means nothing and
         # is never used to rebind an identity.

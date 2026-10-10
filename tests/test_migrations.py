@@ -318,3 +318,34 @@ def test_ambiguous_phone_upgrade_stops_without_changing_assignments(tmp_path, ot
         conn.execute(text("UPDATE hz_identities SET phone=NULL WHERE subject='two@example.org'"))
     migrations.upgrade(eng, "operational")
     assert migrations.current(eng, 'operational') == migrations.head('operational')
+
+
+
+def test_op_0018_keeps_connector_rows_and_adds_empty_columns(tmp_path):
+    """A store at op_0017 with a connector and a connect link upgrades with
+    both rows intact and the three new columns empty."""
+    from alembic.runtime.environment import EnvironmentContext
+
+    eng = _sqlite(tmp_path)
+    cfg, script = migrations._script("operational")
+
+    def to_0017(rev, context):
+        return script._upgrade_revs("op_0017", rev)
+
+    with EnvironmentContext(cfg, script, fn=to_0017, destination_rev="op_0017") as env:
+        with eng.connect() as conn:
+            env.configure(connection=conn, version_table=migrations.STORES["operational"])
+            with env.begin_transaction():
+                env.run_migrations()
+            conn.commit()
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO hz_connectors (id, name, url, created_at, updated_at) "
+                       "VALUES ('gmail', 'Gmail', 'https://g.example/mcp', 1, 1)"))
+        c.execute(text("INSERT INTO hz_connect_states (id, created, expires, hub, subject, "
+                       "surface, app, status, continuation_status) VALUES ('j1', 1, 2, 'sales', "
+                       "'a@x.org', 'web', 'gmail', 'pending', 'none')"))
+    migrations.upgrade(eng, "operational")
+    with eng.connect() as c:
+        assert tuple(c.execute(text("SELECT id, shared_header, shared_secret_enc FROM "
+                                    "hz_connectors")).one()) == ("gmail", None, None)
+        assert tuple(c.execute(text("SELECT id, account FROM hz_connect_states")).one()) == ("j1", None)
