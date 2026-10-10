@@ -64,8 +64,9 @@ def _listing(rows: list[dict], page: str) -> str:
              "reconnect", "shared": "shared, nothing to connect", "unknown": "unknown"}
     items = "; ".join(f"{r['label']} ({r['app']}): {words.get(r['status'], r['status'])}"
                       for r in rows)
-    return (f"What this user can connect here: {items}. To connect one, call again with its "
-            f"app. They can manage connections at {page}.")
+    return (f"What this user can connect here: {items}. To connect one, call connect_account "
+            "again with its app (the ID in brackets) and send the user the personal link it "
+            f"returns. Later they can review their connections at {page}.")
 
 
 def make(ctx) -> list:
