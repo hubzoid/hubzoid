@@ -330,3 +330,50 @@ def test_a_refresh_cannot_outlive_its_lease_even_while_headers_trickle(monkeypat
         stop.set()
     assert time.monotonic() - began < 4
     assert (outcome, reason) == ("unavailable", "ReadTimeout")
+
+
+# ---------------------------------------------------------------------------
+# Listing a server's tools (the Console's Test)
+# ---------------------------------------------------------------------------
+def _mcp_server(*, fail_list: bool = False):
+    """A fake MCP server: a session id, endless bodies where nothing should be
+    read (the notification and DELETE replies), and every request recorded."""
+    import json
+
+    seen = {"calls": [], "chunks": 0}
+
+    def endless():
+        for _ in range(100_000):
+            seen["chunks"] += 1
+            yield b"x" * 1024
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content or b"{}") if request.method == "POST" else {}
+        seen["calls"].append(request.method + " " + str(body.get("method", "")))
+        if request.method == "DELETE" or body.get("method") == "notifications/initialized":
+            return httpx.Response(200, content=endless())
+        if body.get("method") == "initialize":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}},
+                                  headers={"mcp-session-id": "s-1"})
+        if fail_list:
+            return httpx.Response(500)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {
+            "tools": [{"name": "search", "description": "Find  things"}]}})
+
+    return handler, seen
+
+
+@pytest.mark.parametrize("fail_list", [False, True])
+def test_listing_tools_never_reads_unbounded_replies_and_always_closes_the_session(monkeypatch, fail_list):
+    from hubzoid.connectors import server_tools
+
+    handler, seen = _mcp_server(fail_list=fail_list)
+    monkeypatch.setattr(net, "_transport", httpx.MockTransport(handler))
+    if fail_list:
+        with pytest.raises(ConnectorError):
+            server_tools.list_tools("https://mcp.example.org/mcp")
+    else:
+        assert server_tools.list_tools("https://mcp.example.org/mcp") == [
+            {"name": "search", "description": "Find things"}]
+    assert seen["calls"][0] == "POST initialize" and seen["calls"][-1] == "DELETE "
+    assert seen["chunks"] < 10  # the 100 MB replies were never read

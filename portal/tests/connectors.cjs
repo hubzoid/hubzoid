@@ -172,7 +172,7 @@ const step = (name) => {
     step("Adding starts from popular servers, each with how people sign in, or a custom one");
     await page.getByRole("button", { name: "Add connector" }).first().click();
     await drawer().getByRole("button", { name: "Linear: Each person signs in" }).waitFor();
-    await drawer().getByRole("button", { name: "GitHub: Needs a client ID" }).waitFor();
+    await drawer().getByRole("button", { name: "GitHub: Needs an OAuth app" }).waitFor();
     await drawer().getByRole("button", { name: "Cloudflare Docs: No sign-in" }).waitFor();
     await drawer().getByLabel("Search servers").fill("jira");
     await drawer().getByRole("button", { name: "Atlassian: Each person signs in" }).waitFor();
@@ -182,8 +182,9 @@ const step = (name) => {
     assert.equal(await drawer().getByLabel("Name").inputValue(), "Notion");
     assert.equal(await drawer().getByLabel("Server URL").inputValue(), "https://mcp.notion.com/mcp");
     await drawer().getByRole("button", { name: "All servers" }).click();
-    await drawer().getByRole("button", { name: "GitHub: Needs a client ID" }).click();
-    await drawer().getByText("GitHub needs a client ID").waitFor();
+    await drawer().getByRole("button", { name: "GitHub: Needs an OAuth app" }).click();
+    await drawer().getByText("GitHub needs an OAuth app").waitFor();
+    await drawer().getByText("paste its client ID and client secret", { exact: false }).waitFor();
     await drawer().getByRole("button", { name: "All servers" }).click();
     await drawer().getByRole("button", { name: /Custom server/ }).click();
     assert.equal(await drawer().getByLabel("Name").inputValue(), "");
@@ -276,6 +277,15 @@ const step = (name) => {
     await drawer().getByRole("button", { name: "Save" }).click();
     await page.getByText("Gmail was saved.").waitFor();
     assert.deepEqual(last().body.tool_allowlist, ["search_threads", "get_thread", "send_message"]);
+
+    step("Tools load only from the saved server: after changing the URL, save first");
+    await page.getByRole("link", { name: "Gmail" }).click();
+    await drawer().getByLabel("Server URL").fill("https://other-mail.example.org/mcp");
+    await drawer().getByText("Save first to load the tools of the new server.").waitFor();
+    assert.equal(await drawer().getByRole("button", { name: "Load from server" }).count(), 0);
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await drawer().waitFor({ state: "hidden" });
 
     step("A test marks which tools reach agents");
     await gmail.getByRole("button", { name: "Test" }).click();

@@ -95,30 +95,35 @@ def list_tools(url: str, headers: dict | None = None, *, deadline_s: float = 20.
                 if _message(r, 1, deadline) is None:
                     raise ConnectorError("bad_response", "The server did not answer initialize.", 502)
             hdrs = {**base, **({"mcp-session-id": session} if session else {})}
-            c.post(url, json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                   headers=hdrs)
-            cursor = None
-            for page in range(MAX_PAGES):
-                params = {"cursor": cursor} if cursor else {}
-                req = {"jsonrpc": "2.0", "id": 2 + page, "method": "tools/list", "params": params}
-                with c.stream("POST", url, json=req, headers=hdrs) as r:
-                    reply = _message(r, 2 + page, deadline) if r.status_code < 400 else None
-                result = (reply or {}).get("result")
-                if not isinstance(result, dict):
-                    raise ConnectorError("bad_response", "The server did not list its tools.", 502)
-                for t in result.get("tools") or []:
-                    if isinstance(t, dict) and isinstance(t.get("name"), str):
-                        desc = t.get("description") if isinstance(t.get("description"), str) else ""
-                        tools.append({"name": t["name"][:128],
-                                      "description": " ".join(desc.split())[:_DESCRIPTION_MAX]})
-                cursor = result.get("nextCursor")
-                if not cursor or len(tools) >= MAX_TOOLS:
-                    break
-            if session:
-                try:
-                    c.request("DELETE", url, headers=hdrs, timeout=5.0)
-                except httpx.HTTPError:
+            try:
+                # Replies to a notification and to DELETE are never read.
+                with c.stream("POST", url, headers=hdrs,
+                              json={"jsonrpc": "2.0", "method": "notifications/initialized"}):
                     pass
+                cursor = None
+                for page in range(MAX_PAGES):
+                    params = {"cursor": cursor} if cursor else {}
+                    req = {"jsonrpc": "2.0", "id": 2 + page, "method": "tools/list", "params": params}
+                    with c.stream("POST", url, json=req, headers=hdrs) as r:
+                        reply = _message(r, 2 + page, deadline) if r.status_code < 400 else None
+                    result = (reply or {}).get("result")
+                    if not isinstance(result, dict):
+                        raise ConnectorError("bad_response", "The server did not list its tools.", 502)
+                    for t in result.get("tools") or []:
+                        if isinstance(t, dict) and isinstance(t.get("name"), str):
+                            desc = t.get("description") if isinstance(t.get("description"), str) else ""
+                            tools.append({"name": t["name"][:128],
+                                          "description": " ".join(desc.split())[:_DESCRIPTION_MAX]})
+                    cursor = result.get("nextCursor")
+                    if not cursor or len(tools) >= MAX_TOOLS:
+                        break
+            finally:
+                if session:
+                    try:
+                        with c.stream("DELETE", url, headers=hdrs, timeout=5.0):
+                            pass
+                    except httpx.HTTPError:
+                        pass
     except ConnectorError:
         raise
     except httpx.HTTPError as exc:

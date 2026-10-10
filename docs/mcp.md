@@ -119,11 +119,14 @@ administrator run it on the server.
 **Console → Agents → the agent → Connectors → Add connector** registers it and
 offers it in that agent. It opens on a searchable list of popular remote MCP
 servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub and others), each
-labelled with how people sign in: *Each person signs in*, *Needs a client ID*
-(the provider does not let Hubzoid register itself, so create an OAuth app
-there first) or *No sign-in*. Choosing one fills its name, ID, address and
-sign-in; **Custom server** starts empty. The list holds addresses only, checked
-with Hubzoid's discovery on 2026-10-10; run **Test** before people use one. **Offer an existing connector** offers one another
+labelled with how people sign in: *Each person signs in*, *Needs an OAuth app*
+(the provider does not let Hubzoid register itself: create an OAuth app there
+with the redirect URI, then enter its client ID and client secret) or *No
+sign-in*. Choosing one fills its name, ID, address and sign-in; **Custom
+server** starts empty. The list holds addresses only, checked with Hubzoid's
+discovery on 2026-10-10; run **Test** before people use one.
+
+**Offer an existing connector** offers one another
 agent already has. **Stop offering in <agent>** takes it out of that agent only
 and removes its grants there; people's connections and other agents stay.
 **Remove from every agent** deletes it:
@@ -138,15 +141,18 @@ and removes its grants there; people's connections and other agents stay.
   headers, are refused), or *No sign-in* for a server that needs no account.
 - Optional: a **client ID** and **client secret** registered with the provider
   in advance, **scopes**, and **allowed tools**. When editing, **Load from
-  server** lists the server's tools to choose from.
+  server** lists the saved server's tools to choose from (after changing the
+  URL or sign-in, save first).
 
-**Test** reads the server's metadata and changes nothing. It shows the
+**Test** reads the server's metadata. It registers nothing and changes no
+settings. It shows the
 authorization server, whether Hubzoid can register itself, and the redirect URI
 to register with a provider that needs a client created in advance:
 `<public origin>/oauth/connectors/<id>/callback`. It also lists the server's
 tools, marking which reach agents when tools are allowed by name. To list them
 it uses the Shared key, no credential for *No sign-in*, or, for *Each person
-signs in*, your own connection: connect your account first to see them.
+signs in*, your own connection: connect your account first to see them. Like
+any use, that may refresh your connection's sign-in.
 
 Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
 whenever people reach Hubzoid at an address other than this computer. Redirect
@@ -283,9 +289,12 @@ and allow-lists.
 | Codex (`codex-local`) | Per-turn copy of the tool registry. Hubzoid runs the MCP client and the Codex app-server only sees dynamic tools |
 
 Tool names are the same on all three: `mcp__my_<id>__<tool>`, as Claude names
-MCP tools (Mastra and Agno prefix the same way). Characters other than letters,
-digits, `_` and `-` become `_`, and a name longer than 64 characters is cut and
-ends in a short hash, so two long names never collide.
+MCP tools (Mastra and Agno prefix the same way). OpenAI accepts only letters,
+digits, `_` and `-`, up to 64 characters, so on OpenAI Agents and Codex a tool
+name with other characters (`issue.get`) has them replaced by `_` and ends in
+a short hash (`mcp__my_jira__issue_get_bd577d`), and a longer name is cut and
+ends in a hash. Two tools never end up with one name; Claude keeps such names
+as the server spells them.
 
 Rules that hold on all three:
 

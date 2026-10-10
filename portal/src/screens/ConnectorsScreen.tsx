@@ -565,6 +565,9 @@ function ConnectorDrawer({
         : null,
   };
   const invalid = Object.values(problems).some(Boolean);
+  // Tools are listed from the saved server; a different URL or sign-in is another server.
+  const serverChanged = !!existing && (draft.url.trim() !== existing.url || draft.auth !== existing.auth_type);
+  const toolsFrom = serverChanged ? null : serverTools;
   const redirect = `${location.origin}/oauth/connectors/${id || "<id>"}/callback`;
 
   function close() {
@@ -672,8 +675,8 @@ function ConnectorDrawer({
           <Alert
             type="info"
             showIcon
-            title={`${preset.name} needs a client ID`}
-            description={`It doesn’t let Hubzoid register itself. Create an OAuth app in ${preset.name} with the redirect URI below, then paste its client ID.`}
+            title={`${preset.name} needs an OAuth app`}
+            description={`It doesn’t let Hubzoid register itself. Create an OAuth app in ${preset.name} with the redirect URI below, then paste its client ID and client secret.`}
           />
         )}
         <Field id="connector-name" label="Name" problem={touched ? problems.name : null} help="What people see, for example Gmail.">
@@ -831,7 +834,7 @@ function ConnectorDrawer({
             <label className="field-label" htmlFor="connector-tools">
               Allowed tools (optional)
             </label>
-            {existing && !serverTools && (
+            {existing && !toolsFrom && !serverChanged && (
               <Button type="link" size="small" loading={toolsBusy} onClick={() => void loadTools()}>
                 Load from server
               </Button>
@@ -842,20 +845,22 @@ function ConnectorDrawer({
             mode="tags"
             value={draft.tools}
             tokenSeparators={[",", " "]}
-            {...(serverTools ? {} : { open: false, suffixIcon: null })}
-            options={serverTools?.map((t) => ({ value: t.name, label: t.name, title: t.description ?? t.name }))}
+            {...(toolsFrom ? {} : { open: false, suffixIcon: null })}
+            options={toolsFrom?.map((t) => ({ value: t.name, label: t.name, title: t.description ?? t.name }))}
             optionRender={(o) => (
               <div className="tool-option">
                 <span className="identity">{o.value}</span>
                 {o.data.title && o.data.title !== o.value && <Text type="secondary">{o.data.title}</Text>}
               </div>
             )}
-            placeholder={serverTools ? `Choose from ${serverTools.length} ${serverTools.length === 1 ? "tool" : "tools"}` : "search_threads, get_thread"}
+            placeholder={toolsFrom ? `Choose from ${toolsFrom.length} ${toolsFrom.length === 1 ? "tool" : "tools"}` : "search_threads, get_thread"}
             onChange={(v: string[]) => set("tools", v)}
             style={{ width: "100%" }}
           />
           <Text type="secondary" className="field-help">
-            Only these tools reach agents. Leave empty to allow every tool the server offers.
+            {serverChanged && existing
+              ? "Save first to load the tools of the new server."
+              : "Only these tools reach agents. Leave empty to allow every tool the server offers."}
           </Text>
         </div>
         <div className="field">
@@ -1043,7 +1048,7 @@ function TestDrawer({
               </Text>
             ))}
             <Text type="secondary" className="field-help">
-              A test only reads what the server offers. Nothing was registered or changed.
+              A test only reads what the server offers. It registers nothing and changes no settings.
             </Text>
           </>
         )}

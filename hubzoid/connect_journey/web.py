@@ -560,11 +560,14 @@ def _connections_body(mine: list, query) -> str:
     state = {c.id: status for c, status, *_ in mine}
     banner = ""
     done, gone = query.get("connected"), query.get("disconnected")
-    failed = query.get("connector") if query.get("error") else None
-    if done in names and state.get(done) == "connected":
+    # After a refused sign-in the callback adds error= (to connected= or connector=).
+    failed = (query.get("connector") or done) if query.get("error") else None
+    if failed in names:
+        banner = ("bad", "alert", f"{_e(names[failed])} was not connected. Try again.")
+    elif done in names and state.get(done) == "connected":
         banner = ("ok", "check", f"{_e(names[done])} connected.")
-    elif done in names or failed in names:
-        banner = ("bad", "alert", f"{_e(names[done or failed])} was not connected. Try again.")
+    elif done in names:
+        banner = ("bad", "alert", f"{_e(names[done])} was not connected. Try again.")
     elif gone in names and state.get(gone) != "connected":
         banner = ("ok", "check", f"{_e(names[gone])} disconnected.")
     banner_html = (f'<div class="banner {banner[0]}" role="status">{ui.icon(banner[1], 16)}'

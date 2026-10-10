@@ -36,5 +36,5 @@ export const CATALOG: CatalogEntry[] = [
 /** The sign-in label shown on a catalog card. */
 export function catalogAuthLabel(e: CatalogEntry): string {
   if (e.auth === "none") return "No sign-in";
-  return e.needsClient ? "Needs a client ID" : "Each person signs in";
+  return e.needsClient ? "Needs an OAuth app" : "Each person signs in";
 }

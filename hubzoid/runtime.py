@@ -407,16 +407,26 @@ _TOOL_NAME_MAX = 64  # OpenAI function names: ^[A-Za-z0-9_-]{1,64}$
 
 def connector_tool_name(server_key: str, tool: str) -> str:
     """A connector tool's name on every runtime: ``mcp__<server key>__<tool>``,
-    exactly what the Claude SDK calls it. Namespaced by server, as Mastra's
-    MCPClient (``server_tool``) and Agno's ``tool_name_prefix`` do, so a
-    connector tool never collides with a hub tool or another connector's."""
+    what the Claude SDK calls it. Namespaced by server, as Mastra's MCPClient
+    (``server_tool``) and Agno's ``tool_name_prefix`` do, so a connector tool
+    never collides with a hub tool or another connector's.
+
+    OpenAI accepts only letters, digits, ``_`` and ``-`` (64 at most). A tool
+    name with other characters has them replaced by ``_`` and ends in a short
+    hash of the server's own name, so ``issue.get`` and ``issue/get`` stay two
+    tools; an overlong name is cut and ends in a hash too."""
     import hashlib
     import re
 
-    name = re.sub(r"[^A-Za-z0-9_-]", "_", f"mcp__{server_key}__{tool}")
+    def digest(value: str, n: int) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()[:n]
+
+    clean = re.sub(r"[^A-Za-z0-9_-]", "_", tool)
+    if clean != tool:
+        clean += "_" + digest(tool, 6)
+    name = re.sub(r"[^A-Za-z0-9_-]", "_", f"mcp__{server_key}__") + clean
     if len(name) > _TOOL_NAME_MAX:
-        digest = hashlib.sha256(name.encode()).hexdigest()[:8]
-        name = name[:_TOOL_NAME_MAX - 9] + "_" + digest
+        name = name[:_TOOL_NAME_MAX - 9] + "_" + digest(f"{server_key}\0{tool}", 8)
     return name
 
 
@@ -447,6 +457,12 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
             # The call still goes to the server's own tool name (bound when the
             # tool was built); only the name the model sees changes.
             tools = [dataclasses.replace(t, name=connector_tool_name(srv.key, t.name)) for t in tools]
+            seen: set[str] = set()
+            unique = [t for t in tools if not (t.name in seen or seen.add(t.name))]
+            if len(unique) != len(tools):
+                log.warning("personal MCP server %r lists %d tool(s) twice; the repeats are left out",
+                            srv.key, len(tools) - len(unique))
+            tools = unique
         except Exception as exc:  # noqa: BLE001 — one broken server never sinks the turn
             log.warning("personal MCP server %r unavailable this turn (%s)",
                         srv.key, type(exc).__name__)

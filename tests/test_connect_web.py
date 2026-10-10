@@ -300,6 +300,10 @@ def test_your_connections_page_connects_and_disconnects(client, hub):
     # The note after a connect comes from the record, not the query.
     page = client.get("/portal/connections?connected=gmail", headers=_as(ALICE)).text
     assert "Gmail connected." not in page and "Gmail was not connected" in page
+    # A refused reconnect is never shown as connected, even with an older connection kept.
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-b")
+    page = client.get("/portal/connections?connected=gmail&error=access_denied", headers=_as(ALICE)).text
+    assert "Gmail connected." not in page and "Gmail was not connected" in page
     r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
     assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
     # Without the grant, the page offers only Disconnect and refuses to connect.

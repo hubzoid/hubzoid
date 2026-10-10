@@ -402,8 +402,13 @@ def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
     providers accept, and two long names never collapse into one."""
     from hubzoid.runtime import connector_tool_name
 
+    import re
+
     assert connector_tool_name("my_mail", "search") == "mcp__my_mail__search"
-    assert connector_tool_name("my_mail", "send.mail v2") == "mcp__my_mail__send_mail_v2"
+    dotted, slashed = connector_tool_name("my_jira", "issue.get"), connector_tool_name("my_jira", "issue/get")
+    assert dotted != slashed and dotted.startswith("mcp__my_jira__issue_get_")
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in (dotted, slashed))
+    assert connector_tool_name("my_jira", "issue_get") == "mcp__my_jira__issue_get"
     a = connector_tool_name("my_mail", "x" * 80 + "a")
     b = connector_tool_name("my_mail", "x" * 80 + "b")
     assert len(a) == len(b) == 64 and a != b and a.startswith("mcp__my_mail__")
