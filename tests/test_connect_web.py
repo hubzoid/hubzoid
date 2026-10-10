@@ -291,10 +291,14 @@ def test_your_connections_page_connects_and_disconnects(client, hub):
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     page = client.get("/portal/connections", headers=_as(ALICE)).text
     assert "Gmail" in page and "Connected" in page and "Disconnect" in page and "AT-a" not in page
+    assert "Used by" in page and 'class="confirm"' in page  # Disconnect asks first
     r = client.post("/portal/connections/gmail/disconnect", headers={**_as(ALICE), **_SAME})
-    assert r.status_code == 303
-    page = client.get("/portal/connections", headers=_as(ALICE)).text
-    assert "Not connected" in page
+    assert r.status_code == 303 and r.headers["location"] == "/portal/connections?disconnected=gmail"
+    page = client.get(r.headers["location"], headers=_as(ALICE)).text
+    assert "Not connected" in page and "Gmail disconnected." in page
+    # The note after a connect comes from the record, not the query.
+    page = client.get("/portal/connections?connected=gmail", headers=_as(ALICE)).text
+    assert "Gmail connected." not in page and "Gmail was not connected" in page
     r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
     assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
     # Without the grant, the page offers only Disconnect and refuses to connect.

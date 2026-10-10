@@ -89,7 +89,10 @@ function fixture() {
             token_endpoint: "https://auth.example.org/token", registration_endpoint: "https://auth.example.org/register",
             revocation_endpoint: "https://auth.example.org/revoke", iss_parameter_supported: true, pkce: "S256",
             scopes_supported: ["mail.read"], default_scope: "mail.read", scope: "mail.read", registration: "dynamic",
-            token_endpoint_auth_methods: ["none"], notes: [] };
+            token_endpoint_auth_methods: ["none"], notes: [],
+            tools: [{ name: "search_threads", description: "Search mail threads" },
+                    { name: "get_thread", description: "Read one thread" },
+                    { name: "send_message", description: "Send an email" }] };
     if (method === "PATCH") {
       const { client_secret, ...rest } = body;
       Object.assign(found, rest);
@@ -166,8 +169,26 @@ const step = (name) => {
     await linear.getByText("All tools").waitFor();
     assert.equal(await linear.getByRole("switch").isChecked(), true);
 
-    step("Adding checks the fields before sending anything");
+    step("Adding starts from popular servers, each with how people sign in, or a custom one");
     await page.getByRole("button", { name: "Add connector" }).first().click();
+    await drawer().getByRole("button", { name: "Linear: Each person signs in" }).waitFor();
+    await drawer().getByRole("button", { name: "GitHub: Needs a client ID" }).waitFor();
+    await drawer().getByRole("button", { name: "Cloudflare Docs: No sign-in" }).waitFor();
+    await drawer().getByLabel("Search servers").fill("jira");
+    await drawer().getByRole("button", { name: "Atlassian: Each person signs in" }).waitFor();
+    assert.equal(await drawer().getByRole("button", { name: /^Linear/ }).count(), 0);
+    await drawer().getByLabel("Search servers").fill("");
+    await drawer().getByRole("button", { name: "Notion: Each person signs in" }).click();
+    assert.equal(await drawer().getByLabel("Name").inputValue(), "Notion");
+    assert.equal(await drawer().getByLabel("Server URL").inputValue(), "https://mcp.notion.com/mcp");
+    await drawer().getByRole("button", { name: "All servers" }).click();
+    await drawer().getByRole("button", { name: "GitHub: Needs a client ID" }).click();
+    await drawer().getByText("GitHub needs a client ID").waitFor();
+    await drawer().getByRole("button", { name: "All servers" }).click();
+    await drawer().getByRole("button", { name: /Custom server/ }).click();
+    assert.equal(await drawer().getByLabel("Name").inputValue(), "");
+
+    step("Adding checks the fields before sending anything");
     await drawer().getByRole("button", { name: "Add connector" }).click();
     await drawer().getByText("Enter a name people will recognise, for example Gmail.").waitFor();
     await drawer().getByText("Enter the server’s URL.").waitFor();
@@ -193,6 +214,9 @@ const step = (name) => {
     });
     await page.getByRole("dialog", { name: "Test Google Drive" }).getByText("Discovery succeeded").waitFor();
     await drawer().getByText("Hubzoid registers itself (dynamic registration)").waitFor();
+    // The test lists what the server offers.
+    await drawer().getByText("search_threads", { exact: true }).waitFor();
+    await drawer().getByText("Send an email").waitFor();
     assert.ok(fx.state.calls.some((c) => c.method === "POST" && c.endpoint === "/connectors/google_drive/test"));
     await drawer().getByRole("button", { name: "Close" }).click();
     await drawer().waitFor({ state: "hidden" });
@@ -200,6 +224,7 @@ const step = (name) => {
 
     step("A Shared key connector sends its key once and never shows it");
     await page.getByRole("button", { name: "Add connector" }).first().click();
+    await drawer().getByRole("button", { name: /Custom server/ }).click();
     await drawer().getByLabel("Name").fill("Company API");
     await drawer().getByLabel("Server URL").fill("https://api.example.org/mcp");
     await drawer().getByText("Shared key", { exact: true }).click();
@@ -219,6 +244,7 @@ const step = (name) => {
 
     step("A refused save keeps the drawer open with the server's reason");
     await page.getByRole("button", { name: "Add connector" }).first().click();
+    await drawer().getByRole("button", { name: /Custom server/ }).click();
     await drawer().getByLabel("Name").fill("Gmail");
     await drawer().getByLabel("Server URL").fill("https://other.example.org/mcp");
     await drawer().getByRole("button", { name: "Add connector" }).click();
@@ -240,6 +266,22 @@ const step = (name) => {
     assert.equal(edit.body.scopes, "read");
     assert.equal("client_secret" in edit.body, false, "an untouched secret is not sent");
     assert.equal("id" in edit.body, false);
+
+    step("Allowed tools are chosen from what the server lists");
+    await page.getByRole("link", { name: "Gmail" }).click();
+    await drawer().getByRole("button", { name: "Load from server" }).click();
+    await drawer().getByLabel("Allowed tools (optional)").click();
+    await page.locator(".ant-select-item-option", { hasText: "send_message" }).click();
+    await page.keyboard.press("Escape");
+    await drawer().getByRole("button", { name: "Save" }).click();
+    await page.getByText("Gmail was saved.").waitFor();
+    assert.deepEqual(last().body.tool_allowlist, ["search_threads", "get_thread", "send_message"]);
+
+    step("A test marks which tools reach agents");
+    await gmail.getByRole("button", { name: "Test" }).click();
+    const allowedRow = drawer().locator(".server-tools-list li", { hasText: "send_message" });
+    await allowedRow.getByText("Allowed").waitFor();
+    await drawer().getByRole("button", { name: "Close" }).click();
 
     step("A test that fails says why");
     await linear.getByRole("button", { name: "Test" }).click();

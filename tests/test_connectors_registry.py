@@ -345,6 +345,8 @@ def test_a_connector_without_sign_in_connects_at_once(hub, tc):
         f.grant_connector(hub, "docs")
         r = tc.post("/portal/api/connectors/docs/test", headers=SAME)
         assert r.json()["ok"] is True and r.json()["requires_auth"] is False
+        # The Test lists what the server offers, for the Console and its tool picker.
+        assert [t["name"] for t in r.json()["tools"]] == ["lookup"]
         r = tc.post("/api/connections/docs/connect", json={}, headers=SAME)
         assert r.json() == {"authorize_url": "/account/connections?connected=docs"}
         r = tc.post("/api/connections/docs/connect", json={"return_to": "/c/abc"}, headers=SAME)
@@ -361,7 +363,7 @@ def test_a_server_that_needs_sign_in_is_reported_for_a_no_auth_connector(hub, tc
         registry.create(hub, body(name="Private", url=url, auth_type="none"), actor="test")
         r = tc.post("/portal/api/connectors/private/test", headers=SAME).json()
         assert r["ok"] is False and r["requires_auth"] is True
-        assert r["error"]["code"] == "requires_auth"
+        assert r["error"]["code"] == "requires_auth" and "tools" not in r
 
 
 def test_registry_errors_are_connector_errors(hub):
