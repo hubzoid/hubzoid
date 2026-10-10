@@ -72,21 +72,15 @@ def _e(value) -> str:
 
 
 def _not_found() -> HTMLResponse:
-    return _page("Link not found",
-                 ["This connection link is not valid.",
-                  "Ask the agent again for a new link."], 404, tone="bad")
+    return _page("Link not found", ["Ask the agent for a new link."], 404, tone="bad")
 
 
 def _gone(j: dict) -> HTMLResponse:
     back, script = _back(j)
     if j["status"] == "superseded":
-        return _page("A newer link was sent",
-                     ["This link was replaced by a newer one.",
-                      "Use the latest link from the chat."], 410, tone="bad",
-                     actions=back, script=script)
-    return _page("This link has expired",
-                 [f"The link to connect {_e(label(j['app']))} is no longer valid.",
-                  "Ask the agent again for a new link."], 410, tone="bad",
+        return _page("A newer link was sent", ["Use the newest link the agent sent."], 410,
+                     tone="bad", actions=back, script=script)
+    return _page("This link has expired", ["Ask the agent for a new link."], 410, tone="bad",
                  actions=back, script=script)
 
 
@@ -181,20 +175,17 @@ def _outcome(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
     else:
         lead = "Close this tab and carry on in your chat."
     if status == "connected":
-        details = ui.rows([("Account", ui.avatar_chip(email)), ("Agent", _e(agent))])
-        return _page(f"{name} connected", [lead], 200, tone="ok", eyebrow="Connected",
+        details = ui.rows([("Account", ui.avatar_chip(email))])
+        return _page(f"{name} connected", [lead], 200, tone="ok",
                      brand=agent, extra=details, script=script,
                      actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
     if status == "failed":
-        return _page(f"{name} was not connected",
-                     [f"The connection to {app} did not complete.",
-                      "Go back to the chat and ask again for a new link."], 200, tone="bad",
-                     brand=agent, actions=button, script=script)
+        return _page(f"{name} was not connected", ["Ask the agent for a new link to try again."],
+                     200, tone="bad", brand=agent, actions=button, script=script)
     if status == "cancelled":
         return _page("Connection cancelled",
-                     [f"{app} was not connected.",
-                      "Ask the agent again whenever you're ready."], 200, tone="warn", brand=agent,
-                     actions=button, script=script)
+                     [f"{app} was not connected. Ask the agent again when you're ready."], 200,
+                     tone="warn", brand=agent, actions=button, script=script)
     return _gone(j)
 
 
@@ -210,24 +201,22 @@ def _connect_page(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
     c = registry.get(hub_dir, j["app"])
     name = c.name if c is not None else label(j["app"])
     base = f"/portal/connect/{quote(j['id'])}"
-    details = [("Account", ui.avatar_chip(email)), ("Agent", _e(agent))]
+    details = [("Account", ui.avatar_chip(email))]
     if c is not None:
-        details.append(("Server", _e(urlsplit(c.url).hostname or c.url)))
-        if c.scopes:
-            details.append(("Access", _e(c.scopes)))
-        if c.tool_allowlist:
-            details.append(("Tools", _e(", ".join(c.tool_allowlist))))
+        details.append(("Connects to", _e(urlsplit(c.url).hostname or c.url)))
+    access = [f"Access requested: {_e(c.scopes)}."] if c is not None and c.scopes else []
     pair = (f'<div class="pair"><span class="tile agent" aria-hidden="true"><b style="color:var(--brand)">/</b>'
             f'{_e(agent[:1].lower())}</span><span class="link">{ui.icon("link", 14)}</span>'
             f'<span class="tile app" aria-hidden="true">{ui.initial(name)}</span></div>')
-    card = (f'<section class="card">{pair}<p class="eyebrow">Connect an account</p>'
+    card = (f'<section class="card">{pair}'
             f"<h1>Connect {_e(name)}</h1>"
             f'<p class="lead">{_e(agent)} will use {_e(name)} as you.</p>'
             + ui.rows(details)
             + ui.help_text("How this works", [
                 f"You approve access on {_e(name)}'s own page. Hubzoid never sees your password.",
-                f"Hubzoid keeps the sign-in encrypted and uses it only when you work with "
-                f"{_e(agent)}. Disconnect any time on <a href=\"{PAGE}\">Your connections</a>."])
+                *access,
+                "Hubzoid keeps it encrypted, and agents use it only for you. Disconnect any "
+                f"time on <a href=\"{PAGE}\">Your connections</a>."])
             + f'<div class="actions"><form method="post" action="{base}/start">'
               f'<button class="btn btn-primary" type="submit">Continue to {_e(name)} '
               f'{ui.icon("arrow", 16)}</button></form>'
@@ -290,11 +279,9 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="deny", reason="wrong-account")
             return None, _page("This link is for another account",
-                               ["This link was created for a different account, so it "
-                                "cannot be used while you are signed in as "
-                                f"{_e(email)}.",
-                                "Sign in with the account that asked, or ask the agent "
-                                "again from your own chat."], 403, tone="bad")
+                               [f"You're signed in as {_e(email)}.",
+                                "Sign in with the account that asked for it, or ask the agent "
+                                "from your own chat."], 403, tone="bad")
         return (account, email), None
 
     def fresh(j: dict) -> dict:
@@ -360,7 +347,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             store.audit(hub_dir, hub=j["hub"], subject=email, surface="web", app=j["app"],
                         decision="deny", reason="no longer permitted")
             return _page("Not permitted",
-                         [f"You no longer have permission to connect {_e(label(j['app']))}.",
+                         [f"You can no longer connect {_e(_app_name(hub_dir, j['app']))}.",
                           "Ask your administrator."], 403, tone="bad")
         try:
             user = user_of(request, account, email)
@@ -419,13 +406,13 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
                 "location.reload();return}next()}).catch(next)}"
                 "function next(){if(Date.now()-t0<" + str(POLL_SECONDS * 1000) + "){"
                 "setTimeout(tick,2000)}else{var m=document.getElementById('wait'),s=document.getElementById('spin');"
-                "if(s){s.remove()}if(m){m.textContent='The connection has not completed. If you "
-                "cancelled or closed the sign-in window, ask the agent again for a new link.'}}}"
+                "if(s){s.remove()}if(m){m.textContent='This is taking longer than expected. If you "
+                "closed the sign-in window, ask the agent for a new link.'}}}"
                 "setTimeout(tick,1500)})();")
             waiting = (f'<div class="waiting"><span class="spin" id="spin" aria-hidden="true"></span>'
                        f'<span id="wait">Checking your {app} connection…</span></div>'
                        '<p class="muted">This page updates by itself.</p>')
-            return _page("Finishing up", [], 202, eyebrow="Almost done", extra=waiting,
+            return _page("Finishing up", [], 202, extra=waiting,
                          brand=_agent_name(hub_dir, j["hub"]), script=script)
         return _outcome(hub_dir, j, email)
 
@@ -547,9 +534,9 @@ def _date(ts: float | None) -> str:
     return f"{t.tm_mday} {time.strftime('%b %Y', t)}"
 
 
-_BADGES = {"connected": ("ok", "Connected"), "expired": ("warn", "Needs reconnecting"),
+_BADGES = {"connected": ("ok", "Connected"), "expired": ("warn", "Needs attention"),
            "none": ("", "Not connected"), "shared": ("info", "Shared"),
-           "blocked": ("", "Not available")}
+           "blocked": ("", "Not available to you")}
 
 
 def _connections_body(mine: list, query) -> str:
@@ -579,11 +566,11 @@ def _connections_body(mine: list, query) -> str:
         dot = '<span class="dot" aria-hidden="true"></span>' if kind == "connected" else ""
         used = f"Used by {_e(', '.join(agents))}" if agents else ""
         if kind == "blocked":
-            meta = "No longer offered to you. Disconnect to remove it."
+            meta = "You no longer have access. Disconnect to remove it."
         elif kind == "shared":
             meta = " · ".join(x for x in ("Set up by your administrator", used) if x)
         elif kind == "connected":
-            meta = " · ".join(x for x in (used, f"Since {_date(since)}" if since else "") if x)
+            meta = " · ".join(x for x in (used, f"Connected {_date(since)}" if since else "") if x)
         else:
             meta = used
         cid = quote(c.id)
@@ -611,10 +598,11 @@ def _connections_body(mine: list, query) -> str:
         listing = ('<div class="list"><div class="empty">'
                    f'<span class="tile sm" aria-hidden="true">{ui.icon("plug", 18)}</span>'
                    '<p style="margin:0;color:var(--ink);font-weight:600">Nothing to connect yet</p>'
-                   "<p>When your administrator adds an app for your agents, it shows here.</p>"
+                   "<p>Ask your administrator for an app to connect.</p>"
                    "</div></div>")
-    head = ('<p class="eyebrow">Account</p><h1>Your connections</h1>'
-            '<p class="lead">Apps your agents use as you.</p>')
+    head = ('<h1>Your connections</h1>'
+            '<p class="lead">Connect your accounts so agents can use them for you. '
+            'Only you can use your connections.</p>')
     help_ = ui.help_text("About connections", [
         "A connection is yours alone: an agent uses it only when you're the one asking.",
         "Disconnect to stop at once. You can connect again any time."])
@@ -627,7 +615,7 @@ def _confirm_disconnect(name: str, agents: list[str], action: str, *, ghost: boo
     return (f'<details class="confirm"><summary class="btn btn-{"ghost" if ghost else "secondary"} btn-sm" '
             f'aria-label="Disconnect {_e(name)}">Disconnect</summary>'
             f'<div class="pop" role="dialog" aria-label="Disconnect {_e(name)}">'
-            f"<b>Disconnect {_e(name)}?</b><p>{_e(who)} will stop using it as you.</p>"
+            f"<b>Disconnect {_e(name)}?</b><p>{_e(who)} will stop using it for you.</p>"
             f'<div class="actions">{_button(action, "Disconnect", kind="danger")}</div></div></details>')
 
 
@@ -650,7 +638,9 @@ def _mine(hub_dir: Path, account: str, email: str) -> list:
         if c.auth_type == "shared":
             status = "shared"
         elif c.id in conns:
-            status = "expired" if conns[c.id].status == "expired" else "connected"
+            # As the web app sorts them: any other stored status needs attention.
+            ok = (conns[c.id].status or "").lower() in ("", "ok", "active", "connected", "valid")
+            status = "connected" if ok else "expired"
         else:
             status = "none"
         since = conns[c.id].connected_at if c.id in conns else None

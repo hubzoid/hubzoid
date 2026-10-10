@@ -46,10 +46,11 @@ export default function ConnectionsPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Connection | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [justConnected, setJustConnected] = useState<string | null>(connected);
+  // A refused sign-in comes back with ?error= too: then only the error is shown.
+  const [justConnected, setJustConnected] = useState<string | null>(callbackError ? null : connected);
   // ?connector=<id>&error=<code>: the provider or the server turned it down.
   const [failed, setFailed] = useState<{ id: string; code: string } | null>(
-    callbackError ? { id: connector || "", code: callbackError } : null,
+    callbackError ? { id: connector || connected || "", code: callbackError } : null,
   );
 
   const load = useCallback(async () => {
@@ -103,7 +104,10 @@ export default function ConnectionsPage({
     }
   };
 
-  const connectedName = justConnected ? items?.find((c) => c.connector_id === justConnected)?.name ?? justConnected : null;
+  // ?connected= only says where the person came back from: the list says whether it worked.
+  const justItem = justConnected ? items?.find((c) => c.connector_id === justConnected) : undefined;
+  const connectedName = justItem && kindOf(justItem) === "connected" ? justItem.name : null;
+  const notConnectedName = justItem && kindOf(justItem) !== "connected" && kindOf(justItem) !== "shared" ? justItem.name : null;
   const failedName = failed ? (items?.find((c) => c.connector_id === failed.id)?.name ?? (failed.id || t.connections.title)) : null;
 
   return (
@@ -112,6 +116,11 @@ export default function ConnectionsPage({
       {connectedName && (
         <Notice tone="success" className="mb-6" onDismiss={() => setJustConnected(null)}>
           {t.connections.connectedToast(connectedName)}
+        </Notice>
+      )}
+      {notConnectedName && (
+        <Notice tone="error" className="mb-6" onDismiss={() => setJustConnected(null)}>
+          {t.connections.notConnectedNote(notConnectedName)}
         </Notice>
       )}
       {failed && failedName && (
@@ -153,14 +162,16 @@ export default function ConnectionsPage({
                   </div>
                   <p className="m-0 mt-0.5 text-[13px] text-mute">
                     {kind === "blocked"
-                      ? t.connections.notAllowedHelp
+                      ? c.connected
+                        ? t.connections.lostAccessHelp
+                        : t.connections.notAllowedHelp
                       : [kind === "shared" ? t.connections.sharedHelp : "", used, since ? t.connections.since(since) : ""]
                           .filter(Boolean)
                           .join(" · ") || "\u00a0"}
                   </p>
                 </div>
                 <div className="flex flex-none gap-2">
-                  {kind === "connected" && (
+                  {(kind === "connected" || (kind === "blocked" && c.connected)) && (
                     <Button
                       size="sm"
                       onClick={() => {
@@ -205,7 +216,7 @@ export default function ConnectionsPage({
         open={!!confirm}
         onOpenChange={(o) => !o && !busy && setConfirm(null)}
         title={t.connections.disconnectTitle(confirm?.name ?? "")}
-        body={t.connections.disconnectBody}
+        body={t.connections.disconnectBody(confirm?.agents ?? [])}
         confirmLabel={t.connections.disconnect}
         onConfirm={() => void disconnect()}
         busy={!!busy}

@@ -1222,7 +1222,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
 
   step("Before any connector exists the page says how to get one");
   await page.getByRole("heading", { name: "Connections", level: 1 }).waitFor();
-  await page.getByText("No connections are set up yet. An administrator can add them in the Admin Console.").waitFor();
+  await page.getByText("Nothing to connect yet. Ask your administrator for an app to connect.").waitFor();
   await ctx.shot(page, "31-connections-empty");
   await ctx.axe(page, "connections");
 
@@ -1237,8 +1237,8 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await editor.getByRole("button", { name: "Add connector" }).click();
   // Saving tests the server at once: discovery on the real MCP hub.
   const test = page.getByRole("dialog", { name: "Test Remote Notes" });
-  await test.getByText("Ready", { exact: true }).waitFor();
-  await test.getByText("Discovery succeeded. People can connect with their own account.").waitFor();
+  await test.getByText("Check passed", { exact: true }).waitFor();
+  await test.getByText("Sign-in setup found. People with access can connect their own account.").waitFor();
   await ctx.shot(page, "33-console-connector-ready");
   await page.keyboard.press("Escape");
   await test.waitFor({ state: "hidden" });
@@ -1285,7 +1285,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
 
   step("Back on Hubzoid the connection shows as connected");
   await page2.waitForURL(`${ctx.BASE}/account/connections?connected=remote_notes`);
-  await page2.getByText("Connected to Remote Notes.").waitFor();
+  await page2.getByText("Remote Notes connected.").waitFor();
   await row.getByText("Connected", { exact: true }).waitFor();
   await ctx.shot(page2, "37-connections-connected");
   const listed = (await ctx.apiGet(sam.context, "/api/connections")).json;
@@ -1297,7 +1297,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   const confirm = page2.getByRole("alertdialog", { name: "Disconnect Remote Notes?" });
   await ctx.shot(page2, "38-connections-disconnect");
   await confirm.getByRole("button", { name: "Disconnect" }).click();
-  await page2.getByText("Disconnected from Remote Notes.").waitFor();
+  await page2.getByText("Remote Notes disconnected.").waitFor();
   await row.getByText("Not connected").waitFor();
   const after = (await ctx.apiGet(sam.context, "/api/connections")).json;
   const gone = (Array.isArray(after) ? after : after.connections ?? after.items ?? []).find((c) => c.connector_id === "remote_notes");

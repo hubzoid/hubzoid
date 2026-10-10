@@ -189,7 +189,7 @@ def test_start_rechecks_a_revoked_grant_on_a_managed_hub(client, hub):
     jid = _link(hub)
     gs.revoke(ALICE, hub.name, "connector_gmail")
     r = _start(client, jid)
-    assert r.status_code == 403 and "no longer have permission" in r.text
+    assert r.status_code == 403 and "can no longer connect Gmail" in r.text
     assert store.get(hub, jid)["status"] == "pending"
 
 

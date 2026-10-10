@@ -213,8 +213,8 @@ const step = (name) => {
       name: "Google Drive", url: "https://drive.example.org/mcp", auth_type: "oauth", scopes: null,
       tool_allowlist: null, enabled: true, client_id: "drive-client", client_secret: SECRET, id: "google_drive",
     });
-    await page.getByRole("dialog", { name: "Test Google Drive" }).getByText("Discovery succeeded").waitFor();
-    await drawer().getByText("Hubzoid registers itself (dynamic registration)").waitFor();
+    await page.getByRole("dialog", { name: "Test Google Drive" }).getByText("Sign-in setup found").waitFor();
+    await drawer().getByText("Hubzoid can register itself (dynamic registration)").waitFor();
     // The test lists what the server offers.
     await drawer().getByText("search_threads", { exact: true }).waitFor();
     await drawer().getByText("Send an email").waitFor();
@@ -242,6 +242,17 @@ const step = (name) => {
     await drawer().getByRole("button", { name: "Close" }).click();
     await drawer().waitFor({ state: "hidden" });
     assert.equal(await page.getByText("company-key-123").count(), 0, "a key is never shown again");
+
+    step("A Shared key connector moved to another URL needs its key again");
+    await page.getByRole("link", { name: "Company API" }).click();
+    await drawer().getByLabel("Server URL").fill("https://elsewhere.example.org/mcp");
+    const writes = fx.state.calls.filter((c) => c.method !== "GET").length;
+    await drawer().getByRole("button", { name: "Save" }).click();
+    await drawer().getByText("A new server needs its own key. Enter the key again.").waitFor();
+    assert.equal(fx.state.calls.filter((c) => c.method !== "GET").length, writes, "nothing was sent");
+    await drawer().getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await drawer().waitFor({ state: "hidden" });
 
     step("A refused save keeps the drawer open with the server's reason");
     await page.getByRole("button", { name: "Add connector" }).first().click();
@@ -281,7 +292,7 @@ const step = (name) => {
     step("Tools load only from the saved server: after changing the URL, save first");
     await page.getByRole("link", { name: "Gmail" }).click();
     await drawer().getByLabel("Server URL").fill("https://other-mail.example.org/mcp");
-    await drawer().getByText("Save first to load the tools of the new server.").waitFor();
+    await drawer().getByText("Save, then reopen Edit to load the new server’s tools.").waitFor();
     assert.equal(await drawer().getByRole("button", { name: "Load from server" }).count(), 0);
     await drawer().getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: "Discard" }).click();
@@ -295,7 +306,7 @@ const step = (name) => {
 
     step("A test that fails says why");
     await linear.getByRole("button", { name: "Test" }).click();
-    await drawer().getByText("Not ready").waitFor();
+    await drawer().getByText("Check failed").waitFor();
     await drawer().getByText("The server could not be reached. Check the URL and that the server is running.").waitFor();
     await drawer().getByRole("button", { name: "Close" }).click();
 

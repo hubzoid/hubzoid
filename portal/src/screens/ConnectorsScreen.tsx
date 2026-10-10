@@ -189,7 +189,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
     setOffering(true);
     try {
       await connectorsRequest(`/${encodeURIComponent(id)}/agents/${encodeURIComponent(hub.key)}`, "PUT");
-      message.success(`${hub.name} now offers it. Grant “Connect …” in Access to the people who use it.`);
+      message.success(`${hub.name} now offers it. Grant it to people in Access.`);
     } catch (e) {
       message.error(errorText(e));
     } finally {
@@ -300,7 +300,7 @@ function ConnectorsScreen({ hub }: { hub: Hub }) {
               scroll={{ x: 900 }}
               locale={{
                 emptyText: (
-                  <Empty description="No connectors yet. Add one to let people connect an app with their own account.">
+                  <Empty description="No connectors yet. Add one to give agents access to an app.">
                     <Button onClick={() => setEditing("new")}>Add connector</Button>
                   </Empty>
                 ),
@@ -550,14 +550,20 @@ function ConnectorDrawer({
   useNavigationGuard(guard);
 
   const id = creating ? draft.id.trim() || slug(draft.name) : draft.id;
+  // The stored key is never sent to another address: a new URL needs the key again.
+  const keyNeeded = !!existing && existing.auth_type === "shared" && draft.url.trim() !== existing.url;
   const problems = {
     name: draft.name.trim() ? null : "Enter a name people will recognise, for example Gmail.",
     id: creating && !/^[a-z][a-z0-9_]{1,39}$/.test(id) ? "Use 2 to 40 lowercase letters, digits or _, starting with a letter." : null,
     url: urlProblem(draft.url),
     secret: draft.auth === "oauth" && draft.secret && !draft.clientId.trim() ? "A client secret needs its client ID." : null,
     key:
-      draft.auth === "shared" && !draft.key && !(existing?.auth_type === "shared" && existing.has_shared_secret)
-        ? "Enter the key."
+      draft.auth === "shared" && !draft.key
+        ? keyNeeded
+          ? "A new server needs its own key. Enter the key again."
+          : !(existing?.auth_type === "shared" && existing.has_shared_secret)
+            ? "Enter the key."
+            : null
         : null,
     header:
       draft.auth === "shared" && draft.header.trim() && !/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(draft.header.trim())
@@ -742,7 +748,7 @@ function ConnectorDrawer({
               label="Key"
               problem={touched ? problems.key : null}
               help={
-                existing?.has_shared_secret
+                existing?.has_shared_secret && !keyNeeded
                   ? "A key is stored. Leave empty to keep it."
                   : "Stored encrypted and never shown again."
               }
@@ -751,7 +757,7 @@ function ConnectorDrawer({
                 id="connector-key"
                 autoComplete="new-password"
                 value={draft.key}
-                placeholder={existing?.has_shared_secret ? "••••••••" : undefined}
+                placeholder={existing?.has_shared_secret && !keyNeeded ? "••••••••" : undefined}
                 onChange={(e) => set("key", e.target.value)}
               />
             </Field>
@@ -759,7 +765,7 @@ function ConnectorDrawer({
               id="connector-header"
               label="Header (optional)"
               problem={touched ? problems.header : null}
-              help="Default Authorization: Bearer <key>."
+              help="Leave empty to send a plain key as Authorization: Bearer <key>."
             >
               <Input
                 id="connector-header"
@@ -859,7 +865,7 @@ function ConnectorDrawer({
           />
           <Text type="secondary" className="field-help">
             {serverChanged && existing
-              ? "Save first to load the tools of the new server."
+              ? "Save, then reopen Edit to load the new server’s tools."
               : "Only these tools reach agents. Leave empty to allow every tool the server offers."}
           </Text>
         </div>
@@ -922,9 +928,6 @@ function CatalogPicker({ onPick }: { onPick: (entry: CatalogEntry | null) => voi
         ))}
       </ul>
       {shown.length === 0 && <Text type="secondary">No match. Choose Custom server and enter its URL.</Text>}
-      <Text type="secondary" className="field-help">
-        Each server’s address was checked with Hubzoid. Run Test before people use it.
-      </Text>
     </div>
   );
 }
@@ -991,9 +994,9 @@ function TestDrawer({
             label: "Client",
             children:
               result.registration === "pre-registered"
-                ? "Your pre-registered client"
+                ? "Client ID entered"
                 : result.registration === "dynamic"
-                  ? "Hubzoid registers itself (dynamic registration)"
+                  ? "Hubzoid can register itself (dynamic registration)"
                   : "Needs a pre-registered client",
           },
           { key: "resource", label: "Resource", children: <Text className="identity">{result.resource ?? "Not sent"}</Text> },
@@ -1028,17 +1031,17 @@ function TestDrawer({
               <Alert
                 type="success"
                 showIcon
-                title="Ready"
+                title="Check passed"
                 description={
                   result.auth_type === "none"
-                    ? "The server answers without sign-in. People can turn it on."
+                    ? "The server works without sign-in. People with access can turn it on."
                     : result.auth_type === "shared"
-                      ? "The server accepts the key. Agents that offer it can use it."
-                      : "Discovery succeeded. People can connect with their own account."
+                      ? "The server accepts the key. People with access can use it."
+                      : "Sign-in setup found. People with access can connect their own account."
                 }
               />
             ) : (
-              <Alert type="error" showIcon title="Not ready" description={result.error?.message ?? "The server did not answer as expected."} />
+              <Alert type="error" showIcon title="Check failed" description={result.error?.message ?? "The server did not answer as expected."} />
             )}
             {items.length > 0 && <Descriptions column={1} size="small" bordered items={items} />}
             {result.ok && <ServerTools result={result} allowed={connector?.tool_allowlist ?? null} />}
@@ -1076,7 +1079,7 @@ function ServerTools({ result, allowed }: { result: ConnectorTest; allowed: stri
     <div className="server-tools">
       <Title level={5} style={{ margin: 0 }}>
         Tools <Text type="secondary">· {tools.length}</Text>
-        <InfoHelp text="What the server offers. Agents get every tool, or only the allowed ones when you list them in Edit." />
+        <InfoHelp text="What the server offers. Agents get all of them unless you choose Allowed tools in Edit." />
       </Title>
       {tools.length === 0 ? (
         <Text type="secondary">The server lists no tools.</Text>
