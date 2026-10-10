@@ -8,6 +8,11 @@ import subprocess
 
 import pytest
 
+# LiteLLM downloads its model price list at import unless told to use the copy
+# it ships. That remote list changes under us (October 2026 it stopped pricing
+# openrouter/anthropic/claude-haiku-4.5), so tests read the shipped copy.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 # A test must never signal "every process I own": os.kill(-1) or os.killpg(0/1)
 # (killpg(1) is kill(-1)). On a CI runner that kills the runner itself, and the
 # job hangs with no log. A stand-in process (MagicMock pid == 1) is the usual way in.
