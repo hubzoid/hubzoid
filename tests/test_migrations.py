@@ -279,6 +279,10 @@ def _previous_phone_schema(engine):
     migrations.upgrade(engine, "operational")
     with engine.begin() as conn:
         conn.execute(text("DROP INDEX hz_identities_phone_unique"))
+        # Undo op_0018 too, so the upgrade from op_0016 runs it again cleanly.
+        for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
+                              ("hz_connectors", "shared_secret_enc")):
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

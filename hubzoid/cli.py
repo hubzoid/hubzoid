@@ -983,9 +983,6 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
                 # The admin portal (SPA + JSON API) is served by the bridge;
                 # expose it through the one public port like /artifacts.
                 {"prefix": "/portal", "upstream": f"http://127.0.0.1:{br_port}"},
-                # The return from a connector's OAuth sign-in (Console connectors
-                # work in this mode too). Open WebUI's own /oauth/ routes stay.
-                {"prefix": "/oauth/connectors", "upstream": f"http://127.0.0.1:{br_port}"},
             ]
             if settings.mcp_server:
                 # The hosted MCP surface is the one other bridge path that
@@ -998,6 +995,9 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
                 for prefix in ("/.well-known/oauth-protected-resource/mcp",
                                "/.well-known/oauth-authorization-server/mcp/oauth"):
                     edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
+            # The return from a connector's OAuth sign-in (Console connectors
+            # work in this mode too). Open WebUI's own /oauth/ routes stay.
+            edge_routes.append({"prefix": "/oauth/connectors", "upstream": f"http://127.0.0.1:{br_port}"})
             if inbound:
                 # Inbound surfaces receive on a loopback inbound port; only
                 # /webhooks/<hub> is exposed publicly (each POST is signature-,
