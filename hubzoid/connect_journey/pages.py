@@ -56,6 +56,7 @@ a{color:var(--accent-text)}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
 .top{display:flex;align-items:center;justify-content:space-between;padding:16px 20px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;color:var(--ink);text-decoration:none}
+.top-end{display:flex;align-items:center;gap:8px;min-width:0}
 .mark{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;
 border:1px solid var(--line);border-radius:7px;background:var(--raised);
 font:600 13px/1 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink)}
@@ -147,6 +148,7 @@ ICONS = {
     "link": '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     "lock": '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "arrow": '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    "back": '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
     "plug": '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/>',
     "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
 }
@@ -191,10 +193,10 @@ def rows(items: list[tuple[str, str]]) -> str:
 
 
 def shell(title: str, body: str, *, status: int = 200, brand: str = "", wide: bool = False,
-          script: str = "", account: str = "") -> HTMLResponse:
-    """The page: top bar with the agent's (or Hubzoid's) mark and name (and
-    the signed-in ``account``), the content, the /hubzoid footer. ``body`` is
-    HTML the caller escaped."""
+          script: str = "", account: str = "", chat: str = "") -> HTMLResponse:
+    """The page: top bar with the agent's (or Hubzoid's) mark and name (and a
+    way back to the ``chat`` and the signed-in ``account``), the content, the
+    /hubzoid footer. ``body`` is HTML the caller escaped."""
     nonce = secrets.token_urlsafe(12)
     brand_html = (f'<span class="brand">{mark(brand)}<span class="brand-name">{esc(brand)}</span></span>'
                   if brand else
@@ -206,7 +208,9 @@ def shell(title: str, body: str, *, status: int = 200, brand: str = "", wide: bo
         f"<title>{esc(title)}{' · ' + esc(brand) if brand else ''}</title>"
         f'<script nonce="{nonce}">{_THEME}</script>'
         f"<style>{_css()}</style></head><body>"
-        f'<header class="top">{brand_html}{avatar_chip(account) if account else ""}</header>'
+        f'<header class="top">{brand_html}<span class="top-end">'
+        + (f'<a class="btn btn-ghost btn-sm" href="{esc(chat)}">{icon("back", 15)}Back to chat</a>' if chat else "")
+        + f'{avatar_chip(account) if account else ""}</span></header>'
         f'<main id="main"><div class="wrap{" wide" if wide else ""}" aria-live="polite">{body}</div></main>'
         f'<footer>{"<span class=slash>/</span>hubzoid" if brand else "Hubzoid"}</footer>'
         + (f'<script nonce="{nonce}">{script}</script>' if script else "")

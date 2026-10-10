@@ -65,9 +65,9 @@ def client(hub, monkeypatch):
     return c
 
 
-def _link(hub, email=ALICE, surface="whatsapp", reconnect=False):
+def _link(hub, email=ALICE, surface="whatsapp", reconnect=False, chat=None):
     with identity_scope(Identity.make(user=email, groups=["connector_gmail"], surface=surface)), \
-            _request_ctx.chat_scope(f"{surface}-919800000001"):
+            _request_ctx.chat_scope(chat or f"{surface}-919800000001"):
         r = connect_journey.start(hub, app="gmail", reconnect=reconnect)
     return r["id"]
 
@@ -291,6 +291,7 @@ def test_your_connections_page_connects_and_disconnects(client, hub):
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     page = client.get("/portal/connections", headers=_as(ALICE)).text
     assert "Gmail" in page and "Connected" in page and "Disconnect" in page and "AT-a" not in page
+    assert 'href="/">' in page and "Back to chat" in page
     assert "Used by" in page and 'class="confirm"' in page  # Disconnect asks first
     r = client.post("/portal/connections/gmail/disconnect", headers={**_as(ALICE), **_SAME})
     assert r.status_code == 303 and r.headers["location"] == "/portal/connections?disconnected=gmail"
@@ -311,6 +312,23 @@ def test_your_connections_page_connects_and_disconnects(client, hub):
     r = client.post("/portal/connections/gmail/connect",
                     headers={**_as(ALICE), "origin": "https://evil.example"})
     assert r.status_code == 403
+
+@pytest.mark.parametrize("surface, chat, href", [
+    ("web", "web-c_abc1234567", "/c/c_abc1234567"),
+    ("owui", "0b5d3f6e-1c2a-4f3b-9a8e-123456789abc", "/c/0b5d3f6e-1c2a-4f3b-9a8e-123456789abc"),
+    ("owui", "a1b2c3d4e5f6", "/"),  # a derived id, not a conversation: the chat's home
+    ("whatsapp", None, None),  # nothing to go back to on this site
+])
+def test_the_done_page_leads_back_to_the_chat_it_came_from(client, hub, surface, chat, href):
+    jid = _link(hub, surface=surface, chat=chat)
+    _start(client, jid)
+    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
+    page = client.get(f"/portal/connect/{jid}/done", headers=_as(ALICE)).text
+    if href is None:
+        assert "Back to chat" not in page
+    else:
+        assert f'id="back" href="{href}"' in page and "Back to chat" in page
+
 
 def test_web_chat_journey_says_return_to_the_chat(client, hub):
     jid = _link(hub, surface="owui")

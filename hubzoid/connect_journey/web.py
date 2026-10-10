@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 import secrets
 import time
 from pathlib import Path
@@ -77,13 +78,51 @@ def _not_found() -> HTMLResponse:
 
 
 def _gone(j: dict) -> HTMLResponse:
+    back, script = _back(j)
     if j["status"] == "superseded":
         return _page("A newer link was sent",
                      ["This link was replaced by a newer one.",
-                      "Use the latest link from the chat."], 410, tone="bad")
+                      "Use the latest link from the chat."], 410, tone="bad",
+                     actions=back, script=script)
     return _page("This link has expired",
                  [f"The link to connect {_e(label(j['app']))} is no longer valid.",
-                  "Ask the agent again for a new link."], 410, tone="bad")
+                  "Ask the agent again for a new link."], 410, tone="bad",
+                 actions=back, script=script)
+
+
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+# This tab was opened from the chat: close it when the browser allows (the
+# chat's own tab is still there), else open the chat here.
+_BACK_SCRIPT = ("(function(){var a=document.getElementById('back');if(!a)return;"
+                "a.addEventListener('click',function(e){e.preventDefault();var h=a.href;"
+                "try{window.close()}catch(x){}setTimeout(function(){location.href=h},250)})})();")
+
+
+def _chat_url(j: dict) -> str | None:
+    """Where the person asked, on this site: the conversation (the web app and
+    Open WebUI both serve one at ``/c/<id>``), or the chat's home when the id
+    is not a conversation's. None for WhatsApp, Telegram or Slack."""
+    if j.get("surface") not in ("web", "owui"):
+        return None
+    from ..chat.store import WEB_PREFIX, valid_conversation_id
+
+    cid = str(j.get("chat_id") or "")
+    if cid.startswith(WEB_PREFIX) and valid_conversation_id(cid[len(WEB_PREFIX):]):
+        return "/c/" + cid[len(WEB_PREFIX):]
+    if _UUID.match(cid):
+        return "/c/" + cid
+    return "/"
+
+
+def _back(j: dict, *, primary: bool = True) -> tuple[str, str]:
+    """The Back to chat button for a journey and its script, or ("", "")."""
+    url = _chat_url(j)
+    if url is None:
+        return "", ""
+    kind = "primary" if primary else "secondary"
+    return (f'<a class="btn btn-{kind}" id="back" href="{_e(url)}">{ui.icon("back", 16)}Back to chat</a>',
+            _BACK_SCRIPT)
 
 
 def _agent_name(hub_dir: Path, hub: str) -> str:
@@ -134,22 +173,28 @@ def _outcome(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
     app = _e(name)
     agent = _agent_name(hub_dir, j["hub"])
     status = j["status"]
-    back = ("You'll get a confirmation in WhatsApp." if j.get("surface") == "whatsapp"
-            else "Close this tab and carry on in your chat.")
+    button, script = _back(j)
+    if j.get("surface") == "whatsapp":
+        lead = "You'll get a confirmation in WhatsApp."
+    elif button:
+        lead = "You can carry on in your chat."
+    else:
+        lead = "Close this tab and carry on in your chat."
     if status == "connected":
         details = ui.rows([("Account", ui.avatar_chip(email)), ("Agent", _e(agent))])
-        return _page(f"{name} connected", [back], 200, tone="ok", eyebrow="Connected",
-                     brand=agent, extra=details,
-                     actions=f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
+        return _page(f"{name} connected", [lead], 200, tone="ok", eyebrow="Connected",
+                     brand=agent, extra=details, script=script,
+                     actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
     if status == "failed":
         return _page(f"{name} was not connected",
                      [f"The connection to {app} did not complete.",
                       "Go back to the chat and ask again for a new link."], 200, tone="bad",
-                     brand=agent)
+                     brand=agent, actions=button, script=script)
     if status == "cancelled":
         return _page("Connection cancelled",
-                     [f"{app} was not connected. You can close this tab.",
-                      "Ask the agent again whenever you're ready."], 200, tone="warn", brand=agent)
+                     [f"{app} was not connected.",
+                      "Ask the agent again whenever you're ready."], 200, tone="warn", brand=agent,
+                     actions=button, script=script)
     return _gone(j)
 
 
@@ -425,7 +470,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         mine = _mine(hub_dir, account, email)
         return ui.shell("Your connections",
                         _connections_body(mine, request.query_params),
-                        brand=_deployment_name(hub_dir), wide=True, account=email)
+                        brand=_deployment_name(hub_dir), wide=True, account=email, chat="/")
 
     @router.post(PAGE + "/{connector_id}/connect")
     def connect_from_page(connector_id: str, request: Request):
