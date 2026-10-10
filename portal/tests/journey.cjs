@@ -600,10 +600,15 @@ function step(name) {
       endpoint: "/accounts", email: "kai.moreno@addusers.local", name: "Kai Moreno", sign_in: "google",
       grants: [{ hub: "finance", permission: "use_hub" }],
     }], "no password is sent");
-    await drawer().getByRole("button", { name: "Done" }).click();
-    await drawer().waitFor({ state: "hidden" });
+    // As in People, the result leads to the new person; following it closes this drawer.
+    await drawer().getByRole("link", { name: "Open their details" }).click();
+    assert.equal(await hash(), "#/people/kai.moreno%40addusers.local");
+    await drawer().getByRole("heading", { name: "Access by agent" }).waitFor();
+    assert.equal(await drawer().count(), 1, "only their details are open");
+    await drawer().getByText("kai.moreno@addusers.local", { exact: true }).waitFor();
     state.signIn = { password: true, google: false };
     state.mutations.length = 0;
+    await go("/agents/finance/access");
     await page.reload();
     step("Optional groups start collapsed with counts; configuration reads apart from permission; toggles and help work by keyboard");
     // Temporary synthetic capabilities: one missing its setting, one included
@@ -839,13 +844,29 @@ function step(name) {
     await expand("Restricted tools");
     await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
     await drawer().getByRole("button", { name: "Review changes" }).click();
-    state.revision += 1; // another administrator changed access after this drawer loaded
+    // Another administrator gave Kai Manage invoices after this drawer loaded.
+    state.grants.push(["kai.moreno@addusers.local", "finance", "invoices"]);
+    state.revision += 1;
     await drawer().getByRole("button", { name: "Save change" }).click();
     await drawer().getByText("Nothing was saved").waitFor();
     await drawer().getByText("Access changed since you loaded it", { exact: false }).waitFor();
-    await drawer().getByRole("button", { name: /Done/ }).click();
-    await drawer().waitFor({ state: "hidden" });
     assert.equal(state.grants.some(([s, , p]) => s === "kai.moreno@addusers.local" && p === "ledger"), false, "nothing was written");
+    // Reopen loads their current access in place, to try again.
+    await drawer().getByRole("button", { name: "Done" }).waitFor();
+    await drawer().getByRole("button", { name: "Reopen Kai Moreno" }).click();
+    await page.getByRole("dialog", { name: "Edit access" }).waitFor();
+    await drawer().getByText("Kai Moreno").first().waitFor();
+    await expand("Restricted tools");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Read ledger/ }).isChecked(), false, "the refused change isn’t kept");
+    assert.equal(await drawer().getByRole("checkbox", { name: /Manage invoices/ }).isChecked(), true, "Reopen shows their current access");
+    await drawer().getByRole("checkbox", { name: /Read ledger/ }).check();
+    await drawer().getByRole("button", { name: "Review changes" }).click();
+    await drawer().getByRole("button", { name: "Save change" }).click();
+    await saved();
+    assert.equal(await page.getByRole("link", { name: /^Back to / }).count(), 0, "not opened from a person, so no way back");
+    assert.ok(state.grants.some(([s, , p]) => s === "kai.moreno@addusers.local" && p === "ledger"), "the retry saved");
+    state.grants = state.grants.filter(([s, , p]) => !(s === "kai.moreno@addusers.local" && (p === "ledger" || p === "invoices")));
+    state.revision += 1;
     state.mutations.length = 0;
 
     // ---- navigation guards --------------------------------------------------------------
@@ -1331,9 +1352,14 @@ function step(name) {
     await saved();
     assert.deepEqual(lastMutation().operations, [{ action: "grant", permission: USE_HUB_PERM }]);
     assert.equal(lastMutation().subject, PRIYA);
+    // Saved from their details: the notice leads back to them.
+    await page.getByRole("link", { name: "Back to Priya Natarajan" }).click();
+    assert.equal(await hash(), `#/people/${encodeURIComponent(PRIYA)}`);
+    await drawer().getByText(PRIYA, { exact: true }).waitFor();
     state.grants = state.grants.filter(([s, h]) => !(s === PRIYA && h === "support"));
     state.grants.push(...everyoneSupport);
     state.mutations.length = 0;
+    await go("/people");
 
     step("One Administrator role: confirmed, both sides together, mismatches flagged, the last one protected");
     const pickRole = async (label) => {
