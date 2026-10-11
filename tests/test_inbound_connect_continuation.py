@@ -295,3 +295,28 @@ def test_journeys_off_leaves_whatsapp_exactly_as_before(hub, monkeypatch):
     from hubzoid.tools import connect_tools
     import types
     assert connect_tools.make(types.SimpleNamespace(hub_dir=hub)) == []
+
+
+def test_a_service_that_cannot_write_the_shared_store_says_so_once(tmp_path, monkeypatch, caplog):
+    """Started without write access to the gateway's data folder, the WhatsApp
+    service names the fix once and runs without connection follow-ups, rather
+    than failing on every pass."""
+    from hubzoid import deployment
+    from hubzoid.inbound import run
+
+    for name in ("HUBZOID_DEPLOYMENT", "HUBZOID_OPERATIONAL_DB", "DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    hub, gw = tmp_path / "hubs" / "nurturing", tmp_path / "gateway-data"
+    hub.mkdir(parents=True)
+    deployment.save(gw / "deployment.json",
+                    hubs=[dict(key="nurturing", name="nurturing", path=str(hub), model_id="nurturing")],
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
+                    owui_url="http://127.0.0.1:9", owui_db=str(gw / "webui.db"))
+    monkeypatch.setattr(run.os, "access", lambda *a, **k: False)
+    with caplog.at_level("ERROR", logger="hubzoid.inbound"):
+        assert run._connect_journeys(hub, {}, whatsapp=True) is False
+    assert f"ReadWritePaths={gw.resolve()}" in caplog.text
+    monkeypatch.setattr(run.os, "access", lambda *a, **k: True)
+    assert run._connect_journeys(hub, {}, whatsapp=True) is True
+    assert run._connect_journeys(hub, {"HUBZOID_CONNECT_JOURNEY": "false"}, whatsapp=True) is False
+

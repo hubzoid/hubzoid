@@ -71,7 +71,29 @@ def build_app_for_hub(hub_dir, env=None):
         messages=Messages.from_env(env), history_max=history_max,
         history_ttl_seconds=history_ttl_seconds, stream_interval=stream_interval,
         max_upload_bytes=settings.max_upload_bytes,
+        connect_journeys=_connect_journeys(hub_dir, env, whatsapp=wa is not None),
     )
+
+
+def _connect_journeys(hub_dir, env, *, whatsapp: bool) -> bool:
+    """Connection links in WhatsApp: on unless turned off. They record their
+    progress in the shared store, so a service that can't write its folder
+    says so once at start and runs without them, instead of failing on
+    every pass."""
+    from .. import connect_journey
+    from ..db import shared_store_dir
+
+    if not connect_journey.enabled(env):
+        return False
+    folder = shared_store_dir(hub_dir, env)
+    if not whatsapp or folder is None or os.access(folder, os.W_OK):
+        return True
+    log.error(
+        "inbound: this service can't write %s, where the deployment keeps people's "
+        "connections, so WhatsApp won't confirm a connection or offer to continue. "
+        "Add ReadWritePaths=%s to this service (systemctl edit <unit>) and restart it. "
+        "See docs/inbound-surfaces.md.", folder, folder)
+    return False
 
 
 def run(hub_dir, env=None, port=None) -> int:

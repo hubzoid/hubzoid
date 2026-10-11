@@ -234,3 +234,26 @@ def test_systemd_unit_includes_hub_path_and_after_run():
     # Slack adapter must come up after the bridge is running.
     assert "After=hubzoid@" in unit or "Requires=hubzoid@" in unit
     assert "-m hubzoid slack" in unit or "hubzoid slack" in unit
+
+
+def test_units_may_write_the_gateways_shared_store(tmp_path, monkeypatch):
+    """In a gateway, people's phones and connections live in the gateway's
+    data folder. The sandboxed Slack and WhatsApp services must reach it."""
+    from hubzoid import deployment
+    from hubzoid.inbound.service import systemd_unit_for_hub as inbound_unit
+
+    for name in ("HUBZOID_DEPLOYMENT", "HUBZOID_OPERATIONAL_DB", "DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    hub, gw = tmp_path / "hubs" / "nurturing", tmp_path / "gateway-data"
+    hub.mkdir(parents=True)
+    deployment.save(gw / "deployment.json",
+                    hubs=[dict(key="nurturing", name="nurturing", path=str(hub), model_id="nurturing")],
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
+                    owui_url="http://127.0.0.1:9", owui_db=str(gw / "webui.db"))
+    for render in (systemd_unit_for_hub, inbound_unit):
+        unit = render(hub_dir=hub, python_path=Path("/venv/bin/python"))
+        assert f"ReadWritePaths={hub} {gw.resolve()}\n" in unit
+    solo = tmp_path / "solo"
+    solo.mkdir()
+    assert f"ReadWritePaths={solo}\n" in inbound_unit(hub_dir=solo, python_path=Path("/p"))
+

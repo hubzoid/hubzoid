@@ -87,6 +87,28 @@ def test_schema_from_a_newer_hubzoid_is_refused(tmp_path):
         migrations.upgrade(eng, "operational")
 
 
+def test_a_current_store_needs_no_write_to_be_used(tmp_path):
+    """A sandboxed service (the WhatsApp one) may only read a gateway's data
+    folder. Once the store is current, using it takes no lock and writes nothing."""
+    folder = tmp_path / "gw"
+    folder.mkdir()
+    migrations.upgrade(_sqlite(folder), "operational")
+    migrations._done.clear()
+    files = list(folder.iterdir())
+    try:
+        for f in files:
+            f.chmod(0o444)
+        folder.chmod(0o555)
+        read_only = _sqlite(folder)
+        migrations.upgrade(read_only, "operational")
+        assert migrations.current(read_only, "operational") == migrations.head("operational")
+        read_only.dispose()
+    finally:
+        folder.chmod(0o755)
+        for f in files:
+            f.chmod(0o644)
+
+
 def test_both_stores_share_one_standalone_file(tmp_path):
     eng = _sqlite(tmp_path, "hub.db")
     migrations.upgrade(eng, "operational")

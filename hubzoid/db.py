@@ -53,6 +53,35 @@ def operational_url(hub_dir, env=None) -> str:
     return explicit or (env.get("DATABASE_URL") or "").strip() or resolve_url(hub_dir, env)
 
 
+def shared_store_dir(hub_dir, env=None) -> "Path | None":
+    """The folder holding the shared operational store, when it is a SQLite
+    file outside the hub folder (a gateway's data folder). None otherwise.
+
+    A process that uses the store must be able to write there: SQLite keeps
+    its journal next to the file, and Hubzoid its migration lock."""
+    env = env if env is not None else os.environ
+    from .deployment import read
+    try:  # operational_url's order, without creating the hub's own database
+        url = (read(Path(hub_dir), env).get("operational_url")
+               or (env.get("HUBZOID_OPERATIONAL_DB") or "").strip()
+               or (env.get("DATABASE_URL") or "").strip())
+    except (OSError, ValueError, KeyError):
+        return None
+    if not url.startswith("sqlite:///"):
+        return None
+    folder = Path(url[len("sqlite:///"):]).resolve().parent
+    if folder.is_relative_to(Path(hub_dir).resolve()):
+        return None
+    return folder
+
+
+def writable_paths(hub_dir) -> str:
+    """What a hub's sandboxed service may write (systemd ``ReadWritePaths``):
+    the hub folder, and in a gateway the shared store's folder."""
+    shared = shared_store_dir(hub_dir)
+    return " ".join(str(p) for p in (Path(hub_dir), shared) if p is not None)
+
+
 def dbos_url(hub_dir, env=None) -> str:
     """The URL for this bridge's DBOS system database. PER-BRIDGE on SQLite (each
     hub gets its own file), so a gateway's N bridges do not share one SQLite DBOS

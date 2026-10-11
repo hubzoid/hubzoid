@@ -10,6 +10,7 @@ collide with each other, with Open WebUI's migrations or with DBOS's:
 In a standalone hub both live in the same SQLite file. ``upgrade()`` runs once per
 engine per process, under a cross-process lock (a Postgres advisory lock, or a
 file lock next to a SQLite database) so bridges starting together don't race.
+A database already at the latest revision is left alone, without the lock.
 
 Existing installs predate versioning and may hold any subset of today's tables.
 The baseline revisions therefore create only what is missing and then verify the
@@ -105,6 +106,12 @@ def upgrade(engine: Engine, store: str) -> None:
         if store in _done.get(engine, set()):
             return
         cfg, script = _script(store)
+        # Already current, as on most starts: no lock, no write. A process that
+        # may only read the store (a sandboxed service) can still use it. A
+        # revision never moves back, so a head read here cannot go stale.
+        if current(engine, store) == script.get_current_head():
+            _done.setdefault(engine, set()).add(store)
+            return
         with _cross_process_lock(engine, store):
             at = current(engine, store)
             if at is not None and at not in {r.revision for r in script.walk_revisions()}:

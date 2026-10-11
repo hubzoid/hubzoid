@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..db import writable_paths
+
 
 _TEMPLATE = """\
 [Unit]
@@ -28,7 +30,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths={hub_dir}
+ReadWritePaths={writable}
 
 [Install]
 WantedBy=multi-user.target
@@ -47,4 +49,5 @@ def systemd_unit_for_hub(
         hub_dir=str(hub_dir),
         python=str(python_path),
         user=user,
+        writable=writable_paths(hub_dir),
     )

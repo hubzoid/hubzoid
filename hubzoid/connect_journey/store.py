@@ -232,8 +232,14 @@ def take_continuation(hub_dir, *, subject: str, surface: str, chat_id: str,
 
 
 def decline_continuation(hub_dir, *, subject: str, surface: str, chat_id: str) -> int:
-    """Any other reply clears an offered continuation."""
+    """Any other reply clears an offered continuation. Writes only when one
+    is offered, so an ordinary message only reads."""
     with _engine(hub_dir).begin() as c:
+        if not c.execute(text(
+                "SELECT 1 FROM hz_connect_states WHERE subject = :s AND surface = :sf "
+                "AND chat_id = :c AND continuation_status = 'offered' LIMIT 1"),
+                {"s": normalize(subject), "sf": surface, "c": chat_id}).first():
+            return 0
         res = c.execute(text(
             "UPDATE hz_connect_states SET continuation_status = 'declined', continuation = NULL "
             "WHERE subject = :s AND surface = :sf AND chat_id = :c "
@@ -244,9 +250,14 @@ def decline_continuation(hub_dir, *, subject: str, surface: str, chat_id: str) -
 
 def expire_offers(hub_dir, *, hub: str, now: float | None = None) -> int:
     """Close offers older than the window and drop continuations of journeys
-    that can no longer connect, so no request text lingers."""
+    that can no longer connect, so no request text lingers. Both touch only
+    rows holding request text, so a pass with none only reads."""
     now = time.time() if now is None else now
     with _engine(hub_dir).begin() as c:
+        if not c.execute(text(
+                "SELECT 1 FROM hz_connect_states WHERE hub = :h "
+                "AND continuation IS NOT NULL LIMIT 1"), {"h": normalize(hub)}).first():
+            return 0
         res = c.execute(text(
             "UPDATE hz_connect_states SET continuation_status = 'expired', continuation = NULL "
             "WHERE hub = :h AND continuation_status = 'offered' AND notified < :cutoff"),

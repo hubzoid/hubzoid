@@ -399,3 +399,25 @@ async def test_tool_names_what_exists_when_the_app_is_guessed_wrong(hub):
     with _as(ALICE):
         out = await tool.on_invoke_tool(None, json.dumps({"app": "googlemail"}))
     assert "not available" in out and "Gmail (gmail): not connected" in out
+
+
+def test_an_idle_pass_and_an_ordinary_message_write_nothing(tmp_path, monkeypatch):
+    """The WhatsApp service checks for outcomes every few seconds. With nothing
+    to send or clear, a pass and an ordinary message only read the store."""
+    from sqlalchemy import create_engine
+
+    from hubzoid import db, migrations
+
+    path = tmp_path / "ops.db"
+    migrations.upgrade(create_engine(f"sqlite:///{path}"), "operational")
+    path.chmod(0o444)
+    read_only = create_engine(f"sqlite:///{path}")
+    monkeypatch.setattr(db, "operational_engine", lambda *a, **k: read_only)
+    try:
+        assert store.outbox(tmp_path, hub="nurturing", surface="whatsapp", since=0) == []
+        assert store.expire_offers(tmp_path, hub="nurturing") == 0
+        assert store.decline_continuation(tmp_path, subject="alice@example.org",
+                                          surface="whatsapp", chat_id="919800000001") == 0
+    finally:
+        read_only.dispose()
+        path.chmod(0o644)
