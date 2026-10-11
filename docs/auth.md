@@ -313,6 +313,11 @@ links) use `HUBZOID_PUBLIC_URL`. When no public URL is set, a local `hubzoid
 run` on a loopback address sets it to its own address and allows the other
 spelling (`localhost` or `127.0.0.1`) for you.
 
+Behind a gateway, every agent accepts each address the deployment names: the
+gateway's `--public-url` and `HUBZOID_ALLOWED_ORIGINS`, and each hub's own
+`HUBZOID_PUBLIC_URL` (or `WEBUI_URL`) and `HUBZOID_ALLOWED_ORIGINS`. The gateway
+records them when it starts, so restart it after adding an address.
+
 ## The admin command
 
 `hubzoid admin` works on the deployment's account store without signing in,

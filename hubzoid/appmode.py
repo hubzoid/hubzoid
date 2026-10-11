@@ -140,12 +140,20 @@ def public_url(env: Mapping[str, str] | None = None) -> str:
     return raw.rstrip("/")
 
 
-def allowed_origins(env: Mapping[str, str] | None = None) -> list[str]:
+def allowed_origins(env: Mapping[str, str] | None = None, hub_dir: Path | None = None) -> list[str]:
     """Every origin a browser may use for this deployment: the public URL plus
-    ``HUBZOID_ALLOWED_ORIGINS`` (comma separated). Normalised to
-    ``scheme://host[:port]``. Empty when nothing is configured (local mode)."""
+    ``HUBZOID_ALLOWED_ORIGINS`` (comma separated), then the origins the gateway
+    recorded for the deployment this hub is registered in (``hub_dir``, or this
+    bridge's ``HUBZOID_HUB_DIR`` when reading the process environment).
+    Normalised to ``scheme://host[:port]``. Empty when nothing is configured
+    (local mode). Only configured addresses, never one a request carries."""
     out: list[str] = []
     candidates = [public_url(env)] + _env("HUBZOID_ALLOWED_ORIGINS", env).split(",")
+    if hub_dir is None and env is None:
+        hub_dir = _env("HUBZOID_HUB_DIR") or None
+    recorded = _manifest(hub_dir, env).get("allowed_origins") if hub_dir else None
+    if isinstance(recorded, list):
+        candidates += [str(o) for o in recorded]
     for raw in candidates:
         origin = normalize_origin(raw)
         if origin and origin not in out:
@@ -184,5 +192,5 @@ def mode_summary(hub_dir: Path | None = None, env: Mapping[str, str] | None = No
         "ui_mode": ui_mode(hub_dir, env),
         "auth": auth_enabled(hub_dir, env),
         "public_url": public_url(env),
-        "allowed_origins": allowed_origins(env),
+        "allowed_origins": allowed_origins(env, hub_dir),
     }

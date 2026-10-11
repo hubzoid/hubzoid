@@ -167,10 +167,10 @@ any use, that may refresh your connection's sign-in.
 
 Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
 whenever people reach Hubzoid at an address other than this computer. A gateway
-reached at several addresses needs all of them in `HUBZOID_ALLOWED_ORIGINS` on
-the bridge that serves `/portal` (the first hub): otherwise a sign-in started
-on another address returns to the first one, and a provider that registered
-only the address people use refuses it. Redirect
+reached at several addresses accepts each one already set in its environment
+or as a hub's `HUBZOID_PUBLIC_URL`, so a sign-in returns to the address it
+started on; list any other address in the gateway's `HUBZOID_ALLOWED_ORIGINS`.
+Redirect
 URIs are built only on a configured address or on localhost, never on the Host
 a request happens to carry. With sign-in off, the connection routes answer only
 requests addressed to this computer unless a public address is configured.

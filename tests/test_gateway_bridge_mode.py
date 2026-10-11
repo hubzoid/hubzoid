@@ -161,6 +161,38 @@ def test_a_running_bridge_follows_the_manifest(tmp_path):
     assert path.is_file()
 
 
+def test_a_separately_started_bridge_trusts_every_address_of_its_deployment(tmp_path, started):
+    """One site at two addresses: the gateway's --public-url is one, and
+    some hubs' .env give the other. The first hub's bridge serves every agent's
+    sign-in pages, so a sign-in started on either address returns to it."""
+    from hubzoid.connectors import oauth_flow
+
+    sales = _hub(tmp_path, "sales", 4166, "HUBZOID_PUBLIC_URL=https://one.example.org/b/sales\n")
+    support = _hub(tmp_path, "support", 4167, "HUBZOID_PUBLIC_URL=https://two.example.org/b/support\n")
+    gw = tmp_path / "gw"
+    with clean_process_env(HUBZOID_AUTH="true"):
+        result = CliRunner().invoke(cli.app, ["gateway", str(sales), str(support), "--port", "4160",
+                                              "--data-dir", str(gw), "--no-bridges",
+                                              "--public-url", "https://one.example.org"],
+                                    catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    both = ["https://one.example.org", "https://two.example.org"]
+    assert json.loads((gw / "deployment.json").read_text())["allowed_origins"] == both
+
+    def asked_on(host):
+        return Request({"type": "http", "method": "GET", "path": "/", "query_string": b"",
+                        "headers": [(b"host", host.encode()), (b"x-forwarded-proto", b"https")]})
+
+    with clean_process_env(HUBZOID_HUB_DIR=str(sales),
+                           HUBZOID_PUBLIC_URL="https://one.example.org/b/sales"):
+        assert appmode.allowed_origins() == both
+        assert oauth_flow.origin_for(asked_on("two.example.org")) == "https://two.example.org"
+        # Never an address only the request names.
+        assert oauth_flow.origin_for(asked_on("evil.example.net")) == "https://one.example.org"
+        # Settings passed in explicitly are judged alone.
+        assert appmode.allowed_origins({"HUBZOID_PUBLIC_URL": "https://one.example.org"}) == both[:1]
+
+
 def test_standalone_and_legacy_sign_in_are_unchanged(tmp_path):
     hub = _hub(tmp_path, "solo", 4165)
     with clean_process_env(WEBUI_AUTH="false"):

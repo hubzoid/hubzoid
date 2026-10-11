@@ -1222,7 +1222,7 @@ def gateway(
         sign_in=deployment.sign_in_flags(os.environ),
         # The mode, for bridges started separately (gateway --no-bridges).
         ui_mode=appmode.UI_OPENWEBUI, auth=appmode.auth_enabled(env=os.environ),
-        allowed_origins=_deployment_origins(pub))
+        allowed_origins=_deployment_origins(pub, [b.hub_dir for b in gp.backends]))
     _explicit_hide = (os.environ.get("HUBZOID_HIDE_OWUI_USERS") or "").strip()
     if _explicit_hide or _hide_default:
         _hidden = (_explicit_hide.lower() in ("1", "true", "yes", "on")) if _explicit_hide else True
@@ -1507,15 +1507,22 @@ def _gateway_mode_conflicts(hub_dirs: list[Path], *, auth_on: bool, env, conflic
     return problems
 
 
-def _deployment_origins(pub: str) -> list[str]:
+def _deployment_origins(pub: str, hub_dirs=()) -> list[str]:
     """Every browser origin of the deployment: the public URL (`--public-url`
-    or the environment's) plus HUBZOID_ALLOWED_ORIGINS."""
+    or the environment's), HUBZOID_ALLOWED_ORIGINS, then the addresses each
+    hub's own .env gives (its public URL and allowed origins). Bridges read the
+    list back, so the first hub's bridge, which serves every agent's sign-in
+    pages, accepts each address people use."""
     from . import appmode
+    from . import gateway as gateway_lib
 
     env = dict(os.environ)
     if pub:
         env["HUBZOID_PUBLIC_URL"] = pub
-    return appmode.allowed_origins(env)
+    out = appmode.allowed_origins(env)
+    for h in hub_dirs:
+        out += [o for o in appmode.allowed_origins(gateway_lib._own_env(h)) if o not in out]
+    return out
 
 
 def _is_openwebui_value(raw: str) -> bool:
@@ -1690,7 +1697,7 @@ def _gateway_web_app(*, gp, hub_dirs, deployment_env, process_env, dep_secret, d
         workflow_user=os.environ.get("HUBZOID_WORKFLOW_USER"),
         sign_in=deployment.sign_in_flags(os.environ),
         ui_mode=appmode.UI_HUBZOID, auth=auth_on,
-        allowed_origins=_deployment_origins(pub),
+        allowed_origins=_deployment_origins(pub, [b.hub_dir for b in gp.backends]),
         name=name, branding_dir=str(brand_src / "branding"))
     console.print(f"[cyan]→ web app[/cyan]  Hubzoid web app, sign-in {'on' if auth_on else 'off'}; "
                   f"branding from {brand_src / 'branding'}")
