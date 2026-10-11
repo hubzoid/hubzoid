@@ -22,6 +22,7 @@ import importlib.util
 import logging
 import os
 import re
+import sys
 import threading
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -940,6 +941,9 @@ def load_definitions(hub_dir) -> list[WorkflowDef]:
                 if not spec or not spec.loader:
                     continue
                 module = importlib.util.module_from_spec(spec)
+                # Registered while it runs, so annotations (Pydantic input models
+                # under `from __future__ import annotations`) resolve.
+                sys.modules[mod_name] = module
                 try:
                     spec.loader.exec_module(module)
                 except Exception:  # noqa: BLE001 - the engine reports a broken file
@@ -1135,6 +1139,7 @@ def load_workflows(hub_dir) -> int:
             spec = importlib.util.spec_from_file_location(mod_name, py)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = module
                 try:
                     spec.loader.exec_module(module)
                 except Exception:

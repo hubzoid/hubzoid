@@ -215,6 +215,10 @@ def catalog(hub_dir) -> list[dict]:
             if row["enabled"] and row["schedule"]
             else None
         )
+        if row["schedule"] and not row["error"]:
+            from .schedule_grammar import describe
+
+            row["schedule_text"] = describe(row["schedule"])
         row["last_dispatch"] = health.get("last_dispatch")
         row["missed"] = health.get("missed", 0)
         row["heartbeat"] = health.get("heartbeat")

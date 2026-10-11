@@ -19,7 +19,7 @@ _CSS = """
 --muted:#b5b5bc;--line:#3c3c40;--soft:#26262a;--accent:#f28b66;--accent-ink:#0b0b0c;--accent-soft:#2a160f;
 --accent-line:#5a3424;--warn-bg:#352b19;--warn-ink:#e6bf72;--danger:#ffb4b4;--info-bg:#1c2d43;--info:#adccf0;
 --ok-bg:#183328;--ok:#a1d8b6}}
-*{box-sizing:border-box}html,body{margin:0;height:100%}
+*{box-sizing:border-box}html,body{margin:0;height:100%}input{accent-color:var(--accent)}
 body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--font);display:flex;flex-direction:column}
 header{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);
 background:var(--panel);min-height:54px;flex-wrap:wrap}
@@ -37,8 +37,8 @@ button.danger{color:var(--danger)}
 button:disabled{opacity:.55;cursor:default}
 button:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #notice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px;font-size:13px;
-background:var(--accent-soft);border-bottom:1px solid var(--accent-line);color:var(--accent)}
-#notice[hidden]{display:none}
+background:var(--info-bg);border-bottom:1px solid var(--line);color:var(--info)}
+#notice.err{background:var(--warn-bg);color:var(--warn-ink)}#notice[hidden]{display:none}
 main{flex:1;min-height:0;display:flex}
 main>iframe{flex:1;border:0;width:100%;background:#fff}
 main>.pad{flex:1;overflow:auto;padding:16px}
@@ -156,7 +156,7 @@ function poll(){
       const d = await r.json();
       if (d.artifact && d.artifact !== shown) {
         $('notice-text').textContent = 'A newer copy is ready (' + when(d.updated) + ').';
-        $('notice').hidden = false;
+        $('showbtn').hidden = false; $('notice').className = ''; $('notice').hidden = false;
       }
     } catch (e) { /* offline: try again next time */ }
   }, 60000);
@@ -173,11 +173,12 @@ async function updateNow(){
   try {
     await post(cfg.api + '/update', {});
     $('notice-text').textContent = 'Updating. The new copy appears here when it is ready.';
-    $('notice').hidden = false; $('showbtn').hidden = true;
+    $('notice').className = ''; $('notice').hidden = false; $('showbtn').hidden = true;
     shown = shown || (meta && meta.id);
   } catch (e) {
     up.textContent = 'Update now'; up.disabled = false;
-    $('notice-text').textContent = e.message; $('notice').hidden = false; $('showbtn').hidden = true;
+    $('notice-text').textContent = e.message; $('notice').className = 'err'; $('notice').hidden = false;
+    $('showbtn').hidden = true;
   }
 }
 
@@ -239,7 +240,7 @@ function openCompany(){
   const can = c.available && c.allowed;
   opt('owner', 'Only you', '', true, !c.on);
   opt('company', 'Anyone at ' + c.domains + ' with the link',
-      can ? 'They sign in with a ' + c.domains + ' account. They can\'t use the agent or see other reports.'
+      can ? 'They sign in with their ' + c.domains + ' account. They can\'t use the agent or see other reports.'
           : (!c.available ? c.reason : 'Needs \u201cShare reports with the company domain\u201d. Ask an admin.'),
       can, c.on);
   const area = el('div'); p.append(area);

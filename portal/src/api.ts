@@ -96,6 +96,7 @@ export type Workflow = {
   // The webhook that starts this workflow, when it runs on events.
   webhook?: string | null;
   // Workflows from chat: offered as a "Run for me" tool, schedulable by people.
+  schedule_text?: string;
   as_tool?: boolean;
   schedulable?: boolean;
   sensitive?: boolean;

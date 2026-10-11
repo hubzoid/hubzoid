@@ -333,8 +333,8 @@ def build_router(hub_dir) -> APIRouter:
     def can_update(found, subject: str) -> bool:
         from ..access import store_for
 
-        if found.team:
-            return bool(store_for(hub_dir).can(subject, found.hub, "workflows_manage"))
+        if found.team:   # a stopped team page isn't made by the workflow any more
+            return bool(found.live) and bool(store_for(hub_dir).can(subject, found.hub, "workflows_manage"))
         return subject == found.owner
 
     def series_info(found, subject: str | None, *, reader: bool) -> dict:

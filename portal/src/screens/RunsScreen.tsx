@@ -187,7 +187,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
                 </>
               ) : w.schedule ? (
                 <>
-                  <div>{describeCron(w.schedule)}</div>
+                  <div>{w.schedule_text ?? describeCron(w.schedule)}</div>
                   <Space size={6}><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{w.timezone}</Text><Help text={`Cron: ${w.schedule}`} /></Space>
                 </>
               ) : (
@@ -388,7 +388,7 @@ function PeopleSchedules({ hub }: { hub: Hub }) {
             render: (_, s) => <Text type={s.last_status === "failed" ? "danger" : undefined}>{s.last_label}</Text>,
           },
           {
-            title: "Cost, 30 d", key: "cost",
+            title: <span style={{ whiteSpace: "nowrap" }}>30-day cost</span>, key: "cost",
             render: (_, s) => <Tooltip title="Model cost of this schedule's runs in the last 30 days, estimated like the rest of the Console."><Text>${s.cost_30d.toFixed(2)}</Text></Tooltip>,
           },
           {

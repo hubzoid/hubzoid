@@ -20,6 +20,7 @@ from hubzoid.workflows import personal, runtime
 TEAM_ACCT, MEERA, RAVI = "reports@co.org", "meera@co.org", "ravi@co.org"
 
 WORKFLOW = '''
+from __future__ import annotations   # input models must still resolve
 from typing import Literal
 from pydantic import BaseModel, Field
 from hubzoid import workflow, hub
