@@ -151,8 +151,8 @@ chat accounts rely on it alone. See
 To offboard someone, an organization administrator opens them under People
 and uses **…** → **Delete user**. That removes every grant, then the chat
 account and its chats; Activity history, usage records and published artifacts
-are kept. In Open WebUI mode, the person's API keys stop working with the
-account, but Open WebUI keeps its stored connection tokens for that account.
+are kept. Their connections to connectors are removed too. In Open WebUI mode, the
+person's API keys stop working with the account.
 The last administrator cannot be made a User or deleted. The Console doesn't
 offer Block. An organization administrator can **Reactivate** someone who is
 blocked from the same "…" menu (see [blocked users](access-management.md#blocked-users)).

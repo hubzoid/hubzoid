@@ -13,7 +13,7 @@ hubzoid restore /var/backups/hubzoid-2026-09-25.tar.gz
 
 | Saved | Where it comes from |
 |---|---|
-| Every SQLite database | The operational store (accounts, sessions, conversations, grants, audit, usage, workflow state and encrypted personal connector credentials), and each hub's DBOS run history. In Open WebUI mode, also `webui.db` and its vector store. Each database is copied with SQLite's online backup. |
+| Every SQLite database | The operational store (accounts, sessions, conversations, grants, audit, usage, workflow state and encrypted connector credentials), and each hub's DBOS run history. In Open WebUI mode, also `webui.db` and its vector store. Each database is copied with SQLite's online backup. |
 | Chat UI data | Hubzoid uploads under each hub's `.hubzoid/chats/`. In Open WebUI mode, also uploads and settings in `<hub>/.openwebui-data` or the gateway's `--data-dir`; its model cache is rebuilt on demand. |
 | Hub runtime state | Each hub's `.hubzoid`, `.inbound`, `logs` and `output` (files the agent made for users). |
 
@@ -31,8 +31,8 @@ Not saved:
   pass `--include-secrets`. So are the database passwords in the gateway's
   `deployment.json`, which is saved with each password replaced by `***`.
   Keep those files, or the configured `HUBZOID_SECRET_KEY`, protected separately.
-  Without the deployment key, restored personal connector credentials cannot
-  be decrypted. Without the artifact signing key, old download links stop working.
+  Without the deployment key, restored connector credentials (people's
+  connections, Shared keys and OAuth client secrets) cannot be decrypted. Without the artifact signing key, old download links stop working.
 - **PostgreSQL databases.** The backup names them. Use `pg_dump` (below).
 
 The archive is written with owner-only permissions. It still holds user

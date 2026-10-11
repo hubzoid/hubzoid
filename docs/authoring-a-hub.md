@@ -147,6 +147,11 @@ in a sub-agent's `tools:` list.
 
 `${VAR}` references are resolved against the environment at boot.
 
+These servers serve everyone who uses the agent. The Console lists them
+read-only under the agent's Connectors. Remote servers that each person signs
+in to, or that use one company key, are added in the Console instead. See
+[MCP connectors](mcp.md).
+
 ## Evals
 
 One markdown file per behavioural check, under `evals/`. The filename is the

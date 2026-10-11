@@ -120,6 +120,11 @@ of Open WebUI API keys. Read
 [upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
 before you start.
 
+From 1.1, Hubzoid 1.2 manages every MCP connector in the Console, in both chat
+UIs. Open WebUI's own MCP servers are no longer read, and connector tool names
+change on OpenAI Agents and Codex. See
+[upgrading to 1.2](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md#upgrading-to-12-mcp-connectors-in-the-console).
+
 ## One hub, three ways to work
 
 | Experience | Use it for | Start here |
@@ -165,9 +170,9 @@ example's instructions before connecting real systems or enabling schedules.
 ## Share it with your team
 
 - **Connect existing systems.** Add Python tools and MCP connections. Keep
-  credentials separate from agent-readable files. Each person can also connect
-  their own accounts (for example their own Jira or Gmail) to remote MCP
-  servers your administrators register. See
+  credentials separate from agent-readable files. Administrators add remote
+  MCP servers in the Console: each person connects their own account (for
+  example their own Jira or Gmail), or agents use one company key. See
   [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md).
 - **Control who can do what.** Grant agent access and restricted capabilities
   to people in the Console. Hubzoid checks permissions before a
@@ -189,7 +194,7 @@ account page, a connections page, light and dark themes, and works on a phone.
 Conversations are stored by Hubzoid in its operational database.
 
 The **Admin Console** at `/portal/` manages people, agent access,
-personal connectors and activity, and shows workflow runs and usage, with the
+connectors and activity, and shows workflow runs and usage, with the
 same accounts. Administrators open it from **Admin Console** in the web app's
 account menu. For adding teammates, sign-in providers and permissions, see
 [administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md).
