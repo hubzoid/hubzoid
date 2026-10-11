@@ -281,6 +281,8 @@ def test_failures_pause_after_three_and_admins_resume_only_their_own_pause(hub, 
     personal.set_paused(hub, "irs", "admin@co.org", sid, True, admin=True)
     with pytest.raises(personal.ScheduleError, match="paused by an admin"):
         personal.set_paused(hub, "irs", MEERA, sid, False)
+    with pytest.raises(personal.ScheduleError, match="paused by an admin"):
+        personal.run_now(hub, "irs", MEERA, sid)                      # nor run it now
     personal.admin_stop(hub, "irs", "admin@co.org", sid)
     assert personal.get(hub, sid).state == "stopped"
 

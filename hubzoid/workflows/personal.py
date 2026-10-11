@@ -505,6 +505,8 @@ def admin_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> Schedule:
 
 def run_now(hub_dir, hub: str, actor: str, schedule_id: str) -> str:
     s = _own(hub_dir, hub, actor, schedule_id)
+    if s.state == "paused" and s.reason == "admin":
+        raise ScheduleError(f'"{s.name}" was paused by an admin. Only they can resume it.')
     _validated(hub_dir, hub, actor, s.workflow, s.values, s.cadence, s.timezone, check_limits=False)
     # One run per five minutes: asking again joins the run already queued.
     return start(hub_dir, hub, s, slot=f"now-{int(time.time()) // 300}")
