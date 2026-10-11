@@ -282,8 +282,39 @@ function step(name) {
     await page.locator(".topbar .brand-wordmark").waitFor();
     const logo = await page.locator(".topbar .brand-wordmark").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight, fit: getComputedStyle(el).objectFit }));
     assert.deepEqual(logo, { width: 134, height: 30, fit: "none" });
-    await page.getByRole("link", { name: "Manage access", exact: true }).first().waitFor();
-    const darkContrast = await page.locator(".ant-btn-primary, .ant-tag-green, .ant-tag-success").evaluateAll(nodes => {
+    await page.locator(".agent-card .agent-card-link").first().waitFor();
+
+    // The whole card opens the agent: no buttons, the name is the one link
+    // stretched over it, and the status tags open their own tab.
+    const card = page.locator(".agent-card").first();
+    assert.equal(await page.locator(".agent-card .ant-btn").count(), 0, "Agent cards carry no buttons");
+    const key = await card.locator(".identity").textContent();
+    const restBorder = await card.evaluate(el => getComputedStyle(el).borderColor);
+    const nameColor = () => card.locator(".agent-name").evaluate(el => getComputedStyle(el).color);
+    const restName = await nameColor();
+    const usageBox = await card.locator(".agent-card-usage").boundingBox();
+    await page.mouse.move(usageBox.x + 20, usageBox.y + 20);
+    await page.waitForTimeout(250);
+    assert.notEqual(await card.evaluate(el => getComputedStyle(el).borderColor), restBorder, "Hover marks the card");
+    assert.notEqual(await card.evaluate(el => getComputedStyle(el).boxShadow), "none", "Hover lifts the card");
+    assert.notEqual(await nameColor(), restName, `Hover turns the name orange (${restName})`);
+    await page.mouse.click(usageBox.x + 20, usageBox.y + 20);
+    await page.waitForURL(url => url.hash === `#/agents/${key}/access`);
+    await go("/agents");
+    const status = page.locator(".agent-card").first().locator(".agent-card-status").first();
+    await status.click();
+    await page.waitForURL(url => url.hash === `#/agents/${key}/runs`);
+    await go("/agents");
+    await page.locator(".agent-card .agent-card-link").first().focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.locator(".agent-card").first().evaluate(el => getComputedStyle(el).outlineStyle), "solid",
+      "Keyboard focus rings the whole card");
+    await page.getByLabel("Search agents").fill("no agent has this name");
+    await page.getByRole("button", { name: "Clear search" }).click();
+    await page.locator(".agent-card").first().waitFor();
+
+    const darkContrast = await page.locator(".ant-btn-primary, .ant-tag-green, .ant-tag-success, .agent-card .ant-tag-red").evaluateAll(nodes => {
       const lum = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => v / 255)
         .map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
         .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
@@ -292,7 +323,8 @@ function step(name) {
         return (Math.max(a,b) + .05) / (Math.min(a,b) + .05);
       });
     });
-    assert.ok(darkContrast.length >= 2 && darkContrast.every(r => r >= 4.5), `Dark action/tag contrast: ${darkContrast}`);
+    // The cards have no buttons now; their status tags carry the colour.
+    assert.ok(darkContrast.length >= 1 && darkContrast.every(r => r >= 4.5), `Dark action/tag contrast: ${darkContrast}`);
     await page.screenshot({ path: path.join(shots, "hubzoid-console-dark-logo.png"), fullPage: true });
     await page.evaluate(() => localStorage.setItem("hz-theme", "light"));
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -1685,7 +1717,7 @@ function step(name) {
     await page.setViewportSize({ width: 390, height: 844 });
     await go("/agents");
     await page.getByRole("list", { name: "Totals" }).getByText("Messages", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("listitem").count(), 5);
+    assert.equal(await page.getByRole("list", { name: "Totals" }).getByRole("listitem").count(), 5);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Mobile dashboard has no horizontal overflow");
     await page.screenshot({ path: path.join(shots, "hubzoid-portal-overview-mobile.png"), fullPage: true });
     await go("/agents/finance/access");

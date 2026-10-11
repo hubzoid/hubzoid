@@ -193,7 +193,8 @@ Hub administrators see only their agents.
 | Approx. cost | USD estimate from reported model cost or token prices; unpriced calls are excluded and marked with `*`. The help icon explains subscription billing and estimates. |
 
 Usage comes from Hubzoid's recorded operational data, not historical chat-app
-messages. Open an agent card for access, **Runs & schedules**, or Activity.
+messages. Click an agent's card to open it at Access; its workflow and eval tags
+open **Runs & schedules** and **Evals**.
 Global Runs is no longer a navigation entry; existing direct links still work.
 
 Public email and SSO account registration default to off. Managers create

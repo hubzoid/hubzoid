@@ -64,7 +64,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Brand rule: no shadows in V1. */
+/* Brand rule: no shadows in V1, except an agent card's hover, which shows the
+   card opens the agent (see .agent-card:hover). */
 .ant-card,
 .agent-card,
 .ant-card.ant-card-hoverable:hover {
@@ -480,7 +481,77 @@ body .ant-alert .ant-alert-icon {
 }
 
 .agent-card {
+  position: relative;
   border: 1px solid var(--line);
+  transition: border-color .15s, box-shadow .15s;
+}
+
+/* The card opens the agent: its name is the one link, stretched over the card
+   (so middle-click and keyboard work as for any link). Hover lightens the
+   border, adds a soft shadow and turns the name and › orange; an orange
+   border would read as the red of a failing tag in dark mode. */
+.agent-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.agent-card:hover {
+  border-color: var(--mute);
+  box-shadow: 0 12px 28px -14px rgba(0, 0, 0, .45) !important;
+}
+
+.agent-card:hover .agent-name,
+.agent-card:hover .agent-card-chevron {
+  color: var(--accent);
+}
+
+.agent-card:has(.agent-card-link:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agent-card-link:focus-visible {
+  outline: none;
+}
+
+.agent-card-chevron {
+  flex: none;
+  margin-left: auto;
+  align-self: center;
+  color: var(--mute);
+}
+
+/* Status tags open their tab, above the card's link. */
+.agent-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-card-status {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  border-radius: 6px;
+}
+
+.agent-card-status .ant-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  margin: 0;
+}
+
+.agent-card-status:hover .ant-tag {
+  border-color: currentColor;
+}
+
+.agent-card-status:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .agent-card .ant-card-body {
@@ -517,9 +588,8 @@ body .ant-alert .ant-alert-icon {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
-  padding: 12px 0;
+  padding: 12px 0 0;
   border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
 }
 
 .agent-card-usage dt,
@@ -535,18 +605,18 @@ body .ant-alert .ant-alert-icon {
   color: var(--ink);
 }
 
-/* Cards in one row share their row tracks (subgrid), so tags, the metric
-   dividers and the buttons line up even when a name or a badge wraps. Rows
-   size to content: nothing is clipped and no height is fixed. */
+/* Cards in one row share their row tracks (subgrid), so tags and the metric
+   dividers line up even when a name or a badge wraps. Rows size to content:
+   nothing is clipped and no height is fixed. */
 .agent-card {
   display: grid;
-  grid-row: span 4;
+  grid-row: span 3;
   grid-template-rows: subgrid;
 }
 
 .agent-card .ant-card-body {
   display: grid;
-  grid-row: span 4;
+  grid-row: span 3;
   grid-template-rows: subgrid;
   align-content: start;
 }
@@ -564,30 +634,6 @@ body .ant-alert .ant-alert-icon {
 .agent-name,
 .agent-card-title .identity {
   overflow-wrap: anywhere;
-}
-
-/* Primary action on its own row; the two secondary views share the next row. */
-.agent-card-actions {
-  grid-row: 4;
-  align-self: end;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 4px;
-}
-
-.agent-card-actions .ant-btn-primary {
-  width: 100%;
-}
-
-.agent-card-secondary {
-  display: flex;
-  gap: 10px;
-}
-
-.agent-card-secondary .ant-btn {
-  flex: 1 1 0;
 }
 
 /* ---- people / access -------------------------------------------------------- */

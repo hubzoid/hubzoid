@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { Button, Card, Empty, Input, Space, Tag, Typography } from "antd";
-import { Search } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Button, Card, Empty, Input, Tag, Typography } from "antd";
+import { ChevronRight, Search } from "lucide-react";
 import { type EvalScore, type Hub, type SummaryHub, type Workflow } from "../api";
 import { useData } from "../hooks/useData";
 import { agentHref } from "../hooks/useRoute";
@@ -12,25 +12,37 @@ import { short } from "../lib/format";
 
 const { Text } = Typography;
 
+/** A status tag on an agent card that opens one of the agent's tabs. Sits
+ *  above the card's own link, with a › so it reads as a link without hover. */
+function StatusLink({ href, label, color, children }: { href: string; label: string; color?: string; children: ReactNode }) {
+  return (
+    <a href={href} className="agent-card-status" aria-label={label}>
+      <Tag color={color}>
+        {children}
+        <ChevronRight size={12} aria-hidden />
+      </Tag>
+    </a>
+  );
+}
+
 /** The agent's latest eval score, linking to its Evals tab. Nothing for an
- *  agent without eval cases. Counts only. */
+ *  agent without eval cases, or while the count can't be read. Counts only. */
 function EvalBadge({ hub }: { hub: Hub }) {
   const data = useData<{ cases: number; runs: number; latest: EvalScore | null }>(
     "/evals/summary?hub=" + encodeURIComponent(hub.key),
   );
   const d = data.data;
   if (!d || d.cases === 0) return null;
-  const tag = d.latest ? (
-    <Tag color={d.latest.passed === d.latest.total ? "green" : "red"}>
-      Evals {d.latest.passed}/{d.latest.total}
-    </Tag>
-  ) : (
-    <Tag>Evals not run</Tag>
-  );
+  const href = agentHref(hub.key, "evals");
+  if (!d.latest) {
+    return <StatusLink href={href} label={`${hub.name}: evals not run yet`}>Evals not run</StatusLink>;
+  }
+  const { passed, total } = d.latest;
   return (
-    <a href={agentHref(hub.key, "evals")} onClick={(e) => e.stopPropagation()}>
-      {tag}
-    </a>
+    <StatusLink href={href} label={`${hub.name}: evals, ${passed} of ${total} passed`}
+      color={passed === total ? "green" : "red"}>
+      Evals {passed}/{total}
+    </StatusLink>
   );
 }
 
@@ -67,52 +79,47 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
               ? `No agent matches “${search}”.`
               : "No agents are registered in this deployment, or none are assigned to you."
           }
-        />
+        >
+          {search && <Button onClick={() => setSearch("")}>Clear search</Button>}
+        </Empty>
       ) : (
-        <div className="agent-grid">
+        <div className="agent-grid" role="list" aria-label="Agents">
           {list.map((h) => {
             const flows = byHub(h.key);
             const metrics = usage?.find((row) => row.key === h.key);
             const scheduled = flows.filter((w) => w.schedule).length;
             const stale = flows.some((w) => w.state === "stale");
             const broken = flows.some((w) => w.state === "error");
+            const runs = agentHref(h.key, "runs");
+            const status = stale ? "Scheduler stopped"
+              : broken ? "Workflow error"
+              : scheduled ? `${flows.length} ${flows.length === 1 ? "workflow" : "workflows"} · ${scheduled} with a schedule`
+              : flows.length ? `${flows.length} manual ${flows.length === 1 ? "workflow" : "workflows"}`
+              : "No workflows";
+            // The whole card opens the agent: its name is the one link,
+            // stretched over the card. The status tags sit above it.
             return (
-              <Card
-                key={h.key}
-                className="agent-card"
-                hoverable
-                onClick={() => {
-                  location.hash = `/agents/${encodeURIComponent(h.key)}/access`;
-                }}
-              >
+              <Card key={h.key} className="agent-card" role="listitem">
                 <div className="agent-card-head">
                   <AgentAvatar size={44} />
                   <div className="agent-card-title">
-                    <a href={agentHref(h.key)} className="agent-name" onClick={(e) => e.stopPropagation()}>
+                    <a href={agentHref(h.key)} className="agent-name agent-card-link">
                       {h.name}
                     </a>
                     <Text type="secondary" className="identity">
                       {h.key}
                     </Text>
                   </div>
+                  <ChevronRight className="agent-card-chevron" size={20} aria-hidden />
                 </div>
-                <Space wrap size={[6, 6]} className="agent-card-tags">
-                  {workflows &&
-                    (stale ? (
-                      <Tag color="red">Scheduler stopped</Tag>
-                    ) : broken ? (
-                      <Tag color="red">Workflow error</Tag>
-                    ) : scheduled ? (
-                      <Tag>
-                        {flows.length} {flows.length === 1 ? "workflow" : "workflows"} · {scheduled} with a schedule
-                      </Tag>
-                    ) : flows.length ? (
-                      <Tag>{flows.length} manual {flows.length === 1 ? "workflow" : "workflows"}</Tag>
-                    ) : (
-                      <Tag>No workflows</Tag>
-                    ))}
+                <div className="agent-card-tags">
+                  {workflows && (
+                    <StatusLink href={runs} label={`${h.name}: ${status}`} color={stale || broken ? "red" : undefined}>
+                      {status}
+                    </StatusLink>
+                  )}
                   <EvalBadge hub={h} />
-                </Space>
+                </div>
                 {metrics && <dl className="agent-card-usage" aria-label={`${h.name} usage`}>
                   <div>
                     <dt>Tokens used</dt>
@@ -125,15 +132,6 @@ export function AgentCards({ hubs, workflows, usage }: { hubs: Hub[]; workflows?
                     <small>USD</small>
                   </div>
                 </dl>}
-                <div className="agent-card-actions" onClick={(e) => e.stopPropagation()}>
-                  <Button type="primary" href={agentHref(h.key, "access")}>
-                    Manage access
-                  </Button>
-                  <div className="agent-card-secondary">
-                    <Button href={agentHref(h.key, "runs")}>Runs &amp; schedules</Button>
-                    <Button href={agentHref(h.key, "activity")}>Activity</Button>
-                  </div>
-                </div>
               </Card>
             );
           })}
