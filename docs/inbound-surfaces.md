@@ -99,8 +99,8 @@ Same record as a CSV row; `None` → fail-closed. Wins over the CSV if both exis
 
 ## Connecting accounts from WhatsApp
 
-Implemented, off by default. With `HUBZOID_CONNECT_JOURNEY=true` in the hub's
-`.env`, a person can say "connect my Gmail" in WhatsApp. The agent's
+On by default (`HUBZOID_CONNECT_JOURNEY=false` in the hub's `.env` turns it
+off). A person can say "connect my Gmail" in WhatsApp. The agent's
 `connect_account` tool creates a personal link bound to that person's account
 (see [MCP connectors](mcp.md#connect-from-chat-connection-journey) for the
 checks, the link page and how success is verified).
@@ -136,6 +136,8 @@ It needs:
 - the `connector_<app>` capability for the person (a Console grant).
 - a chat-app account for the roster email (Hubzoid's, or Open WebUI's in Open
   WebUI mode), since the link page needs that person signed in.
+- in a gateway, a WhatsApp service that can write the gateway's data folder,
+  where connections are recorded (see [Running](#running)).
 
 Not included: the confirmation and the YES continuation on Telegram, and a
 confirmation for web chat (the done page tells the person to return to the
@@ -314,6 +316,17 @@ Standalone / systemd (serves whichever surfaces the `.env` configures):
 hubzoid inbound run <hub>
 hubzoid inbound systemd <hub> > /etc/systemd/system/hubzoid-inbound@<hub>.service
 ```
+The unit is sandboxed: it may write only the hub folder and, in a gateway, the
+gateway's data folder, where people's phone numbers and connections are kept.
+A unit made before 1.2.1 lists only the hub folder. The service then logs one
+error at start and runs without connection confirmations. Add the data folder
+with a drop-in and restart only that service:
+```
+mkdir -p /etc/systemd/system/<unit>.service.d
+printf '%s\n' '[Service]' 'ReadWritePaths=<gateway data folder>' > /etc/systemd/system/<unit>.service.d/shared-store.conf
+systemctl daemon-reload && systemctl restart <unit>
+```
+The Slack unit (`hubzoid slack systemd`) is sandboxed the same way.
 `HUBZOID_INBOUND_PORT` (default 8100) sets the loopback port. **Give each inbound
 hub behind one gateway a distinct `HUBZOID_INBOUND_PORT`** — the gateway refuses to
 plan two inbound hubs on the same port.
@@ -333,7 +346,7 @@ plan two inbound hubs on the same port.
 | `WEBHOOK_INBOUND_NAME` | `webhook` | generic webhook path segment (`/webhooks/<hub>/<name>`) |
 | `WEBHOOK_INBOUND_HMAC` | false | verify `X-Signature-256` HMAC instead of a shared secret |
 | `HUBZOID_RESTRICTED_SURFACES` | `owui,web,api,mcp` | add `whatsapp`/`telegram` to allow restricted tools |
-| `HUBZOID_CONNECT_JOURNEY` | off | "connect my <app>" links, WhatsApp confirmation and YES continuation |
+| `HUBZOID_CONNECT_JOURNEY` | on | "connect my <app>" links, WhatsApp confirmation and YES continuation |
 | `HUBZOID_CONNECT_TTL` | 600 | connection link lifetime in seconds (60 to 3600) |
 | `INBOUND_MSG_VERIFY_PROMPT` / `_VERIFIED` / `_NOT_REGISTERED` / `_NOT_OWN_CONTACT` / `_PLEASE_VERIFY` / `_NO_RESPONSE` | built-in English | override the fixed handshake/gate/fallback messages |
 | `HUBZOID_MAX_UPLOAD_BYTES` | 25 MiB | per-attachment ingress cap (shared with web/Slack uploads) |

@@ -3,6 +3,29 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.2.1]
+
+Connection links in WhatsApp work behind a gateway. Upgrading: read
+[Upgrading to 1.2.1](docs/UPGRADING.md#upgrading-to-121-whatsapp-and-slack-services-in-a-gateway)
+if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
+
+### Fixed
+- The units `hubzoid inbound systemd` and `hubzoid slack systemd` print may
+  write the gateway's data folder as well as the hub folder. They could write
+  only the hub folder, so behind a gateway the WhatsApp service could not use
+  the shared database: since 1.2 turned connection links on, it failed every
+  few seconds and sent no connection confirmation or YES continuation, and
+  phone numbers recorded in the Console never identified a WhatsApp sender
+  (only the hub's own roster did). The Slack unit had the same limit.
+- A WhatsApp service that still can't write there logs one error at start,
+  naming the fix, and runs without connection confirmations.
+- A database already at the latest schema is used without taking the
+  migration lock, so a process that may only read it can still use it.
+- With nothing to send or clear, the WhatsApp outbox and an ordinary message
+  only read the database; they wrote on every pass and every message.
+- The WhatsApp guide said connection links are off by default. They have been
+  on since 1.2.
+
 ## [1.2.0]
 
 Every MCP connector is managed in the Console, in both UI modes, and the pages

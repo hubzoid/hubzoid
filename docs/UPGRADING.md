@@ -4,6 +4,29 @@
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
+## Upgrading to 1.2.1: WhatsApp and Slack services in a gateway
+
+Nothing to change, unless a WhatsApp, Telegram or Slack service behind a
+gateway runs from a unit printed by `hubzoid inbound systemd` or
+`hubzoid slack systemd`. Those units could write only the hub folder, not the
+gateway's data folder where the shared database lives. Add that folder to the
+unit and restart only that service (see
+[Running](inbound-surfaces.md#running)):
+
+```
+mkdir -p /etc/systemd/system/<unit>.service.d
+printf '%s\n' '[Service]' 'ReadWritePaths=<gateway data folder>' > /etc/systemd/system/<unit>.service.d/shared-store.conf
+systemctl daemon-reload && systemctl restart <unit>
+```
+
+Until then the WhatsApp service logs one error at start and runs without
+connection confirmations. If you set `HUBZOID_CONNECT_JOURNEY=false` to quiet
+1.2.0's repeated errors, remove it once the folder is added.
+
+Phone numbers recorded on people in the Console now identify WhatsApp senders
+in a gateway too. Before, only the hub's own `identity/` roster did. Check that
+those numbers belong to the right people.
+
 ## Upgrading to 1.2: MCP connectors in the Console
 
 Every MCP connector is added in the Console (Agents, the agent, Connectors) in

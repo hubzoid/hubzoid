@@ -528,9 +528,8 @@ that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 
 ## Planned, not built yet
 
-- The Console does not yet list a person's connections. Connections started
-  from chat (`connector_<app>` capabilities and the connection journey) are
-  built and off unless `HUBZOID_CONNECT_JOURNEY` is set; see [mcp.md](mcp.md).
+- The Console does not yet list a person's connections. People see their own
+  on Your connections; see [mcp.md](mcp.md).
 
 ## Administration boundary
 
