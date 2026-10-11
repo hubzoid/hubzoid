@@ -344,7 +344,7 @@ def program_report():
 | `inputs=Model` | A Pydantic model. The run reads it as `hub.input`. Chat and MCP tools take its JSON schema, the Console's Run now builds a form from it, and the CLI takes `--input key=value`. Inputs are validated on every run. Keep them short and never secret: they are stored with the run. `Field(json_schema_extra={"hidden": True})` shows a value as •••• in lists. |
 | `max_input_kb=200` | Raises the inputs limit (4 KB) for a large value such as a diff, up to 256 KB. Not with `schedulable=True`. |
 | `schedule_input={...}` | The inputs for the declared schedule. Required when the model has required fields and the workflow has a schedule. |
-| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before saying it will email the links. Return `{"answer": "..."}` to show text in chat after any links (up to 8,000 characters, marked as data); return `{"refused": "..."}` to show a refusal as is. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
+| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before handing back a run id ("is it ready?" finds it). Return `{"answer": "..."}` to show text in chat after any links (up to 8,000 characters, marked as data); return `{"refused": "..."}` to show a refusal as is. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
 | `schedulable=True` | People can save their own schedule of it from chat (needs `as_tool`). `min_interval="6h"` raises the shortest cadence for this workflow. |
 | `catch_up=True` | The declared schedule runs once after downtime, unless the next slot is close. |
 
@@ -373,8 +373,10 @@ copies of each series. See [reports-and-email.md](reports-and-email.md#live-repo
 Monday at 9". The agent shows what will run, as whom and the next three runs,
 and saves it only after a yes (a one-time code, valid 10 minutes). The first
 run starts at once. Each run acts as that person, so it stops when their access
-does. The owner is emailed when a run changes the report or fails, and the
-schedule pauses after three failures in a row, or when access or inputs change.
+does. The schedule pauses after three failures in a row, or when access or
+inputs change. Nobody is emailed unless the hub sets `notify_by_email: true` in
+`workflows/settings.yaml` and email delivery is set up; then the owner hears when
+a run changes the report, fails or pauses, and when a long Run for me finishes.
 "My schedules", "pause", "resume", "run now", "change to daily" and "stop" work
 in chat. Admins see every schedule under **Runs & schedules → People's
 schedules**, with its 30-day model cost, and can pause or stop it; only an admin

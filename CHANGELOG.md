@@ -18,8 +18,8 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   it in chat. `max_input_kb` takes larger inputs, such as a diff.
 - **Personal schedules.** `schedulable=True` lets people with **Schedule
   reports for themselves** save their own schedule from chat, after a yes. It
-  runs as them, emails them when the report changes or fails, and pauses with
-  a reason after repeated failures or when access or inputs change. They list,
+  runs as them and pauses with a reason after repeated failures or when access
+  or inputs change. Email about it is off unless `notify_by_email: true`. They list,
   pause, resume, change and stop it in chat. Admins see every schedule, with
   its 30-day model cost, under **Runs & schedules**, and can pause or stop it.
 - **Live reports.** `publish_artifact(key=...)` keeps one link per report that

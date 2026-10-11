@@ -64,8 +64,10 @@ def finished(hub_dir, hub: str, workflow: str, run_id: str, env: dict, *, ok: bo
             personal.after_run(hub_dir, hub, env, run_id, ok=ok, cause=cause,
                                published=list(published or []))
         elif trigger == "tool" and ok and env.get("acts_as"):
+            from .personal import email_on
+
             started = env.get("started_at") or 0
-            if started and time.time() - started > tool_wait:
+            if started and time.time() - started > tool_wait and email_on(hub_dir):
                 _ready_email(hub_dir, hub, workflow, run_id, env, list(published or []))
     except Exception:  # noqa: BLE001
         log.exception("workflows: could not finish bookkeeping for run %s", run_id)

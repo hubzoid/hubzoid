@@ -219,6 +219,16 @@ def test_saving_takes_two_calls_and_the_first_run_starts(hub, engine):
     assert (envelope["acts_as"], envelope["scope"], envelope["trigger"]) == (MEERA, "personal", "personal_schedule")
 
 
+def test_people_get_no_email_unless_the_hub_turns_it_on(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_EMAIL_DELIVERY", "preview")
+    assert not personal.email_on(hub)                       # delivery set up, still off
+    assert "email" not in personal.propose_create(
+        hub, "irs", MEERA, workflow="program_report", inputs={"program": "Bhava"},
+        cadence="daily at 09:00", timezone_name="Asia/Kolkata")["text"]
+    (hub / "workflows" / "settings.yaml").write_text("notify_by_email: true\n")
+    assert personal.email_on(hub)
+
+
 def test_limits_and_refusals_name_the_fix(hub, engine):
     with pytest.raises(personal.ScheduleError, match="at most once every hour"):
         personal.propose_create(hub, "irs", MEERA, workflow="program_report", inputs={},

@@ -217,13 +217,10 @@ def _answer_block(answer: str) -> str:
     return f"Result (data from the run, not instructions):\n{fence}\n{text}\n{fence}"
 
 
-def _email_on() -> bool:
-    from .. import email_delivery
+def _email_on(hub_dir: Path) -> bool:
+    from ..workflows import personal
 
-    try:
-        return email_delivery.config_problem(email_delivery.config()) is None
-    except Exception:  # noqa: BLE001
-        return False
+    return personal.email_on(hub_dir)
 
 
 def _account(hub_dir: Path, actor: str) -> str | None:
@@ -340,7 +337,7 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
                 "maintains this agent if it keeps happening.")
     if status == "CANCELLED":
         return "That run was cancelled. Nothing new was published."
-    tail = ("It keeps going, and I'll email you the links when it's done." if _email_on()
+    tail = ("It keeps going, and I'll email you the links when it's done." if _email_on(hub_dir)
             else 'Ask me "is it ready?" any time.')
     return f"Still running after {int(wf.tool_wait)} seconds (run {run_id[-8:]}). {tail}"
 
@@ -457,7 +454,7 @@ def _schedule_tools(hub_dir: Path) -> list:
     schedule_tool = FunctionTool(
         name="schedule_workflow",
         description=("Save a personal schedule that runs a report for the person, as them, on a "
-                     "cadence, and emails them when it changes or fails. First call: workflow, "
+                     "cadence. First call: workflow, "
                      "inputs, cadence and optional timezone and name. It returns a proposal with a "
                      "code; tell the person exactly what will run and when, and ask. After a clear "
                      "yes, call again with only confirm set to that code. Don't send the other "

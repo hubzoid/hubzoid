@@ -106,6 +106,21 @@ def settings(hub_dir) -> dict:
     return out
 
 
+def email_on(hub_dir) -> bool:
+    """Email people about their own schedules and long runs: off unless the hub
+    sets `notify_by_email: true` in workflows/settings.yaml and email delivery
+    is set up. Chat and the report pages show the same state either way."""
+    from .. import email_delivery
+    from .events import settings as wf_settings
+
+    try:
+        if wf_settings(Path(hub_dir)).get("notify_by_email") is not True:
+            return False
+        return email_delivery.config_problem(email_delivery.config()) is None
+    except Exception:  # noqa: BLE001 — a broken settings file or setup sends nothing
+        return False
+
+
 def get(hub_dir, schedule_id: str | None) -> Schedule | None:
     if not schedule_id:
         return None
@@ -364,9 +379,9 @@ def propose_create(hub_dir, hub: str, actor: str, *, workflow: str, inputs, cade
         "name": label})
     words = cadence_words(cadence)
     what = f"{wf.title} for {shown}" if shown else wf.title
-    text_ = (f"Not saved yet. {words} ({timezone_name}), I'll run {what} as you, and email you "
-             f"when it changes or fails. Next runs: {', '.join(_when(t, timezone_name) for t in runs)}. "
-             "Save it?")
+    mail = ", and email you when it changes or fails" if email_on(hub_dir) else ""
+    text_ = (f"Not saved yet. {words} ({timezone_name}), I'll run {what} as you{mail}. "
+             f"Next runs: {', '.join(_when(t, timezone_name) for t in runs)}. Save it?")
     return {"code": code, "text": text_, "name": label}
 
 
@@ -650,8 +665,9 @@ def manage_url(hub_dir, s: Schedule) -> str:
 
 
 def notify(hub_dir, hub: str, s: Schedule | None, kind: str, *, published: list | None = None) -> None:
-    """Email the schedule's owner. Best effort: no email setup, no notice."""
-    if s is None:
+    """Email the schedule's owner when the hub turned it on (`email_on`).
+    Best effort."""
+    if s is None or not email_on(hub_dir):
         return
     from .. import email_delivery
     from .identity import RunIdentity
