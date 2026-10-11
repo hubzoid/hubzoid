@@ -486,6 +486,8 @@ def set_paused(hub_dir, hub: str, actor: str, schedule_id: str, paused: bool, *,
     if s is None or s.hub != hub or s.state == "stopped":
         raise ScheduleError("There is no such schedule on this agent.")
     if paused:
+        if s.state == "paused" and not admin:
+            return s                      # an owner's pause never replaces an admin's
         _update(hub_dir, s.id, state="paused", reason="admin" if admin else "owner", paused_by=actor)
     else:
         if s.state != "paused":

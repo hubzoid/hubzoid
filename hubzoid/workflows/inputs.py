@@ -159,7 +159,8 @@ def parse_cli(pairs) -> dict:
 
 def display_with_schema(schema: dict | None, data: dict | None, *, limit: int = 120) -> str:
     """`display` for a process that has the published JSON schema, not the
-    model: a property marked "hidden" is masked."""
+    model: a property marked "hidden" is masked. With no schema (the workflow
+    was removed or renamed), nothing can be shown safely, so every value is."""
     if not data:
         return ""
     props = (schema or {}).get("properties") or {}
@@ -167,6 +168,6 @@ def display_with_schema(schema: dict | None, data: dict | None, *, limit: int = 
     for name, value in data.items():
         if value in (None, "", [], {}):
             continue
-        parts.append(HIDDEN if (props.get(name) or {}).get("hidden") else str(value))
+        parts.append(HIDDEN if schema is None or (props.get(name) or {}).get("hidden") else str(value))
     text = ", ".join(parts)
     return text if len(text) <= limit else text[: limit - 1] + "…"

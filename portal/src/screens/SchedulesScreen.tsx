@@ -180,7 +180,9 @@ function SchedulesTable({
   runsPath: (s: Row) => string;
   empty: string;
 }) {
-  const [open, setOpen] = useState<Row | null>(null);
+  // By id, so the drawer shows the row as it is after each reload.
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = rows.find((r) => r.id === openId) ?? null;
   return (
     <>
       <Table<Row>
@@ -190,7 +192,7 @@ function SchedulesTable({
         pagination={false}
         scroll={{ x: 900 }}
         rowClassName="clickable"
-        onRow={(s) => ({ onClick: () => setOpen(s) })}
+        onRow={(s) => ({ onClick: () => setOpenId(s.id) })}
         locale={{ emptyText: <Empty description={empty} /> }}
         columns={[
           ...(mine ? [] : [{ title: "Person", key: "owner", render: (_: unknown, s: Row) => <Text className="identity">{s.owner}</Text> }]),
@@ -224,7 +226,7 @@ function SchedulesTable({
           { title: "", key: "acts", align: "right", render: (_, s) => <Actions s={s} mine={mine} act={act} /> },
         ]}
       />
-      <ScheduleDrawer row={open} close={() => setOpen(null)} runsPath={runsPath} mine={mine} act={act} />
+      <ScheduleDrawer row={open} close={() => setOpenId(null)} runsPath={runsPath} mine={mine} act={act} />
     </>
   );
 }

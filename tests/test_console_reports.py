@@ -57,6 +57,9 @@ def _schedule(c, state="active", reason=None, account=None):
             "'every monday at 09:00', 'Asia/Kolkata', :s, :r, :n, 0, :t, :t)"),
             {"h": c.hub, "i": json.dumps({"program": "Bhava"}), "s": state, "r": reason,
              "n": now + 3600, "t": now, "a": account})
+        # What the engine publishes at start, so a Console in any process can show inputs.
+        conn.execute(text("INSERT INTO hz_meta (k, v) VALUES (:k, :v)"),
+                     {"k": f"wf_inputs:{c.hub}", "v": json.dumps({"program_report": {"properties": {"program": {}}}})})
 
 
 def test_access_lists_one_grant_per_report_plus_scheduling_and_company_sharing(client):

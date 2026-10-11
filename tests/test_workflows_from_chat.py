@@ -158,6 +158,12 @@ def test_inputs_are_checked_with_one_safe_sentence(hub):
     with pytest.raises(inputs_lib.InputError, match="too long"):
         inputs_lib.validate(model, {"program": "x" * 5000})
     assert inputs_lib.validate(model, {"program": "x" * 5000}, max_bytes=200 * 1024)
+    big = runtime._chat_options(inputs=model, schedule_input={"program": "x" * 5000}, as_tool=True,
+                                confirm=False, tool_wait=None, surfaces=None, sensitive=False,
+                                schedulable=False, min_interval=None, catch_up=False,
+                                schedule="daily at 06:00", on_webhook=None, max_input_kb=200)
+    assert big["max_input_bytes"] == 200 * 1024                     # schedule_input uses the raised limit
+    assert inputs_lib.display_with_schema(None, {"token": "s3cret"}) == "••••"   # workflow gone: mask all
 
     from pydantic import BaseModel, model_validator
 
@@ -285,6 +291,9 @@ def test_failures_pause_after_three_and_admins_resume_only_their_own_pause(hub, 
         personal.set_paused(hub, "irs", MEERA, sid, False)
     with pytest.raises(personal.ScheduleError, match="paused by an admin"):
         personal.run_now(hub, "irs", MEERA, sid)                      # nor run it now
+    personal.set_paused(hub, "irs", MEERA, sid, True)                # pausing again changes nothing
+    with pytest.raises(personal.ScheduleError, match="paused by an admin"):
+        personal.set_paused(hub, "irs", MEERA, sid, False)
     personal.admin_stop(hub, "irs", "admin@co.org", sid)
     assert personal.get(hub, sid).state == "stopped"
 

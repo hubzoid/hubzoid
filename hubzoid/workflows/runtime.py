@@ -470,19 +470,6 @@ def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfac
     if inputs is not None and not inputs_lib.is_model(inputs):
         raise ValueError("inputs must be a Pydantic model class")
     required = inputs_lib.required_fields(inputs)
-    if schedule_input is not None:
-        if inputs is None:
-            raise ValueError("schedule_input needs inputs=")
-        inputs_lib.validate(inputs, schedule_input)
-    elif schedule and required:
-        raise ValueError("This workflow has required inputs, so its schedule needs schedule_input.")
-    if on_webhook and required:
-        raise ValueError("A webhook can't fill required inputs. Give them defaults.")
-    if schedulable and not as_tool:
-        raise ValueError("schedulable needs as_tool=True")
-    wait = seconds(tool_wait) if tool_wait is not None else 60.0
-    if wait > MAX_TOOL_WAIT:
-        raise ValueError("tool_wait is at most 10 minutes")
     limit = inputs_lib.MAX_BYTES
     if max_input_kb is not None:
         if inputs is None:
@@ -493,6 +480,19 @@ def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfac
                 or not 1 <= max_input_kb <= inputs_lib.MAX_INPUT_KB):
             raise ValueError(f"max_input_kb must be a whole number from 1 to {inputs_lib.MAX_INPUT_KB}")
         limit = max_input_kb * 1024
+    if schedule_input is not None:
+        if inputs is None:
+            raise ValueError("schedule_input needs inputs=")
+        inputs_lib.validate(inputs, schedule_input, max_bytes=limit)
+    elif schedule and required:
+        raise ValueError("This workflow has required inputs, so its schedule needs schedule_input.")
+    if on_webhook and required:
+        raise ValueError("A webhook can't fill required inputs. Give them defaults.")
+    if schedulable and not as_tool:
+        raise ValueError("schedulable needs as_tool=True")
+    wait = seconds(tool_wait) if tool_wait is not None else 60.0
+    if wait > MAX_TOOL_WAIT:
+        raise ValueError("tool_wait is at most 10 minutes")
     names = tuple(surfaces or ())
     unknown = set(names) - set(TOOL_SURFACE_NAMES)
     if unknown:
