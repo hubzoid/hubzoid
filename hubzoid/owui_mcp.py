@@ -1,16 +1,13 @@
-"""Per-user MCP servers from Open WebUI's native connections.
+"""The personal MCP servers of the current turn, for all three runtimes.
 
-OWUI lets each user connect an MCP tool for themselves (``+ -> Integrations
--> Tools``, an OAuth 2.1 redirect) and stores that user's token. OWUI would
-run the tool in its own loop, but a Hubzoid model runs the agent loop itself,
-so OWUI never gets the chance. This module closes that gap: for the caller of
-the current turn it finds which OWUI MCP servers they connected, looks up each
-server's URL, reads and decrypts *their* token, and describes each server with
-the caller's own ``Authorization: Bearer``.
+Kept under its 1.1 name so the runtime adapters do not move. Since 1.2 every
+UI mode uses the connectors added in the Console (``hubzoid.connectors``): Open
+WebUI's own MCP servers are no longer read. The rules (signed-in person,
+allowed surface, not blocked, offered in this agent, the ``connector_<id>``
+grant, a usable token) live in ``hubzoid.connectors.per_user``.
 
-This is the single per-turn source for all three runtimes. It returns plain
-data (:class:`PerUserServer`), and each runtime adapter builds its own client
-from it inside the turn:
+It returns plain data (:class:`PerUserServer`), and each runtime adapter builds
+its own client from it inside the turn:
 
   * Claude (``factory_claude.ClaudeRuntime``) merges :func:`per_user_specs`,
     the Claude-SDK ``http`` specs, into its per-turn options.
@@ -21,35 +18,16 @@ from it inside the turn:
 
 So two people on the same hub each reach the same MCP server as themselves and
 see only their own data, whichever backend the hub runs on.
-
-Entirely no-op (empty result) when the switch ``OWUI_NATIVE_MCP`` is not set,
-the caller is anonymous, the caller's surface may not carry personal tokens
-(``HUBZOID_RESTRICTED_SURFACES``, the restricted-tool rule), or they have
-connected nothing. Each server also needs the caller's ``connector_<app>``
-capability (``app`` is the server's id, see :func:`app_key`). A server whose key would replace a hub MCP server is skipped for
-that turn, so a personal server never shadows a hub tool.
-
-Token freshness (expiry + refresh) is delegated to ``owui_refresh``, so a server
-is described only with a currently valid token. An expired-and-unrefreshable one
-is dropped for that turn (the user reconnects).
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 
-from . import owui_refresh as refresh
-from .access import owui_oauth_tokens as tokens
-from .access import owui_tool_servers as servers
-
 log = logging.getLogger("hubzoid.owui_mcp")
 
-_NAME_RE = re.compile(r"[^a-z0-9]+")
 _APP_RE = re.compile(r"[^a-z0-9_]+")
-
-_TRUTHY = {"1", "true", "yes", "on"}
 
 CONNECTOR_PREFIX = "connector_"
 
@@ -57,20 +35,8 @@ CONNECTOR_PREFIX = "connector_"
 _HUB_SERVER_KEY = "hubzoid"
 
 
-def enabled() -> bool:
-    """On only when the operator set ``OWUI_NATIVE_MCP=true`` - the same one
-    switch that configures OWUI in ``webui.py``. Opt-in, so hubs that do not use
-    native MCP pay nothing (no per-turn DB reads) and stay env-authoritative."""
-    return os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in _TRUTHY
-
-
 def app_key(name: str) -> str:
-    """The app a connector is known by: lowercase ``[a-z0-9_]``.
-
-    For an Open WebUI MCP server it is derived from the server's ``info.id``
-    (the ID the admin typed when registering it), so a server registered as
-    ``gmail`` is the app ``gmail`` and the capability ``connector_gmail``.
-    """
+    """The app a connector is known by: lowercase ``[a-z0-9_]`` (its ID)."""
     return _APP_RE.sub("_", (name or "").strip().lower()).strip("_")
 
 
@@ -83,7 +49,7 @@ def capability(app: str) -> str:
 class PerUserServer:
     """One MCP server this caller may reach this turn, as themselves.
 
-    Runtime-neutral: ``headers`` carries the caller's Bearer, and
+    Runtime-neutral: ``headers`` carries the caller's credential, and
     ``allowed_tools`` is the admin's tool allow-list (bare MCP tool names) or
     None for no filter. Never log or return ``headers``.
     """
@@ -94,21 +60,6 @@ class PerUserServer:
     allowed_tools: tuple[str, ...] | None
     server_id: str
     app: str
-
-
-def _namespace(name: str, server_id: str, taken: set[str]) -> str:
-    """A safe, stable MCP server key -> tools surface as mcp__<key>__<tool>.
-
-    Sanitized to ``owui_<name>``; on a collision (two servers with the same
-    display name) a short slice of the unique server_id disambiguates so both
-    stay reachable.
-    """
-    base = "owui_" + (_NAME_RE.sub("_", (name or "").lower()).strip("_") or "mcp")
-    key = base
-    if key in taken:
-        key = f"{base}_{_NAME_RE.sub('', server_id.lower())[:8]}"
-    taken.add(key)
-    return key
 
 
 def _hub_server_keys(hub_dir) -> set[str]:
@@ -133,74 +84,12 @@ def _connector_gate(hub_dir, identity):
 
 
 def per_user_servers(hub_dir, identity, *, reserved: set[str] | None = None) -> list[PerUserServer]:
-    """The MCP servers this caller connected and may use this turn.
+    """The MCP servers this caller may use this turn (``reserved`` are server
+    keys that must not be replaced, default the hub's own). Empty on every
+    refusal path, never raises for missing data."""
+    from .connectors.per_user import per_user_servers as connector_servers
 
-    ``reserved`` are server keys that must not be replaced (defaults to the
-    hub's own MCP server keys). Empty on every refusal path, never raises for
-    a missing DB, key or row.
-
-    In the default UI mode Hubzoid owns personal connections, so this answers
-    from ``hubzoid.connectors`` instead (same shape, same rules). Only the
-    Open WebUI mode reads Open WebUI's connections below.
-    """
-    from . import appmode
-
-    if not appmode.is_openwebui(hub_dir):
-        from .connectors.per_user import per_user_servers as hubzoid_servers
-
-        return hubzoid_servers(hub_dir, identity, reserved=reserved)
-    if not enabled() or identity is None or getattr(identity, "is_anonymous", True):
-        return []
-    # A personal token follows the same surface rule as restricted tools: a
-    # shared Slack channel or bot-token surface must never carry it.
-    from .access.guard import allowed_surfaces
-    if getattr(identity, "surface", "") not in allowed_surfaces():
-        return []
-
-    user_id = tokens.resolve_user_id(hub_dir, identity.user)
-    if not user_id:
-        return []
-    connected = tokens.connected_server_ids(hub_dir, user_id)
-    if not connected:
-        return []
-    permitted = _connector_gate(hub_dir, identity)
-
-    reserved = _hub_server_keys(hub_dir) if reserved is None else set(reserved)
-    by_id = {c["id"]: c for c in servers.list_mcp_connections(hub_dir)}
-    out: list[PerUserServer] = []
-    taken: set[str] = set()
-    for server_id in sorted(connected):
-        conn = by_id.get(server_id)
-        if conn is None:
-            # Connected once, server since removed by the admin. Skip quietly.
-            continue
-        app = app_key(server_id)
-        if not permitted(app):
-            log.info("owui-mcp: %s lacks %s; server %r not injected",
-                     identity.user, capability(app), server_id)
-            continue
-        key = _namespace(conn["name"], server_id, taken)
-        if key in reserved:
-            log.warning("owui-mcp: personal server %r would replace the hub's %r "
-                        "MCP server; skipped this turn", server_id, key)
-            continue
-        # Valid token, refreshing if it has expired. None => connected but not
-        # usable now (refresh failed / none); drop it this turn (owui_refresh
-        # logged why) and the user reconnects.
-        access_token = refresh.access_token_for(hub_dir, user_id, server_id)
-        if not access_token:
-            continue
-        allow = conn.get("allowed_tools")
-        out.append(PerUserServer(
-            key=key, url=conn["url"],
-            headers={"Authorization": f"Bearer {access_token}"},
-            allowed_tools=tuple(allow) if allow else None,
-            server_id=server_id, app=app,
-        ))
-
-    if out:
-        log.info("owui-mcp: %d personal server(s) for %s", len(out), identity.user)
-    return out
+    return connector_servers(hub_dir, identity, reserved=reserved)
 
 
 def per_user_specs(hub_dir, identity, *, reserved: set[str] | None = None) -> tuple[dict, list[str]]:

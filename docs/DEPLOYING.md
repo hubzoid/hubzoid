@@ -141,7 +141,7 @@ reaches.
 - **Bridges** take only these keys from the deployment secret: the
   `HUBZOID_GATEWAY_ADMIN_*` keys, `WEBUI_SECRET_KEY`, every
   `OAUTH_*_ENCRYPTION_KEY`, `DATABASE_URL`, `DATABASE_SCHEMA`,
-  `HUBZOID_OPERATIONAL_DB`, `HUBZOID_PUBLIC_URL`, `WEBUI_URL`, `OWUI_NATIVE_MCP`,
+  `HUBZOID_OPERATIONAL_DB`, `HUBZOID_PUBLIC_URL`, `WEBUI_URL`,
   `HUBZOID_OTEL_ENDPOINT` and `OTEL_*`. The gateway names the other keys at start
   (they stay with the gateway and Open WebUI). A bridge turns the deployment
   `HUBZOID_PUBLIC_URL` into its own `<url>/b/<hub>` address. Each bridge fetches
@@ -235,9 +235,9 @@ Values are read once, when a process starts. After rotating a secret, restart:
 - a hub secret: that hub's bridge, inbound and Slack processes
 - a restricted secret: that hub's bridge
 
-In Open WebUI mode, rotating `WEBUI_SECRET_KEY` signs everyone out. It also makes the stored
-connected-tool tokens (`oauth_session`) undecryptable, so every personal
-connection must be made again. Rotate it only on purpose.
+In Open WebUI mode, rotating `WEBUI_SECRET_KEY` signs everyone out. Rotate it only on purpose.
+Connector tokens are encrypted with the deployment key (`HUBZOID_SECRET_KEY` or the
+key file) instead. Losing that key means people connect again.
 
 ## Checking a deployment
 

@@ -14,8 +14,6 @@ from sqlalchemy.exc import DBAPIError
 from hubzoid.access import (
     owui_api_keys,
     owui_db,
-    owui_oauth_tokens,
-    owui_tool_servers,
 )
 
 
@@ -161,52 +159,6 @@ def test_read_connections_cannot_write(owui_store):
             con.execute(text("DELETE FROM api_key"))
     assert owui_api_keys.resolve_email(hub, "sk-test") == "alice@example.com"
 
-
-def test_oauth_read_refresh_and_config(owui_store):
-    hub, engine = owui_store
-    token = {"access_token": "synthetic-original", "refresh_token": "synthetic-refresh"}
-    encrypted = (
-        owui_oauth_tokens._fernet("synthetic-test-encryption-secret")
-        .encrypt(json.dumps(token).encode())
-        .decode()
-    )
-    connections = [
-        {
-            "type": "mcp",
-            "url": "https://example.invalid/mcp",
-            "auth_type": "oauth2",
-            "info": {"id": "test-server"},
-        }
-    ]
-    with engine.begin() as con:
-        con.execute(
-            text(
-                "INSERT INTO oauth_session VALUES ('s', 'alice', 'mcp:test-server', :token, 1, 1, 9999999999)"
-            ),
-            {"token": encrypted},
-        )
-        con.execute(
-            text("INSERT INTO config VALUES ('tool_server.connections', :value)"),
-            {"value": json.dumps(connections)},
-        )
-    assert owui_oauth_tokens.resolve_user_id(hub, "ALICE@example.com") == "alice"
-    assert owui_oauth_tokens.read_token(hub, "alice", "test-server") == token
-    assert owui_oauth_tokens.connected_server_ids(hub, "alice") == {"test-server"}
-    assert owui_tool_servers.list_mcp_connections(hub)[0]["id"] == "test-server"
-    assert owui_oauth_tokens.write_session(
-        hub, "s", {"access_token": "synthetic-refreshed"}
-    )
-    assert (
-        owui_oauth_tokens.read_session(hub, "alice", "test-server")["token"][
-            "access_token"
-        ]
-        == "synthetic-refreshed"
-    )
-    with engine.connect() as con:
-        assert (
-            "synthetic-refreshed"
-            not in con.execute(text("SELECT token FROM oauth_session")).scalar_one()
-        )
 
 
 def test_mcp_transport_grant_and_oauth_revocation(owui_store, monkeypatch):

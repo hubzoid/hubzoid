@@ -46,6 +46,11 @@ def hub(tmp_path, monkeypatch):
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
+    # The connector's own OAuth flow has its suite: here it returns the
+    # provider's authorize URL, and the test stores the connection itself.
+    from hubzoid.connectors import oauth_flow
+
+    monkeypatch.setattr(oauth_flow, "start", lambda *a, **k: "https://accounts.example.org/authorize")
     monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     h.grant(hub, ALICE, BOB)
@@ -139,7 +144,7 @@ def test_whatsapp_gmail_journey_end_to_end(hub):
     assert _tick(hub, outbox) == 0  # nothing to say while consent is in progress
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-alice")
     done = pages.get(path + "/done?status=success", headers={"x-test-session": ALICE})
-    assert done.status_code == 200 and "Gmail is connected" in done.text
+    assert done.status_code == 200 and "Gmail connected" in done.text
 
     # 4. WhatsApp confirmation, once, with the one-use continuation offer.
     assert _tick(hub, outbox) == 1
@@ -273,13 +278,13 @@ def test_poller_runs_with_the_app_lifespan_only_when_on(hub, monkeypatch):
     with TestClient(app):
         assert poller._thread is not None and poller._thread.is_alive()
     assert poller._thread is None
-    monkeypatch.delenv("HUBZOID_CONNECT_JOURNEY")
+    monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "false")
     off = _app(hub, FakeBridge(hub), sent)
     assert not hasattr(off.state, "connect_poller")
 
 
 def test_journeys_off_leaves_whatsapp_exactly_as_before(hub, monkeypatch):
-    monkeypatch.delenv("HUBZOID_CONNECT_JOURNEY")
+    monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "false")
     sent = []
     bridge = FakeBridge(hub)
     app = _app(hub, bridge, sent)

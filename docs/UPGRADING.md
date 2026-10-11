@@ -1,7 +1,45 @@
 # Upgrading
 
+- [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Upgrading to 1.2: MCP connectors in the Console
+
+Every MCP connector is added in the Console (Agents, the agent, Connectors) in
+both UI modes, and Hubzoid holds each person's connection. Open WebUI's own MCP
+servers (External Tool Servers with `OWUI_NATIVE_MCP=true`) are no longer read.
+
+**Web app mode:** nothing to do.
+
+**Open WebUI mode**, if you registered MCP servers in Open WebUI:
+
+1. Back up: `hubzoid backup <hub> -o state.tar.gz` (it includes Open WebUI's
+   data). Keep the deployment key (`HUBZOID_SECRET_KEY` or the key file).
+2. Note each server's URL and ID, then remove it in Open WebUI: Admin Panel,
+   Settings, Integrations, External Tool Servers. Do this before upgrading:
+   afterwards the edge refuses changes there.
+3. On a gateway, make sure `ENABLE_FORWARD_USER_INFO_HEADERS` is not `false`.
+   Connectors need each person's Open WebUI account id from it.
+4. Upgrade and restart.
+5. In the Console, add each server again with the same ID (Add connector),
+   offer it in the agents that need it, and grant **Connect <name>**.
+6. People connect once, from the link the agent sends (`connect_account` is
+   on by default) or from `/portal/connections`.
+
+`OWUI_NATIVE_MCP` is ignored and logged. If it was on, settings changed in Open
+WebUI's admin screen while it was on may stop applying, because
+`ENABLE_PERSISTENT_CONFIG` is off again. Put any you need in `.env`. People's
+old Open WebUI connections stay in Open WebUI's database until removed there.
+Hubzoid does not read them. Revoke them at the provider if that matters.
+
+**Connector tool names on OpenAI Agents and Codex** change from the server's
+own name (`search`) to `mcp__my_<id>__<tool>` (`mcp__my_gmail__search`), as
+Claude already named them. Update any agent instructions or skills that name a
+connector tool directly. Hub tools and hub-folder servers keep their names.
+
+To go back, restore the backup and reinstall the previous version. This
+release never writes to Open WebUI's database.
 
 ## Upgrading to 1.1 from 1.0.x
 
@@ -47,7 +85,7 @@ on the expected port is refused.
 | With sign-in on (`HUBZOID_AUTH=true`, or the 1.0 name `WEBUI_AUTH=true`), a hub or gateway whose Open WebUI database has accounts and whose Hubzoid store has none stops at start and prints the two ways forward. In local mode `hubzoid run` only prints that the old chats can be imported. | Migrate, or keep Open WebUI. |
 | Hubzoid owns sign-in. Existing passwords keep working. Google, Microsoft and OpenID Connect use the same variable names and callback paths as Open WebUI, so existing provider registrations keep working. `WEBUI_SECRET_KEY` is not used in the default mode. | Everyone signs in once after the move: sessions do not move. See [authentication](auth.md). |
 | Hosted MCP accepts only OAuth credentials issued by Hubzoid after sign-in and consent. Open WebUI API keys no longer authenticate `/mcp`. `MCP_PUBLIC_URL` is required with `MCP_SERVER=true`. | Reconnect each MCP client ([below](#mcp-clients-move-from-api-keys-to-oauth)). |
-| In the web app, personal MCP connections are run by Hubzoid. Connections made in Open WebUI are not moved. | An organization administrator adds each server in **Console → Agents → the agent → Connectors**, then each person connects again on **Account → Connections**. See [MCP connectors](mcp.md#personal-connections-default-ui-mode). Open WebUI mode keeps its own connections. |
+| In the web app, personal MCP connections are run by Hubzoid. Connections made in Open WebUI are not moved. | An organization administrator adds each server in **Console → Agents → the agent → Connectors**, then each person connects again on **Account → Connections**. See [MCP connectors](mcp.md#connectors-in-the-console-both-ui-modes). Since 1.2 Open WebUI mode uses the same Console connectors. |
 | Every agent's access is managed in the Console, in both chat UIs. Open WebUI groups, roster groups and `MCP_ACCESS_GROUP` grant nothing. A call to the bridge without a verified person is refused. | Run `hubzoid doctor`: it warns about an agent nobody may use. Grant **Use this agent** to the people who need it. |
 | New secret: the deployment key (`HUBZOID_SECRET_KEY`, or the `secret.key` file created on first use) encrypts personal connection tokens and signs identity between Hubzoid processes. Backups leave it out unless asked. | Back it up separately ([backup](BACKUP.md)). |
 | A local `hubzoid run` refuses a network `--host` without sign-in. | Turn sign-in on, or set `HUBZOID_ALLOW_UNAUTHENTICATED_NETWORK=true` on a network you trust. |

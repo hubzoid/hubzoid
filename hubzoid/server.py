@@ -264,7 +264,7 @@ def build_app() -> FastAPI:
         identity = _derive_identity(body, request, hub_dir)
         # Hub-entry gate: a caller must hold `use_hub` (verified identity) to
         # chat at all — read knowledge, use even unrestricted tools. Fail-closed.
-        _enforce_use_hub(request, hub_dir)
+        owui_account = _enforce_use_hub(request, hub_dir)
 
         # Extract content[] attachments (base64 image_url / input_file — Slack
         # and direct-API uploads) into the canonical per-chat uploads store now;
@@ -296,7 +296,8 @@ def build_app() -> FastAPI:
 
         if bool(body.get("stream", False)):
             return StreamingResponse(
-                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir),
+                _stream(rt, prompt, model_label, chat_id, inflight, identity, hub_dir,
+                        owui_account),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -304,7 +305,7 @@ def build_app() -> FastAPI:
         inflight.enter()
         started = time.monotonic()
         try:
-            with _request_ctx.chat_scope(chat_id):
+            with _request_ctx.chat_scope(chat_id), _request_ctx.owui_account_scope(owui_account):
                 with access.identity_scope(identity):
                     text = await rt.run(prompt)
                     raw_usage = _request_ctx.drain_usage()
@@ -421,6 +422,12 @@ def build_app() -> FastAPI:
 
         webapp.mount(app, hub_dir, runtime=rt, inflight=inflight, settings=settings,
                      model_label=model_label)
+    else:
+        # Connectors are managed in the Console in both modes: its API, people's
+        # connections and the OAuth return (the edge routes /oauth/connectors/ here).
+        from .connectors import routes as connector_routes
+
+        connector_routes.mount(app, hub_dir)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.
@@ -464,7 +471,8 @@ class _InFlight:
 # ---------------------------------------------------------------------------
 async def _stream(rt, prompt: str, model: str, chat_id: str,
                   inflight: _InFlight | None = None,
-                  identity=None, hub_dir: Path | None = None) -> AsyncIterator[bytes]:
+                  identity=None, hub_dir: Path | None = None,
+                  owui_account=_request_ctx.UNSET) -> AsyncIterator[bytes]:
     if inflight:
         inflight.enter()
     started = time.monotonic()
@@ -486,7 +494,8 @@ async def _stream(rt, prompt: str, model: str, chat_id: str,
         usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         from .tool_events import THINKING, Status
 
-        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity):
+        with _request_ctx.chat_scope(chat_id), access.identity_scope(identity), \
+                _request_ctx.owui_account_scope(owui_account):
             async for delta in rt.stream(prompt):
                 if isinstance(delta, Status):
                     # A running tool's line ("Running X…"), or None to clear it.
@@ -627,7 +636,7 @@ def _trust(request: Request, hub_dir: Path | None):
     return result
 
 
-def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
+def _enforce_use_hub(request: Request, hub_dir: Path | None):
     """Require `use_hub` to enter the hub at all.
 
     Uses ONLY the verified identity — never the caller-controlled `body.user` —
@@ -636,7 +645,7 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
     `X-Hubzoid-User`). Web app mode: the email a valid identity assertion
     vouches for. Fail-closed: a store error denies (503)."""
     if hub_dir is None:
-        return
+        return _request_ctx.UNSET
     from .access import store_for
     from .access.store import USE_HUB
 
@@ -660,7 +669,9 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
         account_id = None
     try:
         if verified and account_id:
-            gs.upsert_identity(email=verified, owui_id=account_id)
+            from .access.session import bind_owui_account
+
+            bind_owui_account(hub_dir, verified, account_id)
         blocked = bool(verified and gs.is_suspended(verified))
     except Exception:
         raise HTTPException(503, detail="access check unavailable")
@@ -695,6 +706,9 @@ def _enforce_use_hub(request: Request, hub_dir: Path | None) -> None:
                    "Ask your hub administrator for chat access, then start a new chat.")
             ),
         )
+    # The turn runs with this account id in scope: connectors in an Open WebUI
+    # chat need it to match the account the connections belong to.
+    return account_id if openwebui else _request_ctx.UNSET
 
 
 def _derive_identity(body: dict[str, Any], request: Request, hub_dir: Path | None = None):

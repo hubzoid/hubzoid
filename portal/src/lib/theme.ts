@@ -42,6 +42,16 @@ export const lightTheme: ThemeConfig = {
     colorBgLayout: "#FAFAF8",
     colorBgContainer: "#FFFFFF",
     colorBgElevated: "#FFFFFF",
+    // The default algorithm derives muddy tints from these dark seeds; pin the
+    // Studio soft tokens so alerts read as success, warning, error and info.
+    colorSuccessBg: "#EAF4ED",
+    colorSuccessBorder: "#C9E2D1",
+    colorWarningBg: "#FFF5DA",
+    colorWarningBorder: "#EFDCA6",
+    colorErrorBg: "#FBEDEA",
+    colorErrorBorder: "#F0CBC5",
+    colorInfoBg: "#EEF3FA",
+    colorInfoBorder: "#C9D9EE",
   },
   components: {
     Alert: { withDescriptionPadding: 12, withDescriptionIconSize: 16 },

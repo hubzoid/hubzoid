@@ -128,14 +128,14 @@ What the WhatsApp side adds:
 
 It needs:
 
-- an OAuth 2.1 MCP server for the app registered in Open WebUI, with
-  `OWUI_NATIVE_MCP=true`. The journey uses Open WebUI native MCP only. The
-  optional Composio integration is unchanged and not part of it.
+- a connector for the app, added in the Console (Agents, the agent,
+  Connectors) and offered in the agent. The optional Composio integration is
+  unchanged and not part of it.
 - `whatsapp` in `HUBZOID_RESTRICTED_SURFACES`, because a connection is a
   restricted-class capability.
 - the `connector_<app>` capability for the person (a Console grant).
-- an Open WebUI account for the roster email, since the link page needs that
-  person signed in.
+- a chat-app account for the roster email (Hubzoid's, or Open WebUI's in Open
+  WebUI mode), since the link page needs that person signed in.
 
 Not included: the confirmation and the YES continuation on Telegram, and a
 confirmation for web chat (the done page tells the person to return to the

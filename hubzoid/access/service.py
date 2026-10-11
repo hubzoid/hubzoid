@@ -1374,6 +1374,17 @@ class AccessService:
                          "Access was removed, but the chat account could not be deleted. "
                          f"{detail} Try again.".strip())
         gs.mark_account_removed(subject, actor=actor.subject, surface=actor.surface)
+        from .. import appmode
+
+        if appmode.is_openwebui(self.hub_dir):
+            # Hubzoid's own accounts drop their connections on delete; an Open
+            # WebUI account's connections are stored under its id here.
+            try:
+                from ..connectors import tokens
+
+                tokens.drop_user(self.hub_dir, str(identity["owui_id"]))
+            except Exception:  # noqa: BLE001 — unusable anyway: no account has this id
+                log.warning("account delete: personal connections were not removed")
         try:
             gs.set_metadata(DELETED_PREFIX + subject, identity["owui_id"])
         except Exception:  # noqa: BLE001 — People would only keep listing them as unavailable

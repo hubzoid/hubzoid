@@ -114,16 +114,44 @@ def verified_email(request: Request, hub_dir: Path | None = None, *,
     chat app's own credential as ``Authorization: Bearer <token>``. Only
     read-only checks pass it, because a bearer credential is not ambient like
     a cookie."""
+    who = verified_person(request, hub_dir, bearer=bearer)
+    return who[1] if who else ""
+
+
+def verified_person(request: Request, hub_dir: Path | None = None, *,
+                    bearer: bool = False) -> tuple[str, str] | None:
+    """``(account id, email)`` of the signed-in viewer, from a live check of
+    their session, or None when nobody is signed in. The account id is Open
+    WebUI's in Open WebUI mode and Hubzoid's otherwise, so a new account that
+    reuses an email is a different person. Never trusts a client-sent header."""
     from .. import appmode
 
     if appmode.is_openwebui(hub_dir):
-        return _owui_verified_email(request, hub_dir, bearer=bearer)
-    return _hubzoid_verified_email(request, hub_dir, bearer=bearer)
+        return _owui_verified(request, hub_dir, bearer=bearer)
+    return _hubzoid_verified(request, hub_dir, bearer=bearer)
 
 
-def _hubzoid_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool) -> str:
+def bind_owui_account(hub_dir: Path, email: str, owui_id: str | None,
+                      display: str | None = None) -> None:
+    """Record the verified Open WebUI account behind ``email``. When a new
+    account has taken the email over, the earlier account's personal
+    connections are removed with its grants (``upsert_identity``)."""
+    gs = store_for(hub_dir)
+    before = (gs.identity(email) or {}).get("owui_id") if owui_id else None
+    gs.upsert_identity(email=email, owui_id=owui_id, display=display)
+    if before and before != owui_id:
+        try:
+            from ..connectors import tokens
+
+            tokens.drop_user(Path(hub_dir), str(before))
+        except Exception:  # noqa: BLE001 — unusable anyway: keyed by the old account
+            log.warning("access: connections of a replaced account were not removed")
+
+
+def _hubzoid_verified(request: Request, hub_dir: Path | None, *,
+                      bearer: bool) -> tuple[str, str] | None:
     if hub_dir is None:
-        return ""
+        return None
     from .. import auth
     from ..auth import sessions as sessionlib
     from ..auth import users
@@ -142,7 +170,7 @@ def _hubzoid_verified_email(request: Request, hub_dir: Path | None, *, bearer: b
         log.warning("portal: session verification failed")
         raise HTTPException(503, "Could not verify the account service. Try again shortly.")
     if user is None:
-        return ""
+        return None
     email = normalize(user.email)
     try:
         users.on_sign_in(Path(hub_dir), {"id": user.id, "email": email, "name": user.name,
@@ -150,10 +178,11 @@ def _hubzoid_verified_email(request: Request, hub_dir: Path | None, *, bearer: b
     except Exception:  # noqa: BLE001
         log.warning("portal: recording the verified account failed")
         raise HTTPException(503, "Could not verify the account service. Try again shortly.")
-    return email
+    return (str(user.id), email)
 
 
-def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool) -> str:
+def _owui_verified(request: Request, hub_dir: Path | None, *,
+                   bearer: bool) -> tuple[str, str] | None:
     """Open WebUI mode: validate the Open WebUI session cookie with Open WebUI."""
     token = request.cookies.get("token") or ""
     if not token and bearer:
@@ -161,14 +190,14 @@ def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool
         if scheme.lower() == "bearer":
             token = value.strip()
     if not token:
-        return ""
+        return None
     base = (
         deployment.owui_url(hub_dir)
         if hub_dir
         else (os.environ.get("OWUI_INTERNAL_URL") or os.environ.get("WEBUI_URL"))
     )
     if not base:
-        return ""
+        return None
     try:
         import httpx
 
@@ -182,12 +211,13 @@ def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool
         if r.status_code == 200:
             user = r.json()
             if user.get("role") == "pending":
-                return ""
+                return None
             email = normalize(user.get("email", ""))
-            if hub_dir and email:
-                store_for(hub_dir).upsert_identity(
-                    email=email, owui_id=user.get("id"), display=user.get("name")
-                )
+            account = str(user.get("id") or "")
+            if not email or not account:
+                return None
+            if hub_dir:
+                bind_owui_account(hub_dir, email, account, user.get("name"))
                 # Authentication remains in OWUI. Only the configured owner is
                 # provisioned, once; an arbitrary admin/member cannot self-promote.
                 owner = configured_owner(hub_dir)
@@ -195,10 +225,10 @@ def _owui_verified_email(request: Request, hub_dir: Path | None, *, bearer: bool
                     for h in deployment.hubs(hub_dir):
                         path = Path(h["path"])
                         store_for(path).provision_owner(email, h["key"])
-            return email
+            return (account, email)
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001
         log.warning("portal: OWUI session verification failed")
         raise HTTPException(503, "Could not verify the account service. Try again shortly.")
-    return ""
+    return None

@@ -32,7 +32,7 @@ _CONTINUATION_MAX = 4000
 
 _COLUMNS = ("id", "created", "expires", "hub", "subject", "surface", "chat_id", "handle",
             "app", "provider", "provider_ref", "status", "started", "finished",
-            "continuation", "continuation_status", "notified")
+            "continuation", "continuation_status", "notified", "account")
 _SELECT = "SELECT " + ", ".join(_COLUMNS) + " FROM hz_connect_states"
 
 
@@ -67,9 +67,12 @@ def get(hub_dir, jid: str) -> dict | None:
 
 def create(hub_dir, *, jid: str, hub: str, subject: str, surface: str, chat_id: str | None,
            handle: str | None, app: str, provider: str, provider_ref: str | None,
-           ttl: float, now: float | None = None) -> tuple[dict, list[dict]]:
+           ttl: float, now: float | None = None,
+           account: str | None = None) -> tuple[dict, list[dict]]:
     """Insert a pending journey and supersede the subject's older open journeys
-    for the same app, in one transaction. Returns (new row, superseded rows)."""
+    for the same app, in one transaction. Returns (new row, superseded rows).
+    ``account`` is the account id the link is for: its pages then work only
+    for that account, not merely for the same email."""
     now = time.time() if now is None else now
     subject = normalize(subject)
     row = {
@@ -77,7 +80,7 @@ def create(hub_dir, *, jid: str, hub: str, subject: str, surface: str, chat_id: 
         "subject": subject, "surface": surface, "chat_id": chat_id, "handle": handle,
         "app": app, "provider": provider, "provider_ref": provider_ref,
         "status": "pending", "started": None, "finished": None, "continuation": None,
-        "continuation_status": "none", "notified": None,
+        "continuation_status": "none", "notified": None, "account": account,
     }
     with _engine(hub_dir).begin() as c:
         older = [_row(r) for r in c.execute(

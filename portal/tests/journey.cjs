@@ -629,7 +629,7 @@ function step(name) {
     await page.getByRole("button", { name: "Edit access for Lena Berg" }).click();
     assert.deepEqual(
       await drawer().locator(".capability-group-title").allTextContents(),
-      ["Hub access", "Hubzoid tools", "Restricted tools", "Administration", "No longer available"],
+      ["Hub access", "Restricted tools", "Administration", "Hubzoid tools", "No longer available"],
       "groups in order; the empty Workflows group is hidden",
     );
     // Use this agent and removable leftovers stay in view; optional groups are closed.

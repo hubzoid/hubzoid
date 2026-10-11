@@ -995,6 +995,9 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
                 for prefix in ("/.well-known/oauth-protected-resource/mcp",
                                "/.well-known/oauth-authorization-server/mcp/oauth"):
                     edge_routes.append({"prefix": prefix, "upstream": f"http://127.0.0.1:{br_port}"})
+            # The return from a connector's OAuth sign-in (Console connectors
+            # work in this mode too). Open WebUI's own /oauth/ routes stay.
+            edge_routes.append({"prefix": "/oauth/connectors", "upstream": f"http://127.0.0.1:{br_port}"})
             if inbound:
                 # Inbound surfaces receive on a loopback inbound port; only
                 # /webhooks/<hub> is exposed publicly (each POST is signature-,
@@ -1263,12 +1266,12 @@ def gateway(
     previous = _install_shutdown_handlers()
 
     try:
-        # Native MCP is gateway-wide: the shared OWUI holds one tool-server registry
-        # and one token store, so it is on for the whole gateway or off. Resolve once
-        # and pin the shared OWUI + every bridge to that single value, so a hub .env
-        # the plan loop loaded last cannot make it per-bridge-inconsistent.
-        native_mcp = os.environ.get("OWUI_NATIVE_MCP", "").strip().lower() in ("1", "true", "yes", "on")
-        os.environ["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
+        # Connectors need each person's account id from Open WebUI's forwarded
+        # headers. Without them every connector is left out of chat turns.
+        if (os.environ.get("ENABLE_FORWARD_USER_INFO_HEADERS", "true").strip().lower()
+                in ("0", "false", "no", "off")):
+            console.print("[yellow]ENABLE_FORWARD_USER_INFO_HEADERS is off: MCP connectors "
+                          "will not reach chat turns.[/yellow]")
 
         # 1. Launch each hub's headless bridge (unless they already run elsewhere).
         if launch_bridges:
@@ -1312,8 +1315,6 @@ def gateway(
                 # An operator's explicit HUBZOID_OPERATIONAL_DB / DATABASE_URL wins.
                 bridge_env["HUBZOID_GATEWAY"] = "1"
                 bridge_env["HUBZOID_OPERATIONAL_DB"] = shared_op_url
-                # Gateway-wide native MCP (resolved above) - pin every bridge to it.
-                bridge_env["OWUI_NATIVE_MCP"] = "true" if native_mcp else "false"
                 cmd = [
                     sys.executable, "-m", "hubzoid", "run", str(b.hub_dir),
                     "--no-ui", "--bridge-port", str(b.bridge_port),
@@ -1436,6 +1437,9 @@ def gateway(
             if gp.backends:
                 bridges = [f"http://127.0.0.1:{b.bridge_port}" for b in gp.backends]
                 gw_routes.append({"prefix": "/portal", "upstream": bridges[0], "fallbacks": bridges[1:]})
+                # A connector's OAuth return: any bridge can finish it (one store).
+                gw_routes.append({"prefix": "/oauth/connectors", "upstream": bridges[0],
+                                  "fallbacks": bridges[1:]})
             edge_env["HUBZOID_EDGE_WORKFLOW_HUBS"] = json.dumps([str(b.hub_dir) for b in gp.backends])
             edge_env["HUBZOID_EDGE_ROUTES"] = json.dumps(gw_routes)
             edge_env["HUBZOID_DEPLOYMENT"] = str(gw_data / "deployment.json")

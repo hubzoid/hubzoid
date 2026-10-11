@@ -352,10 +352,11 @@ do, in groups. Empty groups are hidden.
 | Group | What it holds |
 |---|---|
 | Hub access | Use this agent (`use_hub`) |
-| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`), and connector capabilities. Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`) and **Access control** (`access_tools`) |
-| Custom restricted tools | `restricted/<capability>.py` modules |
+| Restricted tools | The agent's own `restricted/<capability>.py` modules |
+| Connectors | One row per connector this agent offers (`connector_<id>`): **Connect <name>** for a connector each person signs in to, **Use <name>** for a Shared key connector |
 | Workflows | Workflow-only capabilities (none today; the workflow tools live under Hubzoid tools) |
 | Administration | Manage access (`manage_access`): change access to this agent and create chat accounts for it, within your own access |
+| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`). Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`) and **Access control** (`access_tools`) |
 | No longer available | A grant whose capability no longer exists. Remove it; it can't be granted again |
 
 Availability and permission are separate. A short status next to a capability

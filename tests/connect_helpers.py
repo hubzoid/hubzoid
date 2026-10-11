@@ -1,86 +1,78 @@
 """Shared fakes for the connection-journey and personal-MCP tests.
 
-* An Open WebUI-shaped SQLite database (users, Fernet-encrypted
-  ``oauth_session`` rows, registered MCP tool servers), written exactly the
-  way Open WebUI 0.11 writes it.
+Since 1.2 every UI mode uses the connectors added in the Console, so these
+helpers keep their Open WebUI-shaped arguments (accounts with Open WebUI ids,
+servers, connections) and store them as Hubzoid connectors, identities and
+encrypted tokens in the test's operational store:
+
+* ``seed_owui`` / ``connect`` record accounts, servers and connections.
+* ``owui_env`` selects Open WebUI mode with a deployment key.
+* ``isolated_store`` points every operational-DB user at one SQLite file and
+  writes what was recorded. Every seeded connector is offered in every agent,
+  as a server registered once used to be.
 * An in-process FastMCP HTTP server that answers only the bearers it knows.
-* An isolated operational store per test.
 """
 from __future__ import annotations
 
 import base64
 import contextlib
 import hashlib
-import json
 import socket
-import sqlite3
 import threading
 import time
-import uuid
+from pathlib import Path
+
+_SEEDS: dict[str, dict] = {}
+_ACTIVE: dict = {}
 
 
-def fernet(secret: str):
-    from cryptography.fernet import Fernet
-
-    key = (base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
-           if len(secret) != 44 else secret.encode())
-    return Fernet(key)
+def fernet_key(secret: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()).decode()
 
 
-def seed_owui(db, *, users, servers, secret):
-    """``users``: [(id, email)]. ``servers``: [{id, name, url, auth_type?, allow?, enable?}]."""
-    con = sqlite3.connect(db)
-    con.execute('CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT)')
-    con.execute("CREATE TABLE IF NOT EXISTS oauth_session (id TEXT PRIMARY KEY, user_id TEXT, "
-                "provider TEXT, token TEXT, expires_at BIGINT, created_at BIGINT, updated_at BIGINT)")
-    con.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT, updated_at BIGINT)")
-    for uid, email in users:
-        con.execute('INSERT INTO "user" VALUES (?,?)', (uid, email))
-    conns = []
-    for s in servers:
-        cfg = {}
-        if s.get("allow"):
-            cfg["function_name_filter_list"] = s["allow"]
-        if "enable" in s:
-            cfg["enable"] = s["enable"]
-        conns.append({"type": "mcp", "url": s["url"], "auth_type": s.get("auth_type", "oauth_2.1"),
-                      "info": {"id": s["id"], "name": s.get("name", s["id"])}, "config": cfg})
-    con.execute("INSERT OR REPLACE INTO config VALUES (?,?,?)",
-                ("tool_server.connections", json.dumps(conns), int(time.time())))
-    con.commit()
-    con.close()
+def seed_owui(db, *, users, servers, secret):  # noqa: ARG001 — the secret is owui_env's
+    """``users``: [(account id, email)]. ``servers``: [{id, name, url, auth_type?,
+    allow?, enable?}]; a non-OAuth (``bearer``) server is not a connector."""
+    _SEEDS[str(db)] = {"users": list(users), "servers": list(servers), "tokens": [],
+                       "applied": None}
 
 
-def connect(db, *, user_id, server_id, secret, access_token, created_at=None, expires_in=3600):
-    """What Open WebUI's MCP OAuth callback does: delete the user's previous
-    session for the server, then insert a new one."""
-    now = int(time.time()) if created_at is None else int(created_at)
+def connect(db, *, user_id, server_id, secret=None, access_token,  # noqa: ARG001
+            created_at=None, expires_in=3600):
+    """A person's connection: replaces any earlier one for the server."""
+    now = time.time() if created_at is None else float(created_at)
     token = {"access_token": access_token, "refresh_token": "RT-" + access_token,
-             "expires_at": now + expires_in}
-    enc = fernet(secret).encrypt(json.dumps(token).encode()).decode()
-    con = sqlite3.connect(db)
-    con.execute("DELETE FROM oauth_session WHERE user_id = ? AND provider = ?",
-                (user_id, f"mcp:{server_id}"))
-    con.execute("INSERT INTO oauth_session VALUES (?,?,?,?,?,?,?)",
-                (str(uuid.uuid4()), user_id, f"mcp:{server_id}", enc, now + expires_in, now, now))
-    con.commit()
-    con.close()
+             "expires_at": int(now) + expires_in, "token_type": "Bearer"}
+    seed = _SEEDS[str(db)]
+    seed["tokens"].append((user_id, server_id, token, now))
+    if seed["applied"] is not None:
+        _store_token(seed, user_id, server_id, token, now)
+
+
+def _email(seed, user_id):
+    return next(e for uid, e in seed["users"] if uid == user_id)
+
+
+def _store_token(seed, user_id, server_id, token, now):
+    from hubzoid.connectors import tokens
+
+    tokens.store(seed["applied"], user_id=user_id, email=_email(seed, user_id),
+                 connector_id=server_id, token=dict(token), now=now)
 
 
 def owui_env(monkeypatch, db, secret):
-    from hubzoid.access import owui_oauth_tokens as tok
-
-    monkeypatch.setenv("HUBZOID_OWUI_DB", str(db))
-    monkeypatch.setenv("WEBUI_SECRET_KEY", secret)
-    monkeypatch.setenv("OWUI_NATIVE_MCP", "true")
-    # Open WebUI connections exist only in the legacy UI mode; the default mode
-    # uses Hubzoid's own (tests/test_connectors_*).
+    monkeypatch.setenv("HUBZOID_SECRET_KEY", fernet_key(secret))
+    monkeypatch.delenv("OWUI_NATIVE_MCP", raising=False)
     monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    tok._fernet_cache.clear()
+    from hubzoid import secretbox
+
+    getattr(secretbox, "_cache", {}).clear()
+    _ACTIVE["db"] = str(db)
 
 
 def isolated_store(tmp_path, monkeypatch):
-    """Point every operational-DB user at one SQLite file for this test."""
+    """Point every operational-DB user at one SQLite file for this test, and
+    write what ``seed_owui`` and ``connect`` recorded."""
     import hubzoid.access as access
     import hubzoid.db as db
     from sqlalchemy import create_engine
@@ -90,7 +82,45 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "operational_engine", lambda *a, **k: eng)
     monkeypatch.setattr(db, "engine_for", lambda *a, **k: eng)
     access._stores.clear()
+    seed = _SEEDS.get(_ACTIVE.pop("db", ""))
+    if seed is not None:
+        _apply(seed, Path(tmp_path), monkeypatch)
     return eng
+
+
+def _apply(seed, root: Path, monkeypatch) -> None:
+    import hubzoid.access as access
+    from hubzoid.connectors import ConnectorError, registry
+
+    seed["applied"] = root
+    gs = access.store_for(root)
+    for uid, email in seed["users"]:
+        gs.upsert_identity(email=email, owui_id=uid)
+    ids: set[str] = set()
+    for srv in seed["servers"]:
+        if srv.get("auth_type", "oauth_2.1") not in ("oauth_2.1", "oauth", "oauth_2.1_static"):
+            continue
+        body = {"id": srv["id"], "name": srv.get("name", srv["id"]), "url": srv["url"],
+                "auth_type": "oauth", "enabled": bool(srv.get("enable", True))}
+        if srv.get("allow"):
+            body["tool_allowlist"] = srv["allow"]
+        try:
+            registry.create(root, body, actor="test")
+        except ConnectorError as err:
+            if err.code != "exists":
+                raise
+        ids.add(srv["id"])
+    real = registry.offered_in
+
+    def offered_in(hub_dir, hub, *, conn=None):
+        return set(real(hub_dir, hub, conn=conn)) | ids
+
+    monkeypatch.setattr(registry, "offered_in", offered_in)
+    import hubzoid.connectors as connectors
+
+    monkeypatch.setattr(connectors, "existing_engine", lambda hub_dir: connectors.engine(hub_dir))
+    for user_id, server_id, token, now in seed["tokens"]:
+        _store_token(seed, user_id, server_id, token, now)
 
 
 def grant(hub, *emails, permissions=("connector_gmail", "connector_wiki")) -> None:
