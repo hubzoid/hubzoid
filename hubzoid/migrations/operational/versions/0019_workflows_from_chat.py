@@ -85,6 +85,7 @@ def upgrade() -> None:
         sa.Column("failures", sa.Integer, nullable=False, server_default="0"),
         sa.Column("created", sa.Float, nullable=False),
         sa.Column("updated", sa.Float, nullable=False),
+        sa.Column("series_ids", sa.Text),   # reports its runs published to, newest first
     )
     op.create_index("hz_personal_schedules_due", "hz_personal_schedules",
                     ["hub", "state", "next_fire"])

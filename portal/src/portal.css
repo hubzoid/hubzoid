@@ -1148,3 +1148,31 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 @media (max-width: 420px) {
   .catalog-about { display: none; }
 }
+
+/* ---- Schedules & reports for someone who isn't an admin ---------------------- */
+
+.person-top {
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.person-top-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.person-top-right a {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .person-top { padding: 0 16px; }
+  .person-top-right { gap: 12px; }
+  .person-top-right .identity,
+  .person-top-right .theme-toggle { display: none; }
+}

@@ -63,6 +63,14 @@ def _link(title: str, url: str, surface: str) -> str:
     return f"{title}: {url}" if surface in TEXT_ONLY else f"[{title}]({url})"
 
 
+def _page_line(hub_dir: Path, surface: str) -> str:
+    """Where people see and change their schedules and reports, outside chat."""
+    from ..workflows import personal
+
+    url = personal.page_url(hub_dir)
+    return "See and change them: " + (url if surface in TEXT_ONLY else f"[Schedules and reports]({url})")
+
+
 def _ago(ts: float | None, tz: str = "UTC") -> str:
     if not ts:
         return "not yet"
@@ -406,6 +414,7 @@ def _schedule_tools(hub_dir: Path) -> list:
                              f"{personal.last_words(s)} |")
         lines.append('\nSay "run <name> now", "pause <name>", "resume <name>", "change <name> to daily" '
                      'or "stop <name>".')
+        lines.append(_page_line(hub_dir, surface))
         return "\n".join(lines)
 
     async def change_invoke(_ctx, input_str: str) -> str:
@@ -543,6 +552,8 @@ def _my_reports_tool(hub_dir: Path):
             lines += [_report_line(r, surface) for r in team[:MAX_REPORTS]]
             if len(team) > MAX_REPORTS:
                 lines.append(f"{len(team) - MAX_REPORTS} more. Ask for one by name.")
+        if mine:
+            lines.append("\n" + _page_line(hub_dir, surface))
         return "\n".join(lines)
 
     tool = FunctionTool(

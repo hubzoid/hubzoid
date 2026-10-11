@@ -378,9 +378,12 @@ inputs change. Nobody is emailed unless the hub sets `notify_by_email: true` in
 `workflows/settings.yaml` and email delivery is set up; then the owner hears when
 a run changes the report, fails or pauses, and when a long Run for me finishes.
 "My schedules", "pause", "resume", "run now", "change to daily" and "stop" work
-in chat. Admins see every schedule under **Runs & schedules → People's
-schedules**, with its 30-day model cost, and can pause or stop it; only an admin
-resumes what an admin paused. Limits, in `workflows/settings.yaml`:
+in chat, and on the Console's **Schedules & reports** page, which everyone signed
+in can open (`/portal/#/schedules`; the web app links it from the account menu,
+and the agent's "my schedules" reply links it everywhere). It lists their own
+schedules and report links on every agent, each with its latest runs. Admins
+also get **Everyone**: each person's schedules with their 30-day model cost, to
+pause or stop; only an admin resumes what an admin paused. Limits, in `workflows/settings.yaml`:
 
 ```yaml
 personal_schedules:

@@ -194,9 +194,9 @@ or turning the link off, stops the link at once. A link an admin turns off
 stays off until someone makes a new one in the Console, even while the
 workflow keeps publishing with `audience="domain"`. An agent that an older
 "everyone signed in" grant opens can't have company links: give people access
-by name first. In the Console, **Runs &
-schedules → Live reports** lists every live report: admins copy, replace or
-turn off team links, and turn off personal ones (the owner is emailed).
+by name first. In the Console, **Schedules & reports → Everyone** lists every
+live report: admins copy, replace or turn off team links, and turn off personal
+ones. People see their own under **Yours**.
 Anyone else sees one "This report isn't available" page, whatever the reason.
 
 ## Email

@@ -80,11 +80,6 @@ class CompanyLinkRequest(BaseModel):
     action: str = Field(pattern="^(on|off)$")
 
 
-class ScheduleAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action: str = Field(pattern="^(pause|resume|stop)$")
-
-
 _REPORT_GONE = "This report isn't available"
 
 
@@ -484,62 +479,6 @@ def build_router(hub_dir) -> APIRouter:
             return serve(arts.content_path(hub_dir, art), art, download=True)
         except arts.ArtifactError as exc:
             refused(exc)
-
-    # ---- a schedule's owner page (linked from the "New schedule" email) --------
-
-    @router.get("/portal/my/schedules/{schedule_id}")
-    def my_schedule_page(schedule_id: str, request: Request):
-        subject = signed_in(request)
-        if not subject:
-            back = f"/portal/my/schedules/{quote(schedule_id, safe='')}"
-            return RedirectResponse(f"/auth?redirect={quote(back, safe='/')}", status_code=302)
-        nonce = secrets.token_urlsafe(16)
-        sched = _own_schedule(schedule_id, subject)
-        if sched is None:
-            return _message("Schedule not available", "This schedule isn't yours, or it no longer exists.", 404)
-        return _page(pages.schedule_page(view=_schedule_view(sched), nonce=nonce), nonce)
-
-    @router.post("/portal/my/schedules/api/{schedule_id}")
-    def my_schedule_action(schedule_id: str, payload: ScheduleAction, request: Request):
-        from ..workflows import personal
-
-        require_same_origin(request)
-        subject = api_subject(request)
-        sched = _own_schedule(schedule_id, subject)
-        if sched is None:
-            raise HTTPException(404, "This schedule isn't yours, or it no longer exists.")
-        try:
-            if payload.action == "stop":
-                personal._update(hub_dir, sched.id, state="stopped", reason="owner", paused_by=subject,
-                                 next_fire=None)
-            else:
-                personal.set_paused(hub_dir, sched.hub, subject, sched.id, payload.action == "pause")
-        except personal.ScheduleError as exc:
-            raise HTTPException(409, str(exc))
-        return _schedule_view(personal.get(hub_dir, sched.id))
-
-    def _own_schedule(schedule_id: str, subject: str):
-        from ..workflows import personal
-
-        sched = personal.get(hub_dir, schedule_id)
-        if sched is None or sched.owner != subject or sched.state == "stopped":
-            return None
-        return sched
-
-    def _schedule_view(sched) -> dict:
-        from ..workflows import inputs as inputs_lib
-        from ..workflows import personal
-        from ..workflows.runtime import definition, title_for
-
-        wf = definition(hub_dir, sched.workflow)
-        made = [s for s in series_lib.for_owner(hub_dir, sched.hub, sched.owner) if s.schedule_id == sched.id]
-        return {"name": sched.name, "report": title_for(sched.workflow),
-                "inputs": inputs_lib.display(getattr(wf, "inputs", None), sched.values),
-                "link": series_lib.latest_path(made[0]) if len(made) == 1 else None,
-                "when": f"{personal.cadence_words(sched)} ({sched.timezone})",
-                "state": personal.state_words(sched), "paused": sched.state == "paused",
-                "stopped": sched.state == "stopped", "last": personal.last_words(sched),
-                "api": f"/portal/my/schedules/api/{sched.id}"}
 
     @router.get("/portal/artifacts/{artifact_id}/content")
     @router.get("/portal/artifacts/{artifact_id}/content/{_filename}")

@@ -269,7 +269,9 @@ def test_the_dispatcher_fires_each_slot_once_and_pauses_on_lost_access(hub, engi
 def test_failures_pause_after_three_and_admins_resume_only_their_own_pause(hub, engine):
     _, saved = _save(hub)
     sid = saved["schedule"].id
-    personal.after_run(hub, "irs", {"schedule_id": sid}, saved["run_id"], ok=True, cause=None, published=[])
+    personal.after_run(hub, "irs", {"schedule_id": sid}, saved["run_id"], ok=True, cause=None,
+                       published=[{"series_id": "s-bhava", "changed": False}])
+    assert personal.get(hub, sid).series == ["s-bhava"]          # an unchanged copy still feeds it
     for i in range(3):
         personal.after_run(hub, "irs", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])
         personal.after_run(hub, "irs", {"schedule_id": sid}, f"r{i}", ok=False, cause="timeout", published=[])

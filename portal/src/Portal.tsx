@@ -1,9 +1,9 @@
 import { Suspense, lazy, useCallback, type ReactNode } from "react";
 import { Alert, App, Button, ConfigProvider, Spin, Typography } from "antd";
-import { signInHref, type Hub, type Me } from "./api";
+import { signInHref, type Hub, type Me, type MyData } from "./api";
 import { useData } from "./hooks/useData";
 import { useRoute } from "./hooks/useRoute";
-import { Shell, type Area } from "./components/Shell";
+import { PersonShell, Shell, type Area } from "./components/Shell";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
 import { lightTheme, darkTheme, useThemeMode } from "./lib/theme";
@@ -17,6 +17,7 @@ const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ 
 const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
+const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
 
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
@@ -59,8 +60,51 @@ function Router({
     [modal, message],
   );
   const route = useRoute(onBlocked);
-  const me = useData<Me>("/me");
-  const hubs = useData<{ hubs: Hub[] }>("/hubs");
+  // Schedules & reports is everyone's page: a person who isn't an admin gets
+  // it in a frame of its own, and the admin-only calls are never made.
+  const onSchedules = route.parts[0] === "schedules";
+  const my = useData<MyData>(onSchedules ? "/my" : null);
+  const asAdmin = !onSchedules || my.data?.admin === true;
+  const me = useData<Me>(asAdmin ? "/me" : null);
+  const hubs = useData<{ hubs: Hub[] }>(asAdmin ? "/hubs" : null);
+  const loading = (
+    <div className="gate" role="status" aria-label="Loading">
+      <Spin />
+    </div>
+  );
+
+  if (onSchedules && !my.data)
+    return (
+      <div className="gate">
+        <Typography.Title level={1} style={{ fontSize: 28 }}>Schedules &amp; reports</Typography.Title>
+        {my.error ? (
+          <Alert
+            type="error"
+            showIcon
+            title={my.status === 401 ? "Sign in to continue" : "Couldn’t load your schedules"}
+            description={
+              <div style={{ marginTop: 12 }}>
+                {my.status === 401 ? (
+                  <Button type="primary" href={signInHref()}>Sign in</Button>
+                ) : (
+                  <Button onClick={my.reload}>Try again</Button>
+                )}
+              </div>
+            }
+          />
+        ) : (
+          <Spin />
+        )}
+      </div>
+    );
+  if (onSchedules && my.data && !my.data.admin)
+    return (
+      <PersonShell subject={my.data.subject} webApp={my.data.web_app} mode={mode} setMode={setMode} isDark={isDark}>
+        <Suspense fallback={loading}>
+          <SchedulesScreen admin={false} />
+        </Suspense>
+      </PersonShell>
+    );
 
   const status = me.status ?? hubs.status;
   // A confirmation link from chat or WhatsApp: after signing in, the manager
@@ -90,6 +134,7 @@ function Router({
                   ) : (
                     <>
                       <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
+                      {status === 403 && <><Button href="#/schedules">Your schedules and reports</Button>{" "}</>}
                       <Button type="primary" href="/">
                         Go to the chat app
                       </Button>
@@ -144,6 +189,9 @@ function Router({
   } else if (area === "activity") {
     active = "activity";
     screen = <ActivityScreen hubs={list} />;
+  } else if (area === "schedules") {
+    active = "schedules";
+    screen = <SchedulesScreen admin hubs={list} />;
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;
@@ -166,15 +214,7 @@ function Router({
 
   return (
     <Shell me={me.data} area={active} mode={mode} setMode={setMode} isDark={isDark}>
-      <Suspense
-        fallback={
-          <div className="gate" role="status" aria-label="Loading">
-            <Spin />
-          </div>
-        }
-      >
-        {screen}
-      </Suspense>
+      <Suspense fallback={loading}>{screen}</Suspense>
     </Shell>
   );
 }

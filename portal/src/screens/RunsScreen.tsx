@@ -5,7 +5,6 @@ import {
   Button,
   Collapse,
   Descriptions,
-  Dropdown,
   Empty,
   Form,
   Input,
@@ -20,20 +19,18 @@ import {
   Tooltip,
   message,
 } from "antd";
-import { RefreshCw, Copy, Play, Pause, MoreHorizontal } from "lucide-react";
+import { RefreshCw, Copy, Play } from "lucide-react";
 import {
   query,
   request,
   type Hub,
   type InputSchema,
-  type PersonalSchedule,
-  type Report,
   type Run,
   type Webhook,
   type Workflow,
 } from "../api";
 import { useData } from "../hooks/useData";
-import { agentHref, href } from "../hooks/useRoute";
+import { agentHref, href, hrefWith } from "../hooks/useRoute";
 import {
   LoadState,
   RecoveryScreen,
@@ -259,8 +256,9 @@ function WorkflowList({ hub }: { hub: Hub }) {
         ]}
       />
       <Webhooks hub={hub} />
-      <PeopleSchedules hub={hub} />
-      <LiveReports hub={hub} />
+      <Text type="secondary">
+        People's schedules and live reports are on <a href={hrefWith("/schedules", { scope: "everyone", hub: hub.key })}>Schedules &amp; reports</a>.
+      </Text>
     </div>
   );
 }
@@ -328,168 +326,6 @@ function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
         </Form>
       </Modal>
     </>
-  );
-}
-
-const SCHEDULE_TAG: Record<string, string> = { active: "green", testing: "blue", paused: "gold" };
-
-function PeopleSchedules({ hub }: { hub: Hub }) {
-  const data = useData<{ schedules: PersonalSchedule[] }>("/schedules" + query({ hub: hub.key }));
-  const act = async (s: PersonalSchedule, action: "pause" | "resume" | "stop") => {
-    if (action === "stop") {
-      const ok = await new Promise<boolean>((resolve) => Modal.confirm({
-        title: `Stop ${s.owner}'s schedule "${s.name}"?`,
-        content: "They'll see that an admin stopped it. Its live link keeps the last copy.",
-        okText: "Stop schedule", okButtonProps: { danger: true },
-        onOk: () => resolve(true), onCancel: () => resolve(false),
-      }));
-      if (!ok) return;
-    }
-    try {
-      await request(`/schedules/${encodeURIComponent(s.id)}/${action}`, { hub: hub.key });
-      message.success(action === "stop" ? "Stopped." : action === "pause" ? "Paused." : "Resumed.");
-      data.reload();
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "That did not work.");
-    }
-  };
-  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
-  const rows = data.data.schedules;
-  const active = rows.filter((s) => s.state === "active" || s.state === "testing").length;
-  return (
-    <div className="section">
-      <Space style={{ justifyContent: "space-between", width: "100%" }}>
-        <Title level={5}>People's schedules <Help text="Saved from chat. Each runs as the person who saved it. Admins can pause and stop them, and resume only what they paused." /></Title>
-        {rows.length > 0 && <Text type="secondary">{active} of {rows.length} active</Text>}
-      </Space>
-      <Table<PersonalSchedule>
-        rowKey="id"
-        size="middle"
-        dataSource={rows}
-        pagination={false}
-        scroll={{ x: 900 }}
-        locale={{ emptyText: <Empty description="No one has scheduled this agent's workflows yet. People allowed to schedule can do it from chat." /> }}
-        columns={[
-          { title: "Person", key: "owner", render: (_, s) => <Text className="identity">{s.owner}</Text> },
-          {
-            title: "Schedule", key: "name",
-            render: (_, s) => <><div>{s.name}</div><Tag color={SCHEDULE_TAG[s.state] ?? "default"}>{s.state_label}</Tag></>,
-          },
-          {
-            title: "Report and inputs", key: "report",
-            render: (_, s) => <><div>{s.report}</div>{s.inputs && <Text type="secondary">{s.inputs}</Text>}</>,
-          },
-          { title: "When", key: "when", render: (_, s) => <><div>{s.when}</div><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{s.timezone}</Text></> },
-          {
-            title: "Next run", key: "next",
-            render: (_, s) => s.next_fire ? <When value={new Date(s.next_fire * 1000).toISOString()} /> : <Text type="secondary">—</Text>,
-          },
-          {
-            title: "Last result", key: "last",
-            render: (_, s) => <Text type={s.last_status === "failed" ? "danger" : undefined}>{s.last_label}</Text>,
-          },
-          {
-            title: <span style={{ whiteSpace: "nowrap" }}>30-day cost</span>, key: "cost",
-            render: (_, s) => <Tooltip title="Model cost of this schedule's runs in the last 30 days, estimated like the rest of the Console."><Text>${s.cost_30d.toFixed(2)}</Text></Tooltip>,
-          },
-          {
-            title: "", key: "acts", align: "right",
-            render: (_, s) => (
-              <Space direction="vertical" size={6}>
-                {(s.state === "active" || s.state === "testing") && <Button size="small" icon={<Pause size={14} />} onClick={() => act(s, "pause")}>Pause</Button>}
-                {s.state === "paused" && s.reason === "admin" && <Button size="small" icon={<Play size={14} />} onClick={() => act(s, "resume")}>Resume</Button>}
-                <Button size="small" danger onClick={() => act(s, "stop")}>Stop</Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
-    </div>
-  );
-}
-
-const REPORT_STATE: Record<string, [string, string]> = {
-  live: ["Live", "green"], failed: ["Last update failed", "gold"], stopped: ["No longer updating", "default"],
-};
-
-function LiveReports({ hub }: { hub: Hub }) {
-  const data = useData<{ reports: Report[]; company: { on: boolean; reason: string; domains: string } }>(
-    "/reports" + query({ hub: hub.key }));
-  const link = async (r: Report, action: "copy" | "replace" | "off") => {
-    if (action !== "copy") {
-      const ok = await new Promise<boolean>((resolve) => Modal.confirm({
-        title: action === "replace" ? "Replace this link?" : "Turn off this link?",
-        content: action === "replace"
-          ? "The current link stops working now. Share the new one with your team."
-          : `People at ${data.data?.company.domains ?? "the company domain"} can no longer open it. Anyone who saved a copy keeps it.`,
-        okText: action === "replace" ? "Replace link" : "Turn off link",
-        okButtonProps: { danger: action === "off" },
-        onOk: () => resolve(true), onCancel: () => resolve(false),
-      }));
-      if (!ok) return;
-    }
-    try {
-      const out = await request<{ url?: string }>(`/reports/${encodeURIComponent(r.id)}/company`, { hub: hub.key, action });
-      if (out.url) {
-        try { await navigator.clipboard.writeText(out.url); message.success("Link copied."); }
-        catch { Modal.info({ title: "Company link", content: <Text copyable code>{out.url}</Text> }); }
-      } else {
-        message.success("Link turned off.");
-      }
-      data.reload();
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "That did not work.");
-    }
-  };
-  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
-  const { reports, company } = data.data;
-  if (!reports.length) return null;
-  return (
-    <div className="section">
-      <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
-        <Title level={5}>Live reports <Help text="Each report's live link, which always shows the newest copy. A company link lets people at your company domain open it without using the agent. Personal reports stay with their owner; admins can only turn their link off." /></Title>
-        {company.on ? <Tag color="blue">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}
-      </Space>
-      {!company.on && <Alert className="notice" type="info" showIcon message={company.reason} />}
-      <Table<Report>
-        rowKey="id"
-        size="middle"
-        dataSource={reports}
-        pagination={false}
-        scroll={{ x: 900 }}
-        columns={[
-          { title: "Report", key: "title", render: (_, r) => <><div>{r.title}</div><Text type="secondary" className="identity">{r.key}</Text></> },
-          { title: "Kind", key: "scope", render: (_, r) => r.scope === "team" ? "Team" : <><div>Personal</div><Text type="secondary">{r.owner}</Text></> },
-          {
-            title: "Updated", key: "updated",
-            render: (_, r) => <>{r.updated ? <When value={new Date(r.updated * 1000).toISOString()} /> : "—"}<div><Tag color={REPORT_STATE[r.state][1]}>{REPORT_STATE[r.state][0]}</Tag></div></>,
-          },
-          {
-            title: "Company link", key: "company", align: "right",
-            render: (_, r) => {
-              const more = [
-                ...(r.scope === "team" ? [{ key: "replace", label: "Replace link" }] : []),
-                { key: "off", label: "Turn off link", danger: true },
-              ];
-              if (!r.company_on) {
-                // Only for a report whose workflow shares it, after someone turned its link off.
-                return r.scope === "team" && company.on && r.audience === "domain"
-                  ? <Button size="small" onClick={() => link(r, "replace")}>Make a link</Button>
-                  : <Text type="secondary">Off</Text>;
-              }
-              return (
-                <Space size={6}>
-                  {r.scope === "team" ? <Button size="small" icon={<Copy size={14} />} onClick={() => link(r, "copy")}>Copy</Button> : <Tag>On</Tag>}
-                  <Dropdown trigger={["click"]} menu={{ items: more, onClick: ({ key }) => link(r, key as "replace" | "off") }}>
-                    <Button size="small" aria-label="More" icon={<MoreHorizontal size={14} />} />
-                  </Dropdown>
-                </Space>
-              );
-            },
-          },
-        ]}
-      />
-    </div>
   );
 }
 

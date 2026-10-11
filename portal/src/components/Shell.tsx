@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
+import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -67,15 +67,16 @@ const items = [
   { key: "agents", icon: <Sparkle size={18} />, label: <a href={href("/agents")}>Agents</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
+  { key: "schedules", icon: <CalendarClock size={18} />, label: <a href={href("/schedules")}>Schedules</a> },
 ];
 // Connectors live in each agent (its Connectors tab), not in the menu.
 function navItems(_me: Me) {
   return items;
 }
 
-function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {
+function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
   return (
-    <a className={`brand${compact ? " compact" : ""}`} href={href("/home")} aria-label="Hubzoid">
+    <a className={`brand${compact ? " compact" : ""}`} href={href(to)} aria-label="Hubzoid">
       <img src={isDark ? wordmarkDark : wordmarkLight} alt="Hubzoid" className="brand-wordmark" />
     </a>
   );
@@ -191,6 +192,42 @@ export function Shell({
           </nav>
         </Layout.Sider>
       )}
+      <Layout.Content className="content">
+        <div className="main">{children}</div>
+      </Layout.Content>
+    </Layout>
+  );
+}
+
+/** The frame for someone who isn't an admin: only their schedules and reports,
+ *  no administration menu. */
+export function PersonShell({
+  subject,
+  webApp,
+  isDark,
+  mode,
+  setMode,
+  children,
+}: {
+  subject: string;
+  webApp: boolean;
+  isDark: boolean;
+  mode: Mode;
+  setMode: (m: Mode) => void;
+  children: ReactNode;
+}) {
+  const me: Me = { subject, org_admin: false, manageable: [], web_app: webApp };
+  return (
+    <Layout className="shell person-shell">
+      <Layout.Header className="topbar person-top">
+        <Wordmark isDark={isDark} compact to="/schedules" />
+        <div className="person-top-right">
+          <a href="/">Back to chat</a>
+          <Text type="secondary" className="identity">{subject}</Text>
+          <ThemeToggle mode={mode} setMode={setMode} />
+          <SignOutButton me={me} />
+        </div>
+      </Layout.Header>
       <Layout.Content className="content">
         <div className="main">{children}</div>
       </Layout.Content>

@@ -461,6 +461,31 @@ def runs(
         client.destroy()
 
 
+def schedule_runs(hub_dir, schedule_id: str, *, limit: int = 10) -> list[dict]:
+    """A personal schedule's latest runs: status and times only, never inputs,
+    output or errors. Callers check who may see the schedule first."""
+    from dbos import DBOSClient
+    from .runtime import _app_name
+
+    url = db.dbos_url(hub_dir)
+    if _missing_sqlite(url):
+        return []
+    app = _app_name(Path(hub_dir).name)
+    client = DBOSClient(system_database_url=url, application_name=app, retry_connection_errors=False)
+    try:
+        found = client.list_workflows(workflow_id_prefix=f"ps-{schedule_id}-", application_name=app,
+                                      limit=limit, sort_desc=True, load_input=False, load_output=False)
+        out = []
+        for w in found:
+            started = w.dequeued_at or w.created_at
+            done = w.completed_at if w.status not in ("PENDING", "ENQUEUED", "DELAYED") else None
+            out.append(dict(status=w.status, started=started, completed=done,
+                            duration_ms=done - started if done and started else None))
+        return out
+    finally:
+        client.destroy()
+
+
 def _step_row(x: dict, visible: bool) -> dict:
     # The identity step says who the run acted as: metadata, always shown.
     shown = visible or x.get("function_name") in _IDENTITY_STEPS

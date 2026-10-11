@@ -738,26 +738,144 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         import time
 
         from .usage import run_cost
-        from .workflows import inputs as inputs_lib
         from .workflows import personal
-        from .workflows.runtime import input_schemas, title_for
+        from .workflows.runtime import input_schemas
 
         path = Path(require_hub(admin, hub))
         key = normalize(hub)
         schemas = input_schemas(path, key)
         since = time.time() - 30 * 86400
-        rows = []
-        for s in personal.for_hub(path, key):
-            rows.append(dict(
-                id=s.id, owner=s.owner, name=s.name, workflow=s.workflow,
-                report=title_for(s.workflow),
-                inputs=inputs_lib.display_with_schema(schemas.get(s.workflow), s.values),
-                when=personal.cadence_words(s), timezone=s.timezone, state=s.state, reason=s.reason,
-                state_label=personal.state_words(s),
-                next_fire=s.next_fire if s.state in ("active", "testing") else None,
-                last_status=s.last_status, last_at=s.last_at, last_label=personal.last_words(s),
-                cost_30d=round(run_cost(path, key, f"ps-{s.id}-", since), 4)))
+        rows = [dict(personal.row(s, schemas.get(s.workflow)), owner=s.owner,
+                     cost_30d=round(run_cost(path, key, f"ps-{s.id}-", since), 4))
+                for s in personal.for_hub(path, key)]
         return {"schedules": rows}
+
+    @router.get("/schedules/{schedule_id}/runs")
+    @_denied
+    def schedule_runs(schedule_id: str, hub: str, admin=Depends(require_admin)):
+        """A person's schedule's latest runs, for admins: status and times only."""
+        from .workflows import observe, personal
+
+        path = Path(require_hub(admin, hub))
+        found = personal.get(path, schedule_id)
+        if found is None or found.hub != normalize(hub):
+            raise HTTPException(404, "No such schedule on this agent.")
+        return {"runs": observe.schedule_runs(path, found.id)}
+
+    # ---- a person's own schedules and reports (any signed-in account) --------
+
+    def require_viewer(request: Request) -> tuple[str, str]:
+        """(account id, email) of the signed-in person, from a live session
+        check in either UI mode. Ownership needs both: a new account that
+        reuses an email is someone else."""
+        from .access import session as session_lib
+
+        who = session_lib.verified_person(request, hub_dir)
+        if not who:
+            raise HTTPException(401, "Sign in to continue.")
+        return str(who[0]), normalize(who[1])
+
+    def person_hub(hub: str) -> tuple[Path, str]:
+        key = normalize(hub)
+        for h in deployment.hubs(hub_dir):
+            if normalize(h["key"]) == key:
+                return Path(h["path"]), key
+        raise HTTPException(404, "No such agent here.")
+
+    def own_series(path: Path, s, email: str, account: str) -> bool:
+        from .artifacts import _local_owner
+        from .artifacts import get as get_artifact
+
+        art = get_artifact(path, s.last_artifact) if s.last_artifact else None
+        if art is None or art.owner != email:
+            return False
+        return art.owner_account == account if art.owner_account else _local_owner(path, email)
+
+    def own_schedule(path: Path, key: str, schedule_id: str, email: str, account: str):
+        from .workflows import personal
+
+        found = personal.get(path, schedule_id)
+        if (found is None or found.hub != key or found.state == "stopped"
+                or not personal.owned_by(path, found, email, account)):
+            raise HTTPException(404, "This schedule isn't yours, or it no longer exists.")
+        return found
+
+    @router.get("/my")
+    @_denied
+    def my(request: Request):
+        """The signed-in person's own schedules and report links, on every agent.
+        `api` is where each agent takes actions (its own bridge in a gateway)."""
+        from .artifacts import series as series_lib
+        from .chat.common import api_bases
+        from .workflows import personal
+        from .workflows.runtime import input_schemas, title_for
+
+        account, email = require_viewer(request)
+        try:
+            is_admin = resolver(request) is not None
+        except HTTPException:
+            is_admin = False
+        bases = api_bases(hub_dir)
+        agents, schedules, reports = [], [], []
+        for h in deployment.hubs(hub_dir):
+            path, key = Path(h["path"]), normalize(h["key"])
+            mine = [s for s in personal.for_owner(path, key, email)
+                    if personal.owned_by(path, s, email, account)]
+            made = [s for s in series_lib.for_owner(path, key, email) if own_series(path, s, email, account)]
+            if not mine and not made:
+                continue
+            agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api"))
+            schemas = input_schemas(path, key) if mine else {}
+            for s in mine:
+                links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))
+                         for x in made if x.id in s.series or x.schedule_id == s.id]
+                schedules.append(dict(personal.row(s, schemas.get(s.workflow)), hub=key, reports=links))
+            for x in made:
+                st = series_lib.state(path, x)
+                reports.append(dict(id=x.id, hub=key, title=x.title or x.key, report=title_for(x.workflow),
+                                    url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
+                                    company_on=bool(series_lib.domain_token(path, x))))
+        from . import appmode
+
+        return {"subject": email, "admin": is_admin, "web_app": not appmode.is_openwebui(hub_dir),
+                "agents": agents, "schedules": schedules, "reports": reports}
+
+    @router.get("/my/schedules/{schedule_id}/runs")
+    @_denied
+    def my_schedule_runs(schedule_id: str, hub: str, request: Request):
+        from .workflows import observe
+
+        account, email = require_viewer(request)
+        path, key = person_hub(hub)
+        found = own_schedule(path, key, schedule_id, email, account)
+        return {"runs": observe.schedule_runs(path, found.id)}
+
+    @router.post("/my/schedules/{schedule_id}/{action}")
+    @_denied
+    def my_schedule_action(schedule_id: str, action: Literal["pause", "resume", "run_now", "stop"],
+                           request: Request, payload: HubAction):
+        """Pause, resume, run now or stop one's own schedule. Run now starts on
+        the agent's own engine, so the page sends it to that agent's bridge."""
+        from .workflows import control, personal
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        found = own_schedule(path, key, schedule_id, email, account)
+        try:
+            if action == "run_now":
+                if not control._engine_here(path):
+                    raise HTTPException(409, "Reports can't run on this agent right now. Try again later.")
+                personal.run_now(path, key, email, found.id)
+            elif action == "stop":
+                personal.owner_stop(path, key, email, found.id)
+            else:
+                personal.set_paused(path, key, email, found.id, action == "pause")
+        except personal.ScheduleError as exc:
+            raise HTTPException(409, str(exc))
+        store_for(hub_dir).audit_event(email, f"schedule_{action}", hub=key, permission=found.id,
+                                       surface="console")
+        return {"ok": True}
 
     @router.post("/schedules/{schedule_id}/{action}")
     @_denied
@@ -1298,11 +1416,15 @@ def mount_portal(app, hub_dir) -> None:
 
 
 def _tell_owner_link_off(hub_dir: Path, found) -> None:
-    """Tell a personal report's owner an admin turned its company link off."""
+    """Tell a personal report's owner an admin turned its company link off,
+    when the hub emails people (`notify_by_email`)."""
     from . import email_delivery
     from .artifacts import domains
     from .workflows.identity import RunIdentity
+    from .workflows.personal import email_on
 
+    if not email_on(hub_dir):
+        return
     try:
         email_delivery.send_to_owner(
             hub_dir, hub=found.hub, identity=RunIdentity(found.owner, None, "schedule", found.owner),

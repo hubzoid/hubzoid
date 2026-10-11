@@ -20,8 +20,10 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   reports for themselves** save their own schedule from chat, after a yes. It
   runs as them and pauses with a reason after repeated failures or when access
   or inputs change. Email about it is off unless `notify_by_email: true`. They list,
-  pause, resume, change and stop it in chat. Admins see every schedule, with
-  its 30-day model cost, under **Runs & schedules**, and can pause or stop it.
+  pause, resume, run, change and stop it in chat or on the Console's
+  **Schedules & reports** page, which everyone signed in can open (their own
+  schedules and report links, each with its latest runs). Admins also see
+  everyone's, with the 30-day model cost, and can pause or stop them.
 - **Live reports.** `publish_artifact(key=...)` keeps one link per report that
   always shows the newest copy: the agent's for team runs, each person's own
   for theirs. Unchanged copies (same file or `digest=`) store nothing. The

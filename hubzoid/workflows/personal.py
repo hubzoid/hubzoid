@@ -66,6 +66,15 @@ class Schedule:
     failures: int
     created: float
     updated: float
+    series_ids: str | None = None
+
+    @property
+    def series(self) -> list[str]:
+        """The report series its runs published to, newest first."""
+        try:
+            return list(json.loads(self.series_ids or "[]"))
+        except ValueError:
+            return []
 
     @property
     def values(self) -> dict:
@@ -449,7 +458,7 @@ def create(hub_dir, hub: str, actor: str, *, workflow: str, inputs: dict, cadenc
         c.execute(text(
             f"INSERT INTO hz_personal_schedules ({_COLS}) VALUES (:id, :hub, :workflow, :owner, "
             ":owner_account, :name, :inputs, :cadence, :timezone, 'testing', NULL, NULL, :next_fire, "
-            "NULL, NULL, NULL, NULL, NULL, 0, :t, :t)"),
+            "NULL, NULL, NULL, NULL, NULL, 0, :t, :t, NULL)"),
             {"id": schedule_id, "hub": hub, "workflow": workflow, "owner": actor,
              "owner_account": account, "name": name, "inputs": json.dumps(data),
              "cadence": cadence, "timezone": timezone,
@@ -635,8 +644,11 @@ def after_run(hub_dir, hub: str, env: dict, run_id: str, *, ok: bool, cause: str
     now = time.time()
     if ok:
         changed = any(p.get("changed") for p in published)
+        fed = [p["series_id"] for p in published if p.get("series_id")]
+        series_ids = list(dict.fromkeys(fed + s.series))[:10]
         _update(hub_dir, s.id, last_run=run_id, last_status="updated" if changed else "no_change",
                 last_at=now, last_cause=None, failures=0,
+                **({"series_ids": json.dumps(series_ids)} if fed else {}),
                 **({"state": "active"} if s.state == "testing" else {}))
         if changed and s.state != "testing":
             notify(hub_dir, hub, get(hub_dir, s.id), "changed", published=published)
@@ -660,10 +672,51 @@ def after_run(hub_dir, hub: str, env: dict, run_id: str, *, ok: bool, cause: str
 # ---- notices ----------------------------------------------------------------------
 
 
-def manage_url(hub_dir, s: Schedule) -> str:
+PAGE = "/portal/#/schedules"
+
+
+def page_url(hub_dir) -> str:
+    """Where people see and change their schedules and reports."""
     from ..artifacts import public_base_url
 
-    return f"{public_base_url(hub_dir)}/portal/my/schedules/{s.id}"
+    return f"{public_base_url(hub_dir)}{PAGE}"
+
+
+def manage_url(hub_dir, s: Schedule) -> str:
+    return page_url(hub_dir)
+
+
+def owned_by(hub_dir, s: Schedule, email: str, account: str | None) -> bool:
+    """Is `s` this signed-in account's? The email and the chat-app account it
+    was saved under: a new account that reuses the email gets nothing."""
+    if s.owner != email:
+        return False
+    if s.owner_account:
+        return bool(account) and s.owner_account == account
+    from ..artifacts import _local_owner
+
+    return _local_owner(hub_dir, email)
+
+
+def row(s: Schedule, schema: dict | None = None) -> dict:
+    """One schedule for the Console: what runs, when, and how it went. Hidden
+    inputs stay masked; the report itself is never included."""
+    from . import inputs as inputs_lib
+    from .runtime import title_for
+
+    return dict(id=s.id, name=s.name, workflow=s.workflow, report=title_for(s.workflow),
+                inputs=inputs_lib.display_with_schema(schema, s.values),
+                when=cadence_words(s), timezone=s.timezone, state=s.state, reason=s.reason,
+                state_label=state_words(s),
+                next_fire=s.next_fire if s.state in ("active", "testing") else None,
+                last_status=s.last_status, last_at=s.last_at, last_label=last_words(s))
+
+
+def owner_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> Schedule:
+    """The owner stops their schedule (from the Console; chat confirms first)."""
+    s = _own(hub_dir, hub, actor, schedule_id)
+    _update(hub_dir, s.id, state="stopped", reason="owner", paused_by=actor, next_fire=None)
+    return get(hub_dir, s.id)
 
 
 def notify(hub_dir, hub: str, s: Schedule | None, kind: str, *, published: list | None = None) -> None:

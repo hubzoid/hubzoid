@@ -44,7 +44,7 @@ def client(tmp_path, monkeypatch):
     return c
 
 
-def _schedule(c, state="active", reason=None):
+def _schedule(c, state="active", reason=None, account=None):
     from hubzoid.workflows import personal
 
     now = time.time()
@@ -53,10 +53,10 @@ def _schedule(c, state="active", reason=None):
         conn.execute(text(
             "INSERT INTO hz_personal_schedules (id, hub, workflow, owner, owner_account, name, inputs, "
             "cadence, timezone, state, reason, next_fire, failures, created, updated) VALUES "
-            "('ps1', :h, 'program_report', 'meera@co.org', NULL, 'Bhava monthly', :i, "
+            "('ps1', :h, 'program_report', 'meera@co.org', :a, 'Bhava monthly', :i, "
             "'every monday at 09:00', 'Asia/Kolkata', :s, :r, :n, 0, :t, :t)"),
             {"h": c.hub, "i": json.dumps({"program": "Bhava"}), "s": state, "r": reason,
-             "n": now + 3600, "t": now})
+             "n": now + 3600, "t": now, "a": account})
 
 
 def test_access_lists_one_grant_per_report_plus_scheduling_and_company_sharing(client):
@@ -113,3 +113,49 @@ def test_admins_turn_off_any_company_link_and_copy_only_team_ones(client, tmp_pa
                        json={"hub": client.hub, "action": "copy"}).status_code == 403
     assert client.post(f"/portal/api/reports/{mine_id}/company",
                        json={"hub": client.hub, "action": "off"}).json()["on"] is False
+
+
+def test_people_see_and_change_only_their_own_schedules_and_reports(client, tmp_path, monkeypatch):
+    from hubzoid.access import session
+    from hubzoid.workflows import observe
+
+    gs = access.store_for(client.path)
+    gs.upsert_identity(email="meera@co.org", owui_id="id-meera")
+    for perm in ("use_hub", "wf_program_report", "schedule_reports"):
+        gs.grant("meera@co.org", client.hub, perm, actor="t")
+    _schedule(client, account="id-meera")
+    with client.eng.begin() as conn:                          # this workflow takes no inputs
+        conn.execute(text("UPDATE hz_personal_schedules SET inputs='{}'"))
+    src = tmp_path / "mine.html"
+    src.write_text("mine")
+    arts.publish(client.path, hub=client.hub, owner="meera@co.org", owner_account="id-meera", source=src,
+                 title="Bhava", workflow="program_report", run_id="ps-ps1-first", key="program-bhava",
+                 series={"scope": "personal", "schedule_id": "ps1"})
+    monkeypatch.setattr(observe, "schedule_runs", lambda *_a, **_k: [{"status": "SUCCESS"}])
+    who = {"v": ("id-meera", "meera@co.org")}
+    monkeypatch.setattr(session, "verified_person", lambda *_a, **_k: who["v"])
+    my = client.get("/portal/api/my").json()
+    row = my["schedules"][0]
+    assert row["id"] == "ps1" and row["reports"][0]["url"].endswith("/program-bhava/by/" + row["reports"][0]["url"].rsplit("/", 1)[1])
+    assert "owner" not in row and "cost_30d" not in row and my["reports"][0]["title"] == "Bhava"
+    assert my["agents"][0]["api"] == "/portal/api"
+    hub = {"hub": client.hub}
+    assert client.get("/portal/api/my/schedules/ps1/runs", params=hub).json() == {"runs": [{"status": "SUCCESS"}]}
+    assert client.post("/portal/api/my/schedules/ps1/pause", json=hub).status_code == 200
+    assert client.post("/portal/api/my/schedules/ps1/resume", json=hub).status_code == 200
+    # Run now needs the agent's own engine: in a gateway the page sends it to the agent's bridge.
+    assert "can't run" in client.post("/portal/api/my/schedules/ps1/run_now", json=hub).json()["detail"]
+    import hubzoid.chat.common as chat_common
+    monkeypatch.setattr(chat_common, "api_bases", lambda _d: {client.hub: "/b/irs"})
+    assert client.get("/portal/api/my").json()["agents"][0]["api"] == "/b/irs/portal/api"
+    client.post("/portal/api/schedules/ps1/pause", json=hub)                       # an admin's pause
+    refused = client.post("/portal/api/my/schedules/ps1/resume", json=hub)
+    assert refused.status_code == 409 and "paused by an admin" in refused.json()["detail"]
+    # A new account that took over the email is someone else.
+    who["v"] = ("id-new", "meera@co.org")
+    my = client.get("/portal/api/my").json()
+    assert my["schedules"] == [] and my["reports"] == []
+    assert client.post("/portal/api/my/schedules/ps1/stop", json=hub).status_code == 404
+    assert client.get("/portal/api/my/schedules/ps1/runs", params=hub).status_code == 404
+    who["v"] = None
+    assert client.get("/portal/api/my").status_code == 401

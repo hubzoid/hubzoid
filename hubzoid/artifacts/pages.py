@@ -68,9 +68,6 @@ padding:6px;background:var(--bg);color:var(--ink)}
 .linkbox{width:100%;font:12px var(--mono);padding:6px;border:1px solid var(--line);
 border-radius:8px;background:var(--bg);color:var(--ink)}
 #status{color:var(--muted);font-size:12px;min-height:1em;margin-top:6px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;max-width:460px;margin:40px auto;text-align:left}
-.card h1{font-size:18px;margin:0 0 4px}.card dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;margin:14px 0}
-.card dt{color:var(--muted)}.card dd{margin:0}.card.sched{align-self:flex-start}.card a{color:var(--accent)}.card .sub{color:var(--muted)}
 @media print{header,#share,#notice{display:none}}
 """
 
@@ -379,29 +376,10 @@ _SMALL_JS = r"""
 (function(){
 const cfg = JSON.parse(document.getElementById('hz-cfg').textContent);
 const btn = (id) => document.getElementById(id);
-if (cfg.kind === 'unavailable') {
-  btn('switch').addEventListener('click', async () => {
-    try { await fetch('/api/auth/logout', {method:'POST', credentials:'same-origin'}); } catch (e) {}
-    location.href = '/auth?redirect=' + encodeURIComponent(cfg.back);
-  });
-  return;
-}
-const say = (m) => { btn('status').textContent = m || ''; };
-async function act(action){
-  if (action === 'stop' && !window.confirm('Stop this schedule for good? Its live link keeps the last copy.')) return;
-  try {
-    const r = await fetch(cfg.api, {method:'POST', credentials:'same-origin',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({action})});
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) return say(d.detail || 'That did not work.');
-    if (action === 'stop') { btn('state').textContent = 'Stopped'; btn('actions').remove(); return say('Stopped. Its live link keeps the last copy.'); }
-    btn('state').textContent = d.state; btn('pause').hidden = d.paused; btn('resume').hidden = !d.paused;
-    say(action === 'pause' ? 'Paused. Nothing runs until you resume it.' : 'Resumed.');
-  } catch (e) { say('Could not reach the server. Try again.'); }
-}
-btn('pause').addEventListener('click', () => act('pause'));
-btn('resume').addEventListener('click', () => act('resume'));
-btn('stop').addEventListener('click', () => act('stop'));
+btn('switch').addEventListener('click', async () => {
+  try { await fetch('/api/auth/logout', {method:'POST', credentials:'same-origin'}); } catch (e) {}
+  location.href = '/auth?redirect=' + encodeURIComponent(cfg.back);
+});
 })();
 """
 
@@ -421,26 +399,3 @@ def unavailable(*, email: str | None, back: str, nonce: str) -> str:
 <script type="application/json" id="hz-cfg">{cfg}</script>
 <script nonce="{nonce}">{_SMALL_JS}</script></body></html>"""
 
-
-def schedule_page(*, view: dict, nonce: str) -> str:
-    """A schedule's owner page: what it runs, and pause, resume or stop."""
-    e = html.escape
-    cfg = json.dumps({"kind": "schedule", "api": view["api"]}).replace("<", "\\u003c")
-    report = e(view["report"]) + (f" · {e(view['inputs'])}" if view.get("inputs") else "")
-    if view.get("link"):
-        report += f' · <a href="{e(view["link"])}">Open</a>'
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>{e(view['name'])}</title><style nonce="{nonce}">{_CSS}</style></head>
-<body><main><div class="card sched"><h1>{e(view['name'])}</h1>
-<div class="sub">Your schedule</div>
-<dl><dt>Report</dt><dd>{report}</dd><dt>When</dt><dd>{e(view['when'])}</dd>
-<dt>State</dt><dd id="state">{e(view['state'])}</dd><dt>Last run</dt><dd>{e(view['last'])}</dd></dl>
-<div class="row" id="actions"><button id="pause"{' hidden' if view['paused'] else ''}>Pause</button>
-<button id="resume"{'' if view['paused'] else ' hidden'}>Resume</button>
-<button id="stop" class="danger">Stop schedule</button></div>
-<div id="status" role="status"></div></div></main>
-<script type="application/json" id="hz-cfg">{cfg}</script>
-<script nonce="{nonce}">{_SMALL_JS}</script></body></html>"""

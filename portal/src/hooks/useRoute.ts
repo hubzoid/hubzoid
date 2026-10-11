@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
  *   #/agents/<key>/evals/<eval run stamp>      (the run's detail drawer)
  *   #/people[/<subject>]
  *   #/activity
+ *   #/schedules[?scope=everyone&hub=<key>]   (everyone's own; admins also see everyone's)
  *   #/confirm/<change request id>   (the link an agent tool hands a manager)
  */
 export type Route = { path: string; parts: string[]; query: Record<string, string> };

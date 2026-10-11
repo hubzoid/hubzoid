@@ -158,6 +158,7 @@ export const en = {
     menu: "Account menu",
     account: "Account",
     connections: "Connections",
+    schedules: "Schedules and reports",
     console: "Admin Console",
     signOut: "Sign out",
     signingOut: "Signing out…",

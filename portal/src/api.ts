@@ -131,6 +131,31 @@ export type PersonalSchedule = {
   last_label: string;
   cost_30d: number;
 };
+/** The signed-in person's own schedules and reports, on every agent (`GET /my`). */
+export type ScheduleLink = { title: string; url: string };
+export type MySchedule = Omit<PersonalSchedule, "owner" | "cost_30d"> & { hub: string; reports: ScheduleLink[] };
+export type MyReport = {
+  id: string;
+  hub: string;
+  title: string;
+  report: string;
+  url: string;
+  updated: number | null;
+  state: "live" | "stopped" | "failed";
+  company_on: boolean;
+};
+/** `api`: where this agent takes actions (its own bridge in a gateway). */
+export type MyAgent = { key: string; name: string; api: string };
+export type MyData = {
+  subject: string;
+  admin: boolean;
+  web_app: boolean;
+  agents: MyAgent[];
+  schedules: MySchedule[];
+  reports: MyReport[];
+};
+/** One run of a schedule: status and times only. */
+export type ScheduleRun = { status: string; started: number | null; completed: number | null; duration_ms: number | null };
 /** One live report link: a team report or a person's own. */
 export type Report = {
   id: string;
@@ -377,10 +402,12 @@ export async function request<T>(
   body?: unknown,
   signal?: AbortSignal,
   method?: "GET" | "POST" | "DELETE",
+  /** Another bridge's API in a gateway (an agent's `api`); this one by default. */
+  base = "/portal/api",
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch("/portal/api" + path, {
+    response = await fetch(base + path, {
       credentials: "include",
       signal,
       method: method ?? (body === undefined ? "GET" : "POST"),

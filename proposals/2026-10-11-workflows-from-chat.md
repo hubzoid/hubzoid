@@ -32,8 +32,9 @@ APIs. Both use the same pieces.
 - A builder marks a workflow `as_tool=True` and gives it typed `inputs=`. Chat
   and MCP get a tool that runs it as the person asking ("Run for me").
 - `schedulable=True` lets a person save a schedule with those inputs from chat.
-  It runs as them, emails them when the report changes or fails, and pauses
-  with a named reason when access or inputs change.
+  It runs as them and pauses with a named reason when access or inputs change.
+  Nobody is emailed by default (amended 11 October, following Mastra, Agno and
+  Sim): a hub turns notices on with `notify_by_email: true`.
 - Every keyed report is a series: team (the workflow's own account) or personal
   (one person). The latest link serves the newest copy, shows when it updates
   next, and offers "Update now" to people who can run it.
@@ -42,6 +43,12 @@ APIs. Both use the same pieces.
   reader-only account with no agent access.
 - The Console shows people's schedules, live reports with company links, and
   who started each run and whose access it used.
+- One **Schedules & reports** page (`/portal/#/schedules`, amended 11 October)
+  serves everyone: a person sees their own schedules and report links on every
+  agent, with each schedule's latest runs, and pauses, resumes, runs or stops
+  them; an admin also sees everyone's. Ownership is the verified account id and
+  email. The web app's account menu and the agent's replies link to it; Open
+  WebUI is unchanged.
 
 ## Scope and non-goals
 
