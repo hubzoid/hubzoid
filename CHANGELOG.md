@@ -3,6 +3,21 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.2.3]
+
+The agent cards in the Console open the agent with one click. Nothing to change
+when upgrading.
+
+### Console
+- An agent's card is one link: click anywhere on it to open the agent at
+  Access. Its buttons (Manage access, Runs & schedules, Activity) are gone.
+- Hovering a card lightens its border, adds a soft shadow and turns the name
+  and › orange; keyboard focus rings the card. Middle-click and "open in new
+  tab" work, as for any link.
+- The workflow tag opens Runs & schedules and the eval tag opens Evals, each
+  with a ›. The eval tag still appears only for an agent with evals.
+- A search with no match offers Clear search.
+
 ## [1.2.2]
 
 Google Workspace joins the connector list, the connector screens are clearer,
