@@ -3,12 +3,13 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [1.2.1]
+## [1.2.2]
 
-Connection links in WhatsApp work behind a gateway, Google Workspace joins the
-connector list, and the connector screens are clearer. Upgrading: read
-[Upgrading to 1.2.1](docs/UPGRADING.md#upgrading-to-121-whatsapp-and-slack-services-in-a-gateway)
-if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
+Google Workspace joins the connector list, the connector screens are clearer,
+and a gateway reached at more than one address accepts each of them for
+connector sign-in. Upgrading: read
+[Upgrading to 1.2.2](docs/UPGRADING.md#upgrading-to-122-a-gateway-at-more-than-one-address)
+if people reach your gateway at more than one address.
 
 ### Connectors
 - Gmail, Google Calendar, Drive, Docs and Sheets in **Add connector**, with
@@ -26,9 +27,28 @@ if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
   English; saving there was already refused in any language.
 
 ### Fixed
+- Behind a gateway reached at more than one address, every agent accepts each
+  address the deployment names, including another hub's `HUBZOID_PUBLIC_URL`.
+  A connector sign-in started on another address came back to the first
+  hub's address instead, and a provider that knew only the address people use
+  refused it. The gateway recorded its addresses, but agents started
+  separately (`--no-bridges`) never read them.
+- The units `hubzoid inbound systemd` and `hubzoid slack systemd` print also
+  allow a shared database named only in the hub's `.env`, or by a relative or
+  driver-qualified SQLite address. A deployment record they can't read stops
+  the command with the reason.
+- The WhatsApp service's check at start covers the database file and its
+  migration lock, not only their folder.
+
+## [1.2.1]
+
+Connection links in WhatsApp work behind a gateway. Upgrading: read
+[Upgrading to 1.2.1](docs/UPGRADING.md#upgrading-to-121-whatsapp-and-slack-services-in-a-gateway)
+if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
+
+### Fixed
 - The units `hubzoid inbound systemd` and `hubzoid slack systemd` print may
-  write the shared database's folder as well as the hub folder (read with the
-  hub's own `.env`, as the service runs). They could write
+  write the gateway's data folder as well as the hub folder. They could write
   only the hub folder, so behind a gateway the WhatsApp service could not use
   the shared database: since 1.2 turned connection links on, it failed every
   few seconds and sent no connection confirmation or YES continuation, and

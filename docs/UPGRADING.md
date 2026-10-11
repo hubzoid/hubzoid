@@ -4,6 +4,16 @@
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
+## Upgrading to 1.2.2: a gateway at more than one address
+
+Nothing to change, unless people reach your gateway at more than one address.
+Then restart the gateway once, and then the first hub's agent, which serves
+every agent's connection pages. Every agent then accepts each address the
+deployment names: the gateway's `--public-url` and `HUBZOID_ALLOWED_ORIGINS`,
+and each hub's own `HUBZOID_PUBLIC_URL`. A connector sign-in returns to the
+address it started on. A `HUBZOID_ALLOWED_ORIGINS` you added to a hub's `.env`
+for this can stay or go.
+
 ## Upgrading to 1.2.1: WhatsApp and Slack services in a gateway
 
 Nothing to change, unless a WhatsApp, Telegram or Slack service behind a
