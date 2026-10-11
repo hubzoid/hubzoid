@@ -145,7 +145,6 @@ export type Report = {
   next: number | null;
   audience: string;
   company_on: boolean;
-  company_hint: string | null;
 };
 // A webhook this agent declares: where it receives events and how they went.
 // Payloads, headers and digests never leave the server.

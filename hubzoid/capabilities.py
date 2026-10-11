@@ -342,8 +342,8 @@ def _workflow_tools(hub_dir: Path, taken: set[str]) -> list[dict]:
             continue
         taken.add(pid)
         out.append(dict(
-            permission=pid, label=row.get("title") or _title(row["name"]),
-            description="Run this report for themselves, under their own name.",
+            permission=pid, label="Run " + (row.get("title") or _title(row["name"])),
+            description="Run this report in chat for themselves, under their own name.",
             sensitive=bool(row.get("sensitive")), group="tools", section="workflows",
             surfaces=["chat", "mcp"], status="", available=True, default="grant",
             delegate_grantable=True, obsolete=False,

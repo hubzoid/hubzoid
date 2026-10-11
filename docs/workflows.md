@@ -297,7 +297,102 @@ under **Hubzoid tools → Workflows**:
   group. The access tools work only on Console-managed agents.
 
 Workflows can't be created or edited from chat. Write them in `workflows/` or
-`schedule/` as described above.
+`schedule/` as described above. To let people run a report for themselves, see
+[Reports people run and schedule in chat](#reports-people-run-and-schedule-in-chat-13).
+
+## Reports people run and schedule in chat (1.3)
+
+A code workflow can be a report people run from chat, for themselves, and keep
+fresh on their own schedule. Everything here is optional; a workflow without
+these options works as before.
+
+```python
+# workflows/program_report/main.py
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from hubzoid import hub, step, workflow
+
+
+class ProgramReport(BaseModel):
+    program: Literal["Bhava Spandana", "Inner Engineering"] = Field(description="The program.")
+    period: Literal["week", "month"] = Field("week", description="The week or the month so far.")
+
+
+@step
+def build_page(program: str, period: str) -> dict:
+    ...                                   # write hub.run_dir / "report.html"
+    return {"path": str(path), "digest": digest_of_the_numbers}
+
+
+@workflow("daily 06:00", timezone="Asia/Kolkata", run_as="reports@company.org",
+          inputs=ProgramReport, schedule_input={"program": "Inner Engineering"},
+          as_tool=True, schedulable=True)
+def program_report():
+    """Program registrations for one program, for the week or the month."""
+    page = build_page(hub.input.program, hub.input.period)
+    key = f"program-{hub.input.program.lower().replace(' ', '-')}-{hub.input.period}"
+    return hub.publish_artifact(page["path"], title=f"{hub.input.program} report",
+                                key=key, digest=page["digest"], audience="domain")
+```
+
+| Option | What it does |
+|---|---|
+| `inputs=Model` | A Pydantic model. The run reads it as `hub.input`. Chat and MCP tools take its JSON schema, the Console's Run now builds a form from it, and the CLI takes `--input key=value`. Inputs are validated on every run. Keep them short and never secret: they are stored with the run. `Field(json_schema_extra={"hidden": True})` shows a value as •••• in lists. |
+| `schedule_input={...}` | The inputs for the declared schedule. Required when the model has required fields and the workflow has a schedule. |
+| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before saying it will email the links. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
+| `schedulable=True` | People can save their own schedule of it from chat (needs `as_tool`). `min_interval="6h"` raises the shortest cadence for this workflow. |
+| `catch_up=True` | The declared schedule runs once after downtime, unless the next slot is close. |
+
+In the run, `hub.team_run` is true for the declared schedule, a webhook and a
+Console or CLI run (the workflow's own account); false for Run for me and
+personal schedules. `hub.trigger` and `hub.started_by` say how it started.
+
+**Access.** Each `as_tool` workflow adds a row to the agent's Access screen
+under Hubzoid tools → Workflows: **Run Program report** (`wf_program_report`).
+**Schedule reports for themselves** (`schedule_reports`) lets a person save
+schedules, and **Share reports with the company domain** (`share_domain_links`,
+sensitive) lets a run publish with `audience="domain"`. Nobody has them until
+an admin grants them.
+
+**Live reports.** `key=` makes the artifact a copy in a report series with one
+link, `latest_url`, that always shows the newest copy. A team run writes the
+agent's series (`/portal/latest/<agent>/<key>`); Run for me and personal
+schedules write that person's own series, private to them until they share it
+from the viewer. A key belongs to one workflow. When the file, or `digest=` (a
+hash of the data behind it), matches the newest copy, nothing new is stored. A
+scheduled team run that no longer publishes a key marks that page "No longer
+updating". `series_keep: 50` in `workflows/settings.yaml` keeps the last 50
+copies of each series. See [reports-and-email.md](reports-and-email.md#live-reports).
+
+**Personal schedules.** In chat: "send me the Inner Engineering report every
+Monday at 9". The agent shows what will run, as whom and the next three runs,
+and saves it only after a yes (a one-time code, valid 10 minutes). The first
+run starts at once. Each run acts as that person, so it stops when their access
+does. The owner is emailed when a run changes the report or fails, and the
+schedule pauses after three failures in a row, or when access or inputs change.
+"My schedules", "pause", "resume", "run now", "change to daily" and "stop" work
+in chat. Admins see every schedule under **Runs & schedules → People's
+schedules**, with its 30-day model cost, and can pause or stop it; only an admin
+resumes what an admin paused. Limits, in `workflows/settings.yaml`:
+
+```yaml
+personal_schedules:
+  min_interval: 1h        # shortest cadence
+  per_person: 10          # schedules per person per agent
+  pause_after_failures: 3
+```
+
+**Testing without the engine:**
+
+```python
+from hubzoid.workflows.testing import run_local
+
+out = run_local(program_report, hub_dir="my-hub", inputs={"program": "Inner Engineering"},
+                as_user="priya@company.org")
+out.result, out.artifacts, out.emails      # nothing is published or sent
+```
 
 ## Watching it
 

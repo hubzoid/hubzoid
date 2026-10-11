@@ -38,6 +38,7 @@ button:disabled{opacity:.55;cursor:default}
 button:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #notice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px;font-size:13px;
 background:var(--info-bg);border-bottom:1px solid var(--line);color:var(--info)}
+.q{display:inline-grid;place-items:center;width:16px;height:16px;border:1px solid var(--line);border-radius:50%;font-size:10.5px;color:var(--muted);cursor:help;vertical-align:1px}
 #notice.err{background:var(--warn-bg);color:var(--warn-ink)}#notice[hidden]{display:none}
 main{flex:1;min-height:0;display:flex}
 main>iframe{flex:1;border:0;width:100%;background:#fff}
@@ -69,7 +70,7 @@ border-radius:8px;background:var(--bg);color:var(--ink)}
 #status{color:var(--muted);font-size:12px;min-height:1em;margin-top:6px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;max-width:460px;margin:40px auto;text-align:left}
 .card h1{font-size:18px;margin:0 0 4px}.card dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;margin:14px 0}
-.card dt{color:var(--muted)}.card dd{margin:0}
+.card dt{color:var(--muted)}.card dd{margin:0}.card.sched{align-self:flex-start}.card a{color:var(--accent)}.card .sub{color:var(--muted)}
 @media print{header,#share,#notice{display:none}}
 """
 
@@ -130,7 +131,7 @@ function header(){
     m.append(el('span', {}, 'Last updated ' + when(s.updated)));
   } else if (s.state === 'failed') {
     m.append(el('span', {class:'badge warn'}, 'Not updated since ' + when(s.updated)));
-    m.append(el('span', {}, 'Showing the last good copy.'));
+    m.append(el('span', {}, 'The last update failed.'));
   } else {
     m.append(el('span', {}, 'Updated ' + when(s.updated) + (s.next ? ' · Next update ' + when(s.next) : '')));
   }
@@ -236,13 +237,16 @@ function openCompany(){
     const i = el('input', {type:'radio', name:'aud', value}); if (!enabled) i.disabled = true;
     if (checked) i.checked = true;
     const d = el('div'); d.append(el('div', {}, label)); if (help) d.append(el('small', {}, help));
-    l.append(i, d); p.append(l); return i; };
+    l.append(i, d); p.append(l); return d; };
   const can = c.available && c.allowed;
   opt('owner', 'Only you', '', true, !c.on);
-  opt('company', 'Anyone at ' + c.domains + ' with the link',
-      can ? 'They sign in with their ' + c.domains + ' account. They can\'t use the agent or see other reports.'
+  const company = opt('company', 'Anyone at ' + c.domains + ' with the link',
+      can ? 'They sign in with their ' + c.domains + ' account.'
           : (!c.available ? c.reason : 'Needs \u201cShare reports with the company domain\u201d. Ask an admin.'),
       can, c.on);
+  const why = 'They can\'t use the agent or see other reports. The link always opens the newest copy; '
+    + 'anyone who downloaded a copy keeps it.';
+  company.firstChild.append(' ', el('span', {class:'q', tabindex:'0', role:'img', title: why, 'aria-label': why}, '?'));
   const area = el('div'); p.append(area);
   const draw = () => { area.replaceChildren();
     if (meta.series.company.on && meta.series.company.url) {
@@ -250,8 +254,7 @@ function openCompany(){
       const copy = el('button', {}, 'Copy link');
       copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(box.value); status('Link copied.'); } catch (e) { box.select(); } });
       const r = el('div', {class:'row'}); r.append(box, copy); area.append(r);
-    }
-    area.append(el('small', {class:'note'}, 'This link always opens the newest copy. People who saved a copy keep it.')); };
+    } };
   draw();
   const row = el('div', {class:'row'});
   const save = el('button', {class:'primary'}, 'Save sharing');
@@ -368,7 +371,7 @@ def message(*, title: str, body: str, nonce: str) -> str:
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title><style nonce="{nonce}">{_CSS}</style></head>
-<body><main><div class="center"><h1 style="font-size:18px">{html.escape(title)}</h1>
+<body><main><div class="center"><h1>{html.escape(title)}</h1>
 <p>{html.escape(body)}</p></div></main></body></html>"""
 
 
@@ -423,14 +426,17 @@ def schedule_page(*, view: dict, nonce: str) -> str:
     """A schedule's owner page: what it runs, and pause, resume or stop."""
     e = html.escape
     cfg = json.dumps({"kind": "schedule", "api": view["api"]}).replace("<", "\\u003c")
+    report = e(view["report"]) + (f" · {e(view['inputs'])}" if view.get("inputs") else "")
+    if view.get("link"):
+        report += f' · <a href="{e(view["link"])}">Open</a>'
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{e(view['name'])}</title><style nonce="{nonce}">{_CSS}</style></head>
-<body><main><div class="card"><h1>{e(view['name'])}</h1>
-<div class="m" style="color:var(--muted)">Your schedule</div>
-<dl><dt>Report</dt><dd>{e(view['report'])}</dd><dt>When</dt><dd>{e(view['when'])}</dd>
+<body><main><div class="card sched"><h1>{e(view['name'])}</h1>
+<div class="sub">Your schedule</div>
+<dl><dt>Report</dt><dd>{report}</dd><dt>When</dt><dd>{e(view['when'])}</dd>
 <dt>State</dt><dd id="state">{e(view['state'])}</dd><dt>Last run</dt><dd>{e(view['last'])}</dd></dl>
 <div class="row" id="actions"><button id="pause"{' hidden' if view['paused'] else ''}>Pause</button>
 <button id="resume"{'' if view['paused'] else ' hidden'}>Resume</button>

@@ -62,7 +62,7 @@ def _schedule(c, state="active", reason=None):
 def test_access_lists_one_grant_per_report_plus_scheduling_and_company_sharing(client):
     perms = {p["permission"]: p for p in client.get(
         "/portal/api/permissions", params={"hub": client.hub}).json()["permissions"]}
-    assert perms["wf_program_report"]["label"] == "Program report"
+    assert perms["wf_program_report"]["label"] == "Run Program report"
     assert perms["wf_program_report"]["sensitive"] is True
     assert {"schedule_reports", "share_domain_links"} <= set(perms)
 
@@ -99,9 +99,12 @@ def test_admins_turn_off_any_company_link_and_copy_only_team_ones(client, tmp_pa
         made[scope] = arts.publish(client.path, hub=client.hub, owner=who, owner_account="id-" + who,
                                    source=src, title="Bhava", workflow="program_report", run_id="r",
                                    key="program-bhava", audience="domain", series={"scope": scope})
-    data = client.get("/portal/api/reports", params={"hub": client.hub}).json()
-    assert data["company"]["on"] is True and len(data["reports"]) == 2
     team_id, mine_id = made["team"]["series_id"], made["personal"]["series_id"]
+    assert "share_url" not in made["personal"]                     # a person's copy starts private
+    from hubzoid.artifacts import series
+    series.domain_on(client.path, series.get(client.path, mine_id), "meera@co.org")   # she shares it
+    data = client.get("/portal/api/reports", params={"hub": client.hub}).json()
+    assert data["company"]["on"] is True and [r["company_on"] for r in data["reports"]] == [True, True]
     copy = client.post(f"/portal/api/reports/{team_id}/company", json={"hub": client.hub, "action": "copy"})
     assert copy.json()["url"] == made["team"]["share_url"]
     replaced = client.post(f"/portal/api/reports/{team_id}/company", json={"hub": client.hub, "action": "replace"})

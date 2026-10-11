@@ -120,7 +120,7 @@ def _caller():
     if ident.surface not in TOOL_SURFACES or user.startswith("workflow:"):
         if (ident.surface or "").startswith("slack"):
             return None, ident.surface, "Reports and schedules aren't available in Slack. Use the web chat."
-        return None, ident.surface, f"Reports can't be used from {ident.surface}."
+        return None, ident.surface, "Reports aren't available here. Use the web chat."
     return user, ident.surface, ""
 
 
@@ -260,7 +260,7 @@ def _run_tool(hub_dir: Path, wf):
             proposal = await asyncio.to_thread(personal.propose, hub_dir, hub, actor, "run",
                                                {"workflow": wf.name, "inputs": data})
             return (f"Not started yet. I'll run {wf.title}{' for ' + shown if shown else ''} as you. "
-                    f'Start it? (After a clear yes, call {wf.name} again with only confirm: "{proposal}".)')
+                    f'Start it? (Ask them. When they say yes in their next message, call {wf.name} again with only confirm: "{proposal}".)')
         if wf.confirm:
             try:
                 _kind, payload = await asyncio.to_thread(personal.take, hub_dir, hub, actor, code,
@@ -367,7 +367,7 @@ def _schedule_tools(hub_dir: Path) -> list:
                 timezone_name=tz, name=args.get("name"))
         except personal.ScheduleError as exc:
             return str(exc)
-        return f'{out["text"]} (After a clear yes, call schedule_workflow again with only confirm: "{out["code"]}".)'
+        return f'{out["text"]} (Ask them. When they say yes in their next message, call schedule_workflow again with only confirm: "{out["code"]}".)'
 
     async def my_schedules_invoke(_ctx, input_str: str) -> str:
         actor, surface, why = _caller()
@@ -434,7 +434,7 @@ def _schedule_tools(hub_dir: Path) -> list:
                 return "Say pause, resume, run now, change or stop."
         except personal.ScheduleError as exc:
             return str(exc)
-        return f'{out["text"]} (After a clear yes, call change_schedule again with only confirm: "{out["code"]}".)'
+        return f'{out["text"]} (Ask them. When they say yes in their next message, call change_schedule again with only confirm: "{out["code"]}".)'
 
     schedule_tool = FunctionTool(
         name="schedule_workflow",

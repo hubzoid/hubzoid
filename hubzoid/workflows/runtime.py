@@ -280,7 +280,7 @@ def _identity_step():
                 ident = check_person_run(
                     Path(hub_dir_str), hub, env.get("acts_as") or "", workflow or "",
                     source="schedule" if env.get("trigger") == "personal_schedule" else "caller",
-                    what=what)
+                    what=what, account_id=env.get("acts_as_account") or None)
             else:
                 ident = resolve(Path(hub_dir_str), hub=hub, run_as=run_as,
                                 legacy_subject=legacy_subject, what=what)

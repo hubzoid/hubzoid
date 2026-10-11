@@ -232,14 +232,16 @@ def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
 
 
 def check_person_run(hub_dir: Path, hub: str, email: str, workflow: str, *,
-                     source: str = "caller", what: str = "This workflow") -> RunIdentity:
+                     source: str = "caller", what: str = "This workflow",
+                     account_id: str | None = None) -> RunIdentity:
     """The account a Run for me or personal schedule run acts as: the person
     themselves, active, able to use the hub and still holding the report's
-    grant. Raises IdentityError naming the cause."""
+    grant, and the same account that asked (`account_id`), not a later one
+    with that email. Raises IdentityError naming the cause."""
     from ..access import store_for
     from .runtime import tool_permission
 
-    ident = check(hub_dir, hub, email, source, what=what)
+    ident = check(hub_dir, hub, email, source, account_id=account_id, what=what)
     try:
         allowed = store_for(hub_dir).can(ident.subject, hub, tool_permission(workflow))
     except Exception as exc:  # noqa: BLE001 — fail closed

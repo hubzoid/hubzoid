@@ -5,6 +5,7 @@ import {
   Button,
   Collapse,
   Descriptions,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -19,7 +20,7 @@ import {
   Tooltip,
   message,
 } from "antd";
-import { RefreshCw, Copy, Play, Pause, Ban, RotateCcw } from "lucide-react";
+import { RefreshCw, Copy, Play, Pause, MoreHorizontal } from "lucide-react";
 import {
   query,
   request,
@@ -222,16 +223,16 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ),
           },
           {
-            title: "In chat",
+            title: <span style={{ whiteSpace: "nowrap" }}>In chat <Help text="People given this workflow in Access can run it in chat for themselves. Schedule: they can also save a personal schedule, if allowed to schedule reports." /></span>,
             key: "chat",
             render: (_, w) =>
               w.as_tool ? (
                 <Space size={4} wrap>
-                  <Tag color="orange">Run for yourself</Tag>
-                  {w.schedulable && <Tag color="orange">Schedule</Tag>}
+                  <Tag>Run</Tag>
+                  {w.schedulable && <Tag>Schedule</Tag>}
                 </Space>
               ) : (
-                <Text type="secondary">Not in chat</Text>
+                <Text type="secondary">—</Text>
               ),
           },
           {
@@ -319,7 +320,7 @@ function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
       <Modal title={`Run ${workflow.name}`} open={open} onCancel={() => setOpen(false)}
         okText="Run" onOk={start} confirmLoading={busy} destroyOnHidden>
         <Paragraph type="secondary">
-          Runs as {account}, the workflow's account. You're recorded as the person who started it.
+          Runs as {account}, the workflow's account.
         </Paragraph>
         <Form form={form} layout="vertical">
           {schema && Object.entries(schema.properties).map(([name, prop]) =>
@@ -378,7 +379,7 @@ function PeopleSchedules({ hub }: { hub: Hub }) {
             title: "Report and inputs", key: "report",
             render: (_, s) => <><div>{s.report}</div>{s.inputs && <Text type="secondary">{s.inputs}</Text>}</>,
           },
-          { title: "When", key: "when", render: (_, s) => <><div>{s.when}</div><Text type="secondary">{s.timezone}</Text></> },
+          { title: "When", key: "when", render: (_, s) => <><div>{s.when}</div><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{s.timezone}</Text></> },
           {
             title: "Next run", key: "next",
             render: (_, s) => s.next_fire ? <When value={new Date(s.next_fire * 1000).toISOString()} /> : <Text type="secondary">—</Text>,
@@ -446,7 +447,7 @@ function LiveReports({ hub }: { hub: Hub }) {
   return (
     <div className="section">
       <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
-        <Title level={5}>Live reports <Help text="One row per report link. Admins can copy, replace or turn off company links. Opening a personal report stays with its owner." /></Title>
+        <Title level={5}>Live reports <Help text="Each report's live link, which always shows the newest copy. A company link lets people at your company domain open it without using the agent. Personal reports stay with their owner; admins can only turn their link off." /></Title>
         {company.on ? <Tag color="blue">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}
       </Space>
       {!company.on && <Alert className="notice" type="info" showIcon message={company.reason} />}
@@ -464,18 +465,27 @@ function LiveReports({ hub }: { hub: Hub }) {
             render: (_, r) => <>{r.updated ? <When value={new Date(r.updated * 1000).toISOString()} /> : "—"}<div><Tag color={REPORT_STATE[r.state][1]}>{REPORT_STATE[r.state][0]}</Tag></div></>,
           },
           {
-            title: "Company link", key: "company",
-            render: (_, r) => r.company_on ? <Text className="identity">{r.company_hint}</Text> : <Text type="secondary">None</Text>,
-          },
-          {
-            title: "", key: "acts", align: "right",
-            render: (_, r) => r.company_on || r.scope === "team" ? (
-              <Space direction="vertical" size={6}>
-                {r.scope === "team" && r.company_on && <Button size="small" icon={<Copy size={14} />} onClick={() => link(r, "copy")}>Copy</Button>}
-                {r.scope === "team" && company.on && <Button size="small" icon={<RotateCcw size={14} />} onClick={() => link(r, "replace")}>{r.company_on ? "Replace" : "Make a link"}</Button>}
-                {r.company_on && <Button size="small" danger icon={<Ban size={14} />} onClick={() => link(r, "off")}>Turn off</Button>}
-              </Space>
-            ) : null,
+            title: "Company link", key: "company", align: "right",
+            render: (_, r) => {
+              const more = [
+                ...(r.scope === "team" ? [{ key: "replace", label: "Replace link" }] : []),
+                { key: "off", label: "Turn off link", danger: true },
+              ];
+              if (!r.company_on) {
+                // Only for a report whose workflow shares it, after someone turned its link off.
+                return r.scope === "team" && company.on && r.audience === "domain"
+                  ? <Button size="small" onClick={() => link(r, "replace")}>Make a link</Button>
+                  : <Text type="secondary">Off</Text>;
+              }
+              return (
+                <Space size={6}>
+                  {r.scope === "team" ? <Button size="small" icon={<Copy size={14} />} onClick={() => link(r, "copy")}>Copy</Button> : <Tag>On</Tag>}
+                  <Dropdown trigger={["click"]} menu={{ items: more, onClick: ({ key }) => link(r, key as "replace" | "off") }}>
+                    <Button size="small" aria-label="More" icon={<MoreHorizontal size={14} />} />
+                  </Dropdown>
+                </Space>
+              );
+            },
           },
         ]}
       />

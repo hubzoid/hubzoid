@@ -191,6 +191,9 @@ hover, keyboard focus or tap. Review and confirm before changes are saved.
 | Manage access (`manage_access`) | Review/change access; a direct agent grant includes basic chat, but not restricted tools. Organization-wide admin rights alone do not grant chat |
 | See workflows and runs (`workflows_view`) | List this agent's workflows and recent runs from chat or an assistant ([workflows.md](workflows.md#from-chat-and-assistants)) |
 | Run and control workflows (`workflows_manage`, sensitive) | Start, pause, resume and cancel this agent's workflows from chat or an assistant. Runs act as the workflow's own account |
+| Schedule reports for themselves (`schedule_reports`) | Save personal schedules of the reports they can run, from chat ([workflows.md](workflows.md#reports-people-run-and-schedule-in-chat-13)) |
+| Share reports with the company domain (`share_domain_links`, sensitive) | Give a report a company link anyone at the share domains can open after signing in ([reports-and-email.md](reports-and-email.md#company-links)) |
+| Run *report* (`wf_<workflow>`) | One per workflow offered in chat (`as_tool=True`): run it for themselves, as themselves |
 | Manage access from chat (`access_tools`, sensitive, admins only) | Use the access tools below in this agent's chat. Has an effect only for people who manage access |
 
 An organization administrator manages access across the deployment. That is not
@@ -356,7 +359,7 @@ do, in groups. Empty groups are hidden.
 | Connectors | One row per connector this agent offers (`connector_<id>`): **Connect <name>** for a connector each person signs in to, **Use <name>** for a Shared key connector |
 | Workflows | Workflow-only capabilities (none today; the workflow tools live under Hubzoid tools) |
 | Administration | Manage access (`manage_access`): change access to this agent and create chat accounts for it, within your own access |
-| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`). Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`) and **Access control** (`access_tools`) |
+| Hubzoid tools | Built-in tools that register a capability, such as Save shared knowledge (`curator`). Sections inside it: **Workflows** (`workflows_view`, `workflows_manage`, `schedule_reports`, `share_domain_links` and one `wf_<workflow>` per report) and **Access control** (`access_tools`) |
 | No longer available | A grant whose capability no longer exists. Remove it; it can't be granted again |
 
 Availability and permission are separate. A short status next to a capability

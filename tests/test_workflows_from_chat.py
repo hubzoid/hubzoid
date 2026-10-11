@@ -178,14 +178,21 @@ def _save(hub, actor=MEERA, cadence="every monday at 09:00", program="Bhava"):
 
 
 def test_saving_takes_two_calls_and_the_first_run_starts(hub, engine):
-    proposal = personal.propose_create(hub, "irs", MEERA, workflow="program_report",
-                                       inputs={"program": "Bhava", "period": "month"},
-                                       cadence="every monday at 09:00", timezone_name="Asia/Kolkata")
+    from hubzoid._request_ctx import chat_scope
+
+    ask = dict(workflow="program_report", inputs={"program": "Bhava", "period": "month"},
+               cadence="every monday at 09:00", timezone_name="Asia/Kolkata")
+    with chat_scope("c1"):                                              # the turn that asks
+        proposal = personal.propose_create(hub, "irs", MEERA, **ask)
+        with pytest.raises(personal.ScheduleError, match="next message"):
+            personal.confirm(hub, "irs", MEERA, proposal["code"])       # the model can't say yes
     assert proposal["text"].startswith("Not saved yet. Mondays at 09:00 (Asia/Kolkata)")
     assert personal.for_owner(hub, "irs", MEERA) == []                  # nothing stored yet
     with pytest.raises(personal.ScheduleError, match="doesn't match"):
         personal.confirm(hub, "irs", RAVI, proposal["code"])            # someone else's code
-    saved = personal.confirm(hub, "irs", MEERA, proposal["code"])
+    with chat_scope("c1"):                                              # the person's yes
+        assert personal.propose_create(hub, "irs", MEERA, **ask)["code"] == proposal["code"]
+        saved = personal.confirm(hub, "irs", MEERA, proposal["code"])
     assert saved["schedule"].state == "testing" and saved["run_id"] == f"ps-{saved['schedule'].id}-first"
     with pytest.raises(personal.ScheduleError, match="doesn't match|already used"):
         personal.confirm(hub, "irs", MEERA, proposal["code"])           # used once
@@ -334,6 +341,14 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
                                        body="")["status"] == "refused"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
                                        body="y" * 2001)["status"] == "refused"
+
+    from hubzoid import hub as run
+    from hubzoid.workflows.testing import run_local
+
+    def leads_note():
+        return run.send_email("Weekly", email_list="leads", raise_on_failure=False)["status"]
+    assert run_local(leads_note, hub_dir=hub, trigger="schedule").result == "previewed"
+    assert run_local(leads_note, hub_dir=hub, as_user=MEERA).result == "refused"   # not from a personal run
 
 
 def test_github_webhooks_check_the_body_signature(monkeypatch):

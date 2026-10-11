@@ -313,6 +313,8 @@ class Hub:
         this agent), `audience="people"` with `share_with=["a@x.com"]`, or
         `audience="domain"` (anyone at the company's allowed domains who has the
         series' company link, returned as "share_url") shares it explicitly.
+        A personal run's copy stays private to its person whatever the audience;
+        they share it from the viewer.
         Public links are never made here: the owner creates them in the viewer,
         with permission. Checkpointed as a step."""
         ctx = _ctx()
@@ -343,8 +345,9 @@ class Hub:
 
     def send_email(self, subject: str, body: str = "", *, artifacts=(),
                    email_list: str | None = None, raise_on_failure: bool = True) -> dict:
-        """Email the run's own account (there is no other recipient) with
-        optional links to artifacts it published. Returns the delivery result;
+        """Email the run's own account with optional links to artifacts it
+        published. `email_list="leads"` instead emails each address of that list
+        in workflows/settings.yaml, from a team run only. Returns the delivery result;
         by default raises `EmailError` unless the SMTP server accepted it or it
         was written to the preview outbox. Checkpointed as a step: a recovered
         run never sends an accepted message twice, and an interrupted send is
@@ -354,6 +357,12 @@ class Hub:
         ctx = _ctx()
         ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
         request = {"subject": subject, "body": body, "artifacts": ids}
+        if email_list and ctx.run.get("scope") == "personal":
+            result = dict(status="refused", sent=False, delivery_id=None, recipient=None,
+                          message="Email lists are for team runs. A run for one person emails only them.")
+            if raise_on_failure:
+                raise EmailError(result)
+            return result
         if email_list:
             request["email_list"] = str(email_list)
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,

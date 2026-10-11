@@ -18,6 +18,7 @@ asyncio task.
 """
 from __future__ import annotations
 
+import secrets
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -66,6 +67,15 @@ _current_failure: ContextVar[dict | None] = ContextVar("hubzoid_run_failure", de
 _current_tool_results: ContextVar[dict | None] = ContextVar("hubzoid_tool_results", default=None)
 
 RESULT_KEEP_CHARS = 2000
+
+# One id per chat request (one turn of the conversation), so a tool can tell a
+# yes the person typed in a later message from a call the model made in the
+# same turn. None outside a chat request (MCP calls, CLI, tests).
+_current_turn: ContextVar[str | None] = ContextVar("hubzoid_turn", default=None)
+
+
+def get_turn_id() -> str | None:
+    return _current_turn.get()
 
 
 # Set by the scheduled runner after resolving the account and its scratch path.
@@ -284,6 +294,7 @@ def chat_scope(chat_id: str | None) -> Iterator[None]:
     """Set the chat id (and fresh artifact, usage and failure registries) for a
     `with` block."""
     token = _current_chat_id.set(chat_id)
+    turn_token = _current_turn.set(secrets.token_hex(8))
     art_token = _current_artifacts.set([])
     usage_token = _current_usage.set({})
     failure_token = _current_failure.set({})
@@ -291,6 +302,7 @@ def chat_scope(chat_id: str | None) -> Iterator[None]:
         yield
     finally:
         _current_chat_id.reset(token)
+        _current_turn.reset(turn_token)
         _current_artifacts.reset(art_token)
         _current_usage.reset(usage_token)
         _current_failure.reset(failure_token)

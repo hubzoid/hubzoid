@@ -10,7 +10,7 @@ Every publish records a touch, even when nothing changed. After a declared
 schedule run (or a personal schedule run) finishes, series it no longer
 touched read "No longer updating", so an event page that closed says so
 without any close call. A failed scheduled run marks its series "not updated
-since"; the last good copy stays.
+since"; the newest copy stays.
 
 A series may have a company link (`/portal/r/<token>`): an unguessable token stored as
 a hash, plus the token encrypted so an admin can copy it again. Replacing it
@@ -63,6 +63,7 @@ class Series:
     domain_on: int
     domain_by: str | None
     domain_changed: float | None
+    update_requested: float | None
     created: float
 
     @property
@@ -179,17 +180,22 @@ def claim(hub_dir, *, hub: str, workflow: str, scope: str, owner: str, key: str,
                      t=(title or key)[:300], now=time.time()))
     except IntegrityError:
         pass  # another publish created it first
-    return _one(hub_dir, where, params)
+    found = _one(hub_dir, where, params)
+    if found is None:   # another workflow took the key at the same moment
+        raise ArtifactError(409, f"Key {key} belongs to another workflow. Use another key.")
+    return found
 
 
-def touch(hub_dir, series: Series, *, run_id: str | None, inputs, schedule_id: str | None) -> None:
+def touch(hub_dir, series: Series, *, run_id: str | None, inputs, schedule_id: str | None,
+          audience: str | None = None) -> None:
     """A publish that stored nothing new still counts: this run kept the
     series current."""
     with _engine(hub_dir).begin() as c:
         c.execute(text("UPDATE hz_report_series SET last_run=:r, last_touch=:t, live=1, "
-                       "last_inputs=:i, schedule_id=COALESCE(:sid, schedule_id) WHERE id=:id"),
+                       "last_inputs=:i, schedule_id=COALESCE(:sid, schedule_id), "
+                       "audience=COALESCE(:au, audience) WHERE id=:id"),
                   {"r": run_id, "t": time.time(), "i": json.dumps(inputs) if inputs is not None else None,
-                   "sid": schedule_id, "id": series.id})
+                   "sid": schedule_id, "au": audience, "id": series.id})
 
 
 def record_copy(hub_dir, series: Series, *, artifact_id: str, sha: str, digest: str | None,
@@ -302,6 +308,41 @@ def domain_on(hub_dir, series: Series, actor: str) -> str:
     """The company link, turned on if it was off. Turning a link back on gives
     a new one, so people who had the old link don't get access back."""
     return domain_token(hub_dir, series) or _new_token(hub_dir, series, actor)
+
+
+#: The actor recorded when a team run's code turns its company link on or off.
+BY_WORKFLOW = "workflow"
+
+
+def follow_code(hub_dir, series: Series, wants_link: bool) -> None:
+    """A team run says whether its report has a company link. The code turns
+    the link on and off, except that a link a person turned off stays off
+    until someone makes a new one in the Console."""
+    token = domain_token(hub_dir, series)
+    if wants_link and not token and series.domain_by in (None, BY_WORKFLOW):
+        _new_token(hub_dir, series, BY_WORKFLOW)
+    elif not wants_link and token:
+        domain_off(hub_dir, series, BY_WORKFLOW)
+
+
+def reserve_update(hub_dir, series: Series, now: float | None = None) -> bool:
+    """Take this series' Update now slot: at most one every UPDATE_COOLDOWN
+    seconds, counted from the last copy or the last request."""
+    now = now or time.time()
+    edge = now - UPDATE_COOLDOWN
+    with _engine(hub_dir).begin() as c:
+        done = c.execute(text(
+            "UPDATE hz_report_series SET update_requested=:t WHERE id=:id "
+            "AND (update_requested IS NULL OR update_requested<:e) AND (last_touch IS NULL OR last_touch<:e)"),
+            {"t": now, "e": edge, "id": series.id})
+    return done.rowcount == 1
+
+
+def update_wait(series: Series, now: float | None = None) -> int:
+    """Seconds until Update now may run again (0 when it may)."""
+    now = now or time.time()
+    last = max(series.last_touch or 0, series.update_requested or 0)
+    return max(0, int(UPDATE_COOLDOWN - (now - last))) if last else 0
 
 
 def domain_replace(hub_dir, series: Series, actor: str) -> str:

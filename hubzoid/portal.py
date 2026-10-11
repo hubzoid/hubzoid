@@ -708,10 +708,22 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             except control.ControlError as exc:
                 raise HTTPException(409, exc.message)
             return {"run_id": out["run_id"], "already_running": out["already_running"]}
+        from .workflows import observe
+        from .workflows.runtime import input_schemas
+
+        # The engine runs in another process: the same hold and one-run-at-a-time
+        # rules as a start on the engine's own process.
+        if gs.schedule_hold():
+            raise HTTPException(409, "New runs are on hold while a backup runs. Try again in a few minutes.")
+        name = payload.workflow.replace("-", "_")
+        active = observe.runs(path, name=name, statuses=["PENDING", "ENQUEUED", "DELAYED"], limit=1)
+        if active:
+            return {"run_id": active[0]["id"], "already_running": True}
+        shown = inputs_lib.display_with_schema(
+            input_schemas(path, normalize(payload.hub)).get(name), payload.inputs or None)
         envelope = {"trigger": "operator", "scope": "team", "started_by": admin.subject,
-                    "inputs": payload.inputs or None,
-                    "inputs_display": inputs_lib.display(None, payload.inputs or None)}
-        live = client.enqueue_live(path, payload.workflow.replace("-", "_"), envelope=envelope)
+                    "inputs": payload.inputs or None, "inputs_display": shown}
+        live = client.enqueue_live(path, name, envelope=envelope)
         if live is None:
             raise HTTPException(409, "The workflow engine for this agent isn't running.")
         run_id = live.get_workflow_id()
@@ -777,7 +789,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         from .workflows.runtime import title_for
 
         path = Path(require_hub(admin, hub))
-        on, why = domains.status()
+        on, why = domains.status_for(path, normalize(hub))
         rows = []
         for s in series_lib.for_hub(path, normalize(hub)):
             state = series_lib.state(path, s)
@@ -786,8 +798,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 id=s.id, title=s.title or s.key, key=s.key, workflow=s.workflow,
                 report=title_for(s.workflow), scope=s.scope, owner=s.owner or None,
                 updated=s.updated_at, state=state["state"], next=state["next"],
-                audience=s.audience, company_on=bool(token),
-                company_hint=(f"/portal/r/{token[:4]}…{token[-3:]}" if token else None)))
+                audience=s.audience, company_on=bool(token)))
         return {"reports": rows, "company": {"on": on, "reason": why, "domains": domains.label()}}
 
     @router.post("/reports/{series_id}/company")
@@ -818,7 +829,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 raise HTTPException(409, "This report has no company link. The workflow turns it on.")
             result = {"ok": True, "on": True, "url": series_lib.share_url(path, token)}
         else:
-            on, why = domains.status()
+            on, why = domains.status_for(path, found.hub)
             if not on:
                 raise HTTPException(409, why)
             token = series_lib.domain_replace(path, found, admin.subject)

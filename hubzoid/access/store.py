@@ -388,6 +388,30 @@ class GrantStore:
         with self._engine.begin() as conn:
             self._meta_set(conn, "reader_only:" + subject, "1" if reader else "0")
 
+    def everyone_can_use(self, hub: str) -> bool:
+        """Whether an "everyone signed in" grant (from before 1.1) opens `hub`."""
+        with self._engine.connect() as conn:
+            return conn.execute(
+                text("SELECT 1 FROM hz_grants WHERE subject=:e AND permission=:u "
+                     "AND (hub=:h OR hub='*') LIMIT 1"),
+                {"e": EVERYONE, "u": USE_HUB, "h": normalize(hub)}).fetchone() is not None
+
+    def mark_reader_if_new(self, subject: str, *, within: float = 900) -> bool:
+        """Mark `subject` reader-only when a company link brought them in: no
+        grant of their own and an account made in the last `within` seconds (or
+        none yet). Anyone older or holding a grant keeps what they had."""
+        subject = normalize(subject)
+        with self._engine.connect() as conn:
+            if conn.execute(text("SELECT 1 FROM hz_grants WHERE subject=:s LIMIT 1"),
+                            {"s": subject}).fetchone() is not None:
+                return False
+            row = conn.execute(text("SELECT created FROM hz_identities WHERE subject=:s"),
+                               {"s": subject}).fetchone()
+        if row is not None and (row[0] or 0) < time.time() - within:
+            return False
+        self.set_reader(subject)
+        return True
+
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
         org-wide + wildcard-subject). Used by the portal and

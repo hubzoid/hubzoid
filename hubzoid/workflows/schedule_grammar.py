@@ -157,11 +157,29 @@ def describe(schedule: str) -> str:
 
 
 def shortest_gap(schedule: str, tz: str | None = None) -> float:
-    """The shortest time in seconds between two consecutive fires, sampled over
-    a few weeks: what a minimum-interval rule compares against."""
-    cursor = datetime(2026, 1, 5, tzinfo=_tz.utc)
-    times = []
-    for _ in range(60):
-        cursor = next_after(schedule, tz, cursor)
-        times.append(cursor.astimezone(_tz.utc))
-    return min((b - a).total_seconds() for a, b in zip(times, times[1:]))
+    """The shortest time in seconds between two consecutive fires: what a
+    minimum-interval rule compares against. Sampled over a few weeks, and
+    across each daylight saving change of `tz`, where a day can be 23 hours."""
+    starts = [datetime(2026, 1, 5, tzinfo=_tz.utc)]
+    try:
+        zone = ZoneInfo(tz) if tz else None
+    except Exception:  # noqa: BLE001 — next_after reports a bad zone
+        zone = None
+    if zone is not None:
+        day = datetime(2026, 1, 1, 12, tzinfo=_tz.utc)
+        for _ in range(366):
+            following = day + timedelta(days=1)
+            if day.astimezone(zone).utcoffset() != following.astimezone(zone).utcoffset():
+                starts.append(day - timedelta(days=35))
+            day = following
+    gaps = []
+    for cursor in starts:
+        end = cursor + timedelta(days=70)
+        times = []
+        for _ in range(60):
+            cursor = next_after(schedule, tz, cursor)
+            times.append(cursor.astimezone(_tz.utc))
+            if cursor > end and len(times) > 1:
+                break
+        gaps += [(b - a).total_seconds() for a, b in zip(times, times[1:])]
+    return min(gaps)

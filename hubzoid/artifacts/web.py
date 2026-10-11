@@ -32,7 +32,6 @@ import logging
 import os
 import re
 import secrets
-import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -344,17 +343,17 @@ def build_router(hub_dir) -> APIRouter:
         info = dict(id=found.id, scope=found.scope, title=found.title or found.key, **state)
         if not reader and subject:
             info["can_update"] = can_update(found, subject)
-            wait = series_lib.UPDATE_COOLDOWN - (time.time() - (found.last_touch or 0))
-            info["update_wait"] = max(0, int(wait)) if found.last_touch else 0
+            info["update_wait"] = series_lib.update_wait(found)
         if not reader and subject and not found.team and subject == found.owner:
             token = series_lib.domain_token(hub_dir, found)
             from ..access import store_for
 
+            available, reason = domains.status_for(hub_dir, found.hub)
             info["company"] = dict(
-                available=domains.enabled(), domains=domains.label(),
+                available=available, domains=domains.label(),
                 allowed=bool(store_for(hub_dir).can(subject, found.hub, arts.SHARE_DOMAIN.permission)),
                 on=bool(token), url=series_lib.share_url(hub_dir, token) if token else None,
-                reason=domains.status()[1])
+                reason=reason)
         return info
 
     @router.get("/portal/series/api/{series_id}")
@@ -378,11 +377,10 @@ def build_router(hub_dir) -> APIRouter:
         if not can_update(found, subject):
             raise HTTPException(403, "Only the report's owner, or someone who runs this agent's "
                                      "workflows, can update it.")
-        wait = series_lib.UPDATE_COOLDOWN - (time.time() - (found.last_touch or 0))
-        if found.last_touch and wait > 0:
-            minutes = max(1, int((time.time() - found.last_touch) // 60))
-            raise HTTPException(429, f"Updated {minutes} minute{'s' if minutes != 1 else ''} ago. You "
-                                     f"can update again in {max(1, int(wait // 60) + 1)} minutes.")
+        if not series_lib.reserve_update(hub_dir, found):   # one at a time, whoever asks
+            minutes = max(1, -(-series_lib.update_wait(series_lib.get(hub_dir, found.id) or found) // 60))
+            raise HTTPException(429, f"It was updated just now. You can update again in {minutes} "
+                                     f"minute{'s' if minutes != 1 else ''}.")
         try:
             run_id = _start_update(hub_dir, found, subject)
         except _UpdateRefused as exc:
@@ -403,7 +401,7 @@ def build_router(hub_dir) -> APIRouter:
         if payload.action == "off":
             series_lib.domain_off(hub_dir, found, subject)
             return {"ok": True, "on": False}
-        on, why = domains.status()
+        on, why = domains.status_for(hub_dir, found.hub)
         if not on:
             raise HTTPException(409, why)
         if not store_for(hub_dir).can(subject, found.hub, arts.SHARE_DOMAIN.permission):
@@ -432,13 +430,15 @@ def build_router(hub_dir) -> APIRouter:
             raise HTTPException(404, _REPORT_GONE)
         if arts.role(hub_dir, art, subject) is not None:
             return found, art, subject, False
-        if not domains.email_allowed(subject):
+        if not domains.email_allowed(subject) or not domains.status_for(hub_dir, found.hub)[0]:
             raise HTTPException(404, _REPORT_GONE)
         if not found.team and not arts._owner_current(hub_dir, art):
             raise HTTPException(404, _REPORT_GONE)
         gs = store_for(hub_dir)
-        if not gs.permissions_for(subject, found.hub) and not gs.is_reader(subject):
-            gs.set_reader(subject)
+        if not gs.can(art.owner, found.hub, arts.SHARE_DOMAIN.permission):   # sharing taken away
+            raise HTTPException(404, _REPORT_GONE)
+        if not gs.is_reader(subject):
+            gs.mark_reader_if_new(subject)
         return found, art, subject, True
 
     @router.get("/portal/r/{token}")
@@ -527,10 +527,15 @@ def build_router(hub_dir) -> APIRouter:
         return sched
 
     def _schedule_view(sched) -> dict:
+        from ..workflows import inputs as inputs_lib
         from ..workflows import personal
-        from ..workflows.runtime import title_for
+        from ..workflows.runtime import definition, title_for
 
+        wf = definition(hub_dir, sched.workflow)
+        made = [s for s in series_lib.for_owner(hub_dir, sched.hub, sched.owner) if s.schedule_id == sched.id]
         return {"name": sched.name, "report": title_for(sched.workflow),
+                "inputs": inputs_lib.display(getattr(wf, "inputs", None), sched.values),
+                "link": series_lib.latest_path(made[0]) if len(made) == 1 else None,
                 "when": f"{personal.cadence_words(sched)} ({sched.timezone})",
                 "state": personal.state_words(sched), "paused": sched.state == "paused",
                 "stopped": sched.state == "stopped", "last": personal.last_words(sched),

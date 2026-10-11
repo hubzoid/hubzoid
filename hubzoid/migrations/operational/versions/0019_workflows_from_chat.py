@@ -49,10 +49,13 @@ def upgrade() -> None:
         sa.Column("domain_on", sa.Integer, nullable=False, server_default="0"),
         sa.Column("domain_by", sa.String(320)),
         sa.Column("domain_changed", sa.Float),
+        sa.Column("update_requested", sa.Float),
         sa.Column("created", sa.Float, nullable=False),
     )
+    # One link per key: the agent's (owner '') or one person's. The workflow is
+    # not part of it, so two workflows can never share a link.
     op.create_index("hz_report_series_unique", "hz_report_series",
-                    ["hub", "workflow", "scope", "owner", "key"], unique=True)
+                    ["hub", "scope", "owner", "key"], unique=True)
     op.create_index("hz_report_series_key", "hz_report_series", ["hub", "key"])
     op.create_index("hz_report_series_domain", "hz_report_series", ["domain_hash"], unique=True)
     with op.batch_alter_table("hz_artifacts") as batch:

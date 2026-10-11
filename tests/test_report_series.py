@@ -109,8 +109,17 @@ def test_domain_publish_needs_company_sign_in_and_the_grant(hub, tmp_path, monke
     newer = series.domain_replace(hub, found, "admin@co.org")
     assert series.for_token(hub, token) is None and series.for_token(hub, newer) is not None
     series.domain_off(hub, series.get(hub, found.id), "admin@co.org")
+    _publish(hub, tmp_path, run="r8", body="<h1>8</h1>", audience="domain")
+    assert series.domain_token(hub, series.get(hub, found.id)) is None   # an admin's "off" sticks
     revived = series.domain_on(hub, series.get(hub, found.id), "admin@co.org")
     assert revived != newer                                              # never the old link back
+    _publish(hub, tmp_path, run="r9", body="<h1>8</h1>", audience="hub")
+    assert series.domain_token(hub, series.get(hub, found.id)) is None   # the code took it away
+    from sqlalchemy import text
+    with store_for(hub)._engine.begin() as c:   # an "everyone signed in" grant from an older deployment
+        c.execute(text("INSERT INTO hz_grants (subject, hub, permission, created) VALUES ('*', 'irs', 'use_hub', 0)"))
+    with pytest.raises(arts.ArtifactError, match="everyone signed in"):
+        _publish(hub, tmp_path, run="r10", audience="domain")
 
 
 # ---- the viewer and company links ----------------------------------------------------------
@@ -185,6 +194,9 @@ def test_company_links_admit_only_the_company_domain_with_one_refusal_page(hub, 
     assert _as(web, READER).get(meta["content_url"]).status_code == 200
     assert gs.is_reader(READER)
     assert _as(web, READER).get(f"/portal/latest/irs/program-bhava").status_code == 404  # no agent access
+    gs.revoke(TEAM_ACCT, "irs", "share_domain_links", actor="admin")
+    assert _as(web, READER).get(f"/portal/r/{token}/api").status_code == 404      # sharing taken away
+    gs.grant(TEAM_ACCT, "irs", "share_domain_links", actor="admin")
     series.domain_off(hub, series.get(hub, out["series_id"]), "admin@co.org")
     assert _as(web, READER).get(f"/portal/r/{token}/api").status_code == 404
 
@@ -193,12 +205,15 @@ def test_readers_never_inherit_everyone_grants(hub):
     from sqlalchemy import text
 
     gs = store_for(hub)
+    gs.upsert_identity(email=OUTSIDER, owui_id="id-" + OUTSIDER)
     with gs._engine.begin() as c:   # an "everyone signed in" grant from an older deployment
         c.execute(text("INSERT INTO hz_grants (subject, hub, permission, created) VALUES ('*', 'irs', 'use_hub', 0)"))
+        c.execute(text("UPDATE hz_identities SET created=0 WHERE subject=:s"), {"s": OUTSIDER})
     gs._rev = None
     gs.upsert_identity(email=READER, owui_id="id-" + READER)
     assert gs.can(READER, "irs", "use_hub")
-    gs.set_reader(READER)
+    assert not gs.mark_reader_if_new(SAM) and not gs.mark_reader_if_new(OUTSIDER)   # a grant; an older account
+    assert gs.mark_reader_if_new(READER)
     assert not gs.can(READER, "irs", "use_hub") and "use_hub" not in gs.permissions_for(READER, "irs")
     gs.grant(READER, "irs", "use_hub", actor="admin")
     assert gs.can(READER, "irs", "use_hub")                              # a named grant still works

@@ -49,6 +49,21 @@ def status(env: Mapping[str, str] | None = None) -> tuple[bool, str]:
     return True, ""
 
 
+def status_for(hub_dir, hub: str, env: Mapping[str, str] | None = None) -> tuple[bool, str]:
+    """`status` for one agent. An agent that an older "everyone signed in"
+    grant opens can't have company links: with sign-up on, every reader would
+    get the agent too."""
+    on, why = status(env)
+    if not on:
+        return on, why
+    from ..access import store_for
+
+    if store_for(hub_dir).everyone_can_use(hub):
+        return False, ("Company links are off for this agent: everyone signed in can use it. "
+                       "Give people access by name in the Console first.")
+    return True, ""
+
+
 def enabled(env: Mapping[str, str] | None = None) -> bool:
     return status(env)[0]
 

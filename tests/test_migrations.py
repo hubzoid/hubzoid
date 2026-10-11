@@ -23,7 +23,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_users", "hz_user_identities", "hz_sessions", "hz_auth_links", "hz_auth_attempts",
                "hz_conversations", "hz_messages", "hz_shares",
                "hz_connectors", "hz_connector_tokens", "hz_connector_flows", "hz_connector_agents",
-               "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts"}
+               "hz_workflow_owner", "hz_workflow_events", "hz_workflow_alerts",
+               # workflows from chat (op_0019): report series, personal schedules, proposals
+               "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals"}
 
 
 @pytest.fixture(autouse=True)

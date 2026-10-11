@@ -90,3 +90,4 @@ def test_schedules_read_as_short_words():
     assert describe("daily at 6pm") == "Daily at 18:00"
     assert describe("every 15 minutes") == "Every 15 minutes"
     assert shortest_gap("every 2 hours") == 7200
+    assert shortest_gap("daily at 09:00", "Europe/Berlin") == 23 * 3600   # the spring clock change

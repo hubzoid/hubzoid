@@ -222,13 +222,14 @@ def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact
 
 
 def latest(hub_dir, hub: str, key: str) -> Artifact | None:
-    """The newest artifact published in `hub` with latest key `key`, or None.
-    Who may open it is still `role`'s decision."""
+    """The newest artifact published in `hub` with latest key `key` before
+    report series (1.2 and earlier), or None. Who may open it is still `role`'s
+    decision; a series copy is served through its series."""
     if not HUB_RE.match(hub or "") or not KEY_RE.match(key or ""):
         return None
     with _engine(hub_dir).connect() as c:
         r = c.execute(text(f"SELECT {_COLS} FROM hz_artifacts WHERE hub=:h AND latest_key=:k "
-                           "AND deleted IS NULL ORDER BY created DESC, id DESC LIMIT 1"),
+                           "AND series_id IS NULL AND deleted IS NULL ORDER BY created DESC, id DESC LIMIT 1"),
                       {"h": hub, "k": key}).fetchone()
     return _row(r) if r is not None else None
 
@@ -369,11 +370,13 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     scope = series.get("scope") or series_lib.TEAM
     if scope not in (series_lib.TEAM, series_lib.PERSONAL):
         raise ArtifactError(400, "Unknown report scope.")
+    if scope == series_lib.PERSONAL:   # a person's own copy: they share it from the viewer
+        audience, share_with = "owner", ()
     if audience not in ("owner", "people", "hub", "domain"):
         raise ArtifactError(400, "A workflow can publish to 'owner', 'people', 'hub' or 'domain'. "
                                  "Public links are created by the owner in the viewer.")
     if audience == "domain":
-        on, why = domains.status()
+        on, why = domains.status_for(hub_dir, hub)
         if not on:
             raise ArtifactError(409, why)
         if not _store(hub_dir).can(owner, hub, SHARE_DOMAIN.permission):
@@ -383,6 +386,8 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
         raise ArtifactError(400, "digest must be a short string, such as a hash of the data.")
     found = series_lib.claim(hub_dir, hub=hub, workflow=workflow, scope=scope, owner=owner,
                              key=key, title=title)
+    if scope == series_lib.TEAM:   # the code decides whether a team report has a company link
+        series_lib.follow_code(hub_dir, found, audience == "domain")
     inputs = series.get("inputs")
     schedule_id = series.get("schedule_id")
     sha = _file_sha(source)
@@ -390,7 +395,8 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     same = last is not None and ((digest is not None and digest == found.last_digest)
                                  or (digest is None and sha == found.last_sha))
     if same:
-        series_lib.touch(hub_dir, found, run_id=run_id, inputs=inputs, schedule_id=schedule_id)
+        series_lib.touch(hub_dir, found, run_id=run_id, inputs=inputs, schedule_id=schedule_id,
+                         audience=audience)
         return dict(_summary(last, hub_dir), unchanged=True)
     art = _store_copy(hub_dir, hub=hub, owner=owner, owner_account=owner_account, source=source,
                       title=title, workflow=workflow, run_id=run_id, idem_key=idem_key, key=key,
@@ -402,8 +408,6 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     series_lib.record_copy(hub_dir, found, artifact_id=art.id, sha=art.sha256, digest=digest,
                            run_id=run_id, inputs=inputs, schedule_id=schedule_id, title=title,
                            audience=audience)
-    if audience == "domain":
-        series_lib.domain_on(hub_dir, series_lib.get(hub_dir, found.id), owner)
     keep = _series_keep(hub_dir)
     if keep:
         series_lib.prune(hub_dir, found, keep)

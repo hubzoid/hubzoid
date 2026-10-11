@@ -1,8 +1,26 @@
 # Upgrading
 
+- [Upgrading to 1.3: workflows from chat](#upgrading-to-13-workflows-from-chat)
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Upgrading to 1.3: workflows from chat
+
+Nothing to change. Everything new is off until a workflow opts in
+(`inputs=`, `as_tool=`, `schedulable=`, `key=` with `audience="domain"`) and an
+admin grants the new capabilities. Three things reach every hub:
+
+- **New tables** for report series, personal schedules and proposals. They are
+  created on first start, like earlier migrations. Back up first as usual:
+  `hubzoid backup <hub> -o state.tar.gz`.
+- **Latest links.** `/portal/latest/<agent>/<key>` now serves the page and keeps
+  it current, instead of redirecting to one copy. Bookmarks keep working.
+- **Daylight saving.** A workflow scheduled at a fixed time in a zone with
+  daylight saving now runs at that wall-clock time on the changeover day.
+
+Company links need company sign-in and three settings; see
+[Company links](reports-and-email.md#company-links).
 
 ## Upgrading to 1.2.2: a gateway at more than one address
 
