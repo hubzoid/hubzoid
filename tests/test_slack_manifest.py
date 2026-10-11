@@ -256,4 +256,13 @@ def test_units_may_write_the_gateways_shared_store(tmp_path, monkeypatch):
     solo = tmp_path / "solo"
     solo.mkdir()
     assert f"ReadWritePaths={solo}\n" in inbound_unit(hub_dir=solo, python_path=Path("/p"))
+    # A store named only in the hub's own .env counts, as the service will
+    # load it; a relative path is the hub's (the unit's working directory),
+    # and a driver-qualified URL is still SQLite.
+    shared = tmp_path / "shared"
+    for url in (f"sqlite:///{shared / 'ops.db'}", "sqlite:///../shared/ops.db",
+                f"sqlite+pysqlite:///{shared / 'ops.db'}"):
+        (solo / ".env").write_text(f"HUBZOID_OPERATIONAL_DB={url}\n")
+        unit = inbound_unit(hub_dir=solo, python_path=Path("/p"))
+        assert f"ReadWritePaths={solo} {shared.resolve()}\n" in unit, url
 

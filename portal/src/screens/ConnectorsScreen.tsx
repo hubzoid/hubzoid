@@ -524,7 +524,7 @@ function ConnectorDrawer({
 
   function pick(entry: CatalogEntry | null) {
     setPreset(entry);
-    setDraft(entry ? { ...EMPTY, name: entry.name, id: entry.id, url: entry.url, auth: entry.auth, scopes: entry.scopes ?? "" } : EMPTY);
+    setDraft(entry ? { ...EMPTY, name: entry.name, id: entry.id, url: entry.url, auth: entry.auth, scopes: entry.scopes ?? "", tools: entry.tools ?? [] } : EMPTY);
     setTouched(false);
     setPicking(false);
   }
@@ -793,8 +793,8 @@ function ConnectorDrawer({
               </div>
               <Field
                 id="connector-client-id"
-                label="Client ID (optional)"
-                help="Leave empty when the provider lets Hubzoid register itself."
+                label={preset?.needsClient ? "Client ID" : "Client ID (optional)"}
+                help={preset?.needsClient ? "From the OAuth app above." : "Leave empty when the provider lets Hubzoid register itself."}
               >
                 <Input
                   id="connector-client-id"
@@ -896,7 +896,8 @@ function ConnectorDrawer({
 function CatalogPicker({ onPick }: { onPick: (entry: CatalogEntry | null) => void }) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  const shown = CATALOG.filter((e) => !q || `${e.name} ${e.about}`.toLowerCase().includes(q));
+  // The address too, so "google" finds Gmail and "jira" finds Atlassian.
+  const shown = CATALOG.filter((e) => !q || `${e.name} ${e.about} ${new URL(e.url).host}`.toLowerCase().includes(q));
   return (
     <div className="drawer-body">
       <Input

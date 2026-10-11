@@ -2182,7 +2182,12 @@ def slack_systemd(
 
     hub = hub.resolve()
     python_path = python or Path(sys.executable).resolve()
-    typer.echo(systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user))
+    try:
+        unit = systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user)
+    except ValueError as exc:  # the deployment and the hub disagree on the shared store
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from None
+    typer.echo(unit)
 
 
 inbound_app = typer.Typer(
@@ -2223,7 +2228,12 @@ def inbound_systemd(
 
     hub = hub.resolve()
     python_path = python or Path(sys.executable).resolve()
-    typer.echo(systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user))
+    try:
+        unit = systemd_unit_for_hub(hub_dir=hub, python_path=python_path, user=user)
+    except ValueError as exc:  # the deployment and the hub disagree on the shared store
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from None
+    typer.echo(unit)
 
 
 app.add_typer(

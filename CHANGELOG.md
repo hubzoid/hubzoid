@@ -12,8 +12,8 @@ if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
 
 ### Connectors
 - Gmail, Google Calendar, Drive, Docs and Sheets in **Add connector**, with
-  read-only scopes filled in. Google's servers are a Developer Preview and need
-  an OAuth client.
+  read-only scopes and the servers' read-only tools filled in. Google's servers
+  are a Developer Preview and need an OAuth client.
 - Google is asked for offline access, so a Google connection renews itself
   instead of ending after an hour.
 - Known servers show their logo in Add connector and in the list.
@@ -22,12 +22,13 @@ if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
 - **Delete connector** replaces "Remove from every agent".
 - A refused registration names the redirect URI, so it can be allowed at the
   provider.
-- Open WebUI's External Tool Servers section is hidden; saving there was
-  already refused.
+- Open WebUI's External Tool Servers section is hidden when Open WebUI is in
+  English; saving there was already refused in any language.
 
 ### Fixed
 - The units `hubzoid inbound systemd` and `hubzoid slack systemd` print may
-  write the gateway's data folder as well as the hub folder. They could write
+  write the shared database's folder as well as the hub folder (read with the
+  hub's own `.env`, as the service runs). They could write
   only the hub folder, so behind a gateway the WhatsApp service could not use
   the shared database: since 1.2 turned connection links on, it failed every
   few seconds and sent no connection confirmation or YES continuation, and

@@ -3,7 +3,8 @@
 // the server's address and how people sign in: everything else is discovered
 // by Test. Each was probed with Hubzoid's own discovery (the Google ones on
 // 2026-10-11, the rest on 2026-10-10); the administrator still tests before
-// offering it.
+// offering it. The Google tool lists are each server's read-only tools
+// (readOnlyHint in its tools/list) on 2026-10-11.
 
 export type CatalogEntry = {
   id: string;
@@ -15,6 +16,9 @@ export type CatalogEntry = {
   /** Prefilled scopes. Without them Hubzoid asks for every scope the server
    * lists, which for Google includes full access. */
   scopes?: string;
+  /** Prefilled allowed tools: the server's read-only ones, matching read-only
+   * scopes (a write tool would only fail for want of its scope). */
+  tools?: string[];
   /** What the provider needs before people connect, shown with the OAuth app note. */
   setup?: string;
   about: string;
@@ -36,16 +40,21 @@ export const CATALOG: CatalogEntry[] = [
   { id: "canva", name: "Canva", url: "https://mcp.canva.com/mcp", auth: "oauth", about: "Designs" },
   { id: "webflow", name: "Webflow", url: "https://mcp.webflow.com/mcp", auth: "oauth", about: "Sites and CMS" },
   { id: "gmail", name: "Gmail", url: "https://gmailmcp.googleapis.com/mcp/v1", auth: "oauth", needsClient: true,
-    scopes: `${G}gmail.readonly`, setup: googleSetup("Gmail MCP API"), about: "Read mail" },
+    scopes: `${G}gmail.readonly`, setup: googleSetup("Gmail MCP API"), about: "Read mail",
+    tools: ["search_threads", "get_thread", "get_message", "list_drafts", "get_draft", "list_labels"] },
   { id: "google_calendar", name: "Google Calendar", url: "https://calendarmcp.googleapis.com/mcp/v1", auth: "oauth", needsClient: true,
     scopes: `${G}calendar.calendarlist.readonly ${G}calendar.events.readonly ${G}calendar.events.freebusy`,
-    setup: googleSetup("Calendar MCP API"), about: "Read calendars and events" },
+    setup: googleSetup("Calendar MCP API"), about: "Read calendars and events",
+    tools: ["list_calendars", "list_events", "search_events", "get_event", "suggest_time"] },
   { id: "google_drive", name: "Google Drive", url: "https://drivemcp.googleapis.com/mcp/v1", auth: "oauth", needsClient: true,
-    scopes: `${G}drive.readonly`, setup: googleSetup("Drive MCP API"), about: "Read files" },
+    scopes: `${G}drive.readonly`, setup: googleSetup("Drive MCP API"), about: "Read files",
+    tools: ["search_files", "list_recent_files", "get_file_metadata", "get_file_permissions", "read_file_content", "download_file_content"] },
   { id: "google_docs", name: "Google Docs", url: "https://docsmcp.googleapis.com/mcp/v1", auth: "oauth", needsClient: true,
-    scopes: `${G}drive.readonly ${G}documents.readonly`, setup: googleSetup("Docs MCP API"), about: "Read documents" },
+    scopes: `${G}drive.readonly ${G}documents.readonly`, setup: googleSetup("Docs MCP API"), about: "Read documents",
+    tools: ["read_doc"] },
   { id: "google_sheets", name: "Google Sheets", url: "https://sheetsmcp.googleapis.com/mcp/v1", auth: "oauth", needsClient: true,
-    scopes: `${G}drive.readonly ${G}spreadsheets.readonly`, setup: googleSetup("Sheets MCP API"), about: "Read spreadsheets" },
+    scopes: `${G}drive.readonly ${G}spreadsheets.readonly`, setup: googleSetup("Sheets MCP API"), about: "Read spreadsheets",
+    tools: ["get_spreadsheet", "get_values"] },
   { id: "github", name: "GitHub", url: "https://api.githubcopilot.com/mcp/", auth: "oauth", needsClient: true, about: "Repositories and issues" },
   { id: "asana", name: "Asana", url: "https://mcp.asana.com/v2/mcp", auth: "oauth", needsClient: true, about: "Tasks and projects" },
   { id: "hubspot", name: "HubSpot", url: "https://mcp.hubspot.com", auth: "oauth", needsClient: true, about: "CRM records" },

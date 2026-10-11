@@ -189,10 +189,13 @@ const step = (name) => {
     await drawer().getByText("paste its client ID and client secret", { exact: false }).waitFor();
     // Google: read-only scopes come prefilled, or Hubzoid would ask for full access.
     await drawer().getByRole("button", { name: "All servers" }).click();
-    await drawer().getByLabel("Search servers").fill("gmail");
+    await drawer().getByLabel("Search servers").fill("google");
     await drawer().getByRole("button", { name: "Gmail: Needs an OAuth app" }).click();
     assert.equal(await drawer().getByLabel("Scopes (optional)").inputValue(), "https://www.googleapis.com/auth/gmail.readonly");
     await drawer().getByText("enable the Gmail MCP API", { exact: false }).waitFor();
+    // Its read-only tools come prefilled too: a write tool would fail without a write scope.
+    await drawer().getByText("search_threads", { exact: true }).waitFor();
+    assert.equal(await drawer().getByText("create_draft", { exact: true }).count(), 0);
     for (const section of ["Server", "Sign-in", "Tools"]) await drawer().getByRole("region", { name: section }).waitFor();
     await drawer().getByRole("button", { name: "All servers" }).click();
     await drawer().getByRole("button", { name: /Custom server/ }).click();

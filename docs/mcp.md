@@ -129,8 +129,9 @@ holds addresses only, checked with Hubzoid's discovery (2026-10-10, Google
 
 Google's Workspace MCP servers are a Google Developer Preview. Each needs its
 API enabled in Google Cloud and a Web application OAuth client. Their entries
-fill in read-only scopes: without scopes Hubzoid asks for every scope a server
-lists, which for Google includes full access. Hubzoid asks Google for offline
+fill in read-only scopes and, as allowed tools, the server's read-only tools:
+without scopes Hubzoid asks for every scope a server lists, which for Google
+includes full access, and a write tool would fail without its scope. Hubzoid asks Google for offline
 access, so a connection renews itself instead of ending after an hour.
 
 **Offer an existing connector** offers one another
@@ -285,7 +286,8 @@ connectors:
   bridge through the edge, with the same fallbacks as `/portal`. Open WebUI's
   own `/oauth/` routes are unchanged.
 - Open WebUI's External Tool Servers are not used. Their section of Open
-  WebUI's Settings > Integrations is hidden, and the edge refuses saves to them
+  WebUI's Settings > Integrations is hidden when Open WebUI is in English (in
+  other languages it still shows), and the edge refuses saves to them
   (and to their OAuth client registration) with a message that points to the
   Console. `OWUI_NATIVE_MCP` is ignored.
 - `hubzoid migrate openwebui` keeps each Open WebUI account id as the Hubzoid

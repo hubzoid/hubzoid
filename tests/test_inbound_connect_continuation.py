@@ -319,4 +319,22 @@ def test_a_service_that_cannot_write_the_shared_store_says_so_once(tmp_path, mon
     monkeypatch.setattr(run.os, "access", lambda *a, **k: True)
     assert run._connect_journeys(hub, {}, whatsapp=True) is True
     assert run._connect_journeys(hub, {"HUBZOID_CONNECT_JOURNEY": "false"}, whatsapp=True) is False
+    monkeypatch.undo()
+    for name in ("HUBZOID_DEPLOYMENT", "HUBZOID_OPERATIONAL_DB", "DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    # A writable folder is not enough when the store itself can't be written.
+    store = gw / "hubzoid-operational.db"
+    store.write_bytes(b"")
+    store.chmod(0o444)
+    try:
+        assert run._connect_journeys(hub, {}, whatsapp=True) is False
+    finally:
+        store.chmod(0o644)
+    assert run._connect_journeys(hub, {}, whatsapp=True) is True
+    # A store the deployment and the environment disagree on: off, said once.
+    caplog.clear()
+    with caplog.at_level("ERROR", logger="hubzoid.inbound"):
+        assert run._connect_journeys(hub, {"HUBZOID_OPERATIONAL_DB": "sqlite:////elsewhere/ops.db"},
+                                     whatsapp=True) is False
+    assert "connection follow-ups are off" in caplog.text
 

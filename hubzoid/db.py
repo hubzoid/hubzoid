@@ -53,32 +53,59 @@ def operational_url(hub_dir, env=None) -> str:
     return explicit or (env.get("DATABASE_URL") or "").strip() or resolve_url(hub_dir, env)
 
 
-def shared_store_dir(hub_dir, env=None) -> "Path | None":
-    """The folder holding the shared operational store, when it is a SQLite
-    file outside the hub folder (a gateway's data folder). None otherwise.
+def shared_store_dir(hub_dir, env=None, *, cwd=None) -> "Path | None":
+    """The folder of ``shared_store_file``, or None."""
+    path = shared_store_file(hub_dir, env, cwd=cwd)
+    return path.parent if path is not None else None
+
+
+def shared_store_file(hub_dir, env=None, *, cwd=None) -> "Path | None":
+    """The shared operational store's file, when it is a SQLite file outside
+    the hub folder (in a gateway's data folder). None otherwise.
 
     A process that uses the store must be able to write there: SQLite keeps
-    its journal next to the file, and Hubzoid its migration lock."""
+    its journal next to the file, and Hubzoid its migration lock. The URL is
+    ``operational_url``'s, so a manifest that disagrees with
+    ``HUBZOID_OPERATIONAL_DB`` raises ValueError here too. A relative SQLite
+    path is taken from ``cwd`` (the process's working directory by default)."""
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    from .deployment import manifest_path
+
     env = env if env is not None else os.environ
-    from .deployment import read
-    try:  # operational_url's order, without creating the hub's own database
-        url = (read(Path(hub_dir), env).get("operational_url")
-               or (env.get("HUBZOID_OPERATIONAL_DB") or "").strip()
-               or (env.get("DATABASE_URL") or "").strip())
-    except (OSError, ValueError, KeyError):
+    configured = (manifest_path(Path(hub_dir), env)
+                  or (env.get("HUBZOID_OPERATIONAL_DB") or "").strip()
+                  or (env.get("DATABASE_URL") or "").strip())
+    if not configured:
+        return None  # the hub's own database, inside the hub
+    try:
+        url = make_url(sqlalchemy_url(operational_url(hub_dir, env)))
+    except (OSError, KeyError, ArgumentError):
         return None
-    if not url.startswith("sqlite:///"):
+    if url.get_backend_name() != "sqlite" or url.database in (None, "", ":memory:"):
         return None
-    folder = Path(url[len("sqlite:///"):]).resolve().parent
-    if folder.is_relative_to(Path(hub_dir).resolve()):
+    path = Path(url.database)
+    if not path.is_absolute():
+        path = Path(cwd if cwd is not None else Path.cwd()) / path
+    path = path.resolve()
+    if path.parent.is_relative_to(Path(hub_dir).resolve()):
         return None
-    return folder
+    return path
 
 
 def writable_paths(hub_dir) -> str:
     """What a hub's sandboxed service may write (systemd ``ReadWritePaths``):
-    the hub folder, and in a gateway the shared store's folder."""
-    shared = shared_store_dir(hub_dir)
+    the hub folder, and in a gateway the shared store's folder. Read with the
+    hub's own ``.env`` over this environment, as the service will run, and
+    relative to the hub (the unit's working directory)."""
+    env = dict(os.environ)
+    dotenv = Path(hub_dir) / ".env"
+    if dotenv.is_file():
+        from dotenv import dotenv_values
+
+        env.update({k: v for k, v in dotenv_values(dotenv).items() if v is not None})
+    shared = shared_store_dir(hub_dir, env, cwd=hub_dir)
     return " ".join(str(p) for p in (Path(hub_dir), shared) if p is not None)
 
 

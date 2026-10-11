@@ -77,23 +77,34 @@ def build_app_for_hub(hub_dir, env=None):
 
 def _connect_journeys(hub_dir, env, *, whatsapp: bool) -> bool:
     """Connection links in WhatsApp: on unless turned off. They record their
-    progress in the shared store, so a service that can't write its folder
-    says so once at start and runs without them, instead of failing on
-    every pass."""
+    progress in the shared store, so a service that can't write it says so
+    once at start and runs without them, instead of failing on every pass."""
     from .. import connect_journey
-    from ..db import shared_store_dir
+    from ..db import shared_store_file
 
-    if not connect_journey.enabled(env):
+    if not connect_journey.enabled(env) or not whatsapp:
+        return connect_journey.enabled(env)
+    try:
+        store = shared_store_file(hub_dir, env)
+    except ValueError as exc:
+        log.error("inbound: connection follow-ups are off: %s", exc)
         return False
-    folder = shared_store_dir(hub_dir, env)
-    if not whatsapp or folder is None or os.access(folder, os.W_OK):
+    if store is None or _writable(store):
         return True
+    folder = store.parent
     log.error(
         "inbound: this service can't write %s, where the deployment keeps people's "
         "connections, so WhatsApp won't confirm a connection or offer to continue. "
         "Add ReadWritePaths=%s to this service (systemctl edit <unit>) and restart it. "
         "See docs/inbound-surfaces.md.", folder, folder)
     return False
+
+
+def _writable(store: Path) -> bool:
+    """The store's folder, and the store and its migration lock when present."""
+    lock = store.with_name(store.name + ".operational.migrate.lock")
+    return os.access(store.parent, os.W_OK) and all(
+        os.access(f, os.W_OK) for f in (store, lock) if f.exists())
 
 
 def run(hub_dir, env=None, port=None) -> int:
