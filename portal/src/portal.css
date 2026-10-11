@@ -1043,6 +1043,47 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 }
 .catalog-auth.client { color: var(--accent); }
 .catalog-back { padding-inline: 0; }
+.catalog-tile .logo { width: 18px; height: 18px; }
+:root[data-theme="light"] .catalog-tile .logo.ink-light,
+:root[data-theme="dark"] .catalog-tile .logo.ink-dark { color: var(--ink) !important; }
+.connector-cell.with-logo { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.connector-cell-text { min-width: 0; }
+
+/* The connector form: titled groups set apart by a rule, so the fields read
+   as Server, Sign-in and Tools rather than one long column. */
+.form-section { display: flex; flex-direction: column; gap: 14px; }
+.form-section + .form-section { padding-top: 20px; border-top: 1px solid var(--line); }
+.form-section-title {
+  margin: 0;
+  color: var(--mute);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.form-section .field-help { min-height: 0; }
+.redirect-uri {
+  display: block;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--subtle);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* A neutral note: something to know, not a status, so no status colour. */
+.note {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--subtle);
+}
+.note-icon { flex: none; margin-top: 2px; color: var(--mute); }
+.note-title { font-weight: 600; }
+.note-text { color: var(--mute); font-size: 13px; }
 .field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .tool-option { display: flex; flex-direction: column; min-width: 0; }
 .tool-option .ant-typography { font-size: 12px; white-space: normal; }

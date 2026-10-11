@@ -118,18 +118,28 @@ administrator run it on the server.
 
 **Console → Agents → the agent → Connectors → Add connector** registers it and
 offers it in that agent. It opens on a searchable list of popular remote MCP
-servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub and others), each
-labelled with how people sign in: *Each person signs in*, *Needs an OAuth app*
-(the provider does not let Hubzoid register itself: create an OAuth app there
-with the redirect URI, then enter its client ID and client secret) or *No
-sign-in*. Choosing one fills its name, ID, address and sign-in; **Custom
-server** starts empty. The list holds addresses only, checked with Hubzoid's
-discovery on 2026-10-10; run **Test** before people use one.
+servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub, Gmail, Google
+Calendar, Drive, Docs, Sheets and others), each with its logo and how people
+sign in: *Each person signs in*, *Needs an OAuth app* (the provider does not
+let Hubzoid register itself: create an OAuth app there with the redirect URI,
+then enter its client ID and client secret) or *No sign-in*. Choosing one fills
+its name, ID, address and sign-in; **Custom server** starts empty. The list
+holds addresses only, checked with Hubzoid's discovery (2026-10-10, Google
+2026-10-11); run **Test** before people use one.
+
+Google's Workspace MCP servers are a Google Developer Preview. Each needs its
+API enabled in Google Cloud and a Web application OAuth client. Their entries
+fill in read-only scopes: without scopes Hubzoid asks for every scope a server
+lists, which for Google includes full access. Hubzoid asks Google for offline
+access, so a connection renews itself instead of ending after an hour.
 
 **Offer an existing connector** offers one another
 agent already has. **Stop offering in <agent>** takes it out of that agent only
 and removes its grants there; people's connections and other agents stay.
-**Remove from every agent** deletes it:
+**Delete connector** removes it from every agent: connected people lose their
+connections, revoked at the provider where it supports revocation.
+
+The form has three parts:
 
 - **Name** and **ID**. The ID is a short slug such as `gmail`. It is also the
   capability `connector_<id>` and cannot be changed later.
@@ -155,7 +165,11 @@ signs in*, your own connection: connect your account first to see them. Like
 any use, that may refresh your connection's sign-in.
 
 Set `HUBZOID_PUBLIC_URL` (and `HUBZOID_ALLOWED_ORIGINS` for other addresses)
-whenever people reach Hubzoid at an address other than this computer. Redirect
+whenever people reach Hubzoid at an address other than this computer. A gateway
+reached at several addresses needs all of them in `HUBZOID_ALLOWED_ORIGINS` on
+the bridge that serves `/portal` (the first hub): otherwise a sign-in started
+on another address returns to the first one, and a provider that registered
+only the address people use refuses it. Redirect
 URIs are built only on a configured address or on localhost, never on the Host
 a request happens to carry. With sign-in off, the connection routes answer only
 requests addressed to this computer unless a public address is configured.
@@ -249,8 +263,8 @@ failure goes to the same place with `?error=<code>`.
   grant it again.
 - Disconnecting cancels a sign-in that is still finishing: its tokens are
   revoked, not saved.
-- Provider-specific authorization parameters (for example Google's
-  `access_type=offline`) cannot be configured yet.
+- Provider-specific authorization parameters cannot be configured. Google is
+  asked for offline access (`access_type=offline`, `prompt=consent`) on its own.
 
 ## Open WebUI mode
 
@@ -270,9 +284,10 @@ connectors:
 - The connector's OAuth return (`/oauth/connectors/<id>/callback`) goes to a
   bridge through the edge, with the same fallbacks as `/portal`. Open WebUI's
   own `/oauth/` routes are unchanged.
-- Open WebUI's External Tool Servers are not used. The edge refuses saves to
-  them (and to their OAuth client registration) with a message that points to
-  the Console. `OWUI_NATIVE_MCP` is ignored.
+- Open WebUI's External Tool Servers are not used. Their section of Open
+  WebUI's Settings > Integrations is hidden, and the edge refuses saves to them
+  (and to their OAuth client registration) with a message that points to the
+  Console. `OWUI_NATIVE_MCP` is ignored.
 - `hubzoid migrate openwebui` keeps each Open WebUI account id as the Hubzoid
   account id, so connections carry over to the web app.
 

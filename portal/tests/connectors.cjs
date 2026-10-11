@@ -164,6 +164,7 @@ const step = (name) => {
     await gmail.getByText("gmail · https://gmail-mcp.example.org/mcp").waitFor();
     await gmail.getByText("2 allowed").waitFor();
     await gmail.getByText("3 people").waitFor();
+    assert.equal(await gmail.locator("svg.logo").count(), 1, "a known server shows its brand mark");
     const linear = page.getByRole("row").filter({ hasText: "Linear" });
     await linear.getByText("OAuth · own client").waitFor();
     await linear.getByText("All tools").waitFor();
@@ -174,6 +175,7 @@ const step = (name) => {
     await drawer().getByRole("button", { name: "Linear: Each person signs in" }).waitFor();
     await drawer().getByRole("button", { name: "GitHub: Needs an OAuth app" }).waitFor();
     await drawer().getByRole("button", { name: "Cloudflare Docs: No sign-in" }).waitFor();
+    assert.ok((await drawer().locator(".catalog-card svg.logo").count()) >= 20, "catalog servers show their brand marks");
     await drawer().getByLabel("Search servers").fill("jira");
     await drawer().getByRole("button", { name: "Atlassian: Each person signs in" }).waitFor();
     assert.equal(await drawer().getByRole("button", { name: /^Linear/ }).count(), 0);
@@ -185,6 +187,13 @@ const step = (name) => {
     await drawer().getByRole("button", { name: "GitHub: Needs an OAuth app" }).click();
     await drawer().getByText("GitHub needs an OAuth app").waitFor();
     await drawer().getByText("paste its client ID and client secret", { exact: false }).waitFor();
+    // Google: read-only scopes come prefilled, or Hubzoid would ask for full access.
+    await drawer().getByRole("button", { name: "All servers" }).click();
+    await drawer().getByLabel("Search servers").fill("gmail");
+    await drawer().getByRole("button", { name: "Gmail: Needs an OAuth app" }).click();
+    assert.equal(await drawer().getByLabel("Scopes (optional)").inputValue(), "https://www.googleapis.com/auth/gmail.readonly");
+    await drawer().getByText("enable the Gmail MCP API", { exact: false }).waitFor();
+    for (const section of ["Server", "Sign-in", "Tools"]) await drawer().getByRole("region", { name: section }).waitFor();
     await drawer().getByRole("button", { name: "All servers" }).click();
     await drawer().getByRole("button", { name: /Custom server/ }).click();
     assert.equal(await drawer().getByLabel("Name").inputValue(), "");
@@ -306,7 +315,7 @@ const step = (name) => {
 
     step("A test that fails says why");
     await linear.getByRole("button", { name: "Test" }).click();
-    await drawer().getByText("Check failed").waitFor();
+    await drawer().getByText("Test failed").waitFor();
     await drawer().getByText("The server could not be reached. Check the URL and that the server is running.").waitFor();
     await drawer().getByRole("button", { name: "Close" }).click();
 
@@ -329,11 +338,11 @@ const step = (name) => {
     assert.deepEqual([last().method, last().endpoint], ["DELETE", "/connectors/notion/agents/sales"]);
     assert.deepEqual(fx.state.connectors.find((c) => c.id === "notion").agents, ["support"]);
 
-    step("Removing asks first and says what happens to connected people");
+    step("Deleting asks first and says what happens to connected people");
     await gmail.getByRole("button", { name: "More actions for Gmail" }).click();
-    await page.getByRole("menuitem", { name: "Remove from every agent" }).click();
+    await page.getByRole("menuitem", { name: "Delete connector" }).click();
     await page.getByText("3 people lose their connections.", { exact: false }).waitFor();
-    await page.getByRole("button", { name: "Remove connector" }).click();
+    await page.getByRole("button", { name: "Delete connector" }).click();
     await page.getByText("Gmail was removed.").waitFor();
     assert.equal(last().method, "DELETE");
     assert.equal(await page.getByRole("row").filter({ hasText: "gmail-mcp" }).count(), 0);

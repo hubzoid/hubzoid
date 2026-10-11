@@ -1237,7 +1237,7 @@ journey("connections", "Connections: empty state, a connector to a second hub's 
   await editor.getByRole("button", { name: "Add connector" }).click();
   // Saving tests the server at once: discovery on the real MCP hub.
   const test = page.getByRole("dialog", { name: "Test Remote Notes" });
-  await test.getByText("Check passed", { exact: true }).waitFor();
+  await test.getByText("Test passed", { exact: true }).waitFor();
   await test.getByText("Sign-in setup found. People with access can connect their own account.").waitFor();
   await ctx.shot(page, "33-console-connector-ready");
   await page.keyboard.press("Escape");

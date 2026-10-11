@@ -133,3 +133,14 @@ def test_a_left_behind_running_tool_line_is_hidden_too():
         assert pattern.fullmatch(tool_events.running_status(names).description)
     assert not pattern.fullmatch("Searching the web")
     assert not pattern.fullmatch("Working on it\u2026")
+
+
+def test_open_webuis_tool_servers_are_hidden():
+    """Connectors are added in the Console; the edge refuses saves to Open
+    WebUI's External Tool Servers, so its section is hidden as well."""
+    body = SCRIPT.split("function toolServers")[1].split("\n  }\n")[0]
+    assert "const TOOL_SERVERS = 'External Tool Servers';" in SCRIPT
+    assert "label.closest('section')" in body and "innerHTML" not in body
+    assert "[data-hz-tool-servers] { display:none !important; }" in SCRIPT
+    assert "staleStatus(); toolServers();" in SCRIPT
+

@@ -25,6 +25,9 @@ For every signed-in person it also explains an empty chat: a blocked account,
 or an account with no agent yet, sees a notice instead of an unexplained
 "Select a model".
 
+It hides Open WebUI's External Tool Servers (Settings > Integrations): MCP
+connectors are added in the Console, and the edge refuses saves there.
+
 It also clears the bridge's own status lines ("Working on it…", and
 "Running <tool>…" while a tool runs) from a finished message. The bridge hides that line itself before the first words, the finish
 or an error, but a turn stopped before its first word, or cut off because the
@@ -62,6 +65,7 @@ SCRIPT = r'''
       padding:4px 8px; border-radius:6px; background:#171717; color:#fff; font-size:12px;
       line-height:16px; pointer-events:none; z-index:50; }
     [data-hz-stale-status] { display:none !important; }
+    [data-hz-tool-servers] { display:none !important; }
   `;
   document.head.appendChild(style);
   if (HIDE_USERS) {
@@ -228,7 +232,19 @@ SCRIPT = r'''
       if (!block.hasAttribute('data-hz-stale-status')) block.setAttribute('data-hz-stale-status', '');
   }
   function scheduleStatus() {
-    if (!statusQueued) { statusQueued = true; setTimeout(staleStatus, 100); }
+    if (!statusQueued) { statusQueued = true; setTimeout(() => { staleStatus(); toolServers(); }, 100); }
+  }
+  // MCP connectors are added in the Hubzoid Console in every mode, and the edge
+  // refuses saves to Open WebUI's External Tool Servers. Hide that section of
+  // Settings > Integrations so nobody tries. Found by its English label: in
+  // another language it still shows, and saving is still refused.
+  const TOOL_SERVERS = 'External Tool Servers';
+  function toolServers() {
+    for (const label of document.querySelectorAll('section .text-xs')) {
+      if (label.textContent.trim() !== TOOL_SERVERS) continue;
+      const section = label.closest('section');
+      if (section && !section.hasAttribute('data-hz-tool-servers')) section.setAttribute('data-hz-tool-servers', '');
+    }
   }
   // OWUI replaces the sidebar when expanding/collapsing and after SPA login.
   // Observe layout changes without issuing extra authentication requests,

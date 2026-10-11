@@ -88,6 +88,9 @@ class Completed:
 # ---------------------------------------------------------------------------
 # Small rules
 # ---------------------------------------------------------------------------
+GOOGLE_ISSUER = "https://accounts.google.com"
+
+
 def redirect_uri(origin: str, connector_id: str) -> str:
     return origin.rstrip("/") + CALLBACK_PATH.format(id=connector_id)
 
@@ -205,11 +208,12 @@ def _register(c: httpx.Client, disc: Discovery, redirect: str, scope: str | None
         failure = net.oauth_error(resp) if resp else f"http_{status}"
         if status != 400:
             break
-    log.warning("connectors: dynamic client registration for %s failed (%s)",
-                disc.issuer, failure)
-    raise ConnectorError("registration_failed", "The server refused to register Hubzoid as a "
-                         f"client ({failure}). An administrator can register Hubzoid with the "
-                         "provider and enter its client ID on the connector.", 502)
+    log.warning("connectors: dynamic client registration for %s with %s failed (%s)",
+                disc.issuer, redirect, failure)
+    raise ConnectorError("registration_failed", f"The server refused to register Hubzoid with "
+                         f"the redirect URI {redirect} ({failure}). An administrator can allow "
+                         "that address at the provider, or register Hubzoid there and enter "
+                         "its client ID on the connector.", 502)
 
 
 def client_for(hub_dir, connector: registry.Connector, disc: Discovery, redirect: str,
@@ -267,6 +271,11 @@ def start(hub_dir, connector: registry.Connector | None, user, *, origin: str,
         params["resource"] = disc.resource
     if scope:
         params["scope"] = scope
+    if disc.issuer == GOOGLE_ISSUER:
+        # Google issues a refresh token only when asked for offline access,
+        # and again only on a fresh consent. Without it a connection ends
+        # with its access token, after an hour.
+        params.update(access_type="offline", prompt="consent")
     authorize_url = with_params(disc.authorization_endpoint, params)
     payload = {
         "v": 1, "code_verifier": pkce.code_verifier, "redirect_uri": redirect,

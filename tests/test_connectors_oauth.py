@@ -270,6 +270,17 @@ def test_dynamic_registration_is_cached_for_everyone(hub, provider):
     assert len(provider.registered) == 2
 
 
+def test_google_is_asked_for_offline_access_and_no_one_else(hub, provider, monkeypatch):
+    """Google sends a refresh token only for offline access on a fresh
+    consent; without one a connection ends after an hour."""
+    add(hub, client_id="app", client_secret="sec")
+    q = parse_qs(urlsplit(start(hub)).query)
+    assert "access_type" not in q and "prompt" not in q
+    monkeypatch.setattr(oauth_flow, "GOOGLE_ISSUER", AS)
+    q = parse_qs(urlsplit(start(hub)).query)
+    assert q["access_type"] == ["offline"] and q["prompt"] == ["consent"]
+
+
 def test_registration_falls_back_to_a_confidential_client(hub, provider):
     provider.register_status["none"] = 400
     add(hub)
@@ -285,6 +296,8 @@ def test_registration_refused_everywhere_says_what_to_do(hub, provider):
     with pytest.raises(ConnectorError) as err:
         start(hub)
     assert err.value.code == "registration_failed" and "client ID" in err.value.message
+    # The refused address is named, so it can be allowed at the provider.
+    assert f"{REDIRECT_ORIGIN}/oauth/connectors/mail/callback" in err.value.message
 
 
 def test_no_registration_endpoint_needs_a_pre_registered_client(hub, provider):

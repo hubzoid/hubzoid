@@ -5,9 +5,25 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [1.2.1]
 
-Connection links in WhatsApp work behind a gateway. Upgrading: read
+Connection links in WhatsApp work behind a gateway, Google Workspace joins the
+connector list, and the connector screens are clearer. Upgrading: read
 [Upgrading to 1.2.1](docs/UPGRADING.md#upgrading-to-121-whatsapp-and-slack-services-in-a-gateway)
 if a WhatsApp, Telegram or Slack service runs from a unit Hubzoid printed.
+
+### Connectors
+- Gmail, Google Calendar, Drive, Docs and Sheets in **Add connector**, with
+  read-only scopes filled in. Google's servers are a Developer Preview and need
+  an OAuth client.
+- Google is asked for offline access, so a Google connection renews itself
+  instead of ending after an hour.
+- Known servers show their logo in Add connector and in the list.
+- The connector form is grouped into Server, Sign-in and Tools.
+- **Test passed** / **Test failed**, and the tools note is a quiet line.
+- **Delete connector** replaces "Remove from every agent".
+- A refused registration names the redirect URI, so it can be allowed at the
+  provider.
+- Open WebUI's External Tool Servers section is hidden; saving there was
+  already refused.
 
 ### Fixed
 - The units `hubzoid inbound systemd` and `hubzoid slack systemd` print may
