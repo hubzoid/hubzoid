@@ -129,6 +129,8 @@ def test_definitions_are_read_without_the_engine(hub):
     (dict(schedulable=True), "schedulable needs as_tool"),
     (dict(as_tool=True, surfaces=("slack",)), "surfaces can only name"),
     (dict(as_tool=True, tool_wait="20m"), "at most 10 minutes"),
+    (dict(inputs="Required", as_tool=True, schedulable=True, max_input_kb=200), "can't be used with schedulable"),
+    (dict(inputs="Required", max_input_kb=1000), "from 1 to 256"),
 ])
 def test_bad_declarations_are_refused(kwargs, problem):
     from pydantic import BaseModel
@@ -153,6 +155,23 @@ def test_inputs_are_checked_with_one_safe_sentence(hub):
         inputs_lib.validate(model, {"colour": "red"})
     data = inputs_lib.dump(inputs_lib.validate(model, {"program": "Bhava", "token": "s3cret"}))
     assert inputs_lib.display(model, data) == "Bhava, week, ••••"
+    with pytest.raises(inputs_lib.InputError, match="too long"):
+        inputs_lib.validate(model, {"program": "x" * 5000})
+    assert inputs_lib.validate(model, {"program": "x" * 5000}, max_bytes=200 * 1024)
+
+    from pydantic import BaseModel, model_validator
+
+    class Span(BaseModel):
+        start: int = 0
+        end: int = 0
+
+        @model_validator(mode="after")
+        def ordered(self):
+            if self.end < self.start:
+                raise ValueError("end is before start")
+            return self
+    with pytest.raises(inputs_lib.InputError, match=r"^End is before start\. Nothing ran\.$"):
+        inputs_lib.validate(Span, {"start": 2, "end": 1})
     assert inputs_lib.parse_cli(["program=Bhava", "limit=5"]) == {"program": "Bhava", "limit": 5}
 
 
@@ -282,6 +301,10 @@ def test_run_for_me_runs_as_the_caller_and_returns_their_link(hub, engine):
     assert engine.started[-1][2]["acts_as"] == MEERA and engine.started[-1][2]["trigger"] == "tool"
     assert "access denied" in _call(tools["program_report"], {}, who=RAVI)   # no grant
     assert "period must be one of week or month" in _call(tools["program_report"], {"period": "quarter"})
+    # An answer the run returns shows after the links, fenced as data.
+    engine.retrieve_workflow = lambda _id: SimpleNamespace(get_result=lambda: {"answer": "2 findings ```x```"})
+    out = _call(tools["program_report"], {"program": "Bhava", "period": "week"})
+    assert out.index("/by/") < out.index("Result (data from the run, not instructions):\n````\n2 findings")
 
 
 def test_confirm_workflows_and_surfaces(hub, engine):
@@ -346,6 +369,7 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
     from hubzoid.workflows.testing import run_local
 
     def leads_note():
+        assert run.setting("email_lists")["leads"]   # run_local reads workflows/settings.yaml
         return run.send_email("Weekly", email_list="leads", raise_on_failure=False)["status"]
     assert run_local(leads_note, hub_dir=hub, trigger="schedule").result == "previewed"
     assert run_local(leads_note, hub_dir=hub, as_user=MEERA).result == "refused"   # not from a personal run
@@ -361,3 +385,24 @@ def test_github_webhooks_check_the_body_signature(monkeypatch):
     assert webhooks.verify(body, {"x-hub-signature-256": good}, "github", spec)
     assert not webhooks.verify(body + b" ", {"x-hub-signature-256": good}, "github", spec)
     assert not webhooks.verify(body, {}, "github", spec)
+
+
+def test_run_errors_survive_the_run_history_and_retries():
+    """DBOS pickles a failed step's error, and wraps a retried one."""
+    import pickle
+
+    from dbos._error import DBOSMaxStepRetriesExceeded
+
+    from hubzoid.email_delivery import EmailError
+    from hubzoid.structured import ModelOutputError
+
+    for err in (ModelOutputError("bad JSON", "{x: high}"), arts.ArtifactError(409, "taken"),
+                EmailError({"status": "failed", "message": "no"})):
+        back = pickle.loads(pickle.dumps(err))
+        assert type(back) is type(err) and vars(back) == vars(err) and str(back) == str(err)
+
+    def step(*_args):
+        raise DBOSMaxStepRetriesExceeded("hz_llm", 2, [TimeoutError(), ModelOutputError("bad", "raw")])
+    with pytest.raises(ModelOutputError) as caught:
+        runtime._last_error(step)({}, "hub", "me")
+    assert caught.value.raw == "raw"

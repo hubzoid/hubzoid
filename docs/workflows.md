@@ -91,7 +91,9 @@ checks every workflow file loads.
 `call_llm` uses the hub's model unless you pass `model`. For LiteLLM models it
 uses the provider's JSON mode; on `claude-local` it runs one Claude turn with
 no tools. If the reply does not match `response_model`, the call raises
-`ModelOutputError`, which keeps the raw reply in `.raw`.
+`ModelOutputError`, which keeps the raw reply in `.raw`. A call that fails
+after its retry raises its last error, so `except ModelOutputError` works
+inside the engine too.
 
 Each call is saved as a step, so a workflow that resumes after a restart does
 not pay for the same call twice. Each call also writes a usage row: tokens and
@@ -340,8 +342,9 @@ def program_report():
 | Option | What it does |
 |---|---|
 | `inputs=Model` | A Pydantic model. The run reads it as `hub.input`. Chat and MCP tools take its JSON schema, the Console's Run now builds a form from it, and the CLI takes `--input key=value`. Inputs are validated on every run. Keep them short and never secret: they are stored with the run. `Field(json_schema_extra={"hidden": True})` shows a value as •••• in lists. |
+| `max_input_kb=200` | Raises the inputs limit (4 KB) for a large value such as a diff, up to 256 KB. Not with `schedulable=True`. |
 | `schedule_input={...}` | The inputs for the declared schedule. Required when the model has required fields and the workflow has a schedule. |
-| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before saying it will email the links. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
+| `as_tool=True` | A chat and MCP tool named after the workflow ("Run for me"). It runs as the person asking, with their grants, and waits up to `tool_wait` (default 60 s, at most 10 minutes) before saying it will email the links. Return `{"answer": "..."}` to show text in chat after any links (up to 8,000 characters, marked as data); return `{"refused": "..."}` to show a refusal as is. `confirm=True` asks before running. `surfaces=("web", "mcp")` limits where the tool appears. `sensitive=True` marks the grant Sensitive in the Console. |
 | `schedulable=True` | People can save their own schedule of it from chat (needs `as_tool`). `min_interval="6h"` raises the shortest cadence for this workflow. |
 | `catch_up=True` | The declared schedule runs once after downtime, unless the next slot is close. |
 
@@ -393,6 +396,8 @@ out = run_local(program_report, hub_dir="my-hub", inputs={"program": "Inner Engi
                 as_user="priya@company.org")
 out.result, out.artifacts, out.emails      # nothing is published or sent
 ```
+
+`run_local` reads `workflows/settings.yaml`, so `hub.setting()` works as in the engine.
 
 ## Watching it
 

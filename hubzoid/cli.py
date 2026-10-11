@@ -2346,7 +2346,8 @@ def _cli_envelope(hub: Path, name: str, pairs) -> dict:
     model = getattr(definition, "inputs", None)
     try:
         data = inputs_lib.parse_cli(pairs)
-        values = inputs_lib.validate(model, data or None) if (model or data) else None
+        limit = getattr(definition, "max_input_bytes", inputs_lib.MAX_BYTES)
+        values = inputs_lib.validate(model, data or None, max_bytes=limit) if (model or data) else None
     except inputs_lib.InputError as exc:
         raise ValueError("Input " + str(exc)) from None
     dumped = inputs_lib.dump(values)

@@ -255,9 +255,11 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
         else:
             from . import inputs as inputs_lib
 
-            model = runtime._REGISTRY[target.name].inputs
+            definition = runtime._REGISTRY[target.name]
+            model = definition.inputs
             try:
-                values = inputs_lib.validate(model, inputs or None) if (model or inputs) else None
+                values = (inputs_lib.validate(model, inputs or None, max_bytes=definition.max_input_bytes)
+                          if (model or inputs) else None)
             except inputs_lib.InputError as exc:
                 raise ControlError(str(exc), "bad_input") from None
             data = inputs_lib.dump(values)

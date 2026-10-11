@@ -8,15 +8,18 @@ before a code change pauses with "inputs changed" instead of running with
 values the code no longer accepts.
 
 Inputs are short and never secret: they travel in the run's checkpoint, the
-schedule row and the Console. A field marked hidden
+schedule row and the Console. A workflow that takes a large value, such as a
+diff, raises its own limit with `max_input_kb` (not for schedulable ones). A field marked hidden
 (`Field(json_schema_extra={"hidden": True})`) shows as •••• in listings.
 """
 from __future__ import annotations
 
 import json
 
-#: Largest serialized inputs accepted for one run or schedule.
+#: Largest serialized inputs accepted for one run or schedule, unless the
+#: workflow sets `max_input_kb` (at most MAX_INPUT_KB).
 MAX_BYTES = 4000
+MAX_INPUT_KB = 256
 HIDDEN = "••••"
 
 
@@ -65,6 +68,10 @@ def _first_error(exc) -> str:
         rule = "given"
     elif kind == "extra_forbidden":
         return f"{field} isn't an input of this report. Nothing ran."
+    elif kind == "value_error" and not err.get("loc"):
+        # A model-level validator's message is a whole sentence: show it as written.
+        rule = (err.get("msg") or "").removeprefix("Value error, ").strip().rstrip(".")
+        return f"{rule[:1].upper() + rule[1:]}. Nothing ran." if rule else "Those inputs aren't valid. Nothing ran."
     else:
         rule = (err.get("msg") or "valid").removeprefix("Value error, ").rstrip(".")
         rule = rule[:1].lower() + rule[1:]
@@ -73,7 +80,7 @@ def _first_error(exc) -> str:
     return f"{field} must be {rule}. Nothing ran."
 
 
-def validate(model, data) -> object | None:
+def validate(model, data, *, max_bytes: int = MAX_BYTES) -> object | None:
     """A model instance from `data` (a dict, or None for defaults). Raises
     InputError with one short, safe sentence."""
     if model is None:
@@ -84,7 +91,7 @@ def validate(model, data) -> object | None:
         data = {}
     if not isinstance(data, dict):
         raise InputError("Inputs must be named values. Nothing ran.")
-    if len(json.dumps(data, default=str)) > MAX_BYTES:
+    if len(json.dumps(data, default=str)) > max_bytes:
         raise InputError("Those inputs are too long. Nothing ran.")
     from pydantic import ValidationError
 

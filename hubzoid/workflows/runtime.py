@@ -75,6 +75,7 @@ class WorkflowDef:
     schedulable: bool = False          # people may save personal schedules
     min_interval: float | None = None  # shortest personal cadence, in seconds
     catch_up: bool = False             # one late run after downtime
+    max_input_bytes: int = 4000        # largest serialized inputs (max_input_kb)
     doc: str = ""
     title: str = ""
     extra: dict = field(default_factory=dict)
@@ -315,6 +316,7 @@ def workflow(
     schedulable: bool = False,
     min_interval: float | str | None = None,
     catch_up: bool = False,
+    max_input_kb: int | None = None,
 ):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
@@ -336,6 +338,8 @@ def workflow(
         grant Sensitive in the Console.
       * `schedulable=True` lets people save personal schedules of it from chat.
         `min_interval` raises the shortest cadence they may choose.
+      * `max_input_kb` raises the inputs limit (4 KB) for a large value such
+        as a diff, up to 256 KB. Not with `schedulable=True`.
       * `catch_up=True` runs the declared schedule once after downtime."""
     defining = _DEFINING.get() is not None
     if not defining:
@@ -362,7 +366,7 @@ def workflow(
                          confirm=confirm, tool_wait=tool_wait, surfaces=surfaces,
                          sensitive=sensitive, schedulable=schedulable,
                          min_interval=min_interval, catch_up=catch_up,
-                         schedule=schedule, on_webhook=on_webhook)
+                         schedule=schedule, on_webhook=on_webhook, max_input_kb=max_input_kb)
 
     def deco(fn: Callable):
         name = fn.__name__
@@ -457,7 +461,8 @@ def workflow(
 
 
 def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfaces,
-                  sensitive, schedulable, min_interval, catch_up, schedule, on_webhook) -> dict:
+                  sensitive, schedulable, min_interval, catch_up, schedule, on_webhook,
+                  max_input_kb=None) -> dict:
     """Validate the workflows-from-chat options of one declaration."""
     from . import inputs as inputs_lib
     from .deadlines import seconds
@@ -478,6 +483,16 @@ def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfac
     wait = seconds(tool_wait) if tool_wait is not None else 60.0
     if wait > MAX_TOOL_WAIT:
         raise ValueError("tool_wait is at most 10 minutes")
+    limit = inputs_lib.MAX_BYTES
+    if max_input_kb is not None:
+        if inputs is None:
+            raise ValueError("max_input_kb needs inputs=")
+        if schedulable:
+            raise ValueError("max_input_kb can't be used with schedulable=True")
+        if (isinstance(max_input_kb, bool) or not isinstance(max_input_kb, int)
+                or not 1 <= max_input_kb <= inputs_lib.MAX_INPUT_KB):
+            raise ValueError(f"max_input_kb must be a whole number from 1 to {inputs_lib.MAX_INPUT_KB}")
+        limit = max_input_kb * 1024
     names = tuple(surfaces or ())
     unknown = set(names) - set(TOOL_SURFACE_NAMES)
     if unknown:
@@ -486,7 +501,7 @@ def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfac
                 as_tool=bool(as_tool), confirm=bool(confirm), tool_wait=float(wait),
                 surfaces=names, sensitive=bool(sensitive), schedulable=bool(schedulable),
                 min_interval=seconds(min_interval) if min_interval is not None else None,
-                catch_up=bool(catch_up))
+                catch_up=bool(catch_up), max_input_bytes=limit)
 
 
 def _run_inputs(chat: dict, env: dict):
@@ -500,7 +515,7 @@ def _run_inputs(chat: dict, env: dict):
     data = env.get("inputs")
     if data is None and env.get("scope", "team") == "team":
         data = chat.get("schedule_input")
-    return inputs_lib.validate(model, data)
+    return inputs_lib.validate(model, data, max_bytes=chat["max_input_bytes"])
 
 
 def step(fn: Callable | None = None, *, max_attempts: int = 1):
@@ -573,6 +588,25 @@ def _seam_step():
     return _DBOS.step()
 
 
+def _last_error(step_fn: Callable) -> Callable:
+    """A retried seam raises the call's own last error (ModelOutputError, a
+    timeout), as `hub.call_llm` documents, not DBOS's retries-exceeded one."""
+    from functools import wraps
+
+    from dbos._error import DBOSMaxStepRetriesExceeded
+
+    @wraps(step_fn)
+    def call(*args):
+        try:
+            return step_fn(*args)
+        except DBOSMaxStepRetriesExceeded as exc:
+            if exc.errors:
+                raise exc.errors[-1] from None
+            raise
+
+    return call
+
+
 def _wrap_seams_as_steps() -> None:
     """Wrap the configured seams in DBOS steps so a completed call is
     checkpointed and NOT re-invoked on recovery. Arguments and results are
@@ -591,14 +625,14 @@ def _wrap_seams_as_steps() -> None:
         def _llm_step(spec: dict, hub_dir_str: str, subject: str):
             return raw_llm(spec, hub_dir=Path(hub_dir_str), subject=subject)
 
-        context._LLM_STEP = _llm_step
+        context._LLM_STEP = _last_error(_llm_step)
     if raw_agent is not None and context._AGENT_STEP is None:
 
         @_seam_step()
         def _agent_step(task: str, hub_dir_str: str, subject: str):
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
-        context._AGENT_STEP = _agent_step
+        context._AGENT_STEP = _last_error(_agent_step)
     if raw_jev is not None and context._JEV_STEP is None:
 
         @_DBOS.step()

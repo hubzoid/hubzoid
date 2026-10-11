@@ -39,6 +39,7 @@ def run_local(fn, *, hub_dir, inputs: dict | None = None, as_user: str | None = 
     from .. import db
     from . import context
     from . import inputs as inputs_lib
+    from .events import settings
     from .runtime import load_definitions
 
     hub_dir = Path(hub_dir)
@@ -48,7 +49,8 @@ def run_local(fn, *, hub_dir, inputs: dict | None = None, as_user: str | None = 
     data = inputs
     if data is None and wf is not None and trigger in TEAM_TRIGGERS:
         data = wf.schedule_input
-    values = inputs_lib.validate(model, data) if (model is not None or data) else None
+    limit = wf.max_input_bytes if wf is not None else inputs_lib.MAX_BYTES
+    values = inputs_lib.validate(model, data, max_bytes=limit) if (model is not None or data) else None
     scope = "team" if trigger in TEAM_TRIGGERS else "personal"
     user = (as_user or "builder@localhost").strip().lower()
     identity = {"subject": user, "account_id": None, "email": user, "legacy_permissions": [],
@@ -80,7 +82,7 @@ def run_local(fn, *, hub_dir, inputs: dict | None = None, as_user: str | None = 
     context._PUBLISH_STEP, context._EMAIL_STEP = publish, email
     try:
         with context.run_scope(hub=hub_dir.name.lower(), workflow=name, hub_dir=hub_dir,
-                               engine=db.operational_engine(hub_dir), settings={},
+                               engine=db.operational_engine(hub_dir), settings=settings(hub_dir),
                                identity=identity, run_id=run_id, event=event, inputs=values,
                                run={"trigger": trigger, "scope": scope,
                                     "started_by": None if trigger in ("schedule", "webhook") else user}):

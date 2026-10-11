@@ -14,7 +14,8 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   `hubzoid schedule run <hub> <name> --input key=value` takes them.
 - **Run for me.** `as_tool=True` offers a workflow as a chat and MCP tool that
   runs as the person asking, with their access. Each one is a capability in
-  the Console (**Run <report>**).
+  the Console (**Run <report>**). A run that returns `{"answer": "..."}` shows
+  it in chat. `max_input_kb` takes larger inputs, such as a diff.
 - **Personal schedules.** `schedulable=True` lets people with **Schedule
   reports for themselves** save their own schedule from chat, after a yes. It
   runs as them, emails them when the report changes or fails, and pauses with
@@ -49,6 +50,9 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
 ### Fixed
 - Schedules with a fixed time ran an hour off on the day daylight saving time
   changed in the workflow's time zone.
+- In the engine, `hub.call_llm` raised DBOS's retries error instead of
+  `ModelOutputError`, and a run that failed with `ModelOutputError`,
+  `ArtifactError` or `EmailError` reported a `TypeError`.
 
 ## [1.2.3]
 

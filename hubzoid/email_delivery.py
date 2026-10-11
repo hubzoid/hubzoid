@@ -64,6 +64,10 @@ class EmailError(RuntimeError):
         super().__init__(result["message"])
         self.result = result
 
+    def __reduce__(self):
+        # Workflow errors are pickled into the run's history.
+        return (self.__class__, (self.result,))
+
 
 @dataclass(frozen=True)
 class SmtpConfig:

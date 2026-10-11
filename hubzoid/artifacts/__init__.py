@@ -106,6 +106,10 @@ class ArtifactError(Exception):
         self.status = status
         self.message = message
 
+    def __reduce__(self):
+        # Workflow errors are pickled into the run's history.
+        return (self.__class__, (self.status, self.message))
+
 
 @dataclass(frozen=True)
 class Artifact:
