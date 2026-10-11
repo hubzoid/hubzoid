@@ -27,4 +27,8 @@ def __getattr__(name):
         from . import workflows
 
         return getattr(workflows, name)
+    if name in ("current_user", "data_dir"):
+        from .workflows import context
+
+        return getattr(context, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

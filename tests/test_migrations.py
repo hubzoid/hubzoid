@@ -305,6 +305,11 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+        # And op_0019.
+        for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals"):
+            conn.execute(text(f"DROP TABLE {table}"))
+        conn.execute(text("DROP INDEX hz_artifacts_series"))
+        conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

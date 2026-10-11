@@ -323,6 +323,34 @@ def _connectors(hub_dir: Path, taken: set[str]) -> list[dict]:
     return out
 
 
+def _workflow_tools(hub_dir: Path, taken: set[str]) -> list[dict]:
+    """One row per workflow the builder offers in chat (`as_tool=True`), read
+    from the workflow files without importing them: "Program report"."""
+    try:
+        from .workflows.observe import definitions
+
+        rows = definitions(hub_dir)
+    except Exception:  # noqa: BLE001 - a broken workflow file hides its rows only
+        log.exception("capabilities: workflow list unavailable for %s", hub_dir.name)
+        return []
+    out = []
+    for row in rows:
+        if not row.get("as_tool") or row.get("error"):
+            continue
+        pid = "wf_" + _norm(row["name"])
+        if pid in taken or not _ID.match(pid):
+            continue
+        taken.add(pid)
+        out.append(dict(
+            permission=pid, label=row.get("title") or _title(row["name"]),
+            description="Run this report for themselves, under their own name.",
+            sensitive=bool(row.get("sensitive")), group="tools", section="workflows",
+            surfaces=["chat", "mcp"], status="", available=True, default="grant",
+            delegate_grantable=True, obsolete=False,
+        ))
+    return out
+
+
 def _obsolete(permission: str) -> dict:
     return dict(
         permission=permission, label=_title(permission),
@@ -371,6 +399,8 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
             sensitive=bool(meta.get("sensitive", False)), group="restricted", section="", surfaces=[],
             status="", available=True, default="grant", delegate_grantable=True, obsolete=False,
         )
+    for row in _workflow_tools(hub_dir, set(entries)):
+        entries[row["permission"]] = row
     for name in sorted({_norm(g) for g in granted} - set(entries) - {""}):
         entries[name] = _obsolete(name)
     order = {g: i for i, g in enumerate((*GROUPS, OBSOLETE_GROUP))}
@@ -378,11 +408,14 @@ def catalog(hub_dir: Path, *, granted: Iterable[str] = ()) -> list[dict]:
     # Inside a section, built-ins keep the order their module registered them
     # (e.g. "See workflows and runs" before "Run and control workflows").
     registered_at = {cap.permission: i for i, cap in enumerate(registered())}
+    # Workflows rows in a fixed order whatever the import order: the built-ins,
+    # then scheduling and company sharing, then one row per report.
+    fixed = {"workflows_view": 0, "workflows_manage": 1, "schedule_reports": 2, "share_domain_links": 3}
 
     def key(e):
         section = e.get("section") or ""
+        rank = fixed.get(e["permission"], 10 + registered_at.get(e["permission"], len(registered_at)))
         return (order.get(e["group"], len(order)), sections.get(section, 0),
-                registered_at.get(e["permission"], len(registered_at)) if section else 0,
-                e["permission"])
+                rank if section else 0, e["permission"])
 
     return sorted(entries.values(), key=key)

@@ -59,3 +59,34 @@ def test_due_between_window():
     s2 = datetime(2026, 1, 1, 10, 0, 10, tzinfo=timezone.utc)
     e2 = datetime(2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc)
     assert not due_between("* * * * *", None, s2, e2)
+
+
+def test_daylight_saving_changes_fire_each_day_once():
+    from datetime import datetime, timedelta, timezone
+
+    from hubzoid.workflows.schedule_grammar import due_between
+
+    def fires(schedule, tz, start, hours):
+        t, out = start, []
+        for _ in range(hours * 60):
+            if due_between(schedule, tz, t, t + timedelta(minutes=1)):
+                out.append(t + timedelta(minutes=1))
+            t += timedelta(minutes=1)
+        return [f"{x:%m-%d %H:%M}" for x in out]
+
+    utc = timezone.utc
+    # Clocks go back: 01:30 happens twice on 1 Nov 2026 in New York, and runs once.
+    assert fires("daily at 01:30", "America/New_York", datetime(2026, 10, 31, 4, tzinfo=utc), 52) == [
+        "10-31 05:30", "11-01 05:30", "11-02 06:30"]
+    # Clocks go forward: 02:30 doesn't exist on 8 Mar 2026; it runs right after the gap.
+    assert fires("daily at 02:30", "America/New_York", datetime(2026, 3, 7, 5, tzinfo=utc), 52) == [
+        "03-07 07:30", "03-08 07:30", "03-09 06:30"]
+
+
+def test_schedules_read_as_short_words():
+    from hubzoid.workflows.schedule_grammar import describe, shortest_gap
+
+    assert describe("every monday at 09:00") == "Mondays at 09:00"
+    assert describe("daily at 6pm") == "Daily at 18:00"
+    assert describe("every 15 minutes") == "Every 15 minutes"
+    assert shortest_gap("every 2 hours") == 7200

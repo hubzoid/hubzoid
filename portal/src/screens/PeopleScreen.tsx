@@ -250,6 +250,7 @@ export function PeopleScreen({
                   <Space size={4} wrap>
                     <AccountTag status={p.status} />
                     {p.organization_admin && <RoleBadge>Administrator</RoleBadge>}
+                    {p.reader && !p.organization_admin && <Tooltip title="Signed in to read a shared report. No agent access."><Tag>Reader</Tag></Tooltip>}
                   </Space>
                 ),
               },

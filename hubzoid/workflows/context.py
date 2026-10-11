@@ -82,6 +82,9 @@ class RunCtx:
     run_id: str = ""                  # the DBOS workflow id, when there is one
     event: dict | None = None
     owner: Any = None
+    inputs: Any = None                # the validated `hub.input`, or None
+    run: dict = field(default_factory=dict)        # how this run started (its envelope)
+    published: list = field(default_factory=list)  # report links this run touched
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -133,7 +136,8 @@ def publish_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: s
         Path(hub_dir), hub=hub, owner=ident.subject, owner_account=ident.account_id,
         source=Path(request["path"]), title=request.get("title"), workflow=workflow,
         run_id=run_id or None, idem_key=idem_key, audience=request.get("audience") or "owner",
-        share_with=request.get("share_with") or (), key=request.get("key"))
+        share_with=request.get("share_with") or (), key=request.get("key"),
+        digest=request.get("digest"), series=request.get("series"))
 
 
 def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str,
@@ -148,6 +152,12 @@ def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str
     except IdentityError as exc:
         return dict(status="refused", sent=False, delivery_id=None, recipient=None,
                     message=str(exc))
+    if request.get("email_list"):
+        return email_delivery.send_to_list(
+            Path(hub_dir), hub=hub, identity=ident, list_name=request["email_list"],
+            subject=request["subject"], body=request.get("body") or "",
+            artifact_ids=request.get("artifacts") or (), workflow=workflow,
+            run_id=run_id or None, idem_key=idem_key)
     return email_delivery.send_to_owner(
         Path(hub_dir), hub=hub, identity=ident, subject=request["subject"],
         body=request.get("body") or "", artifact_ids=request.get("artifacts") or (),
@@ -210,6 +220,38 @@ class Hub:
     def name(self) -> str:
         return _ctx().hub
 
+    @property
+    def input(self):
+        """This run's inputs (an instance of the workflow's `inputs=` model),
+        or None when the workflow declares none."""
+        return _ctx().inputs
+
+    @property
+    def trigger(self) -> str:
+        """How this run started: schedule, personal_schedule, tool, operator,
+        cli, webhook or update."""
+        return _ctx().run.get("trigger") or "schedule"
+
+    @property
+    def started_by(self) -> str | None:
+        """The account that started this run, or None for a declared schedule
+        or a webhook."""
+        return _ctx().run.get("started_by")
+
+    @property
+    def team_run(self) -> bool:
+        """True for a team run (declared schedule, Run now, CLI, webhook): it
+        acts as the workflow's own account and writes the team's report links.
+        False for Run for me and personal schedules, which act as a person."""
+        return _ctx().run.get("scope", "team") == "team"
+
+    @property
+    def data_dir(self) -> Path:
+        """A private folder for this workflow's own data files, under
+        `.hubzoid/data/` (agent file tools can't reach it; backups include it).
+        The same folder as `hubzoid.data_dir()` in hub tools."""
+        return data_dir(_ctx().hub_dir)
+
     def setting(self, key: str, default=None):
         return _ctx().settings.get(key, default)
 
@@ -253,35 +295,54 @@ class Hub:
         return path
 
     def publish_artifact(self, path, *, title: str | None = None,
-                         audience: str = "owner", share_with=(), key: str | None = None) -> dict:
+                         audience: str = "owner", share_with=(), key: str | None = None,
+                         digest: str | None = None) -> dict:
         """Publish an existing file as an artifact owned by the run's account and
         return {"id", "url", "title", "filename", "content_type", "size"}.
 
-        `key` (lowercase letters, digits, '-' or '_') adds "latest_url", one
-        bookmark that always opens the newest artifact published with this key
-        in this agent, for anyone who may open that one.
+        `key` (lowercase letters, digits, '-' or '_') makes the artifact a copy in
+        a report series and adds "latest_url", one link that always shows the
+        newest copy. A team run (`hub.team_run`) writes the team's series, which
+        belongs to the agent; Run for me and personal schedules write that
+        person's own series. A key belongs to one workflow in the agent. A
+        publish whose file (or `digest`, a hash of the data behind it) matches
+        the newest copy stores nothing new and returns that copy with
+        "unchanged": true.
 
         Private to the owner by default. `audience="hub"` (everyone who can use
-        this agent) or `audience="people"` with `share_with=["a@x.com"]` shares
-        it explicitly. Public links are never made here: the owner
-        creates them in the viewer, with permission. Each call stores a new
-        artifact; earlier ones are never overwritten. Checkpointed as a step."""
+        this agent), `audience="people"` with `share_with=["a@x.com"]`, or
+        `audience="domain"` (anyone at the company's allowed domains who has the
+        series' company link, returned as "share_url") shares it explicitly.
+        Public links are never made here: the owner creates them in the viewer,
+        with permission. Checkpointed as a step."""
         ctx = _ctx()
         source = Path(path)
         if not source.is_absolute():
             source = Path(ctx.hub_dir) / source
+        from . import inputs as inputs_lib
+
         request = {"path": str(source.resolve()), "title": title, "audience": audience,
                    "share_with": [p if isinstance(p, str) else dict(p) for p in share_with],
-                   "key": key}
+                   "key": key, "digest": digest,
+                   "series": {"scope": ctx.run.get("scope", "team"),
+                              "schedule_id": ctx.run.get("schedule_id"),
+                              "inputs": inputs_lib.dump(ctx.inputs)}}
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
         _owned(ctx)
         if _PUBLISH_STEP is not None:
-            return _PUBLISH_STEP(*args)
-        return publish_now(*args)
+            out = _PUBLISH_STEP(*args)
+        else:
+            out = publish_now(*args)
+        if key:
+            ctx.published.append({"key": key, "title": out.get("title"),
+                                  "url": out.get("share_url") or out.get("latest_url") or out.get("url"),
+                                  "series_id": out.get("series_id"),
+                                  "changed": not out.get("unchanged")})
+        return out
 
     def send_email(self, subject: str, body: str = "", *, artifacts=(),
-                   raise_on_failure: bool = True) -> dict:
+                   email_list: str | None = None, raise_on_failure: bool = True) -> dict:
         """Email the run's own account (there is no other recipient) with
         optional links to artifacts it published. Returns the delivery result;
         by default raises `EmailError` unless the SMTP server accepted it or it
@@ -293,6 +354,8 @@ class Hub:
         ctx = _ctx()
         ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
         request = {"subject": subject, "body": body, "artifacts": ids}
+        if email_list:
+            request["email_list"] = str(email_list)
         args = (str(ctx.hub_dir), ctx.hub, _identity(ctx).to_dict(), ctx.workflow,
                 ctx.run_id, request)
         _owned(ctx)
@@ -411,10 +474,72 @@ def _validated(value, response_model, raw_text: str):
 hub = Hub()
 
 
+def _hub_dir_here(hub_dir=None) -> Path:
+    if hub_dir is not None:
+        return Path(hub_dir)
+    ctx = _run.get()
+    if ctx is not None:
+        return Path(ctx.hub_dir)
+    env = os.environ.get("HUBZOID_HUB_DIR")
+    if not env:
+        raise RuntimeError("No hub here: pass hub_dir, or call this inside a workflow or hub tool.")
+    return Path(env)
+
+
+def data_dir(hub_dir=None) -> Path:
+    """A private folder for a hub's own data files: `<hub>/.hubzoid/data/`.
+    Agent file tools can't read it and backups include it. Workflows reach the
+    same folder as `hub.data_dir`."""
+    path = _hub_dir_here(hub_dir) / ".hubzoid" / "data"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+class RequestUser:
+    """The signed-in person a hub tool is answering, with the same shape as
+    `hub.user`: id, email, attrs and can()."""
+
+    def __init__(self, hub_dir: Path, hub: str, subject: str):
+        self._hub_dir, self._hub, self.id = hub_dir, hub, subject
+
+    @property
+    def email(self) -> str:
+        return self.id
+
+    @property
+    def attrs(self) -> dict:
+        from ..access import store_for
+
+        return store_for(self._hub_dir).attrs_for(self._hub, self.id)
+
+    def can(self, permission: str, hub: str | None = None) -> bool:
+        from ..access import store_for
+
+        return store_for(self._hub_dir).can(self.id, hub or self._hub, permission)
+
+
+def current_user(hub_dir=None):
+    """Who a hub tool (`tools_local`) or workflow is acting for: inside a run,
+    `hub.user`; in chat or MCP, the signed-in caller. None for nobody (an
+    anonymous or system call)."""
+    ctx = _run.get()
+    if ctx is not None:
+        return HubUser(ctx)
+    from ..access import current_identity, normalize
+
+    ident = current_identity()
+    subject = normalize(getattr(ident, "user", "") or "")
+    if ident.is_anonymous or not subject or subject.startswith("workflow:"):
+        return None
+    root = _hub_dir_here(hub_dir)
+    return RequestUser(root, root.name.lower(), subject)
+
+
 @contextmanager
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
-              identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None) -> Iterator[None]:
+              identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None,
+              inputs=None, run: dict | None = None, published: list | None = None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -426,15 +551,19 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         hub=hub, workflow=workflow, hub_dir=Path(hub_dir), engine=engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
         identity=identity, run_id=run_id or "", event=event, owner=owner,
+        inputs=inputs, run=dict(run or {}), published=published if published is not None else [],
     )
     token = _run.set(ctx)
-    try:
-        if identity:
-            from ..access import Identity, identity_scope
+    from ..usage import run_tag
 
-            with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+    try:
+        with run_tag(ctx.run_id):
+            if identity:
+                from ..access import Identity, identity_scope
+
+                with identity_scope(Identity.make(ctx.subject, surface="workflow")):
+                    yield
+            else:
                 yield
-        else:
-            yield
     finally:
         _run.reset(token)

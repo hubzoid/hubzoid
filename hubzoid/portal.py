@@ -115,6 +115,24 @@ class PersonRequest(BaseModel):
     suspended: bool = True
 
 
+class HubAction(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+
+
+class CompanyLinkAction(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    action: Literal["copy", "replace", "off"]
+
+
+class WorkflowRun(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    workflow: str = Field(min_length=1, max_length=255)
+    inputs: dict = Field(default_factory=dict)
+
+
 class AccountGrant(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     hub: str = Field(min_length=1, max_length=200)
@@ -616,6 +634,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if not admin.is_org_admin:
                 person.pop("phone", None)  # personal data: organization administrators
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
+            person["reader"] = gs.is_reader(sub)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
             # Filters, applied before pagination.
             if status and person["status"] != status:
@@ -659,12 +678,154 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @router.get("/workflows")
     def workflows(hub: str | None = None, admin=Depends(require_admin)):
         from .workflows.observe import catalog
+        from .workflows.runtime import input_schemas
 
-        return {
-            "workflows": [
-                w for h in selected(admin, hub) for w in catalog(Path(h["path"]))
-            ]
-        }
+        out = []
+        for h in selected(admin, hub):
+            schemas = input_schemas(Path(h["path"]), h["key"])
+            for w in catalog(Path(h["path"])):
+                w["input_schema"] = schemas.get(w["name"])
+                out.append(w)
+        return {"workflows": out}
+
+    @router.post("/workflows/run")
+    @_denied
+    def run_workflow(request: Request, payload: WorkflowRun, admin=Depends(require_admin)):
+        """Run now, from the Console: a team run with inputs, recorded as
+        started by this admin. Needs Run and control workflows (or org admin)."""
+        from .workflows import client, control
+        from .workflows import inputs as inputs_lib
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        gs = store_for(hub_dir)
+        if not (admin.is_org_admin or gs.can(admin.subject, payload.hub, "workflows_manage")):
+            raise HTTPException(403, "Running workflows needs \u201cRun and control workflows\u201d.")
+        if control._engine_here(path):
+            try:
+                out = control.start_now(path, payload.workflow, actor=admin.subject, surface="console",
+                                        prefer="code", inputs=payload.inputs or None)
+            except control.ControlError as exc:
+                raise HTTPException(409, exc.message)
+            return {"run_id": out["run_id"], "already_running": out["already_running"]}
+        envelope = {"trigger": "operator", "scope": "team", "started_by": admin.subject,
+                    "inputs": payload.inputs or None,
+                    "inputs_display": inputs_lib.display(None, payload.inputs or None)}
+        live = client.enqueue_live(path, payload.workflow.replace("-", "_"), envelope=envelope)
+        if live is None:
+            raise HTTPException(409, "The workflow engine for this agent isn't running.")
+        run_id = live.get_workflow_id()
+        live.client.destroy()
+        return {"run_id": run_id, "already_running": False}
+
+    @router.get("/schedules")
+    @_denied
+    def schedules(hub: str, admin=Depends(require_admin)):
+        """People's schedules on one agent: who, what, when and how it went.
+        Never the report itself: that stays with its owner."""
+        import time
+
+        from .usage import run_cost
+        from .workflows import inputs as inputs_lib
+        from .workflows import personal
+        from .workflows.runtime import input_schemas, title_for
+
+        path = Path(require_hub(admin, hub))
+        key = normalize(hub)
+        schemas = input_schemas(path, key)
+        since = time.time() - 30 * 86400
+        rows = []
+        for s in personal.for_hub(path, key):
+            rows.append(dict(
+                id=s.id, owner=s.owner, name=s.name, workflow=s.workflow,
+                report=title_for(s.workflow),
+                inputs=inputs_lib.display_with_schema(schemas.get(s.workflow), s.values),
+                when=personal.cadence_words(s), timezone=s.timezone, state=s.state, reason=s.reason,
+                state_label=personal.state_words(s),
+                next_fire=s.next_fire if s.state in ("active", "testing") else None,
+                last_status=s.last_status, last_at=s.last_at, last_label=personal.last_words(s),
+                cost_30d=round(run_cost(path, key, f"ps-{s.id}-", since), 4)))
+        return {"schedules": rows}
+
+    @router.post("/schedules/{schedule_id}/{action}")
+    @_denied
+    def schedule_action(schedule_id: str, action: Literal["pause", "resume", "stop"],
+                        request: Request, payload: HubAction, admin=Depends(require_admin)):
+        """Admins pause, resume what they paused, or stop. Never edit inputs."""
+        from .workflows import personal
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        key = normalize(payload.hub)
+        try:
+            if action == "stop":
+                personal.admin_stop(path, key, admin.subject, schedule_id)
+            else:
+                personal.set_paused(path, key, admin.subject, schedule_id, action == "pause", admin=True)
+        except personal.ScheduleError as exc:
+            raise HTTPException(409, str(exc))
+        store_for(hub_dir).audit_event(admin.subject, f"schedule_{action}", hub=key,
+                                       permission=schedule_id, surface="console")
+        return {"ok": True}
+
+    @router.get("/reports")
+    @_denied
+    def reports(hub: str, admin=Depends(require_admin)):
+        """One row per live report link on an agent, with its company link."""
+        from .artifacts import domains
+        from .artifacts import series as series_lib
+        from .workflows.runtime import title_for
+
+        path = Path(require_hub(admin, hub))
+        on, why = domains.status()
+        rows = []
+        for s in series_lib.for_hub(path, normalize(hub)):
+            state = series_lib.state(path, s)
+            token = series_lib.domain_token(path, s)
+            rows.append(dict(
+                id=s.id, title=s.title or s.key, key=s.key, workflow=s.workflow,
+                report=title_for(s.workflow), scope=s.scope, owner=s.owner or None,
+                updated=s.updated_at, state=state["state"], next=state["next"],
+                audience=s.audience, company_on=bool(token),
+                company_hint=(f"/portal/r/{token[:4]}…{token[-3:]}" if token else None)))
+        return {"reports": rows, "company": {"on": on, "reason": why, "domains": domains.label()}}
+
+    @router.post("/reports/{series_id}/company")
+    @_denied
+    def report_company(series_id: str, request: Request, payload: CompanyLinkAction,
+                       admin=Depends(require_admin)):
+        """Copy, replace or turn off a report's company link. Admins can turn off
+        any link, a personal one included (its owner is told); copying and
+        replacing are for team reports."""
+        from .artifacts import domains
+        from .artifacts import series as series_lib
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        found = series_lib.get(path, series_id)
+        if found is None or found.hub != normalize(payload.hub):
+            raise HTTPException(404, "No such report on this agent.")
+        if payload.action == "off":
+            series_lib.domain_off(path, found, admin.subject)
+            if not found.team:
+                _tell_owner_link_off(path, found)
+            result = {"ok": True, "on": False}
+        elif not found.team:
+            raise HTTPException(403, "Only the owner shares a personal report. Admins can turn its link off.")
+        elif payload.action == "copy":
+            token = series_lib.domain_token(path, found)
+            if not token:
+                raise HTTPException(409, "This report has no company link. The workflow turns it on.")
+            result = {"ok": True, "on": True, "url": series_lib.share_url(path, token)}
+        else:
+            on, why = domains.status()
+            if not on:
+                raise HTTPException(409, why)
+            token = series_lib.domain_replace(path, found, admin.subject)
+            result = {"ok": True, "on": True, "url": series_lib.share_url(path, token)}
+        store_for(hub_dir).audit_event(admin.subject, f"report_link_{payload.action}",
+                                       hub=normalize(payload.hub), permission=series_id, surface="console")
+        return result
 
     @router.get("/webhooks")
     @_denied
@@ -1123,3 +1284,20 @@ def mount_portal(app, hub_dir) -> None:
         log.info("portal: serving SPA from %s", dist)
     else:
         log.info("portal: API mounted; static SPA not built (no portal_dist/)")
+
+
+def _tell_owner_link_off(hub_dir: Path, found) -> None:
+    """Tell a personal report's owner an admin turned its company link off."""
+    from . import email_delivery
+    from .artifacts import domains
+    from .workflows.identity import RunIdentity
+
+    try:
+        email_delivery.send_to_owner(
+            hub_dir, hub=found.hub, identity=RunIdentity(found.owner, None, "schedule", found.owner),
+            subject=f"{found.title or found.key}: company link turned off",
+            body=(f"An admin turned off the {domains.label()} link to your report. People who use "
+                  "the agent can still open it.\n"),
+            workflow=found.workflow, idem_key=f"series:{found.id}:off:{found.domain_changed}")
+    except Exception:  # noqa: BLE001 — a notice never blocks the admin's change
+        log.exception("portal: could not tell %s about a company link", found.owner)

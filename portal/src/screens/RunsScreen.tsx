@@ -6,15 +6,31 @@ import {
   Collapse,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
   Tooltip,
   message,
 } from "antd";
-import { RefreshCw, Copy } from "lucide-react";
-import { query, type Hub, type Run, type Webhook, type Workflow } from "../api";
+import { RefreshCw, Copy, Play, Pause, Ban, RotateCcw } from "lucide-react";
+import {
+  query,
+  request,
+  type Hub,
+  type InputSchema,
+  type PersonalSchedule,
+  type Report,
+  type Run,
+  type Webhook,
+  type Workflow,
+} from "../api";
 import { useData } from "../hooks/useData";
 import { agentHref, href } from "../hooks/useRoute";
 import {
@@ -30,6 +46,10 @@ import { WorkflowResult } from "../components/WorkflowResult";
 import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
 
 const { Text, Title, Paragraph } = Typography;
+const TRIGGERS: Record<string, string> = {
+  schedule: "Team schedule", personal_schedule: "Personal schedule", tool: "Chat",
+  operator: "Run now", cli: "CLI", webhook: "Webhook", update: "Update now",
+};
 const PAGE = 50;
 function CopyCommand({ command, label }: { command: string; label: string }) {
   return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
@@ -202,6 +222,19 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ),
           },
           {
+            title: "In chat",
+            key: "chat",
+            render: (_, w) =>
+              w.as_tool ? (
+                <Space size={4} wrap>
+                  <Tag color="orange">Run for yourself</Tag>
+                  {w.schedulable && <Tag color="orange">Schedule</Tag>}
+                </Space>
+              ) : (
+                <Text type="secondary">Not in chat</Text>
+              ),
+          },
+          {
             title: "Next run",
             key: "next",
             render: (_, w) =>
@@ -220,11 +253,232 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "",
             key: "runs",
             align: "right",
-            render: (_, w) => <Space wrap>{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
+            render: (_, w) => <Space wrap>{!w.webhook && !w.name.startsWith("md:") && !w.error && <RunNow hub={hub} workflow={w} />}{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
           },
         ]}
       />
       <Webhooks hub={hub} />
+      <PeopleSchedules hub={hub} />
+      <LiveReports hub={hub} />
+    </div>
+  );
+}
+
+/** One form field per input, from the workflow's published schema. */
+function inputField(name: string, prop: InputSchema["properties"][string], required: boolean) {
+  const choices = prop.enum ?? prop.anyOf?.find((a) => a.enum)?.enum;
+  const kind = prop.type ?? prop.anyOf?.find((a) => a.type && a.type !== "null")?.type;
+  const label = name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  const control = choices ? (
+    <Select allowClear={!required} options={choices.map((c) => ({ value: c as string, label: String(c) }))} />
+  ) : kind === "integer" || kind === "number" ? (
+    <InputNumber style={{ width: "100%" }} />
+  ) : kind === "boolean" ? (
+    <Switch />
+  ) : prop.hidden ? (
+    <Input.Password autoComplete="off" />
+  ) : (
+    <Input />
+  );
+  return (
+    <Form.Item key={name} name={name} label={label} tooltip={prop.description} initialValue={prop.default as never}
+      valuePropName={kind === "boolean" ? "checked" : "value"}
+      rules={required ? [{ required: true, message: `${label} is required.` }] : []}>
+      {control}
+    </Form.Item>
+  );
+}
+
+function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form] = Form.useForm();
+  const schema = workflow.input_schema;
+  const account = workflow.runs_as?.account ?? "the workflow's account";
+  const start = async () => {
+    const values = schema ? await form.validateFields() : {};
+    const inputs = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+    setBusy(true);
+    try {
+      const out = await request<{ run_id: string; already_running: boolean }>("/workflows/run", {
+        hub: hub.key, workflow: workflow.name, inputs,
+      });
+      message.success(out.already_running ? "A run is already in progress." : "Run started.");
+      setOpen(false);
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "Could not start the run.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button size="small" icon={<Play size={14} />} onClick={() => (schema ? setOpen(true) : start())}>
+        Run now
+      </Button>
+      <Modal title={`Run ${workflow.name}`} open={open} onCancel={() => setOpen(false)}
+        okText="Run" onOk={start} confirmLoading={busy} destroyOnHidden>
+        <Paragraph type="secondary">
+          Runs as {account}, the workflow's account. You're recorded as the person who started it.
+        </Paragraph>
+        <Form form={form} layout="vertical">
+          {schema && Object.entries(schema.properties).map(([name, prop]) =>
+            inputField(name, prop, (schema.required ?? []).includes(name)))}
+        </Form>
+      </Modal>
+    </>
+  );
+}
+
+const SCHEDULE_TAG: Record<string, string> = { active: "green", testing: "blue", paused: "gold" };
+
+function PeopleSchedules({ hub }: { hub: Hub }) {
+  const data = useData<{ schedules: PersonalSchedule[] }>("/schedules" + query({ hub: hub.key }));
+  const act = async (s: PersonalSchedule, action: "pause" | "resume" | "stop") => {
+    if (action === "stop") {
+      const ok = await new Promise<boolean>((resolve) => Modal.confirm({
+        title: `Stop ${s.owner}'s schedule "${s.name}"?`,
+        content: "They'll see that an admin stopped it. Its live link keeps the last copy.",
+        okText: "Stop schedule", okButtonProps: { danger: true },
+        onOk: () => resolve(true), onCancel: () => resolve(false),
+      }));
+      if (!ok) return;
+    }
+    try {
+      await request(`/schedules/${encodeURIComponent(s.id)}/${action}`, { hub: hub.key });
+      message.success(action === "stop" ? "Stopped." : action === "pause" ? "Paused." : "Resumed.");
+      data.reload();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "That did not work.");
+    }
+  };
+  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
+  const rows = data.data.schedules;
+  const active = rows.filter((s) => s.state === "active" || s.state === "testing").length;
+  return (
+    <div className="section">
+      <Space style={{ justifyContent: "space-between", width: "100%" }}>
+        <Title level={5}>People's schedules <Help text="Saved from chat. Each runs as the person who saved it. Admins can pause and stop them, and resume only what they paused." /></Title>
+        {rows.length > 0 && <Text type="secondary">{active} of {rows.length} active</Text>}
+      </Space>
+      <Table<PersonalSchedule>
+        rowKey="id"
+        size="middle"
+        dataSource={rows}
+        pagination={false}
+        scroll={{ x: 900 }}
+        locale={{ emptyText: <Empty description="No one has scheduled this agent's workflows yet. People allowed to schedule can do it from chat." /> }}
+        columns={[
+          { title: "Person", key: "owner", render: (_, s) => <Text className="identity">{s.owner}</Text> },
+          {
+            title: "Schedule", key: "name",
+            render: (_, s) => <><div>{s.name}</div><Tag color={SCHEDULE_TAG[s.state] ?? "default"}>{s.state_label}</Tag></>,
+          },
+          {
+            title: "Report and inputs", key: "report",
+            render: (_, s) => <><div>{s.report}</div>{s.inputs && <Text type="secondary">{s.inputs}</Text>}</>,
+          },
+          { title: "When", key: "when", render: (_, s) => <><div>{s.when}</div><Text type="secondary">{s.timezone}</Text></> },
+          {
+            title: "Next run", key: "next",
+            render: (_, s) => s.next_fire ? <When value={new Date(s.next_fire * 1000).toISOString()} /> : <Text type="secondary">—</Text>,
+          },
+          {
+            title: "Last result", key: "last",
+            render: (_, s) => <Text type={s.last_status === "failed" ? "danger" : undefined}>{s.last_label}</Text>,
+          },
+          {
+            title: "Cost, 30 d", key: "cost",
+            render: (_, s) => <Tooltip title="Model cost of this schedule's runs in the last 30 days, estimated like the rest of the Console."><Text>${s.cost_30d.toFixed(2)}</Text></Tooltip>,
+          },
+          {
+            title: "", key: "acts", align: "right",
+            render: (_, s) => (
+              <Space direction="vertical" size={6}>
+                {(s.state === "active" || s.state === "testing") && <Button size="small" icon={<Pause size={14} />} onClick={() => act(s, "pause")}>Pause</Button>}
+                {s.state === "paused" && s.reason === "admin" && <Button size="small" icon={<Play size={14} />} onClick={() => act(s, "resume")}>Resume</Button>}
+                <Button size="small" danger onClick={() => act(s, "stop")}>Stop</Button>
+              </Space>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+const REPORT_STATE: Record<string, [string, string]> = {
+  live: ["Live", "green"], failed: ["Last update failed", "gold"], stopped: ["No longer updating", "default"],
+};
+
+function LiveReports({ hub }: { hub: Hub }) {
+  const data = useData<{ reports: Report[]; company: { on: boolean; reason: string; domains: string } }>(
+    "/reports" + query({ hub: hub.key }));
+  const link = async (r: Report, action: "copy" | "replace" | "off") => {
+    if (action !== "copy") {
+      const ok = await new Promise<boolean>((resolve) => Modal.confirm({
+        title: action === "replace" ? "Replace this link?" : "Turn off this link?",
+        content: action === "replace"
+          ? "The current link stops working now. Share the new one with your team."
+          : `People at ${data.data?.company.domains ?? "the company domain"} can no longer open it. Anyone who saved a copy keeps it.`,
+        okText: action === "replace" ? "Replace link" : "Turn off link",
+        okButtonProps: { danger: action === "off" },
+        onOk: () => resolve(true), onCancel: () => resolve(false),
+      }));
+      if (!ok) return;
+    }
+    try {
+      const out = await request<{ url?: string }>(`/reports/${encodeURIComponent(r.id)}/company`, { hub: hub.key, action });
+      if (out.url) {
+        try { await navigator.clipboard.writeText(out.url); message.success("Link copied."); }
+        catch { Modal.info({ title: "Company link", content: <Text copyable code>{out.url}</Text> }); }
+      } else {
+        message.success("Link turned off.");
+      }
+      data.reload();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "That did not work.");
+    }
+  };
+  if (!data.data) return data.error ? <LoadState error={data.error} retry={data.reload} /> : null;
+  const { reports, company } = data.data;
+  if (!reports.length) return null;
+  return (
+    <div className="section">
+      <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
+        <Title level={5}>Live reports <Help text="One row per report link. Admins can copy, replace or turn off company links. Opening a personal report stays with its owner." /></Title>
+        {company.on ? <Tag color="blue">Company links on for {company.domains}</Tag> : <Tag>Company links off</Tag>}
+      </Space>
+      {!company.on && <Alert className="notice" type="info" showIcon message={company.reason} />}
+      <Table<Report>
+        rowKey="id"
+        size="middle"
+        dataSource={reports}
+        pagination={false}
+        scroll={{ x: 900 }}
+        columns={[
+          { title: "Report", key: "title", render: (_, r) => <><div>{r.title}</div><Text type="secondary" className="identity">{r.key}</Text></> },
+          { title: "Kind", key: "scope", render: (_, r) => r.scope === "team" ? "Team" : <><div>Personal</div><Text type="secondary">{r.owner}</Text></> },
+          {
+            title: "Updated", key: "updated",
+            render: (_, r) => <>{r.updated ? <When value={new Date(r.updated * 1000).toISOString()} /> : "—"}<div><Tag color={REPORT_STATE[r.state][1]}>{REPORT_STATE[r.state][0]}</Tag></div></>,
+          },
+          {
+            title: "Company link", key: "company",
+            render: (_, r) => r.company_on ? <Text className="identity">{r.company_hint}</Text> : <Text type="secondary">None</Text>,
+          },
+          {
+            title: "", key: "acts", align: "right",
+            render: (_, r) => r.company_on || r.scope === "team" ? (
+              <Space direction="vertical" size={6}>
+                {r.scope === "team" && r.company_on && <Button size="small" icon={<Copy size={14} />} onClick={() => link(r, "copy")}>Copy</Button>}
+                {r.scope === "team" && company.on && <Button size="small" icon={<RotateCcw size={14} />} onClick={() => link(r, "replace")}>{r.company_on ? "Replace" : "Make a link"}</Button>}
+                {r.company_on && <Button size="small" danger icon={<Ban size={14} />} onClick={() => link(r, "off")}>Turn off</Button>}
+              </Space>
+            ) : null,
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -411,10 +665,25 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               render: (_, r) => formatDuration(r.duration_ms),
             },
             {
+              title: "Trigger",
+              key: "trigger",
+              render: (_, r) => r.trigger ? <Tag>{TRIGGERS[r.trigger] ?? r.trigger}</Tag> : <Text type="secondary">—</Text>,
+            },
+            {
+              title: "Started by",
+              key: "started_by",
+              render: (_, r) => r.started_by ? <Text className="identity">{r.started_by}</Text> : <Text type="secondary">{r.trigger === "personal_schedule" ? "Schedule" : r.trigger === "webhook" ? "Webhook" : "Schedule"}</Text>,
+            },
+            {
               title: "Runs as",
               key: "run_as",
               render: (_, r) =>
                 r.run_as ? <Text className="identity">{r.run_as}</Text> : <Text type="secondary">—</Text>,
+            },
+            {
+              title: "Inputs",
+              key: "inputs",
+              render: (_, r) => r.inputs ? <Text type="secondary">{r.inputs}</Text> : <Text type="secondary">—</Text>,
             },
             {
               title: "Result",

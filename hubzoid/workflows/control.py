@@ -217,10 +217,13 @@ def _audit(hub_dir: Path, action: str, target: str, **fields) -> None:
 
 
 def start_now(hub_dir, name: str, *, actor: str, surface: str,
-              request_id: str | None = None, prefer: str = "markdown") -> dict:
-    """Queue one run of a workflow or markdown task now, on this process's
+              request_id: str | None = None, prefer: str = "markdown",
+              inputs: dict | None = None, trigger: str = "operator") -> dict:
+    """Queue one team run of a workflow or markdown task now, on this process's
     engine. Returns {run_id, workflow, kind, runs_as, already_running}. When
-    a run is already queued or running, returns that one and records nothing."""
+    a run is already queued or running, returns that one and records nothing.
+    `inputs` are validated against the workflow's model; the run still acts as
+    the workflow's own account and records `actor` as who started it."""
     from ..access import store_for
     from . import markdown, runtime
 
@@ -243,12 +246,24 @@ def start_now(hub_dir, name: str, *, actor: str, surface: str,
         if active:
             return dict(out, run_id=active[0], already_running=True)
         if target.kind == "markdown":
+            if inputs:
+                raise ControlError("Scheduled tasks don't take inputs.", "broken")
             # Unique per start: a second start in the same second, after a
             # short run finished, must not reuse (and silently not run) the id.
             slot = f"manual-{datetime.now():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
             handle = markdown.enqueue_task(target.task, slot)
         else:
-            handle = runtime.start(target.name)
+            from . import inputs as inputs_lib
+
+            model = runtime._REGISTRY[target.name].inputs
+            try:
+                values = inputs_lib.validate(model, inputs or None) if (model or inputs) else None
+            except inputs_lib.InputError as exc:
+                raise ControlError(str(exc), "bad_input") from None
+            data = inputs_lib.dump(values)
+            handle = runtime.start(target.name, envelope={
+                "trigger": trigger, "scope": "team", "started_by": actor, "inputs": data,
+                "inputs_display": inputs_lib.display(model, data)})
         run_id = handle.get_workflow_id()
     _audit(hub_dir, "run_start", target.name, actor=actor, surface=surface,
            request_id=request_id, subject=run_id)

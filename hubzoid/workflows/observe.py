@@ -126,15 +126,27 @@ def definitions(hub_dir) -> list[dict]:
                         error=None,
                         run_as=None,
                         webhook=None,
+                        as_tool=False,
+                        schedulable=False,
+                        sensitive=False,
+                        has_inputs=False,
+                        title=node.name.replace("_", " ").strip().capitalize(),
                     )
                     try:
                         args = {
                             k.arg: ast.literal_eval(k.value)
                             for k in dec.keywords
-                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook")
+                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook", "as_tool",
+                                         "schedulable", "sensitive", "surfaces")
                         }
                         row["run_as"] = args.get("run_as")
                         row["webhook"] = args.get("on_webhook")
+                        # Workflows from chat, read without importing the file.
+                        row["as_tool"] = bool(args.get("as_tool"))
+                        row["schedulable"] = bool(args.get("schedulable")) and row["as_tool"]
+                        row["sensitive"] = bool(args.get("sensitive"))
+                        row["surfaces"] = list(args.get("surfaces") or ())
+                        row["has_inputs"] = any(k.arg == "inputs" for k in dec.keywords)
                         row["schedule"] = (
                             ast.literal_eval(dec.args[0])
                             if dec.args
@@ -351,6 +363,11 @@ def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = No
         error=(str(w.error)[:8000] if w.error else None) if visible else _error_summary(w.error),
         redacted=(not visible) and w.output is not None,
         run_as=(owner or {}).get("subject"),
+        # How it started: operational metadata, shown to managers.
+        trigger=((owner or {}).get("run") or {}).get("trigger"),
+        started_by=((owner or {}).get("run") or {}).get("started_by"),
+        inputs=((owner or {}).get("run") or {}).get("inputs_display") or None,
+        scope=((owner or {}).get("run") or {}).get("scope"),
     )
 
 

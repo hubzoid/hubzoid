@@ -361,7 +361,32 @@ class GrantStore:
         self._refresh_if_stale()
         hub, action = normalize(hub), normalize(action)
         with self._lock:
-            return bool(self._enforcer.enforce(subject, hub, action))
+            allowed = bool(self._enforcer.enforce(subject, hub, action))
+        if allowed and self.is_reader(subject):
+            # A reader came in through a shared report link: only grants made
+            # to them by name count, never "everyone signed in".
+            return self._direct(subject, hub, action)
+        return allowed
+
+    def _direct(self, subject: str, hub: str, action: str) -> bool:
+        with self._engine.connect() as conn:
+            return conn.execute(
+                text("SELECT 1 FROM hz_grants WHERE subject=:s AND (hub=:h OR hub='*') "
+                     "AND permission=:p LIMIT 1"), {"s": subject, "h": hub, "p": action}
+            ).fetchone() is not None
+
+    def is_reader(self, subject: str) -> bool:
+        """Whether `subject` is a reader-only account: created when they first
+        opened a report through its company link."""
+        with self._engine.connect() as conn:
+            return self._meta_get(conn, "reader_only:" + normalize(subject)) == "1"
+
+    def set_reader(self, subject: str, reader: bool = True) -> None:
+        subject = normalize(subject)
+        if not subject or subject == EVERYONE or "@" not in subject:
+            raise ValueError("a person is required")
+        with self._engine.begin() as conn:
+            self._meta_set(conn, "reader_only:" + subject, "1" if reader else "0")
 
     def permissions_for(self, subject: str, hub: str) -> set[str]:
         """Every permission `subject` effectively holds in `hub` (direct +
@@ -374,11 +399,12 @@ class GrantStore:
         self._refresh_if_stale()
         subjects = [subject]
         out: set[str] = set()
+        everyone = "" if self.is_reader(subject) else " OR subject='*'"
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT subject, hub, permission FROM hz_grants "
-                    "WHERE (subject IN :subs OR subject='*') AND (hub=:h OR hub='*')"
+                    f"WHERE (subject IN :subs{everyone}) AND (hub=:h OR hub='*')"
                 ).bindparams(bindparam("subs", expanding=True)),
                 {"subs": subjects, "h": hub},
             ).fetchall()
@@ -393,11 +419,12 @@ class GrantStore:
         subject = normalize(subject)
         self._refresh_if_stale()
         subjects = [subject]
+        everyone = "" if self.is_reader(subject) else " OR subject='*'"
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT hub FROM hz_grants "
-                    "WHERE (subject IN :subs OR subject='*') AND permission=:u"
+                    f"WHERE (subject IN :subs{everyone}) AND permission=:u"
                 ).bindparams(bindparam("subs", expanding=True)),
                 {"subs": subjects, "u": USE_HUB},
             ).fetchall()

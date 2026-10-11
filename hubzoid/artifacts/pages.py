@@ -9,51 +9,68 @@ import html
 import json
 
 _CSS = """
-:root{--bg:#fbfaf7;--panel:#ffffff;--ink:#1d1d1b;--muted:#6b6a65;--line:#e4e1d9;
---accent:#2f5d8a;--accent-ink:#fff;--warn-bg:#fff4e0;--warn-ink:#7a4b00;--danger:#a3322a;
---font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#171716;--panel:#1f1f1d;--ink:#ecebe6;
---muted:#a3a19a;--line:#34332f;--accent:#7fb0e0;--accent-ink:#0f1720;--warn-bg:#3a2d12;
---warn-ink:#f3cf8a;--danger:#ef8a80}}
+:root{--bg:#fafaf8;--panel:#ffffff;--ink:#0b0b0c;--body:#1f1f22;--muted:#6b6b70;--line:#e7e6e2;
+--soft:#f4f3ef;--accent:#b5471f;--accent-ink:#fff;--accent-soft:#fff0e9;--accent-line:#efb9a5;
+--warn-bg:#fff5da;--warn-ink:#805500;--danger:#a3322a;--info-bg:#eef3fa;--info:#345e91;
+--ok-bg:#eaf4ed;--ok:#276444;
+--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#151516;--panel:#222224;--ink:#fafaf8;--body:#e9e9e6;
+--muted:#b5b5bc;--line:#3c3c40;--soft:#26262a;--accent:#f28b66;--accent-ink:#0b0b0c;--accent-soft:#2a160f;
+--accent-line:#5a3424;--warn-bg:#352b19;--warn-ink:#e6bf72;--danger:#ffb4b4;--info-bg:#1c2d43;--info:#adccf0;
+--ok-bg:#183328;--ok:#a1d8b6}}
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--font);display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:12px;padding:8px 16px;border-bottom:1px solid var(--line);
-background:var(--panel);min-height:52px}
+header{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);
+background:var(--panel);min-height:54px;flex-wrap:wrap}
 header .t{flex:1;min-width:0}
 header h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-header .m{color:var(--muted);font-size:12px}
+header .m{color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.badge{display:inline-block;font-size:11.5px;line-height:1;padding:4px 8px;border-radius:999px;background:var(--soft);color:var(--body)}
+.badge.team{background:var(--info-bg);color:var(--info)}.badge.mine{background:var(--accent-soft);color:var(--accent)}
+.badge.warn{background:var(--warn-bg);color:var(--warn-ink)}
 button,.btn{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--panel);color:var(--ink);
-padding:6px 12px;border-radius:6px;cursor:pointer;text-decoration:none;white-space:nowrap}
+padding:6px 12px;border-radius:8px;cursor:pointer;text-decoration:none;white-space:nowrap}
+button:hover,.btn:hover{background:var(--soft)}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 button.danger{color:var(--danger)}
-button:disabled{opacity:.5;cursor:default}
+button:disabled{opacity:.55;cursor:default}
+button:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#notice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px;font-size:13px;
+background:var(--accent-soft);border-bottom:1px solid var(--accent-line);color:var(--accent)}
+#notice[hidden]{display:none}
 main{flex:1;min-height:0;display:flex}
 main>iframe{flex:1;border:0;width:100%;background:#fff}
 main>.pad{flex:1;overflow:auto;padding:16px}
 img.preview{max-width:100%;height:auto;display:block;margin:0 auto;background:#fff}
-pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+pre{white-space:pre-wrap;word-break:break-word;font:12.5px/1.5 var(--mono);margin:0}
 table{border-collapse:collapse;font-size:13px}
 th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
 tr:first-child td{font-weight:600;background:var(--panel)}
 .note{color:var(--muted);margin:16px 0}
-.center{margin:auto;max-width:520px;padding:32px 16px;text-align:center}
+.center{margin:auto;max-width:440px;padding:32px 16px;text-align:center}
+.center h1{font-size:20px;margin:0 0 8px}
+.center p{color:var(--muted);margin:0 0 16px}
 #share{position:fixed;top:60px;right:16px;width:min(420px,calc(100vw - 32px));background:var(--panel);
-border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);padding:16px;display:none;z-index:5}
+border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.12);padding:16px;display:none;z-index:5}
 #share.open{display:block}
 #share h2{font-size:14px;margin:0 0 10px}
 #share label{display:flex;gap:8px;align-items:flex-start;margin:8px 0}
 #share label.off{color:var(--muted)}
 #share small{display:block;color:var(--muted)}
 #share label.field{display:block;margin:8px 0 4px;font-weight:600}
-#share textarea{width:100%;min-height:70px;font:inherit;border:1px solid var(--line);border-radius:6px;
+#share textarea{width:100%;min-height:70px;font:inherit;border:1px solid var(--line);border-radius:8px;
 padding:6px;background:var(--bg);color:var(--ink)}
 #share select{font:inherit}
-.warn{background:var(--warn-bg);color:var(--warn-ink);border-radius:6px;padding:8px;margin:8px 0;font-size:13px}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.linkbox{width:100%;font:12px ui-monospace,Menlo,monospace;padding:6px;border:1px solid var(--line);
-border-radius:6px;background:var(--bg);color:var(--ink)}
+.warn{background:var(--warn-bg);color:var(--warn-ink);border-radius:8px;padding:8px;margin:8px 0;font-size:13px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.linkbox{width:100%;font:12px var(--mono);padding:6px;border:1px solid var(--line);
+border-radius:8px;background:var(--bg);color:var(--ink)}
 #status{color:var(--muted);font-size:12px;min-height:1em;margin-top:6px}
-@media print{header,#share{display:none}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;max-width:460px;margin:40px auto;text-align:left}
+.card h1{font-size:18px;margin:0 0 4px}.card dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;margin:14px 0}
+.card dt{color:var(--muted)}.card dd{margin:0}
+@media print{header,#share,#notice{display:none}}
 """
 
 _JS = r"""
@@ -90,12 +107,89 @@ async function load(){
   meta = data; render();
 }
 
+function when(ts){
+  if (!ts) return '';
+  const d = new Date(ts * 1000), now = new Date();
+  const hm = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const day = new Date(now); day.setHours(0,0,0,0);
+  const that = new Date(d); that.setHours(0,0,0,0);
+  const diff = Math.round((that - day) / 86400000);
+  if (diff === 0) return 'today ' + hm;
+  if (diff === -1) return 'yesterday ' + hm;
+  if (diff === 1) return 'tomorrow ' + hm;
+  return d.toLocaleDateString([], {weekday:'short', day:'numeric', month:'short'}) + ' ' + hm;
+}
+
+function header(){
+  const m = $('meta'); m.replaceChildren();
+  const s = meta.series;
+  if (!s) { m.textContent = new Date(meta.created * 1000).toLocaleString() + ' · ' + meta.filename; return; }
+  m.append(el('span', {class: 'badge ' + (s.scope === 'team' ? 'team' : 'mine')}, s.scope === 'team' ? 'Team report' : 'Your report'));
+  if (s.state === 'stopped') {
+    m.append(el('span', {class:'badge'}, 'No longer updating'));
+    m.append(el('span', {}, 'Last updated ' + when(s.updated)));
+  } else if (s.state === 'failed') {
+    m.append(el('span', {class:'badge warn'}, 'Not updated since ' + when(s.updated)));
+    m.append(el('span', {}, 'Showing the last good copy.'));
+  } else {
+    m.append(el('span', {}, 'Updated ' + when(s.updated) + (s.next ? ' · Next update ' + when(s.next) : '')));
+  }
+  const up = $('updatebtn');
+  up.hidden = !s.can_update;
+  if (s.can_update) {
+    up.disabled = s.update_wait > 0;
+    up.title = s.update_wait > 0 ? 'You can update again in ' + Math.ceil(s.update_wait / 60) + ' minutes.'
+      : 'Reruns the run that made this copy, with the same inputs.';
+  }
+  if (s.company) $('sharebtn').hidden = false;
+}
+
+let shown = null, polling = null;
+function poll(){
+  if (!meta || !meta.series || polling) return;
+  const url = cfg.api + '/latest';
+  polling = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return;
+    try {
+      const r = await fetch(url, {credentials:'same-origin', headers: shown ? {'If-None-Match': '"' + shown + '"'} : {}});
+      if (r.status !== 200) return;
+      const d = await r.json();
+      if (d.artifact && d.artifact !== shown) {
+        $('notice-text').textContent = 'A newer copy is ready (' + when(d.updated) + ').';
+        $('notice').hidden = false;
+      }
+    } catch (e) { /* offline: try again next time */ }
+  }, 60000);
+}
+
+async function showNewest(){
+  $('notice').hidden = true;
+  const r = await fetch(cfg.api, {credentials:'same-origin'});
+  if (r.ok) { meta = await r.json(); render(); }
+}
+
+async function updateNow(){
+  const up = $('updatebtn'); up.disabled = true; up.textContent = 'Updating…';
+  try {
+    await post(cfg.api + '/update', {});
+    $('notice-text').textContent = 'Updating. The new copy appears here when it is ready.';
+    $('notice').hidden = false; $('showbtn').hidden = true;
+    shown = shown || (meta && meta.id);
+  } catch (e) {
+    up.textContent = 'Update now'; up.disabled = false;
+    $('notice-text').textContent = e.message; $('notice').hidden = false; $('showbtn').hidden = true;
+  }
+}
+
 function render(){
   document.title = meta.title;
   $('title').textContent = meta.title;
-  $('meta').textContent = new Date(meta.created * 1000).toLocaleString() + ' · ' + meta.filename;
+  shown = meta.id;
+  $('updatebtn').textContent = 'Update now';
+  $('showbtn').hidden = false;
+  header();
   const dl = $('download'); dl.href = meta.download_url; dl.hidden = false;
-  if (meta.role === 'owner') $('sharebtn').hidden = false;
+  if (meta.role === 'owner' && meta.sharing) $('sharebtn').hidden = false;
   const box = $('content'); box.replaceChildren();
   if (meta.kind === 'html') {
     box.append(el('iframe', {src: meta.content_url, title: meta.title,
@@ -120,6 +214,7 @@ function render(){
     const a = el('a', {class:'btn', href: meta.download_url}, 'Download ' + meta.filename); c.append(a);
     box.append(c);
   }
+  poll();
 }
 
 function status(msg){ $('status').textContent = msg || ''; }
@@ -132,7 +227,46 @@ async function post(url, body, method){
   return data;
 }
 
+function openCompany(){
+  const c = meta.series.company; const p = $('share'); p.replaceChildren();
+  p.append(el('h2', {}, 'Who can view this report'));
+  const opt = (value, label, help, enabled, checked) => {
+    const l = el('label', enabled ? {} : {class:'off'});
+    const i = el('input', {type:'radio', name:'aud', value}); if (!enabled) i.disabled = true;
+    if (checked) i.checked = true;
+    const d = el('div'); d.append(el('div', {}, label)); if (help) d.append(el('small', {}, help));
+    l.append(i, d); p.append(l); return i; };
+  const can = c.available && c.allowed;
+  opt('owner', 'Only you', '', true, !c.on);
+  opt('company', 'Anyone at ' + c.domains + ' with the link',
+      can ? 'They sign in with a ' + c.domains + ' account. They can\'t use the agent or see other reports.'
+          : (!c.available ? c.reason : 'Needs \u201cShare reports with the company domain\u201d. Ask an admin.'),
+      can, c.on);
+  const area = el('div'); p.append(area);
+  const draw = () => { area.replaceChildren();
+    if (meta.series.company.on && meta.series.company.url) {
+      const box = el('input', {class:'linkbox', readonly:'readonly', 'aria-label':'Company link'}); box.value = meta.series.company.url;
+      const copy = el('button', {}, 'Copy link');
+      copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(box.value); status('Link copied.'); } catch (e) { box.select(); } });
+      const r = el('div', {class:'row'}); r.append(box, copy); area.append(r);
+    }
+    area.append(el('small', {class:'note'}, 'This link always opens the newest copy. People who saved a copy keep it.')); };
+  draw();
+  const row = el('div', {class:'row'});
+  const save = el('button', {class:'primary'}, 'Save sharing');
+  const close = el('button', {}, 'Close');
+  row.append(save, close); p.append(row, el('div', {id:'status', role:'status'}));
+  save.addEventListener('click', async () => {
+    const v = (p.querySelector('input[name=aud]:checked') || {}).value;
+    try { const r = await post(cfg.api + '/company', {action: v === 'company' ? 'on' : 'off'});
+      meta.series.company.on = !!r.on; meta.series.company.url = r.url || null; draw(); status('Saved.'); }
+    catch (e) { status(e.message); } });
+  close.addEventListener('click', () => p.classList.remove('open'));
+  p.classList.add('open');
+}
+
 function openShare(){
+  if (meta.series && meta.series.company) return openCompany();
   const s = meta.sharing; const p = $('share'); p.replaceChildren();
   p.append(el('h2', {}, 'Who can view this artifact'));
   const opt = (value, label, help, enabled) => {
@@ -199,7 +333,9 @@ function openShare(){
   sync(); p.classList.add('open');
 }
 
-$('sharebtn').addEventListener('click', () => { if (meta && meta.sharing) openShare(); });
+$('sharebtn').addEventListener('click', () => { if (meta && (meta.sharing || (meta.series && meta.series.company))) openShare(); });
+$('updatebtn').addEventListener('click', updateNow);
+$('showbtn').addEventListener('click', showNewest);
 load();
 })();
 """
@@ -215,8 +351,10 @@ def shell(*, mode: str, api: str | None, nonce: str) -> str:
 <style nonce="{nonce}">{_CSS}</style></head>
 <body>
 <header><div class="t"><h1 id="title">Loading…</h1><div class="m" id="meta"></div></div>
+<button id="updatebtn" hidden>Update now</button>
 <button id="sharebtn" hidden>Share</button>
 <a id="download" class="btn" hidden>Download</a></header>
+<div id="notice" role="status" hidden><span id="notice-text"></span><button id="showbtn">Show it</button></div>
 <main id="content"><div class="center">Loading…</div></main>
 <div id="share" role="dialog" aria-label="Sharing"></div>
 <script type="application/json" id="hz-cfg">{cfg}</script>
@@ -231,3 +369,71 @@ def message(*, title: str, body: str, nonce: str) -> str:
 <title>{html.escape(title)}</title><style nonce="{nonce}">{_CSS}</style></head>
 <body><main><div class="center"><h1 style="font-size:18px">{html.escape(title)}</h1>
 <p>{html.escape(body)}</p></div></main></body></html>"""
+
+
+_SMALL_JS = r"""
+(function(){
+const cfg = JSON.parse(document.getElementById('hz-cfg').textContent);
+const btn = (id) => document.getElementById(id);
+if (cfg.kind === 'unavailable') {
+  btn('switch').addEventListener('click', async () => {
+    try { await fetch('/api/auth/logout', {method:'POST', credentials:'same-origin'}); } catch (e) {}
+    location.href = '/auth?redirect=' + encodeURIComponent(cfg.back);
+  });
+  return;
+}
+const say = (m) => { btn('status').textContent = m || ''; };
+async function act(action){
+  if (action === 'stop' && !window.confirm('Stop this schedule for good? Its live link keeps the last copy.')) return;
+  try {
+    const r = await fetch(cfg.api, {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({action})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return say(d.detail || 'That did not work.');
+    if (action === 'stop') { btn('state').textContent = 'Stopped'; btn('actions').remove(); return say('Stopped. Its live link keeps the last copy.'); }
+    btn('state').textContent = d.state; btn('pause').hidden = d.paused; btn('resume').hidden = !d.paused;
+    say(action === 'pause' ? 'Paused. Nothing runs until you resume it.' : 'Resumed.');
+  } catch (e) { say('Could not reach the server. Try again.'); }
+}
+btn('pause').addEventListener('click', () => act('pause'));
+btn('resume').addEventListener('click', () => act('resume'));
+btn('stop').addEventListener('click', () => act('stop'));
+})();
+"""
+
+
+def unavailable(*, email: str | None, back: str, nonce: str) -> str:
+    """One page for every company-link refusal, so it can't test links or emails."""
+    who = (f"The link may be turned off, or it isn't shared with {html.escape(email)}."
+           if email else "The link may be turned off or incomplete.")
+    cfg = json.dumps({"kind": "unavailable", "back": back}).replace("<", "\\u003c")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>This report isn't available</title><style nonce="{nonce}">{_CSS}</style></head>
+<body><main><div class="center"><h1>This report isn't available</h1><p>{who}</p>
+<button id="switch">Sign in with another account</button></div></main>
+<script type="application/json" id="hz-cfg">{cfg}</script>
+<script nonce="{nonce}">{_SMALL_JS}</script></body></html>"""
+
+
+def schedule_page(*, view: dict, nonce: str) -> str:
+    """A schedule's owner page: what it runs, and pause, resume or stop."""
+    e = html.escape
+    cfg = json.dumps({"kind": "schedule", "api": view["api"]}).replace("<", "\\u003c")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{e(view['name'])}</title><style nonce="{nonce}">{_CSS}</style></head>
+<body><main><div class="card"><h1>{e(view['name'])}</h1>
+<div class="m" style="color:var(--muted)">Your schedule</div>
+<dl><dt>Report</dt><dd>{e(view['report'])}</dd><dt>When</dt><dd>{e(view['when'])}</dd>
+<dt>State</dt><dd id="state">{e(view['state'])}</dd><dt>Last run</dt><dd>{e(view['last'])}</dd></dl>
+<div class="row" id="actions"><button id="pause"{' hidden' if view['paused'] else ''}>Pause</button>
+<button id="resume"{'' if view['paused'] else ' hidden'}>Resume</button>
+<button id="stop" class="danger">Stop schedule</button></div>
+<div id="status" role="status"></div></div></main>
+<script type="application/json" id="hz-cfg">{cfg}</script>
+<script nonce="{nonce}">{_SMALL_JS}</script></body></html>"""

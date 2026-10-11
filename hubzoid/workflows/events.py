@@ -87,8 +87,8 @@ def declarations(hub_dir):
         if key in seen:
             raise ValueError('Webhook names collide after environment normalization')
         seen.add(key)
-        if not isinstance(spec, dict) or spec.get('verify', 'header') not in ('header', 'hmac'):
-            raise ValueError('Webhook verification must be header or hmac')
+        if not isinstance(spec, dict) or spec.get('verify', 'header') not in ('header', 'hmac', 'github'):
+            raise ValueError('Webhook verification must be header, hmac or github')
         if spec.get('verify') == 'hmac' and not spec.get('timestamp_header'):
             raise ValueError('HMAC webhooks require a signed timestamp_header')
     return specs

@@ -231,6 +231,24 @@ def resolve(hub_dir: Path, *, hub: str | None = None, run_as: str | None = None,
     return ident
 
 
+def check_person_run(hub_dir: Path, hub: str, email: str, workflow: str, *,
+                     source: str = "caller", what: str = "This workflow") -> RunIdentity:
+    """The account a Run for me or personal schedule run acts as: the person
+    themselves, active, able to use the hub and still holding the report's
+    grant. Raises IdentityError naming the cause."""
+    from ..access import store_for
+    from .runtime import tool_permission
+
+    ident = check(hub_dir, hub, email, source, what=what)
+    try:
+        allowed = store_for(hub_dir).can(ident.subject, hub, tool_permission(workflow))
+    except Exception as exc:  # noqa: BLE001 — fail closed
+        raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
+    if not allowed:
+        raise IdentityError(f"{ident.subject} no longer has access to this report.")
+    return ident
+
+
 def recheck(hub_dir: Path, hub: str, ident: RunIdentity, *, what: str = "This workflow") -> None:
     """Before a protected operation: is the run's account still usable?"""
     if not ident.is_person:
@@ -269,6 +287,8 @@ _SOURCES = {
     "deployment-secret": f"{WORKFLOW_USER_ENV} in the deployment secret",
     "setup": "the setup default (the initial owner)",
     "local": "the local quickstart account",
+    "caller": "the person who asked",
+    "schedule": "the schedule's owner",
     LEGACY_SOURCE: "the legacy service identity",
 }
 
