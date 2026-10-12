@@ -45,15 +45,15 @@ jobs:
         run: |
           export PATH="$(pg_config --bindir):$PATH"
           command -v initdb && command -v pg_ctl
-          pytest -q -m "" tests/test_workflows_from_chat_engine.py tests/test_report_series.py::test_concurrent_claims_cannot_take_a_key_in_different_namespaces tests/test_migrations.py::test_postgres_fresh_and_partial_upgrade
+          pytest -q -ra -m "" tests/test_workflows_from_chat_engine.py tests/test_report_series.py::test_concurrent_claims_cannot_take_a_key_in_different_namespaces tests/test_migrations.py::test_postgres_fresh_and_partial_upgrade
       - name: Critical workflow checks excluded by historical durations
         if: matrix.group == 2
         run: |
           export PATH="$(pg_config --bindir):$PATH"
           command -v initdb && command -v pg_ctl
-          pytest -q -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py
+          pytest -q -ra -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py
       - name: Test suite, part ${{ matrix.group }} of 2 (Open WebUI mode included, heavy tests left out)
-        run: pytest -q --no-header -m "not heavy" --splits 2 --group ${{ matrix.group }}
+        run: pytest -q -ra --no-header -m "not heavy" --splits 2 --group ${{ matrix.group }}
 
   console:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')

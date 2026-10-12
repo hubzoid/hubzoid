@@ -70,13 +70,22 @@ def test_missing_changelog_prevents_new_release(tmp_path):
     assert "release create" not in calls
 
 
-def test_only_publishing_a_release_triggers_the_release_pipeline():
+def test_release_candidates_can_validate_without_publishing():
     workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
     assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/secrets.yml",
                          ROOT / ".github/workflows/tests.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
     config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
-    assert config["on"] == {"release": {"types": ["published"]}}
+    assert config["on"] == {
+        "release": {"types": ["published"]},
+        "workflow_dispatch": "",
+        "pull_request": {"types": ["labeled", "synchronize", "reopened"]},
+    }
+    for name in ("tests", "console", "package", "image"):
+        assert config["jobs"][name]["if"] == (
+            "github.event_name != 'pull_request' || "
+            "contains(github.event.pull_request.labels.*.name, 'release-candidate')"
+        )
 
 
 def test_every_push_and_pull_request_is_scanned_for_secrets():
@@ -119,7 +128,7 @@ def test_pull_requests_and_pushes_run_fast_checks_that_cannot_publish():
 
 def test_release_validation_covers_legacy_mode_and_a_core_only_install():
     jobs = WORKFLOW["jobs"]
-    suite = next(s["run"] for s in jobs["tests"]["steps"] if "pytest" in s.get("run", ""))
+    suite = next(s["run"] for s in jobs["tests"]["steps"] if "--splits" in s.get("run", ""))
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
     assert ".[dev,openwebui]" in install and '-m "not heavy"' in suite and "--splits 2" in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
@@ -136,8 +145,12 @@ def test_all_release_checks_gate_publishing_and_publish_jobs_retry_independently
     assert set(jobs["publish-image"]["needs"]) == {"tests", "console", "package", "image"}
     assert jobs["publish-pypi"]["needs"] == "publish-image"
     assert jobs["github-release"]["needs"] == "publish-pypi"
-    for name in ("publish-image", "publish-pypi", "github-release"):
-        assert "if" not in jobs[name]  # retain GitHub's dependency-success gate
+    # An ordinary condition keeps the implicit success() dependency gate.
+    # PR/manual checks must never publish; downstream publishers also depend
+    # on the successful release-only image publisher.
+    assert jobs["publish-image"]["if"] == "github.event_name == 'release'"
+    for name in ("publish-pypi", "github-release"):
+        assert "if" not in jobs[name]
     checks = "\n".join(s.get("run", "") for name in ("tests", "console", "package")
                        for s in jobs[name]["steps"])
     for required in ("pytest", "npm run lint", "npm test", "verify_install.py"):

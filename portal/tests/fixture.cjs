@@ -307,6 +307,13 @@ function createFixture() {
 
   async function handle(method, endpoint, params, body) {
     if (state.role === "none") throw error(401, "Sign in to continue.");
+    // Signed-in non-admins have a personal workspace; only the admin APIs
+    // below require Console privileges.
+    if (method === "GET" && endpoint === "/my") return {
+      subject: state.viewer, admin: state.role !== "user", blocked: false,
+      web_app: false, connections: false, agents: [], schedules: [], reports: [], catalog: [],
+    };
+    if (method === "GET" && endpoint === "/my/runs") return { runs: [] };
     const a = admin();
     if (!a) throw error(403, "Sign in with an account allowed to manage agent access.");
     if (state.delays[endpoint]) await new Promise((r) => setTimeout(r, state.delays[endpoint]));
