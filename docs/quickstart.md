@@ -39,6 +39,9 @@ home-goods shop: five policy files, a stock export, a `stock_check` tool and
 three suggested prompts. Other templates: `--template minimal` (one example of
 each file type), `--template demo` (a guided tour) and `--template watchtower`
 (a workflow-first sample).
+For PR reviews and engineering reports, use `--template gitzoid` and follow its
+[setup guide](../hubzoid/templates/gitzoid/README.md). It starts with fictional
+PRs in preview mode; reviews use your chosen model.
 
 For the model, init uses a signed-in Claude Code or Codex CLI when it finds
 one (it asks when it finds both). Otherwise, in a terminal, it offers to save

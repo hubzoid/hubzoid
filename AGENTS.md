@@ -123,6 +123,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/templates/minimal/` | Small runnable hub, selected with `--template minimal`. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
+| `hubzoid/templates/gitzoid/` | PR review, security and engineering-report sample, with fictional data and optional GitHub setup. `--template gitzoid`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Public reverse proxy: the native chat app and Console by default; Open WebUI and bridge routes in Open WebUI mode. |

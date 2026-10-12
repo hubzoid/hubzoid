@@ -12,6 +12,12 @@ need no new required fields; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading
 for backup and restart instructions.
 
 ### Added
+- **GitZoid sample.** `hubzoid init my-gitzoid --template gitzoid` starts with
+  fictional pull requests in preview mode. Connect selected repositories for
+  PR reviews, saved rules, security checks and engineering reports. Setup checks
+  explain access, queued PRs and limits; GitHub publishing is an explicit choice.
+  See the [GitZoid guide](hubzoid/templates/gitzoid/README.md) for prerequisites,
+  account permissions, costs and upgrading an existing Hub.
 - **Inputs.** `@workflow(inputs=Model)` takes typed inputs, read as
   `hub.input`. The Console's Run now shows a form for them, and
   `hubzoid schedule run <hub> <name> --input key=value` takes them.

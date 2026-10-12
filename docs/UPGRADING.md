@@ -15,6 +15,12 @@ Console and runtime agree. If you tried pre-release main, ask again for any
 pending confirmations. New chat proposals bind to the account and chat that
 requested them; confirm in that same conversation within ten minutes.
 
+**GitZoid is included as a new template.** Existing Hubs do not receive template
+updates automatically. If you tried an earlier GitZoid checkout, back up its
+Hub and state, compare the new template, and preserve your settings, approved
+rules and secrets. Start in preview mode and run `setup_check` before enabling
+GitHub publishing. See the [sample guide](../hubzoid/templates/gitzoid/README.md).
+
 No Hub-file migration is required. The report features are off until a workflow opts in
 (`inputs=`, `as_tool=`, `schedulable=`, and optionally `key=` or `audience="domain"`) and an
 admin grants the new capabilities. These reach every hub:

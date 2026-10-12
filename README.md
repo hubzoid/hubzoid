@@ -130,10 +130,14 @@ setup. [Connect your assistant →](https://github.com/hubzoid/hubzoid/blob/main
 | **Operations** | Stock decisions, supplier delays and customer returns from sample data and policies | `hubzoid init my-hub` |
 | **Watchtower** | A personal service report, an explicit rule correction and repeat runs; also a model-assisted incident check | `hubzoid init my-watchtower --template watchtower` |
 | **Guided tour** | Explore Hub tools, knowledge and skills | `hubzoid init my-tour --template demo` |
+| **GitZoid** | Review fictional pull requests against saved rules, then connect your own repos | `hubzoid init my-gitzoid --template gitzoid` |
 
 Each sample includes instructions. Watchtower's
 [Service snapshot walkthrough](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131)
 uses a model-free report; chat still uses your configured runtime.
+GitZoid starts in preview mode with fictional data; reviews still use your
+configured model. Its [setup guide](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/gitzoid/README.md)
+covers GitHub access, existing PRs, publishing and costs.
 For a small starting folder, use `--template minimal`.
 
 ## Share with your team
