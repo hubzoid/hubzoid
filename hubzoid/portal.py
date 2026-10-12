@@ -783,15 +783,6 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 return Path(h["path"]), key
         raise HTTPException(404, "No such agent here.")
 
-    def own_series(path: Path, s, email: str, account: str) -> bool:
-        from .artifacts import _local_owner
-        from .artifacts import get as get_artifact
-
-        art = get_artifact(path, s.last_artifact) if s.last_artifact else None
-        if art is None or art.owner != email:
-            return False
-        return art.owner_account == account if art.owner_account else _local_owner(path, email)
-
     def own_schedule(path: Path, key: str, schedule_id: str, email: str, account: str):
         from .workflows import personal
 
@@ -828,7 +819,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             path, key = Path(h["path"]), normalize(h["key"])
             mine = [s for s in personal.for_owner(path, key, email)
                     if personal.owned_by(path, s, email, account)]
-            made = [s for s in series_lib.for_owner(path, key, email) if own_series(path, s, email, account)]
+            made = [s for s in series_lib.for_owner(path, key, email) if series_lib.owned(path, s, email, account)]
             usable = not blocked and gs.can(email, key, USE_HUB)
             if not (mine or made or usable):
                 continue

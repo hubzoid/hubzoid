@@ -7,9 +7,9 @@
 
 ## Upgrading to 1.3: workflows from chat
 
-Nothing to change. Everything new is off until a workflow opts in
+Nothing to change. The report features are off until a workflow opts in
 (`inputs=`, `as_tool=`, `schedulable=`, `key=` with `audience="domain"`) and an
-admin grants the new capabilities. Three things reach every hub:
+admin grants the new capabilities. These reach every hub:
 
 - **New tables** for report series, personal schedules and proposals. They are
   created on first start, like earlier migrations. Back up first as usual:
@@ -18,6 +18,15 @@ admin grants the new capabilities. Three things reach every hub:
   it current, instead of redirecting to one copy. Bookmarks keep working.
 - **Daylight saving.** A workflow scheduled at a fixed time in a zone with
   daylight saving now runs at that wall-clock time on the changeover day.
+- **One portal for everyone.** `/portal/` now opens for every signed-in person,
+  showing their own schedules, connections and agents. Only admins get the
+  admin pages, as before. In Open WebUI mode the sidebar's Hubzoid link shows for
+  everyone signed in: "Admin Console" for admins, "Schedules & connections" for
+  the rest. `/portal/connections` now opens the portal's Connections tab.
+- **MCP timeouts.** On the OpenAI Agents SDK and Codex runtimes an MCP tool call
+  now gets 30 seconds instead of 5. Set `HUBZOID_MCP_TIMEOUT` to change it; a
+  server's own `client_session_timeout_seconds` still wins. The Claude runtime is
+  unchanged unless you set it.
 
 Company links need company sign-in and three settings; see
 [Company links](reports-and-email.md#company-links).

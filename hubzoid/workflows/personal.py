@@ -140,12 +140,15 @@ def get(hub_dir, schedule_id: str | None) -> Schedule | None:
 
 
 def for_owner(hub_dir, hub: str, owner: str, *, include_stopped: bool = False) -> list[Schedule]:
+    """The schedules of whoever holds `owner`'s email now: not those a
+    replaced account saved under the same email."""
     q = f"SELECT {_COLS} FROM hz_personal_schedules WHERE hub=:h AND owner=:o"
     if not include_stopped:
         q += " AND state<>'stopped'"
     with _engine(hub_dir).connect() as c:
         rows = c.execute(text(q + " ORDER BY created"), {"h": hub, "o": owner}).fetchall()
-    return [Schedule(**dict(r._mapping)) for r in rows]
+    account = current_account(hub_dir, owner)
+    return [s for s in (Schedule(**dict(r._mapping)) for r in rows) if owned_by(hub_dir, s, owner, account)]
 
 
 def for_hub(hub_dir, hub: str) -> list[Schedule]:
@@ -436,6 +439,7 @@ def confirm(hub_dir, hub: str, actor: str, code: str) -> dict:
     s = _own(hub_dir, hub, actor, payload["id"])
     if kind == "stop":
         _update(hub_dir, s.id, state="stopped", reason="owner", paused_by=actor, next_fire=None)
+        _retire_reports(hub_dir, s)
         return {"kind": "stop", "schedule": get(hub_dir, s.id)}
     _validated(hub_dir, hub, actor, s.workflow, s.values, payload["cadence"], payload["timezone"],
                ignore=s.id)
@@ -510,6 +514,7 @@ def admin_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> Schedule:
     if s is None or s.hub != hub or s.state == "stopped":
         raise ScheduleError("There is no such schedule on this agent.")
     _update(hub_dir, s.id, state="stopped", reason="admin", paused_by=actor, next_fire=None)
+    _retire_reports(hub_dir, s)
     notify(hub_dir, hub, get(hub_dir, s.id), "admin_stopped")
     return get(hub_dir, s.id)
 
@@ -519,8 +524,25 @@ def run_now(hub_dir, hub: str, actor: str, schedule_id: str) -> str:
     if s.state == "paused" and s.reason == "admin":
         raise ScheduleError(f'"{s.name}" was paused by an admin. Only they can resume it.')
     _validated(hub_dir, hub, actor, s.workflow, s.values, s.cadence, s.timezone, check_limits=False)
-    # One run per five minutes: asking again joins the run already queued.
-    return start(hub_dir, hub, s, slot=f"now-{int(time.time()) // 300}")
+    # One run per five minutes: asking again joins the run already queued. Once
+    # that run has finished, its id would start nothing, so say so instead.
+    slot = f"now-{int(time.time()) // 300}"
+    status = _run_status(f"ps-{s.id}-{slot}")
+    if status in ("PENDING", "ENQUEUED", "DELAYED"):
+        return f"ps-{s.id}-{slot}"
+    if status:
+        raise ScheduleError(f'"{s.name}" ran a few minutes ago. Run it again in a few minutes.')
+    return start(hub_dir, hub, s, slot=slot)
+
+
+def _run_status(run_id: str) -> str | None:
+    from . import runtime
+
+    try:
+        found = runtime._DBOS.get_workflow_status(run_id)
+    except Exception:  # noqa: BLE001 — unknown: start it, the id still dedupes
+        return None
+    return getattr(found, "status", None) if found is not None else None
 
 
 # ---- running ----------------------------------------------------------------------
@@ -689,15 +711,22 @@ def manage_url(hub_dir, s: Schedule) -> str:
 
 
 def owned_by(hub_dir, s: Schedule, email: str, account: str | None) -> bool:
-    """Is `s` this signed-in account's? The email and the chat-app account it
-    was saved under: a new account that reuses the email gets nothing."""
+    """Is `s` this account's? The email and, when the schedule recorded one,
+    the chat-app account it was saved under: a new account that reuses the
+    email gets nothing."""
     if s.owner != email:
         return False
-    if s.owner_account:
-        return bool(account) and s.owner_account == account
-    from ..artifacts import _local_owner
+    return not s.owner_account or s.owner_account == account
 
-    return _local_owner(hub_dir, email)
+
+def current_account(hub_dir, email: str) -> str | None:
+    """The chat-app account the email belongs to now."""
+    from ..access import store_for
+
+    try:
+        return (store_for(Path(hub_dir)).identity(email) or {}).get("owui_id") or None
+    except Exception:  # noqa: BLE001 — unknown binds nothing
+        return None
 
 
 def row(s: Schedule, schema: dict | None = None) -> dict:
@@ -718,7 +747,22 @@ def owner_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> Schedule:
     """The owner stops their schedule (from the Console; chat confirms first)."""
     s = _own(hub_dir, hub, actor, schedule_id)
     _update(hub_dir, s.id, state="stopped", reason="owner", paused_by=actor, next_fire=None)
+    _retire_reports(hub_dir, s)
     return get(hub_dir, s.id)
+
+
+def _retire_reports(hub_dir, s: Schedule) -> None:
+    """A stopped schedule's reports say "No longer updating", unless another
+    schedule of the same person still feeds them."""
+    from ..artifacts import series as series_lib
+
+    try:
+        mine = set(s.series) | {x.id for x in series_lib.for_owner(hub_dir, s.hub, s.owner)
+                                if x.schedule_id == s.id}
+        kept = {i for o in for_owner(hub_dir, s.hub, s.owner) if o.id != s.id for i in o.series}
+        series_lib.retire(hub_dir, s.hub, mine - kept)
+    except Exception:  # noqa: BLE001 — the stop itself has happened
+        log.exception("personal: could not mark the reports of %s as stopped", s.id)
 
 
 def notify(hub_dir, hub: str, s: Schedule | None, kind: str, *, published: list | None = None) -> None:

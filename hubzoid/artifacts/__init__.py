@@ -396,6 +396,13 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     schedule_id = series.get("schedule_id")
     sha = _file_sha(source)
     last = get(hub_dir, found.last_artifact) if found.last_artifact else None
+    if (scope != series_lib.TEAM and last is not None and last.owner_account and owner_account
+            and last.owner_account != owner_account):
+        # A new account took the email over: it gets a fresh copy, and the old
+        # company link doesn't start showing its reports.
+        series_lib.domain_off(hub_dir, found, "account-replaced")
+        found = series_lib.get(hub_dir, found.id)
+        last = None
     same = last is not None and ((digest is not None and digest == found.last_digest)
                                  or (digest is None and sha == found.last_sha))
     if same:

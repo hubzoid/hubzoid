@@ -31,7 +31,10 @@ Change it for the hub with `HUBZOID_MCP_TIMEOUT=<seconds>`, or for one server
 with `"client_session_timeout_seconds": 120` in its entry, which wins. The
 Claude runtime times calls in the `claude` CLI (`MCP_TOOL_TIMEOUT`, in
 milliseconds). An explicit `HUBZOID_MCP_TIMEOUT` is passed on to it, unless
-`MCP_TOOL_TIMEOUT` is already set. Without one, the CLI keeps its own default.
+`MCP_TOOL_TIMEOUT` is already set. Without one, the CLI keeps its own default,
+which is longer: Claude Code 2.1.296 let a 130-second call finish. A server's
+`client_session_timeout_seconds` isn't passed to Claude, so a slow server works
+there without it.
 
 ## Env-var interpolation
 

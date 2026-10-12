@@ -568,12 +568,18 @@ def _start_update(hub_dir: Path, found, subject: str) -> str:
 
     env = {"trigger": "update", "scope": found.scope, "started_by": subject,
            "inputs": found.inputs, "inputs_display": ""}
-    if not found.team:
-        env.update(acts_as=found.owner, schedule_id=found.schedule_id)
     try:
         series_hub = Path(deployment.hub_path(hub_dir, found.hub))
     except (KeyError, OSError, ValueError):
         series_hub = Path(hub_dir)
+    if not found.team:
+        # The account the copy was made for, so a queued run stops if a new
+        # account has taken the email over by the time it starts.
+        from . import get as get_artifact
+
+        art = get_artifact(series_hub, found.last_artifact) if found.last_artifact else None
+        env.update(acts_as=found.owner, acts_as_account=getattr(art, "owner_account", None),
+                   schedule_id=found.schedule_id)
     if runtime._LAUNCHED and runtime._HUB_DIR and Path(runtime._HUB_DIR).resolve() == series_hub.resolve():
         if found.workflow not in runtime._REGISTRY:
             raise _UpdateRefused("This report's workflow isn't running here right now.")

@@ -377,9 +377,12 @@ def workflow(
         import inspect
 
         doc = inspect.getdoc(fn) or ""
+        if chat["as_tool"] and len(tool_permission(name)) > 64:
+            raise ValueError(f"{name}: a workflow offered in chat needs a name of at most 61 characters")
         recorded = _DEFINING.get()
         if recorded is not None:
-            if name in recorded:
+            # Names that differ only in case would share one grant (wf_<name>).
+            if name.lower() in {n.lower() for n in recorded}:
                 raise ValueError(f"duplicate workflow name: {name}")
             recorded[name] = WorkflowDef(
                 name=name, fn=fn, wrapped=fn, schedule=schedule, timezone=timezone,
@@ -387,7 +390,7 @@ def workflow(
                 concurrency=concurrency, concurrency_key=concurrency_key, timeout=timeout,
                 alert_to=alert_to, doc=doc, title=title_for(name), **chat)
             return fn
-        if name in _REGISTRY:
+        if name.lower() in {n.lower() for n in _REGISTRY}:
             raise ValueError(f"duplicate workflow name: {name}")
         identity_step = _identity_step()
         # The owner this definition was loaded under. A later owner re-imports

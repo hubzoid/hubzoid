@@ -429,3 +429,66 @@ def test_run_errors_survive_the_run_history_and_retries():
     with pytest.raises(ModelOutputError) as caught:
         runtime._last_error(step)({}, "hub", "me")
     assert caught.value.raw == "raw"
+
+
+# ---- final review: accounts, run now, stop, names --------------------------------------------
+
+
+def test_a_replaced_account_sees_none_of_the_old_schedules_or_reports(hub, engine):
+    from hubzoid.tools import report_tools
+
+    _, saved = _save(hub)
+    assert personal.for_owner(hub, "irs", MEERA)                    # hers, saved as id-meera
+    src = hub / "mine.html"
+    src.write_text("mine")
+    made = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Bhava",
+                        workflow="program_report", run_id="r1", key="program-mine", series={"scope": "personal"})
+    assert report_tools._reports_for(hub, MEERA)[0]
+    store_for(hub).upsert_identity(email=MEERA, owui_id="id-new")   # a new account took the email
+    assert personal.for_owner(hub, "irs", MEERA) == []
+    assert not [r for r in report_tools._reports_for(hub, MEERA)[0] if "program-mine" in r[1]]
+    # Publishing again as the new account starts fresh; the old company link doesn't follow.
+    from hubzoid.artifacts import series
+
+    series.domain_on(hub, series.get(hub, made["series_id"]), MEERA)
+    src.write_text("theirs")
+    again = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-new", source=src, title="Bhava",
+                         workflow="program_report", run_id="r2", key="program-mine", series={"scope": "personal"})
+    assert again["series_id"] == made["series_id"] and not series.domain_token(hub, series.get(hub, made["series_id"]))
+
+
+def test_run_now_twice_in_five_minutes_says_so_and_stopping_retires_the_report(hub, engine):
+    from hubzoid.artifacts import series
+
+    _, saved = _save(hub)
+    sid = saved["schedule"].id
+    personal.run_now(hub, "irs", MEERA, sid)                         # finishes at once here
+    started = len(engine.started)
+    with pytest.raises(personal.ScheduleError, match="ran a few minutes ago"):
+        personal.run_now(hub, "irs", MEERA, sid)                     # nothing would run: said, not hidden
+    assert len(engine.started) == started
+    (made,) = [x for x in series.for_owner(hub, "irs", MEERA) if x.schedule_id == sid]
+    assert series.state(hub, made)["state"] == "live"
+    personal.owner_stop(hub, "irs", MEERA, sid)
+    assert series.state(hub, series.get(hub, made.id))["state"] == "stopped"   # "No longer updating"
+
+
+def test_a_workflow_never_takes_a_core_tool_name(hub, engine):
+    (hub / "workflows" / "clash").mkdir()
+    (hub / "workflows" / "clash" / "clash.py").write_text(
+        "from hubzoid import workflow\n@workflow(as_tool=True)\ndef my_reports():\n    return {}\n")
+    names = [t.name for t in __import__("hubzoid.tools.report_tools", fromlist=["x"]).make(SimpleNamespace(hub_dir=hub))]
+    assert names.count("my_reports") == 1 and "program_report" in names
+
+
+def test_update_now_runs_for_the_account_the_copy_was_made_for(hub, engine, monkeypatch):
+    from hubzoid.artifacts import series, web
+
+    src = hub / "u.html"
+    src.write_text("u")
+    made = arts.publish(hub, hub="irs", owner=MEERA, owner_account="id-" + MEERA, source=src, title="Bhava",
+                        workflow="program_report", run_id="r1", key="program-u", series={"scope": "personal"})
+    monkeypatch.setattr(runtime, "_HUB_DIR", hub)
+    web._start_update(hub, series.get(hub, made["series_id"]), MEERA)
+    env = engine.started[-1][2]
+    assert (env["acts_as"], env["acts_as_account"], env["trigger"]) == (MEERA, "id-" + MEERA, "update")

@@ -2,7 +2,8 @@
 
 The sidebar gets one Hubzoid link for every signed-in person: "Admin Console"
 for those `/portal/api/me` authorizes, "Schedules & connections" for everyone
-else whose `/portal/api/chat-access` answers and who isn't blocked. Both open
+else whose `/portal/api/chat-access` answers (a blocked person included: their
+page says they're blocked and still lets them disconnect). Both open
 `/portal/`, the same Console, which shows each person what their access allows.
 
 Open WebUI is a single-page app: the page loads once and login/logout happen via
@@ -223,7 +224,8 @@ SCRIPT = r'''
       access(),
     ]);
     if (current !== revision) return;
-    role = admin ? 'admin' : (a && !a.blocked ? 'person' : '');
+    // A blocked person keeps the link: their page is where they disconnect.
+    role = admin ? 'admin' : (a ? 'person' : '');
     place();
     explain(a);
   }

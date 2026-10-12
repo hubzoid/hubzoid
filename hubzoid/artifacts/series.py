@@ -126,6 +126,17 @@ def for_hub(hub_dir, hub: str) -> list[Series]:
                  order="scope DESC, updated_at DESC")
 
 
+def owned(hub_dir, s: Series, email: str, account: str | None) -> bool:
+    """Is personal series `s` this account's? Its newest copy was made for
+    this email and, when that copy recorded an account, for this account."""
+    from . import get as get_artifact
+
+    art = get_artifact(hub_dir, s.last_artifact) if s.last_artifact else None
+    if art is None or art.owner != email:
+        return False
+    return not art.owner_account or art.owner_account == account
+
+
 def for_owner(hub_dir, hub: str, owner: str) -> list[Series]:
     return _many(hub_dir, "hub=:h AND scope='personal' AND owner=:o AND last_artifact IS NOT NULL",
                  {"h": hub, "o": owner})
@@ -233,6 +244,15 @@ def finish_run(hub_dir, hub: str, workflow: str, run_id: str, *, trigger: str | 
         else:
             c.execute(text(f"UPDATE hz_report_series SET failed_at=COALESCE(failed_at, :t) "
                            f"WHERE {where} AND live=1"), dict(params, t=time.time()))
+
+
+def retire(hub_dir, hub: str, ids: set[str]) -> None:
+    """Mark these series no longer updating: their schedule was stopped."""
+    if not ids:
+        return
+    with _engine(hub_dir).begin() as c:
+        for sid in ids:
+            c.execute(text("UPDATE hz_report_series SET live=0 WHERE hub=:h AND id=:i"), {"h": hub, "i": sid})
 
 
 def prune(hub_dir, series: Series, keep: int) -> int:

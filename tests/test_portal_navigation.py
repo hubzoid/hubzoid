@@ -30,7 +30,7 @@ def test_one_link_names_itself_for_admins_and_for_everyone_else():
     # schedules and connections. Both open the same /portal/.
     assert "admin: ['Admin Console', 'Hubzoid Admin Console'," in SCRIPT
     assert "person: ['Schedules & connections'," in SCRIPT
-    assert "role = admin ? 'admin' : (a && !a.blocked ? 'person' : '');" in SCRIPT
+    assert "role = admin ? 'admin' : (a ? 'person' : '');" in SCRIPT
     assert "link.setAttribute('aria-label', aria);" in SCRIPT and "link.title = title;" in SCRIPT
     # Collapsed: the label hides, a keyboard focus still names the link.
     assert "[data-compact] span { display:none; }" in SCRIPT

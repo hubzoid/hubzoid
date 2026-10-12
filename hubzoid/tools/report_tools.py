@@ -104,15 +104,19 @@ def make(ctx) -> list:
         return []
     if not defs:
         return []
-    tools = []
+    # The fixed tools first: a workflow never takes their names.
+    tools = _schedule_tools(hub_dir) if any(d.schedulable for d in defs) else []
+    tools.append(_my_reports_tool(hub_dir))
+    taken = {t.name.lower() for t in tools}
     for wf in defs:
+        if wf.name.lower() in taken:
+            log.warning("report_tools: workflow %r has the name of another tool; not offered in chat", wf.name)
+            continue
         try:
             tools.append(_run_tool(hub_dir, wf))
+            taken.add(wf.name.lower())
         except Exception:  # noqa: BLE001 — one broken workflow never breaks chat
             log.exception("report_tools: %s can't be offered in chat", wf.name)
-    if any(d.schedulable for d in defs):
-        tools += _schedule_tools(hub_dir)
-    tools.append(_my_reports_tool(hub_dir))
     return tools
 
 
@@ -585,7 +589,10 @@ def _reports_for(hub_dir: Path, actor: str):
         return zones[workflow]
 
     mine = []
+    account = _account(hub_dir, actor)
     for s in series_lib.for_owner(hub_dir, hub, actor):
+        if not series_lib.owned(hub_dir, s, actor, account):
+            continue                      # a replaced account's, under the same email
         mine.append((s.title or s.key, series_lib.latest_url(hub_dir, s), s.updated_at, tz(s.workflow), bool(s.live)))
     team = []
     for s in series_lib.team_series(hub_dir, hub):
