@@ -83,6 +83,11 @@ Environment variables explicitly supported:
   HUBZOID_SMTP_STARTTLS  Upgrade with STARTTLS. Default: true.
   HUBZOID_SMTP_SSL       Implicit TLS (usually port 465). Default: false.
   HUBZOID_SMTP_TIMEOUT   Seconds per SMTP operation. Default: 30.
+  HUBZOID_MCP_TIMEOUT    Seconds one MCP tool call may take, for every MCP
+                         server and connector. Default: 30. A server's own
+                         client_session_timeout_seconds in .mcp.json wins. On
+                         the Claude runtime it is passed as MCP_TOOL_TIMEOUT
+                         (ms) only when set, and only if that isn't set.
   HUBZOID_EMAIL_DELIVERY smtp | preview. preview writes each email to
                          .hubzoid/outbox/ and reports that nothing was sent.
                          Default: smtp. See docs/reports-and-email.md.

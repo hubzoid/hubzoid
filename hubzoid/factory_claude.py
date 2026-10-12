@@ -152,10 +152,22 @@ def tool_free_options(system: str, model_pin: str | None = None):
     )
     if model_pin is not None:
         opts["model"] = model_pin
-    child_env = config_secrets.child_env_overrides(os.environ)
+    child_env = _child_env()
     if child_env:
         opts["env"] = child_env
     return claude_options(**opts)
+
+
+def _child_env() -> dict[str, str]:
+    """The claude child's environment overrides. An explicit
+    HUBZOID_MCP_TIMEOUT (seconds) becomes the CLI's MCP_TOOL_TIMEOUT
+    (milliseconds) unless that is set; unset, the CLI keeps its own default."""
+    out = config_secrets.child_env_overrides(os.environ)
+    if os.environ.get("HUBZOID_MCP_TIMEOUT", "").strip() and not os.environ.get("MCP_TOOL_TIMEOUT"):
+        from .loaders.mcp import call_timeout
+
+        out["MCP_TOOL_TIMEOUT"] = str(int(call_timeout() * 1000))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +414,7 @@ def build_claude_runtime(hub_dir: Path, *, extra_tools: dict | None = None,
         setting_sources=[],  # explicit: no Claude Code config discovery
         include_partial_messages=True,  # token-level deltas via StreamEvent
     )
-    child_env = config_secrets.child_env_overrides(os.environ)
+    child_env = _child_env()
     if child_env:
         opts_kwargs["env"] = child_env
     if agent_defs:

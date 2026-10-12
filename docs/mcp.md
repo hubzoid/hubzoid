@@ -25,6 +25,14 @@ The same shape Claude Desktop uses:
 }
 ```
 
+**Timeouts.** One tool call may take 30 seconds on the OpenAI Agents SDK and
+Codex runtimes, for hub servers (stdio included) and Console connectors alike.
+Change it for the hub with `HUBZOID_MCP_TIMEOUT=<seconds>`, or for one server
+with `"client_session_timeout_seconds": 120` in its entry, which wins. The
+Claude runtime times calls in the `claude` CLI (`MCP_TOOL_TIMEOUT`, in
+milliseconds). An explicit `HUBZOID_MCP_TIMEOUT` is passed on to it, unless
+`MCP_TOOL_TIMEOUT` is already set. Without one, the CLI keeps its own default.
+
 ## Env-var interpolation
 
 `${VAR}` references in any string field are resolved against the environment

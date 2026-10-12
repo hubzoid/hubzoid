@@ -56,6 +56,11 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
 - The `run_workflow` chat tool takes inputs.
 
 ### Fixed
+- MCP tool calls timed out after 5 seconds on the OpenAI Agents SDK and Codex
+  runtimes (the SDK's default), for stdio servers and Console connectors
+  always. They now get 30 seconds, `HUBZOID_MCP_TIMEOUT` changes it, and a
+  server's own `client_session_timeout_seconds` still wins. On Claude an
+  explicit `HUBZOID_MCP_TIMEOUT` becomes the CLI's `MCP_TOOL_TIMEOUT`.
 - Schedules with a fixed time ran an hour off on the day daylight saving time
   changed in the workflow's time zone.
 - In the engine, `hub.call_llm` raised DBOS's retries error instead of
