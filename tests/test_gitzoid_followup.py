@@ -34,7 +34,8 @@ def test_gitleaks_cannot_load_pr_config_and_still_scans_dotfiles(suppression):
     assert all(token not in c["message"] for c in checks)
 
 
-def test_custom_analyzer_requires_explicit_project_code_opt_in(monkeypatch):
+@pytest.mark.parametrize("command", ["custom-sarif", "/custom/bin/ruff", "bin/gitleaks"])
+def test_custom_analyzer_requires_explicit_project_code_opt_in(monkeypatch, command):
     gz = h.template_lib()
     calls = []
     monkeypatch.setattr(gz.checks.shutil, "which", lambda cmd: "/trusted/" + cmd)
@@ -43,7 +44,8 @@ def test_custom_analyzer_requires_explicit_project_code_opt_in(monkeypatch):
         from types import SimpleNamespace
         return SimpleNamespace(stdout='{"runs": []}', returncode=0)
     monkeypatch.setattr(gz.checks.subprocess, "run", run)
-    a = {"name": "custom", "run": ["custom-sarif", "."]}
+    args = gz.checks.SAFE_RUNS.get(command.rsplit("/", 1)[-1], ["."])
+    a = {"name": "custom", "run": [command, *args]}
     _, notes = gz.checks.run_analyzers([], lambda p: "", [a])
     assert not calls and "allow_project_code" in notes[0]
     gz.checks.run_analyzers([], lambda p: "", [{**a, "allow_project_code": True}])

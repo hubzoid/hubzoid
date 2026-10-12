@@ -110,7 +110,7 @@ def run_analyzers(files: list[dict], read_head, analyzers: list[dict]) -> tuple[
         env.update(HOME=str(home), XDG_CONFIG_HOME=str(home))
         for a in analyzers:
             cmd = [str(x) for x in a["run"]]
-            name, tool = a.get("name") or cmd[0], Path(cmd[0]).name
+            name, tool = a.get("name") or cmd[0], cmd[0]
             preset = tool in SAFE_RUNS and cmd[1:] == SAFE_RUNS[tool]
             if not preset and not a.get("allow_project_code", False):
                 notes.append(f"{name}: skipped; custom commands require allow_project_code: true and may execute PR code")
