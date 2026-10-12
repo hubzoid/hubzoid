@@ -327,6 +327,9 @@ async def _start_engine(hub_dir, hub_name):
                 window = await asyncio.to_thread(runtime.downtime_missed, since, now)
                 if window.get("missed"):
                     downtime = window
+                    caught = await asyncio.to_thread(runtime.catch_up, since, now)
+                    if caught:
+                        log.warning("workflows: caught up once late: %s", ", ".join(caught))
                     log.warning(
                         "workflows: %d scheduled slot(s) missed during downtime "
                         "%s..%s (not back-filled)",

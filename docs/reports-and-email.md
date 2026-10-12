@@ -23,9 +23,10 @@ the template is required: publish any HTML you like, or any other file.
 
 ## Publishing
 
-`hub.publish_artifact(path, *, title=None, audience="owner", share_with=(), key=None)`
-returns `{"id", "url", "title", "filename", "content_type", "size"}`, and
-`latest_url` when a `key` is given.
+`hub.publish_artifact(path, *, title=None, audience="owner", share_with=(), key=None, digest=None)`
+returns `{"id", "url", "title", "filename", "content_type", "size"}`, plus
+`latest_url` and `series_id` when a `key` is given and `share_url` for a
+company link.
 
 - **Owner.** The owner is the account the run acts as
   ([workflow-identity.md](workflow-identity.md)). No caller can choose it.
@@ -35,14 +36,12 @@ returns `{"id", "url", "title", "filename", "content_type", "size"}`, and
     "principal": "finance"}]` shares it with those people or groups.
   - Both need a Console-managed hub.
   - A workflow can never create a public link.
-- **Every call stores a new artifact.** Earlier artifacts are never
-  overwritten, even when the file name is the same.
-- **One bookmark for a board you republish.** `key="sales-board"` (lowercase
-  letters, digits, `-` and `_`) tags the publish.
-  `https://<your host>/portal/latest/<agent>/sales-board` opens the newest
-  artifact published with that key in that agent. A viewer who may not open
-  the newest one gets "not available", never an older copy. Older artifacts
-  stay at their own addresses.
+  - `audience="domain"` adds a company link (see [Live reports](#live-reports)).
+- **Every call stores a new artifact,** unless a `key` is given and nothing
+  changed. Earlier artifacts are never overwritten.
+- **One link for a report you republish.** `key="sales-board"` (lowercase
+  letters, digits, `-` and `_`) makes the publish a copy in a live report. See
+  [Live reports](#live-reports).
 - **Recorded server-side:** owner, hub, workflow, run, content type, size,
   SHA-256, storage location, creation time and sharing.
 - **Stored privately** under `<hub>/.hubzoid/artifacts/`. Agent file tools
@@ -147,12 +146,75 @@ people or with the agent, never grants it.
 - **Clear warning in the dialog.** Anyone who has the link can open the
   artifact without signing in.
 
+## Live reports
+
+A `key` gives a report one link that always shows its newest copy.
+
+- **Team or personal.** A team run (the declared schedule, a webhook, the
+  Console or the CLI) writes the agent's report:
+  `https://<your host>/portal/latest/<agent>/<key>`. Run for me and personal
+  schedules ([workflows.md](workflows.md#reports-people-run-and-schedule-in-chat-13))
+  write that person's own copy, at its own link, private to them until they
+  share it.
+- **The page stays current.** The viewer shows when the report was updated and
+  when it updates next, and offers the newer copy when one arrives. The owner
+  of a personal report, and people with **Run and control workflows** for a
+  team one, have **Update now** (once every 5 minutes).
+- **Unchanged copies store nothing.** When the file, or `digest=` (a short
+  hash of the data behind it, so a page with a timestamp still counts as the
+  same), matches the newest copy, the publish returns that copy with
+  `"unchanged": true`.
+- **Pages that stop.** When a scheduled team run doesn't publish a key it
+  published before (an event closed), that page says "No longer updating" and
+  keeps its last copy.
+- **A key belongs to one workflow** in the agent. Another workflow using it is
+  refused.
+- **Retention.** `series_keep: 50` in `workflows/settings.yaml` keeps the last
+  50 copies of each report. Without it, copies are kept.
+
+### Company links
+
+`audience="domain"` gives a team report a company link,
+`https://<your host>/portal/r/<token>`, that anyone at your company domain can
+open after signing in, without access to the agent. They get a reader-only
+account: it opens company links and reports shared with it, nothing else. A
+person shares their own report the same way from the viewer's **Share**.
+
+It needs, for the deployment:
+
+```
+HUBZOID_SHARE_DOMAINS=company.org      # who may open company links
+OAUTH_ALLOWED_DOMAINS=company.org      # each share domain, listed explicitly
+ENABLE_OAUTH_SIGNUP=true               # readers get an account on first visit
+```
+
+and company sign-in (Google, Microsoft or OIDC, see [auth.md](auth.md)). The
+publisher needs **Share reports with the company domain**. Taking that away,
+or turning the link off, stops the link at once. A link an admin turns off
+stays off until someone makes a new one in the Console, even while the
+workflow keeps publishing with `audience="domain"`. An agent that an older
+"everyone signed in" grant opens can't have company links: give people access
+by name first. In the Console, **Schedules & reports → Everyone** lists every
+live report: admins copy, replace or turn off team links, and turn off personal
+ones. People see their own under **Yours**.
+Anyone else sees one "This report isn't available" page, whatever the reason.
+
 ## Email
 
-`hub.send_email(subject, body="", *, artifacts=(), raise_on_failure=True)`
+`hub.send_email(subject, body="", *, artifacts=(), email_list=None, raise_on_failure=True)`
 
 - **The recipient is fixed.** It is always the run's own account email. There is
   no `to`, `cc` or `bcc`, so neither code nor a model can address anyone else.
+- **Email lists.** `hub.send_email(subject, body, email_list="leads")` emails
+  each address of a list you declare in `workflows/settings.yaml`, one message
+  each. Only from a team run; every address must be an account here or at a
+  share domain (others are refused); at most 50 addresses and a 2,000-character
+  body. Link the report rather than pasting it:
+
+  ```yaml
+  email_lists:
+    leads: [asha@company.org, ravi@company.org]
+  ```
 - **Artifact links.** `artifacts` takes artifacts the same account owns. The
   email links to them, and opening a link needs a sign-in. The email has no
   attachments.

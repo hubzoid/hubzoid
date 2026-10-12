@@ -22,7 +22,6 @@ from __future__ import annotations
 import html
 import logging
 import re
-import secrets
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -178,7 +177,7 @@ def _outcome(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
         details = ui.rows([("Account", ui.avatar_chip(email))])
         return _page(f"{name} connected", [lead], 200, tone="ok",
                      brand=agent, extra=details, script=script,
-                     actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
+                     actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Connections</a>')
     if status == "failed":
         return _page(f"{name} was not connected", ["Ask the agent for a new link to try again."],
                      200, tone="bad", brand=agent, actions=button, script=script)
@@ -216,7 +215,7 @@ def _connect_page(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
                 f"You approve access on {_e(name)}'s own page. Hubzoid never sees your password.",
                 *access,
                 "Hubzoid keeps it encrypted, and agents use it only for you. Disconnect any "
-                f"time on <a href=\"{PAGE}\">Your connections</a>."])
+                f"time in <a href=\"{PAGE}\">My workspace, Connections</a>."])
             + f'<div class="actions"><form method="post" action="{base}/start">'
               f'<button class="btn btn-primary" type="submit">Continue to {_e(name)} '
               f'{ui.icon("arrow", 16)}</button></form>'
@@ -434,215 +433,24 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         return JSONResponse({"state": j["status"], "app": j["app"],
                              "checked": int(time.time())}, headers=hdrs)
 
-    # ---- Your connections ------------------------------------------------------
+    # ---- Connections (My workspace) ----------------------------------------------
     @router.get(PAGE)
     def connections(request: Request):
-        """Every connector this person may use, with its status and one action.
-        Open WebUI mode only: the web app has its own Settings → Connections."""
+        """Open WebUI mode: a person's connections are a tab of the Console,
+        `/portal/#/connections`. This address stays (links in chat history and
+        sign-ins under way return here) and carries its query into the tab.
+        The web app has its own Settings → Connections."""
         if not legacy() and session_email is None:
             return RedirectResponse("/account/connections", status_code=302)
+        query = f"?{request.url.query}" if request.url.query else ""
         try:
-            account, email = who_of(request)
-        except HTTPException as exc:
-            return _page("Try again shortly", ["Your sign-in could not be checked right now."],
-                         exc.status_code)
-        if not email:
-            return RedirectResponse("/auth?redirect=" + quote(PAGE, safe="/"), status_code=302,
+            signed_in = bool(who_of(request)[1])
+        except HTTPException:
+            signed_in = True     # can't check now: the tab shows the problem
+        if not signed_in:        # sign in first, to an address without a fragment
+            return RedirectResponse("/auth?redirect=" + quote(PAGE + query, safe="/"), status_code=302,
                                     headers={"Cache-Control": "no-store"})
-        from ..access import store_for
-
-        if store_for(hub_dir).is_suspended(email):
-            return _page("Your connections", ["Your access is blocked. Contact your administrator."],
-                         403, tone="bad")
-        mine = _mine(hub_dir, account, email)
-        return ui.shell("Your connections",
-                        _connections_body(mine, request.query_params),
-                        brand=_deployment_name(hub_dir), wide=True, account=email, chat="/")
-
-    @router.post(PAGE + "/{connector_id}/connect")
-    def connect_from_page(connector_id: str, request: Request):
-        from ..access.session import require_same_origin
-        from ..connectors import ConnectorError, oauth_flow, registry
-
-        try:
-            require_same_origin(request)
-            account, email = who_of(request)
-        except HTTPException:
-            return _page("Request refused", ["Open Your connections and try again."], 403,
-                         tone="bad")
-        from ..connectors import per_user
-
-        c = registry.get(hub_dir, connector_id)
-        if (not email or not account or c is None or not c.enabled or c.auth_type == "shared"
-                or c.id not in per_user.allowed_ids(hub_dir, email, [c.id])):
-            return _page("Not available", ["Ask your administrator."], 403, tone="bad")
-        user = user_of(request, account, email)
-        back = f"{PAGE}?connected={quote(c.id)}"
-        try:
-            if c.auth_type == "none":
-                oauth_flow.connect_without_auth(hub_dir, c, user)
-                target = back
-            else:
-                target = oauth_flow.start(hub_dir, c, user, origin=oauth_flow.origin_for(request),
-                                          return_to=back)
-        except ConnectorError as err:
-            return _page("Cannot connect", [_e(err.message)], err.status, tone="bad")
-        return RedirectResponse(target, status_code=303, headers={"Cache-Control": "no-store",
-                                                                  "Referrer-Policy": "no-referrer"})
-
-    @router.post(PAGE + "/{connector_id}/disconnect")
-    def disconnect_from_page(connector_id: str, request: Request):
-        from ..access.session import require_same_origin
-        from ..connectors import tokens
-
-        try:
-            require_same_origin(request)
-            account, email = who_of(request)
-        except HTTPException:
-            return _page("Request refused", ["Open Your connections and try again."], 403,
-                         tone="bad")
-        if account and tokens.disconnect(hub_dir, account, connector_id):
-            store.audit(hub_dir, hub="", subject=email, surface="web", app=connector_id,
-                        decision="disconnected", reason="on Your connections")
-        return RedirectResponse(f"{PAGE}?disconnected={quote(connector_id)}", status_code=303,
+        return RedirectResponse("/portal/#/connections" + query, status_code=302,
                                 headers={"Cache-Control": "no-store"})
 
     return router
-
-
-def _button(action: str, text: str, *, kind: str = "secondary", label_: str = "") -> str:
-    aria = f' aria-label="{_e(label_)}"' if label_ else ""
-    return (f'<form method="post" action="{action}"><button class="btn btn-{kind} btn-sm" '
-            f'type="submit"{aria}>{_e(text)}</button></form>')
-
-
-def _deployment_name(hub_dir: Path) -> str:
-    """The agent's name when the deployment has one agent, else "" (Hubzoid)."""
-    from .. import deployment
-
-    try:
-        hubs = deployment.hubs(Path(hub_dir))
-    except Exception:  # noqa: BLE001 — wording only
-        return ""
-    return (hubs[0].get("name") or hubs[0].get("key") or "") if len(hubs) == 1 else ""
-
-
-def _date(ts: float | None) -> str:
-    if not ts:
-        return ""
-    t = time.localtime(ts)
-    return f"{t.tm_mday} {time.strftime('%b %Y', t)}"
-
-
-_BADGES = {"connected": ("ok", "Connected"), "expired": ("warn", "Needs attention"),
-           "none": ("", "Not connected"), "shared": ("info", "Shared"),
-           "blocked": ("", "Not available to you")}
-
-
-def _connections_body(mine: list, query) -> str:
-    """The list on Your connections: each app with its status, the agents that
-    use it, and one action. A note after a connect or disconnect is read from
-    the person's own records, never from the query alone."""
-    names = {c.id: c.name for c, *_ in mine}
-    state = {c.id: status for c, status, *_ in mine}
-    banner = ""
-    done, gone = query.get("connected"), query.get("disconnected")
-    # After a refused sign-in the callback adds error= (to connected= or connector=).
-    failed = (query.get("connector") or done) if query.get("error") else None
-    if failed in names:
-        banner = ("bad", "alert", f"{_e(names[failed])} was not connected. Try again.")
-    elif done in names and state.get(done) == "connected":
-        banner = ("ok", "check", f"{_e(names[done])} connected.")
-    elif done in names:
-        banner = ("bad", "alert", f"{_e(names[done])} was not connected. Try again.")
-    elif gone in names and state.get(gone) != "connected":
-        banner = ("ok", "check", f"{_e(names[gone])} disconnected.")
-    banner_html = (f'<div class="banner {banner[0]}" role="status">{ui.icon(banner[1], 16)}'
-                   f"<span>{banner[2]}</span></div>") if banner else ""
-    items = []
-    for c, status, allowed, agents, since in mine:
-        kind = "blocked" if not allowed and status != "shared" else status
-        tone, text = _BADGES[kind]
-        dot = '<span class="dot" aria-hidden="true"></span>' if kind == "connected" else ""
-        used = f"Used by {_e(', '.join(agents))}" if agents else ""
-        if kind == "blocked":
-            meta = "You no longer have access. Disconnect to remove it."
-        elif kind == "shared":
-            meta = " · ".join(x for x in ("Set up by your administrator", used) if x)
-        elif kind == "connected":
-            meta = " · ".join(x for x in (used, f"Connected {_date(since)}" if since else "") if x)
-        else:
-            meta = used
-        cid = quote(c.id)
-        if kind in ("connected", "blocked"):
-            action = _confirm_disconnect(c.name, agents, f"{PAGE}/{cid}/disconnect")
-        elif kind == "expired":
-            action = (_confirm_disconnect(c.name, agents, f"{PAGE}/{cid}/disconnect", ghost=True)
-                      + _button(f"{PAGE}/{cid}/connect", "Reconnect", kind="primary",
-                                label_=f"Reconnect {c.name}"))
-        elif kind == "none":
-            action = _button(f"{PAGE}/{cid}/connect", "Connect", kind="primary",
-                             label_=f"Connect {c.name}")
-        else:
-            action = ""
-        items.append(
-            f'<li class="item" data-connector="{_e(c.id)}">'
-            f'<span class="tile sm app" aria-hidden="true">{ui.initial(c.name)}</span>'
-            f'<div class="item-main"><div class="item-title">{_e(c.name)}'
-            f'<span class="badge {tone}">{dot}{text}</span></div>'
-            + (f'<div class="item-meta">{meta}</div>' if meta else "")
-            + f'</div><div class="row-actions">{action}</div></li>')
-    if items:
-        listing = f'<ul class="list" aria-label="Your connections" style="list-style:none;padding:0">{"".join(items)}</ul>'
-    else:
-        listing = ('<div class="list"><div class="empty">'
-                   f'<span class="tile sm" aria-hidden="true">{ui.icon("plug", 18)}</span>'
-                   '<p style="margin:0;color:var(--ink);font-weight:600">Nothing to connect yet</p>'
-                   "<p>Ask your administrator for an app to connect.</p>"
-                   "</div></div>")
-    head = ('<h1>Your connections</h1>'
-            '<p class="lead">Connect your accounts so agents can use them for you. '
-            'Only you can use your connections.</p>')
-    help_ = ui.help_text("About connections", [
-        "A connection is yours alone: an agent uses it only when you're the one asking.",
-        "Disconnect to stop at once. You can connect again any time."])
-    return head + banner_html + listing + help_
-
-
-def _confirm_disconnect(name: str, agents: list[str], action: str, *, ghost: bool = False) -> str:
-    """Disconnect behind a confirmation, with no script (a details popover)."""
-    who = ", ".join(agents) if agents else "Your agents"
-    return (f'<details class="confirm"><summary class="btn btn-{"ghost" if ghost else "secondary"} btn-sm" '
-            f'aria-label="Disconnect {_e(name)}">Disconnect</summary>'
-            f'<div class="pop" role="dialog" aria-label="Disconnect {_e(name)}">'
-            f"<b>Disconnect {_e(name)}?</b><p>{_e(who)} will stop using it for you.</p>"
-            f'<div class="actions">{_button(action, "Disconnect", kind="danger")}</div></div></details>')
-
-
-def _mine(hub_dir: Path, account: str, email: str) -> list:
-    """``[(connector, status, allowed, agents, connected_at)]`` the person may use somewhere
-    in this deployment (offered in an agent where they hold its grant), plus
-    any they are still connected to without a grant (``allowed`` False: they
-    can only remove it). Status: connected, expired, none or shared; agents:
-    the names of the agents that use it for them."""
-    from ..connectors import per_user, registry, tokens
-
-    conns = {c.connector_id: c for c in tokens.for_user(hub_dir, account)} if account else {}
-    listed = [c for c in registry.list_all(hub_dir) if c.enabled]
-    used = per_user.used_by(hub_dir, email, [c.id for c in listed])
-    out = []
-    for c in listed:
-        allowed = bool(used.get(c.id))
-        if not allowed and c.id not in conns:
-            continue
-        if c.auth_type == "shared":
-            status = "shared"
-        elif c.id in conns:
-            # As the web app sorts them: any other stored status needs attention.
-            ok = (conns[c.id].status or "").lower() in ("", "ok", "active", "connected", "valid")
-            status = "connected" if ok else "expired"
-        else:
-            status = "none"
-        since = conns[c.id].connected_at if c.id in conns else None
-        out.append((c, status, allowed, used.get(c.id, []), since))
-    return out

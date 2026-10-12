@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
-import { usesSignInLinks, type Me } from "../api";
+import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
+import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules" | "connections";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -68,14 +68,23 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
-// Connectors live in each agent (its Connectors tab), not in the menu.
+// Connectors live in each agent (its Connectors tab), not in the menu. An
+// admin's own schedules and connections are under "You", as on everyone's My
+// workspace; connections are the web app's Settings page there.
+function youItems(me: Me) {
+  const connections = me.web_app ? "/account/connections" : href("/connections");
+  return [
+    { key: "schedules", icon: <CalendarClock size={18} />, label: <a href={href("/schedules")}>Schedules</a> },
+    { key: "connections", icon: <Plug size={18} />, label: <a href={connections}>Connections</a> },
+  ];
+}
 function navItems(_me: Me) {
   return items;
 }
 
-function Wordmark({ isDark, compact }: { isDark: boolean; compact?: boolean }) {
+function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
   return (
-    <a className={`brand${compact ? " compact" : ""}`} href={href("/home")} aria-label="Hubzoid">
+    <a className={`brand${compact ? " compact" : ""}`} href={href(to)} aria-label="Hubzoid">
       <img src={isDark ? wordmarkDark : wordmarkLight} alt="Hubzoid" className="brand-wordmark" />
     </a>
   );
@@ -118,6 +127,8 @@ function Sidebar({
       <Wordmark isDark={isDark} />
       <div className="eyebrow sidebar-label">Workspace</div>
       <Menu mode="inline" selectedKeys={[area]} items={navItems(me)} onClick={onNavigate} />
+      <div className="eyebrow sidebar-label">You</div>
+      <Menu mode="inline" selectedKeys={[area]} items={youItems(me)} onClick={onNavigate} />
       <div className="sidebar-footer">
         <ThemeToggle mode={mode} setMode={setMode} />
         <a href="/">Open chat ↗</a>
@@ -193,6 +204,60 @@ export function Shell({
       )}
       <Layout.Content className="content">
         <div className="main">{children}</div>
+      </Layout.Content>
+    </Layout>
+  );
+}
+
+/** The frame for someone who isn't an admin: their schedules and reports,
+ *  their connections and the agents they can use. No administration menu. */
+export function PersonShell({
+  my,
+  page,
+  isDark,
+  mode,
+  setMode,
+  children,
+}: {
+  my: MyData;
+  page: "schedules" | "connections" | "agents";
+  isDark: boolean;
+  mode: Mode;
+  setMode: (m: Mode) => void;
+  children: ReactNode;
+}) {
+  const me: Me = { subject: my.subject, org_admin: false, manageable: [], web_app: my.web_app };
+  const tabs = [
+    { key: "schedules", label: "Schedules & reports", to: href("/schedules") },
+    ...(my.connections ? [{ key: "connections", label: "Connections",
+      to: my.web_app ? "/account/connections" : href("/connections") }] : []),
+    { key: "agents", label: "Agents", to: href("/agents") },
+  ];
+  return (
+    <Layout className="shell person-shell">
+      <Layout.Header className="topbar person-top">
+        <div className="person-top-left">
+          <Wordmark isDark={isDark} compact to="/schedules" />
+          <span className="person-title">My workspace</span>
+        </div>
+        <div className="person-top-right">
+          <a href="/">Back to chat</a>
+          <Text type="secondary" className="identity">{my.subject}</Text>
+          <ThemeToggle mode={mode} setMode={setMode} />
+          <SignOutButton me={me} />
+        </div>
+      </Layout.Header>
+      <nav className="person-tabs" aria-label="Your pages">
+        {tabs.map((t) => (
+          <a key={t.key} href={t.to} aria-current={t.key === page ? "page" : undefined}>{t.label}</a>
+        ))}
+      </nav>
+      <Layout.Content className="content">
+        <div className="main">
+          {my.blocked && <Alert className="notice" type="warning" showIcon
+            message="Your access is blocked. Contact your administrator." />}
+          {children}
+        </div>
       </Layout.Content>
     </Layout>
   );

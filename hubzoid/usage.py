@@ -54,12 +54,44 @@ def estimate_cost(model: str | None, input_tokens: int | None,
     return None
 
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+#: The workflow run a model call belongs to, so its cost can be summed per run
+#: and per personal schedule. Set by the workflow run context.
+_RUN_TAG: ContextVar["str | None"] = ContextVar("hubzoid_usage_run", default=None)
+
+
+@contextmanager
+def run_tag(run_id: str | None):
+    token = _RUN_TAG.set(run_id or None)
+    try:
+        yield
+    finally:
+        _RUN_TAG.reset(token)
+
+
+def run_cost(hub_dir, hub: str, prefix: str, since: float) -> float:
+    """Model cost of runs whose id starts with `prefix`, since `since`."""
+    from sqlalchemy import text as _text
+
+    from . import db, migrations
+
+    engine = db.operational_engine(Path(hub_dir))
+    migrations.upgrade(engine, "operational")
+    with engine.connect() as conn:
+        value = conn.execute(_text("SELECT SUM(cost_usd) FROM hz_usage WHERE hub=:h AND chat_id LIKE :p "
+                                   "AND ts >= :t"), {"h": hub, "p": prefix + "%", "t": since}).scalar()
+    return float(value or 0.0)
+
+
 def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
            chat_id: str | None = None, model: str | None = None,
            input_tokens: int | None = None, output_tokens: int | None = None,
            cost_usd: float | None = None, status: str = "ok",
            duration_ms: int | None = None) -> None:
     """Insert one usage row. Best effort: never raises into chat or a workflow."""
+    chat_id = chat_id or _RUN_TAG.get()
     try:
         if cost_usd is None:
             cost_usd = estimate_cost(model, input_tokens, output_tokens)

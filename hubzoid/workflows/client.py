@@ -6,7 +6,7 @@ from .ownership import readiness
 from .. import db
 
 
-def enqueue_live(hub_dir, name, *, markdown=False, overrides=None):
+def enqueue_live(hub_dir, name, *, markdown=False, overrides=None, envelope=None):
     from dbos import DBOSClient
     from .runtime import _app_name
     ready = readiness(hub_dir, hub_dir.name)
@@ -27,7 +27,7 @@ def enqueue_live(hub_dir, name, *, markdown=False, overrides=None):
                 raise ValueError(f'Workflow {name!r} is not served by the live owner')
             options = {'workflow_name': name, 'queue_name': definition['queue'], 'workflow_id': rid,
                        'queue_partition_key': definition.get('manual_partition', name)}
-            args = (hub_dir.name,)
+            args = (hub_dir.name, None, dict(envelope)) if envelope else (hub_dir.name,)
         handle = client.enqueue(options, *args)
         return LiveHandle(client, handle, hub_dir)
     except BaseException:

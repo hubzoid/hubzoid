@@ -29,6 +29,27 @@ from pathlib import Path
 
 from .._fs import resolve_bucket
 
+#: Seconds one MCP tool call may take, unless a server's own
+#: `client_session_timeout_seconds` says otherwise. HUBZOID_MCP_TIMEOUT changes it.
+DEFAULT_CALL_TIMEOUT = 30.0
+
+
+def call_timeout(env=None) -> float:
+    """Seconds an MCP tool call may take on the OpenAI Agents SDK and Codex
+    runtimes: HUBZOID_MCP_TIMEOUT, else 30. A bad value keeps the default."""
+    raw = ((env if env is not None else os.environ).get("HUBZOID_MCP_TIMEOUT") or "").strip()
+    if not raw:
+        return DEFAULT_CALL_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        log.warning("HUBZOID_MCP_TIMEOUT=%r is not a positive number of seconds; using %s",
+                    raw, DEFAULT_CALL_TIMEOUT)
+        return DEFAULT_CALL_TIMEOUT
+    return value
+
 log = logging.getLogger(__name__)
 _VAR_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 

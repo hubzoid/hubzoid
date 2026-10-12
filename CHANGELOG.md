@@ -3,6 +3,72 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.3.0]
+
+Reports people run and schedule from chat, with live links. Upgrading: nothing
+to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-from-chat).
+
+### Added
+- **Inputs.** `@workflow(inputs=Model)` takes typed inputs, read as
+  `hub.input`. The Console's Run now shows a form for them, and
+  `hubzoid schedule run <hub> <name> --input key=value` takes them.
+- **Run for me.** `as_tool=True` offers a workflow as a chat and MCP tool that
+  runs as the person asking, with their access. Each one is a capability in
+  the Console (**Run <report>**). A run that returns `{"answer": "..."}` shows
+  it in chat. `max_input_kb` takes larger inputs, such as a diff.
+- **Personal schedules.** `schedulable=True` lets people with **Schedule
+  reports for themselves** save their own schedule from chat, after a yes. It
+  runs as them and pauses with a reason after repeated failures or when access
+  or inputs change. Email about it is off unless `notify_by_email: true`. They list,
+  pause, resume, run, change and stop it in chat or on the Console's
+  **Schedules & reports** page, with each schedule's latest runs. Admins also
+  see everyone's, with the 30-day model cost, and can pause or stop them.
+- **My workspace, one portal for everyone.** `/portal/` is the same Console
+  for every signed-in person, showing what their access allows: someone who
+  isn't an admin gets **My workspace** with their Schedules & reports,
+  Connections and Agents. Admins find their own Schedules and Connections under
+  **You** in the Console. Open WebUI's sidebar gets one Hubzoid link for each
+  person ("Admin Console" or "My workspace"); the web app's account menu has
+  "My workspace". In Open WebUI
+  mode, `/portal/connections` opens the portal's Connections tab instead of a
+  page of its own.
+- **Live reports.** `publish_artifact(key=...)` keeps one link per report that
+  always shows the newest copy: the agent's for team runs, each person's own
+  for theirs. Unchanged copies (same file or `digest=`) store nothing. The
+  page shows when it updates next, offers the newer copy, and has **Update
+  now** for people who can run it. A page a scheduled run stops publishing
+  says "No longer updating". `series_keep` in `workflows/settings.yaml` limits
+  copies.
+- **Company links.** `audience="domain"` and the viewer's **Share** give a
+  report a link anyone at `HUBZOID_SHARE_DOMAINS` can open after company
+  sign-in, as a reader-only account with no agent access. Needs **Share
+  reports with the company domain**. The Console lists live reports and copies,
+  replaces or turns off their company links.
+- **Email lists.** `hub.send_email(..., email_list="leads")` emails each
+  address of a list declared in `workflows/settings.yaml`, from team runs.
+- **Runs show how they started:** trigger, who started them and their inputs.
+- `verify: github` for named webhooks checks GitHub's `X-Hub-Signature-256`.
+- `hubzoid.workflows.testing.run_local` runs a workflow once without the
+  engine, capturing what it would publish and email.
+- `catch_up=True` runs a declared schedule once after downtime.
+
+### Changed
+- `/portal/latest/<agent>/<key>` serves the page itself (it redirected to a
+  fixed copy) and shows only the agent's own copies, never a person's.
+- The `run_workflow` chat tool takes inputs.
+
+### Fixed
+- MCP tool calls timed out after 5 seconds on the OpenAI Agents SDK and Codex
+  runtimes (the SDK's default), for stdio servers and Console connectors
+  always. They now get 30 seconds, `HUBZOID_MCP_TIMEOUT` changes it, and a
+  server's own `client_session_timeout_seconds` still wins. On Claude an
+  explicit `HUBZOID_MCP_TIMEOUT` becomes the CLI's `MCP_TOOL_TIMEOUT`.
+- Schedules with a fixed time ran an hour off on the day daylight saving time
+  changed in the workflow's time zone.
+- In the engine, `hub.call_llm` raised DBOS's retries error instead of
+  `ModelOutputError`, and a run that failed with `ModelOutputError`,
+  `ArtifactError` or `EmailError` reported a `TypeError`.
+
 ## [1.2.3]
 
 The agent cards in the Console open the agent with one click. Nothing to change

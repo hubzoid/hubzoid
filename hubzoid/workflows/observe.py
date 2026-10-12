@@ -126,15 +126,27 @@ def definitions(hub_dir) -> list[dict]:
                         error=None,
                         run_as=None,
                         webhook=None,
+                        as_tool=False,
+                        schedulable=False,
+                        sensitive=False,
+                        has_inputs=False,
+                        title=node.name.replace("_", " ").strip().capitalize(),
                     )
                     try:
                         args = {
                             k.arg: ast.literal_eval(k.value)
                             for k in dec.keywords
-                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook")
+                            if k.arg in ("schedule", "timezone", "run_as", "on_webhook", "as_tool",
+                                         "schedulable", "sensitive", "surfaces")
                         }
                         row["run_as"] = args.get("run_as")
                         row["webhook"] = args.get("on_webhook")
+                        # Workflows from chat, read without importing the file.
+                        row["as_tool"] = bool(args.get("as_tool"))
+                        row["schedulable"] = bool(args.get("schedulable")) and row["as_tool"]
+                        row["sensitive"] = bool(args.get("sensitive"))
+                        row["surfaces"] = list(args.get("surfaces") or ())
+                        row["has_inputs"] = any(k.arg == "inputs" for k in dec.keywords)
                         row["schedule"] = (
                             ast.literal_eval(dec.args[0])
                             if dec.args
@@ -203,6 +215,10 @@ def catalog(hub_dir) -> list[dict]:
             if row["enabled"] and row["schedule"]
             else None
         )
+        if row["schedule"] and not row["error"]:
+            from .schedule_grammar import describe
+
+            row["schedule_text"] = describe(row["schedule"])
         row["last_dispatch"] = health.get("last_dispatch")
         row["missed"] = health.get("missed", 0)
         row["heartbeat"] = health.get("heartbeat")
@@ -351,6 +367,11 @@ def _run_row(hub_name: str, w, *, visible: bool = False, owner: dict | None = No
         error=(str(w.error)[:8000] if w.error else None) if visible else _error_summary(w.error),
         redacted=(not visible) and w.output is not None,
         run_as=(owner or {}).get("subject"),
+        # How it started: operational metadata, shown to managers.
+        trigger=((owner or {}).get("run") or {}).get("trigger"),
+        started_by=((owner or {}).get("run") or {}).get("started_by"),
+        inputs=((owner or {}).get("run") or {}).get("inputs_display") or None,
+        scope=((owner or {}).get("run") or {}).get("scope"),
     )
 
 
@@ -436,6 +457,31 @@ def runs(
                 row["steps"] = [_step_row(x, visible) for x in steps]
             rows.append(row)
         return rows
+    finally:
+        client.destroy()
+
+
+def schedule_runs(hub_dir, schedule_id: str, *, limit: int = 10) -> list[dict]:
+    """A personal schedule's latest runs: status and times only, never inputs,
+    output or errors. Callers check who may see the schedule first."""
+    from dbos import DBOSClient
+    from .runtime import _app_name
+
+    url = db.dbos_url(hub_dir)
+    if _missing_sqlite(url):
+        return []
+    app = _app_name(Path(hub_dir).name)
+    client = DBOSClient(system_database_url=url, application_name=app, retry_connection_errors=False)
+    try:
+        found = client.list_workflows(workflow_id_prefix=f"ps-{schedule_id}-", application_name=app,
+                                      limit=limit, sort_desc=True, load_input=False, load_output=False)
+        out = []
+        for w in found:
+            started = w.dequeued_at or w.created_at
+            done = w.completed_at if w.status not in ("PENDING", "ENQUEUED", "DELAYED") else None
+            out.append(dict(status=w.status, started=started, completed=done,
+                            duration_ms=done - started if done and started else None))
+        return out
     finally:
         client.destroy()
 

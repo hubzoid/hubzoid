@@ -1148,3 +1148,71 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
 @media (max-width: 420px) {
   .catalog-about { display: none; }
 }
+
+/* ---- Schedules & reports for someone who isn't an admin ---------------------- */
+
+.person-top {
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.person-top-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.person-title {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.person-top-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.person-top-right a {
+  white-space: nowrap;
+}
+
+.person-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  overflow-x: auto;
+}
+
+.person-tabs a {
+  padding: 12px 10px;
+  color: var(--mute);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.person-tabs a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .person-top { padding: 0 16px; }
+  .person-tabs { padding: 0 12px; }
+  .person-top-right { gap: 12px; }
+  .person-top-right .identity,
+  .person-top-right .theme-toggle,
+  .person-title { display: none; }
+}
+
+/* The admin's own pages ("You") under the workspace menu. */
+.sidebar .ant-menu ~ .sidebar-label {
+  margin-top: 18px;
+}

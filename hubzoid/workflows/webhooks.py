@@ -45,6 +45,12 @@ def verify(raw, headers, name, spec):
     secret = os.environ.get('WEBHOOK_SECRET_' + name.upper().replace('-', '_'), '')
     if not secret:
         return False
+    if spec.get('verify') == 'github':
+        # GitHub signs the raw body with the secret: X-Hub-Signature-256: sha256=<hex>.
+        # No timestamp; X-GitHub-Delivery deduplicates instead.
+        sent = headers.get('x-hub-signature-256', '')
+        expected = 'sha256=' + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sent.encode(), expected.encode())
     carrier = headers.get(spec.get('signature_header', spec.get('header', 'X-Hook-Secret')).lower(), '')
     if spec.get('verify', 'header') == 'header':
         return hmac.compare_digest(carrier.encode(), secret.encode())
@@ -102,7 +108,7 @@ def build_router(hub_dir):
         if not workflow:
             raise HTTPException(503, 'Workflow engine is not ready')
         key = key_for(body, request.headers, spec)
-        payload = {'body': body, 'headers': {k: v for k, v in request.headers.items() if k in ('content-type', 'x-delivery-id', 'x-github-delivery')}}
+        payload = {'body': body, 'headers': {k: v for k, v in request.headers.items() if k in ('content-type', 'x-delivery-id', 'x-github-delivery', 'x-github-event')}}
         try:
             async with asyncio.timeout(5):
                 async with limit:

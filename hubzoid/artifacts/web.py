@@ -41,12 +41,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .. import artifacts as arts
 from . import pages
+from . import series as series_lib
 
 log = logging.getLogger("hubzoid.artifacts")
 
 _UNAVAILABLE = "This artifact is not available, or you do not have access to it."
 _LINK_BAD = "This link does not work. It may have expired or been turned off."
 _ORIGIN = re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?$")
+_REF = re.compile(r"^[0-9a-f]{12}$")
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{12,64}$")
 
 
 class ShareEntry(BaseModel):
@@ -70,6 +73,14 @@ class LinkRequest(BaseModel):
 class OpenRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=20, max_length=200)
+
+
+class CompanyLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str = Field(pattern="^(on|off)$")
+
+
+_REPORT_GONE = "This report isn't available"
 
 
 def _extra_origins() -> str:
@@ -167,8 +178,8 @@ def build_router(hub_dir) -> APIRouter:
             raise HTTPException(401, "Sign in to view this artifact.")
         return subject
 
-    def meta(art: arts.Artifact, who: str, *, public: bool) -> dict:
-        base = f"/portal/p/{art.id}" if public else f"/portal/artifacts/{art.id}"
+    def meta(art: arts.Artifact, who: str, *, public: bool, base: str | None = None) -> dict:
+        base = base or (f"/portal/p/{art.id}" if public else f"/portal/artifacts/{art.id}")
         # The file name ends the content URL: a browser's PDF viewer titles the
         # document from its URL, and "content" told people nothing.
         out = dict(id=art.id, title=art.title, filename=art.filename,
@@ -180,7 +191,7 @@ def build_router(hub_dir) -> APIRouter:
             out["preview"] = arts.preview(hub_dir, art)
         except arts.ArtifactError:
             out["preview"] = None
-        if who == "owner" and not public:
+        if who == "owner" and not public and base.startswith("/portal/artifacts/"):
             out["sharing"] = dict(
                 audience=art.audience, people=arts.shares(hub_dir, art.id),
                 link=arts.active_link(hub_dir, art.id),
@@ -259,7 +270,8 @@ def build_router(hub_dir) -> APIRouter:
     def newest(hub: str, key: str, request: Request):
         """One bookmark for a board a workflow republishes: the newest artifact
         published with this key, if this viewer may open that one. Never an
-        older copy."""
+        older copy. A team report series is served right here, so the address
+        stays the live link."""
         if not arts.HUB_RE.match(hub) or not arts.KEY_RE.match(key):
             return _message("Artifact not found", _UNAVAILABLE, 404)
         subject = signed_in(request)
@@ -267,6 +279,9 @@ def build_router(hub_dir) -> APIRouter:
             # Built only from the validated hub and key: never an open redirect.
             back = f"/portal/latest/{hub}/{key}"
             return RedirectResponse(f"/auth?redirect={quote(back, safe='/')}", status_code=302)
+        found = series_lib.team(hub_dir, hub, key)
+        if found is not None and found.last_artifact:
+            return series_page(found, subject)
         art = arts.latest(hub_dir, hub, key)
         if art is None or arts.role(hub_dir, art, subject) is None:
             return _message("Artifact not available",
@@ -274,6 +289,196 @@ def build_router(hub_dir) -> APIRouter:
                             "see it, ask its owner to share it with you.", 404)
         return RedirectResponse(f"/portal/artifacts/{art.id}", status_code=302,
                                 headers={"Cache-Control": "private, no-store"})
+
+    # ---- report series: live latest links, Update now, company links ------------
+
+    def series_page(found, subject: str):
+        art = arts.get(hub_dir, found.last_artifact)
+        if art is None or arts.role(hub_dir, art, subject) is None:
+            return _message("Artifact not available",
+                            f"{_UNAVAILABLE} You are signed in as {subject}. If you should "
+                            "see it, ask its owner to share it with you.", 404)
+        nonce = secrets.token_urlsafe(16)
+        return _page(pages.shell(mode="series", api=f"/portal/series/api/{found.id}", nonce=nonce),
+                     nonce)
+
+    @router.get("/portal/latest/{hub}/{key}/by/{ref}")
+    def newest_personal(hub: str, key: str, ref: str, request: Request):
+        """A person's own report series: the newest copy, for whoever may open it."""
+        if not arts.HUB_RE.match(hub) or not arts.KEY_RE.match(key) or not _REF.match(ref):
+            return _message("Artifact not found", _UNAVAILABLE, 404)
+        subject = signed_in(request)
+        if not subject:
+            back = f"/portal/latest/{hub}/{key}/by/{ref}"
+            return RedirectResponse(f"/auth?redirect={quote(back, safe='/')}", status_code=302)
+        found = series_lib.personal(hub_dir, hub, key, ref)
+        if found is None or not found.last_artifact:
+            return _message("Artifact not available", f"{_UNAVAILABLE} You are signed in as {subject}.", 404)
+        return series_page(found, subject)
+
+    def series_for(series_id: str, subject: str):
+        found = series_lib.get(hub_dir, series_id)
+        art = arts.get(hub_dir, found.last_artifact) if found and found.last_artifact else None
+        who = arts.role(hub_dir, art, subject) if art else None
+        if who is None:
+            raise HTTPException(404, _UNAVAILABLE)
+        return found, art, who
+
+    def can_update(found, subject: str) -> bool:
+        from ..access import store_for
+
+        if found.team:   # a stopped team page isn't made by the workflow any more
+            return bool(found.live) and bool(store_for(hub_dir).can(subject, found.hub, "workflows_manage"))
+        return subject == found.owner
+
+    def series_info(found, subject: str | None, *, reader: bool) -> dict:
+        from . import domains
+
+        state = series_lib.state(hub_dir, found)
+        info = dict(id=found.id, scope=found.scope, title=found.title or found.key, **state)
+        if not reader and subject:
+            info["can_update"] = can_update(found, subject)
+            info["update_wait"] = series_lib.update_wait(found)
+        if not reader and subject and not found.team and subject == found.owner:
+            token = series_lib.domain_token(hub_dir, found)
+            from ..access import store_for
+
+            available, reason = domains.status_for(hub_dir, found.hub)
+            info["company"] = dict(
+                available=available, domains=domains.label(),
+                allowed=bool(store_for(hub_dir).can(subject, found.hub, arts.SHARE_DOMAIN.permission)),
+                on=bool(token), url=series_lib.share_url(hub_dir, token) if token else None,
+                reason=reason)
+        return info
+
+    @router.get("/portal/series/api/{series_id}")
+    def series_api(series_id: str, request: Request):
+        subject = api_subject(request)
+        found, art, who = series_for(series_id, subject)
+        return {"series": series_info(found, subject, reader=False),
+                **meta(art, who, public=False)}
+
+    @router.get("/portal/series/api/{series_id}/latest")
+    def series_latest(series_id: str, request: Request):
+        subject = api_subject(request)
+        found, art, _ = series_for(series_id, subject)
+        return _latest_json(request, found, art)
+
+    @router.post("/portal/series/api/{series_id}/update")
+    def series_update(series_id: str, request: Request):
+        require_same_origin(request)
+        subject = api_subject(request)
+        found, _, _ = series_for(series_id, subject)
+        if not can_update(found, subject):
+            raise HTTPException(403, "Only the report's owner, or someone who runs this agent's "
+                                     "workflows, can update it.")
+        if not series_lib.reserve_update(hub_dir, found):   # one at a time, whoever asks
+            minutes = max(1, -(-series_lib.update_wait(series_lib.get(hub_dir, found.id) or found) // 60))
+            raise HTTPException(429, f"It was updated just now. You can update again in {minutes} "
+                                     f"minute{'s' if minutes != 1 else ''}.")
+        try:
+            run_id = _start_update(hub_dir, found, subject)
+        except _UpdateRefused as exc:
+            raise HTTPException(409, str(exc))
+        return {"ok": True, "run_id": run_id}
+
+    @router.post("/portal/series/api/{series_id}/company")
+    def series_company(series_id: str, payload: CompanyLinkRequest, request: Request):
+        """The owner turns a personal report's company link on or off."""
+        from . import domains
+        from ..access import store_for
+
+        require_same_origin(request)
+        subject = api_subject(request)
+        found, _, who = series_for(series_id, subject)
+        if found.team or subject != found.owner or who != "owner":
+            raise HTTPException(404, _UNAVAILABLE)
+        if payload.action == "off":
+            series_lib.domain_off(hub_dir, found, subject)
+            return {"ok": True, "on": False}
+        on, why = domains.status_for(hub_dir, found.hub)
+        if not on:
+            raise HTTPException(409, why)
+        if not store_for(hub_dir).can(subject, found.hub, arts.SHARE_DOMAIN.permission):
+            raise HTTPException(403, f"You can't share reports with {domains.label()}. An admin can "
+                                     f"allow it in the Console (\u201c{arts.SHARE_DOMAIN.label}\u201d).")
+        token = series_lib.domain_on(hub_dir, found, subject)
+        return {"ok": True, "on": True, "url": series_lib.share_url(hub_dir, token)}
+
+    # Company links: the token in the path is checked on every request, with
+    # the signed-in account's email domain. One page for every refusal.
+
+    def company(token: str, request: Request):
+        """(series, newest copy, subject) or an HTTP error. Readers who don't
+        use the agent are marked reader-only the first time."""
+        from . import domains
+        from ..access import store_for
+
+        subject = signed_in(request)
+        found = series_lib.for_token(hub_dir, token)
+        if not subject:
+            raise HTTPException(401, "Sign in to open this report.")
+        if found is None or not found.domain_on or not found.last_artifact:
+            raise HTTPException(404, _REPORT_GONE)
+        art = arts.get(hub_dir, found.last_artifact)
+        if art is None or not arts._active(hub_dir, subject):
+            raise HTTPException(404, _REPORT_GONE)
+        if arts.role(hub_dir, art, subject) is not None:
+            return found, art, subject, False
+        if not domains.email_allowed(subject) or not domains.status_for(hub_dir, found.hub)[0]:
+            raise HTTPException(404, _REPORT_GONE)
+        if not found.team and not arts._owner_current(hub_dir, art):
+            raise HTTPException(404, _REPORT_GONE)
+        gs = store_for(hub_dir)
+        if not gs.can(art.owner, found.hub, arts.SHARE_DOMAIN.permission):   # sharing taken away
+            raise HTTPException(404, _REPORT_GONE)
+        if not gs.is_reader(subject):
+            gs.mark_reader_if_new(subject)
+        return found, art, subject, True
+
+    @router.get("/portal/r/{token}")
+    def company_page(token: str, request: Request):
+        if not _TOKEN.match(token):
+            return _message(_REPORT_GONE, "The link may be turned off or incomplete.", 404)
+        if not signed_in(request):
+            return RedirectResponse(f"/auth?redirect={quote('/portal/r/' + token, safe='/')}",
+                                    status_code=302)
+        nonce = secrets.token_urlsafe(16)
+        try:
+            company(token, request)
+        except HTTPException:
+            return _page(pages.unavailable(email=signed_in(request), back=f"/portal/r/{token}",
+                                           nonce=nonce), nonce, 404)
+        return _page(pages.shell(mode="company", api=f"/portal/r/{token}/api", nonce=nonce), nonce)
+
+    @router.get("/portal/r/{token}/api")
+    def company_api(token: str, request: Request):
+        found, art, subject, reader = company(token, request)
+        base = f"/portal/r/{token}"
+        out = meta(art, "viewer", public=False, base=base)
+        out["series"] = series_info(found, subject, reader=True)
+        return out
+
+    @router.get("/portal/r/{token}/api/latest")
+    def company_latest(token: str, request: Request):
+        found, art, _, _ = company(token, request)
+        return _latest_json(request, found, art)
+
+    @router.get("/portal/r/{token}/content/{_filename}")
+    def company_content(token: str, _filename: str, request: Request):
+        _, art, _, _ = company(token, request)
+        try:
+            return serve(arts.content_path(hub_dir, art), art, download=False)
+        except arts.ArtifactError as exc:
+            refused(exc)
+
+    @router.get("/portal/r/{token}/download")
+    def company_download(token: str, request: Request):
+        _, art, _, _ = company(token, request)
+        try:
+            return serve(arts.content_path(hub_dir, art), art, download=True)
+        except arts.ArtifactError as exc:
+            refused(exc)
 
     @router.get("/portal/artifacts/{artifact_id}/content")
     @router.get("/portal/artifacts/{artifact_id}/content/{_filename}")
@@ -339,3 +544,51 @@ def build_router(hub_dir) -> APIRouter:
             refused(exc)
 
     return router
+
+
+class _UpdateRefused(Exception):
+    """Update now can't start; the message is safe to show."""
+
+
+def _latest_json(request: Request, found, art) -> JSONResponse:
+    """What an open tab polls: the newest copy's id and time, with an ETag so
+    an unchanged report costs a 304."""
+    etag = f'"{art.id}"'
+    if request.headers.get("if-none-match") == etag:
+        return JSONResponse(None, status_code=304, headers={"ETag": etag})
+    return JSONResponse({"artifact": art.id, "updated": found.updated_at, "live": bool(found.live)},
+                        headers={"ETag": etag, "Cache-Control": "private, no-cache"})
+
+
+def _start_update(hub_dir: Path, found, subject: str) -> str:
+    """Rerun the run that made the newest copy, with the same inputs: as the
+    owner for a personal report, as the workflow's account for a team one."""
+    from .. import deployment
+    from ..workflows import client, runtime
+
+    env = {"trigger": "update", "scope": found.scope, "started_by": subject,
+           "inputs": found.inputs, "inputs_display": ""}
+    try:
+        series_hub = Path(deployment.hub_path(hub_dir, found.hub))
+    except (KeyError, OSError, ValueError):
+        series_hub = Path(hub_dir)
+    if not found.team:
+        # The account the copy was made for, so a queued run stops if a new
+        # account has taken the email over by the time it starts.
+        from . import get as get_artifact
+
+        art = get_artifact(series_hub, found.last_artifact) if found.last_artifact else None
+        env.update(acts_as=found.owner, acts_as_account=getattr(art, "owner_account", None),
+                   schedule_id=found.schedule_id)
+    if runtime._LAUNCHED and runtime._HUB_DIR and Path(runtime._HUB_DIR).resolve() == series_hub.resolve():
+        if found.workflow not in runtime._REGISTRY:
+            raise _UpdateRefused("This report's workflow isn't running here right now.")
+        handle = runtime.start_run(found.workflow, env) if not found.team else \
+            runtime.start(found.workflow, envelope=env)
+        return handle.get_workflow_id()
+    live = client.enqueue_live(series_hub, found.workflow, envelope=env)
+    if live is None:
+        raise _UpdateRefused("Reports can't run on this agent right now. Try again later.")
+    run_id = live.get_workflow_id()
+    live.client.destroy()
+    return run_id

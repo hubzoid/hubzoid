@@ -64,6 +64,10 @@ class EmailError(RuntimeError):
         super().__init__(result["message"])
         self.result = result
 
+    def __reduce__(self):
+        # Workflow errors are pickled into the run's history.
+        return (self.__class__, (self.result,))
+
 
 @dataclass(frozen=True)
 class SmtpConfig:
@@ -341,6 +345,15 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
     except ValueError as exc:
         return dict(status="refused", sent=False, delivery_id=None, recipient=recipient,
                     message=str(exc))
+    return _deliver(hub_dir, hub=hub, owner=owner, recipient=recipient, subject=subject, body=body,
+                    links=links, artifact_ids=artifact_ids, workflow=workflow, run_id=run_id,
+                    idem_key=idem_key, smtp_factory=smtp_factory, sleep=sleep)
+
+
+def _deliver(hub_dir, *, hub: str, owner: str, recipient: str, subject: str, body: str,
+             links, artifact_ids, workflow, run_id, idem_key, smtp_factory, sleep) -> dict:
+    """Send (or preview) one checked message to one recipient, recorded under
+    `idem_key` so a retry never sends an accepted message twice."""
     cfg = config()
     problem = config_problem(cfg)
     if problem is None and cfg.mode == "smtp":
@@ -429,3 +442,95 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
     row = _record(hub_dir, delivery_id)
     detail = _clean(last.detail, cfg) if last else "unknown error"
     return _result(row, f"The email to {recipient} was not sent: {detail}.")
+
+
+MAX_LIST = 50
+MAX_LIST_BODY = 2000
+
+
+def list_members(hub_dir, name: str) -> list[str]:
+    """The addresses of `email_lists.<name>` in workflows/settings.yaml."""
+    from .workflows.events import settings
+
+    lists = (settings(Path(hub_dir)).get("email_lists") or {})
+    if not isinstance(lists, dict) or name not in lists:
+        raise ValueError(f"There is no email list named {name!r} in workflows/settings.yaml.")
+    members = lists[name]
+    if not isinstance(members, list) or not all(isinstance(m, str) for m in members):
+        raise ValueError(f"Email list {name!r} must be a list of addresses.")
+    out = sorted({m.strip().lower() for m in members if m.strip()})
+    if len(out) > MAX_LIST:
+        raise ValueError(f"Email list {name!r} has more than {MAX_LIST} addresses.")
+    return out
+
+
+def _list_link(hub_dir, art) -> str:
+    from . import artifacts
+    from .artifacts import series as series_lib
+
+    if art.series_id:
+        found = series_lib.get(hub_dir, art.series_id)
+        if found is not None:
+            token = series_lib.domain_token(hub_dir, found)
+            return series_lib.share_url(hub_dir, token) if token else series_lib.latest_url(hub_dir, found)
+    return artifacts.viewer_url(art.id, hub_dir)
+
+
+def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, body: str,
+                 artifact_ids=(), workflow: str | None = None, run_id: str | None = None,
+                 idem_key: str | None = None, smtp_factory=None, sleep=time.sleep) -> dict:
+    """Email a builder-declared list, one message per address, so nobody sees
+    who else is on it. Every address must belong to an account here or to the
+    company's share domains, and the body is short plain text: report content
+    stays behind sign-in, at its link. Returns {status, sent, results, message}."""
+    from . import artifacts
+    from .access import store_for
+    from .artifacts import domains
+    from .workflows.identity import IdentityError, require_person
+
+    try:
+        require_person(identity, "Sending email")
+        members = list_members(hub_dir, list_name)
+    except (IdentityError, ValueError) as exc:
+        return dict(status="refused", sent=False, results=[], message=str(exc))
+    subject = (subject or "").strip()
+    if not subject or len(subject) > MAX_SUBJECT or "\n" in subject or "\r" in subject:
+        return dict(status="refused", sent=False, results=[],
+                    message=f"The subject must be one line of at most {MAX_SUBJECT} characters.")
+    body = body or ""
+    if len(body) > MAX_LIST_BODY:
+        return dict(status="refused", sent=False, results=[],
+                    message=f"A list email body is at most {MAX_LIST_BODY} characters. Link the report instead.")
+    links = []
+    for aid in artifact_ids or ():
+        art = artifacts.get(hub_dir, aid)
+        if art is None or art.owner != identity.subject:
+            return dict(status="refused", sent=False, results=[],
+                        message=f"Artifact {aid!r} is not a report this run published.")
+        links.append((art.title, _list_link(hub_dir, art)))
+    gs = store_for(Path(hub_dir))
+    share = set(domains.share_domains())
+    results = []
+    for member in members:
+        known = bool((gs.identity(member) or {}).get("owui_id"))
+        if gs.is_suspended(member):
+            results.append(dict(status="skipped", recipient=member, message="Blocked account."))
+            continue
+        if not known and member.rsplit("@", 1)[-1] not in share:
+            results.append(dict(status="refused", recipient=member,
+                                message="Not an account here and not at a company share domain."))
+            continue
+        results.append(_deliver(
+            hub_dir, hub=hub, owner=identity.subject, recipient=member, subject=subject,
+            body=body + f"\n\nYou get this because you're on the {list_name} list for {hub}. "
+                        "To stop, ask the agent's admin.",
+            links=links, artifact_ids=artifact_ids, workflow=workflow, run_id=run_id,
+            idem_key=f"{idem_key}:{member}" if idem_key else None, smtp_factory=smtp_factory,
+            sleep=sleep))
+    ok = [r for r in results if r.get("status") in ("accepted", "previewed")]
+    status = ("refused" if not ok else "previewed" if all(r["status"] == "previewed" for r in ok)
+              else "accepted")
+    if ok and len(ok) < len(results):
+        status = "partial"
+    return dict(status=status, sent=any(r.get("status") == "accepted" for r in results),
+                results=results, message=f"{len(ok)} of {len(results)} sent to the {list_name} list.")

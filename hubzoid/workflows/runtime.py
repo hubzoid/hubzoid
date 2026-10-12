@@ -22,8 +22,10 @@ import importlib.util
 import logging
 import os
 import re
+import sys
 import threading
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from datetime import timezone as utc_timezone
 from pathlib import Path
@@ -62,10 +64,49 @@ class WorkflowDef:
     timeout: float | str | None = None
     alert_to: list | None = None
     queue: Any = None
+    # Workflows from chat (all optional; a workflow without them is unchanged).
+    inputs: Any = None                 # a Pydantic model class, or None
+    schedule_input: dict | None = None
+    as_tool: bool = False              # offer a "Run for me" tool in chat and MCP
+    confirm: bool = False              # two calls before a run starts
+    tool_wait: float = 60.0            # seconds a tool waits for the result
+    surfaces: tuple = ()               # chat surfaces allowed; () means every tool surface
+    sensitive: bool = False            # the per-report grant shows as Sensitive
+    schedulable: bool = False          # people may save personal schedules
+    min_interval: float | None = None  # shortest personal cadence, in seconds
+    catch_up: bool = False             # one late run after downtime
+    max_input_bytes: int = 4000        # largest serialized inputs (max_input_kb)
+    doc: str = ""
+    title: str = ""
+    extra: dict = field(default_factory=dict)
+
+    @property
+    def permission(self) -> str:
+        return tool_permission(self.name)
 
 
 _REGISTRY: "dict[str, WorkflowDef]" = {}
 _IDENTITY_STEP = None  # the checkpointed "who does this run act as" step
+# While `load_definitions` imports workflow files to read their declarations,
+# `@workflow` and `@step` record and return instead of touching the engine.
+_DEFINING: ContextVar["dict | None"] = ContextVar("hubzoid_wf_defining", default=None)
+_def_lock = threading.Lock()
+_DEF_CACHE: dict[str, tuple[str, list]] = {}
+
+#: Chat surfaces a workflow tool may name in `surfaces=`.
+TOOL_SURFACE_NAMES = ("web", "owui", "api", "mcp", "whatsapp", "telegram")
+MAX_TOOL_WAIT = 600.0
+
+
+def tool_permission(name: str) -> str:
+    """The grant that lets a person run workflow `name` for themselves."""
+    return "wf_" + name.lower()
+
+
+def title_for(name: str, doc: str = "") -> str:
+    """A workflow's name for people: "program_report" -> "Program report"."""
+    words = name.replace("_", " ").replace("-", " ").strip()
+    return (words[:1].upper() + words[1:]) if words else name
 
 
 def _app_name(hub_name: str) -> str:
@@ -229,12 +270,26 @@ def _identity_step():
 
         @_DBOS.step(name="hz_run_identity")
         def resolve_identity(hub_dir_str: str, hub: str, run_as: str | None,
-                             legacy_subject: str, what: str) -> dict:
-            from .identity import resolve
+                             legacy_subject: str, what: str, envelope: dict | None = None,
+                             workflow: str | None = None) -> dict:
+            from .identity import check_person_run, resolve
 
-            ident = resolve(Path(hub_dir_str), hub=hub, run_as=run_as,
-                            legacy_subject=legacy_subject, what=what)
-            return ident.to_dict()
+            env = envelope or {}
+            if env.get("scope") == "personal":
+                # Run for me and personal schedules act as the person, checked
+                # now: an active account that may still use this report.
+                ident = check_person_run(
+                    Path(hub_dir_str), hub, env.get("acts_as") or "", workflow or "",
+                    source="schedule" if env.get("trigger") == "personal_schedule" else "caller",
+                    what=what, account_id=env.get("acts_as_account") or None)
+            else:
+                ident = resolve(Path(hub_dir_str), hub=hub, run_as=run_as,
+                                legacy_subject=legacy_subject, what=what)
+            out = ident.to_dict()
+            # Who started it and how: operational metadata the Console shows.
+            out["run"] = {k: env.get(k) for k in (
+                "trigger", "scope", "started_by", "schedule_id", "inputs_display")}
+            return out
 
         _IDENTITY_STEP = resolve_identity
     return _IDENTITY_STEP
@@ -251,6 +306,17 @@ def workflow(
     concurrency_key: str | None = None,
     timeout: float | str | None = None,
     alert_to: list | None = None,
+    inputs: Any = None,
+    schedule_input: dict | None = None,
+    as_tool: bool = False,
+    confirm: bool = False,
+    tool_wait: float | str | None = None,
+    surfaces: tuple | list | None = None,
+    sensitive: bool = False,
+    schedulable: bool = False,
+    min_interval: float | str | None = None,
+    catch_up: bool = False,
+    max_input_kb: int | None = None,
 ):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
@@ -259,8 +325,25 @@ def workflow(
 
     `run_as` names the account the run acts as (see `workflows.identity`);
     without it, the hub or deployment HUBZOID_WORKFLOW_USER, then the setup
-    default. It selects an identity and grants nothing."""
-    _require_init()
+    default. It selects an identity and grants nothing.
+
+    Workflows from chat, all optional:
+      * `inputs=` a Pydantic model; the run reads it as `hub.input`.
+        `schedule_input={...}` fills it for the declared schedule.
+      * `as_tool=True` offers a chat and MCP tool that runs this workflow as
+        the person asking ("Run for me"), with their grants. `confirm=True`
+        asks first. `tool_wait` is how long the tool waits for the result
+        (default 60s, at most 10 minutes). `surfaces=` limits the chat surfaces
+        (web, owui, api, mcp, whatsapp, telegram). `sensitive=True` marks the
+        grant Sensitive in the Console.
+      * `schedulable=True` lets people save personal schedules of it from chat.
+        `min_interval` raises the shortest cadence they may choose.
+      * `max_input_kb` raises the inputs limit (4 KB) for a large value such
+        as a diff, up to 256 KB. Not with `schedulable=True`.
+      * `catch_up=True` runs the declared schedule once after downtime."""
+    defining = _DEFINING.get() is not None
+    if not defining:
+        _require_init()
     if run_as is not None:
         from .identity import validate_run_as
 
@@ -268,7 +351,7 @@ def workflow(
 
     if concurrency is not None and (isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1):
         raise ValueError("concurrency must be a positive integer")
-    if on_webhook:
+    if on_webhook and not defining:
         from .events import declarations
         if on_webhook not in declarations(_HUB_DIR):
             raise ValueError(f"Webhook {on_webhook!r} is not configured")
@@ -279,15 +362,36 @@ def workflow(
     seconds(timeout)
     from .events import validate_destinations
     validate_destinations(alert_to)
+    chat = _chat_options(inputs=inputs, schedule_input=schedule_input, as_tool=as_tool,
+                         confirm=confirm, tool_wait=tool_wait, surfaces=surfaces,
+                         sensitive=sensitive, schedulable=schedulable,
+                         min_interval=min_interval, catch_up=catch_up,
+                         schedule=schedule, on_webhook=on_webhook, max_input_kb=max_input_kb)
 
     def deco(fn: Callable):
         name = fn.__name__
-        if name in _REGISTRY:
-            raise ValueError(f"duplicate workflow name: {name}")
         if schedule:
             from .schedule_grammar import next_after
 
             next_after(schedule, timezone, datetime.now(utc_timezone.utc))
+        import inspect
+
+        doc = inspect.getdoc(fn) or ""
+        if chat["as_tool"] and len(tool_permission(name)) > 64:
+            raise ValueError(f"{name}: a workflow offered in chat needs a name of at most 61 characters")
+        recorded = _DEFINING.get()
+        if recorded is not None:
+            # Names that differ only in case would share one grant (wf_<name>).
+            if name.lower() in {n.lower() for n in recorded}:
+                raise ValueError(f"duplicate workflow name: {name}")
+            recorded[name] = WorkflowDef(
+                name=name, fn=fn, wrapped=fn, schedule=schedule, timezone=timezone,
+                on_failure=on_failure, run_as=run_as, on_webhook=on_webhook,
+                concurrency=concurrency, concurrency_key=concurrency_key, timeout=timeout,
+                alert_to=alert_to, doc=doc, title=title_for(name), **chat)
+            return fn
+        if name.lower() in {n.lower() for n in _REGISTRY}:
+            raise ValueError(f"duplicate workflow name: {name}")
         identity_step = _identity_step()
         # The owner this definition was loaded under. A later owner re-imports
         # the module, so a run claimed by a process that lost ownership keeps
@@ -302,27 +406,44 @@ def workflow(
             return time.time() + duration if duration is not None else None
 
         @_DBOS.workflow(name=name)
-        def wrapped(hub_name: str | None = None, event: dict | None = None):
+        def wrapped(hub_name: str | None = None, event: dict | None = None,
+                    envelope: dict | None = None):
             if owner is not None:
                 owner.assert_owned()
             hub_name = hub_name or _HUB_NAME
+            env = dict(envelope or {})
+            env.setdefault("trigger", "webhook" if event else "schedule")
+            env.setdefault("scope", "team")
             identity = identity_step(str(_HUB_DIR), hub_name.lower(), run_as,
-                                     f"workflow:{name}", f"Workflow {name!r}")
+                                     f"workflow:{name}", f"Workflow {name!r}", env, name)
+            from . import outcomes
             from .deadlines import scope
             deadline = run_deadline()
-            with scope(absolute=deadline, check_exit=False), context.run_scope(
-                hub=hub_name,
-                workflow=name,
-                hub_dir=_HUB_DIR,
-                engine=_ENGINE,
-                settings=_load_settings(),
-                identity=identity,
-                run_id=_DBOS.workflow_id or "",
-                event=event, owner=owner,
-            ):
-                from .alerts import track_run
-                with track_run(_HUB_DIR, hub_name, name, _DBOS.workflow_id, deadline):
-                    return fn()
+            run_id = _DBOS.workflow_id or ""
+            published: list = []
+            try:
+                values = _run_inputs(chat, env)
+                with scope(absolute=deadline, check_exit=False), context.run_scope(
+                    hub=hub_name,
+                    workflow=name,
+                    hub_dir=_HUB_DIR,
+                    engine=_ENGINE,
+                    settings=_load_settings(),
+                    identity=identity,
+                    run_id=run_id,
+                    event=event, owner=owner,
+                    inputs=values, run=env, published=published,
+                ):
+                    from .alerts import track_run
+                    with track_run(_HUB_DIR, hub_name, name, _DBOS.workflow_id, deadline):
+                        result = fn()
+            except Exception as exc:
+                outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=False,
+                                  error=exc, published=published, tool_wait=chat["tool_wait"])
+                raise
+            outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
+                              published=published, tool_wait=chat["tool_wait"])
+            return result
 
 
         _REGISTRY[name] = WorkflowDef(
@@ -334,6 +455,7 @@ def workflow(
             on_failure=on_failure,
             run_as=run_as, on_webhook=on_webhook, concurrency=concurrency,
             concurrency_key=concurrency_key, timeout=timeout, alert_to=alert_to,
+            doc=doc, title=title_for(name), **chat,
         )
         log.info("workflows: registered %r (schedule=%r)", name, schedule)
         return wrapped
@@ -341,10 +463,70 @@ def workflow(
     return deco
 
 
+def _chat_options(*, inputs, schedule_input, as_tool, confirm, tool_wait, surfaces,
+                  sensitive, schedulable, min_interval, catch_up, schedule, on_webhook,
+                  max_input_kb=None) -> dict:
+    """Validate the workflows-from-chat options of one declaration."""
+    from . import inputs as inputs_lib
+    from .deadlines import seconds
+
+    if inputs is not None and not inputs_lib.is_model(inputs):
+        raise ValueError("inputs must be a Pydantic model class")
+    required = inputs_lib.required_fields(inputs)
+    limit = inputs_lib.MAX_BYTES
+    if max_input_kb is not None:
+        if inputs is None:
+            raise ValueError("max_input_kb needs inputs=")
+        if schedulable:
+            raise ValueError("max_input_kb can't be used with schedulable=True")
+        if (isinstance(max_input_kb, bool) or not isinstance(max_input_kb, int)
+                or not 1 <= max_input_kb <= inputs_lib.MAX_INPUT_KB):
+            raise ValueError(f"max_input_kb must be a whole number from 1 to {inputs_lib.MAX_INPUT_KB}")
+        limit = max_input_kb * 1024
+    if schedule_input is not None:
+        if inputs is None:
+            raise ValueError("schedule_input needs inputs=")
+        inputs_lib.validate(inputs, schedule_input, max_bytes=limit)
+    elif schedule and required:
+        raise ValueError("This workflow has required inputs, so its schedule needs schedule_input.")
+    if on_webhook and required:
+        raise ValueError("A webhook can't fill required inputs. Give them defaults.")
+    if schedulable and not as_tool:
+        raise ValueError("schedulable needs as_tool=True")
+    wait = seconds(tool_wait) if tool_wait is not None else 60.0
+    if wait > MAX_TOOL_WAIT:
+        raise ValueError("tool_wait is at most 10 minutes")
+    names = tuple(surfaces or ())
+    unknown = set(names) - set(TOOL_SURFACE_NAMES)
+    if unknown:
+        raise ValueError(f"surfaces can only name {', '.join(TOOL_SURFACE_NAMES)}")
+    return dict(inputs=inputs, schedule_input=dict(schedule_input) if schedule_input else None,
+                as_tool=bool(as_tool), confirm=bool(confirm), tool_wait=float(wait),
+                surfaces=names, sensitive=bool(sensitive), schedulable=bool(schedulable),
+                min_interval=seconds(min_interval) if min_interval is not None else None,
+                catch_up=bool(catch_up), max_input_bytes=limit)
+
+
+def _run_inputs(chat: dict, env: dict):
+    """The validated `hub.input` for one run: the envelope's inputs, or the
+    declared schedule_input for a team run, or the model's defaults."""
+    from . import inputs as inputs_lib
+
+    model = chat.get("inputs")
+    if model is None:
+        return None
+    data = env.get("inputs")
+    if data is None and env.get("scope", "team") == "team":
+        data = chat.get("schedule_input")
+    return inputs_lib.validate(model, data, max_bytes=chat["max_input_bytes"])
+
+
 def step(fn: Callable | None = None, *, max_attempts: int = 1):
     """A durable step for the author's own side effects (posting, emailing).
     At-least-once — make it idempotent. Opt into retries with
     `@step(max_attempts=N)` (default 1 = no retry)."""
+    if _DEFINING.get() is not None:
+        return fn if fn is not None else (lambda f: f)
     _require_init()
 
     def wrap(f: Callable):
@@ -409,6 +591,25 @@ def _seam_step():
     return _DBOS.step()
 
 
+def _last_error(step_fn: Callable) -> Callable:
+    """A retried seam raises the call's own last error (ModelOutputError, a
+    timeout), as `hub.call_llm` documents, not DBOS's retries-exceeded one."""
+    from functools import wraps
+
+    from dbos._error import DBOSMaxStepRetriesExceeded
+
+    @wraps(step_fn)
+    def call(*args):
+        try:
+            return step_fn(*args)
+        except DBOSMaxStepRetriesExceeded as exc:
+            if exc.errors:
+                raise exc.errors[-1] from None
+            raise
+
+    return call
+
+
 def _wrap_seams_as_steps() -> None:
     """Wrap the configured seams in DBOS steps so a completed call is
     checkpointed and NOT re-invoked on recovery. Arguments and results are
@@ -427,14 +628,14 @@ def _wrap_seams_as_steps() -> None:
         def _llm_step(spec: dict, hub_dir_str: str, subject: str):
             return raw_llm(spec, hub_dir=Path(hub_dir_str), subject=subject)
 
-        context._LLM_STEP = _llm_step
+        context._LLM_STEP = _last_error(_llm_step)
     if raw_agent is not None and context._AGENT_STEP is None:
 
         @_seam_step()
         def _agent_step(task: str, hub_dir_str: str, subject: str):
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
-        context._AGENT_STEP = _agent_step
+        context._AGENT_STEP = _last_error(_agent_step)
     if raw_jev is not None and context._JEV_STEP is None:
 
         @_DBOS.step()
@@ -540,6 +741,10 @@ def launch(*, target: str | None = None) -> None:
         )
     except Exception:  # noqa: BLE001 — catalog publish is best-effort
         log.exception("workflows: could not publish catalog")
+    try:
+        publish_input_schemas(_HUB_DIR, Path(_HUB_DIR).name.lower(), _REGISTRY.values())
+    except Exception:  # noqa: BLE001 — the Console falls back to "no inputs form"
+        log.exception("workflows: could not publish input schemas")
 
 
 def _cancel_runs_from_other_code() -> None:
@@ -609,6 +814,35 @@ def registry() -> list[WorkflowDef]:
     return list(_REGISTRY.values())
 
 
+def publish_input_schemas(hub_dir, hub: str, defs) -> None:
+    """Each workflow's input schema, in the shared store, so a Console served by
+    another bridge can build the Run now form without importing hub code."""
+    import json
+
+    from sqlalchemy import text
+
+    from . import inputs as inputs_lib
+
+    data = {w.name: inputs_lib.schema(w.inputs) for w in defs if w.inputs is not None}
+    with db.operational_engine(Path(hub_dir)).begin() as conn:
+        conn.execute(text("DELETE FROM hz_meta WHERE k=:k"), {"k": f"wf_inputs:{hub}"})
+        conn.execute(text("INSERT INTO hz_meta (k, v) VALUES (:k, :v)"),
+                     {"k": f"wf_inputs:{hub}", "v": json.dumps(data)})
+
+
+def input_schemas(hub_dir, hub: str) -> dict:
+    import json
+
+    from sqlalchemy import text
+
+    try:
+        with db.operational_engine(Path(hub_dir)).connect() as conn:
+            raw = conn.execute(text("SELECT v FROM hz_meta WHERE k=:k"), {"k": f"wf_inputs:{hub}"}).scalar()
+        return json.loads(raw) if raw else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def shutdown(*, completion_timeout_sec: float = 5.0, only_for=None) -> None:
     """Tear the DBOS engine down cleanly at bridge shutdown. In-flight runs get
     up to `completion_timeout_sec` to finish; anything still running stays
@@ -667,11 +901,7 @@ def shutdown(*, completion_timeout_sec: float = 5.0, only_for=None) -> None:
             log.info("workflows: DBOS shut down")
 
 
-def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
-    """Fire one workflow now (dispatcher + `hubzoid schedule run`). Enqueues on
-    the hub's workflow queue in this workflow's partition, so two runs of the
-    same workflow never overlap while different workflows run side by side."""
-    wf = _REGISTRY[name]
+def _assert_owner() -> None:
     if _OWNER is not None:
         from .ownership import OwnershipLost
         try:
@@ -679,15 +909,96 @@ def start(name: str, hub_name: str | None = None, *, scheduled_at=None):
         except OwnershipLost as exc:
             # Callers here are operators and the dispatcher, not a run.
             raise RuntimeError(str(exc)) from None
+
+
+def start(name: str, hub_name: str | None = None, *, scheduled_at=None,
+          envelope: dict | None = None):
+    """Fire one team run now (dispatcher, Run now, `hubzoid workflow run`).
+    Enqueues on the hub's workflow queue in this workflow's partition, so two
+    runs of the same workflow never overlap while different workflows run side
+    by side. `envelope` records how it started (trigger, started by, inputs)."""
+    wf = _REGISTRY[name]
+    _assert_owner()
     import uuid
+    env = dict(envelope or {"trigger": "schedule" if scheduled_at else "operator"})
+    env.setdefault("scope", "team")
     key = f"{hub_name or _HUB_NAME}:{name}:{scheduled_at}" if scheduled_at else None
     if _QUEUE is not None:
         options = enqueue_options(wf)
-        options.update(workflow_name=name, attributes={"trigger": "schedule" if scheduled_at else "manual"})
+        options.update(workflow_name=name, attributes={"trigger": env.get("trigger") or "manual"})
         if key:
             options["workflow_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, key))
-        return _DBOS.enqueue_workflow_with_options(options, hub_name or _HUB_NAME)
-    return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME)
+        return _DBOS.enqueue_workflow_with_options(options, hub_name or _HUB_NAME, None, env)
+    return _DBOS.start_workflow(wf.wrapped, hub_name or _HUB_NAME, None, env)
+
+
+def start_run(name: str, envelope: dict, *, workflow_id: str | None = None):
+    """Queue one run described by `envelope` (Run for me, a personal schedule,
+    Update now). A personal run gets its own partition, so one person's run
+    never waits behind another person's or the team's."""
+    wf = _REGISTRY[name]
+    _assert_owner()
+    partition = envelope.get("acts_as") if envelope.get("scope") == "personal" else None
+    options = enqueue_options(wf, partition=partition)
+    options.update(workflow_name=name, attributes={"trigger": envelope.get("trigger") or "manual"})
+    if workflow_id:
+        options["workflow_id"] = workflow_id
+    return _DBOS.enqueue_workflow_with_options(options, _HUB_NAME, None, dict(envelope))
+
+
+def load_definitions(hub_dir) -> list[WorkflowDef]:
+    """The hub's workflow declarations with their input models, without the
+    engine: each workflow file is imported in a mode where `@workflow` only
+    records. Chat and MCP tools are built from these before the engine starts.
+    A file that fails to import is skipped (the engine reports it). Cached
+    until a workflow file changes."""
+    from .._fs import resolve_bucket
+
+    root = resolve_bucket(Path(hub_dir), "workflows")
+    if root is None or not root.is_dir():
+        return []
+    files = sorted(p for d in root.iterdir() if d.is_dir() for p in d.glob("*.py")
+                   if not p.name.startswith("_"))
+    import hashlib
+
+    digest = hashlib.sha256()
+    for py in files:
+        digest.update(str(py).encode() + b"\0" + py.read_bytes() + b"\0")
+    cache_key = str(Path(hub_dir).resolve())
+    with _def_lock:
+        cached = _DEF_CACHE.get(cache_key)
+        if cached and cached[0] == digest.hexdigest():
+            return list(cached[1])
+        found: dict = {}
+        token = _DEFINING.set(found)
+        try:
+            for py in files:
+                mod_name = f"_hubzoid_wfdef_{py.parent.name}_{py.stem}"
+                spec = importlib.util.spec_from_file_location(mod_name, py)
+                if not spec or not spec.loader:
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                # Registered while it runs, so annotations (Pydantic input models
+                # under `from __future__ import annotations`) resolve.
+                sys.modules[mod_name] = module
+                try:
+                    spec.loader.exec_module(module)
+                except Exception:  # noqa: BLE001 - the engine reports a broken file
+                    log.warning("workflows: could not read %s for chat tools", py, exc_info=True)
+        finally:
+            _DEFINING.reset(token)
+        defs = list(found.values())
+        _DEF_CACHE[cache_key] = (digest.hexdigest(), defs)
+        return list(defs)
+
+
+def definition(hub_dir, name: str) -> WorkflowDef | None:
+    """One workflow's declaration: the loaded one when this process runs the
+    hub's engine, else read from its file."""
+    if _INITED and _HUB_DIR is not None and Path(_HUB_DIR).resolve() == Path(hub_dir).resolve() \
+            and name in _REGISTRY:
+        return _REGISTRY[name]
+    return next((w for w in load_definitions(hub_dir) if w.name == name), None)
 
 
 def run_now(name: str, hub_name: str | None = None):
@@ -767,8 +1078,47 @@ def tick(*, last: datetime, now: datetime | None = None) -> list[str] | None:
         except Exception:  # noqa: BLE001 — one bad schedule never stalls the loop
             failed.append(wf.name)
             log.exception("workflows: dispatch failed for %r", wf.name)
+    if any(getattr(w, "schedulable", False) for w in _REGISTRY.values()):
+        try:
+            from . import personal
+
+            started += personal.fire_due(_HUB_DIR, Path(_HUB_DIR).name.lower(), now.timestamp())
+        except Exception:  # noqa: BLE001 — team schedules still count as dispatched
+            failed.append("personal schedules")
+            log.exception("workflows: personal schedules could not be dispatched")
     if failed:
         raise RuntimeError("Could not dispatch workflows: " + ", ".join(failed))
+    return started
+
+
+def catch_up(since: datetime, now: datetime | None = None) -> list[str]:
+    """After downtime: for each workflow declared `catch_up=True`, run the latest
+    slot missed in (since, now] once, unless its next slot is close anyway.
+    The slot's run id is fixed, so a second call starts nothing new."""
+    from .schedule_grammar import next_after
+
+    now = now or datetime.now(timezone.utc)
+    started = []
+    for wf in _REGISTRY.values():
+        if not (getattr(wf, "catch_up", False) and wf.schedule):
+            continue
+        try:
+            cursor, last = since, None
+            for _ in range(100_000):
+                cursor = next_after(wf.schedule, wf.timezone, cursor)
+                if cursor > now:
+                    break
+                last = cursor
+            if last is None:
+                continue
+            gap = (cursor - last).total_seconds()
+            if (cursor - now).total_seconds() < 0.25 * gap:
+                continue
+            start(wf.name, scheduled_at=last.astimezone(timezone.utc).isoformat(),
+                  envelope={"trigger": "schedule", "scope": "team", "caught_up": True})
+            started.append(wf.name)
+        except Exception:  # noqa: BLE001 — one workflow never blocks the others
+            log.exception("workflows: could not catch up %r", wf.name)
     return started
 
 
@@ -826,6 +1176,7 @@ def load_workflows(hub_dir) -> int:
             spec = importlib.util.spec_from_file_location(mod_name, py)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = module
                 try:
                     spec.loader.exec_module(module)
                 except Exception:
@@ -834,8 +1185,10 @@ def load_workflows(hub_dir) -> int:
     return len(_REGISTRY) - before
 
 
-def enqueue_options(wf, event=None):
-    """One queue/partition policy for schedules, operator runs and events."""
+def enqueue_options(wf, event=None, partition: str | None = None):
+    """One queue/partition policy for schedules, operator runs and events.
+    `partition` (a person, for personal runs) gives that person's runs of the
+    workflow their own partition on the shared queue."""
     dedicated = wf.concurrency is not None or bool(wf.concurrency_key)
     queue_name = f"{_app_name(_HUB_NAME)}-wf" + (f"-{wf.name}" if dedicated else "")
     options = {"queue_name": wf.queue.name if wf.queue is not None else queue_name}
@@ -845,7 +1198,7 @@ def enqueue_options(wf, event=None):
         value = field((event or {}).get("body", {}), wf.concurrency_key)
         options["queue_partition_key"] = json.dumps(value, sort_keys=True) if value is not None else "missing"
     elif not dedicated:
-        options["queue_partition_key"] = wf.name
+        options["queue_partition_key"] = wf.name if not partition else f"{wf.name}:{partition}"
     return options
 
 

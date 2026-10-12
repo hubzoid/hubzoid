@@ -394,11 +394,14 @@ def personal_mcp_server(srv):
     allow-list. The caller's Bearer rides in the transport headers only."""
     from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 
+    from .loaders.mcp import call_timeout
+
     tool_filter = (create_static_tool_filter(allowed_tool_names=list(srv.allowed_tools))
                    if srv.allowed_tools else None)
     return MCPServerStreamableHttp(
         params={"url": srv.url, "headers": dict(srv.headers)},
         name=srv.key, tool_filter=tool_filter, cache_tools_list=True,
+        client_session_timeout_seconds=call_timeout(),
     )
 
 

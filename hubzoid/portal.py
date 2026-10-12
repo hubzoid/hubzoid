@@ -33,6 +33,7 @@ from typing import Any, Callable, Literal
 
 import functools
 import shlex
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
@@ -113,6 +114,24 @@ class ApplyRequest(BaseModel):
 class PersonRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=320)
     suspended: bool = True
+
+
+class HubAction(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+
+
+class CompanyLinkAction(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    action: Literal["copy", "replace", "off"]
+
+
+class WorkflowRun(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    hub: str = Field(min_length=1, max_length=255)
+    workflow: str = Field(min_length=1, max_length=255)
+    inputs: dict = Field(default_factory=dict)
 
 
 class AccountGrant(BaseModel):
@@ -616,6 +635,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             if not admin.is_org_admin:
                 person.pop("phone", None)  # personal data: organization administrators
             person["organization_admin"] = gs.can(sub, ORG, MANAGE_ACCESS)
+            person["reader"] = gs.is_reader(sub)
             person["access"] = {h: sorted(gs.permissions_for(sub, h)) for h in scopes}
             # Filters, applied before pagination.
             if status and person["status"] != status:
@@ -659,12 +679,283 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     @router.get("/workflows")
     def workflows(hub: str | None = None, admin=Depends(require_admin)):
         from .workflows.observe import catalog
+        from .workflows.runtime import input_schemas
 
-        return {
-            "workflows": [
-                w for h in selected(admin, hub) for w in catalog(Path(h["path"]))
-            ]
-        }
+        out = []
+        for h in selected(admin, hub):
+            schemas = input_schemas(Path(h["path"]), h["key"])
+            for w in catalog(Path(h["path"])):
+                w["input_schema"] = schemas.get(w["name"])
+                out.append(w)
+        return {"workflows": out}
+
+    @router.post("/workflows/run")
+    @_denied
+    def run_workflow(request: Request, payload: WorkflowRun, admin=Depends(require_admin)):
+        """Run now, from the Console: a team run with inputs, recorded as
+        started by this admin. Needs Run and control workflows (or org admin)."""
+        from .workflows import client, control
+        from .workflows import inputs as inputs_lib
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        gs = store_for(hub_dir)
+        if not (admin.is_org_admin or gs.can(admin.subject, payload.hub, "workflows_manage")):
+            raise HTTPException(403, "Running workflows needs \u201cRun and control workflows\u201d.")
+        if control._engine_here(path):
+            try:
+                out = control.start_now(path, payload.workflow, actor=admin.subject, surface="console",
+                                        prefer="code", inputs=payload.inputs or None)
+            except control.ControlError as exc:
+                raise HTTPException(409, exc.message)
+            return {"run_id": out["run_id"], "already_running": out["already_running"]}
+        from .workflows import observe
+        from .workflows.runtime import input_schemas
+
+        # The engine runs in another process: the same hold and one-run-at-a-time
+        # rules as a start on the engine's own process.
+        if gs.schedule_hold():
+            raise HTTPException(409, "New runs are on hold while a backup runs. Try again in a few minutes.")
+        name = payload.workflow.replace("-", "_")
+        active = observe.runs(path, name=name, statuses=["PENDING", "ENQUEUED", "DELAYED"], limit=1)
+        if active:
+            return {"run_id": active[0]["id"], "already_running": True}
+        shown = inputs_lib.display_with_schema(
+            input_schemas(path, normalize(payload.hub)).get(name), payload.inputs or None)
+        envelope = {"trigger": "operator", "scope": "team", "started_by": admin.subject,
+                    "inputs": payload.inputs or None, "inputs_display": shown}
+        live = client.enqueue_live(path, name, envelope=envelope)
+        if live is None:
+            raise HTTPException(409, "The workflow engine for this agent isn't running.")
+        run_id = live.get_workflow_id()
+        live.client.destroy()
+        return {"run_id": run_id, "already_running": False}
+
+    @router.get("/schedules")
+    @_denied
+    def schedules(hub: str, admin=Depends(require_admin)):
+        """People's schedules on one agent: who, what, when and how it went.
+        Never the report itself: that stays with its owner."""
+        import time
+
+        from .usage import run_cost
+        from .workflows import personal
+        from .workflows.runtime import input_schemas
+
+        path = Path(require_hub(admin, hub))
+        key = normalize(hub)
+        schemas = input_schemas(path, key)
+        since = time.time() - 30 * 86400
+        rows = [dict(personal.row(s, schemas.get(s.workflow)), owner=s.owner,
+                     cost_30d=round(run_cost(path, key, f"ps-{s.id}-", since), 4))
+                for s in personal.for_hub(path, key)]
+        return {"schedules": rows}
+
+    @router.get("/schedules/{schedule_id}/runs")
+    @_denied
+    def schedule_runs(schedule_id: str, hub: str, admin=Depends(require_admin)):
+        """A person's schedule's latest runs, for admins: status and times only."""
+        from .workflows import observe, personal
+
+        path = Path(require_hub(admin, hub))
+        found = personal.get(path, schedule_id)
+        if found is None or found.hub != normalize(hub):
+            raise HTTPException(404, "No such schedule on this agent.")
+        return {"runs": observe.schedule_runs(path, found.id)}
+
+    # ---- a person's own schedules and reports (any signed-in account) --------
+
+    def require_viewer(request: Request) -> tuple[str, str]:
+        """(account id, email) of the signed-in person, from a live session
+        check in either UI mode. Ownership needs both: a new account that
+        reuses an email is someone else."""
+        from .access import session as session_lib
+
+        who = session_lib.verified_person(request, hub_dir)
+        if not who:
+            raise HTTPException(401, "Sign in to continue.")
+        return str(who[0]), normalize(who[1])
+
+    def person_hub(hub: str) -> tuple[Path, str]:
+        key = normalize(hub)
+        for h in deployment.hubs(hub_dir):
+            if normalize(h["key"]) == key:
+                return Path(h["path"]), key
+        raise HTTPException(404, "No such agent here.")
+
+    def own_schedule(path: Path, key: str, schedule_id: str, email: str, account: str):
+        from .workflows import personal
+
+        found = personal.get(path, schedule_id)
+        if (found is None or found.hub != key or found.state == "stopped"
+                or not personal.owned_by(path, found, email, account)):
+            raise HTTPException(404, "This schedule isn't yours, or it no longer exists.")
+        return found
+
+    @router.get("/my")
+    @_denied
+    def my(request: Request):
+        """The signed-in person's own schedules and report links, on every agent.
+        `api` is where each agent takes actions (its own bridge in a gateway)."""
+        from .artifacts import series as series_lib
+        from .chat.common import api_bases
+        from .workflows import personal
+        from .workflows.runtime import input_schemas, title_for
+
+        account, email = require_viewer(request)
+        try:
+            is_admin = resolver(request) is not None
+        except HTTPException:
+            is_admin = False
+        from . import appmode
+        from .access.store import USE_HUB
+
+        gs = store_for(hub_dir)
+        owui = appmode.is_openwebui(hub_dir)
+        blocked = gs.is_suspended(email)
+        bases = api_bases(hub_dir)
+        agents, schedules, reports = [], [], []
+        for h in deployment.hubs(hub_dir):
+            path, key = Path(h["path"]), normalize(h["key"])
+            mine = [s for s in personal.for_owner(path, key, email)
+                    if personal.owned_by(path, s, email, account)]
+            made = [s for s in series_lib.for_owner(path, key, email) if series_lib.owned(path, s, email, account)]
+            usable = not blocked and gs.can(email, key, USE_HUB)
+            if not (mine or made or usable):
+                continue
+            model = h.get("model_id") or key
+            chat = (f"/?models={quote(model)}" if owui else f"/?agent={quote(model)}") if usable else None
+            agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api",
+                               chat=chat))
+            schemas = input_schemas(path, key) if mine else {}
+            for s in mine:
+                links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))
+                         for x in made if x.id in s.series or x.schedule_id == s.id]
+                schedules.append(dict(personal.row(s, schemas.get(s.workflow)), hub=key, reports=links))
+            for x in made:
+                st = series_lib.state(path, x)
+                reports.append(dict(id=x.id, hub=key, title=x.title or x.key, report=title_for(x.workflow),
+                                    url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
+                                    company_on=bool(series_lib.domain_token(path, x))))
+        return {"subject": email, "admin": is_admin, "blocked": blocked, "web_app": not owui, "agents": agents,
+                "schedules": schedules, "reports": reports,
+                "connections": _has_connections(hub_dir, account, email)}
+
+    @router.get("/my/schedules/{schedule_id}/runs")
+    @_denied
+    def my_schedule_runs(schedule_id: str, hub: str, request: Request):
+        from .workflows import observe
+
+        account, email = require_viewer(request)
+        path, key = person_hub(hub)
+        found = own_schedule(path, key, schedule_id, email, account)
+        return {"runs": observe.schedule_runs(path, found.id)}
+
+    @router.post("/my/schedules/{schedule_id}/{action}")
+    @_denied
+    def my_schedule_action(schedule_id: str, action: Literal["pause", "resume", "run_now", "stop"],
+                           request: Request, payload: HubAction):
+        """Pause, resume, run now or stop one's own schedule. Run now starts on
+        the agent's own engine, so the page sends it to that agent's bridge."""
+        from .workflows import control, personal
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        found = own_schedule(path, key, schedule_id, email, account)
+        try:
+            if action == "run_now":
+                if not control._engine_here(path):
+                    raise HTTPException(409, "Reports can't run on this agent right now. Try again later.")
+                personal.run_now(path, key, email, found.id)
+            elif action == "stop":
+                personal.owner_stop(path, key, email, found.id)
+            else:
+                personal.set_paused(path, key, email, found.id, action == "pause")
+        except personal.ScheduleError as exc:
+            raise HTTPException(409, str(exc))
+        store_for(hub_dir).audit_event(email, f"schedule_{action}", hub=key, permission=found.id,
+                                       surface="console")
+        return {"ok": True}
+
+    @router.post("/schedules/{schedule_id}/{action}")
+    @_denied
+    def schedule_action(schedule_id: str, action: Literal["pause", "resume", "stop"],
+                        request: Request, payload: HubAction, admin=Depends(require_admin)):
+        """Admins pause, resume what they paused, or stop. Never edit inputs."""
+        from .workflows import personal
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        key = normalize(payload.hub)
+        try:
+            if action == "stop":
+                personal.admin_stop(path, key, admin.subject, schedule_id)
+            else:
+                personal.set_paused(path, key, admin.subject, schedule_id, action == "pause", admin=True)
+        except personal.ScheduleError as exc:
+            raise HTTPException(409, str(exc))
+        store_for(hub_dir).audit_event(admin.subject, f"schedule_{action}", hub=key,
+                                       permission=schedule_id, surface="console")
+        return {"ok": True}
+
+    @router.get("/reports")
+    @_denied
+    def reports(hub: str, admin=Depends(require_admin)):
+        """One row per live report link on an agent, with its company link."""
+        from .artifacts import domains
+        from .artifacts import series as series_lib
+        from .workflows.runtime import title_for
+
+        path = Path(require_hub(admin, hub))
+        on, why = domains.status_for(path, normalize(hub))
+        rows = []
+        for s in series_lib.for_hub(path, normalize(hub)):
+            state = series_lib.state(path, s)
+            token = series_lib.domain_token(path, s)
+            rows.append(dict(
+                id=s.id, title=s.title or s.key, key=s.key, workflow=s.workflow,
+                report=title_for(s.workflow), scope=s.scope, owner=s.owner or None,
+                updated=s.updated_at, state=state["state"], next=state["next"],
+                audience=s.audience, company_on=bool(token)))
+        return {"reports": rows, "company": {"on": on, "reason": why, "domains": domains.label()}}
+
+    @router.post("/reports/{series_id}/company")
+    @_denied
+    def report_company(series_id: str, request: Request, payload: CompanyLinkAction,
+                       admin=Depends(require_admin)):
+        """Copy, replace or turn off a report's company link. Admins can turn off
+        any link, a personal one included (its owner is told); copying and
+        replacing are for team reports."""
+        from .artifacts import domains
+        from .artifacts import series as series_lib
+
+        _check_mutation(request, admin)
+        path = Path(require_hub(admin, payload.hub))
+        found = series_lib.get(path, series_id)
+        if found is None or found.hub != normalize(payload.hub):
+            raise HTTPException(404, "No such report on this agent.")
+        if payload.action == "off":
+            series_lib.domain_off(path, found, admin.subject)
+            if not found.team:
+                _tell_owner_link_off(path, found)
+            result = {"ok": True, "on": False}
+        elif not found.team:
+            raise HTTPException(403, "Only the owner shares a personal report. Admins can turn its link off.")
+        elif payload.action == "copy":
+            token = series_lib.domain_token(path, found)
+            if not token:
+                raise HTTPException(409, "This report has no company link. The workflow turns it on.")
+            result = {"ok": True, "on": True, "url": series_lib.share_url(path, token)}
+        else:
+            on, why = domains.status_for(path, found.hub)
+            if not on:
+                raise HTTPException(409, why)
+            token = series_lib.domain_replace(path, found, admin.subject)
+            result = {"ok": True, "on": True, "url": series_lib.share_url(path, token)}
+        store_for(hub_dir).audit_event(admin.subject, f"report_link_{payload.action}",
+                                       hub=normalize(payload.hub), permission=series_id, surface="console")
+        return result
 
     @router.get("/webhooks")
     @_denied
@@ -1123,3 +1414,37 @@ def mount_portal(app, hub_dir) -> None:
         log.info("portal: serving SPA from %s", dist)
     else:
         log.info("portal: API mounted; static SPA not built (no portal_dist/)")
+
+
+def _has_connections(hub_dir: Path, account: str, email: str) -> bool:
+    """Whether a person has connections to see: a connector they may connect,
+    or one they connected (it can still be disconnected)."""
+    from .connectors import per_user, registry, tokens
+
+    try:
+        ids = [c.id for c in registry.list_all(hub_dir) if c.enabled and c.auth_type != "shared"]
+        return bool(per_user.allowed_ids(hub_dir, email, ids) or tokens.for_user(hub_dir, account))
+    except Exception:  # noqa: BLE001 — the page still opens; the tab just isn't offered
+        log.exception("portal: could not check connections for the people page")
+        return False
+
+
+def _tell_owner_link_off(hub_dir: Path, found) -> None:
+    """Tell a personal report's owner an admin turned its company link off,
+    when the hub emails people (`notify_by_email`)."""
+    from . import email_delivery
+    from .artifacts import domains
+    from .workflows.identity import RunIdentity
+    from .workflows.personal import email_on
+
+    if not email_on(hub_dir):
+        return
+    try:
+        email_delivery.send_to_owner(
+            hub_dir, hub=found.hub, identity=RunIdentity(found.owner, None, "schedule", found.owner),
+            subject=f"{found.title or found.key}: company link turned off",
+            body=(f"An admin turned off the {domains.label()} link to your report. People who use "
+                  "the agent can still open it.\n"),
+            workflow=found.workflow, idem_key=f"series:{found.id}:off:{found.domain_changed}")
+    except Exception:  # noqa: BLE001 — a notice never blocks the admin's change
+        log.exception("portal: could not tell %s about a company link", found.owner)

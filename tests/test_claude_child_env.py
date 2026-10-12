@@ -146,3 +146,15 @@ def test_smtp_credentials_do_not_reach_agent_children():
     assert out.get("HUBZOID_SMTP_PASSWORD") == "" and out.get("HUBZOID_SMTP_USERNAME") == ""
     assert "HUBZOID_SMTP_HOST" not in out
     assert config_secrets.bridge_deployment_key("HUBZOID_SMTP_HOST")
+
+
+def test_the_claude_cli_gets_mcp_tool_timeout_only_when_the_hub_sets_one(monkeypatch):
+    from hubzoid.factory_claude import tool_free_options
+
+    monkeypatch.delenv("HUBZOID_MCP_TIMEOUT", raising=False)
+    monkeypatch.delenv("MCP_TOOL_TIMEOUT", raising=False)
+    assert "MCP_TOOL_TIMEOUT" not in (tool_free_options("s").env or {})   # the CLI keeps its own default
+    monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", "45")
+    assert tool_free_options("s").env["MCP_TOOL_TIMEOUT"] == "45000"         # seconds -> milliseconds
+    monkeypatch.setenv("MCP_TOOL_TIMEOUT", "600000")
+    assert "MCP_TOOL_TIMEOUT" not in tool_free_options("s").env              # an explicit CLI value wins

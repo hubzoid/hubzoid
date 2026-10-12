@@ -25,6 +25,17 @@ The same shape Claude Desktop uses:
 }
 ```
 
+**Timeouts.** One tool call may take 30 seconds on the OpenAI Agents SDK and
+Codex runtimes, for hub servers (stdio included) and Console connectors alike.
+Change it for the hub with `HUBZOID_MCP_TIMEOUT=<seconds>`, or for one server
+with `"client_session_timeout_seconds": 120` in its entry, which wins. The
+Claude runtime times calls in the `claude` CLI (`MCP_TOOL_TIMEOUT`, in
+milliseconds). An explicit `HUBZOID_MCP_TIMEOUT` is passed on to it, unless
+`MCP_TOOL_TIMEOUT` is already set. Without one, the CLI keeps its own default,
+which is longer: Claude Code 2.1.296 let a 130-second call finish. A server's
+`client_session_timeout_seconds` isn't passed to Claude, so a slow server works
+there without it.
+
 ## Env-var interpolation
 
 `${VAR}` references in any string field are resolved against the environment
@@ -204,7 +215,9 @@ organization administrators see the tab but cannot change it.
 
 From the link the agent sends (`connect_account`, the connection journey
 below), or from the connections page: **Settings, Connections** in the web
-app, `/portal/connections` in Open WebUI mode. Before anything happens, the
+app; in Open WebUI mode, **Connections** in the Hubzoid portal (the sidebar's
+"My workspace" link, or `/portal/connections`, which opens it).
+Before anything happens, the
 link's page shows the account, the agent, the server's host and any scopes the
 connector requests (as Agno's consent page shows where credentials go). Both
 pages list each app with its status and the agents that use it for the
@@ -275,7 +288,7 @@ connectors:
 - An administrator adds them in the Console. The Connectors tab is the same in
   both modes. Open WebUI's admin role alone does not allow it: the Console's
   organization administrators do.
-- A person connects from the agent's link or `/portal/connections`. Both
+- A person connects from the agent's link or the portal's Connections tab. Both
   check the Open WebUI session live and bind the connection to the person's
   Open WebUI account id. A new account that reuses an email is a different
   person and inherits nothing.
@@ -419,7 +432,7 @@ deployment:
    try it there.
 3. Ask "connect my Gmail". Open the link while signed in as another account
    (expect 403), then as the right one. Approve at the provider.
-4. Expect the done page to say connected, and `/portal/connections` (or
+4. Expect the done page to say connected, and the portal's Connections tab (or
    Settings, Connections) to list it as connected.
 5. Ask something that needs Gmail on each backend (`claude-local`, an OpenAI
    model, `codex-local`). The tool must answer with that person's mailbox.

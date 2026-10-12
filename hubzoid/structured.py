@@ -17,6 +17,10 @@ class ModelOutputError(ValueError):
         super().__init__(message)
         self.raw = raw
 
+    def __reduce__(self):
+        # Workflow errors are pickled into the run's history.
+        return (self.__class__, (str(self), self.raw))
+
 
 def json_instruction(schema: dict | None) -> str:
     """The instruction appended to a prompt when JSON is required."""

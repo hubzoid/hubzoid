@@ -68,24 +68,24 @@ def load_mcp_servers(specs: dict[str, dict]) -> list:
         if not raw_transport:
             # Preserve the pre-existing default: bare url -> SSE, else stdio.
             raw_transport = "sse" if has_url else "stdio"
-        # Optional per-server override of the MCP client's per-call timeout.
-        # HTTP transports only; slow tools (e.g. a browser) need more than 5s.
+        # Seconds one tool call may take: the server's own
+        # client_session_timeout_seconds, else HUBZOID_MCP_TIMEOUT (default 30;
+        # the SDK's own 5 s is too short for a real query).
         timeout = spec.get("client_session_timeout_seconds")
-        http_kwargs = {}
-        if timeout is not None:
-            http_kwargs["client_session_timeout_seconds"] = timeout
+        kwargs = {"client_session_timeout_seconds": timeout if timeout is not None
+                  else mcp_loader.call_timeout()}
         try:
             if raw_transport == "sse":
                 server = MCPServerSse(
                     params={"url": spec["url"], "headers": spec.get("headers", {})},
                     name=name,
-                    **http_kwargs,
+                    **kwargs,
                 )
             elif raw_transport == "streamable-http":
                 server = MCPServerStreamableHttp(
                     params={"url": spec["url"], "headers": spec.get("headers", {})},
                     name=name,
-                    **http_kwargs,
+                    **kwargs,
                 )
             else:
                 server = MCPServerStdio(
@@ -95,6 +95,7 @@ def load_mcp_servers(specs: dict[str, dict]) -> list:
                         "env": spec.get("env", {}),
                     },
                     name=name,
+                    **kwargs,
                 )
             out.append(server)
         except KeyError as exc:

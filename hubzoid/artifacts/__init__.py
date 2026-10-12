@@ -63,6 +63,18 @@ SHARE_PUBLIC = register(Capability(
     permission=PUBLIC_LINK_PERMISSION, label=PUBLIC_LINK_META["label"], group="tools",
     description=PUBLIC_LINK_META["description"], surfaces=(), sensitive=True,
 ))
+def _company_probe(_hub_dir) -> str:
+    from . import domains
+
+    return "" if domains.enabled() else "Company links are off"
+
+
+SHARE_DOMAIN = register(Capability(
+    permission="share_domain_links", label="Share reports with the company domain",
+    group="tools", section="workflows", surfaces=(), sensitive=True, probe=_company_probe,
+    description=("Anyone at the company's allowed email domains who has the report's link can "
+                 "read it after signing in. They can't use the agent or see other reports."),
+))
 AUDIENCES = ("owner", "people", "hub", "link")
 STORE_DIR = ".hubzoid/artifacts"
 ID_RE = re.compile(r"^a[A-Za-z0-9_-]{16,40}$")
@@ -94,6 +106,10 @@ class ArtifactError(Exception):
         self.status = status
         self.message = message
 
+    def __reduce__(self):
+        # Workflow errors are pickled into the run's history.
+        return (self.__class__, (self.status, self.message))
+
 
 @dataclass(frozen=True)
 class Artifact:
@@ -119,6 +135,7 @@ class Artifact:
         return kind_for(self.filename)
 
     latest_key: str | None = None
+    series_id: str | None = None
 
 
 def kind_for(filename: str) -> str:
@@ -191,7 +208,7 @@ def _row(r) -> Artifact:
 
 
 _COLS = ("id, hub, owner, owner_account, workflow, run_id, title, filename, content_type, "
-         "size, sha256, storage, audience, created, updated, deleted, latest_key")
+         "size, sha256, storage, audience, created, updated, deleted, latest_key, series_id")
 
 
 def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact | None:
@@ -209,13 +226,14 @@ def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact
 
 
 def latest(hub_dir, hub: str, key: str) -> Artifact | None:
-    """The newest artifact published in `hub` with latest key `key`, or None.
-    Who may open it is still `role`'s decision."""
+    """The newest artifact published in `hub` with latest key `key` before
+    report series (1.2 and earlier), or None. Who may open it is still `role`'s
+    decision; a series copy is served through its series."""
     if not HUB_RE.match(hub or "") or not KEY_RE.match(key or ""):
         return None
     with _engine(hub_dir).connect() as c:
         r = c.execute(text(f"SELECT {_COLS} FROM hz_artifacts WHERE hub=:h AND latest_key=:k "
-                           "AND deleted IS NULL ORDER BY created DESC, id DESC LIMIT 1"),
+                           "AND series_id IS NULL AND deleted IS NULL ORDER BY created DESC, id DESC LIMIT 1"),
                       {"h": hub, "k": key}).fetchone()
     return _row(r) if r is not None else None
 
@@ -242,11 +260,16 @@ def content_path(hub_dir, art: Artifact) -> Path:
 def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source: Path,
             title: str | None = None, workflow: str | None = None, run_id: str | None = None,
             idem_key: str | None = None, audience: str = "owner",
-            share_with=(), key: str | None = None) -> dict:
+            share_with=(), key: str | None = None, digest: str | None = None,
+            series: dict | None = None) -> dict:
     """Store `source` as a new artifact owned by `owner` and return
     {id, url, title, filename, content_type, size} (and `latest_url` with a
     `key`). The caller has already established `owner` from the run's identity,
     never from an argument.
+
+    A workflow publish with a `key` goes to a report series (`series` says the
+    run's scope): see `artifacts.series`. An unchanged copy stores nothing and
+    returns the newest copy with `unchanged`.
 
     `idem_key` makes a retried publish (a DBOS step re-run after a crash) return
     the artifact the first attempt stored instead of storing it twice."""
@@ -271,9 +294,35 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
     if size > max_bytes():
         raise ArtifactError(413, f"{source.name} is {size} bytes, over the "
                                  f"HUBZOID_ARTIFACT_MAX_BYTES limit of {max_bytes()}.")
+    if key and series is not None and workflow:
+        return _publish_series(hub_dir, hub=hub, owner=owner, owner_account=owner_account,
+                               source=source, title=title, workflow=workflow, run_id=run_id,
+                               idem_key=idem_key, audience=audience, share_with=share_with,
+                               key=key, digest=digest, series=series)
     if audience not in ("owner", "people", "hub"):
         raise ArtifactError(400, "A workflow can publish to 'owner', 'people' or 'hub'. "
                                  "Public links are created by the owner in the viewer.")
+    art = _store_copy(hub_dir, hub=hub, owner=owner, owner_account=owner_account, source=source,
+                      title=title, workflow=workflow, run_id=run_id, idem_key=idem_key, key=key)
+    if audience != "owner":
+        set_audience(hub_dir, art, owner, audience, share_with)
+        art = get(hub_dir, art.id)
+    return _summary(art, hub_dir)
+
+
+def _file_sha(source: Path) -> str:
+    digest = hashlib.sha256()
+    with source.open("rb") as src:
+        for chunk in iter(lambda: src.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _store_copy(hub_dir, *, hub: str, owner: str, owner_account: str | None, source: Path,
+                title: str | None, workflow: str | None, run_id: str | None,
+                idem_key: str | None, key: str | None, series_id: str | None = None) -> Artifact:
+    """Copy `source` into the artifact store and record it, owner-only."""
+    size = source.stat().st_size
     filename = _safe_filename(source.name)
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     artifact_id = "a" + secrets.token_urlsafe(18)
@@ -292,22 +341,98 @@ def publish(hub_dir, *, hub: str, owner: str, owner_account: str | None, source:
                workflow=workflow, run_id=run_id, idem_key=idem_key,
                title=(title or source.stem)[:300], filename=filename,
                content_type=content_type, size=size, sha256=digest.hexdigest(),
-               storage=rel, audience="owner", created=now, updated=now, latest_key=key)
-    with eng.begin() as c:
+               storage=rel, audience="owner", created=now, updated=now, latest_key=key,
+               series_id=series_id)
+    with _engine(hub_dir).begin() as c:
         c.execute(text(
             "INSERT INTO hz_artifacts (id, hub, owner, owner_account, workflow, run_id, idem_key, "
             "title, filename, content_type, size, sha256, storage, audience, created, updated, "
-            "latest_key) VALUES (:id, :hub, :owner, :owner_account, :workflow, :run_id, :idem_key, "
-            ":title, :filename, :content_type, :size, :sha256, :storage, :audience, :created, "
-            ":updated, :latest_key)"),
+            "latest_key, series_id) VALUES (:id, :hub, :owner, :owner_account, :workflow, :run_id, "
+            ":idem_key, :title, :filename, :content_type, :size, :sha256, :storage, :audience, "
+            ":created, :updated, :latest_key, :series_id)"),
             row)
-    art = get(hub_dir, artifact_id)
-    if audience != "owner":
-        set_audience(hub_dir, art, owner, audience, share_with)
-        art = get(hub_dir, artifact_id)
     log.info("artifacts: published %s (%s, %d bytes) for %s in %s", artifact_id,
              filename, size, owner, hub)
-    return _summary(art, hub_dir)
+    return get(hub_dir, artifact_id)
+
+
+def _series_keep(hub_dir) -> int:
+    try:
+        from ..workflows.events import settings
+
+        return max(0, int(settings(Path(hub_dir)).get("series_keep") or 0))
+    except Exception:  # noqa: BLE001 — keep everything when the setting can't be read
+        return 0
+
+
+def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None, source: Path,
+                    title: str | None, workflow: str, run_id: str | None, idem_key: str | None,
+                    audience: str, share_with, key: str, digest: str | None, series: dict) -> dict:
+    from . import domains
+    from . import series as series_lib
+
+    scope = series.get("scope") or series_lib.TEAM
+    if scope not in (series_lib.TEAM, series_lib.PERSONAL):
+        raise ArtifactError(400, "Unknown report scope.")
+    if scope == series_lib.PERSONAL:   # a person's own copy: they share it from the viewer
+        audience, share_with = "owner", ()
+    if audience not in ("owner", "people", "hub", "domain"):
+        raise ArtifactError(400, "A workflow can publish to 'owner', 'people', 'hub' or 'domain'. "
+                                 "Public links are created by the owner in the viewer.")
+    if audience == "domain":
+        on, why = domains.status_for(hub_dir, hub)
+        if not on:
+            raise ArtifactError(409, why)
+        if not _store(hub_dir).can(owner, hub, SHARE_DOMAIN.permission):
+            raise ArtifactError(403, f"{owner} can't share reports with {domains.label()}. An admin "
+                                     f"can allow it in the Console (\u201c{SHARE_DOMAIN.label}\u201d).")
+    if digest is not None and (not isinstance(digest, str) or not 1 <= len(digest) <= 128):
+        raise ArtifactError(400, "digest must be a short string, such as a hash of the data.")
+    found = series_lib.claim(hub_dir, hub=hub, workflow=workflow, scope=scope, owner=owner,
+                             key=key, title=title)
+    if scope == series_lib.TEAM:   # the code decides whether a team report has a company link
+        series_lib.follow_code(hub_dir, found, audience == "domain")
+    inputs = series.get("inputs")
+    schedule_id = series.get("schedule_id")
+    sha = _file_sha(source)
+    last = get(hub_dir, found.last_artifact) if found.last_artifact else None
+    if (scope != series_lib.TEAM and last is not None and last.owner_account and owner_account
+            and last.owner_account != owner_account):
+        # A new account took the email over: it gets a fresh copy, and the old
+        # company link doesn't start showing its reports.
+        series_lib.domain_off(hub_dir, found, "account-replaced")
+        found = series_lib.get(hub_dir, found.id)
+        last = None
+    same = last is not None and ((digest is not None and digest == found.last_digest)
+                                 or (digest is None and sha == found.last_sha))
+    if same:
+        series_lib.touch(hub_dir, found, run_id=run_id, inputs=inputs, schedule_id=schedule_id,
+                         audience=audience)
+        return dict(_summary(last, hub_dir), unchanged=True)
+    art = _store_copy(hub_dir, hub=hub, owner=owner, owner_account=owner_account, source=source,
+                      title=title, workflow=workflow, run_id=run_id, idem_key=idem_key, key=key,
+                      series_id=found.id)
+    copy_audience = "hub" if audience == "domain" and scope == series_lib.TEAM else \
+        "owner" if audience == "domain" else audience
+    if copy_audience != "owner":
+        set_audience(hub_dir, art, owner, copy_audience, share_with)
+    series_lib.record_copy(hub_dir, found, artifact_id=art.id, sha=art.sha256, digest=digest,
+                           run_id=run_id, inputs=inputs, schedule_id=schedule_id, title=title,
+                           audience=audience)
+    keep = _series_keep(hub_dir)
+    if keep:
+        series_lib.prune(hub_dir, found, keep)
+    return _summary(get(hub_dir, art.id), hub_dir)
+
+
+def _remove_files(hub_dir, artifact_id: str) -> None:
+    art = get(hub_dir, artifact_id, include_deleted=True)
+    if art is None:
+        return
+    try:
+        shutil.rmtree(content_path(hub_dir, art).parent, ignore_errors=True)
+    except ArtifactError:
+        pass
 
 
 def _summary(art: Artifact, hub_dir=None) -> dict:
@@ -315,6 +440,16 @@ def _summary(art: Artifact, hub_dir=None) -> dict:
                content_type=art.content_type, size=art.size, audience=art.audience)
     if art.latest_key:
         out["latest_url"] = latest_url(art.hub, art.latest_key, hub_dir)
+    if art.series_id and hub_dir is not None:
+        from . import series as series_lib
+
+        found = series_lib.get(hub_dir, art.series_id)
+        if found is not None:
+            out["series_id"] = found.id
+            out["latest_url"] = series_lib.latest_url(hub_dir, found)
+            token = series_lib.domain_token(hub_dir, found)
+            if token:
+                out["share_url"] = series_lib.share_url(hub_dir, token)
     return out
 
 
@@ -385,6 +520,14 @@ def _owner_current(hub_dir, art: Artifact) -> bool:
     return True
 
 
+def _named_reader(hub_dir, subject: str) -> bool:
+    """Someone named on a share who doesn't use the agent: allowed only at the
+    company's share domains, as a reader."""
+    from . import domains
+
+    return domains.email_allowed(subject)
+
+
 def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
     """'owner', 'viewer' or None for a signed-in `subject`. The one decision."""
     from ..access import normalize
@@ -397,7 +540,7 @@ def role(hub_dir, art: Artifact | None, subject: str) -> str | None:
     if art.audience == "hub":
         return "viewer" if hub_member(hub_dir, art.hub, subject) else None
     if art.audience == "people":
-        if not hub_member(hub_dir, art.hub, subject):
+        if not hub_member(hub_dir, art.hub, subject) and not _named_reader(hub_dir, subject):
             return None
         listed = shares(hub_dir, art.id)
         mine = [s for s in listed if s["kind"] == "user" and s["principal"] == subject]
@@ -446,7 +589,8 @@ def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
                 raise ArtifactError(400, "Each person needs an account email.")
             if "@" not in principal:
                 raise ArtifactError(400, f"{principal!r} is not an account email.")
-            if principal != art.owner and not hub_member(hub_dir, art.hub, principal):
+            if (principal != art.owner and not hub_member(hub_dir, art.hub, principal)
+                    and not _named_reader(hub_dir, principal)):
                 raise ArtifactError(409, f"{principal} cannot use this agent, so the "
                                          "artifact cannot be shared with them.")
             entries.append((kind, principal))
@@ -605,11 +749,7 @@ def delete(hub_dir, art: Artifact | None, actor: str) -> None:
         c.execute(text("DELETE FROM hz_artifact_shares WHERE artifact_id=:a"), {"a": art.id})
         c.execute(text("UPDATE hz_artifacts SET deleted=:t, updated=:t, audience='owner' "
                        "WHERE id=:a"), {"t": now, "a": art.id})
-    try:
-        folder = content_path(hub_dir, art).parent
-        shutil.rmtree(folder, ignore_errors=True)
-    except ArtifactError:
-        pass
+    _remove_files(hub_dir, art.id)
     _audit(hub_dir, art.hub, "artifact_deleted", art.id, actor)
 
 

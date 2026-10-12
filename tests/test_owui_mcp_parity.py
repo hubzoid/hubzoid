@@ -394,7 +394,21 @@ def test_parity_spec_is_the_same_data_for_every_runtime(hub):
 
     from hubzoid.runtime import personal_mcp_server
     client = personal_mcp_server(srv_)
-    assert client.name == srv_.key
+    assert client.name == srv_.key and client.client_session_timeout_seconds == 30
+
+
+def test_mcp_tool_calls_get_30_seconds_unless_a_server_or_the_env_says_otherwise(monkeypatch):
+    from hubzoid.factory import load_mcp_servers
+
+    specs = {"db": {"command": "db-mcp"}, "web": {"url": "https://x.example/mcp", "transport": "http"},
+             "browser": {"url": "https://b.example/mcp", "client_session_timeout_seconds": 120}}
+    monkeypatch.delenv("HUBZOID_MCP_TIMEOUT", raising=False)
+    got = {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}
+    assert got == {"db": 30, "web": 30, "browser": 120}          # stdio included; the server wins
+    monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", "90")
+    assert {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}["db"] == 90
+    monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", "soon")              # a bad value keeps the default
+    assert {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}["web"] == 30
 
 
 def test_connector_tool_names_are_valid_and_unique_on_every_runtime():

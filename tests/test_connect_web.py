@@ -285,37 +285,16 @@ def test_a_new_account_with_the_same_email_cannot_use_the_link(client, hub):
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).status_code == 403
 
 
-def test_your_connections_page_connects_and_disconnects(client, hub):
-    r = client.get("/portal/connections")
-    assert r.status_code == 302 and r.headers["location"] == "/auth?redirect=/portal/connections"
-    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
-    page = client.get("/portal/connections", headers=_as(ALICE)).text
-    assert "Gmail" in page and "Connected" in page and "Disconnect" in page and "AT-a" not in page
-    assert 'href="/">' in page and "Back to chat" in page
-    assert "Used by" in page and 'class="confirm"' in page  # Disconnect asks first
-    r = client.post("/portal/connections/gmail/disconnect", headers={**_as(ALICE), **_SAME})
-    assert r.status_code == 303 and r.headers["location"] == "/portal/connections?disconnected=gmail"
-    page = client.get(r.headers["location"], headers=_as(ALICE)).text
-    assert "Not connected" in page and "Gmail disconnected." in page
-    # The note after a connect comes from the record, not the query.
-    page = client.get("/portal/connections?connected=gmail", headers=_as(ALICE)).text
-    assert "Gmail connected." not in page and "Gmail was not connected" in page
-    # A refused reconnect is never shown as connected, even with an older connection kept.
-    h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-b")
-    page = client.get("/portal/connections?connected=gmail&error=access_denied", headers=_as(ALICE)).text
-    assert "Gmail connected." not in page and "Gmail was not connected" in page
-    r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
-    assert r.status_code == 303 and r.headers["location"] == AUTHORIZE
-    # Without the grant, the page offers only Disconnect and refuses to connect.
-    from hubzoid.access import store_for
-
-    store_for(hub).revoke(ALICE, hub.name, "connector_gmail", actor="test")
-    r = client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME})
-    assert r.status_code == 403
-    # Another site's form cannot act for the person.
-    r = client.post("/portal/connections/gmail/connect",
-                    headers={**_as(ALICE), "origin": "https://evil.example"})
-    assert r.status_code == 403
+def test_your_connections_address_opens_the_console_tab(client, hub):
+    # Signed out: sign in first, to an address without a fragment.
+    r = client.get("/portal/connections?connected=gmail")
+    assert r.status_code == 302
+    assert r.headers["location"] == "/auth?redirect=/portal/connections%3Fconnected%3Dgmail"
+    # Signed in: the Console tab, with the sign-in's result carried over.
+    r = client.get("/portal/connections?connector=gmail&error=access_denied", headers=_as(ALICE))
+    assert r.status_code == 302
+    assert r.headers["location"] == "/portal/#/connections?connector=gmail&error=access_denied"
+    assert client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME}).status_code in (404, 405)
 
 @pytest.mark.parametrize("surface, chat, href", [
     ("web", "web-c_abc1234567", "/c/c_abc1234567"),

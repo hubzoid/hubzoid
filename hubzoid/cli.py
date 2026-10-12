@@ -2336,6 +2336,35 @@ def schedule_list(
         raise typer.Exit(1)
 
 
+def _cli_envelope(hub: Path, name: str, pairs) -> dict:
+    """How a CLI run starts: a team run, recorded as started from the CLI, with
+    validated `--input` values. ValueError carries the one-line problem."""
+    from .workflows import inputs as inputs_lib
+    from .workflows import runtime as _wf
+
+    definition = next((d for d in _wf.load_definitions(hub) if d.name == name), None)
+    model = getattr(definition, "inputs", None)
+    try:
+        data = inputs_lib.parse_cli(pairs)
+        limit = getattr(definition, "max_input_bytes", inputs_lib.MAX_BYTES)
+        values = inputs_lib.validate(model, data or None, max_bytes=limit) if (model or data) else None
+    except inputs_lib.InputError as exc:
+        raise ValueError("Input " + str(exc)) from None
+    dumped = inputs_lib.dump(values)
+    return {"trigger": "cli", "scope": "team", "started_by": "cli",
+            "inputs": dumped, "inputs_display": inputs_lib.display(model, dumped)}
+
+
+def _print_report_links(hub: Path, run_id: str) -> None:
+    from .artifacts import series as series_lib
+
+    try:
+        for s in series_lib.touched_by(hub, hub.name.lower(), run_id):
+            console.print(f"Report: {series_lib.latest_url(hub, s)}")
+    except Exception:  # noqa: BLE001 — links are a convenience
+        pass
+
+
 @schedule_app.command("run")
 def schedule_run(
     hub: Path = typer.Argument(..., help="Hub directory."),
@@ -2344,6 +2373,7 @@ def schedule_run(
     max_rounds: int = typer.Option(None, "--max-rounds", help="Override the task's round cap."),
     model: str = typer.Option(None, "--model", help="Override the model for this run (LLM tasks), e.g. claude-local/opus."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the round-1 prompt (LLM) or the command (script) and exit."),
+    inputs: list[str] = typer.Option(None, "--input", help="A workflow input as key=value. Repeat for each input."),
 ) -> None:
     """Fire one task NOW — for testing and manual runs.
 
@@ -2371,12 +2401,22 @@ def schedule_run(
         if match_def and any(v is not None for v in (timeout, max_rounds, model)):
             console.print("[red]Workflows do not accept --timeout, --max-rounds or --model. Configure these in workflow code.[/red]")
             raise typer.Exit(2)
+        if inputs and not match_def:
+            console.print("[red]--input is only for code workflows.[/red]")
+            raise typer.Exit(2)
         if dry_run:
             if match_def is None:
                 console.print(f"[red]No workflow {task_name!r} found[/red]")
                 raise typer.Exit(2)
             console.print(f"Would run workflow {want} from {match_def['source']}; no code executed.")
             return
+        envelope = None
+        if match_def:
+            try:
+                envelope = _cli_envelope(hub, want, inputs)
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(2)
         _load_settings(hub)
         # Second source: a DBOS workflow under <hub>/workflows/<name>/. The
         # registry is keyed by the function name; accept the folder name too
@@ -2392,10 +2432,11 @@ def schedule_run(
                 jev=lambda spec, hub_dir=None, subject=None: _agent_rt.jev_once(hub_dir, spec, subject=subject),
             )
             from .workflows.client import enqueue_live
-            live = enqueue_live(hub, want)
+            live = enqueue_live(hub, want, envelope=envelope)
             if live is not None:
                 _audit_cli_start(hub, want, live.get_workflow_id())
                 console.print(f"Workflow {want}: {live.get_result()!r}")
+                _print_report_links(hub, live.get_workflow_id())
                 return
             _wf.init(hub)
             _wf.load_workflows(hub)
@@ -2406,7 +2447,7 @@ def schedule_run(
             if match:
                 console.print(f"[cyan]→ running workflow {match}[/cyan]")
                 try:
-                    handle = _wf.start(match)
+                    handle = _wf.start(match, envelope=envelope)
                     _audit_cli_start(hub, match, handle.get_workflow_id())
                     result = handle.get_result()
                 except Exception as run_exc:  # noqa: BLE001 — the run failed, not the load
@@ -2416,6 +2457,7 @@ def schedule_run(
                 finally:
                     _wf.shutdown()
                 console.print(f"[green]✓ workflow {match} returned:[/green] {result!r}")
+                _print_report_links(hub, handle.get_workflow_id())
                 return
             known_wf = ", ".join(sorted(wf_names))
             _wf.shutdown()

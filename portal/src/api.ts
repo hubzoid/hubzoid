@@ -95,6 +95,85 @@ export type Workflow = {
   runs_as?: { account: string | null; source: string | null; via: string | null; error: string | null };
   // The webhook that starts this workflow, when it runs on events.
   webhook?: string | null;
+  // Workflows from chat: offered as a "Run for me" tool, schedulable by people.
+  schedule_text?: string;
+  as_tool?: boolean;
+  schedulable?: boolean;
+  sensitive?: boolean;
+  has_inputs?: boolean;
+  title?: string;
+  input_schema?: InputSchema | null;
+};
+export type InputSchema = {
+  type: "object";
+  properties: Record<string, {
+    type?: string; enum?: unknown[]; default?: unknown; description?: string;
+    anyOf?: { type?: string; enum?: unknown[] }[]; hidden?: boolean;
+  }>;
+  required?: string[];
+};
+/** A schedule a person saved from chat. It runs as them. */
+export type PersonalSchedule = {
+  id: string;
+  owner: string;
+  name: string;
+  workflow: string;
+  report: string;
+  inputs: string;
+  when: string;
+  timezone: string;
+  state: "testing" | "active" | "paused" | "stopped";
+  reason: string | null;
+  state_label: string;
+  next_fire: number | null;
+  last_status: string | null;
+  last_at: number | null;
+  last_label: string;
+  cost_30d: number;
+};
+/** The signed-in person's own schedules and reports, on every agent (`GET /my`). */
+export type ScheduleLink = { title: string; url: string };
+export type MySchedule = Omit<PersonalSchedule, "owner" | "cost_30d"> & { hub: string; reports: ScheduleLink[] };
+export type MyReport = {
+  id: string;
+  hub: string;
+  title: string;
+  report: string;
+  url: string;
+  updated: number | null;
+  state: "live" | "stopped" | "failed";
+  company_on: boolean;
+};
+/** `api`: where this agent takes actions (its own bridge in a gateway). */
+export type MyAgent = { key: string; name: string; api: string; chat: string | null };
+export type MyData = {
+  subject: string;
+  admin: boolean;
+  /** Blocked by an administrator: no agents, no connections. */
+  blocked: boolean;
+  web_app: boolean;
+  agents: MyAgent[];
+  schedules: MySchedule[];
+  reports: MyReport[];
+  /** Whether there are connections to see (one to connect, or one connected). */
+  connections: boolean;
+};
+/** One run of a schedule: status and times only. */
+export type ScheduleRun = { status: string; started: number | null; completed: number | null; duration_ms: number | null };
+/** One live report link: a team report or a person's own. */
+export type Report = {
+  id: string;
+  title: string;
+  key: string;
+  workflow: string;
+  report: string;
+  scope: "team" | "personal";
+  owner: string | null;
+  updated: number | null;
+  state: "live" | "stopped" | "failed";
+  next: number | null;
+  audience: string;
+  company_on: boolean;
 };
 // A webhook this agent declares: where it receives events and how they went.
 // Payloads, headers and digests never leave the server.
@@ -128,6 +207,11 @@ export type Run = {
   run_as?: string | null;
   // True when the run has a result that only its own account may see.
   redacted?: boolean;
+  // How it started: schedule, personal_schedule, tool, operator, cli, webhook, update.
+  trigger?: string | null;
+  started_by?: string | null;
+  inputs?: string | null;
+  scope?: string | null;
   steps?: {
     name: string;
     started: number | null;
@@ -150,6 +234,8 @@ export type Person = {
   suspended: boolean;
   account_unavailable: boolean;
   organization_admin: boolean;
+  /** Signed in to read a shared report; no agent access unless granted. */
+  reader?: boolean;
   access: Record<string, string[]>;
   /** The number their WhatsApp and Telegram messages come from (digits).
    *  Shown to organization administrators only. */
@@ -320,10 +406,12 @@ export async function request<T>(
   body?: unknown,
   signal?: AbortSignal,
   method?: "GET" | "POST" | "DELETE",
+  /** Another bridge's API in a gateway (an agent's `api`); this one by default. */
+  base = "/portal/api",
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch("/portal/api" + path, {
+    response = await fetch(base + path, {
       credentials: "include",
       signal,
       method: method ?? (body === undefined ? "GET" : "POST"),

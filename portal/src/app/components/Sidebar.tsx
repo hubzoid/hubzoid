@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   Check,
   ExternalLink,
+  LayoutGrid,
   LogOut,
   Monitor,
   Moon,
@@ -559,6 +560,10 @@ function AccountMenu() {
           <Menu.Item className="hz-menu-item" onSelect={() => navigate("/account/connections")}>
             <Plug size={15} aria-hidden />
             {t.account.connections}
+          </Menu.Item>
+          <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/#/schedules")}>
+            <LayoutGrid size={15} aria-hidden />
+            {t.account.schedules}
           </Menu.Item>
           {(app.isAdmin || app.user?.console) && (
             <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/")}>

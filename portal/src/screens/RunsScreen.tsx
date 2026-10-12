@@ -6,17 +6,31 @@ import {
   Collapse,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
   Tooltip,
   message,
 } from "antd";
-import { RefreshCw, Copy } from "lucide-react";
-import { query, type Hub, type Run, type Webhook, type Workflow } from "../api";
+import { RefreshCw, Copy, Play } from "lucide-react";
+import {
+  query,
+  request,
+  type Hub,
+  type InputSchema,
+  type Run,
+  type Webhook,
+  type Workflow,
+} from "../api";
 import { useData } from "../hooks/useData";
-import { agentHref, href } from "../hooks/useRoute";
+import { agentHref, href, hrefWith } from "../hooks/useRoute";
 import {
   LoadState,
   RecoveryScreen,
@@ -30,6 +44,10 @@ import { WorkflowResult } from "../components/WorkflowResult";
 import { resultSummary, workflowCommand, createWorkflowCommand, shortRunId } from "../lib/results";
 
 const { Text, Title, Paragraph } = Typography;
+const TRIGGERS: Record<string, string> = {
+  schedule: "Team schedule", personal_schedule: "Personal schedule", tool: "Chat",
+  operator: "Run now", cli: "CLI", webhook: "Webhook", update: "Update now",
+};
 const PAGE = 50;
 function CopyCommand({ command, label }: { command: string; label: string }) {
   return <Tooltip title="Run on the Hubzoid server." trigger={["hover", "focus"]}>
@@ -167,7 +185,7 @@ function WorkflowList({ hub }: { hub: Hub }) {
                 </>
               ) : w.schedule ? (
                 <>
-                  <div>{describeCron(w.schedule)}</div>
+                  <div>{w.schedule_text ?? describeCron(w.schedule)}</div>
                   <Space size={6}><Text type="secondary" style={{ whiteSpace: "nowrap" }}>{w.timezone}</Text><Help text={`Cron: ${w.schedule}`} /></Space>
                 </>
               ) : (
@@ -202,6 +220,19 @@ function WorkflowList({ hub }: { hub: Hub }) {
               ),
           },
           {
+            title: <span style={{ whiteSpace: "nowrap" }}>In chat <Help text="People given this workflow in Access can run it in chat for themselves. Schedule: they can also save a personal schedule, if allowed to schedule reports." /></span>,
+            key: "chat",
+            render: (_, w) =>
+              w.as_tool ? (
+                <Space size={4} wrap>
+                  <Tag>Run</Tag>
+                  {w.schedulable && <Tag>Schedule</Tag>}
+                </Space>
+              ) : (
+                <Text type="secondary">—</Text>
+              ),
+          },
+          {
             title: "Next run",
             key: "next",
             render: (_, w) =>
@@ -220,12 +251,81 @@ function WorkflowList({ hub }: { hub: Hub }) {
             title: "",
             key: "runs",
             align: "right",
-            render: (_, w) => <Space wrap>{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
+            render: (_, w) => <Space wrap>{!w.webhook && !w.name.startsWith("md:") && !w.error && <RunNow hub={hub} workflow={w} />}{!w.webhook && <CopyCommand label="Copy run command" command={workflowCommand("run", w.name, hub.path || hub.key)} />}<Button href={runsHref(hub, w.name)}>View runs</Button></Space>,
           },
         ]}
       />
       <Webhooks hub={hub} />
+      <Text type="secondary">
+        People's schedules and live reports are on <a href={hrefWith("/schedules", { scope: "everyone", hub: hub.key })}>Schedules &amp; reports</a>.
+      </Text>
     </div>
+  );
+}
+
+/** One form field per input, from the workflow's published schema. */
+function inputField(name: string, prop: InputSchema["properties"][string], required: boolean) {
+  const choices = prop.enum ?? prop.anyOf?.find((a) => a.enum)?.enum;
+  const kind = prop.type ?? prop.anyOf?.find((a) => a.type && a.type !== "null")?.type;
+  const label = name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  const control = choices ? (
+    <Select allowClear={!required} options={choices.map((c) => ({ value: c as string, label: String(c) }))} />
+  ) : kind === "integer" || kind === "number" ? (
+    <InputNumber style={{ width: "100%" }} />
+  ) : kind === "boolean" ? (
+    <Switch />
+  ) : prop.hidden ? (
+    <Input.Password autoComplete="off" />
+  ) : (
+    <Input />
+  );
+  return (
+    <Form.Item key={name} name={name} label={label} tooltip={prop.description} initialValue={prop.default as never}
+      valuePropName={kind === "boolean" ? "checked" : "value"}
+      rules={required ? [{ required: true, message: `${label} is required.` }] : []}>
+      {control}
+    </Form.Item>
+  );
+}
+
+function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form] = Form.useForm();
+  const schema = workflow.input_schema;
+  const account = workflow.runs_as?.account ?? "the workflow's account";
+  const start = async () => {
+    const values = schema ? await form.validateFields() : {};
+    const inputs = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+    setBusy(true);
+    try {
+      const out = await request<{ run_id: string; already_running: boolean }>("/workflows/run", {
+        hub: hub.key, workflow: workflow.name, inputs,
+      });
+      message.success(out.already_running ? "A run is already in progress." : "Run started.");
+      setOpen(false);
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "Could not start the run.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button size="small" icon={<Play size={14} />} onClick={() => (schema ? setOpen(true) : start())}>
+        Run now
+      </Button>
+      <Modal title={`Run ${workflow.name}`} open={open} onCancel={() => setOpen(false)}
+        okText="Run" onOk={start} confirmLoading={busy} destroyOnHidden>
+        <Paragraph type="secondary">
+          Runs as {account}, the workflow's account.
+        </Paragraph>
+        <Form form={form} layout="vertical">
+          {schema && Object.entries(schema.properties).map(([name, prop]) =>
+            inputField(name, prop, (schema.required ?? []).includes(name)))}
+        </Form>
+      </Modal>
+    </>
   );
 }
 
@@ -411,10 +511,25 @@ function RunList({ hub, workflow }: { hub: Hub; workflow: string }) {
               render: (_, r) => formatDuration(r.duration_ms),
             },
             {
+              title: "Trigger",
+              key: "trigger",
+              render: (_, r) => r.trigger ? <Tag>{TRIGGERS[r.trigger] ?? r.trigger}</Tag> : <Text type="secondary">—</Text>,
+            },
+            {
+              title: "Started by",
+              key: "started_by",
+              render: (_, r) => r.started_by ? <Text className="identity">{r.started_by}</Text> : <Text type="secondary">{r.trigger === "personal_schedule" ? "Schedule" : r.trigger === "webhook" ? "Webhook" : "Schedule"}</Text>,
+            },
+            {
               title: "Runs as",
               key: "run_as",
               render: (_, r) =>
                 r.run_as ? <Text className="identity">{r.run_as}</Text> : <Text type="secondary">—</Text>,
+            },
+            {
+              title: "Inputs",
+              key: "inputs",
+              render: (_, r) => r.inputs ? <Text type="secondary">{r.inputs}</Text> : <Text type="secondary">—</Text>,
             },
             {
               title: "Result",
