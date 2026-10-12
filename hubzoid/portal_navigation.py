@@ -217,12 +217,11 @@ SCRIPT = r'''
   }
   async function sync() {
     const current = ++revision;
-    let admin = false;
-    try {
-      const r = await fetch('/portal/api/me?brief=1', {credentials: 'same-origin'});
-      admin = r.ok;
-    } catch (_) { admin = false; }
-    const a = await access();
+    // Both at once, so a sign-out between them can't mix two accounts' answers.
+    const [admin, a] = await Promise.all([
+      fetch('/portal/api/me?brief=1', {credentials: 'same-origin'}).then((r) => r.ok, () => false),
+      access(),
+    ]);
     if (current !== revision) return;
     role = admin ? 'admin' : (a && !a.blocked ? 'person' : '');
     place();

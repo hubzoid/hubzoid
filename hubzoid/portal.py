@@ -846,7 +846,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 reports.append(dict(id=x.id, hub=key, title=x.title or x.key, report=title_for(x.workflow),
                                     url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
                                     company_on=bool(series_lib.domain_token(path, x))))
-        return {"subject": email, "admin": is_admin, "web_app": not owui, "agents": agents,
+        return {"subject": email, "admin": is_admin, "blocked": blocked, "web_app": not owui, "agents": agents,
                 "schedules": schedules, "reports": reports,
                 "connections": _has_connections(hub_dir, account, email)}
 

@@ -38,8 +38,10 @@ export function ConnectionsScreen() {
   const connect = async (c: Connection) => {
     setBusy(c.connector_id);
     try {
+      // No return_to: the sign-in comes back to /portal/connections with
+      // ?connected=<id> or ?connector=<id>&error=<code>, which open this tab.
       const out = await request<{ authorize_url?: string }>(
-        `/connections/${encodeURIComponent(c.connector_id)}/connect`, { return_to: "/portal/connections" });
+        `/connections/${encodeURIComponent(c.connector_id)}/connect`, {});
       // No sign-in needed: it's connected now, so stay and say so.
       if (out.authorize_url && c.auth_type !== "none") { location.assign(out.authorize_url); return; }
       message.success(t.connections.connectedToast(c.name));
@@ -68,7 +70,8 @@ export function ConnectionsScreen() {
   const items = data.data;
   const find = (id?: string) => items?.find((c) => c.connector_id === id);
   const came = back.error ? undefined : find(back.connected);
-  const failedName = back.error ? (find(back.connector || back.connected)?.name ?? back.connector ?? t.connections.title) : null;
+  // Only for an app in the person's own list: the address alone names nothing.
+  const failedName = back.error ? (find(back.connector || back.connected)?.name ?? null) : null;
   return (
     <>
       <PageHeader title={t.connections.title} description={t.connections.intro} />

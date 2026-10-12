@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
+import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
 import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
@@ -243,7 +243,11 @@ export function PersonShell({
         ))}
       </nav>
       <Layout.Content className="content">
-        <div className="main">{children}</div>
+        <div className="main">
+          {my.blocked && <Alert className="notice" type="warning" showIcon
+            message="Your access is blocked. Contact your administrator." />}
+          {children}
+        </div>
       </Layout.Content>
     </Layout>
   );

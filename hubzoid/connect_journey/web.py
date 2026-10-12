@@ -444,10 +444,10 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
             return RedirectResponse("/account/connections", status_code=302)
         query = f"?{request.url.query}" if request.url.query else ""
         try:
-            _account, email = who_of(request)
+            signed_in = bool(who_of(request)[1])
         except HTTPException:
-            email = "x"          # can't check now: the tab shows the problem
-        if not email:            # sign in first, to an address without a fragment
+            signed_in = True     # can't check now: the tab shows the problem
+        if not signed_in:        # sign in first, to an address without a fragment
             return RedirectResponse("/auth?redirect=" + quote(PAGE + query, safe="/"), status_code=302,
                                     headers={"Cache-Control": "no-store"})
         return RedirectResponse("/portal/#/connections" + query, status_code=302,

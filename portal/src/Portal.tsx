@@ -62,20 +62,20 @@ function Router({
     [modal, message],
   );
   const route = useRoute(onBlocked);
-  // One portal for everyone: /my says who this is and whether they're an
-  // admin. Someone who isn't gets their own pages in a frame of their own, and
-  // the admin-only calls are never made.
+  // One portal for everyone, asked in parallel: /me answers for an admin (the
+  // full Console), /my for everyone else (their own pages in a frame of their
+  // own). An admin's Console never waits on /my.
+  const me = useData<Me>("/me");
+  const hubs = useData<{ hubs: Hub[] }>("/hubs");
+  const notAdmin = !!me.error && (me.status === 401 || me.status === 403);
   const my = useData<MyData>("/my");
-  const asAdmin = my.data?.admin === true;
-  const me = useData<Me>(asAdmin ? "/me" : null);
-  const hubs = useData<{ hubs: Hub[] }>(asAdmin ? "/hubs" : null);
   const loading = (
     <div className="gate" role="status" aria-label="Loading">
       <Spin />
     </div>
   );
   const confirming = route.parts[0] === "confirm";
-  if (!my.data)
+  if (notAdmin && !my.data)
     return (
       <div className="gate">
         <Typography.Title level={1} style={{ fontSize: 28 }}>Hubzoid</Typography.Title>
@@ -105,11 +105,11 @@ function Router({
       </div>
     );
   // Connections in the web app are its own Settings page.
-  if (route.parts[0] === "connections" && my.data.web_app) {
+  if (route.parts[0] === "connections" && (me.data?.web_app ?? my.data?.web_app) === true) {
     location.replace("/account/connections");
     return loading;
   }
-  if (!my.data.admin) {
+  if (notAdmin && my.data) {
     const area = route.parts[0];
     const page = area === "connections" ? "connections" : area === "agents" ? "agents" : "schedules";
     return (

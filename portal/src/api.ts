@@ -149,6 +149,8 @@ export type MyAgent = { key: string; name: string; api: string; chat: string | n
 export type MyData = {
   subject: string;
   admin: boolean;
+  /** Blocked by an administrator: no agents, no connections. */
+  blocked: boolean;
   web_app: boolean;
   agents: MyAgent[];
   schedules: MySchedule[];
