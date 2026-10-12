@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Sparkle, Sun, Users } from "lucide-react";
-import { usesSignInLinks, type Me } from "../api";
+import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
 import wordmarkLight from "../assets/brand/wordmark-light.png";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules" | "connections";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -69,9 +69,12 @@ const items = [
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
   { key: "schedules", icon: <CalendarClock size={18} />, label: <a href={href("/schedules")}>Schedules</a> },
 ];
-// Connectors live in each agent (its Connectors tab), not in the menu.
-function navItems(_me: Me) {
-  return items;
+// Connectors live in each agent (its Connectors tab), not in the menu. Your own
+// connections are the web app's Settings page there, and a Console page in
+// Open WebUI mode.
+function navItems(me: Me) {
+  const href_ = me.web_app ? "/account/connections" : href("/connections");
+  return [...items, { key: "connections", icon: <Plug size={18} />, label: <a href={href_}>Your connections</a> }];
 }
 
 function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
@@ -199,35 +202,46 @@ export function Shell({
   );
 }
 
-/** The frame for someone who isn't an admin: only their schedules and reports,
- *  no administration menu. */
+/** The frame for someone who isn't an admin: their schedules and reports,
+ *  their connections and the agents they can use. No administration menu. */
 export function PersonShell({
-  subject,
-  webApp,
+  my,
+  page,
   isDark,
   mode,
   setMode,
   children,
 }: {
-  subject: string;
-  webApp: boolean;
+  my: MyData;
+  page: "schedules" | "connections" | "agents";
   isDark: boolean;
   mode: Mode;
   setMode: (m: Mode) => void;
   children: ReactNode;
 }) {
-  const me: Me = { subject, org_admin: false, manageable: [], web_app: webApp };
+  const me: Me = { subject: my.subject, org_admin: false, manageable: [], web_app: my.web_app };
+  const tabs = [
+    { key: "schedules", label: "Schedules & reports", to: href("/schedules") },
+    ...(my.connections ? [{ key: "connections", label: "Connections",
+      to: my.web_app ? "/account/connections" : href("/connections") }] : []),
+    { key: "agents", label: "Agents", to: href("/agents") },
+  ];
   return (
     <Layout className="shell person-shell">
       <Layout.Header className="topbar person-top">
         <Wordmark isDark={isDark} compact to="/schedules" />
         <div className="person-top-right">
           <a href="/">Back to chat</a>
-          <Text type="secondary" className="identity">{subject}</Text>
+          <Text type="secondary" className="identity">{my.subject}</Text>
           <ThemeToggle mode={mode} setMode={setMode} />
           <SignOutButton me={me} />
         </div>
       </Layout.Header>
+      <nav className="person-tabs" aria-label="Your pages">
+        {tabs.map((t) => (
+          <a key={t.key} href={t.to} aria-current={t.key === page ? "page" : undefined}>{t.label}</a>
+        ))}
+      </nav>
       <Layout.Content className="content">
         <div className="main">{children}</div>
       </Layout.Content>

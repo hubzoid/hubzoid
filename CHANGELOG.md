@@ -21,9 +21,15 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   runs as them and pauses with a reason after repeated failures or when access
   or inputs change. Email about it is off unless `notify_by_email: true`. They list,
   pause, resume, run, change and stop it in chat or on the Console's
-  **Schedules & reports** page, which everyone signed in can open (their own
-  schedules and report links, each with its latest runs). Admins also see
-  everyone's, with the 30-day model cost, and can pause or stop them.
+  **Schedules & reports** page, with each schedule's latest runs. Admins also
+  see everyone's, with the 30-day model cost, and can pause or stop them.
+- **One portal for everyone.** `/portal/` is the same Console for every
+  signed-in person, showing what their access allows: someone who isn't an
+  admin gets their Schedules & reports, Connections and Agents. Open WebUI's
+  sidebar gets one Hubzoid link for each person ("Admin Console" or "Schedules
+  & connections"); the web app links it from the account menu. In Open WebUI
+  mode, `/portal/connections` opens the portal's Connections tab instead of a
+  page of its own.
 - **Live reports.** `publish_artifact(key=...)` keeps one link per report that
   always shows the newest copy: the agent's for team runs, each person's own
   for theirs. Unchanged copies (same file or `digest=`) store nothing. The

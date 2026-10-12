@@ -1,14 +1,19 @@
 """Small edge-owned enhancement; never patches installed OWUI bundles.
 
+The sidebar gets one Hubzoid link for every signed-in person: "Admin Console"
+for those `/portal/api/me` authorizes, "Schedules & connections" for everyone
+else whose `/portal/api/chat-access` answers and who isn't blocked. Both open
+`/portal/`, the same Console, which shows each person what their access allows.
+
 Open WebUI is a single-page app: the page loads once and login/logout happen via
 in-app navigation without a full reload. So a one-shot check on load would show the
-link before an admin has signed in and leave it visible after they sign out. The
-script therefore RE-EVALUATES the session — adding the link when `/portal/api/me`
-authorizes and removing it otherwise — on load, on history navigation, when the tab
+link before anyone has signed in and leave it visible after they sign out. The
+script therefore RE-EVALUATES the session, adding or relabelling the link or
+removing it, on load, on history navigation, when the tab
 regains focus, and on a slow interval. It is idempotent and never throws into chat.
-The link carries Lucide's `shield-cog` icon (ISC, as in the Console) at Open WebUI's
-sidebar size and stroke, and keeps its name and a tooltip when the sidebar is
-collapsed.
+The admin link carries Lucide's `shield-cog` icon and the people's link its
+`calendar-clock` (ISC, as in the Console) at Open WebUI's sidebar size and stroke;
+each keeps its name and a tooltip when the sidebar is collapsed.
 
 With `HUBZOID_HIDE_OWUI_USERS` on (`script(hide_users=True)`), Open WebUI's
 Users section (its user list and Groups) is out of reach in the browser: people
@@ -44,7 +49,7 @@ SCRIPT = r'''
   // Where Open WebUI's Admin Panel opens while its Users section is hidden:
   // Settings > Integrations over Evaluations.
   const SETTINGS = '/admin/evaluations/leaderboard?settings=admin%3Aintegrations';
-  let authorized = false, revision = 0, queued = false, observedSidebar;
+  let role = '', revision = 0, queued = false, observedSidebar;
   const style = document.createElement('style');
   // Sized like Open WebUI's own sidebar items: a 16px icon with a 1.5 stroke,
   // 13px text, 8px gap; a 32px square when the sidebar is collapsed.
@@ -60,7 +65,7 @@ SCRIPT = r'''
     #${ID}[data-compact] { justify-content:center; width:32px; height:32px; min-height:32px;
       padding:0; margin:0 auto 2px; border-radius:8px; }
     #${ID}[data-compact] span { display:none; }
-    #${ID}[data-compact]:focus-visible::after { content:'Admin Console'; position:absolute;
+    #${ID}[data-compact]:focus-visible::after { content:attr(data-label); position:absolute;
       left:calc(100% + 8px); top:50%; transform:translateY(-50%); white-space:nowrap;
       padding:4px 8px; border-radius:6px; background:#171717; color:#fff; font-size:12px;
       line-height:16px; pointer-events:none; z-index:50; }
@@ -144,24 +149,38 @@ SCRIPT = r'''
     }
     if (n.textContent !== text) n.textContent = text;
   }
+  // Who is signed in here, for the notice and the link: null when nobody is.
   async function access() {
-    if (location.pathname.startsWith('/auth')) { notice(''); return; }
+    if (location.pathname.startsWith('/auth')) return null;
     try {
       const r = await fetch('/portal/api/chat-access', {credentials: 'same-origin'});
-      if (!r.ok) { notice(''); return; }
-      const a = await r.json();
-      if (a.blocked) notice('Your access to agents has been blocked by an administrator. Contact your administrator if you think this is a mistake.');
-      else if (a.allowed === 0) notice('You do not have access to any agent yet. Ask an administrator to give you access.');
-      else notice('');
-    } catch (_) { /* never break chat */ }
+      return r.ok ? await r.json() : null;
+    } catch (_) { return null; /* never break chat */ }
   }
+  function explain(a) {
+    if (a && a.blocked) notice('Your access to agents has been blocked by an administrator. Contact your administrator if you think this is a mistake.');
+    else if (a && a.allowed === 0) notice('You do not have access to any agent yet. Ask an administrator to give you access.');
+    else notice('');
+  }
+  // Lucide shield-cog and calendar-clock (ISC).
+  const ICONS = {
+    admin: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
+      + '<circle cx="12.077" cy="11.695" r="3"/>'
+      + '<path d="M10.929 14.467l-.383.924M10.929 8.923L10.546 8M13.225 8.923L13.608 8M13.607 15.391l-.382-.924M14.849 10.547l.923-.383M14.849 12.843l.923.383M9.305 10.547l-.923-.383M9.305 12.843l-.923.383"/>',
+    person: '<path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4"/>'
+      + '<path d="M8 2v4"/><path d="M3 10h5"/><path d="M17.5 17.5 16 16.3V14"/><circle cx="16" cy="16" r="6"/>',
+  };
+  const LABELS = {
+    admin: ['Admin Console', 'Hubzoid Admin Console', 'Hubzoid Admin Console \u2014 manage access and view workflow runs'],
+    person: ['Schedules & connections', 'Your schedules, reports and connections', 'Your schedules, reports and connections in Hubzoid'],
+  };
   const resize = new ResizeObserver(place);
   function place() {
     queued = false;
     const existing = document.getElementById(ID);
     const sidebar = document.getElementById('sidebar');
     const profile = sidebar?.querySelector('button[aria-label="User menu"]');
-    if (!authorized || !profile) { existing?.remove(); return; }
+    if (!role || !profile) { existing?.remove(); return; }
     // Both OWUI layouts wrap the profile button in a menu-trigger span.
     // Insert a sibling, never an interactive link inside the profile button.
     const anchor = profile.closest('[role="button"][aria-haspopup]') || profile;
@@ -172,14 +191,15 @@ SCRIPT = r'''
       link = document.createElement('a');
       link.id = ID;
       link.href = '/portal/';
-      link.setAttribute('aria-label', 'Hubzoid Admin Console');
-      link.title = 'Hubzoid Admin Console \u2014 manage access and view workflow runs';
-      // Lucide shield-cog (ISC).
+    }
+    if (link.dataset.role !== role) {
+      const [name, aria, title] = LABELS[role];
+      link.dataset.role = role;
+      link.dataset.label = name;
+      link.setAttribute('aria-label', aria);
+      link.title = title;
       link.innerHTML = '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
-        + '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
-        + '<circle cx="12.077" cy="11.695" r="3"/>'
-        + '<path d="M10.929 14.467l-.383.924M10.929 8.923L10.546 8M13.225 8.923L13.608 8M13.607 15.391l-.382-.924M14.849 10.547l.923-.383M14.849 12.843l.923.383M9.305 10.547l-.923-.383M9.305 12.843l-.923.383"/>'
-        + '</svg><span>Admin Console</span>';
+        + ICONS[role] + '</svg><span>' + name.replace('&', '&amp;') + '</span>';
     }
     if (link.parentElement !== parent || link.nextElementSibling !== anchor)
       parent.insertBefore(link, anchor);
@@ -197,15 +217,16 @@ SCRIPT = r'''
   }
   async function sync() {
     const current = ++revision;
-    let ok = false;
+    let admin = false;
     try {
       const r = await fetch('/portal/api/me?brief=1', {credentials: 'same-origin'});
-      ok = r.ok;
-    } catch (_) { ok = false; }
+      admin = r.ok;
+    } catch (_) { admin = false; }
+    const a = await access();
     if (current !== revision) return;
-    authorized = ok;
+    role = admin ? 'admin' : (a && !a.blocked ? 'person' : '');
     place();
-    access();
+    explain(a);
   }
   // The bridge's waiting line, left behind when a turn is stopped before its
   // first word or the bridge dies (see the module docstring). Hide the status

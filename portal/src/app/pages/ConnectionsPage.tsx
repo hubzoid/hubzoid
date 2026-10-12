@@ -8,21 +8,11 @@ import { describeError } from "../lib/errors";
 import { formatDate } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Connection } from "../lib/types";
+import { kindOf, type Kind } from "../lib/connections";
 import { toast } from "../components/toast";
 import { Button, ConfirmDialog, Notice, Spinner, cx } from "../components/ui";
 import { SettingsFrame } from "./SettingsFrame";
 
-type Kind = "connected" | "attention" | "off" | "blocked" | "shared";
-
-function kindOf(c: Connection): Kind {
-  if (c.allowed === false) return "blocked";
-  if (c.auth_type === "shared") return "shared";
-  const status = (c.status || "").toLowerCase();
-  if (c.connected && ["", "ok", "active", "connected", "valid"].includes(status)) return "connected";
-  if (c.connected || ["expired", "error", "revoked", "invalid", "needs_reauth", "reauth", "failed"].includes(status))
-    return "attention";
-  return "off";
-}
 
 const badge: Record<Kind, { text: string; className: string }> = {
   connected: { text: t.connections.connected, className: "bg-success-soft text-success" },

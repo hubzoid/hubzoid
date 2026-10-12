@@ -1170,8 +1170,30 @@ body .ant-alert .ant-alert-icon { font-size: 16px; align-self: flex-start; margi
   white-space: nowrap;
 }
 
+.person-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  overflow-x: auto;
+}
+
+.person-tabs a {
+  padding: 12px 10px;
+  color: var(--mute);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.person-tabs a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
 @media (max-width: 640px) {
   .person-top { padding: 0 16px; }
+  .person-tabs { padding: 0 12px; }
   .person-top-right { gap: 12px; }
   .person-top-right .identity,
   .person-top-right .theme-toggle { display: none; }

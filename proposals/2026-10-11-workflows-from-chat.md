@@ -47,8 +47,11 @@ APIs. Both use the same pieces.
   serves everyone: a person sees their own schedules and report links on every
   agent, with each schedule's latest runs, and pauses, resumes, runs or stops
   them; an admin also sees everyone's. Ownership is the verified account id and
-  email. The web app's account menu and the agent's replies link to it; Open
-  WebUI is unchanged.
+  email. It is one tab of one portal for everyone (`/portal/`, amended 12
+  October): people who aren't admins also get their Connections and the Agents
+  they can use there, and Open WebUI's sidebar gets one Hubzoid link for every
+  signed-in person. The web app's account menu and the agent's replies link to
+  it too.
 
 ## Scope and non-goals
 

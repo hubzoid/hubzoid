@@ -25,13 +25,16 @@ def test_the_admin_console_link_uses_a_settings_icon_at_the_sidebar_size():
     assert '<rect x="3" y="3" width="18" height="18" rx="3"/>' not in SCRIPT
 
 
-def test_the_admin_console_link_keeps_its_name_when_collapsed():
-    assert "<span>Admin Console</span>" in SCRIPT
-    assert "link.setAttribute('aria-label', 'Hubzoid Admin Console');" in SCRIPT
-    assert "link.title = 'Hubzoid Admin Console" in SCRIPT
+def test_one_link_names_itself_for_admins_and_for_everyone_else():
+    # Admins: the Admin Console. Everyone else signed in and not blocked: their
+    # schedules and connections. Both open the same /portal/.
+    assert "admin: ['Admin Console', 'Hubzoid Admin Console'," in SCRIPT
+    assert "person: ['Schedules & connections'," in SCRIPT
+    assert "role = admin ? 'admin' : (a && !a.blocked ? 'person' : '');" in SCRIPT
+    assert "link.setAttribute('aria-label', aria);" in SCRIPT and "link.title = title;" in SCRIPT
     # Collapsed: the label hides, a keyboard focus still names the link.
     assert "[data-compact] span { display:none; }" in SCRIPT
-    assert re.search(r"\[data-compact\]:focus-visible::after \{ content:'Admin Console';", SCRIPT)
+    assert "[data-compact]:focus-visible::after { content:attr(data-label);" in SCRIPT
     assert "width:32px; height:32px;" in SCRIPT
 
 

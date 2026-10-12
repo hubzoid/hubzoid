@@ -145,7 +145,7 @@ export type MyReport = {
   company_on: boolean;
 };
 /** `api`: where this agent takes actions (its own bridge in a gateway). */
-export type MyAgent = { key: string; name: string; api: string };
+export type MyAgent = { key: string; name: string; api: string; chat: string | null };
 export type MyData = {
   subject: string;
   admin: boolean;
@@ -153,6 +153,8 @@ export type MyData = {
   agents: MyAgent[];
   schedules: MySchedule[];
   reports: MyReport[];
+  /** Whether there are connections to see (one to connect, or one connected). */
+  connections: boolean;
 };
 /** One run of a schedule: status and times only. */
 export type ScheduleRun = { status: string; started: number | null; completed: number | null; duration_ms: number | null };

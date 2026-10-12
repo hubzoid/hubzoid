@@ -142,6 +142,9 @@ def test_people_see_and_change_only_their_own_schedules_and_reports(client, tmp_
     assert row["id"] == "ps1" and row["reports"][0]["url"].endswith("/program-bhava/by/" + row["reports"][0]["url"].rsplit("/", 1)[1])
     assert "owner" not in row and "cost_30d" not in row and my["reports"][0]["title"] == "Bhava"
     assert my["agents"][0]["api"] == "/portal/api"
+    assert my["agents"][0]["chat"].startswith("/?agent=") and my["connections"] is False
+    monkeypatch.setattr("hubzoid.appmode.is_openwebui", lambda *_a, **_k: True)
+    assert client.get("/portal/api/my").json()["agents"][0]["chat"].startswith("/?models=")
     hub = {"hub": client.hub}
     assert client.get("/portal/api/my/schedules/ps1/runs", params=hub).json() == {"runs": [{"status": "SUCCESS"}]}
     assert client.post("/portal/api/my/schedules/ps1/pause", json=hub).status_code == 200

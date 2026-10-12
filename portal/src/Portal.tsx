@@ -18,6 +18,8 @@ const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) =>
 const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
 const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
 const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
+const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
+const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.MyAgents })));
 
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
@@ -60,11 +62,11 @@ function Router({
     [modal, message],
   );
   const route = useRoute(onBlocked);
-  // Schedules & reports is everyone's page: a person who isn't an admin gets
-  // it in a frame of its own, and the admin-only calls are never made.
-  const onSchedules = route.parts[0] === "schedules";
-  const my = useData<MyData>(onSchedules ? "/my" : null);
-  const asAdmin = !onSchedules || my.data?.admin === true;
+  // One portal for everyone: /my says who this is and whether they're an
+  // admin. Someone who isn't gets their own pages in a frame of their own, and
+  // the admin-only calls are never made.
+  const my = useData<MyData>("/my");
+  const asAdmin = my.data?.admin === true;
   const me = useData<Me>(asAdmin ? "/me" : null);
   const hubs = useData<{ hubs: Hub[] }>(asAdmin ? "/hubs" : null);
   const loading = (
@@ -72,24 +74,29 @@ function Router({
       <Spin />
     </div>
   );
-
-  if (onSchedules && !my.data)
+  const confirming = route.parts[0] === "confirm";
+  if (!my.data)
     return (
       <div className="gate">
-        <Typography.Title level={1} style={{ fontSize: 28 }}>Schedules &amp; reports</Typography.Title>
+        <Typography.Title level={1} style={{ fontSize: 28 }}>Hubzoid</Typography.Title>
         {my.error ? (
           <Alert
             type="error"
             showIcon
-            title={my.status === 401 ? "Sign in to continue" : "Couldn’t load your schedules"}
+            title={my.status === 401 ? "Sign in to continue" : "Couldn’t connect"}
             description={
-              <div style={{ marginTop: 12 }}>
-                {my.status === 401 ? (
-                  <Button type="primary" href={signInHref()}>Sign in</Button>
-                ) : (
-                  <Button onClick={my.reload}>Try again</Button>
-                )}
-              </div>
+              <>
+                {my.status === 401
+                  ? confirming && "Sign in to review this change. If you land in the chat app afterwards, open the confirmation link again."
+                  : "Check your connection and try again."}
+                <div style={{ marginTop: 12 }}>
+                  {my.status === 401 ? (
+                    <Button type="primary" href={signInHref()}>Sign in</Button>
+                  ) : (
+                    <Button onClick={my.reload}>Try again</Button>
+                  )}
+                </div>
+              </>
             }
           />
         ) : (
@@ -97,19 +104,24 @@ function Router({
         )}
       </div>
     );
-  if (onSchedules && my.data && !my.data.admin)
+  // Connections in the web app are its own Settings page.
+  if (route.parts[0] === "connections" && my.data.web_app) {
+    location.replace("/account/connections");
+    return loading;
+  }
+  if (!my.data.admin) {
+    const area = route.parts[0];
+    const page = area === "connections" ? "connections" : area === "agents" ? "agents" : "schedules";
     return (
-      <PersonShell subject={my.data.subject} webApp={my.data.web_app} mode={mode} setMode={setMode} isDark={isDark}>
+      <PersonShell my={my.data} page={page} mode={mode} setMode={setMode} isDark={isDark}>
         <Suspense fallback={loading}>
-          <SchedulesScreen admin={false} />
+          {page === "connections" ? <ConnectionsScreen /> : page === "agents" ? <MyAgents agents={my.data.agents} /> : <SchedulesScreen admin={false} />}
         </Suspense>
       </PersonShell>
     );
+  }
 
   const status = me.status ?? hubs.status;
-  // A confirmation link from chat or WhatsApp: after signing in, the manager
-  // needs to come back to this exact page.
-  const confirming = route.parts[0] === "confirm";
   if (!me.data || !hubs.data)
     return (
       <div className="gate">
@@ -134,7 +146,6 @@ function Router({
                   ) : (
                     <>
                       <Button onClick={() => { me.reload(); hubs.reload(); }}>Try again</Button>{" "}
-                      {status === 403 && <><Button href="#/schedules">Your schedules and reports</Button>{" "}</>}
                       <Button type="primary" href="/">
                         Go to the chat app
                       </Button>
@@ -192,6 +203,9 @@ function Router({
   } else if (area === "schedules") {
     active = "schedules";
     screen = <SchedulesScreen admin hubs={list} />;
+  } else if (area === "connections") {
+    active = "connections";
+    screen = <ConnectionsScreen />;
   } else if (area === "confirm" && rest[0]) {
     active = "people";
     screen = <ConfirmScreen id={rest[0]} hubs={list} />;

@@ -33,6 +33,7 @@ from typing import Any, Callable, Literal
 
 import functools
 import shlex
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
@@ -815,6 +816,12 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             is_admin = resolver(request) is not None
         except HTTPException:
             is_admin = False
+        from . import appmode
+        from .access.store import USE_HUB
+
+        gs = store_for(hub_dir)
+        owui = appmode.is_openwebui(hub_dir)
+        blocked = gs.is_suspended(email)
         bases = api_bases(hub_dir)
         agents, schedules, reports = [], [], []
         for h in deployment.hubs(hub_dir):
@@ -822,9 +829,13 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             mine = [s for s in personal.for_owner(path, key, email)
                     if personal.owned_by(path, s, email, account)]
             made = [s for s in series_lib.for_owner(path, key, email) if own_series(path, s, email, account)]
-            if not mine and not made:
+            usable = not blocked and gs.can(email, key, USE_HUB)
+            if not (mine or made or usable):
                 continue
-            agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api"))
+            model = h.get("model_id") or key
+            chat = (f"/?models={quote(model)}" if owui else f"/?agent={quote(model)}") if usable else None
+            agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api",
+                               chat=chat))
             schemas = input_schemas(path, key) if mine else {}
             for s in mine:
                 links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))
@@ -835,10 +846,9 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 reports.append(dict(id=x.id, hub=key, title=x.title or x.key, report=title_for(x.workflow),
                                     url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
                                     company_on=bool(series_lib.domain_token(path, x))))
-        from . import appmode
-
-        return {"subject": email, "admin": is_admin, "web_app": not appmode.is_openwebui(hub_dir),
-                "agents": agents, "schedules": schedules, "reports": reports}
+        return {"subject": email, "admin": is_admin, "web_app": not owui, "agents": agents,
+                "schedules": schedules, "reports": reports,
+                "connections": _has_connections(hub_dir, account, email)}
 
     @router.get("/my/schedules/{schedule_id}/runs")
     @_denied
@@ -1413,6 +1423,19 @@ def mount_portal(app, hub_dir) -> None:
         log.info("portal: serving SPA from %s", dist)
     else:
         log.info("portal: API mounted; static SPA not built (no portal_dist/)")
+
+
+def _has_connections(hub_dir: Path, account: str, email: str) -> bool:
+    """Whether a person has connections to see: a connector they may connect,
+    or one they connected (it can still be disconnected)."""
+    from .connectors import per_user, registry, tokens
+
+    try:
+        ids = [c.id for c in registry.list_all(hub_dir) if c.enabled and c.auth_type != "shared"]
+        return bool(per_user.allowed_ids(hub_dir, email, ids) or tokens.for_user(hub_dir, account))
+    except Exception:  # noqa: BLE001 — the page still opens; the tab just isn't offered
+        log.exception("portal: could not check connections for the people page")
+        return False
 
 
 def _tell_owner_link_off(hub_dir: Path, found) -> None:
