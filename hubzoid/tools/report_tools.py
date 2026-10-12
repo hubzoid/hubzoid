@@ -52,10 +52,6 @@ MAX_REPORTS = 10
 RESERVED_NAMES = frozenset({"schedule_workflow", "my_schedules", "change_schedule", "my_reports"})
 
 
-def _person_ref(subject: str) -> str:
-    return hashlib.sha256(subject.encode()).hexdigest()[:10]
-
-
 def _inputs_ref(data: dict | None) -> str:
     return hashlib.sha256(json.dumps(data or {}, sort_keys=True).encode()).hexdigest()[:10]
 
@@ -320,13 +316,12 @@ def _run_tool(hub_dir: Path, wf):
 
 async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, shown: str) -> str:
     from ..access import store_for
-    from ..workflows import runtime
+    from ..workflows import personal, runtime
 
     if store_for(hub_dir).schedule_hold():
         return "New runs are on hold while a backup runs. Try again in a few minutes."
     account = _account(hub_dir, actor)
-    person_key = _person_ref(json.dumps([actor, account]))
-    prefix = f"tool-{wf.name}-{person_key}-{_inputs_ref(data)}-"
+    prefix = f"{personal.tool_run_prefix(wf.name, actor, account)}{_inputs_ref(data)}-"
     active = await asyncio.to_thread(lambda: [w.workflow_id for w in runtime._DBOS.list_workflows(
         name=wf.name, workflow_id_prefix=prefix, status=list(_ACTIVE), load_input=False,
         load_output=False)])

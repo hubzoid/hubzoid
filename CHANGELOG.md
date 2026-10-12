@@ -67,6 +67,8 @@ for backup and restart instructions.
 - The `run_workflow` chat tool takes inputs.
 
 ### Fixed
+- A person's recent report requests stay visible on busy hubs: history is
+  filtered by account before the 50-run limit, then merged across workflows.
 - First-run reports can be opened by the local quickstart owner before an
   account row exists; enabling sign-in or blocking that owner revokes the exception.
 - Unchanged live-report polling returns an empty HTTP 304 response, avoiding

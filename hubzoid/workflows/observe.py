@@ -474,7 +474,8 @@ def personal_runs(hub_dir, viewer: str, account: str | None, *, run_id: str | No
     from dbos import DBOSClient
     from .. import artifacts
     from ..artifacts import series
-    from .runtime import _app_name, title_for
+    from .runtime import _app_name, load_definitions, title_for
+    from .personal import tool_run_prefix
 
     url = db.dbos_url(hub_dir)
     if _missing_sqlite(url):
@@ -483,7 +484,17 @@ def personal_runs(hub_dir, viewer: str, account: str | None, *, run_id: str | No
     hub = Path(hub_dir).name.lower()
     client = DBOSClient(system_database_url=url, application_name=app, retry_connection_errors=False)
     try:
-        found = client.list_workflows(application_name=app, workflow_id_prefix="tool-",
+        # DBOS applies all prefixes before its limit and ordering, so a busy
+        # teammate cannot displace this account's results. An exact reference
+        # also works after a workflow is removed from the Hub.
+        prefixes = [] if run_id else [
+            tool_run_prefix(name, viewer, account)
+            for name in sorted({wf.name for wf in load_definitions(hub_dir)})
+        ]
+        if not run_id and not prefixes:
+            return []
+        found = client.list_workflows(application_name=app,
+            workflow_id_prefix="tool-" if run_id else prefixes,
             workflow_ids=[run_id] if run_id else None, limit=50, sort_desc=True,
             load_input=True, load_output=True)
         rows = []
