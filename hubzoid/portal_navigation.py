@@ -1,7 +1,7 @@
 """Small edge-owned enhancement; never patches installed OWUI bundles.
 
 The sidebar gets one Hubzoid link for every signed-in person: "Admin Console"
-for those `/portal/api/me` authorizes, "Schedules & connections" for everyone
+for those `/portal/api/me` authorizes, "My workspace" for everyone
 else whose `/portal/api/chat-access` answers (a blocked person included: their
 page says they're blocked and still lets them disconnect). Both open
 `/portal/`, the same Console, which shows each person what their access allows.
@@ -13,7 +13,7 @@ script therefore RE-EVALUATES the session, adding or relabelling the link or
 removing it, on load, on history navigation, when the tab
 regains focus, and on a slow interval. It is idempotent and never throws into chat.
 The admin link carries Lucide's `shield-cog` icon and the people's link its
-`calendar-clock` (ISC, as in the Console) at Open WebUI's sidebar size and stroke;
+`layout-grid` (ISC, as in the Console) at Open WebUI's sidebar size and stroke;
 each keeps its name and a tooltip when the sidebar is collapsed.
 
 With `HUBZOID_HIDE_OWUI_USERS` on (`script(hide_users=True)`), Open WebUI's
@@ -163,17 +163,17 @@ SCRIPT = r'''
     else if (a && a.allowed === 0) notice('You do not have access to any agent yet. Ask an administrator to give you access.');
     else notice('');
   }
-  // Lucide shield-cog and calendar-clock (ISC).
+  // Lucide shield-cog and layout-grid (ISC).
   const ICONS = {
     admin: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
       + '<circle cx="12.077" cy="11.695" r="3"/>'
       + '<path d="M10.929 14.467l-.383.924M10.929 8.923L10.546 8M13.225 8.923L13.608 8M13.607 15.391l-.382-.924M14.849 10.547l.923-.383M14.849 12.843l.923.383M9.305 10.547l-.923-.383M9.305 12.843l-.923.383"/>',
-    person: '<path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4"/>'
-      + '<path d="M8 2v4"/><path d="M3 10h5"/><path d="M17.5 17.5 16 16.3V14"/><circle cx="16" cy="16" r="6"/>',
+    person: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/>'
+      + '<rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
   };
   const LABELS = {
     admin: ['Admin Console', 'Hubzoid Admin Console', 'Hubzoid Admin Console \u2014 manage access and view workflow runs'],
-    person: ['Schedules & connections', 'Your schedules, reports and connections', 'Your schedules, reports and connections in Hubzoid'],
+    person: ['My workspace', 'My workspace in Hubzoid', 'My workspace: schedules, reports, connections and agents'],
   };
   const resize = new ResizeObserver(place);
   function place() {

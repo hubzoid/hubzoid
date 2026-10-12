@@ -216,7 +216,7 @@ organization administrators see the tab but cannot change it.
 From the link the agent sends (`connect_account`, the connection journey
 below), or from the connections page: **Settings, Connections** in the web
 app; in Open WebUI mode, **Connections** in the Hubzoid portal (the sidebar's
-"Schedules & connections" link, or `/portal/connections`, which opens it).
+"My workspace" link, or `/portal/connections`, which opens it).
 Before anything happens, the
 link's page shows the account, the agent, the server's host and any scopes the
 connector requests (as Agno's consent page shows where credentials go). Both

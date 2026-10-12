@@ -7,9 +7,9 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
-  CalendarClock,
   Check,
   ExternalLink,
+  LayoutGrid,
   LogOut,
   Monitor,
   Moon,
@@ -562,7 +562,7 @@ function AccountMenu() {
             {t.account.connections}
           </Menu.Item>
           <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/#/schedules")}>
-            <CalendarClock size={15} aria-hidden />
+            <LayoutGrid size={15} aria-hidden />
             {t.account.schedules}
           </Menu.Item>
           {(app.isAdmin || app.user?.console) && (

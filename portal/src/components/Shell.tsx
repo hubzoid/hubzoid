@@ -67,14 +67,19 @@ const items = [
   { key: "agents", icon: <Sparkle size={18} />, label: <a href={href("/agents")}>Agents</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
-  { key: "schedules", icon: <CalendarClock size={18} />, label: <a href={href("/schedules")}>Schedules</a> },
 ];
-// Connectors live in each agent (its Connectors tab), not in the menu. Your own
-// connections are the web app's Settings page there, and a Console page in
-// Open WebUI mode.
-function navItems(me: Me) {
-  const href_ = me.web_app ? "/account/connections" : href("/connections");
-  return [...items, { key: "connections", icon: <Plug size={18} />, label: <a href={href_}>Your connections</a> }];
+// Connectors live in each agent (its Connectors tab), not in the menu. An
+// admin's own schedules and connections are under "You", as on everyone's My
+// workspace; connections are the web app's Settings page there.
+function youItems(me: Me) {
+  const connections = me.web_app ? "/account/connections" : href("/connections");
+  return [
+    { key: "schedules", icon: <CalendarClock size={18} />, label: <a href={href("/schedules")}>Schedules</a> },
+    { key: "connections", icon: <Plug size={18} />, label: <a href={connections}>Connections</a> },
+  ];
+}
+function navItems(_me: Me) {
+  return items;
 }
 
 function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
@@ -122,6 +127,8 @@ function Sidebar({
       <Wordmark isDark={isDark} />
       <div className="eyebrow sidebar-label">Workspace</div>
       <Menu mode="inline" selectedKeys={[area]} items={navItems(me)} onClick={onNavigate} />
+      <div className="eyebrow sidebar-label">You</div>
+      <Menu mode="inline" selectedKeys={[area]} items={youItems(me)} onClick={onNavigate} />
       <div className="sidebar-footer">
         <ThemeToggle mode={mode} setMode={setMode} />
         <a href="/">Open chat ↗</a>
@@ -229,7 +236,10 @@ export function PersonShell({
   return (
     <Layout className="shell person-shell">
       <Layout.Header className="topbar person-top">
-        <Wordmark isDark={isDark} compact to="/schedules" />
+        <div className="person-top-left">
+          <Wordmark isDark={isDark} compact to="/schedules" />
+          <span className="person-title">My workspace</span>
+        </div>
         <div className="person-top-right">
           <a href="/">Back to chat</a>
           <Text type="secondary" className="identity">{my.subject}</Text>

@@ -381,7 +381,7 @@ a run changes the report, fails or pauses, and when a long Run for me finishes.
 in chat, and in the Hubzoid portal (`/portal/`), the same Console admins use,
 showing each person what their access allows: their **Schedules & reports**,
 their **Connections** and the **Agents** they can use. The web app links it from
-the account menu, Open WebUI's sidebar has a "Schedules & connections" link,
+the account menu, Open WebUI's sidebar has a "My workspace" link,
 and the agent's "my schedules" reply links it everywhere. It lists their own
 schedules and report links on every agent, each with its latest runs. Admins
 also get **Everyone**: each person's schedules with their 30-day model cost, to

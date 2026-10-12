@@ -21,7 +21,7 @@ admin grants the new capabilities. These reach every hub:
 - **One portal for everyone.** `/portal/` now opens for every signed-in person,
   showing their own schedules, connections and agents. Only admins get the
   admin pages, as before. In Open WebUI mode the sidebar's Hubzoid link shows for
-  everyone signed in: "Admin Console" for admins, "Schedules & connections" for
+  everyone signed in: "Admin Console" for admins, "My workspace" for
   the rest. `/portal/connections` now opens the portal's Connections tab.
 - **MCP timeouts.** On the OpenAI Agents SDK and Codex runtimes an MCP tool call
   now gets 30 seconds instead of 5. Set `HUBZOID_MCP_TIMEOUT` to change it; a

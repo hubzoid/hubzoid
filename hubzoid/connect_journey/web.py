@@ -177,7 +177,7 @@ def _outcome(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
         details = ui.rows([("Account", ui.avatar_chip(email))])
         return _page(f"{name} connected", [lead], 200, tone="ok",
                      brand=agent, extra=details, script=script,
-                     actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Your connections</a>')
+                     actions=button + f'<a class="btn btn-secondary" href="{PAGE}">Connections</a>')
     if status == "failed":
         return _page(f"{name} was not connected", ["Ask the agent for a new link to try again."],
                      200, tone="bad", brand=agent, actions=button, script=script)
@@ -215,7 +215,7 @@ def _connect_page(hub_dir: Path, j: dict, email: str) -> HTMLResponse:
                 f"You approve access on {_e(name)}'s own page. Hubzoid never sees your password.",
                 *access,
                 "Hubzoid keeps it encrypted, and agents use it only for you. Disconnect any "
-                f"time on <a href=\"{PAGE}\">Your connections</a>."])
+                f"time in <a href=\"{PAGE}\">My workspace, Connections</a>."])
             + f'<div class="actions"><form method="post" action="{base}/start">'
               f'<button class="btn btn-primary" type="submit">Continue to {_e(name)} '
               f'{ui.icon("arrow", 16)}</button></form>'
@@ -433,7 +433,7 @@ def build_router(hub_dir: Path, *, session_email=None) -> APIRouter:
         return JSONResponse({"state": j["status"], "app": j["app"],
                              "checked": int(time.time())}, headers=hdrs)
 
-    # ---- Your connections ------------------------------------------------------
+    # ---- Connections (My workspace) ----------------------------------------------
     @router.get(PAGE)
     def connections(request: Request):
         """Open WebUI mode: a person's connections are a tab of the Console,

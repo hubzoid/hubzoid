@@ -389,7 +389,7 @@ def _tools(hub_dir: Path, c: registry.Connector, user) -> dict:
         except Exception:  # noqa: BLE001 — the test result stands without the tools
             access = None
         if not access:
-            return {"tools": None, "tools_note": "Connect your own account in Your connections, "
+            return {"tools": None, "tools_note": "Connect your own account in Connections, "
                                              "then test again to list them."}
         headers = {"Authorization": f"Bearer {access}"}
     try:

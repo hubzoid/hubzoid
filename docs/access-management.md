@@ -532,7 +532,7 @@ that runs the edge (the gateway, or `hubzoid run`) wins either way. When hidden:
 ## Planned, not built yet
 
 - The Console does not yet list a person's connections. People see their own
-  on Your connections; see [mcp.md](mcp.md).
+  in My workspace, Connections; see [mcp.md](mcp.md).
 
 ## Administration boundary
 

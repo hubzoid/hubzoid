@@ -23,11 +23,13 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   pause, resume, run, change and stop it in chat or on the Console's
   **Schedules & reports** page, with each schedule's latest runs. Admins also
   see everyone's, with the 30-day model cost, and can pause or stop them.
-- **One portal for everyone.** `/portal/` is the same Console for every
-  signed-in person, showing what their access allows: someone who isn't an
-  admin gets their Schedules & reports, Connections and Agents. Open WebUI's
-  sidebar gets one Hubzoid link for each person ("Admin Console" or "Schedules
-  & connections"); the web app links it from the account menu. In Open WebUI
+- **My workspace, one portal for everyone.** `/portal/` is the same Console
+  for every signed-in person, showing what their access allows: someone who
+  isn't an admin gets **My workspace** with their Schedules & reports,
+  Connections and Agents. Admins find their own Schedules and Connections under
+  **You** in the Console. Open WebUI's sidebar gets one Hubzoid link for each
+  person ("Admin Console" or "My workspace"); the web app's account menu has
+  "My workspace". In Open WebUI
   mode, `/portal/connections` opens the portal's Connections tab instead of a
   page of its own.
 - **Live reports.** `publish_artifact(key=...)` keeps one link per report that
