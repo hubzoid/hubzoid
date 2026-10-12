@@ -67,33 +67,69 @@ def secret_findings(checks: list[dict]) -> list[dict]:
             for c in checks if c.get("secret")]
 
 
+# These exact presets have known config-isolation semantics. Other commands
+# require an operator's explicit acknowledgement that project code may execute.
+SAFE_RUNS = {
+    "ruff": ["check", "--output-format", "sarif", "--exit-zero", "--no-cache", "--isolated", "--select", "F,B,S", "."],
+    "gitleaks": ["dir", ".", "--report-format", "sarif", "--report-path", "-", "--no-banner", "--exit-code", "0", "--redact"],
+}
+
+
 def run_analyzers(files: list[dict], read_head, analyzers: list[dict]) -> tuple[list[dict], list[str]]:
-    """Run each configured analyzer over the changed files and keep results on
-    added lines. One that is not installed is skipped with a note."""
+    """Scan untrusted data with isolated presets; custom commands require opt-in.
+
+    Config and ignore files remain scan targets, but never control the presets.
+    Custom commands are NOT sandboxed and can execute project configuration.
+    """
     if not analyzers:
         return [], []
     checks, notes = [], []
     added = {(f["filename"], n) for f in files for n, _ in added_lines(f.get("patch") or "")}
     with tempfile.TemporaryDirectory(prefix="gitzoid-") as tmp:
-        root = Path(os.path.realpath(tmp))
+        control = Path(os.path.realpath(tmp))
+        root = control / "source"
+        root.mkdir()
+        home = control / "home"
+        home.mkdir()
+        config = control / "gitleaks.toml"
+        config.write_text("[extend]\nuseDefault = true\n")
+        ignore = control / "gitleaksignore"
+        ignore.write_text("")
         for f in files:
             if f.get("status") == "removed":
                 continue
-            text = read_head(f["filename"])
             target = (root / f["filename"]).resolve()
-            if text is None or root not in target.parents:
+            if root not in target.parents:
+                continue
+            text = read_head(f["filename"])
+            if text is None:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text)
-        env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")}
+        env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TMPDIR")}
+        env.update(HOME=str(home), XDG_CONFIG_HOME=str(home))
         for a in analyzers:
-            name, cmd = a.get("name") or a["run"][0], [str(x) for x in a["run"]]
+            cmd = [str(x) for x in a["run"]]
+            name, tool = a.get("name") or cmd[0], Path(cmd[0]).name
+            preset = tool in SAFE_RUNS and cmd[1:] == SAFE_RUNS[tool]
+            if not preset and not a.get("allow_project_code", False):
+                notes.append(f"{name}: skipped; custom commands require allow_project_code: true and may execute PR code")
+                continue
             exe = shutil.which(cmd[0])
             if exe is None:
                 notes.append(f"{name}: not installed, skipped")
                 continue
+            if preset:
+                cmd = [exe, *(str(root) if x == "." else x for x in cmd[1:])]
+                if tool == "gitleaks":
+                    cmd += ["--config", str(config), "--gitleaks-ignore-path", str(ignore), "--ignore-gitleaks-allow"]
+                elif tool == "ruff":
+                    cmd += ["--no-respect-gitignore", "--ignore-noqa"]
+            else:
+                cmd[0] = exe
+                notes.append(f"{name}: custom command opted in; project code execution is allowed")
             try:
-                proc = subprocess.run([exe, *cmd[1:]], cwd=root, env=env, capture_output=True, text=True,
+                proc = subprocess.run(cmd, cwd=control if preset else root, env=env, capture_output=True, text=True,
                                       timeout=int(a.get("timeout", 120)))
                 doc = json.loads(proc.stdout)
             except subprocess.TimeoutExpired:
