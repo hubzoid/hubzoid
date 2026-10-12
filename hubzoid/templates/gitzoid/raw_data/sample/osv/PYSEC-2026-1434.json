@@ -1,0 +1,56 @@
+{
+  "id": "PYSEC-2026-1434",
+  "summary": "Request smuggling leading to endpoint restriction bypass in Gunicorn",
+  "details": "Gunicorn fails to properly validate Transfer-Encoding headers, leading to HTTP Request Smuggling (HRS) vulnerabilities. By crafting requests with conflicting Transfer-Encoding headers, attackers can bypass security restrictions and access restricted endpoints. This issue is due to Gunicorn's handling of Transfer-Encoding headers, where it incorrectly processes requests with multiple, conflicting Transfer-Encoding headers, treating them as chunked regardless of the final encoding specified. This vulnerability has been shown to allow access to endpoints restricted by gunicorn. This issue has bee",
+  "aliases": [
+    "CVE-2024-1135",
+    "GHSA-w3h3-4rj7-4ph4"
+  ],
+  "modified": "2026-07-07T17:47:39.221645615Z",
+  "published": "2026-07-07T11:45:38.679382Z",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:H/A:N"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "name": "gunicorn",
+        "ecosystem": "PyPI",
+        "purl": "pkg:pypi/gunicorn"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "22.0.0"
+            }
+          ]
+        }
+      ],
+      "database_specific": {
+        "source": "https://github.com/pypa/advisory-database/blob/main/vulns/gunicorn/PYSEC-2026-1434.yaml"
+      }
+    }
+  ],
+  "references": [
+    {
+      "type": "ADVISORY",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-1135"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/benoitc/gunicorn/issues/3091"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/benoitc/gunicorn/pull/3113"
+    }
+  ]
+}

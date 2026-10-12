@@ -1,0 +1,7 @@
+# Suppliers the nightly sync reads. Ids match the supplier API.
+- id: nordlys-linen
+  name: Nordlys Linen
+- id: copper-kettle
+  name: Copper Kettle Co
+- id: harbor-ceramics
+  name: Harbor Ceramics

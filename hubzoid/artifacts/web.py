@@ -36,7 +36,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import artifacts as arts
@@ -550,12 +550,12 @@ class _UpdateRefused(Exception):
     """Update now can't start; the message is safe to show."""
 
 
-def _latest_json(request: Request, found, art) -> JSONResponse:
+def _latest_json(request: Request, found, art) -> Response:
     """What an open tab polls: the newest copy's id and time, with an ETag so
     an unchanged report costs a 304."""
     etag = f'"{art.id}"'
     if request.headers.get("if-none-match") == etag:
-        return JSONResponse(None, status_code=304, headers={"ETag": etag})
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
     return JSONResponse({"artifact": art.id, "updated": found.updated_at, "live": bool(found.live)},
                         headers={"ETag": etag, "Cache-Control": "private, no-cache"})
 

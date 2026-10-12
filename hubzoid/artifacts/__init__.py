@@ -519,7 +519,9 @@ def _local_owner(hub_dir, subject: str) -> bool:
     from ..access.session import LOCAL_OWNER
     from ..workflows.identity import local_quickstart
 
-    return subject == LOCAL_OWNER and local_quickstart(Path(hub_dir))
+    from .. import appmode
+
+    return subject == LOCAL_OWNER and not appmode.auth_enabled(Path(hub_dir)) and local_quickstart(Path(hub_dir))
 
 
 def _owner_current(hub_dir, art: Artifact) -> bool:
@@ -536,7 +538,7 @@ def _owner_current(hub_dir, art: Artifact) -> bool:
             return False
     elif not _local_owner(hub_dir, owner):
         return False
-    if not hub_member(hub_dir, art.hub, owner):
+    if not hub_member(hub_dir, art.hub, owner) and not _local_owner(hub_dir, owner):
         return False
     return True
 

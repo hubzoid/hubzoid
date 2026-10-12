@@ -1,0 +1,8 @@
+number: 103
+title: Search orders by customer email
+author: sam
+created_at: "2026-10-09T16:45:00Z"
+updated_at: "2026-10-10T08:00:00Z"
+branch: sam/order-search
+body: |
+  Customer care can now type part of an email address to find orders.

@@ -157,6 +157,8 @@ def test_the_latest_link_is_the_page_and_reports_its_state(hub, web, tmp_path):
     unchanged = _as(web, SAM).get(f"/portal/series/api/{out['series_id']}/latest",
                                   headers={"If-None-Match": latest.headers["etag"]})
     assert unchanged.status_code == 304
+    assert unchanged.content == b""  # HTTP forbids a body; Uvicorn rejects JSON null on 304.
+    assert unchanged.headers["etag"] == latest.headers["etag"]
 
 
 def test_update_now_is_for_the_owner_or_operators_and_waits_between_updates(hub, web, tmp_path, monkeypatch):

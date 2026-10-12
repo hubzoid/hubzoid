@@ -237,7 +237,7 @@ def init(
         "with one example of each file type. 'demo': the guided tour with a Hubzoid Guide "
         "agent, four teaching skills and six knowledge pages. 'watchtower': a "
         "workflow-first sample, a scheduled check on bundled sample metrics that explains "
-        "threshold breaches.",
+        "threshold breaches. 'gitzoid': PR reviews, security checks and engineering reports, with a fictional repo.",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files in the hub folder."),
     model: str | None = typer.Option(None, "--model", help="Model for a new hub, e.g. codex-local, claude-local or a provider model id."),
@@ -375,6 +375,17 @@ def init(
                       "signed-in `claude` CLI. Without one, set an OpenRouter, Anthropic or OpenAI key there.")
         step += 1
     console.print(f"  {step}. hubzoid run {escape(shlex.quote(str(hub_dir)))}   (opens the web app in your browser)")
+    if template == "gitzoid":
+        target = escape(shlex.quote(str(hub_dir)))
+        console.print(
+            f"\nGitZoid starts with a fictional repo and preview publishing. Your selected model is still required.\n"
+            f"  hubzoid schedule run {target} setup_check\n"
+            f"  hubzoid schedule run {target} repo_profiles\n"
+            f"  hubzoid schedule run {target} pr_sweep\n"
+            f"Connect your repos: python {escape(shlex.quote(str(hub_dir / 'setup.py')))} --help\n"
+            "Enable GitZoid tools for your own account in Console → Access (or use hubzoid grant).\n"
+            "All eligible open PRs are queued by default; drafts and bot PRs can be included. See the Hub README."
+        )
     if template == DEFAULT_TEMPLATE:
         console.print(
             "\n[dim]Kestrel & Oak is a fictional shop. Try a suggested prompt, such as "

@@ -67,6 +67,10 @@ for backup and restart instructions.
 - The `run_workflow` chat tool takes inputs.
 
 ### Fixed
+- First-run reports can be opened by the local quickstart owner before an
+  account row exists; enabling sign-in or blocking that owner revokes the exception.
+- Unchanged live-report polling returns an empty HTTP 304 response, avoiding
+  repeated server errors from a JSON body.
 - Unchanged reports get a new copy when their audience or named readers change;
   the latest link follows the new policy. Historical copies retain their access.
 - Confirm-only calls work with required workflow inputs and use the saved inputs.

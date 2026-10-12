@@ -1,0 +1,9 @@
+number: 104
+title: Load the catalog with yaml.safe_load
+author: maya
+created_at: "2026-10-07T11:00:00Z"
+updated_at: "2026-10-07T11:30:00Z"
+branch: maya/safe-yaml
+body: |
+  The catalog files are plain lists of products, so safe_load is enough and
+  removes the FullLoader warning.

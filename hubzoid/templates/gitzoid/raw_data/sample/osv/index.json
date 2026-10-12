@@ -1,0 +1,25 @@
+{
+  "_note": "OSV.dev querybatch results for the sample's packages, captured 2026-10-10 and 2026-10-11. Packages not listed had no advisories.",
+  "PyPI/flask@3.1.1": [
+    "GHSA-68rp-wp8r-4726",
+    "PYSEC-2026-2151"
+  ],
+  "PyPI/requests@2.31.0": [
+    "GHSA-9hjg-9r4m-mvj7",
+    "GHSA-9wx4-h78v-vm56",
+    "GHSA-gc5v-m9x4-r6x2",
+    "PYSEC-2026-1872",
+    "PYSEC-2026-1873",
+    "PYSEC-2026-2275"
+  ],
+  "PyPI/pyyaml@5.3.1": [
+    "GHSA-8q59-q68h-6hv4",
+    "PYSEC-2021-142"
+  ],
+  "PyPI/gunicorn@21.2.0": [
+    "GHSA-hc5x-x2vx-497g",
+    "GHSA-w3h3-4rj7-4ph4",
+    "PYSEC-2026-1433",
+    "PYSEC-2026-1434"
+  ]
+}
