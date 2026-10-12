@@ -2,11 +2,23 @@
 
 Pull requests and pushes to `main` run the fast checks
 (`.github/workflows/tests.yml`), and every push and pull request is scanned for
-secrets (`.github/workflows/secrets.yml`). The full validation, the image
-builds and publishing run only when a GitHub release is published
+secrets (`.github/workflows/secrets.yml`). The broader validation and image
+builds run before publication on a pull request labeled `release-candidate`,
+or through a manual run of the release workflow. These validation runs cannot
+publish packages or images. Publishing requires a GitHub release event
 (`.github/workflows/ci.yml`). Its checks (the tests on two machines without the
 `heavy` ones, the Console journeys, packaging and both images) run side by side
-in about ten minutes, and publishing waits for all of them.
+on hosted runners, and publishing waits for all of them. A focused step also
+runs report recovery and PostgreSQL claim/upgrade tests regardless of their
+`heavy` classification. A second step restores duration-excluded workflow,
+PostgreSQL, report-sample and schedule-control checks. Excluded or skipped
+critical checks are not passes.
+
+Before tagging, validate the exact candidate commit on a draft pull request
+with the `release-candidate` label. Inspect skips, test failures, both native
+image checks and clean-install results. Complete acceptance on a copy of the
+intended deployment, including its runtime, sign-in, permissions and restart
+persistence. Check real email delivery if that deployment promotes email.
 
 1. Update `pyproject.toml` and `CHANGELOG.md` to the new version and push main.
 2. In GitHub, open **Releases → Draft a new release**.

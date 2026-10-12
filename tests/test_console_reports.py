@@ -167,3 +167,46 @@ def test_people_see_and_change_only_their_own_schedules_and_reports(client, tmp_
     assert client.get("/portal/api/my/schedules/ps1/runs", params=hub).status_code == 404
     who["v"] = None
     assert client.get("/portal/api/my").status_code == 401
+
+
+def test_personal_edit_api_checks_owner_revision_and_origin(client, monkeypatch):
+    from hubzoid.access import session
+
+    gs = access.store_for(client.path)
+    gs.upsert_identity(email="meera@co.org", owui_id="id-meera")
+    for permission in ("use_hub", "wf_program_report", "schedule_reports"):
+        gs.grant("meera@co.org", client.hub, permission, actor="test")
+    _schedule(client, account="id-meera")
+    with client.eng.begin() as conn:
+        conn.execute(text("UPDATE hz_personal_schedules SET inputs='{}'"))
+    who = {"value": ("id-meera", "meera@co.org")}
+    monkeypatch.setattr(session, "verified_person", lambda *_a, **_k: who["value"])
+    url = "/portal/api/my/schedules/ps1"
+    snapshot = client.get(url, params={"hub": client.hub}).json()
+    change = {"hub": client.hub, "inputs": {}, "cadence": "daily at 18:00", "timezone": "UTC",
+              "revision": snapshot["revision"]}
+    assert client.put(url, json=change, headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.put(url, json=change).status_code == 200
+    assert client.put(url, json=change).status_code == 409
+    who["value"] = ("replacement", "meera@co.org")
+    assert client.get(url, params={"hub": client.hub}).status_code == 404
+    assert client.put(url, json=change).status_code == 404
+
+
+def test_personal_catalog_includes_only_permitted_web_reports(client, monkeypatch):
+    from hubzoid.access import session
+
+    monkeypatch.setenv("HUBZOID_SCHEDULES", "1")
+    monkeypatch.delenv("HUBZOID_WORKFLOW_TOOLS", raising=False)
+    gs = access.store_for(client.path)
+    gs.upsert_identity(email="meera@co.org", owui_id="id-meera")
+    gs.grant("meera@co.org", client.hub, "use_hub", actor="test")
+    monkeypatch.setattr(session, "verified_person", lambda *_a, **_k: ("id-meera", "meera@co.org"))
+    assert client.get("/portal/api/my").json()["catalog"] == []
+    gs.grant("meera@co.org", client.hub, "wf_program_report", actor="test")
+    reports = client.get("/portal/api/my").json()["catalog"]
+    assert reports[0]["workflow"] == "program_report" and reports[0]["schedulable"] is False
+    gs.grant("meera@co.org", client.hub, "schedule_reports", actor="test")
+    assert client.get("/portal/api/my").json()["catalog"][0]["schedulable"] is True
+    monkeypatch.setenv("HUBZOID_WORKFLOW_TOOLS", "false")
+    assert client.get("/portal/api/my").json()["catalog"] == []

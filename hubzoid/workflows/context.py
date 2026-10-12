@@ -307,7 +307,7 @@ class Hub:
         person's own series. A key belongs to one workflow in the agent. A
         publish whose file (or `digest`, a hash of the data behind it) matches
         the newest copy stores nothing new and returns that copy with
-        "unchanged": true.
+        "unchanged": true. Team copies also require the same sharing policy.
 
         Private to the owner by default. `audience="hub"` (everyone who can use
         this agent), `audience="people"` with `share_with=["a@x.com"]`, or

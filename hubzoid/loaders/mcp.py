@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -44,7 +45,7 @@ def call_timeout(env=None) -> float:
         value = float(raw)
     except ValueError:
         value = 0.0
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         log.warning("HUBZOID_MCP_TIMEOUT=%r is not a positive number of seconds; using %s",
                     raw, DEFAULT_CALL_TIMEOUT)
         return DEFAULT_CALL_TIMEOUT

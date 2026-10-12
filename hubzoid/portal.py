@@ -121,6 +121,13 @@ class HubAction(BaseModel):
     hub: str = Field(min_length=1, max_length=255)
 
 
+class ScheduleEdit(HubAction):
+    inputs: dict = Field(default_factory=dict)
+    cadence: str = Field(min_length=1, max_length=200)
+    timezone: str = Field(min_length=1, max_length=100)
+    revision: float
+
+
 class CompanyLinkAction(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     hub: str = Field(min_length=1, max_length=255)
@@ -800,7 +807,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         from .artifacts import series as series_lib
         from .chat.common import api_bases
         from .workflows import personal
-        from .workflows.runtime import input_schemas, title_for
+        from .workflows.runtime import input_schemas, title_for, tool_permission
 
         account, email = require_viewer(request)
         try:
@@ -814,7 +821,7 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         owui = appmode.is_openwebui(hub_dir)
         blocked = gs.is_suspended(email)
         bases = api_bases(hub_dir)
-        agents, schedules, reports = [], [], []
+        agents, schedules, reports, catalog = [], [], [], []
         for h in deployment.hubs(hub_dir):
             path, key = Path(h["path"]), normalize(h["key"])
             mine = [s for s in personal.for_owner(path, key, email)
@@ -827,7 +834,22 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
             chat = (f"/?models={quote(model)}" if owui else f"/?agent={quote(model)}") if usable else None
             agents.append(dict(key=key, name=h.get("name") or key, api=bases.get(key, "") + "/portal/api",
                                chat=chat))
-            schemas = input_schemas(path, key) if mine else {}
+            schemas = input_schemas(path, key) if mine or usable else {}
+            if usable:
+                from .workflows.observe import definitions
+                from .capabilities import switched_off
+                from .tools.report_tools import SCHEDULE_REPORTS, RESERVED_NAMES
+                from .workflows.boot import schedules_enabled
+
+                if schedules_enabled() and not switched_off(SCHEDULE_REPORTS):
+                    for wf in definitions(path):
+                        if (not wf.get("as_tool") or wf.get("error") or wf["name"].lower() in RESERVED_NAMES
+                                or (wf.get("surfaces") and "web" not in wf["surfaces"])
+                                or not gs.can(email, key, tool_permission(wf["name"]))):
+                            continue
+                        catalog.append(dict(hub=key, workflow=wf["name"], title=wf["title"],
+                            schedulable=bool(wf.get("schedulable") and gs.can(email, key, "schedule_reports")),
+                            schema=schemas.get(wf["name"])))
             for s in mine:
                 links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))
                          for x in made if x.id in s.series or x.schedule_id == s.id]
@@ -838,8 +860,55 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                                     url=series_lib.latest_path(x), updated=x.updated_at, state=st["state"],
                                     company_on=bool(series_lib.domain_token(path, x))))
         return {"subject": email, "admin": is_admin, "blocked": blocked, "web_app": not owui, "agents": agents,
-                "schedules": schedules, "reports": reports,
+                "schedules": schedules, "reports": reports, "catalog": catalog,
                 "connections": _has_connections(hub_dir, account, email)}
+
+    @router.get("/my/runs")
+    @_denied
+    def my_runs(hub: str, request: Request, run_id: str | None = None):
+        from .workflows import observe
+        from .access.store import USE_HUB
+
+        account, email = require_viewer(request)
+        path, key = person_hub(hub)
+        gs = store_for(path)
+        if gs.is_suspended(email) or not gs.can(email, key, USE_HUB):
+            raise HTTPException(403, "You no longer have access to this agent.")
+        return {"runs": observe.personal_runs(path, email, account, run_id=run_id)}
+
+    @router.get("/my/schedules/{schedule_id}")
+    @_denied
+    def my_schedule_edit(schedule_id: str, hub: str, request: Request):
+        from .workflows.runtime import input_schemas
+
+        account, email = require_viewer(request)
+        path, key = person_hub(hub)
+        s = own_schedule(path, key, schedule_id, email, account)
+        schema = input_schemas(path, key).get(s.workflow)
+        if schema is None:
+            from .workflows.observe import definitions
+
+            declaration = next((d for d in definitions(path) if d["name"] == s.workflow), None)
+            if declaration and not declaration.get("has_inputs") and not declaration.get("error"):
+                schema = {"type": "object", "properties": {}}
+        return dict(inputs=s.values, cadence=s.cadence, timezone=s.timezone, revision=s.updated, schema=schema)
+
+    @router.put("/my/schedules/{schedule_id}")
+    @_denied
+    def save_my_schedule(schedule_id: str, request: Request, payload: ScheduleEdit):
+        from .workflows import personal
+
+        _check_same_origin(request)
+        account, email = require_viewer(request)
+        path, key = person_hub(payload.hub)
+        s = own_schedule(path, key, schedule_id, email, account)
+        try:
+            personal.edit(path, key, email, s.id, inputs=payload.inputs, cadence=payload.cadence,
+                          timezone_name=payload.timezone, revision=payload.revision)
+        except personal.ScheduleError as exc:
+            raise HTTPException(409, str(exc))
+        store_for(hub_dir).audit_event(email, "schedule_edit", hub=key, permission=s.id, surface="console")
+        return {"ok": True}
 
     @router.get("/my/schedules/{schedule_id}/runs")
     @_denied

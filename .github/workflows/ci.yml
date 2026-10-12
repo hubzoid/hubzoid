@@ -9,6 +9,9 @@ name: release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,6 +23,7 @@ permissions:
 jobs:
   # The checks run side by side; publishing waits for all of them.
   tests:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     # The suite with slow and end-to-end tests and Open WebUI mode, except the
     # heavy ones (5 s or more each, see tests/conftest.py), on two machines.
     runs-on: ubuntu-24.04
@@ -36,10 +40,23 @@ jobs:
           cache: pip
       - name: Install with Open WebUI mode and test tools
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
+      - name: Report recovery and PostgreSQL regressions (including heavy checks)
+        if: matrix.group == 1
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          command -v initdb && command -v pg_ctl
+          pytest -q -m "" tests/test_workflows_from_chat_engine.py tests/test_report_series.py::test_concurrent_claims_cannot_take_a_key_in_different_namespaces tests/test_migrations.py::test_postgres_fresh_and_partial_upgrade
+      - name: Critical workflow checks excluded by historical durations
+        if: matrix.group == 2
+        run: |
+          export PATH="$(pg_config --bindir):$PATH"
+          command -v initdb && command -v pg_ctl
+          pytest -q -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py
       - name: Test suite, part ${{ matrix.group }} of 2 (Open WebUI mode included, heavy tests left out)
         run: pytest -q --no-header -m "not heavy" --splits 2 --group ${{ matrix.group }}
 
   console:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -58,6 +75,7 @@ jobs:
           cd portal && npx playwright install --with-deps chromium && npm test
 
   package:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -68,6 +86,7 @@ jobs:
           cache: pip
 
       - name: Tag matches the package version
+        if: github.event_name == 'release'
         run: |
           want="${GITHUB_REF_NAME#v}"
           have=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
@@ -87,7 +106,8 @@ jobs:
           /tmp/clean/bin/pip install dist/*.whl
           /tmp/clean/bin/pip check
           ! /tmp/clean/bin/python -c "import open_webui"
-          cd /tmp && /tmp/clean/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_install.py" "$GITHUB_REF_NAME"
+          want=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cd /tmp && /tmp/clean/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_install.py" "$want"
 
       - uses: actions/upload-artifact@v6
         with:
@@ -95,6 +115,7 @@ jobs:
           path: dist/
 
   image:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     # Each architecture builds and boots natively; no emulation on this path.
     strategy:
       fail-fast: false
@@ -136,6 +157,7 @@ jobs:
           docker rm -f candidate
 
   publish-image:
+    if: github.event_name == 'release'
     needs: [tests, console, package, image]
     runs-on: ubuntu-24.04
     environment:

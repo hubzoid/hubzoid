@@ -407,8 +407,9 @@ def test_mcp_tool_calls_get_30_seconds_unless_a_server_or_the_env_says_otherwise
     assert got == {"db": 30, "web": 30, "browser": 120}          # stdio included; the server wins
     monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", "90")
     assert {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}["db"] == 90
-    monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", "soon")              # a bad value keeps the default
-    assert {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}["web"] == 30
+    for invalid in ("soon", "NaN", "inf", "-inf", "0", "-1"):
+        monkeypatch.setenv("HUBZOID_MCP_TIMEOUT", invalid)
+        assert {s.name: s.client_session_timeout_seconds for s in load_mcp_servers(specs)}["web"] == 30
 
 
 def test_connector_tool_names_are_valid_and_unique_on_every_runtime():
