@@ -94,3 +94,22 @@ def test_the_controlled_failure_names_the_bad_line(sample):
         (hub / "raw_data" / "samples" / "broken.jsonl").read_text())
     _, err = _run(hub, env)
     assert err and "broken.jsonl line 2 is not valid JSON" in err
+
+
+def test_snapshot_uses_saved_rule_and_personal_inputs_without_model(sample):
+    from pathlib import Path
+    from hubzoid.workflows.runtime import load_definitions
+    from hubzoid.workflows.testing import run_local
+
+    hub, _ = sample
+    wf = next(w for w in load_definitions(hub) if w.name == "service_snapshot")
+    assert wf.as_tool and wf.schedulable
+    first = run_local(wf.fn, hub_dir=hub, inputs={"service": "checkout"})
+    before = Path(first.artifacts[0]["path"]).read_text()
+    assert "Check" in before and "800 ms" in before and "search" not in before
+    (hub / "knowledge" / "snapshot-rules.json").write_text('{"p95_ms": 2000}')
+    second = run_local(wf.fn, hub_dir=hub, inputs={"service": "checkout"})
+    after = Path(second.artifacts[0]["path"]).read_text()
+    assert "<td>OK</td>" in after and "2000 ms" in after
+    assert first.artifacts[0]["key"] == second.artifacts[0]["key"]
+    assert first.artifacts[0]["scope"] == "personal"

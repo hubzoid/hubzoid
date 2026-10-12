@@ -3,12 +3,21 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
-## [1.3.0]
+## [1.3.1]
 
-Reports people run and schedule from chat, with live links. Upgrading: nothing
-to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-from-chat).
+1.3.0 will not be released; 1.3.1 is the first release of this functionality.
+
+Reports people run and schedule from chat, with live links. Existing Hub folders
+need no new required fields; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-from-chat)
+for backup and restart instructions.
 
 ### Added
+- **GitZoid sample.** `hubzoid init my-gitzoid --template gitzoid` starts with
+  fictional pull requests in preview mode. Connect selected repositories for
+  PR reviews, saved rules, security checks and engineering reports. Setup checks
+  explain access, queued PRs and limits; GitHub publishing is an explicit choice.
+  See the [GitZoid guide](hubzoid/templates/gitzoid/README.md) for prerequisites,
+  account permissions, costs and upgrading an existing Hub.
 - **Inputs.** `@workflow(inputs=Model)` takes typed inputs, read as
   `hub.input`. The Console's Run now shows a form for them, and
   `hubzoid schedule run <hub> <name> --input key=value` takes them.
@@ -34,7 +43,7 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
   page of its own.
 - **Live reports.** `publish_artifact(key=...)` keeps one link per report that
   always shows the newest copy: the agent's for team runs, each person's own
-  for theirs. Unchanged copies (same file or `digest=`) store nothing. The
+  for theirs. Unchanged content and sharing (same file or `digest=`) store nothing. The
   page shows when it updates next, offers the newer copy, and has **Update
   now** for people who can run it. A page a scheduled run stops publishing
   says "No longer updating". `series_keep` in `workflows/settings.yaml` limits
@@ -58,6 +67,30 @@ to change; read [Upgrading to 1.3](docs/UPGRADING.md#upgrading-to-13-workflows-f
 - The `run_workflow` chat tool takes inputs.
 
 ### Fixed
+- First-run reports can be opened by the local quickstart owner before an
+  account row exists; enabling sign-in or blocking that owner revokes the exception.
+- Unchanged live-report polling returns an empty HTTP 304 response, avoiding
+  repeated server errors from a JSON body.
+- Unchanged reports get a new copy when their audience or named readers change;
+  the latest link follows the new policy. Historical copies retain their access.
+- Confirm-only calls work with required workflow inputs and use the saved inputs.
+  Confirmations are bound to the original account, chat and workflow. Chat tools
+  can recover pending codes from earlier turns, so a clear yes does not cause
+  another confirmation request when tool outputs are absent from chat history.
+- Run for me returns ordinary artifact links as well as keyed report links.
+- Run history checks the recorded account ID, so a replacement account with the
+  same email cannot read the earlier account's results.
+- Failed schedule dispatch counts toward automatic pausing. A persisted handoff
+  retries the same run ID after a restart. Finishing an in-flight run cannot
+  reactivate the report of a stopped schedule or lift an administrator's pause.
+- Concurrent publishers cannot assign one report key to different workflows.
+- The personal workspace refreshes visible work, supports keyboard and phone
+  controls, lists permitted reports and recent personal results, and lets owners
+  edit saved inputs and timing. Failed work offers a run reference and recovery.
+- Watchtower includes a model-free Service snapshot report with an explicit
+  saved-rule correction and personal scheduling walkthrough.
+- Invalid non-finite MCP timeout settings fall back to the default.
+- Test timeouts remain failures; they are no longer rewritten as skips.
 - MCP tool calls timed out after 5 seconds on the OpenAI Agents SDK and Codex
   runtimes (the SDK's default), for stdio servers and Console connectors
   always. They now get 30 seconds, `HUBZOID_MCP_TIMEOUT` changes it, and a

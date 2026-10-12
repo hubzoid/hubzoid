@@ -157,6 +157,8 @@ def test_the_latest_link_is_the_page_and_reports_its_state(hub, web, tmp_path):
     unchanged = _as(web, SAM).get(f"/portal/series/api/{out['series_id']}/latest",
                                   headers={"If-None-Match": latest.headers["etag"]})
     assert unchanged.status_code == 304
+    assert unchanged.content == b""  # HTTP forbids a body; Uvicorn rejects JSON null on 304.
+    assert unchanged.headers["etag"] == latest.headers["etag"]
 
 
 def test_update_now_is_for_the_owner_or_operators_and_waits_between_updates(hub, web, tmp_path, monkeypatch):
@@ -217,3 +219,43 @@ def test_readers_never_inherit_everyone_grants(hub):
     assert not gs.can(READER, "irs", "use_hub") and "use_hub" not in gs.permissions_for(READER, "irs")
     gs.grant(READER, "irs", "use_hub", actor="admin")
     assert gs.can(READER, "irs", "use_hub")                              # a named grant still works
+
+
+def test_unchanged_report_restricts_audience(hub, tmp_path):
+    first = _publish(hub, tmp_path, audience='hub')
+    assert arts.role(hub, arts.get(hub, first['id']), MEERA) == 'viewer'
+    again = _publish(hub, tmp_path, run='private', audience='owner')
+    assert arts.role(hub, arts.get(hub, again['id']), MEERA) is None, 'Latest report remains shared after publish requested owner-only'
+
+
+def test_unchanged_report_replaces_named_readers(hub, tmp_path):
+    first = _publish(hub, tmp_path, audience='people', share_with=[MEERA])
+    again = _publish(hub, tmp_path, run='new-readers', audience='people', share_with=[SAM])
+    art = arts.get(hub, again['id'])
+    assert arts.role(hub, art, MEERA) is None
+    assert arts.role(hub, art, SAM) == 'viewer'
+
+
+
+@pytest.mark.parametrize("backend", ["sqlite", pytest.param("postgres", marks=pytest.mark.slow)])
+def test_concurrent_claims_cannot_take_a_key_in_different_namespaces(hub, backend, request, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    if backend == "postgres":
+        monkeypatch.setenv("HUBZOID_OPERATIONAL_DB", request.getfixturevalue("postgres_url"))
+    series._engine(hub)  # migrate before exercising simultaneous claims
+    ready = Barrier(2)
+
+    def claim(name):
+        ready.wait(timeout=5)
+        try:
+            return series.claim(hub, hub="irs", workflow=name, scope="personal",
+                                owner=name + "@co.org", key="shared-key", title=name).workflow
+        except arts.ArtifactError as exc:
+            assert exc.status == 409
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, ["one", "two"]))
+    assert sum(r is not None for r in results) == 1

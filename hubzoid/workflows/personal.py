@@ -8,11 +8,11 @@ every run. It never runs as anyone else, and it can't be moved to someone else.
 Saving, changing and stopping take two calls: a proposal, then a confirm with
 the code it returned, within 10 minutes and only by the same person. That stops
 a model saving a schedule in one call by mistake. It doesn't prove a human
-agreed, so every new schedule also emails its owner.
+agreed. Email notices are opt-in.
 
 The hub's dispatcher fires due schedules every minute: it starts the run with
-an id made of the schedule and its slot, then advances `next_fire` with a
-compare-and-swap, so a slot runs at most once even across a crash. After
+an id made of the schedule and its slot. A persisted dispatching state and
+compare-and-swap let a restart retry the same id without duplicating work. After
 downtime a schedule runs at most once late. A schedule that can't run pauses
 with a named reason instead of failing over and over: the owner's access
 changed, its inputs no longer match the workflow, the workflow was removed,
@@ -158,12 +158,13 @@ def for_hub(hub_dir, hub: str) -> list[Schedule]:
     return [Schedule(**dict(r._mapping)) for r in rows]
 
 
-def _update(hub_dir, schedule_id: str, **values) -> None:
+def _update(hub_dir, schedule_id: str, **values) -> bool:
     values["updated"] = time.time()
     sets = ", ".join(f"{k}=:{k}" for k in values)
     with _engine(hub_dir).begin() as c:
-        c.execute(text(f"UPDATE hz_personal_schedules SET {sets} WHERE id=:id"),
-                  dict(values, id=schedule_id))
+        changed = c.execute(text(f"UPDATE hz_personal_schedules SET {sets} WHERE id=:id AND state<>'stopped'"),
+                            dict(values, id=schedule_id))
+    return changed.rowcount == 1
 
 
 # ---- words ------------------------------------------------------------------------
@@ -210,7 +211,7 @@ def last_words(s: Schedule) -> str:
         return f"No change {_when(s.last_at, s.timezone)}"
     if s.last_status == "failed":
         return f"Failed {_when(s.last_at, s.timezone)}: {CAUSES.get(s.last_cause or '', CAUSES['error'])}"
-    if s.last_status == "running":
+    if s.last_status in ("running", "dispatching"):
         return "Running now"
     return "Not run yet"
 
@@ -323,7 +324,7 @@ def _new_code() -> str:
 
 def propose(hub_dir, hub: str, actor: str, kind: str, payload: dict) -> str:
     """Store the first half of a two-call action. Returns its code."""
-    from .._request_ctx import get_turn_id
+    from .._request_ctx import get_chat_id, get_turn_id
 
     now = time.time()
     code = _new_code()
@@ -338,9 +339,15 @@ def propose(hub_dir, hub: str, actor: str, kind: str, payload: dict) -> str:
                 "AND status='pending' AND expires>:t"), {"h": hub, "a": actor, "k": kind, "t": now}):
             earlier = json.loads(raw)
             earlier.pop("_turn", None)
+            if earlier.pop("_chat", None) != get_chat_id():
+                continue
+            earlier_account = earlier.pop("_account", None)
+            if earlier_account != current_account(hub_dir, actor):
+                continue
             if json.dumps(earlier, sort_keys=True, default=str) == same:
                 return pid
-        payload = dict(payload, _turn=get_turn_id())
+        payload = dict(payload, _turn=get_turn_id(), _chat=get_chat_id(),
+                       _account=current_account(hub_dir, actor))
         c.execute(text("INSERT INTO hz_workflow_proposals (id, hub, actor, kind, payload, created, "
                        "expires, status) VALUES (:i, :h, :a, :k, :p, :t, :e, 'pending')"),
                   {"i": code, "h": hub, "a": actor, "k": kind, "p": json.dumps(payload),
@@ -348,12 +355,46 @@ def propose(hub_dir, hub: str, actor: str, kind: str, payload: dict) -> str:
     return code
 
 
-def take(hub_dir, hub: str, actor: str, code: str, *, kinds: tuple[str, ...]) -> tuple[str, dict]:
+def pending(hub_dir, hub: str, actor: str, *, kinds: tuple[str, ...]) -> list[dict]:
+    """Recover unexpired proposals from this account and chat's earlier turns.
+
+    Text-only conversation history cannot retain tool results. Listing a
+    proposal recovers its code; it never establishes the person's consent.
+    Without a chat id (e.g. standalone MCP calls), recovery is unavailable.
+    """
+    from .._request_ctx import get_chat_id, get_turn_id
+
+    chat = get_chat_id()
+    if not chat:
+        return []
+    account = current_account(hub_dir, actor)
+    with _engine(hub_dir).connect() as c:
+        rows = c.execute(text(
+            "SELECT id, kind, payload FROM hz_workflow_proposals WHERE hub=:h AND actor=:a "
+            "AND status='pending' AND expires>:t ORDER BY created DESC"),
+            {"h": hub, "a": actor, "t": time.time()})
+        out = []
+        for code, kind, raw in rows:
+            payload = json.loads(raw)
+            if (kind not in kinds or payload.pop("_chat", None) != chat
+                    or payload.pop("_account", None) != account
+                    or payload.pop("_turn", None) == get_turn_id()):
+                continue
+            out.append(dict(code=code, kind=kind, values=payload))
+            if len(out) == 10:
+                break
+    return out
+
+
+def take(hub_dir, hub: str, actor: str, code: str, *, kinds: tuple[str, ...],
+         workflow: str | None = None) -> tuple[str, dict]:
     """Use a pending proposal exactly once: (kind, payload), or ScheduleError.
     Never in the chat turn that made it."""
-    from .._request_ctx import get_turn_id
+    from .._request_ctx import get_chat_id, get_turn_id
 
-    code = (code or "").strip().upper()
+    if not isinstance(code, str):
+        raise ScheduleError("That confirmation doesn't match a pending proposal. Nothing was saved.")
+    code = code.strip().upper()
     now = time.time()
     with _engine(hub_dir).begin() as c:
         row = c.execute(text("SELECT kind, payload, expires, status FROM hz_workflow_proposals "
@@ -366,6 +407,13 @@ def take(hub_dir, hub: str, actor: str, code: str, *, kinds: tuple[str, ...]) ->
             raise ScheduleError("That proposal expired after 10 minutes, so nothing was saved. "
                                 "Ask again to get a new one.")
         payload = json.loads(row[1])
+        if payload.pop("_account", None) != current_account(hub_dir, actor):
+            raise ScheduleError("That proposal belongs to a different account. Nothing was saved.")
+        chat = payload.pop("_chat", None)
+        if chat is not None and chat != get_chat_id():
+            raise ScheduleError("That proposal belongs to a different chat. Nothing was saved.")
+        if workflow is not None and payload.get("workflow") != workflow:
+            raise ScheduleError("That confirmation doesn't match this report. Nothing was saved.")
         turn = payload.pop("_turn", None)
         if turn is not None and turn == get_turn_id():
             # The yes has to come from the person, in a later message.
@@ -398,14 +446,18 @@ def propose_create(hub_dir, hub: str, actor: str, *, workflow: str, inputs, cade
 
 
 def propose_change(hub_dir, hub: str, actor: str, schedule_id: str, *, cadence: str | None,
-                   timezone_name: str | None) -> dict:
+                   timezone_name: str | None, inputs: dict | None = None) -> dict:
+    from .inputs import display
+
     s = _own(hub_dir, hub, actor, schedule_id)
     tz = timezone_name or s.timezone
     new_cadence = cadence or s.cadence
-    _validated(hub_dir, hub, actor, s.workflow, s.values, new_cadence, tz, ignore=s.id)
-    code = propose(hub_dir, hub, actor, "change", {"id": s.id, "cadence": new_cadence, "timezone": tz})
+    wf, data, _ = _validated(hub_dir, hub, actor, s.workflow,
+                            s.values if inputs is None else inputs, new_cadence, tz, ignore=s.id)
+    code = propose(hub_dir, hub, actor, "change", {"id": s.id, "cadence": new_cadence,
+                    "timezone": tz, "inputs": data, "revision": s.updated})
     return {"code": code, "text": (f'Not changed yet. "{s.name}" would run {cadence_words(new_cadence)} '
-                                   f"({tz}) instead of {cadence_words(s)} ({s.timezone}). Change it?")}
+                                   f"({tz}) with inputs {display(wf.inputs, data) or 'none'}. Change it?")}
 
 
 def propose_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> dict:
@@ -441,12 +493,31 @@ def confirm(hub_dir, hub: str, actor: str, code: str) -> dict:
         _update(hub_dir, s.id, state="stopped", reason="owner", paused_by=actor, next_fire=None)
         _retire_reports(hub_dir, s)
         return {"kind": "stop", "schedule": get(hub_dir, s.id)}
-    _validated(hub_dir, hub, actor, s.workflow, s.values, payload["cadence"], payload["timezone"],
-               ignore=s.id)
-    nxt = _next_runs(payload["cadence"], payload["timezone"], 1)[0]
-    _update(hub_dir, s.id, cadence=payload["cadence"], timezone=payload["timezone"],
-            next_fire=nxt if s.state in ("active", "testing") else s.next_fire)
-    return {"kind": "change", "schedule": get(hub_dir, s.id)}
+    changed = edit(hub_dir, hub, actor, s.id, inputs=payload.get("inputs", s.values),
+                   cadence=payload["cadence"], timezone_name=payload["timezone"],
+                   revision=payload.get("revision", s.updated))
+    return {"kind": "change", "schedule": changed}
+
+
+def edit(hub_dir, hub: str, actor: str, schedule_id: str, *, inputs: dict,
+         cadence: str, timezone_name: str, revision: float) -> Schedule:
+    """Owner-only edit. The reviewed snapshot must still be current; editing
+    never resumes a pause or changes an already dispatched run's inputs."""
+    s = _own(hub_dir, hub, actor, schedule_id)
+    _, data, _ = _validated(hub_dir, hub, actor, s.workflow, inputs, cadence, timezone_name,
+                            ignore=s.id)
+    nxt = _next_runs(cadence, timezone_name, 1)[0]
+    with _engine(hub_dir).begin() as c:
+        changed = c.execute(text(
+            "UPDATE hz_personal_schedules SET inputs=:inputs, cadence=:cadence, timezone=:tz, "
+            "next_fire=:next, updated=:now WHERE id=:id AND updated=:revision "
+            "AND state<>'stopped' AND COALESCE(last_status, '')<>'dispatching'"),
+            {"inputs": json.dumps(data), "cadence": cadence, "tz": timezone_name,
+             "next": nxt if s.state in ("active", "testing") else s.next_fire,
+             "now": time.time(), "id": s.id, "revision": revision})
+        if changed.rowcount != 1:
+            raise ScheduleError("This schedule changed while you were editing. Refresh it and try again.")
+    return get(hub_dir, s.id)
 
 
 def create(hub_dir, hub: str, actor: str, *, workflow: str, inputs: dict, cadence: str,
@@ -564,9 +635,32 @@ def start(hub_dir, hub: str, s: Schedule, *, slot: str) -> str:
     if wf is None:
         raise ScheduleError("Reports can't run on this agent right now. Try again later.")
     run_id = f"ps-{s.id}-{slot}"
-    runtime.start_run(s.workflow, envelope(s, wf), workflow_id=run_id)
-    _update(hub_dir, s.id, last_run=run_id, last_status="running")
+    with _engine(hub_dir).begin() as c:
+        claimed = c.execute(text(
+            "UPDATE hz_personal_schedules SET last_run=:run, last_status='dispatching', updated=:now "
+            "WHERE id=:id AND updated=:revision AND state<>'stopped' "
+            "AND NOT (state='paused' AND reason='admin')"),
+            {"run": run_id, "now": time.time(), "id": s.id, "revision": s.updated})
+        if claimed.rowcount != 1:
+            raise ScheduleError("This schedule changed. Refresh it and try again.")
+    _dispatch(hub_dir, hub, s, run_id)
     return run_id
+
+
+def _dispatch(hub_dir, hub: str, s: Schedule, run_id: str) -> None:
+    from . import runtime
+
+    try:
+        runtime.start_run(s.workflow, envelope(s, runtime._REGISTRY.get(s.workflow)),
+                          workflow_id=run_id)
+    except Exception:
+        after_run(hub_dir, hub, {"schedule_id": s.id}, run_id,
+                  ok=False, cause="dispatch", published=[])
+        raise
+    with _engine(hub_dir).begin() as c:
+        c.execute(text("UPDATE hz_personal_schedules SET last_status='running', updated=:t "
+                       "WHERE id=:id AND last_run=:run AND last_status='dispatching'"),
+                  {"id": s.id, "run": run_id, "t": time.time()})
 
 
 def problem(hub_dir, hub: str, s: Schedule) -> str | None:
@@ -601,7 +695,7 @@ def fire_due(hub_dir, hub: str, now: float | None = None) -> list[str]:
     with _engine(hub_dir).connect() as c:
         due = [Schedule(**dict(r._mapping)) for r in c.execute(text(
             f"SELECT {_COLS} FROM hz_personal_schedules WHERE hub=:h AND state IN "
-            "('active', 'testing') AND next_fire IS NOT NULL AND next_fire<=:t ORDER BY next_fire"),
+            "('active', 'testing') AND (last_status='dispatching' OR (next_fire IS NOT NULL AND next_fire<=:t)) ORDER BY next_fire"),
             {"h": hub, "t": now}).fetchall()]
     started = []
     for s in due:
@@ -609,6 +703,12 @@ def fire_due(hub_dir, hub: str, now: float | None = None) -> list[str]:
             reason = problem(hub_dir, hub, s)
             if reason:
                 pause(hub_dir, hub, s, reason)
+                continue
+            if s.last_status == "dispatching" and s.last_run:
+                # A crash between committing the intent and enqueueing retries
+                # the same durable id. DBOS admission is idempotent by that id.
+                _dispatch(hub_dir, hub, s, s.last_run)
+                started.append(s.last_run)
                 continue
             # Catch up at most once: the latest slot due, skipped when the next
             # one is close anyway.
@@ -632,20 +732,14 @@ def fire_due(hub_dir, hub: str, now: float | None = None) -> list[str]:
             with _engine(hub_dir).begin() as c:
                 moved = c.execute(text(
                     "UPDATE hz_personal_schedules SET next_fire=:n, last_fire=:f, updated=:t"
-                    + (", last_run=:r, last_status='running'" if fire else "")
-                    + " WHERE id=:id AND next_fire=:old AND state IN ('active', 'testing')"),
+                    + (", last_run=:r, last_status='dispatching'" if fire else "")
+                    + " WHERE id=:id AND next_fire=:old AND updated=:revision AND state IN ('active', 'testing')"),
                     {"n": nxt, "f": slot, "t": time.time(), "id": s.id, "old": s.next_fire,
+                     "revision": s.updated,
                      **({"r": run_id} if fire else {})})
             if not fire or moved.rowcount != 1:
                 continue
-            from . import runtime
-
-            try:
-                runtime.start_run(s.workflow, envelope(s, runtime._REGISTRY.get(s.workflow)),
-                                  workflow_id=run_id)
-            except Exception:  # noqa: BLE001 — the slot is spent; the next one runs
-                _update(hub_dir, s.id, last_status="failed", last_cause="error", last_at=time.time())
-                raise
+            _dispatch(hub_dir, hub, s, run_id)
             started.append(run_id)
         except Exception:  # noqa: BLE001 — one schedule never stalls the rest
             log.exception("schedules: could not fire %s", s.id)
@@ -653,44 +747,57 @@ def fire_due(hub_dir, hub: str, now: float | None = None) -> list[str]:
 
 
 def pause(hub_dir, hub: str, s: Schedule, reason: str) -> None:
-    _update(hub_dir, s.id, state="paused", reason=reason, paused_by="system")
-    notify(hub_dir, hub, get(hub_dir, s.id), "paused")
+    if _update(hub_dir, s.id, state="paused", reason=reason, paused_by="system"):
+        notify(hub_dir, hub, get(hub_dir, s.id), "paused")
 
 
 def after_run(hub_dir, hub: str, env: dict, run_id: str, *, ok: bool, cause: str | None,
               published: list) -> None:
     """Bookkeeping when a personal schedule's run ends. Idempotent per run."""
-    s = get(hub_dir, env.get("schedule_id"))
-    if s is None or s.state == "stopped":
-        return
-    if s.last_run == run_id and s.last_status in ("updated", "no_change", "failed"):
-        return
-    now = time.time()
-    if ok:
-        changed = any(p.get("changed") for p in published)
-        fed = [p["series_id"] for p in published if p.get("series_id")]
-        series_ids = list(dict.fromkeys(fed + s.series))[:10]
-        _update(hub_dir, s.id, last_run=run_id, last_status="updated" if changed else "no_change",
-                last_at=now, last_cause=None, failures=0,
-                **({"series_ids": json.dumps(series_ids)} if fed else {}),
-                **({"state": "active"} if s.state == "testing" else {}))
-        if changed and s.state != "testing":
-            notify(hub_dir, hub, get(hub_dir, s.id), "changed", published=published)
-        return
-    failures = s.failures + 1
-    limits = settings(hub_dir)
-    values = dict(last_run=run_id, last_status="failed", last_at=now, last_cause=cause,
-                  failures=failures)
-    if s.state == "testing":
-        _update(hub_dir, s.id, state="paused", reason="first_run", paused_by="system", **values)
-        notify(hub_dir, hub, get(hub_dir, s.id), "paused")
-    elif failures >= limits["pause_after_failures"]:
-        _update(hub_dir, s.id, state="paused", reason="failures", paused_by="system", **values)
-        notify(hub_dir, hub, get(hub_dir, s.id), "paused")
-    else:
-        _update(hub_dir, s.id, **values)
-        if failures == 1:
-            notify(hub_dir, hub, get(hub_dir, s.id), "failed")
+    engine = _engine(hub_dir)
+    notice = None
+    with engine.connect() as c:
+        # Outcomes and pause/stop must serialize. Never let an old completion
+        # replace a newer dispatch intent or lift a pause set during the run.
+        if engine.dialect.name == "sqlite":
+            c.exec_driver_sql("BEGIN IMMEDIATE")
+        suffix = " FOR UPDATE" if engine.dialect.name != "sqlite" else ""
+        row_ = c.execute(text(f"SELECT {_COLS} FROM hz_personal_schedules WHERE id=:id" + suffix),
+                         {"id": env.get("schedule_id")}).fetchone()
+        s = Schedule(**dict(row_._mapping)) if row_ else None
+        if s is None or s.hub != hub or s.state == "stopped" or s.last_run != run_id:
+            return
+        if s.last_status in ("updated", "no_change", "failed"):
+            return
+        now = time.time()
+        if ok:
+            changed = any(p.get("changed") for p in published)
+            fed = [p["series_id"] for p in published if p.get("series_id")]
+            values = dict(last_status="updated" if changed else "no_change", last_at=now,
+                          last_cause=None, failures=0)
+            if fed:
+                values["series_ids"] = json.dumps(list(dict.fromkeys(fed + s.series))[:10])
+            if s.state == "testing":
+                values["state"] = "active"
+            elif changed:
+                notice = "changed"
+        else:
+            failures = s.failures + 1
+            values = dict(last_status="failed", last_at=now, last_cause=cause, failures=failures)
+            if s.state == "testing":
+                values.update(state="paused", reason="first_run", paused_by="system")
+                notice = "paused"
+            elif s.state != "paused" and failures >= settings(hub_dir)["pause_after_failures"]:
+                values.update(state="paused", reason="failures", paused_by="system")
+                notice = "paused"
+            elif failures == 1:
+                notice = "failed"
+        values["updated"] = now
+        sets = ", ".join(f"{key}=:{key}" for key in values)
+        c.execute(text(f"UPDATE hz_personal_schedules SET {sets} WHERE id=:id"), dict(values, id=s.id))
+        c.commit()
+    if notice:
+        notify(hub_dir, hub, get(hub_dir, s.id), notice, published=published)
 
 
 # ---- notices ----------------------------------------------------------------------
@@ -740,7 +847,25 @@ def row(s: Schedule, schema: dict | None = None) -> dict:
                 when=cadence_words(s), timezone=s.timezone, state=s.state, reason=s.reason,
                 state_label=state_words(s),
                 next_fire=s.next_fire if s.state in ("active", "testing") else None,
-                last_status=s.last_status, last_at=s.last_at, last_label=last_words(s))
+                last_status=s.last_status, last_at=s.last_at, last_label=last_words(s),
+                last_run=s.last_run, recovery=recovery(s))
+
+
+def recovery(s: Schedule) -> str | None:
+    if s.state == "paused" and s.reason == "owner":
+        return None
+    if s.reason == "admin":
+        return "Ask an administrator to resume this schedule."
+    reason = s.reason if s.reason in ("access", "inputs", "removed") else s.last_cause
+    if s.state != "paused" and s.last_status != "failed":
+        return None
+    return {
+        "access": "Ask an administrator to restore report and scheduling access, then resume.",
+        "inputs": "Edit the saved inputs to match the report, then resume.",
+        "removed": "Ask the builder to restore this report, or stop this schedule and choose another.",
+        "dispatch": "The run could not be queued. Try Run now; if it repeats, give the run reference to an administrator.",
+        "timeout": "Try a smaller input range. If it still times out, give the run reference to the builder.",
+    }.get(reason, "Try Run now. If it fails again, give the run reference to the builder. Resume when fixed.")
 
 
 def owner_stop(hub_dir, hub: str, actor: str, schedule_id: str) -> Schedule:

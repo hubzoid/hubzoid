@@ -39,6 +39,9 @@ home-goods shop: five policy files, a stock export, a `stock_check` tool and
 three suggested prompts. Other templates: `--template minimal` (one example of
 each file type), `--template demo` (a guided tour) and `--template watchtower`
 (a workflow-first sample).
+For PR reviews and engineering reports, use `--template gitzoid` and follow its
+[setup guide](../hubzoid/templates/gitzoid/README.md). It starts with fictional
+PRs in preview mode; reviews use your chosen model.
 
 For the model, init uses a signed-in Claude Code or Codex CLI when it finds
 one (it asks when it finds both). Otherwise, in a terminal, it offers to save
@@ -94,7 +97,7 @@ already have `.env`, add `MODEL` and a randomly generated `BRIDGE_API_KEYS`
 yourself. Use a signed-in Claude CLI for `claude-local`, or choose another
 [provider](providers.md). Plain Markdown in `AGENTS.md` works; optional
 frontmatter supplies the display name, description and suggestions
-([authoring](authoring.md)). No application files need to be replaced.
+([authoring](authoring-a-hub.md)). No application files need to be replaced.
 
 To add a model-free workflow in the same project:
 
@@ -123,8 +126,11 @@ The hub's tools and knowledge are then available there under your access. See
 2. Replace the files in `knowledge/` with your own and ask about them.
 3. Add tools only when the agent needs to act. Put permission-sensitive tools
    under `restricted/` and grant their capabilities in the Console.
-4. Run `hubzoid doctor my-hub`, restart after configuration changes, and try
-   the same task again. Add an [eval](evals.md) for behaviour you rely on.
+4. Save a correction explicitly in the relevant knowledge or instruction file,
+   using Claude Code, Codex or your editor. A chat correction alone is not saved
+   shared knowledge. Run `hubzoid doctor my-hub`, restart after configuration
+   changes, and repeat the task to see the correction applied. Add an
+   [eval](evals.md) for behaviour you rely on.
 5. Put your logo in `branding/` ([branding](branding.md)).
 
 ## First workflow
@@ -140,6 +146,12 @@ hubzoid schedule run my-hub first_check
 Open **Console → Agents → your agent → Runs & schedules** to inspect its result
 and steps. The scaffold is manual. Scheduling is a separate, deliberate choice.
 See [workflows.md](workflows.md) for scheduling, retries and recovery.
+
+With 1.3.1, the [Watchtower Service snapshot walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131)
+also covers running a report from chat, saving a rule correction, and managing
+your own schedule in **My workspace → Schedules & reports**. The report is
+model-free; chat still needs runtime authentication. Report and scheduling
+permissions must be granted, and the hub must be running when a schedule is due.
 
 ## Share with a team
 

@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger("hubzoid.artifacts")
 
@@ -170,31 +169,33 @@ def claim(hub_dir, *, hub: str, workflow: str, scope: str, owner: str, key: str,
     from . import ArtifactError
 
     owner = owner if scope == PERSONAL else ""
-    with _engine(hub_dir).connect() as c:
-        other = c.execute(text("SELECT workflow FROM hz_report_series WHERE hub=:h AND key=:k "
-                               "AND workflow<>:w LIMIT 1"),
-                          {"h": hub, "k": key, "w": workflow}).fetchone()
-    if other is not None:
-        raise ArtifactError(409, f"Key {key} belongs to workflow {other[0]}. Use another key.")
-    where = "hub=:h AND workflow=:w AND scope=:s AND owner=:o AND key=:k"
+    engine = _engine(hub_dir)
     params = {"h": hub, "w": workflow, "s": scope, "o": owner, "k": key}
-    found = _one(hub_dir, where, params)
-    if found is not None:
-        return found
-    try:
-        with _engine(hub_dir).begin() as c:
+    # Serialize the namespace check as well as insertion. The unique series
+    # index alone cannot arbitrate different scopes or owners using one key.
+    with engine.connect() as c:
+        if engine.dialect.name == "sqlite":
+            c.exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            lock = int.from_bytes(hashlib.sha256(f"report-key:{hub}:{key}".encode()).digest()[:8],
+                                  "big", signed=True)
+            c.execute(text("SELECT pg_advisory_xact_lock(:lock)"), {"lock": lock})
+        other = c.execute(text("SELECT workflow FROM hz_report_series WHERE hub=:h AND key=:k "
+                               "AND workflow<>:w LIMIT 1"), params).fetchone()
+        if other is not None:
+            raise ArtifactError(409, f"Key {key} belongs to workflow {other[0]}. Use another key.")
+        where = "hub=:h AND workflow=:w AND scope=:s AND owner=:o AND key=:k"
+        found = c.execute(text(f"SELECT {_COLS} FROM hz_report_series WHERE {where}"), params).fetchone()
+        if found is None:
             c.execute(text(
                 "INSERT INTO hz_report_series (id, hub, workflow, scope, owner, owner_ref, key, "
                 "title, audience, live, domain_on, created) VALUES (:id, :h, :w, :s, :o, :r, :k, "
                 ":t, 'owner', 1, 0, :now)"),
                 dict(params, id="s" + secrets.token_urlsafe(12), r=owner_ref(owner) if owner else "",
                      t=(title or key)[:300], now=time.time()))
-    except IntegrityError:
-        pass  # another publish created it first
-    found = _one(hub_dir, where, params)
-    if found is None:   # another workflow took the key at the same moment
-        raise ArtifactError(409, f"Key {key} belongs to another workflow. Use another key.")
-    return found
+            found = c.execute(text(f"SELECT {_COLS} FROM hz_report_series WHERE {where}"), params).fetchone()
+        c.commit()
+    return Series(**dict(found._mapping))
 
 
 def touch(hub_dir, series: Series, *, run_id: str | None, inputs, schedule_id: str | None,
@@ -233,7 +234,16 @@ def finish_run(hub_dir, hub: str, workflow: str, run_id: str, *, trigger: str | 
     if trigger == "schedule" and scope == TEAM:
         where, params = "hub=:h AND workflow=:w AND scope='team'", {"h": hub, "w": workflow}
     elif trigger == "personal_schedule" and schedule_id:
-        where, params = "hub=:h AND schedule_id=:sid", {"h": hub, "sid": schedule_id}
+        from ..workflows import personal
+
+        sched = personal.get(hub_dir, schedule_id)
+        if sched is None or sched.state == "stopped":
+            if sched is not None:
+                personal._retire_reports(hub_dir, sched)
+            return
+        where = ("hub=:h AND schedule_id=:sid AND EXISTS (SELECT 1 FROM hz_personal_schedules "
+                 "WHERE id=:sid AND state<>'stopped')")
+        params = {"h": hub, "sid": schedule_id}
     else:
         return
     with _engine(hub_dir).begin() as c:

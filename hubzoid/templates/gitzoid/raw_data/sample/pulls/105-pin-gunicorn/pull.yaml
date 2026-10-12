@@ -1,0 +1,9 @@
+number: 105
+title: Pin gunicorn 21.2 for the old base image
+author: sam
+created_at: "2026-10-08T09:30:00Z"
+updated_at: "2026-10-08T09:30:00Z"
+branch: sam/pin-gunicorn
+body: |
+  The deploy image still runs Python 3.8 for the label printer driver, and
+  gunicorn 23 needs a newer Python. Pinning back until the printer is replaced.

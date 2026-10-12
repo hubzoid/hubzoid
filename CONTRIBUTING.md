@@ -63,12 +63,15 @@ Every pull request and every push to `main` runs
 the fast default tests (no `slow` or end-to-end tests) on SQLite, without Open
 WebUI, browsers, live models or Docker, spread over two machines, and the web
 app's lint (`npm run lint` in `portal/`). Publishing a release adds the slow and
-end-to-end tests, except those marked `heavy`.
+end-to-end tests, except those marked `heavy`. A focused release step explicitly
+includes report handoff/recovery and PostgreSQL claim/upgrade checks regardless
+of their duration classification.
 
 A test that took 5 s or more in `.test_durations` is marked `heavy` and left
 out of CI; run them locally before a change to the workflow engine, the gateway
-or process handling. A test still running after two minutes is reported as
-skipped, so a hang never blocks CI; a failing assertion always does. After
+or process handling. With the development dependencies installed, a test still
+running after two minutes fails through `pytest-timeout`. A timeout or an
+excluded critical test does not count as a pass. After
 adding or speeding up slow tests, refresh the timings with
 `pytest -m "" --store-durations`.
 

@@ -1,0 +1,16 @@
+number: 101
+title: Retry the supplier sync until it succeeds
+author: dev-ana
+created_at: "2026-10-10T14:05:00Z"
+updated_at: "2026-10-11T09:12:00Z"
+branch: ana/sync-retry
+requested_reviewers: [maya]
+body: |
+  The Copper Kettle API drops connections at night, so the 02:00 sync often
+  misses them. This retries each supplier until it answers.
+comments:
+  - id: 9101
+    kind: issue
+    author: maya
+    created_at: "2026-10-11T08:40:00Z"
+    body: Can we keep the 10 second timeout per call? The warehouse reads at 06:00.

@@ -59,7 +59,7 @@ def _run_owner(client, workflow_id: str) -> dict | None:
 
 
 def may_see_results(owner: dict | None, viewer: str | None, *,
-                    legacy_visible: bool = True) -> bool:
+                    legacy_visible: bool = True, account: str | None = None) -> bool:
     """Whether `viewer` may see what a run produced. Fails closed.
     `legacy_visible=False` keeps legacy service runs private too: for readers
     who are not the hub's managers (the agent's workflow tools)."""
@@ -68,7 +68,8 @@ def may_see_results(owner: dict | None, viewer: str | None, *,
     if owner.get("source") == "legacy-service":
         return legacy_visible  # a hub service run: no person's data or connections
     subject = (owner.get("subject") or "").strip().lower()
-    return bool(viewer) and subject == viewer.strip().lower()
+    return (bool(viewer) and subject == viewer.strip().lower()
+            and (not owner.get("account_id") or owner["account_id"] == account))
 
 # A live dispatcher writes a heartbeat every ~60s. If the newest heartbeat is
 # older than this while the deployment still marks schedules enabled, the
@@ -417,7 +418,9 @@ def runs(
     ``may_see_results``)."""
     from dbos import DBOSClient
     from .runtime import _app_name
+    from .personal import current_account
 
+    account = current_account(hub_dir, viewer) if viewer else None
     url = db.dbos_url(hub_dir)
     if _missing_sqlite(url):
         return []
@@ -451,11 +454,72 @@ def runs(
         for w in result:
             steps = client.list_workflow_steps(w.workflow_id) if run_id else None
             owner = _identity_of(steps) if run_id else _run_owner(client, w.workflow_id)
-            visible = trusted or may_see_results(owner, viewer, legacy_visible=legacy_visible)
+            visible = trusted or may_see_results(owner, viewer, legacy_visible=legacy_visible, account=account)
             row = _run_row(hub_name, w, visible=visible, owner=owner)
             if run_id:
                 row["steps"] = [_step_row(x, visible) for x in steps]
             rows.append(row)
+        return rows
+    finally:
+        client.destroy()
+
+
+def personal_runs(hub_dir, viewer: str, account: str | None, *, run_id: str | None = None) -> list[dict]:
+    """Bounded personal history without workflow-administration access.
+
+    Both the trusted admission envelope and checkpointed identity must belong
+    to this account. Queued runs may not have their identity checkpoint yet.
+    Never return raw errors, inputs or steps on this surface.
+    """
+    from dbos import DBOSClient
+    from .. import artifacts
+    from ..artifacts import series
+    from .runtime import _app_name, title_for
+
+    url = db.dbos_url(hub_dir)
+    if _missing_sqlite(url):
+        return []
+    app = _app_name(Path(hub_dir).name)
+    hub = Path(hub_dir).name.lower()
+    client = DBOSClient(system_database_url=url, application_name=app, retry_connection_errors=False)
+    try:
+        found = client.list_workflows(application_name=app, workflow_id_prefix="tool-",
+            workflow_ids=[run_id] if run_id else None, limit=50, sort_desc=True,
+            load_input=True, load_output=True)
+        rows = []
+        for w in found:
+            # DBOS stores positional args as a tuple and keyword args separately.
+            raw = w.input if isinstance(w.input, dict) else {}
+            args = raw.get("args") or ()
+            env = args[2] if len(args) == 3 and isinstance(args[2], dict) else {}
+            if (env.get("trigger") != "tool" or env.get("scope") != "personal"
+                    or env.get("acts_as") != viewer or env.get("acts_as_account") != account):
+                continue
+            owner = _run_owner(client, w.workflow_id)
+            if owner and (owner.get("subject") != viewer or owner.get("account_id") != account
+                          or owner.get("source") == "legacy-service"):
+                continue
+            if not owner and w.status not in ("ENQUEUED", "PENDING", "DELAYED"):
+                # Identity failures have no trusted checkpoint; expose status
+                # from the admitted envelope, but never the returned data.
+                output = {}
+            else:
+                output = w.output if owner and isinstance(w.output, dict) else {}
+            links, represented = [], set()
+            for item in series.touched_by(hub_dir, hub, w.workflow_id):
+                if not series.owned(hub_dir, item, viewer, account):
+                    continue
+                links.append(dict(title=item.title or item.key, url=series.latest_url(hub_dir, item)))
+                represented.add(item.id)
+            for art in artifacts.for_run(hub_dir, hub, w.workflow_id):
+                if art.series_id not in represented and art.owner == viewer and art.owner_account == account:
+                    links.append(dict(title=art.title or art.filename, url=artifacts.viewer_url(art.id, hub_dir)))
+            answer = output.get("refused") or output.get("answer")
+            rows.append(dict(id=w.workflow_id, report=title_for(w.name), status=w.status,
+                started=w.created_at, links=links,
+                answer=answer[:8000] if isinstance(answer, str) else None,
+                recovery="Try again. If it fails again, give this run reference to the builder."
+                    if w.status in ("ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED") else None))
         return rows
     finally:
         client.destroy()
@@ -479,7 +543,7 @@ def schedule_runs(hub_dir, schedule_id: str, *, limit: int = 10) -> list[dict]:
         for w in found:
             started = w.dequeued_at or w.created_at
             done = w.completed_at if w.status not in ("PENDING", "ENQUEUED", "DELAYED") else None
-            out.append(dict(status=w.status, started=started, completed=done,
+            out.append(dict(id=w.workflow_id, status=w.status, started=started, completed=done,
                             duration_ms=done - started if done and started else None))
         return out
     finally:
@@ -518,7 +582,7 @@ def _source_groups(hubs):
 
 
 def _query_source(url, members, *, name, run_id, statuses, start, end, limit,
-                  viewer=None) -> list[dict]:
+                  viewer=None, accounts=None) -> list[dict]:
     """Run one ``list_workflows`` against a single DBOS system DB (which may host
     several agents, on shared Postgres), mapping each row back to its hub key."""
     from dbos import DBOSClient
@@ -548,7 +612,8 @@ def _query_source(url, members, *, name, run_id, statuses, start, end, limit,
             hub_name = app_to_hub.get(w.application_name) or single
             if hub_name is not None:
                 owner = _run_owner(client, w.workflow_id)
-                rows.append(_run_row(hub_name, w, visible=may_see_results(owner, viewer),
+                rows.append(_run_row(hub_name, w, visible=may_see_results(
+                    owner, viewer, account=(accounts or {}).get(hub_name)),
                                      owner=owner))
         return rows
     finally:
@@ -581,6 +646,11 @@ def runs_across(
     of strictly-newer rows without pushing the boundary up), and only the one boundary
     timestamp's group is refetched — never the full history.
     """
+    from .personal import current_account
+
+    hubs = list(hubs)
+    accounts = {h.get("key") or Path(h["path"]).name.lower(): current_account(h["path"], viewer)
+                for h in hubs} if viewer else {}
     resolved = resolve_statuses(statuses)
     groups = _source_groups(hubs)
 
@@ -589,7 +659,7 @@ def runs_across(
         for url, members in groups.items():
             merged += _query_source(
                 url, members, name=name, run_id=run_id, statuses=resolved,
-                start=start, end=end, limit=None, viewer=viewer,
+                start=start, end=end, limit=None, viewer=viewer, accounts=accounts,
             )
         merged.sort(key=_order_key, reverse=True)
         return {"runs": merged, "has_more": False}
@@ -600,7 +670,7 @@ def runs_across(
     for url, members in groups.items():
         rows = _query_source(
             url, members, name=name, run_id=None, statuses=resolved,
-            start=start, end=end, limit=want, viewer=viewer,
+            start=start, end=end, limit=want, viewer=viewer, accounts=accounts,
         )
         phase1[url] = rows
         capped[url] = len(rows) >= want
@@ -630,7 +700,7 @@ def runs_across(
         if capped[url]:
             group = _query_source(
                 url, members, name=name, run_id=None, statuses=resolved,
-                start=b_iso, end=b_iso, limit=None, viewer=viewer,
+                start=b_iso, end=b_iso, limit=None, viewer=viewer, accounts=accounts,
             )
         else:
             group = [r for r in phase1[url] if (r["created"] or 0) == boundary]

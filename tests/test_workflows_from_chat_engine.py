@@ -62,6 +62,7 @@ _RUN = textwrap.dedent('''
     out["team"] = done(runtime.start("program_report", scheduled_at="2026-10-12T00:30:00+00:00"))
     out["mine"] = done(runtime.start_run("program_report", {
         "trigger": "tool", "scope": "personal", "acts_as": "meera@co.org", "started_by": "meera@co.org",
+        "acts_as_account": "id-meera@co.org",
         "inputs": {"program": "Samyama", "period": "month"}, "inputs_display": "Samyama, month"},
         workflow_id="tool-test-1"))
     out["refused"] = done(runtime.start_run("program_report", {
@@ -78,7 +79,32 @@ _RUN = textwrap.dedent('''
     out["history"] = {k: {"trigger": rows[k]["trigger"], "started_by": rows[k]["started_by"],
                           "inputs": rows[k]["inputs"], "run_as": rows[k]["run_as"]}
                       for k in ("tool-test-1",) if k in rows}
+    out["personal"] = observe.personal_runs(hub, "meera@co.org", "id-meera@co.org")
+    # Persist the exact handoff state a crash before queue admission leaves.
+    out["recover"] = {"schedule": s.id, "run": "ps-" + s.id + "-restart"}
+    personal._update(hub, s.id, last_run=out["recover"]["run"], last_status="dispatching")
     print("RESULT " + json.dumps(out), flush=True)
+    runtime.shutdown()
+''')
+
+_RECOVER = textwrap.dedent('''
+    import json, sys
+    from dbos import DBOS
+    from hubzoid.workflows import runtime, personal, observe
+    hub, sid, run_id = sys.argv[1:]
+    runtime.init(hub, hub_name="irs")
+    runtime.load_workflows(hub)
+    runtime.launch()
+    started = personal.fire_due(hub, "irs")
+    result = DBOS.retrieve_workflow(run_id).get_result()
+    # The same durable admission id is idempotent in the real engine too.
+    schedule = personal.get(hub, sid)
+    second = runtime.start_run(schedule.workflow,
+        personal.envelope(schedule, runtime._REGISTRY[schedule.workflow]),
+        workflow_id=run_id).get_result()
+    rows = [r for r in observe.schedule_runs(hub, sid) if r["id"] == run_id]
+    print("RESULT " + json.dumps({"started": started,
+          "same": result == second, "count": len(rows), "status": schedule.last_status}), flush=True)
     runtime.shutdown()
 ''')
 
@@ -109,3 +135,12 @@ def test_team_and_personal_runs_of_one_workflow(tmp_path):
     assert out["schedule"] == {"state": "active", "last": "updated"}
     assert out["history"]["tool-test-1"] == {"trigger": "tool", "started_by": "meera@co.org",
                                              "inputs": "Samyama, month", "run_as": "meera@co.org"}
+    assert [r["id"] for r in out["personal"]] == ["tool-test-1"]
+    assert out["personal"][0]["links"][0]["url"] == out["mine"]["url"]
+    recovered = subprocess.run([sys.executable, "-c", _RECOVER, str(hub),
+                                out["recover"]["schedule"], out["recover"]["run"]],
+                               env=env, capture_output=True, text=True, timeout=120)
+    line = next((l for l in recovered.stdout.splitlines() if l.startswith("RESULT ")), None)
+    assert line, recovered.stderr[-4000:]
+    assert json.loads(line[7:]) == {"started": [out["recover"]["run"]],
+                                   "same": True, "count": 1, "status": "no_change"}

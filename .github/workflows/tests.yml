@@ -4,7 +4,7 @@ name: tests
 # the fast Python tests on SQLite without Open WebUI, browsers, live models or
 # Docker, spread over two machines (.test_durations), and the web app's lint.
 # They hold no secrets and publish nothing. The slow and end-to-end tests run
-# when a release is published (ci.yml).
+# for labeled release candidates, manual checks and published releases (ci.yml).
 on:
   pull_request:
   push:

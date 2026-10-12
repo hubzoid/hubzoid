@@ -1,0 +1,13 @@
+# Labels for GitZoid's restricted capabilities in the Console.
+gitzoid:
+  label: GitZoid tools
+  description: Ask about pull requests, findings, code, history, security and repo profiles; draft rules.
+  sensitive: true
+gitzoid_manager:
+  label: GitZoid people data
+  description: Counts per person for the digest groups set in this person's gitzoid_groups attribute.
+  sensitive: true
+gitzoid_admin:
+  label: GitZoid rule approval
+  description: Approve or reject drafted team rules. Approval writes the rule file.
+  sensitive: true

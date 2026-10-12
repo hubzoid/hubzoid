@@ -104,13 +104,15 @@ export type Workflow = {
   title?: string;
   input_schema?: InputSchema | null;
 };
+export type InputProperty = {
+  type?: string; enum?: unknown[]; default?: unknown; description?: string;
+  anyOf?: InputProperty[]; hidden?: boolean; $ref?: string;
+};
 export type InputSchema = {
   type: "object";
-  properties: Record<string, {
-    type?: string; enum?: unknown[]; default?: unknown; description?: string;
-    anyOf?: { type?: string; enum?: unknown[] }[]; hidden?: boolean;
-  }>;
+  properties: Record<string, InputProperty>;
   required?: string[];
+  $defs?: Record<string, InputProperty>;
 };
 /** A schedule a person saved from chat. It runs as them. */
 export type PersonalSchedule = {
@@ -129,6 +131,8 @@ export type PersonalSchedule = {
   last_status: string | null;
   last_at: number | null;
   last_label: string;
+  last_run?: string | null;
+  recovery?: string | null;
   cost_30d: number;
 };
 /** The signed-in person's own schedules and reports, on every agent (`GET /my`). */
@@ -155,11 +159,12 @@ export type MyData = {
   agents: MyAgent[];
   schedules: MySchedule[];
   reports: MyReport[];
+  catalog?: { hub: string; workflow: string; title: string; schedulable: boolean; schema: InputSchema | null }[];
   /** Whether there are connections to see (one to connect, or one connected). */
   connections: boolean;
 };
 /** One run of a schedule: status and times only. */
-export type ScheduleRun = { status: string; started: number | null; completed: number | null; duration_ms: number | null };
+export type ScheduleRun = { id?: string; status: string; started: number | null; completed: number | null; duration_ms: number | null };
 /** One live report link: a team report or a person's own. */
 export type Report = {
   id: string;
@@ -405,7 +410,7 @@ export async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
-  method?: "GET" | "POST" | "DELETE",
+  method?: "GET" | "POST" | "PUT" | "DELETE",
   /** Another bridge's API in a gateway (an agent's `api`); this one by default. */
   base = "/portal/api",
 ): Promise<T> {
@@ -744,3 +749,9 @@ export type EvalRunStarted = {
   cases: string[];
   judge: boolean;
 };
+
+export type PersonalRun = {
+  id: string; report: string; status: string; started: number | null;
+  links: ScheduleLink[]; answer: string | null; recovery: string | null;
+};
+export type ScheduleEdit = { inputs: Record<string, unknown>; cadence: string; timezone: string; revision: number; schema: InputSchema | null };

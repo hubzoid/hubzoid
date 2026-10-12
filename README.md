@@ -6,7 +6,7 @@
 </p>
 
 <h3 align="center">One brain for your internal agents.</h3>
-<p align="center">Provide context once. Reuse it across workflows, chat, and the AI tools your team already uses.</p>
+<p align="center">Your knowledge. Your way of working. Useful across your assistants and your team.</p>
 <p align="center">
   <a href="https://hubzoid.com/docs">Documentation</a> ·
   <a href="https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md">Quickstart</a> ·
@@ -18,31 +18,24 @@
   <a href="https://github.com/hubzoid/hubzoid/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-0B0B0C" alt="Apache License 2.0"></a>
 </p>
 
-**Hubzoid is an open-source, self-hostable platform for internal AI agents.**
-Keep your team's knowledge, instructions, skills, and tools in a versionable
-folder. Use that shared Hub through chat, repeatable workflows, or your own
-assistant through MCP.
+**Hubzoid turns a folder of your knowledge, rules and tools into an agent you can
+use yourself and share with your team.** Ask it questions in chat, run repeatable
+workflows, or connect your own assistant through MCP.
 
-Start with a useful agent on your laptop. Give it the context and capabilities
-it needs, then share it with your team using accounts and scoped permissions.
+Start with one useful job: a stock check, a policy answer, or a weekly report.
+Keep the context and rules in files you can read, edit and version. Add teammates
+with access to the agents and capabilities they need.
 
 <p align="center">
   <img alt="Your agent folder becomes a shared Hub for chat, workflows and your assistant through MCP." src="https://raw.githubusercontent.com/hubzoid/hubzoid/72ac7bf1610c8a335b9b3ac3b536de8fdb6770f1/assets/shared-hub-light.svg" width="680">
 </p>
 
-## Start a hub
+## Get your first useful result
 
-Use **Python 3.11 or 3.12**. With [uv](https://docs.astral.sh/uv/):
+Use Claude Code or Codex with the setup prompt below, or run these commands
+yourself.
 
-```bash
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install hubzoid
-hubzoid init my-hub
-hubzoid run my-hub
-```
-
-Or with pip:
+Use **Python 3.11 or 3.12** in a virtual environment:
 
 ```bash
 python3.12 -m venv .venv
@@ -52,203 +45,152 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
-`hubzoid init` scaffolds an operations assistant for Kestrel & Oak, a
-fictional home-goods shop, with policy files, a stock export, a `stock_check`
-tool and three suggested prompts. It uses a signed-in Claude Code or Codex CLI
-when it finds one. Otherwise, in a terminal, it offers to save an OpenRouter,
-Anthropic or OpenAI key in `my-hub/.env`. See
-[providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md).
-`--template minimal` gives the small 1.0 starter instead.
+The web app opens at **http://127.0.0.1:3080**. Ask:
 
-`hubzoid run` serves the Hubzoid web app, file downloads and MCP on one port,
-prints one ready line with the address (`http://127.0.0.1:3080` by
-default) and opens it in your browser. Pick a suggested prompt, such as "What should we reorder today, and
-what could run out first?" Edit `my-hub/AGENTS.md` to make the hub yours.
+> What should we reorder, and what could run out first?
 
-If Hubzoid gave your team a useful agent, a ⭐ on [GitHub](https://github.com/hubzoid/hubzoid) helps others find it.
+The starter is an operations assistant for a **fictional home-goods shop**. It
+uses a stock export and saved policies to explain what needs attention. You can
+inspect the numbers and rules in `my-hub/`.
 
-Sign-in is off by default (**local mode**): you are the hub's owner and the
-port stays on your machine. The ready line also prints a command to connect
-Claude Code to the hub's tools and knowledge:
+`init` detects a signed-in Claude Code or Codex CLI. Otherwise it offers to save
+a model API key in the Hub's private `.env`. Chat needs model authentication;
+provider charges or subscription limits apply. [Choose a runtime →](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md)
 
-```bash
-claude mcp add --transport http <hub name> http://127.0.0.1:3080/mcp
+<details>
+<summary>Prefer to set up with Claude Code or Codex?</summary>
+
+Paste this into your coding assistant:
+
+```text
+Help me set up a local Hubzoid agent using the current quickstart:
+https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md
+
+Use a new folder and a Python 3.11 or 3.12 virtual environment.
+Help me choose an available runtime without pasting secrets into chat.
+Run the operations sample and show me one result from its stock data.
+Then help me adapt it to one task using material I choose.
+Show me proposed file changes before replacing sample content.
 ```
 
-Run `/mcp` in Claude Code and approve the connection in your browser (OAuth).
-See [hosted MCP](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md).
+Your coding assistant helps author the Hub. Its setup conversation is not
+shared Hub knowledge. Authoring, runtime selection and MCP access are separate.
 
-**Workflows on Python 3.12:** the workflow engine (DBOS, which runs markdown
-schedules and code workflows) needs SQLite 3.42 or newer, or PostgreSQL.
-Check with the same Python the hub uses:
-`python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
-`hubzoid doctor` reports it as `deps.sqlite`. Python 3.11 is not affected.
+</details>
 
-This branch's changes may be ahead of the package published on PyPI;
-[source installation](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
-tests the checked-out revision.
+Local mode is private to your machine. Turn on sign-in before sharing access.
+For Windows, uv, troubleshooting and source installation, see the
+[quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md).
 
-### Turn on sign-in for a team
+**Python 3.12 workflows need SQLite 3.42+ or PostgreSQL.** `hubzoid doctor my-hub`
+checks the environment. This checkout targets **1.3.1**; until it is published,
+`pip install hubzoid` installs the earlier release. Use the
+[source-install steps](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
+to try this revision. 1.3.0 will not be released.
 
-Before anyone else can reach the hub, turn sign-in on and create the first
-administrator:
+## Make it work your way
+
+Try a correction you can verify:
+
+1. Ask the sample: **“A customer opened a blender 40 days ago and wants to
+   return it. What can we offer?”** Its saved change-of-mind policy is 30 days.
+2. Ask Claude Code or Codex to change the **change-of-mind** window to 45 days
+   in `my-hub/knowledge/returns-policy.md`, keep the faulty-item rules unchanged,
+   and show you the diff. Or edit the file yourself.
+3. Restart the Hub and ask again. The answer should apply the saved 45-day
+   window and the policy's other conditions.
+
+Then replace the fictional policies and stock export with your own material.
+Only explicit Hub content is shared; a correction in chat alone does not become
+shared knowledge or automatic memory.
+[Learn to author a Hub →](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
+
+## One Hub, three ways to use it
+
+| You want to… | Use… |
+|---|---|
+| Ask about your work and get a useful answer | **Chat**, with your Hub's knowledge and permitted tools |
+| Repeat a report or check, with saved inputs and results | **Workflows**, on demand or on a schedule |
+| Bring the same capabilities into your own assistant | **MCP**, with your own access |
+
+In **1.3.1**, offered reports can run from chat and have personal schedules.
+**My workspace → Schedules & reports** shows available reports, recent results
+and your schedules. Edit inputs and timing, pause or stop. Schedules need the
+Hub running; email notices are off by default.
+[Reports, permissions and sharing →](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md)
+
+For Claude Code, use the connection command printed by `hubzoid run`, then open
+`/mcp` in Claude Code and approve the connection. Other clients have their own
+setup. [Connect your assistant →](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md)
+
+## Pick a starting point
+
+| Sample | What you can try | Create it |
+|---|---|---|
+| **Operations** | Stock decisions, supplier delays and customer returns from sample data and policies | `hubzoid init my-hub` |
+| **Watchtower** | A personal service report, an explicit rule correction and repeat runs; also a model-assisted incident check | `hubzoid init my-watchtower --template watchtower` |
+| **Guided tour** | Explore Hub tools, knowledge and skills | `hubzoid init my-tour --template demo` |
+| **GitZoid** | Review fictional pull requests against saved rules, then connect your own repos | `hubzoid init my-gitzoid --template gitzoid` |
+
+Each sample includes instructions. Watchtower's
+[Service snapshot walkthrough](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131)
+uses a model-free report; chat still uses your configured runtime.
+GitZoid starts in preview mode with fictional data; reviews still use your
+configured model. Its [setup guide](https://github.com/hubzoid/hubzoid/blob/main/hubzoid/templates/gitzoid/README.md)
+covers GitHub access, existing PRs, publishing and costs.
+For a small starting folder, use `--template minimal`.
+
+## Share with your team
+
+Turn on sign-in and set the public address in `my-hub/.env`, then create your
+first administrator:
+
+```dotenv
+HUBZOID_AUTH=true
+HUBZOID_PUBLIC_URL=https://hub.example.com
+```
 
 ```bash
-# in my-hub/.env
-HUBZOID_AUTH=true
-HUBZOID_PUBLIC_URL=https://hub.example.com   # the address people open
-
 hubzoid admin create you@example.com my-hub --owner
 ```
 
-`hubzoid admin create` prints a one-time sign-in link. Open it, set a
-password, and add teammates in the Admin Console (**People → Add user**), which
-gives you a link to share with each of them. People can also sign in with
-Google, Microsoft or a standard OpenID Connect provider. Without sign-in,
-`hubzoid run` refuses to listen on a network address. See
-[authentication](https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md)
-and [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md).
+Open the one-time sign-in link, set a password, and add teammates through
+**Admin Console → People**. Grant access to the agents and capabilities they
+need. Shared knowledge does not mean shared credentials or access to another
+person's private results.
 
-### Upgrading from 1.0
+For a public deployment, configure HTTPS and persistent storage, then restart.
+[Team setup](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md) ·
+[Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) ·
+[Backup and restore](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md)
 
-Hubzoid 1.1 replaces Open WebUI with its own web app and accounts. A 1.0.x
-deployment with sign-in on does not start until its accounts and chats are
-moved with `hubzoid migrate openwebui` (dry run first, then a backup), or until
-you keep Open WebUI as the chat app with `pip install "hubzoid[openwebui]"`
-and `HUBZOID_UI=openwebui`. Hosted MCP clients now connect with OAuth instead
-of Open WebUI API keys. Read
-[upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
-before you start.
+## Choose your interface
 
-From 1.1, Hubzoid 1.2 manages every MCP connector in the Console, in both chat
-UIs. Open WebUI's own MCP servers are no longer read, and connector tool names
-change on OpenAI Agents and Codex. See
-[upgrading to 1.2](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md#upgrading-to-12-mcp-connectors-in-the-console).
-
-## One hub, three ways to work
-
-| Experience | Use it for | Start here |
-|---|---|---|
-| **Chat** | Ask questions and take authorized actions using the hub's context, in the web app or other channels | [Sign-in and accounts](https://github.com/hubzoid/hubzoid/blob/main/docs/auth.md), [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md), [other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) |
-| **Workflows** | Run scheduled reports and checks, inspect their steps, and save the results | [Markdown tasks](https://github.com/hubzoid/hubzoid/blob/main/docs/schedule.md), [Python workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md), [reports and email](https://github.com/hubzoid/hubzoid/blob/main/docs/reports-and-email.md) |
-| **Your assistant through MCP** | Bring hub tools, knowledge, and skills into a supported personal assistant | [Connect an MCP client](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md) |
-
-Business data can stay in its source systems, connected through tools or MCP.
-Shared context does not mean shared credentials: conversation history, workflow
-state, and permissions remain distinct. Each integration has its own setup.
-
-## A hub is a folder
-
-```text
-my-hub/
-├── AGENTS.md        Main agent instructions
-├── knowledge/       Reference material
-├── skills/          Reusable instructions, loaded when needed
-├── agents/          Specialist agent definitions
-├── tools_local/     Python tool factories
-├── restricted/      Tools that require explicit permissions
-├── connectors/      External MCP connections
-├── schedule/        Markdown tasks
-├── workflows/       Python workflows and steps
-└── evals/           Behavioural checks
-```
-
-Only `AGENTS.md` is required for the hub structure. Runtime credentials and configuration still need to be set. Start small and add files when they become useful. [Author a hub →](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md)
-
-## Start with a useful job
-
-| Example | What it does | Try it |
-|---|---|---|
-| **AskHub** | Answer team questions from shared knowledge | [Company Q&A template](https://github.com/hubzoid/hubzoid/blob/main/templates/company-qna) |
-| **Daily Reports** | Prepare a recurring briefing from business inputs | [Morning briefing template](https://github.com/hubzoid/hubzoid/blob/main/templates/morning-briefing) |
-| **Watchtower** | Check bundled metrics against thresholds and explain exceptions | `hubzoid init watchtower --template watchtower` |
-
-Examples use sample data and placeholder integrations where stated. Read the
-example's instructions before connecting real systems or enabling schedules.
-[Browse all templates →](https://github.com/hubzoid/hubzoid/blob/main/templates/README.md)
-
-## Share it with your team
-
-- **Connect existing systems.** Add Python tools and MCP connections. Keep
-  credentials separate from agent-readable files. Administrators add remote
-  MCP servers in the Console: each person connects their own account (for
-  example their own Jira or Gmail), or agents use one company key. See
-  [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md).
-- **Control who can do what.** Grant agent access and restricted capabilities
-  to people in the Console. Hubzoid checks permissions before a
-  restricted tool runs.
-- **See what happened.** Inspect workflow runs, steps, usage, and activity.
-  Model cost estimates are guidance; your provider's bill is authoritative.
-- **Choose your runtime.** Use OpenAI Agents, Claude Agent SDK, or local Codex.
-  Provider and channel capabilities vary. See [providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md).
-- **Run it yourself.** Deploy one hub, or use `hubzoid gateway` to serve several
-  hubs behind one web app, where one sign-in covers every agent a person may
-  use. See [deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md).
-
-The **web app** at `/` is where people chat: conversations with history,
-search, archive and rename, replies that stream with their tool steps and
-reasoning, stop, edit and resend, regenerate with branches, attachments
-(picker, drag and drop, paste), code and tables, download links for files the
-agent makes, and read-only share links for signed-in colleagues. It has an
-account page, a connections page, light and dark themes, and works on a phone.
-Conversations are stored by Hubzoid in its operational database.
-
-The **Admin Console** at `/portal/` manages people, agent access,
-connectors and activity, and shows workflow runs and usage, with the
-same accounts. Administrators open it from **Admin Console** in the web app's
-account menu. For adding teammates, sign-in providers and permissions, see
-[administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md).
-
-## Try a worked example
-
-```bash
-# Guided chat tour
-hubzoid init guided-hub --template demo
-```
-
-For a small Python workflow:
-
-```bash
-hubzoid new workflow first-check my-hub
-hubzoid schedule run my-hub first_check
-```
-
-The scaffold runs on demand and needs no model or external service. Add a schedule only when you want unattended execution. The Console inspects runs; CLI commands operate them.
-
-## Documentation
-
-The [website documentation](https://hubzoid.com/docs) is the reading and discovery surface. The guides in this checkout describe this revision and remain available when working offline or reviewing a change.
-
-| Task | Guide in this repository |
+| Interface | Install and select |
 |---|---|
-| Install and get a first useful reply | [Quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md) |
-| Choose models and credentials | [Providers](https://github.com/hubzoid/hubzoid/blob/main/docs/providers.md) |
-| Build tools, knowledge, and skills | [Hub authoring](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md) |
-| Set up people and capabilities | [Administration](https://github.com/hubzoid/hubzoid/blob/main/docs/ADMINISTRATION.md), [access management](https://github.com/hubzoid/hubzoid/blob/main/docs/access-management.md) |
-| Automate and inspect work | [Markdown tasks](https://github.com/hubzoid/hubzoid/blob/main/docs/schedule.md), [Python workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md) |
-| Connect an assistant | [MCP server](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp-server.md) |
-| Deploy, upgrade, and recover | [Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md), [upgrading](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md), [backup](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md) |
-| Test behaviour and observe calls | [Evals](https://github.com/hubzoid/hubzoid/blob/main/docs/evals.md), [observability](https://github.com/hubzoid/hubzoid/blob/main/docs/OBSERVABILITY.md) |
+| **Hubzoid web app — default** | `pip install hubzoid` includes chat and Console. No separate UI package or Node installation is needed. |
+| **Open WebUI — optional compatibility mode** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
 
-[Browse all guides →](https://github.com/hubzoid/hubzoid/blob/main/docs/README.md)
+The default app is built with assistant-ui and bundled with Hubzoid. When
+upgrading an existing deployment, read the [upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
+first, especially if moving from Open WebUI.
 
-## Contribute
+## Go further
 
-Read [CONTRIBUTING.md](https://github.com/hubzoid/hubzoid/blob/main/CONTRIBUTING.md) and the [product direction](https://github.com/hubzoid/hubzoid/blob/main/docs/PRODUCT_CONTEXT.md). Propose non-trivial changes as text in `proposals/` before large implementations. Keep integration and maintenance costs low; preserve the hub-folder contract and runtime neutrality.
+| Next step | Guide |
+|---|---|
+| Add knowledge, skills, tools or specialist agents | [Hub authoring](https://github.com/hubzoid/hubzoid/blob/main/docs/authoring-a-hub.md) |
+| Connect business systems | [MCP connectors](https://github.com/hubzoid/hubzoid/blob/main/docs/mcp.md) |
+| Write repeatable work | [Python workflows](https://github.com/hubzoid/hubzoid/blob/main/docs/workflows.md), [Markdown tasks](https://github.com/hubzoid/hubzoid/blob/main/docs/schedule.md) |
+| Check answer quality and inspect runs | [Evals](https://github.com/hubzoid/hubzoid/blob/main/docs/evals.md), [observability](https://github.com/hubzoid/hubzoid/blob/main/docs/OBSERVABILITY.md) |
+| Use Slack or other channels | [Slack](https://github.com/hubzoid/hubzoid/blob/main/docs/slack.md), [other channels](https://github.com/hubzoid/hubzoid/blob/main/docs/inbound-surfaces.md) |
 
-```bash
-pip install -e '.[dev]'
-pytest
-```
+[All guides](https://github.com/hubzoid/hubzoid/blob/main/docs/README.md) ·
+[Website documentation](https://hubzoid.com/docs) ·
+[Release notes](https://github.com/hubzoid/hubzoid/blob/main/CHANGELOG.md)
 
-Real-provider tests are separate and skip without credentials. Changes to the
-web app or the Console also need their build and browser checks (`portal/`).
-Pull requests and pushes to `main` run the fast checks. The full validation
-runs when a GitHub release is published. See
-[contributing](https://github.com/hubzoid/hubzoid/blob/main/CONTRIBUTING.md) and [publishing a release](https://github.com/hubzoid/hubzoid/blob/main/docs/RELEASING.md).
-
-## License and help
-
-Hubzoid product code, including team controls, is **Apache-2.0 licensed**. Dependencies, optional services, fonts, and brand assets retain their own terms. See [LICENSE](https://github.com/hubzoid/hubzoid/blob/main/LICENSE) and [LICENSING.md](https://github.com/hubzoid/hubzoid/blob/main/LICENSING.md).
-
-Need help building or operating your team's agent? [Implementation assistance](https://hubzoid.com/enterprise) uses the same open-source product.
+Hubzoid is **Apache-2.0**, including team controls. Dependencies and brand assets
+retain their own terms. [Licensing](https://github.com/hubzoid/hubzoid/blob/main/LICENSING.md).
+To contribute, start with the [contributing guide](https://github.com/hubzoid/hubzoid/blob/main/CONTRIBUTING.md).
+Need help with your company's agent? [Build with us](https://hubzoid.com/enterprise)
+uses the same open-source product.

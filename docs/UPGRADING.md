@@ -7,8 +7,22 @@
 
 ## Upgrading to 1.3: workflows from chat
 
-Nothing to change. The report features are off until a workflow opts in
-(`inputs=`, `as_tool=`, `schedulable=`, `key=` with `audience="domain"`) and an
+Install **1.3.1** once published; 1.3.0 will not be released. Existing Hub folders need no new
+required fields. Back up before upgrading (`hubzoid backup <hub> -o state.tar.gz`).
+In the environment that runs your deployment, install `pip install -U 'hubzoid==1.3.1'`
+(retain `[openwebui]` if you use that extra) and restart the gateway and every bridge so the bundled
+Console and runtime agree. If you tried pre-release main, ask again for any
+pending confirmations. New chat proposals bind to the account and chat that
+requested them; confirm in that same conversation within ten minutes.
+
+**GitZoid is included as a new template.** Existing Hubs do not receive template
+updates automatically. If you tried an earlier GitZoid checkout, back up its
+Hub and state, compare the new template, and preserve your settings, approved
+rules and secrets. Start in preview mode and run `setup_check` before enabling
+GitHub publishing. See the [sample guide](../hubzoid/templates/gitzoid/README.md).
+
+No Hub-file migration is required. The report features are off until a workflow opts in
+(`inputs=`, `as_tool=`, `schedulable=`, and optionally `key=` or `audience="domain"`) and an
 admin grants the new capabilities. These reach every hub:
 
 - **New tables** for report series, personal schedules and proposals. They are
@@ -30,6 +44,12 @@ admin grants the new capabilities. These reach every hub:
 
 Company links need company sign-in and three settings; see
 [Company links](reports-and-email.md#company-links).
+
+After restarting, run a permitted report, open its result, and check a personal
+schedule in **My workspace → Schedules & reports**. Changing the audience or
+named readers creates a new copy even when its contents are unchanged; old
+copies retain their access. Revoke or delete old copies separately if needed.
+To roll back, restore the backup and reinstall your previous package version.
 
 ## Upgrading to 1.2.2: a gateway at more than one address
 

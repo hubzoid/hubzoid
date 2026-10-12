@@ -343,12 +343,24 @@ idempotency and code changes. For operators:
   `HUBZOID_WORKFLOW_USER`, else the setup owner. `hubzoid schedule list` shows
   which. Grant that account the tool permissions it needs
   ([workflow-identity.md](workflow-identity.md)).
-- An agent's **Runs & schedules** tab lists every
-  run with its steps, result and error. They are read only. Run, pause, resume
-  and cancel with `hubzoid schedule` on the server.
+- An agent's **Runs & schedules** tab lists runs and steps, with controls gated
+  by the viewer's workflow permissions. Personal results belong to the account
+  that ran them; administrator access alone does not reveal their contents.
+  The `hubzoid schedule` commands also operate workflows on the server.
 - DBOS holds the execution history. Hubzoid keeps no second run database.
 - Before a code change or upgrade, drain queued runs. Runs left from older code
   are cancelled at the next start (see [workflows.md](workflows.md)).
+
+### Personal reports and schedules (1.3.1)
+
+Grant **Use this agent**, the specific **Run <report>** capability, and optionally
+**Schedule reports for themselves**. The workflow must opt into chat execution
+and personal scheduling. A person can then discover reports, find their recent
+results, and edit inputs/timing or pause/stop their own schedules under **My
+workspace → Schedules & reports**, without workflow administration rights.
+Administrators can inspect schedule status and pause or stop another person's
+schedule; that does not grant access to its report contents. Email notices need
+explicit opt-in. See [reports and email](reports-and-email.md).
 
 ## Troubleshooting
 

@@ -23,7 +23,8 @@ CAUSES = {
     "access": "access changed",
     "inputs": "inputs changed",
     "removed": "the workflow was removed",
-    "error": "it stopped with an error (details are in the Console)",
+    "error": "it stopped with an error",
+    "dispatch": "it could not be queued",
 }
 
 

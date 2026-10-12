@@ -1,0 +1,12 @@
+number: 102
+title: Add an order export for finance
+author: lee
+created_at: "2026-10-11T10:20:00Z"
+updated_at: "2026-10-11T10:20:00Z"
+branch: lee/finance-export
+requested_reviewers: [dev-ana]
+body: |
+  Finance asked for a CSV of last month's orders for the VAT return. Adds
+  /orders/admin/export?since=YYYY-MM-DD.
+
+  Fixes #42

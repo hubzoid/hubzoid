@@ -11,6 +11,8 @@ testing an unreleased branch.
 | Understand the direction | [Product context](PRODUCT_CONTEXT.md) |
 | Invite a team and grant capabilities | [Administration](ADMINISTRATION.md), [authentication](auth.md), [access](access-management.md) |
 | Build recurring work | [Markdown tasks](schedule.md), [Python workflows](workflows.md) |
+| Run and manage personal reports | [Reports, sharing and email](reports-and-email.md#personal-workspace-in-131), [Watchtower walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131) |
+| Try PR reviews and engineering reports | [GitZoid sample and GitHub setup](../hubzoid/templates/gitzoid/README.md) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |
 | Operate and recover | [Deployment](DEPLOYING.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |

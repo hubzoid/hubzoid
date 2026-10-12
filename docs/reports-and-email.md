@@ -163,7 +163,10 @@ A `key` gives a report one link that always shows its newest copy.
 - **Unchanged copies store nothing.** When the file, or `digest=` (a short
   hash of the data behind it, so a page with a timestamp still counts as the
   same), matches the newest copy, the publish returns that copy with
-  `"unchanged": true`.
+  `"unchanged": true`. For team reports this also requires the same audience
+  and named reader accounts. A changed sharing policy creates a new copy even
+  when its content is unchanged. Historical copies retain their existing access;
+  changing the newest report does not revoke previously shared copies.
 - **Pages that stop.** When a scheduled team run doesn't publish a key it
   published before (an event closed), that page says "No longer updating" and
   keeps its last copy.
@@ -298,3 +301,35 @@ it, and email me a link.
 - **Limits.** A run can send at most 5 emails.
 - **Existing tasks.** Tasks without these keys are offered nothing new.
 - **Runtimes.** Both tools behave the same on every runtime.
+
+
+## Personal workspace in 1.3.1
+
+**My workspace → Schedules & reports** lists reports your account can run,
+recent one-off requests, your saved schedules and your live report links. Open
+chat from a report card and use its suggested request. A long run keeps going
+when chat stops waiting: ask “is it ready?” or use `my_reports` with the full
+run reference. That lookup requires ownership; workflow-administration access
+is not needed. The recent list is bounded; use an exact run reference for older
+work. Answers and links belong to the original account, not a replacement
+account with the same email.
+
+Choose a schedule's name with a mouse or keyboard to see its last runs and run
+references. **Edit** changes its saved inputs, cadence and time zone. Changes
+apply to future runs; a run in progress keeps its original inputs. Editing
+preserves pauses, including an administrator's pause. A stale edit is refused
+so it cannot overwrite a newer change. In chat, `change_schedule` can propose
+replacement `inputs` as well as timing; review and confirm in the next message.
+Confirm in the same conversation within ten minutes. The tools can recover a
+pending proposal from earlier turns of that chat if its code is missing from
+history. Recovery does not save or run anything and never substitutes for your
+consent. Standalone MCP calls without a chat ID must retain the returned code.
+
+The visible page refreshes every ten seconds and when you return to it. Pause,
+resume and edit remain visible on narrow screens. Failures show a safe recovery
+suggestion and a run reference to give the builder; raw exception data is not
+exposed in the personal list. Email is off by default and needs both the hub's
+opt-in and working delivery configuration.
+
+For a runnable example with your own data and an explicitly saved correction,
+see the [Watchtower Service snapshot walkthrough](../hubzoid/templates/watchtower/README.md#run-your-own-report-from-chat-131).

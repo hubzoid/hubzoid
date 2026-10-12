@@ -1,0 +1,46 @@
+{
+  "id": "GHSA-8q59-q68h-6hv4",
+  "summary": "Improper Input Validation in PyYAML",
+  "aliases": [
+    "CVE-2020-14343",
+    "PYSEC-2021-142"
+  ],
+  "modified": "2026-02-04T03:33:10.792778Z",
+  "published": "2021-03-25T21:26:26Z",
+  "details": "A vulnerability was discovered in the PyYAML library in versions before 5.4, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full_load method or with the FullLoader loader. Applications that use the library to process untrusted input may be vulnerable to this flaw. This flaw allows an attacker to execute arbitrary code on the system by abusing the python/object/new constructor. This flaw is due to an incomplete fix for CVE-2020-1747.",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    },
+    {
+      "type": "CVSS_V4",
+      "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+    }
+  ],
+  "database_specific": {
+    "severity": "CRITICAL"
+  },
+  "affected": [
+    {
+      "package": {
+        "name": "pyyaml",
+        "ecosystem": "PyPI",
+        "purl": "pkg:pypi/pyyaml"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "5.4"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

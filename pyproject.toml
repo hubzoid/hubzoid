@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "1.3.0"
+version = "1.3.1"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -141,9 +141,8 @@ hubzoid = ["*.pyc", "**/__pycache__/*"]
 testpaths = ["tests"]
 # Fast by default; CI and release checks run everything with `-m ""`.
 addopts = "-m 'not (slow or heavy or e2e or e2e_llm or e2e_ui or e2e_browser)'"
-# No test takes a minute. A test still running after two is stopped and
-# reported as skipped (tests/conftest.py), so a hang never blocks CI; only real
-# failures do.
+# A test still running after two minutes fails through pytest-timeout.
+# Critical timeouts and excluded tests must never count as validation passes.
 timeout = 120
 timeout_method = "signal"
 markers = [

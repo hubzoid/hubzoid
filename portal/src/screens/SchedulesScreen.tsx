@@ -6,6 +6,9 @@ import {
   Drawer,
   Dropdown,
   Empty,
+  Form,
+  Grid,
+  Input,
   List,
   Modal,
   Segmented,
@@ -28,7 +31,11 @@ import {
   type PersonalSchedule,
   type Report,
   type ScheduleRun,
+  type ScheduleEdit,
+  type PersonalRun,
 } from "../api";
+import { inputField } from "../components/WorkflowInputs";
+import { useVisibleRefresh } from "../hooks/useVisibleRefresh";
 import { useData } from "../hooks/useData";
 import { useHashQuery } from "../hooks/useRoute";
 import { InfoHelp as Help, LoadState, PageHeader, RunStatusTag, When } from "../components/common";
@@ -84,6 +91,8 @@ export function SchedulesScreen({ admin, hubs }: { admin: boolean; hubs?: Hub[] 
 
 function Mine() {
   const data = useData<MyData>("/my");
+  const [editing, setEditing] = useState<Row | null>(null);
+  useVisibleRefresh(data.reload, data.refreshing || data.loading);
   if (!data.data) return <LoadState error={data.error} retry={data.reload} />;
   const { agents, schedules, reports } = data.data;
   const api = (hub: string) => agents.find((a) => a.key === hub)?.api;
@@ -100,16 +109,23 @@ function Mine() {
   };
   return (
     <div className="panel">
+      <Space wrap><Button onClick={data.reload} loading={data.refreshing}>Refresh</Button>
+        <Text type="secondary">Results appear here and in chat. Email is sent only when enabled by the hub.</Text></Space>
+      <ReportCatalog catalog={data.data.catalog ?? []} agents={agents} />
+      <RecentRuns agents={agents} />
       <Section title="Schedules" help="Reports the agent runs for you, as you. Make new ones in chat.">
         <SchedulesTable
           rows={schedules}
           mine
+          edit={setEditing}
           agentName={agents.length > 1 ? name : undefined}
           act={act}
           runsPath={(s) => `/my/schedules/${encodeURIComponent(s.id)}/runs${query({ hub: s.hub })}`}
-          empty="Nothing scheduled yet. Ask in chat, for example “send me this report every Monday at 9”."
+          empty="Nothing scheduled yet. Ask in chat, for example “run this report for me every Monday at 9”."
         />
       </Section>
+      {editing && <ScheduleEditor key={editing.id} row={editing} api={api(editing.hub)}
+        close={() => setEditing(null)} saved={() => { setEditing(null); data.reload(); }} />}
       {reports.length > 0 && (
         <Section title="Reports" help="Your own copies. Each link always shows the newest one.">
           <Table
@@ -173,6 +189,7 @@ function SchedulesTable({
   act,
   runsPath,
   empty,
+  edit,
 }: {
   rows: Row[];
   mine: boolean;
@@ -180,13 +197,25 @@ function SchedulesTable({
   act: Act;
   runsPath: (s: Row) => string;
   empty: string;
+  edit?: (row: Row) => void;
 }) {
   // By id, so the drawer shows the row as it is after each reload.
   const [openId, setOpenId] = useState<string | null>(null);
   const open = rows.find((r) => r.id === openId) ?? null;
+  const screens = Grid.useBreakpoint();
   return (
     <>
-      <Table<Row>
+      {!screens.md ? <List dataSource={rows} locale={{ emptyText: <Empty description={empty} /> }}
+        renderItem={(s) => <List.Item><Space direction="vertical" style={{ width: "100%" }}>
+          <Button type="link" style={{ padding: 0, whiteSpace: "normal", height: "auto" }} onClick={() => setOpenId(s.id)}>{s.name}</Button>
+          <Tag color={STATE_TAG[s.state]}>{s.state_label}</Tag>
+          {s.owner && <Text className="identity">{s.owner}</Text>}
+          {agentName && <Text type="secondary">{agentName(s.hub)}</Text>}
+          {s.next_fire && <Text>Next: <When value={at(s.next_fire)} /></Text>}
+          <Text>{s.when} ({s.timezone})</Text><Text>{s.last_label}</Text>
+          {s.reports?.map((r) => <a key={r.url} href={r.url}>{r.title} ↗</a>)}
+          <Actions s={s} mine={mine} act={act} edit={edit} />
+        </Space></List.Item>} /> : <Table<Row>
         rowKey="id"
         size="middle"
         dataSource={rows}
@@ -200,7 +229,7 @@ function SchedulesTable({
           ...(agentName ? [{ title: "Agent", key: "agent", render: (_: unknown, s: Row) => agentName(s.hub) }] : []),
           {
             title: "Schedule", key: "name",
-            render: (_, s) => <><div>{s.name}</div><Tag color={STATE_TAG[s.state] ?? "default"}>{s.state_label}</Tag></>,
+            render: (_, s) => <><Button type="link" style={{ padding: 0 }} onClick={(e) => { e.stopPropagation(); setOpenId(s.id); }}>{s.name}</Button><div /><Tag color={STATE_TAG[s.state] ?? "default"}>{s.state_label}</Tag></>,
           },
           {
             title: "Report", key: "report",
@@ -224,17 +253,17 @@ function SchedulesTable({
             title: <span style={{ whiteSpace: "nowrap" }}>30-day cost</span>, key: "cost",
             render: (_: unknown, s: Row) => <Tooltip title="Model cost of this schedule's runs in the last 30 days."><Text>${(s.cost_30d ?? 0).toFixed(2)}</Text></Tooltip>,
           }]),
-          { title: "", key: "acts", align: "right", render: (_, s) => <Actions s={s} mine={mine} act={act} /> },
+          { title: "", key: "acts", align: "right", render: (_, s) => <Actions s={s} mine={mine} act={act} edit={edit} /> },
         ]}
-      />
-      <ScheduleDrawer row={open} close={() => setOpenId(null)} runsPath={runsPath} mine={mine} act={act} />
+      />}
+      <ScheduleDrawer edit={edit} row={open} close={() => setOpenId(null)} runsPath={runsPath} mine={mine} act={act} />
     </>
   );
 }
 
 /** Pause or Resume, and a menu with Run now (own schedules) and Stop. An
  *  admin's pause is theirs to lift; the owner sees it but can't. */
-function Actions({ s, mine, act }: { s: Row; mine: boolean; act: Act }) {
+function Actions({ s, mine, act, edit }: { s: Row; mine: boolean; act: Act; edit?: (row: Row) => void }) {
   const canResume = s.state === "paused" && (mine ? !adminPaused(s) : adminPaused(s));
   const more = [
     ...(mine && !adminPaused(s) ? [{ key: "run_now", label: "Run now" }] : []),
@@ -242,6 +271,7 @@ function Actions({ s, mine, act }: { s: Row; mine: boolean; act: Act }) {
   ];
   return (
     <Space size={6} onClick={(e) => e.stopPropagation()}>
+      {edit && <Button size="small" onClick={() => edit(s)}>Edit</Button>}
       {live(s) && <Button size="small" icon={<Pause size={14} />} onClick={() => act(s, "pause")}>Pause</Button>}
       {s.state === "paused" && (
         <Tooltip title={canResume ? undefined : mine ? "Only an admin can resume it." : "Only its owner can resume it."}>
@@ -261,7 +291,9 @@ function ScheduleDrawer({
   runsPath,
   mine,
   act,
+  edit,
 }: {
+  edit?: (row: Row) => void;
   row: Row | null;
   close: () => void;
   runsPath: (s: Row) => string;
@@ -269,9 +301,10 @@ function ScheduleDrawer({
   act: Act;
 }) {
   const runs = useData<{ runs: ScheduleRun[] }>(row ? runsPath(row) : null);
+  useVisibleRefresh(runs.reload, runs.refreshing || runs.loading, !!row);
   return (
     <Drawer open={!!row} onClose={close} size={460} title={row?.name} destroyOnHidden
-      extra={row && <Actions s={row} mine={mine} act={async (s, a) => { await act(s, a); if (a === "stop") close(); }} />}>
+      extra={row && <Actions s={row} mine={mine} edit={edit} act={async (s, a) => { await act(s, a); if (a === "stop") close(); }} />}>
       {row && (
         <>
           <Descriptions column={1} size="small" items={[
@@ -284,6 +317,8 @@ function ScheduleDrawer({
             { key: "state", label: "State", children: <Tag color={STATE_TAG[row.state] ?? "default"}>{row.state_label}</Tag> },
             { key: "next", label: "Next run", children: row.next_fire ? <When value={at(row.next_fire)} /> : "—" },
           ]} />
+          {row.recovery && <Alert type="warning" showIcon message={row.recovery} />}
+          {row.last_run && <div><Text type="secondary">Run reference: </Text><Text copyable style={{ overflowWrap: "anywhere" }}>{row.last_run}</Text></div>}
           <Title level={5} style={{ marginTop: 20 }}>Latest runs</Title>
           {runs.data ? (
             <List
@@ -294,6 +329,7 @@ function ScheduleDrawer({
                 <List.Item>
                   <Space wrap>
                     <RunStatusTag status={r.status} />
+                    {r.id && <Text copyable>{r.id}</Text>}
                     {r.started ? <When value={new Date(r.started).toISOString()} /> : "—"}
                     {r.duration_ms != null && <Text type="secondary">{formatDuration(r.duration_ms)}</Text>}
                   </Space>
@@ -331,6 +367,7 @@ function Everyone({ hubs, hub, setHub }: { hubs: Hub[]; hub?: string; setHub: (h
 
 function PeopleSchedules({ hub }: { hub: Hub }) {
   const data = useData<{ schedules: PersonalSchedule[] }>("/schedules" + query({ hub: hub.key }));
+  useVisibleRefresh(data.reload, data.refreshing || data.loading);
   const act: Act = async (s, action) => {
     if (action === "stop" && !(await confirm(`Stop ${s.owner}'s schedule "${s.name}"?`,
       "They'll see that an admin stopped it. Its live link keeps the last copy.", "Stop schedule"))) return;
@@ -453,4 +490,67 @@ export function MyAgents({ agents }: { agents: MyAgent[] }) {
       </div>
     </>
   );
+}
+
+
+function ReportCatalog({ catalog, agents }: { catalog: NonNullable<MyData["catalog"]>; agents: MyAgent[] }) {
+  if (!catalog.length) return null;
+  return <Section title="Reports you can run" help="Reports this agent offers with your current access. Open chat and use the suggested request.">
+    <List dataSource={catalog} renderItem={(r) => <List.Item>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <Text strong>{r.title}</Text><Text type="secondary">{agents.find((a) => a.key === r.hub)?.name} · {r.schedulable ? "Run once or schedule" : "Run once"}</Text>
+        <Text copyable={{ text: `Run ${r.workflow} for me` }}>Ask: Run {r.workflow} for me</Text>
+        {r.schema && <Text type="secondary">Inputs: {Object.keys(r.schema.properties).join(", ") || "none"}</Text>}
+        <Button href={agents.find((a) => a.key === r.hub)?.chat ?? "/"}>Open chat ↗</Button>
+      </Space>
+    </List.Item>} />
+  </Section>;
+}
+
+function RecentRuns({ agents }: { agents: MyAgent[] }) {
+  const [selected, setSelected] = useState<string>();
+  const usable = agents.filter((a) => a.chat);
+  const agent = usable.find((a) => a.key === selected) ?? usable[0];
+  const data = useData<{ runs: PersonalRun[] }>(agent ? `/my/runs${query({ hub: agent.key })}` : null);
+  useVisibleRefresh(data.reload, data.refreshing || data.loading, !!agent);
+  if (!agent) return null;
+  return <Section title="Recent requests" help="Your recent one-off reports and answers, including work that continued after chat stopped waiting.">
+    {usable.length > 1 && <Select aria-label="Recent requests agent" value={agent.key} onChange={setSelected}
+      options={usable.map((a) => ({ value: a.key, label: a.name }))} />}
+    {data.data ? <List dataSource={data.data.runs} locale={{ emptyText: "No recent requests. Choose a report above to get started." }}
+      renderItem={(r) => <List.Item><Space direction="vertical" style={{ width: "100%" }}>
+        <Space wrap><Text strong>{r.report}</Text><RunStatusTag status={r.status} /></Space>
+        {r.links.map((link) => <a key={link.url} href={link.url}>{link.title} ↗</a>)}
+        {r.answer && <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }} ellipsis={{ rows: 3, expandable: true }}>{r.answer}</Typography.Paragraph>}
+        {r.recovery && <Text type="warning">{r.recovery}</Text>}
+        <Text type="secondary" copyable style={{ overflowWrap: "anywhere" }}>{r.id}</Text>
+      </Space></List.Item>} /> : <LoadState error={data.error} retry={data.reload} />}
+  </Section>;
+}
+
+function ScheduleEditor({ row, api, close, saved }: { row: Row; api?: string; close: () => void; saved: () => void }) {
+  const data = useData<ScheduleEdit>(`/my/schedules/${encodeURIComponent(row.id)}${query({ hub: row.hub })}`);
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
+    setSaving(true);
+    try {
+      await request(`/my/schedules/${encodeURIComponent(row.id)}`, { ...values, hub: row.hub,
+        inputs: data.data?.schema ? values.inputs ?? {} : data.data?.inputs ?? {}, revision: data.data?.revision }, undefined, "PUT", api);
+      message.success("Schedule updated. Paused schedules stay paused."); saved();
+    } catch (error) { message.error(error instanceof Error ? error.message : "Could not save."); }
+    finally { setSaving(false); }
+  };
+  return <Modal open title={`Edit ${row.name}`} onCancel={close} onOk={save} okText="Save changes"
+    confirmLoading={saving} okButtonProps={{ disabled: !data.data }} destroyOnHidden>
+    {data.data ? <Form form={form} layout="vertical" initialValues={data.data}>
+      <Form.Item name="cadence" label="When" rules={[{ required: true }]} extra="For example: every monday at 09:00, daily at 18:00, every 2 hours"><Input /></Form.Item>
+      <Form.Item name="timezone" label="Time zone" rules={[{ required: true }]} extra="For example: Asia/Kolkata"><Input /></Form.Item>
+      {data.data.schema ? Object.entries(data.data.schema.properties).map(([name, prop]) => inputField(name, prop, data.data!.schema!.required?.includes(name) ?? false, "inputs", data.data!.schema!.$defs))
+        : <Alert type="info" message="Input fields are unavailable until the agent starts. Existing inputs will be kept." />}
+      <Text type="secondary">Changes apply to future runs. A run already in progress keeps its original inputs.</Text>
+    </Form> : <LoadState error={data.error} retry={data.reload} />}
+  </Modal>;
 }

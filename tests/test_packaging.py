@@ -69,7 +69,7 @@ def test_package_data_covers_templates_migrations_and_the_web_app():
                 "migrations/operational/versions/0009_accounts.py",
                 "migrations/operational/script.py.mako"):
         assert (PKG / rel).resolve() in data, rel
-    for name in ("operations", "minimal", "demo", "watchtower"):
+    for name in ("operations", "minimal", "demo", "watchtower", "gitzoid"):
         tpl = PKG / "templates" / name
         assert all(p.resolve() in data for p in tpl.rglob("*") if p.is_file()
                    and "__pycache__" not in p.parts and p.suffix != ".pyc"), name

@@ -1793,13 +1793,16 @@ function step(name) {
     state.role = "org";
 
     // ---- ordinary user -----------------------------------------------------------------------
-    step("An ordinary user is turned away without seeing any administration UI");
+    step("An ordinary user sees their workspace without administration controls");
     state.role = "user";
     await page.reload(); // fresh session as an ordinary (non-admin) user
     await go("");
-    await page.getByText("Console access is not enabled for this account").waitFor();
-    assert.equal(await page.getByRole("link", { name: "Agents" }).count(), 0);
-    await page.getByRole("link", { name: "Go to the chat app" }).waitFor();
+    await page.getByText("My workspace", { exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Schedules & reports", exact: true }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "People", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: "Activity", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Add user", exact: true }).count(), 0);
+    await page.getByRole("link", { name: "Back to chat" }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Sign in", exact: true }).count(), 0, "a 403 is not a sign-in problem");
 
     // ---- OWUI navigation link reacts to SPA login/logout --------------------------------

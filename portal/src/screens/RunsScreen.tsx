@@ -1,3 +1,4 @@
+import { inputField } from "../components/WorkflowInputs";
 import { useState } from "react";
 import {
   Alert,
@@ -7,12 +8,8 @@ import {
   Descriptions,
   Empty,
   Form,
-  Input,
-  InputNumber,
   Modal,
-  Select,
   Space,
-  Switch,
   Table,
   Tag,
   Typography,
@@ -24,7 +21,6 @@ import {
   query,
   request,
   type Hub,
-  type InputSchema,
   type Run,
   type Webhook,
   type Workflow,
@@ -263,31 +259,6 @@ function WorkflowList({ hub }: { hub: Hub }) {
   );
 }
 
-/** One form field per input, from the workflow's published schema. */
-function inputField(name: string, prop: InputSchema["properties"][string], required: boolean) {
-  const choices = prop.enum ?? prop.anyOf?.find((a) => a.enum)?.enum;
-  const kind = prop.type ?? prop.anyOf?.find((a) => a.type && a.type !== "null")?.type;
-  const label = name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
-  const control = choices ? (
-    <Select allowClear={!required} options={choices.map((c) => ({ value: c as string, label: String(c) }))} />
-  ) : kind === "integer" || kind === "number" ? (
-    <InputNumber style={{ width: "100%" }} />
-  ) : kind === "boolean" ? (
-    <Switch />
-  ) : prop.hidden ? (
-    <Input.Password autoComplete="off" />
-  ) : (
-    <Input />
-  );
-  return (
-    <Form.Item key={name} name={name} label={label} tooltip={prop.description} initialValue={prop.default as never}
-      valuePropName={kind === "boolean" ? "checked" : "value"}
-      rules={required ? [{ required: true, message: `${label} is required.` }] : []}>
-      {control}
-    </Form.Item>
-  );
-}
-
 function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -322,7 +293,7 @@ function RunNow({ hub, workflow }: { hub: Hub; workflow: Workflow }) {
         </Paragraph>
         <Form form={form} layout="vertical">
           {schema && Object.entries(schema.properties).map(([name, prop]) =>
-            inputField(name, prop, (schema.required ?? []).includes(name)))}
+            inputField(name, prop, (schema.required ?? []).includes(name), undefined, schema.$defs))}
         </Form>
       </Modal>
     </>

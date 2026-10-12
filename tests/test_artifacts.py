@@ -514,3 +514,22 @@ def test_report_page_labels_people_and_never_stays_on_loading():
     assert "Link not available" in doc and "Artifact not available" in doc   # terminal headings
     assert "Who can view this artifact" in doc and "Report" not in doc      # any file type, not only reports
     assert "'Create public link'" in doc                                   # one flow from the main button
+
+
+def test_first_local_workflow_report_publishes_before_web_login(tmp_path, monkeypatch):
+    from hubzoid.access.session import LOCAL_OWNER
+    for name in ("WEBUI_AUTH", "HUBZOID_AUTH", "HUBZOID_DEPLOYMENT", "DATABASE_URL", "HUBZOID_OPERATIONAL_DB"):
+        monkeypatch.delenv(name, raising=False)
+    hub = tmp_path / "fresh"
+    hub.mkdir()
+    (hub / "AGENTS.md").write_text("---\nname: fresh\n---\nLocal Hub")
+    source = _file(tmp_path)
+    result = arts.publish(hub, hub="fresh", owner=LOCAL_OWNER, owner_account=None, source=source,
+                          workflow="weekly_digest", audience="hub", key="team-digest", series={"scope": "team"})
+    art = arts.get(hub, result["id"])
+    assert arts.role(hub, art, LOCAL_OWNER) == "owner"
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    assert arts.role(hub, art, LOCAL_OWNER) is None
+    monkeypatch.delenv("HUBZOID_AUTH")
+    store_for(hub).suspend(LOCAL_OWNER, actor="test")
+    assert arts.role(hub, art, LOCAL_OWNER) is None

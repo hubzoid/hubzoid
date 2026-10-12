@@ -58,19 +58,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.heavy)
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """A timeout (pytest-timeout, pyproject's `timeout`) is reported as a skip,
-    not a failure: a slow or stuck machine must not block CI. Assertion and
-    other failures still fail."""
-    outcome = yield
-    report = outcome.get_result()
-    if report.failed and "Timeout (>" in str(report.longrepr):
-        report.outcome = "skipped"
-        report.longrepr = (str(item.path), item.location[1] or 0,
-                           "Skipped: timed out (a hang is reported, not a failure)")
-
-
 @pytest.fixture(scope="session")
 def postgres_url(tmp_path_factory):
     initdb, pg_ctl = shutil.which("initdb"), shutil.which("pg_ctl")

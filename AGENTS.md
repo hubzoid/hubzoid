@@ -1,24 +1,90 @@
 # AGENTS.md. for AI editors working on the hubzoid platform
 
-## Product direction · 2026-09-22
+## Product direction · 2026-10-07
 
 Read [the product brief](docs/PRODUCT_CONTEXT.md) before product, architecture,
-or user-facing work. Its revision is HZ-VISION-2026-09-22-v1.
+or user-facing work. Its revision is HZ-DIRECTION-2026-10-07-v5.
 
 Hubzoid is the single open-source product focus: shared context and capabilities
 used through workflows, chat, and personal assistants through MCP. The primary
 audience is AI-capable builders bringing useful personal agents to their teams.
-Independent adoption and sustained use guide growth. Enterprise assistance is
-a secondary path. GitZoid is a sample application direction.
+Useful independent usage and sustained use guide growth. Stars, issues and PRs
+are optional. A distinct Build with us services path serves business and
+technology leaders. GitZoid is a sample application direction.
 
 This brief supersedes older services-led product positioning. It is direction,
-not a release feature list. Memory, frontend, onboarding, hosting, and other
-architecture choices remain open. This context update authorizes no migration.
+not a release feature list. After 1.1.1, prioritize stability, testing and friction
+in first and repeat use. Older implementation workstreams are a reference
+inventory, not an automatic feature queue. Native chat is the current default.
+Easy customer hosting is a framework requirement. Provider-specific implementation,
+memory and additional onboarding variants still need scoped decisions.
+This context update authorizes no migration.
 The engineering, compatibility, licensing, and validation rules below still apply.
 
 This file guides AI coding tools (Claude Code, Cursor, Codex, Copilot, Gemini
 CLI, etc.) editing the hubzoid platform source. The per-hub `demo-hub/AGENTS.md`
 is a different thing. that's the runtime prompt for the hub's main agent.
+
+## Adoption and stabilization
+
+Keep the core tagline **One brain for your internal agents.** Add the value
+message **Your knowledge. Your way of working. Useful across your assistants and your team.**
+Help builders make agents for their own work and company. The first-use
+milestone is a useful result from their own material and rules, followed by
+an explicitly saved correction that changes the next result. Keep a runnable
+sample with a clear personalization step.
+
+Use Claude Code or Codex as the primary authoring path for this audience,
+alongside human-readable instructions. Authoring, MCP access and runtime
+selection are separate. Only explicit Hub content is shared. Do not imply
+that setup conversation becomes shared knowledge or automatic memory.
+Prioritize the path from personal usefulness to repeat work, shared context
+and a teammate with appropriate access when removing adoption friction.
+
+Every promoted setup path needs release-bound prerequisites, a useful sample
+result, troubleshooting, honest costs and limits, and human-readable plus
+agent-readable instructions. Start with one reliable path and add variants
+progressively. Preserve a usable path for AI-capable non-engineers.
+
+Connecting an assistant over MCP, adapting an existing agent and hosting an
+existing runtime are different operations. Do not claim one-prompt portability
+or subscription-based team hosting without evidence for that combination.
+
+Reproduce historical findings before calling them current bugs or completed
+fixes. For release confidence, inspect heavy-test exclusions and timeout skips.
+A skipped or timed-out critical check does not count as a pass. Keep targeted
+regression checks with fixes and record real-provider validation gaps.
+
+## Required roadmap scope
+
+Required outcomes include stability, building agents from personal/team context,
+easy customer hosting, Build and Use modes, human-in-the-loop workflows and
+actions, RAG/retrieval, controlled memory, and multi-agent communication.
+Their inclusion is approved. Implementation designs and release allocations
+remain to be scoped through proposals. Begin with bounded useful examples and
+existing components, retaining runtime neutrality and Hub compatibility.
+Proposed Git-backed Build changes and approval of business actions are distinct concerns.
+Do not treat planned capabilities as already shipped.
+
+## Customer-hosting requirement
+
+The framework must make customer-controlled hosting straightforward. Railway
+and Maritime are the requested provider examples, with support to be implemented
+and validated. Prefer provider-native deployment configuration or templates and
+existing packaging over a custom hosting layer when they meet the need.
+
+Each promoted path needs release-bound human and agent instructions covering
+model authentication, secrets, persistent Hub and operational data, public URLs,
+sign-in/MCP callbacks, scoped access, costs, troubleshooting, backup/restore and
+upgrades. Verify a useful task, teammate access, restart persistence, workflow
+and scheduler behaviour, and any provider sleep/wake limits. Record the tested
+release, provider configuration, runtime and limits. A working local assistant
+login does not establish unattended hosted or shared subscription use.
+
+This is a framework requirement, separate from a public demo or optional
+Hubzoid-managed hosting. Use the proposal workflow for non-trivial implementation.
+Do not claim provider support from this instruction alone or provision paid
+resources without the actual authorized scope. Preserve the name Maritime.
 
 ## Prime directive: keep it thin
 
@@ -57,6 +123,7 @@ Non-trivial changes come in as text in `proposals/`, not as large code PRs. See
 | `hubzoid/templates/minimal/` | Small runnable hub, selected with `--template minimal`. |
 | `hubzoid/templates/demo/` | Full guided tour. Selected via `hubzoid init <name> --template demo`. |
 | `hubzoid/templates/watchtower/` | Workflow-first sample (scheduled check, structured `call_llm`, controlled failure). `--template watchtower`. |
+| `hubzoid/templates/gitzoid/` | PR review, security and engineering-report sample, with fictional data and optional GitHub setup. `--template gitzoid`. |
 | `demo-hub/` | The canonical demo hub at the repo root (mirrors `templates/demo/`). |
 | `server.py` | FastAPI bridge serving `/v1/chat/completions` + `/v1/models` + `/artifacts`. |
 | `edge.py` | Public reverse proxy: the native chat app and Console by default; Open WebUI and bridge routes in Open WebUI mode. |

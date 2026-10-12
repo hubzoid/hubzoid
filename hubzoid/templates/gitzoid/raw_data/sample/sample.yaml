@@ -1,0 +1,600 @@
+_note: Everything here is fictional sample data for the GitZoid template.
+repo: kestrel-oak/storefront
+default_branch: main
+base_dir: storefront
+now: '2026-10-12T09:00:00Z'
+gitzoid_login: gitzoid-bot
+people:
+  maya:
+    permission: admin
+  dev-ana:
+    permission: write
+  lee:
+    permission: write
+  sam:
+    permission: write
+  guest-joe:
+    permission: read
+issues:
+  42:
+    title: Finance needs last month's orders for the VAT return
+    body: Finance files VAT monthly and needs every order with totals. Customer data must stay internal.
+history:
+- number: 60
+  title: Show the delivery date on the order page
+  author: maya
+  created_at: '2026-07-02T17:43:48Z'
+  merged_at: '2026-07-02T23:43:48Z'
+  additions: 132
+  deletions: 61
+  changed_files: 3
+  files:
+  - filename: app/orders.py
+    additions: 9
+    deletions: 4
+  - filename: templates/order.html
+    additions: 108
+    deletions: 34
+  - filename: tests/test_orders.py
+    additions: 15
+    deletions: 23
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-07-02T23:33:48Z'
+- number: 61
+  title: Cache supplier stock for five minutes
+  author: dev-ana
+  created_at: '2026-07-06T06:13:31Z'
+  merged_at: '2026-07-06T09:13:31Z'
+  additions: 65
+  deletions: 31
+  changed_files: 2
+  files:
+  - filename: app/suppliers.py
+    additions: 7
+    deletions: 5
+  - filename: tests/test_suppliers.py
+    additions: 58
+    deletions: 26
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-07-06T08:13:31Z'
+- number: 62
+  title: Add Harbor Ceramics to the nightly sync
+  author: sam
+  created_at: '2026-07-08T22:40:09Z'
+  merged_at: '2026-07-09T04:40:09Z'
+  additions: 57
+  deletions: 3
+  changed_files: 1
+  files:
+  - filename: config/suppliers.yaml
+    additions: 57
+    deletions: 3
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-07-09T04:30:09Z'
+- number: 63
+  title: Round VAT half up to the cent
+  author: lee
+  created_at: '2026-07-12T15:28:20Z'
+  merged_at: '2026-07-12T18:28:20Z'
+  additions: 93
+  deletions: 73
+  changed_files: 2
+  files:
+  - filename: app/invoices.py
+    additions: 83
+    deletions: 37
+  - filename: tests/test_invoices.py
+    additions: 10
+    deletions: 36
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-07-12T18:18:20Z'
+- number: 64
+  title: Log the supplier id when a sync fails
+  author: maya
+  created_at: '2026-07-14T17:37:10Z'
+  merged_at: '2026-07-15T23:37:10Z'
+  additions: 8
+  deletions: 35
+  changed_files: 1
+  files:
+  - filename: app/sync.py
+    additions: 8
+    deletions: 35
+  reviews:
+  - author: dev-ana
+    state: APPROVED
+    submitted_at: '2026-07-14T19:37:10Z'
+- number: 65
+  title: Paginate recent orders
+  author: dev-ana
+  created_at: '2026-07-18T00:09:55Z'
+  merged_at: '2026-07-18T20:09:55Z'
+  additions: 148
+  deletions: 26
+  changed_files: 2
+  files:
+  - filename: app/orders.py
+    additions: 72
+    deletions: 7
+  - filename: tests/test_orders.py
+    additions: 76
+    deletions: 19
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-07-18T02:09:55Z'
+- number: 66
+  title: Move settings to environment variables
+  author: sam
+  created_at: '2026-07-17T08:43:18Z'
+  merged_at: '2026-07-22T08:43:18Z'
+  additions: 92
+  deletions: 77
+  changed_files: 2
+  files:
+  - filename: app/config.py
+    additions: 16
+    deletions: 37
+  - filename: README.md
+    additions: 76
+    deletions: 40
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-07-17T10:43:18Z'
+- number: 67
+  title: Add an index on orders.created_at
+  author: lee
+  created_at: '2026-07-24T10:43:25Z'
+  merged_at: '2026-07-25T06:43:25Z'
+  additions: 94
+  deletions: 4
+  changed_files: 1
+  files:
+  - filename: migrations/0007_orders_created_at.sql
+    additions: 94
+    deletions: 4
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-07-25T04:43:25Z'
+- number: 68
+  title: Fix the catalog cache never expiring
+  author: maya
+  created_at: '2026-07-28T15:21:32Z'
+  merged_at: '2026-07-28T18:21:32Z'
+  additions: 123
+  deletions: 54
+  changed_files: 2
+  files:
+  - filename: app/catalog.py
+    additions: 66
+    deletions: 34
+  - filename: tests/test_catalog.py
+    additions: 57
+    deletions: 20
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-07-28T17:21:32Z'
+- number: 69
+  title: Return 404 for unknown orders
+  author: dev-ana
+  created_at: '2026-07-29T19:20:31Z'
+  merged_at: '2026-07-31T21:20:31Z'
+  additions: 145
+  deletions: 26
+  changed_files: 2
+  files:
+  - filename: app/orders.py
+    additions: 41
+    deletions: 15
+  - filename: tests/test_orders.py
+    additions: 104
+    deletions: 11
+  reviews: []
+- number: 70
+  title: Upgrade Flask to 3.1
+  author: sam
+  created_at: '2026-08-03T19:05:28Z'
+  merged_at: '2026-08-03T22:05:28Z'
+  additions: 70
+  deletions: 31
+  changed_files: 1
+  files:
+  - filename: requirements.txt
+    additions: 70
+    deletions: 31
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-08-03T21:55:28Z'
+- number: 71
+  title: 'Customer care: copy order id button'
+  author: lee
+  created_at: '2026-08-04T06:40:53Z'
+  merged_at: '2026-08-07T04:40:53Z'
+  additions: 98
+  deletions: 36
+  changed_files: 2
+  files:
+  - filename: templates/order.html
+    additions: 80
+    deletions: 4
+  - filename: static/order.js
+    additions: 18
+    deletions: 32
+  reviews:
+  - author: dev-ana
+    state: APPROVED
+    submitted_at: '2026-08-04T10:40:53Z'
+- number: 72
+  title: Time out supplier calls after 10 seconds
+  author: maya
+  created_at: '2026-08-10T04:49:18Z'
+  merged_at: '2026-08-10T10:49:18Z'
+  additions: 73
+  deletions: 30
+  changed_files: 2
+  files:
+  - filename: app/suppliers.py
+    additions: 65
+    deletions: 26
+  - filename: tests/test_suppliers.py
+    additions: 8
+    deletions: 4
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-08-10T06:49:18Z'
+- number: 73
+  title: Revert "Cache supplier stock for five minutes"
+  author: dev-ana
+  created_at: '2026-08-11T16:09:02Z'
+  merged_at: '2026-08-13T18:09:02Z'
+  additions: 91
+  deletions: 22
+  changed_files: 1
+  files:
+  - filename: app/suppliers.py
+    additions: 91
+    deletions: 22
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-08-11T20:09:02Z'
+- number: 74
+  title: Add the Nordlys Linen autumn catalog
+  author: sam
+  created_at: '2026-08-15T17:35:33Z'
+  merged_at: '2026-08-16T23:35:33Z'
+  additions: 11
+  deletions: 5
+  changed_files: 1
+  files:
+  - filename: app/catalog/nordlys-autumn.yaml
+    additions: 11
+    deletions: 5
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-08-16T01:35:33Z'
+- number: 75
+  title: Staff sign-in for the order pages
+  author: lee
+  created_at: '2026-08-18T16:28:03Z'
+  merged_at: '2026-08-19T22:28:03Z'
+  additions: 192
+  deletions: 58
+  changed_files: 3
+  files:
+  - filename: app/auth.py
+    additions: 11
+    deletions: 3
+  - filename: app/orders.py
+    additions: 96
+    deletions: 19
+  - filename: tests/test_auth.py
+    additions: 85
+    deletions: 36
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-08-19T18:28:03Z'
+- number: 76
+  title: Weekly stock report for the warehouse
+  author: maya
+  created_at: '2026-08-22T10:26:51Z'
+  merged_at: '2026-08-23T06:26:51Z'
+  additions: 121
+  deletions: 51
+  changed_files: 2
+  files:
+  - filename: app/reports.py
+    additions: 116
+    deletions: 22
+  - filename: tests/test_reports.py
+    additions: 5
+    deletions: 29
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-08-22T18:26:51Z'
+- number: 77
+  title: Fix rounding on discounted invoices
+  author: dev-ana
+  created_at: '2026-08-26T03:35:13Z'
+  merged_at: '2026-08-26T09:35:13Z'
+  additions: 96
+  deletions: 21
+  changed_files: 2
+  files:
+  - filename: app/invoices.py
+    additions: 66
+    deletions: 3
+  - filename: tests/test_invoices.py
+    additions: 30
+    deletions: 18
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-08-26T04:35:13Z'
+- number: 78
+  title: Retry the payments webhook once on 5xx
+  author: sam
+  created_at: '2026-08-26T12:15:07Z'
+  merged_at: '2026-08-29T10:15:07Z'
+  additions: 66
+  deletions: 41
+  changed_files: 2
+  files:
+  - filename: app/payments.py
+    additions: 53
+    deletions: 31
+  - filename: tests/test_payments.py
+    additions: 13
+    deletions: 10
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-08-26T20:15:07Z'
+- number: 79
+  title: Drop the unused gift-wrap column
+  author: lee
+  created_at: '2026-08-31T14:51:20Z'
+  merged_at: '2026-09-01T20:51:20Z'
+  additions: 223
+  deletions: 35
+  changed_files: 2
+  files:
+  - filename: migrations/0008_drop_giftwrap.sql
+    additions: 116
+    deletions: 8
+  - filename: app/orders.py
+    additions: 107
+    deletions: 27
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-08-31T18:51:20Z'
+- number: 80
+  title: 'Order page: show the courier tracking link'
+  author: maya
+  created_at: '2026-09-04T07:28:35Z'
+  merged_at: '2026-09-05T03:28:35Z'
+  additions: 80
+  deletions: 33
+  changed_files: 2
+  files:
+  - filename: app/orders.py
+    additions: 48
+    deletions: 24
+  - filename: templates/order.html
+    additions: 32
+    deletions: 9
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-09-04T15:28:35Z'
+- number: 81
+  title: 'Warehouse CSV: add the bin location'
+  author: dev-ana
+  created_at: '2026-09-07T17:45:06Z'
+  merged_at: '2026-09-07T23:45:06Z'
+  additions: 87
+  deletions: 14
+  changed_files: 1
+  files:
+  - filename: app/reports.py
+    additions: 87
+    deletions: 14
+  reviews: []
+- number: 82
+  title: Faster catalog search
+  author: sam
+  created_at: '2026-09-09T21:14:31Z'
+  merged_at: '2026-09-11T03:14:31Z'
+  additions: 39
+  deletions: 27
+  changed_files: 2
+  files:
+  - filename: app/catalog.py
+    additions: 36
+    deletions: 18
+  - filename: tests/test_catalog.py
+    additions: 3
+    deletions: 9
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-09-09T23:14:31Z'
+- number: 83
+  title: Document the supplier API timeouts
+  author: lee
+  created_at: '2026-09-12T13:25:49Z'
+  merged_at: '2026-09-14T15:25:49Z'
+  additions: 75
+  deletions: 20
+  changed_files: 1
+  files:
+  - filename: CONTRIBUTING.md
+    additions: 75
+    deletions: 20
+  reviews:
+  - author: dev-ana
+    state: APPROVED
+    submitted_at: '2026-09-13T07:25:49Z'
+- number: 84
+  title: 'Copper Kettle: new API base URL'
+  author: maya
+  created_at: '2026-09-14T16:52:10Z'
+  merged_at: '2026-09-17T14:52:10Z'
+  additions: 147
+  deletions: 38
+  changed_files: 2
+  files:
+  - filename: app/config.py
+    additions: 86
+    deletions: 3
+  - filename: config/suppliers.yaml
+    additions: 61
+    deletions: 35
+  reviews:
+  - author: lee
+    state: APPROVED
+    submitted_at: '2026-09-15T10:52:10Z'
+- number: 85
+  title: Show stock warnings below five items
+  author: dev-ana
+  created_at: '2026-09-19T18:30:32Z'
+  merged_at: '2026-09-21T00:30:32Z'
+  additions: 100
+  deletions: 55
+  changed_files: 2
+  files:
+  - filename: app/catalog.py
+    additions: 16
+    deletions: 30
+  - filename: templates/product.html
+    additions: 84
+    deletions: 25
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-09-20T02:30:32Z'
+- number: 86
+  title: Fix the sync skipping the last supplier
+  author: sam
+  created_at: '2026-09-23T17:16:50Z'
+  merged_at: '2026-09-23T23:16:50Z'
+  additions: 76
+  deletions: 31
+  changed_files: 2
+  files:
+  - filename: app/sync.py
+    additions: 59
+    deletions: 10
+  - filename: tests/test_sync.py
+    additions: 17
+    deletions: 21
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-09-23T19:16:50Z'
+- number: 87
+  title: Add a health check endpoint
+  author: lee
+  created_at: '2026-09-27T10:51:52Z'
+  merged_at: '2026-09-27T13:51:52Z'
+  additions: 146
+  deletions: 15
+  changed_files: 2
+  files:
+  - filename: app/__init__.py
+    additions: 75
+    deletions: 9
+  - filename: tests/test_health.py
+    additions: 71
+    deletions: 6
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-09-27T11:51:52Z'
+- number: 88
+  title: 'Customer care: search by order id prefix'
+  author: maya
+  created_at: '2026-09-28T12:19:45Z'
+  merged_at: '2026-09-30T14:19:45Z'
+  additions: 195
+  deletions: 37
+  changed_files: 2
+  files:
+  - filename: app/orders.py
+    additions: 114
+    deletions: 13
+  - filename: tests/test_orders.py
+    additions: 81
+    deletions: 24
+  reviews:
+  - author: dev-ana
+    state: APPROVED
+    submitted_at: '2026-09-28T13:19:45Z'
+- number: 89
+  title: Tidy invoice PDF layout
+  author: dev-ana
+  created_at: '2026-09-30T17:11:43Z'
+  merged_at: '2026-10-03T15:11:43Z'
+  additions: 80
+  deletions: 23
+  changed_files: 1
+  files:
+  - filename: templates/invoice.html
+    additions: 80
+    deletions: 23
+  reviews:
+  - author: sam
+    state: APPROVED
+    submitted_at: '2026-09-30T21:11:43Z'
+- number: 90
+  title: Reorder suggestions for the buying team
+  author: sam
+  created_at: '2026-10-06T22:54:14Z'
+  merged_at: '2026-10-07T01:54:14Z'
+  additions: 126
+  deletions: 49
+  changed_files: 2
+  files:
+  - filename: app/reports.py
+    additions: 62
+    deletions: 30
+  - filename: tests/test_reports.py
+    additions: 64
+    deletions: 19
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-10-07T01:44:14Z'
+- number: 91
+  title: Use one database connection per request
+  author: lee
+  created_at: '2026-10-09T17:37:01Z'
+  merged_at: '2026-10-09T23:37:01Z'
+  additions: 46
+  deletions: 16
+  changed_files: 1
+  files:
+  - filename: app/db.py
+    additions: 46
+    deletions: 16
+  reviews:
+  - author: maya
+    state: APPROVED
+    submitted_at: '2026-10-09T23:27:01Z'

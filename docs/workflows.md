@@ -364,12 +364,12 @@ link, `latest_url`, that always shows the newest copy. A team run writes the
 agent's series (`/portal/latest/<agent>/<key>`); Run for me and personal
 schedules write that person's own series, private to them until they share it
 from the viewer. A key belongs to one workflow. When the file, or `digest=` (a
-hash of the data behind it), matches the newest copy, nothing new is stored. A
+hash of the data behind it), matches the newest copy and sharing policy, nothing new is stored. A
 scheduled team run that no longer publishes a key marks that page "No longer
 updating". `series_keep: 50` in `workflows/settings.yaml` keeps the last 50
 copies of each series. See [reports-and-email.md](reports-and-email.md#live-reports).
 
-**Personal schedules.** In chat: "send me the Inner Engineering report every
+**Personal schedules.** In chat: "run the program report for me every
 Monday at 9". The agent shows what will run, as whom and the next three runs,
 and saves it only after a yes (a one-time code, valid 10 minutes). The first
 run starts at once. Each run acts as that person, so it stops when their access
@@ -383,7 +383,10 @@ showing each person what their access allows: their **Schedules & reports**,
 their **Connections** and the **Agents** they can use. The web app links it from
 the account menu, Open WebUI's sidebar has a "My workspace" link,
 and the agent's "my schedules" reply links it everywhere. It lists their own
-schedules and report links on every agent, each with its latest runs. Admins
+schedules and report links on every agent, each with its latest runs. In 1.3.1,
+**Edit** changes saved inputs and timing, and **Recent requests** shows completed
+one-off answers and files without workflow-administration access. The report
+catalog lists permitted reports with a suggested chat request. Admins
 also get **Everyone**: each person's schedules with their 30-day model cost, to
 pause or stop; only an admin resumes what an admin paused. Limits, in `workflows/settings.yaml`:
 

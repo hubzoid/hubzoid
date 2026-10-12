@@ -1,0 +1,38 @@
+{
+  "id": "PYSEC-2026-2151",
+  "aliases": [
+    "CVE-2026-27205",
+    "GHSA-68rp-wp8r-4726"
+  ],
+  "modified": "2026-07-13T07:15:25.033843440Z",
+  "published": "2026-02-21T06:17:00.910Z",
+  "details": "Flask is a web server gateway interface (WSGI) web application framework. In versions 3.1.2 and below, when the session object is accessed, Flask should set the Vary: Cookie header., resulting in a Use of Cache Containing Sensitive Information vulnerability. The logic instructs caches not to cache the response, as it may contain information specific to a logged in user. This is handled in most cases, but some forms of access such as the Python in operator were overlooked. The severity and risk depend on the application being hosted behind a caching proxy that doesn't ignore responses with cook",
+  "severity": [
+    {
+      "type": "CVSS_V3",
+      "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N"
+    }
+  ],
+  "affected": [
+    {
+      "package": {
+        "name": "flask",
+        "ecosystem": "PyPI",
+        "purl": "pkg:pypi/flask"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "3.1.3"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

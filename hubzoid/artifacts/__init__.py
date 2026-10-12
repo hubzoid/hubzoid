@@ -225,6 +225,15 @@ def get(hub_dir, artifact_id: str, *, include_deleted: bool = False) -> Artifact
     return art
 
 
+def for_run(hub_dir, hub: str, run_id: str) -> list[Artifact]:
+    """Published copies for a run. Callers must establish the run's owner."""
+    with _engine(hub_dir).connect() as c:
+        rows = c.execute(text(f"SELECT {_COLS} FROM hz_artifacts WHERE hub=:h AND run_id=:r "
+                              "AND deleted IS NULL ORDER BY created, id"),
+                         {"h": hub, "r": run_id}).fetchall()
+    return [_row(r) for r in rows]
+
+
 def latest(hub_dir, hub: str, key: str) -> Artifact | None:
     """The newest artifact published in `hub` with latest key `key` before
     report series (1.2 and earlier), or None. Who may open it is still `role`'s
@@ -379,6 +388,9 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     if audience not in ("owner", "people", "hub", "domain"):
         raise ArtifactError(400, "A workflow can publish to 'owner', 'people', 'hub' or 'domain'. "
                                  "Public links are created by the owner in the viewer.")
+    if audience == "people":
+        # Validate before allocating a copy or altering the series policy.
+        share_with = [principal for _, principal in _share_entries(hub_dir, hub, owner, share_with)]
     if audience == "domain":
         on, why = domains.status_for(hub_dir, hub)
         if not on:
@@ -396,15 +408,26 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     schedule_id = series.get("schedule_id")
     sha = _file_sha(source)
     last = get(hub_dir, found.last_artifact) if found.last_artifact else None
-    if (scope != series_lib.TEAM and last is not None and last.owner_account and owner_account
-            and last.owner_account != owner_account):
+    if last is not None and (last.owner != owner or last.owner_account != owner_account):
         # A new account took the email over: it gets a fresh copy, and the old
         # company link doesn't start showing its reports.
-        series_lib.domain_off(hub_dir, found, "account-replaced")
-        found = series_lib.get(hub_dir, found.id)
+        if scope == series_lib.PERSONAL:
+            series_lib.domain_off(hub_dir, found, "account-replaced")
+            found = series_lib.get(hub_dir, found.id)
         last = None
+    copy_audience = "hub" if audience == "domain" and scope == series_lib.TEAM else \
+        "owner" if audience == "domain" else audience
     same = last is not None and ((digest is not None and digest == found.last_digest)
                                  or (digest is None and sha == found.last_sha))
+    if same and scope == series_lib.TEAM:
+        # Deduplicate content only when the publication's access is unchanged.
+        # A new policy gets a new copy, leaving historical copies alone.
+        same = last.audience == copy_audience
+        if same and copy_audience == "people":
+            wanted = {(k, p, _account_of(hub_dir, p))
+                      for k, p in _share_entries(hub_dir, hub, owner, share_with)}
+            actual = {(s["kind"], s["principal"], s["account"]) for s in shares(hub_dir, last.id)}
+            same = wanted == actual
     if same:
         series_lib.touch(hub_dir, found, run_id=run_id, inputs=inputs, schedule_id=schedule_id,
                          audience=audience)
@@ -412,8 +435,6 @@ def _publish_series(hub_dir, *, hub: str, owner: str, owner_account: str | None,
     art = _store_copy(hub_dir, hub=hub, owner=owner, owner_account=owner_account, source=source,
                       title=title, workflow=workflow, run_id=run_id, idem_key=idem_key, key=key,
                       series_id=found.id)
-    copy_audience = "hub" if audience == "domain" and scope == series_lib.TEAM else \
-        "owner" if audience == "domain" else audience
     if copy_audience != "owner":
         set_audience(hub_dir, art, owner, copy_audience, share_with)
     series_lib.record_copy(hub_dir, found, artifact_id=art.id, sha=art.sha256, digest=digest,
@@ -498,7 +519,9 @@ def _local_owner(hub_dir, subject: str) -> bool:
     from ..access.session import LOCAL_OWNER
     from ..workflows.identity import local_quickstart
 
-    return subject == LOCAL_OWNER and local_quickstart(Path(hub_dir))
+    from .. import appmode
+
+    return subject == LOCAL_OWNER and not appmode.auth_enabled(Path(hub_dir)) and local_quickstart(Path(hub_dir))
 
 
 def _owner_current(hub_dir, art: Artifact) -> bool:
@@ -515,7 +538,7 @@ def _owner_current(hub_dir, art: Artifact) -> bool:
             return False
     elif not _local_owner(hub_dir, owner):
         return False
-    if not hub_member(hub_dir, art.hub, owner):
+    if not hub_member(hub_dir, art.hub, owner) and not _local_owner(hub_dir, owner):
         return False
     return True
 
@@ -567,38 +590,42 @@ def _audit(hub_dir, hub: str, action: str, target: str, actor: str) -> None:
         log.exception("artifacts: could not audit %s", action)
 
 
-def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
-                 people=()) -> None:
-    """Change who can view `art`. Only the owner. `people` is a list of
-    account emails (or {"kind": "user", "principal": ...})."""
+def _share_entries(hub_dir, hub: str, owner: str, people) -> list[tuple[str, str]]:
+    """Validate and normalize the same recipients for publishing and sharing."""
     from ..access import normalize
 
+    entries: list[tuple[str, str]] = []
+    for p in list(people or [])[:MAX_SHARES + 1]:
+        kind, principal = ("user", p) if isinstance(p, str) else (p.get("kind"), p.get("principal"))
+        principal = normalize(principal or "")
+        if kind == "group":
+            raise ArtifactError(400, "Share with people by their account email. "
+                                     "Groups are no longer available.")
+        if kind != "user" or not principal:
+            raise ArtifactError(400, "Each person needs an account email.")
+        if "@" not in principal:
+            raise ArtifactError(400, f"{principal!r} is not an account email.")
+        if (principal != owner and not hub_member(hub_dir, hub, principal)
+                and not _named_reader(hub_dir, principal)):
+            raise ArtifactError(409, f"{principal} cannot use this agent, so the "
+                                     "artifact cannot be shared with them.")
+        entries.append((kind, principal))
+    entries = sorted(set(entries))
+    if len(entries) > MAX_SHARES:
+        raise ArtifactError(400, f"Share with at most {MAX_SHARES} people.")
+    if not entries:
+        raise ArtifactError(400, "Add at least one person.")
+    return entries
+
+
+def set_audience(hub_dir, art: Artifact | None, actor: str, audience: str,
+                 people=()) -> None:
+    """Change who can view `art`. Only the owner."""
     art = _require_owner(hub_dir, art, actor)
     if audience not in ("owner", "people", "hub"):
         raise ArtifactError(400, "Choose only you, specific people, or everyone in this hub. "
                                  "Public links have their own action.")
-    entries: list[tuple[str, str]] = []
-    if audience == "people":
-        for p in list(people or [])[:MAX_SHARES + 1]:
-            kind, principal = ("user", p) if isinstance(p, str) else (p.get("kind"), p.get("principal"))
-            principal = normalize(principal or "")
-            if kind == "group":
-                raise ArtifactError(400, "Share with people by their account email. "
-                                         "Groups are no longer available.")
-            if kind != "user" or not principal:
-                raise ArtifactError(400, "Each person needs an account email.")
-            if "@" not in principal:
-                raise ArtifactError(400, f"{principal!r} is not an account email.")
-            if (principal != art.owner and not hub_member(hub_dir, art.hub, principal)
-                    and not _named_reader(hub_dir, principal)):
-                raise ArtifactError(409, f"{principal} cannot use this agent, so the "
-                                         "artifact cannot be shared with them.")
-            entries.append((kind, principal))
-        entries = sorted(set(entries))
-        if len(entries) > MAX_SHARES:
-            raise ArtifactError(400, f"Share with at most {MAX_SHARES} people.")
-        if not entries:
-            raise ArtifactError(400, "Add at least one person.")
+    entries = _share_entries(hub_dir, art.hub, art.owner, people) if audience == "people" else []
     now = _now()
     with _engine(hub_dir).begin() as c:
         c.execute(text("DELETE FROM hz_artifact_shares WHERE artifact_id=:a"), {"a": art.id})
