@@ -81,16 +81,21 @@ def audit_prepare(repo: str, queued_only: bool) -> dict:
             scan_notes.append(f"{len(missing)} source files unavailable in checkout (oversize or links): " + ", ".join(missing[:10]))
     if sum(1 for _ in gz.checkout.text_files(root)) >= 20000:
         scan_notes.append("20,000-file checkout scan limit reached; remaining paths unexamined")
-    pending = gz.audit.windows(root, files, state["done"])
+    oversized = []
+    pending = gz.audit.windows(root, files, state["done"], oversized=oversized)
+    if oversized:
+        labels = [f"{path}:{start + 1}-{end}" for path, start, end in map(gz.audit.unit, oversized)]
+        scan_notes.append(f"{len(oversized)} oversized source windows exceed {gz.audit.BATCH_CHARS:,} characters; "
+                          "not audited: " + ", ".join(labels[:10]))
     units = pending[:settings.audit.max_files_per_repo]
     return {"sha": sha, "batches": [[u] for u in units], "remaining": len(pending) - len(units),
             "profile": gz.profiles.text(profile), "queued_only": queued_only, "scan_notes": scan_notes}
 
 
 @step()
-def load(repo: str, paths: list[str], sha: str) -> list[list[str]] | None:
+def load(repo: str, paths: list[str], sha: str) -> list | dict | None:
     """The batch's files, or None when the checkout moved to another commit
-    mid-audit (the audit then resumes on the next run, on one commit)."""
+    mid-audit; an unavailable unit has its own coverage error."""
     if gz.checkout.current_sha(hub.data_dir, repo) != sha:
         return None
     root = gz.checkout.path_for(hub.data_dir, repo)
@@ -102,7 +107,7 @@ def load(repo: str, paths: list[str], sha: str) -> list[list[str]] | None:
         text = "".join((root / path).read_text(errors="replace").splitlines(keepends=True)[start:end])
         # A single minified line can exceed the window; surface it rather than silently clipping.
         if len(text) > gz.audit.BATCH_CHARS:
-            return None
+            return {"unavailable": f"oversized source window {path}:{start + 1}-{end}; not audited"}
         result.append([path, text, start])
     return result
 
@@ -187,18 +192,22 @@ def deep_audit():
             if not time_left(p["deadline"]):
                 finished = False
                 break
+            batch = load(repo, paths, prep["sha"])
+            if batch is None:
+                finished = False
+                message = "checkout changed or a source file disappeared; audit resumes on the next run"
+                unfinished.append({"repo": repo, "error": message})
+                coverage_problem(repo, message)
+                break
+            if isinstance(batch, dict):
+                finished = False
+                unfinished.append({"repo": repo, "error": batch["unavailable"]})
+                continue
             problem = flow.charge(1)
             if problem:
                 finished = False
                 unfinished.append({"repo": repo, "error": problem})
                 coverage_problem(repo, problem)
-                break
-            batch = load(repo, paths, prep["sha"])
-            if batch is None:
-                finished = False
-                message = "checkout changed or a single source line exceeds 40,000 characters; audit incomplete"
-                unfinished.append({"repo": repo, "error": message})
-                coverage_problem(repo, message)
                 break
             try:
                 result = flow.ask(gz.audit.prompt(repo, prep["profile"], [tuple(b) for b in batch]),
@@ -226,12 +235,12 @@ def deep_audit():
                     pass  # unresolved findings stay open
             new = audit_record(repo, [f.model_dump() for f in result.findings], paths, p["stamp"], resolved)
             new_by_group.setdefault(item["group"], []).extend({**n, "repo": repo} for n in new)
-        if finished and prep["scan_notes"]:
+        if prep["scan_notes"]:
             finished = False
             message = "; ".join(prep["scan_notes"])
             unfinished.append({"repo": repo, "error": message})
             coverage_problem(repo, message)
-        if finished and prep["remaining"]:
+        if prep["remaining"]:
             finished = False
             message = f"{prep['remaining']} audit windows remain at {prep['sha'][:7]}; resumes next run"
             unfinished.append({"repo": repo, "error": message})
@@ -241,6 +250,8 @@ def deep_audit():
             done.append({"repo": repo, "reason": item["reason"], "batches": len(prep["batches"])})
         elif not any(u["repo"] == repo for u in unfinished):
             unfinished.append({"repo": repo, "error": "time budget used; resumes on the next run"})
+        if not finished:
+            coverage_problem(repo, "; ".join(u["error"] for u in unfinished if u["repo"] == repo))
     pages = {}
     for group, repos in p["group_repos"].items():
         new = new_by_group.get(group, [])

@@ -20,6 +20,7 @@ or three runs failed in a row.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
@@ -37,6 +38,12 @@ PROPOSAL_SECONDS = 600
 LIVE_STATES = ("testing", "active", "paused")
 DEFAULTS = {"min_interval": 3600.0, "per_person": 10, "pause_after_failures": 3}
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def tool_run_prefix(workflow: str, subject: str, account: str | None) -> str:
+    """Existing one-off run namespace, shared by admission and personal history."""
+    person = hashlib.sha256(json.dumps([subject, account]).encode()).hexdigest()[:10]
+    return f"tool-{workflow}-{person}-"
 
 
 class ScheduleError(ValueError):

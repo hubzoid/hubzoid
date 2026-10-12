@@ -136,6 +136,7 @@ def test_release_validation_covers_legacy_mode_and_a_core_only_install():
     assert 'echo "$(pg_config --bindir)" >> "$GITHUB_PATH"' in install
     assert "apt-get install -y ripgrep" in install
     assert "codex_binary()" in install and "-k real_codex_has_only_hub_tools" in install
+    assert "command -v gitleaks" in install and '-m "" tests/test_gitzoid_followup.py' in install
     clean = next(s["run"] for s in jobs["package"]["steps"]
                  if s.get("name") == "Clean install of the wheel works and serves the Console")
     assert "pip install dist/*.whl" in clean and 'import open_webui"' in clean

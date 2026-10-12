@@ -32,7 +32,13 @@ grant your own email instead. Permissions can also be chosen in Console → Acce
 Use `--model` to choose explicitly. The fictional GitHub and advisory data need
 no GitHub token or external feeds; reviews and summaries still use your selected
 model, require its authentication/network access and consume its quota. Optional
-Ruff and Gitleaks analyzers report when unavailable. They never run repo scripts.
+Ruff and Gitleaks presets report when unavailable. They use isolated configuration
+and scan changed files as data, including dotfiles; PR config, ignore lists and
+Gitleaks suppression comments cannot turn them off. Custom analyzer commands
+require `allow_project_code: true` on that analyzer in Hub settings. This is an
+explicit operator opt-in: custom tools can load executable project configuration
+and are not sandboxed. Use only trusted commands in an appropriately isolated
+runner; they are skipped by default.
 
 You first see a setup result with access, mode, eligible PR count and next steps.
 The profile describes the repo. The review run shows each PR's outcome, full

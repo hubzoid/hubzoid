@@ -64,9 +64,10 @@ gitzoid:
     model_calls_per_day: 400
     replies_per_person_per_hour: 10
 
-  # Open-source analyzers on each PR's changed files. Any command that prints
-  # SARIF works; one that is not installed is skipped with a note. Their
-  # results are evidence for the reviewer, not findings by themselves.
+  # Isolated Ruff/Gitleaks presets scan changed files, including dotfiles, as data.
+  # Custom SARIF commands require allow_project_code: true on that analyzer;
+  # they can execute PR configuration and are NOT sandboxed. Missing or unapproved
+  # tools are skipped with a note. Results are evidence for the reviewer.
   analyzers:
     - name: ruff
       run: [ruff, check, --output-format, sarif, --exit-zero, --no-cache, --isolated, --select, "F,B,S", .]

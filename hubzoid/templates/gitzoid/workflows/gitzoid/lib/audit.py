@@ -54,18 +54,24 @@ def select(root: Path, profile: dict | None, queued: list[str], done: list[str],
     return ranked[:limit]
 
 
-def windows(root: Path, files: list[str], done: list[str]) -> list[str]:
+def windows(root: Path, files: list[str], done: list[str], *, oversized: list[str] | None = None) -> list[str]:
     import json
     units = []
+    def emit(path, start, end, size):
+        value = json.dumps([path, start, end])
+        if size > BATCH_CHARS and oversized is not None:
+            oversized.append(value)  # unavailable, never recorded as successfully audited
+        else:
+            units.append(value)
     for path in files:
         lines = (root / path).read_text(errors="replace").splitlines(keepends=True)
         start, size = 0, 0
         for i, line in enumerate(lines):
             if size and size + len(line) > BATCH_CHARS:
-                units.append(json.dumps([path, start, i]))
+                emit(path, start, i, size)
                 start, size = i, 0
             size += len(line)
-        units.append(json.dumps([path, start, len(lines)]))
+        emit(path, start, len(lines), size)
     return [u for u in units if u not in done]
 
 

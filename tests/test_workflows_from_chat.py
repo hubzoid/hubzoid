@@ -724,7 +724,8 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
 
     monkeypatch.setattr(observe, "_missing_sqlite", lambda _: False)
     env = {"trigger": "tool", "scope": "personal", "acts_as": MEERA, "acts_as_account": "id-" + MEERA}
-    run = SimpleNamespace(workflow_id="tool-program_report-person-input-deadbeef", name="program_report",
+    prefix = personal.tool_run_prefix("program_report", MEERA, "id-" + MEERA)
+    run = SimpleNamespace(workflow_id=prefix + "input-deadbeef", name="program_report",
                           input={"args": ("irs", None, env), "kwargs": {}},
                           status="SUCCESS", output={"answer": "Private result"}, created_at=1000)
     who = {"subject": MEERA, "account_id": "id-" + MEERA, "source": "caller"}
@@ -735,7 +736,8 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
 
         def list_workflows(self, **kwargs):
             assert kwargs["application_name"] == runtime._app_name("irs")
-            return [run]
+            prefixes = kwargs["workflow_id_prefix"]
+            return [run] if run.workflow_id.startswith(tuple(prefixes) if isinstance(prefixes, list) else prefixes) else []
 
         def list_workflow_steps(self, _):
             return [{"function_name": "hz_run_identity", "output": who}]
@@ -747,6 +749,7 @@ def test_personal_results_require_admission_and_current_account_identity(hub, mo
     own = observe.personal_runs(hub, MEERA, "id-" + MEERA)
     assert own[0]["answer"] == "Private result" and "input" not in own[0]
     assert observe.personal_runs(hub, RAVI, "id-" + RAVI) == []
+    assert observe.personal_runs(hub, RAVI, "id-" + RAVI, run_id=run.workflow_id) == []
     assert observe.personal_runs(hub, MEERA, "replacement") == []
     who["account_id"] = "other-account"
     assert observe.personal_runs(hub, MEERA, "id-" + MEERA) == []
@@ -776,3 +779,47 @@ def test_run_history_also_binds_results_to_the_recorded_account():
     assert not may_see_results(owner, MEERA, account="replacement")
     assert not may_see_results(owner, MEERA)
     assert not may_see_results(owner, RAVI, account="original")
+
+
+def test_personal_history_limits_after_account_filter_and_merges_workflows(hub, monkeypatch):
+    import dbos
+    from hubzoid.workflows import observe
+
+    monkeypatch.setattr(observe, "_missing_sqlite", lambda _: False)
+    owner = {"subject": MEERA, "account_id": "id-" + MEERA, "source": "caller"}
+    env = {"trigger": "tool", "scope": "personal", "acts_as": MEERA,
+           "acts_as_account": "id-" + MEERA}
+    def run(name, actor, number):
+        prefix = personal.tool_run_prefix(name, actor, "id-" + actor)
+        return SimpleNamespace(workflow_id=prefix + f"input-{number}", name=name,
+            input={"args": ("irs", None, env)}, status="SUCCESS",
+            output={"answer": str(number)}, created_at=number)
+
+    # A busy teammate would consume the old hub-wide limit before our first result.
+    own = [run("program_report", MEERA, n) for n in range(55)]
+    own += [run("costly_audit", MEERA, 60)]
+    all_runs = own + [run("program_report", RAVI, n) for n in range(100, 160)]
+    class Client:
+        def __init__(self, **kwargs): pass
+        def destroy(self): pass
+        def list_workflow_steps(self, _):
+            return [{"function_name": "hz_run_identity", "output": owner}]
+        def list_workflows(self, **kwargs):
+            prefixes = kwargs["workflow_id_prefix"]
+            prefixes = tuple(prefixes) if isinstance(prefixes, list) else prefixes
+            selected = [w for w in all_runs if w.workflow_id.startswith(prefixes)]
+            if kwargs.get("workflow_ids"):
+                selected = [w for w in selected if w.workflow_id in kwargs["workflow_ids"]]
+            selected = sorted(selected, key=lambda w: w.created_at, reverse=True)[:kwargs["limit"]]
+            assert len(selected) <= 50  # Payload loading stays bounded across workflows.
+            return selected
+
+    monkeypatch.setattr(dbos, "DBOSClient", Client)
+    result = observe.personal_runs(hub, MEERA, "id-" + MEERA)
+    assert len(result) == 50
+    assert [r["started"] for r in result] == [60, *range(54, 5, -1)]
+    # Existing IDs are unchanged, and exact lookup survives definition removal.
+    old_key = hashlib.sha256(json.dumps([MEERA, "id-" + MEERA]).encode()).hexdigest()[:10]
+    assert own[0].workflow_id.startswith(f"tool-program_report-{old_key}-")
+    monkeypatch.setattr(runtime, "load_definitions", lambda _: [])
+    assert observe.personal_runs(hub, MEERA, "id-" + MEERA, run_id=own[0].workflow_id)[0]["answer"] == "0"

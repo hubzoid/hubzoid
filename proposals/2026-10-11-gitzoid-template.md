@@ -164,3 +164,25 @@ setup_check through the workflow engine. The template secret scan reported no
 leaks; `git diff --check` passed. The setup guide now states the checkout's actual
 1.3.0 package version, distinguishing the development branch from the published
 release. No release version was changed or published.
+
+### Post-merge review follow-up · 2026-10-13
+
+Reproduced Gitleaks suppression against the previous code: a synthetic token
+produced one result, but PR-supplied config, fingerprint ignore, and inline
+suppression each reduced it to zero. The presets now use trusted temporary
+configuration and ignore controls outside the source tree, keep dotfiles as
+scan targets, and disable project suppression. Custom commands require the
+Hub-owned `allow_project_code: true` acknowledgement; they are not sandboxed.
+
+Oversized audit windows no longer consume the per-run selection slots or block
+later files. They remain outside the successful `done` set and keep coverage
+incomplete across runs. Checkout changes still stop the run; a repaired line
+on a new commit can complete normally. Model E2E prerequisites follow the
+selected provider, and its review model is explicitly selected for the run.
+
+Focused checks: 77 library/regression/follow-up tests passed, followed by 50
+workflow/follow-up tests (overlapping scopes). Real Gitleaks 8.30.1 exercised
+all three suppression cases; Ruff command isolation used a subprocess seam.
+A missing-key OpenAI E2E invocation skipped specifically for OPENAI_API_KEY.
+No live provider call, release build, main-checkout change, or deployment was
+performed for this follow-up. Existing live-service validation gaps remain.

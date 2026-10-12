@@ -58,13 +58,13 @@ _RUN = textwrap.dedent('''
             return handle.get_result()
         except Exception as exc:
             return {"error": type(exc).__name__, "message": str(exc)}
-    out = {}
+    out = {"mine_id": personal.tool_run_prefix("program_report", "meera@co.org", "id-meera@co.org") + "inputs-test-1"}
     out["team"] = done(runtime.start("program_report", scheduled_at="2026-10-12T00:30:00+00:00"))
     out["mine"] = done(runtime.start_run("program_report", {
         "trigger": "tool", "scope": "personal", "acts_as": "meera@co.org", "started_by": "meera@co.org",
         "acts_as_account": "id-meera@co.org",
         "inputs": {"program": "Samyama", "period": "month"}, "inputs_display": "Samyama, month"},
-        workflow_id="tool-test-1"))
+        workflow_id=out["mine_id"]))
     out["refused"] = done(runtime.start_run("program_report", {
         "trigger": "tool", "scope": "personal", "acts_as": "ravi@co.org", "started_by": "ravi@co.org",
         "inputs": {}}, workflow_id="tool-test-2"))
@@ -78,7 +78,7 @@ _RUN = textwrap.dedent('''
     rows = {r["id"]: r for r in observe.runs(hub, limit=10, trusted=True)}
     out["history"] = {k: {"trigger": rows[k]["trigger"], "started_by": rows[k]["started_by"],
                           "inputs": rows[k]["inputs"], "run_as": rows[k]["run_as"]}
-                      for k in ("tool-test-1",) if k in rows}
+                      for k in (out["mine_id"],) if k in rows}
     out["personal"] = observe.personal_runs(hub, "meera@co.org", "id-meera@co.org")
     # Persist the exact handoff state a crash before queue admission leaves.
     out["recover"] = {"schedule": s.id, "run": "ps-" + s.id + "-restart"}
@@ -133,9 +133,9 @@ def test_team_and_personal_runs_of_one_workflow(tmp_path):
     assert "/portal/latest/irs/program-samyama/by/" in out["mine"]["url"]
     assert out["refused"]["error"] == "IdentityError"                            # no report grant
     assert out["schedule"] == {"state": "active", "last": "updated"}
-    assert out["history"]["tool-test-1"] == {"trigger": "tool", "started_by": "meera@co.org",
+    assert out["history"][out["mine_id"]] == {"trigger": "tool", "started_by": "meera@co.org",
                                              "inputs": "Samyama, month", "run_as": "meera@co.org"}
-    assert [r["id"] for r in out["personal"]] == ["tool-test-1"]
+    assert [r["id"] for r in out["personal"]] == [out["mine_id"]]
     assert out["personal"][0]["links"][0]["url"] == out["mine"]["url"]
     recovered = subprocess.run([sys.executable, "-c", _RECOVER, str(hub),
                                 out["recover"]["schedule"], out["recover"]["run"]],

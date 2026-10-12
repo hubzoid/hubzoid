@@ -105,8 +105,9 @@ class Limits(_Strict):
 
 class Analyzer(_Strict):
     name: str
-    run: list[str]
+    run: list[str] = Field(min_length=1)
     timeout: int = 120
+    allow_project_code: bool = False
 
 
 class Settings(_Strict):
