@@ -38,8 +38,23 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: actions/setup-node@v5
+        if: matrix.group == 1
+        with:
+          node-version: "22"
+      - name: Make database and file-security prerequisites available to every step
+        run: |
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Install with Open WebUI mode and test tools
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'
+      - name: Real Codex tool isolation (local fake model, no provider credentials)
+        if: matrix.group == 1
+        run: |
+          npm install -g @openai/codex@0.147.0
+          python -c "from hubzoid.factory_codex import codex_binary; codex_binary()"
+          pytest -q -ra -m "" tests/test_codex_runtime.py -k real_codex_has_only_hub_tools
       - name: Report recovery and PostgreSQL regressions (including heavy checks)
         if: matrix.group == 1
         run: |
@@ -69,10 +84,9 @@ jobs:
       - name: Build the Console from source
         working-directory: portal
         run: npm ci && npm run lint && npm run build
-      - name: Codex isolation fixture and Console journeys
-        run: |
-          npm install -g @openai/codex@0.147.0
-          cd portal && npx playwright install --with-deps chromium && npm test
+      - name: Console journeys
+        working-directory: portal
+        run: npx playwright install --with-deps chromium && npm test
 
   package:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')

@@ -132,6 +132,10 @@ def test_release_validation_covers_legacy_mode_and_a_core_only_install():
     install = "\n".join(s.get("run", "") for s in jobs["tests"]["steps"])
     assert ".[dev,openwebui]" in install and '-m "not heavy"' in suite and "--splits 2" in suite
     assert jobs["tests"]["strategy"]["matrix"]["group"] == [1, 2]
+    # Prerequisites must persist into the broad suite, not just one focused step.
+    assert 'echo "$(pg_config --bindir)" >> "$GITHUB_PATH"' in install
+    assert "apt-get install -y ripgrep" in install
+    assert "codex_binary()" in install and "-k real_codex_has_only_hub_tools" in install
     clean = next(s["run"] for s in jobs["package"]["steps"]
                  if s.get("name") == "Clean install of the wheel works and serves the Console")
     assert "pip install dist/*.whl" in clean and 'import open_webui"' in clean
