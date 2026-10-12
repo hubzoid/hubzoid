@@ -1,0 +1,1 @@
+function e(e){if(e.allowed===!1)return`blocked`;if(e.auth_type===`shared`)return`shared`;let t=(e.status||``).toLowerCase();return e.connected&&[``,`ok`,`active`,`connected`,`valid`].includes(t)?`connected`:e.connected||[`expired`,`error`,`revoked`,`invalid`,`needs_reauth`,`reauth`,`failed`].includes(t)?`attention`:`off`}export{e as t};
