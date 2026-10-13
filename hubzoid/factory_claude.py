@@ -805,7 +805,7 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
             finally:
                 if config is not None:
                     config.close()
-                if pool and claim:
+                if pool and claim and not confirmed:
                     await asyncio.to_thread(pool.release, credential, claim)
         if failure is None:
             return

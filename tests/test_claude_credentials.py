@@ -321,3 +321,25 @@ def test_error_event_without_terminal_result_never_replays(configured, monkeypat
     asyncio.run(rt.run("hi"))
     assert len(calls) == 1 and rt.last_error is not None
     assert creds.Pool.configured(configured).select(set())[0].slot == 0
+
+
+
+def test_failed_recovery_probe_uses_provider_reset_not_inconclusive_delay(configured, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(creds.time, "time", lambda: now[0])
+    pool = creds.Pool.configured(configured)
+    pool.failed(pool.credentials[0], creds.Unavailable(reset_at=1100))
+    now[0] = 1101
+    async def query(*, prompt, options):
+        if options.env[creds.TOKEN_KEYS[0]] == "fake-primary":
+            yield sdk.types.RateLimitEvent(uuid="r", session_id="s", rate_limit_info=sdk.types.RateLimitInfo(
+                status="rejected", resets_at=1150))
+            yield failure()
+            yield result(True)
+        else:
+            yield result()
+    monkeypatch.setattr(sdk, "query", query)
+    assert asyncio.run(claude_complete("hi", hub_dir=configured))[0] == "done"
+    assert pool.select(set())[0].slot == 1
+    now[0] = 1151
+    assert pool.select(set())[0].slot == 0
