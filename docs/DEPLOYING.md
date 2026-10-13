@@ -489,7 +489,7 @@ Without backups, the existing login behavior is unchanged.
 - A limited credential stays unavailable until its reported reset, or five
   minutes when no usable reset is provided. One request probes recovery; other
   requests keep using backups. An inconclusive probe waits another five minutes.
-  A crashed probe's lease expires after five minutes. Successful recovery restores
+  A crashed probe's lease expires after five minutes. Only a successful terminal SDK result restores
   the earlier credential's priority; there is no round-robin switching.
 - A rejected login stays disabled until its token is replaced. Restarting with
   the same token does not clear the failure. Restart the bridges after changing

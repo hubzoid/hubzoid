@@ -365,3 +365,21 @@ def test_redacted_exception_preserves_status_for_notice_without_failover(configu
     assert "usage limit" in answer and "fake-primary" not in str(rt.last_error)
     assert "ProviderError" in str(rt.last_error)
     assert len(calls) == 1  # presentation may classify an error; replay still needs an SDK result
+
+
+
+def test_recovery_keeps_other_requests_on_backup_until_terminal_success(configured, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(creds.time, "time", lambda: now[0])
+    pool = creds.Pool.configured(configured)
+    pool.failed(pool.credentials[0], creds.Unavailable(reset_at=1100))
+    now[0] = 1101
+    while_streaming = []
+    async def query(**kwargs):
+        yield sdk.AssistantMessage(content=[sdk.TextBlock(text="partial")], model="sonnet")
+        while_streaming.append(pool.select(set())[0].slot)
+        yield result()
+    monkeypatch.setattr(sdk, "query", query)
+    asyncio.run(runtime(configured).run("hi"))
+    assert while_streaming == [1]
+    assert pool.select(set())[0].slot == 0

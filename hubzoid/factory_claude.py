@@ -789,9 +789,6 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                             block.get("type") in {"tool_use", "input_json_delta"})
                     elif isinstance(message, SystemMessage):
                         progress = progress or message.subtype.startswith("task_")
-                    if progress and failure is None and claim:
-                        await asyncio.to_thread(pool.recovered, credential, claim)
-                        claim = None
                 yield message
         except BaseException as exc:
             if pool and previous_results:

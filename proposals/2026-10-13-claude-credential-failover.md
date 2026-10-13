@@ -131,7 +131,7 @@ Hubzoid code findings:
   coordinate bridges and prevent a late success clearing a newer failure.
   No migration, new dependency, background timer or external service.
 - Use the provider reset when available; otherwise five minutes. A five-minute
-  recovery lease bounds a crashed probe. A normal successful model response
+  recovery lease bounds a crashed probe. A successful terminal SDK result
   makes the credential eligible again; unrelated failures do not mark it healthy.
 - The original issue's broad consecutive-failure trigger is excluded. No admin
   alerts or remaining-quota UI, as explicitly requested. Runtime limit events
