@@ -234,9 +234,20 @@ loop with your own Claude Code or Codex action and key when someone adds the
 Same repos, `review.md` files, groups and recipients. Copy `security_groups`,
 `digest_groups` and recipients into `workflows/settings.yaml`, start with
 `post_to_github: false`, compare a week of results, then post. Differences:
-email is a summary and a link (no PDF attachment), recipients must be at your
+email is a styled summary with key updates, next actions and a report link
+(no PDF attachment; plain-text fallback included), recipients must be at your
 company domain or have an account, and repo profiles refresh when the code
 changes instead of every 14 days.
+
+## Presentation in 1.3.2
+
+Reviews group issues and security findings, keep suggestions and verified fixes
+collapsed, and show the reviewed commit and any coverage limits. Reports lead
+with the changes and actions, then measurements and source evidence. Email uses
+Hubzoid 1.3.2's safe Markdown format with existing recipient and length limits.
+Existing Hubs need the updated GitZoid workflow files as well as Hubzoid 1.3.2;
+upgrading the package alone does not overwrite a personalized Hub. Preserve
+your settings, rules and `.hubzoid` state when copying template updates.
 
 ## Validation for 1.3.1
 

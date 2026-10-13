@@ -219,8 +219,66 @@ def _artifact_links(hub_dir, owner: str, artifact_ids,
     return out
 
 
+def _formatted_body(body: str) -> str:
+    """Render opt-in Markdown with fixed email styles and a structural allowlist.
+
+    Escape raw HTML before Markdown conversion, then remove images, unsafe link
+    schemes and arbitrary attributes. Only artifact links are appended by the
+    delivery layer; embedded Markdown links must use HTTP(S).
+    """
+    from html.parser import HTMLParser
+    from urllib.parse import urlsplit
+
+    import markdown
+
+    styles = {
+        "h1": "font-size:24px;line-height:1.2;color:#087f46;margin:0 0 20px",
+        "h2": "font:700 12px/1.5 monospace;text-transform:uppercase;letter-spacing:1px;"
+              "border-bottom:1px solid #e7e6e2;padding-bottom:10px;margin-top:26px",
+        "h3": "font-size:15px;margin-top:22px",
+        "p": "margin:12px 0;line-height:1.6",
+        "li": "margin:7px 0;line-height:1.6",
+        "blockquote": "margin:16px 0;padding:10px 16px;border-left:3px solid #12c46a;background:#f7f8f6",
+        "pre": "white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8f6;padding:12px",
+        "a": "color:#087f46",
+    }
+    allowed = set(styles) | {"ul", "ol", "strong", "em", "code", "br", "hr"}
+
+    class SafeEmail(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in allowed:
+                return
+            attributes = f' style="{styles[tag]}"' if tag in styles else ""
+            if tag == "a":
+                href = dict(attrs).get("href") or ""
+                # Reject control characters and malformed URLs, even if browsers normalize them.
+                try:
+                    valid = not any(ord(c) < 33 for c in href) and urlsplit(href).scheme.lower() in {"https", "http"}
+                except ValueError:
+                    valid = False
+                if valid:
+                    attributes += f' href="{html.escape(href, quote=True)}"'
+            self.parts.append(f"<{tag}{attributes}>")
+
+        def handle_endtag(self, tag):
+            if tag in allowed and tag not in {"br", "hr"}:
+                self.parts.append(f"</{tag}>")
+
+        def handle_data(self, data):
+            self.parts.append(html.escape(data))
+
+    parser = SafeEmail()
+    parser.feed(markdown.markdown(html.escape(body)))
+    parser.close()
+    return "".join(parser.parts)
+
+
 def build_message(*, sender: str, recipient: str, subject: str, body: str,
-                  links: list[tuple[str, str]], message_id: str) -> EmailMessage:
+                  links: list[tuple[str, str]], message_id: str, body_format: str = "text") -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = sender
     msg["To"] = recipient
@@ -228,17 +286,35 @@ def build_message(*, sender: str, recipient: str, subject: str, body: str,
     msg["Date"] = formatdate(localtime=False, usegmt=True)
     msg["Message-ID"] = message_id
     text_body = body.rstrip()
+    if body_format == "markdown":
+        import re
+        text_body = re.sub(r"\\([\\`*_{}\[\]()#+.!<>|~-])", r"\1", text_body)
     if links:
         text_body += "\n\n" + "\n".join(f"{title}: {url}" for title, url in links)
         text_body += "\n\n(Sign in to open these reports.)"
     msg.set_content(text_body + "\n")
     items = "".join(f'<li><a href="{html.escape(url)}">{html.escape(title)}</a></li>'
                     for title, url in links)
-    html_body = ("<div style=\"font-family:system-ui,Arial,sans-serif;font-size:14px;"
-                 "line-height:1.5\">" + "".join(f"<p>{html.escape(p)}</p>"
-                                              for p in body.strip().split("\n\n") if p.strip())
-                 + (f"<ul>{items}</ul><p style=\"color:#666\">Sign in to open these reports.</p>"
-                    if links else "") + "</div>")
+    if body_format not in {"text", "markdown"}:
+        raise ValueError("Email body_format must be text or markdown.")
+    content = (_formatted_body(body) if body_format == "markdown" else
+               "".join(f"<p>{html.escape(p)}</p>" for p in body.strip().split("\n\n") if p.strip()))
+    html_body = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
+                 "<body style=\"margin:0;background:#f2f3f1;color:#0b0b0c\">"
+                 "<div style=\"font-family:system-ui,Arial,sans-serif;font-size:14px;line-height:1.5;"
+                 "max-width:640px;margin:24px auto;padding:24px;background:#fff;"
+                 "border:1px solid #e7e6e2;border-radius:14px;overflow-wrap:anywhere\">" + content
+                 + (f"<hr style=\"border:0;border-top:1px solid #e7e6e2;margin-top:24px\">"
+                    f"<p><strong>Open the full report</strong></p><ul>{items}</ul>"
+                    "<p style=\"color:#5f6773;font-size:12px\">Sign in to open these reports.</p>"
+                    if links else "") + "</div></body></html>")
+    if body_format == "text":
+        # Preserve the existing presentation for workflows that have not opted in.
+        html_body = ("<div style=\"font-family:system-ui,Arial,sans-serif;font-size:14px;"
+                     "line-height:1.5\">" + content
+                     + (f"<ul>{items}</ul><p style=\"color:#666\">Sign in to open these reports.</p>"
+                        if links else "") + "</div>")
     msg.add_alternative(html_body, subtype="html")
     return msg
 
@@ -318,7 +394,8 @@ def _smtp_send(cfg: SmtpConfig, msg: EmailMessage, recipient: str, on_data, smtp
 
 def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
                   artifact_ids=(), workflow: str | None = None, run_id: str | None = None,
-                  idem_key: str | None = None, smtp_factory=None, sleep=time.sleep) -> dict:
+                  idem_key: str | None = None, smtp_factory=None, sleep=time.sleep,
+                  body_format: str = "text") -> dict:
     """Send (or preview) one email to the run's own account. Returns a result
     dict: status accepted | previewed | failed | ambiguous | refused, `sent`
     (True only for accepted), `delivery_id`, `recipient` and a `message`
@@ -336,6 +413,9 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
     if not subject or len(subject) > MAX_SUBJECT or "\n" in subject or "\r" in subject:
         return dict(status="refused", sent=False, delivery_id=None, recipient=recipient,
                     message=f"The subject must be one line of at most {MAX_SUBJECT} characters.")
+    if body_format not in {"text", "markdown"}:
+        return dict(status="refused", sent=False, delivery_id=None, recipient=None,
+                    message="Email body_format must be text or markdown.")
     body = body or ""
     if len(body) > MAX_BODY:
         return dict(status="refused", sent=False, delivery_id=None, recipient=recipient,
@@ -347,11 +427,11 @@ def send_to_owner(hub_dir, *, hub: str, identity, subject: str, body: str,
                     message=str(exc))
     return _deliver(hub_dir, hub=hub, owner=owner, recipient=recipient, subject=subject, body=body,
                     links=links, artifact_ids=artifact_ids, workflow=workflow, run_id=run_id,
-                    idem_key=idem_key, smtp_factory=smtp_factory, sleep=sleep)
+                    idem_key=idem_key, smtp_factory=smtp_factory, sleep=sleep, body_format=body_format)
 
 
 def _deliver(hub_dir, *, hub: str, owner: str, recipient: str, subject: str, body: str,
-             links, artifact_ids, workflow, run_id, idem_key, smtp_factory, sleep) -> dict:
+             links, artifact_ids, workflow, run_id, idem_key, smtp_factory, sleep, body_format="text") -> dict:
     """Send (or preview) one checked message to one recipient, recorded under
     `idem_key` so a retry never sends an accepted message twice."""
     cfg = config()
@@ -390,7 +470,7 @@ def _deliver(hub_dir, *, hub: str, owner: str, recipient: str, subject: str, bod
     domain = (cfg.sender.rsplit("@", 1)[-1] if "@" in cfg.sender else "hubzoid.local")
     message_id = f"<{delivery_id}@{domain}>"
     msg = build_message(sender=cfg.sender or "hubzoid-preview@localhost", recipient=recipient,
-                        subject=subject, body=body, links=links, message_id=message_id)
+                        subject=subject, body=body, links=links, message_id=message_id, body_format=body_format)
 
     if cfg.mode == "preview":
         from .workflows.identity import person_slug
@@ -476,13 +556,22 @@ def _list_link(hub_dir, art) -> str:
     return artifacts.viewer_url(art.id, hub_dir)
 
 
+def _list_footer(list_name: str, hub: str, body_format: str) -> str:
+    footer = f"You get this because you're on the {list_name} list for {hub}. To stop, ask the agent's admin."
+    if body_format == "markdown":
+        import re
+        footer = re.sub(r"([\\`*_{}\[\]()#+.!<>|~-])", r"\\\1", " ".join(footer.split()))
+    return footer
+
+
 def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, body: str,
                  artifact_ids=(), workflow: str | None = None, run_id: str | None = None,
-                 idem_key: str | None = None, smtp_factory=None, sleep=time.sleep) -> dict:
+                 idem_key: str | None = None, smtp_factory=None, sleep=time.sleep,
+                  body_format: str = "text") -> dict:
     """Email a builder-declared list, one message per address, so nobody sees
     who else is on it. Every address must belong to an account here or to the
-    company's share domains, and the body is short plain text: report content
-    stays behind sign-in, at its link. Returns {status, sent, results, message}."""
+    company's share domains. The bounded body is text or opt-in Markdown; full
+    report content stays behind sign-in, at its link. Returns {status, sent, results, message}."""
     from . import artifacts
     from .access import store_for
     from .artifacts import domains
@@ -497,6 +586,9 @@ def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, b
     if not subject or len(subject) > MAX_SUBJECT or "\n" in subject or "\r" in subject:
         return dict(status="refused", sent=False, results=[],
                     message=f"The subject must be one line of at most {MAX_SUBJECT} characters.")
+    if body_format not in {"text", "markdown"}:
+        return dict(status="refused", sent=False, results=[],
+                    message="Email body_format must be text or markdown.")
     body = body or ""
     if len(body) > MAX_LIST_BODY:
         return dict(status="refused", sent=False, results=[],
@@ -522,11 +614,10 @@ def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, b
             continue
         results.append(_deliver(
             hub_dir, hub=hub, owner=identity.subject, recipient=member, subject=subject,
-            body=body + f"\n\nYou get this because you're on the {list_name} list for {hub}. "
-                        "To stop, ask the agent's admin.",
+            body=body + "\n\n" + _list_footer(list_name, hub, body_format),
             links=links, artifact_ids=artifact_ids, workflow=workflow, run_id=run_id,
             idem_key=f"{idem_key}:{member}" if idem_key else None, smtp_factory=smtp_factory,
-            sleep=sleep))
+            sleep=sleep, body_format=body_format))
     ok = [r for r in results if r.get("status") in ("accepted", "previewed")]
     status = ("refused" if not ok else "previewed" if all(r["status"] == "previewed" for r in ok)
               else "accepted")

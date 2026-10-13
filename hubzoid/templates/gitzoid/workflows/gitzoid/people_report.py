@@ -83,6 +83,9 @@ def people_report():
     key = f"gitzoid-people-{gz.reports.slug(name)}"
     art = gz.runtime.publish(hub, key, html, f"People report · {name}", key, digest=gz.runtime.digest_of(rows, label))
     if hub.trigger == "personal_schedule":
-        hub.send_email(f"GitZoid people report · {name} · {label}", "Your people report is ready:",
-                       artifacts=[art], raise_on_failure=False)
+        subject, body = gz.render.report_email("people", name, label, {
+            "headline": f"Your private report covers {len(rows)} people in the groups you manage.",
+            "highlights": ["Activity counts only; no scores or rankings. Individual details stay in the report."]})
+        hub.send_email(subject[:200], gz.runtime.clip(body), artifacts=[art],
+                       raise_on_failure=False, body_format="markdown")
     return {"report": name, "period": label, "people": len(rows), "link": gz.runtime.link_of(art)}

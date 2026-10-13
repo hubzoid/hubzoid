@@ -204,7 +204,7 @@ Anyone else sees one "This report isn't available" page, whatever the reason.
 
 ## Email
 
-`hub.send_email(subject, body="", *, artifacts=(), email_list=None, raise_on_failure=True)`
+`hub.send_email(subject, body="", *, artifacts=(), email_list=None, raise_on_failure=True, body_format="text")`
 
 - **The recipient is fixed.** It is always the run's own account email. There is
   no `to`, `cc` or `bcc`, so neither code nor a model can address anyone else.
@@ -221,6 +221,11 @@ Anyone else sees one "This report isn't available" page, whatever the reason.
 - **Artifact links.** `artifacts` takes artifacts the same account owns. The
   email links to them, and opening a link needs a sign-in. The email has no
   attachments.
+- **Formatting (1.3.2+).** Set `body_format="markdown"` for styled headings,
+  lists, emphasis and HTTP(S) links. Raw HTML is escaped, images are removed,
+  and styles are fixed by Hubzoid. The message retains a plain-text MIME part.
+  Text is the default; recipient checks, body limits and retries are unchanged.
+  Escape Markdown in external text before interpolating it into a styled body.
 - **Return value.** It returns the delivery result. Unless the result is
   `accepted` or `previewed`, it raises `hubzoid.email_delivery.EmailError`. With
   `raise_on_failure=False` it returns the result instead.

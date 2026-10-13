@@ -157,11 +157,12 @@ def email_now(hub_dir: str, hub: str, identity: dict, workflow: str, run_id: str
             Path(hub_dir), hub=hub, identity=ident, list_name=request["email_list"],
             subject=request["subject"], body=request.get("body") or "",
             artifact_ids=request.get("artifacts") or (), workflow=workflow,
-            run_id=run_id or None, idem_key=idem_key)
+            run_id=run_id or None, idem_key=idem_key, body_format=request.get("body_format", "text"))
     return email_delivery.send_to_owner(
         Path(hub_dir), hub=hub, identity=ident, subject=request["subject"],
         body=request.get("body") or "", artifact_ids=request.get("artifacts") or (),
-        workflow=workflow, run_id=run_id or None, idem_key=idem_key)
+        workflow=workflow, run_id=run_id or None, idem_key=idem_key,
+        body_format=request.get("body_format", "text"))
 
 
 def _ctx() -> RunCtx:
@@ -344,19 +345,26 @@ class Hub:
         return out
 
     def send_email(self, subject: str, body: str = "", *, artifacts=(),
-                   email_list: str | None = None, raise_on_failure: bool = True) -> dict:
+                   email_list: str | None = None, raise_on_failure: bool = True,
+                   body_format: str = "text") -> dict:
         """Email the run's own account with optional links to artifacts it
         published. `email_list="leads"` instead emails each address of that list
         in workflows/settings.yaml, from a team run only. Returns the delivery result;
         by default raises `EmailError` unless the SMTP server accepted it or it
         was written to the preview outbox. Checkpointed as a step: a recovered
         run never sends an accepted message twice, and an interrupted send is
-        reported as ambiguous rather than repeated."""
+        reported as ambiguous rather than repeated. ``body_format="markdown"``
+        opts into headings, lists and emphasis with fixed email styles. Raw HTML is escaped;
+        images and unsafe links are stripped; a plain-text MIME part is retained."""
         from ..email_delivery import EmailError
 
         ctx = _ctx()
         ids = [a["id"] if isinstance(a, dict) else str(a) for a in artifacts]
+        if body_format not in {"text", "markdown"}:
+            raise ValueError("Email body_format must be text or markdown.")
         request = {"subject": subject, "body": body, "artifacts": ids}
+        if body_format != "text":
+            request["body_format"] = body_format
         if email_list and ctx.run.get("scope") == "personal":
             result = dict(status="refused", sent=False, delivery_id=None, recipient=None,
                           message="Email lists are for team runs. A run for one person emails only them.")

@@ -431,7 +431,14 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
         "email_lists:\n  leads: [meera@co.org, new@co.org, eve@gmail.com]\n")
     ident = RunIdentity(TEAM_ACCT, "id-" + TEAM_ACCT, "run_as", TEAM_ACCT)
     out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads",
-                                      subject="Weekly", body="Numbers are in.")
+                                      subject="Weekly", body="# Numbers are in", body_format="markdown")
+    from email import policy
+    from email.parser import BytesParser
+    from pathlib import Path
+    preview = next(r for r in out["results"] if r["status"] == "previewed")
+    message = BytesParser(policy=policy.default).parsebytes(Path(preview["outbox"]).read_bytes())
+    assert "<h1" in message.get_body(preferencelist=("html",)).get_content()
+    assert "To stop, ask" in message.get_body(preferencelist=("plain",)).get_content()
     by = {r["recipient"]: r["status"] for r in out["results"]}
     assert by == {"eve@gmail.com": "refused", "meera@co.org": "previewed", "new@co.org": "refused"}
     monkeypatch.setenv("HUBZOID_SHARE_DOMAINS", "co.org")
@@ -439,7 +446,7 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
                  "OAUTH_ALLOWED_DOMAINS": "co.org"}.items():
         monkeypatch.setenv(k, v)
     out = email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads",
-                                      subject="Weekly", body="Numbers are in.")
+                                      subject="Weekly", body="# Numbers are in", body_format="markdown")
     assert {r["recipient"]: r["status"] for r in out["results"]}["new@co.org"] == "previewed"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="nope", subject="x",
                                        body="")["status"] == "refused"

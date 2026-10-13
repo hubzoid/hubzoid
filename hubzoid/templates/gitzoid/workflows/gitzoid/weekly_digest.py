@@ -86,7 +86,8 @@ def weekly_digest():
                                      x["health"], data["coverage"])
         art = gz.runtime.publish(hub, f"digest-{group}", html, f"Weekly digest · {group}", f"gitzoid-digest-{gz.reports.slug(group)}",
                                  digest=gz.runtime.digest_of(d, numbers, label))
-        subject, body = gz.render.digest_email(group, label, d)
+        subject, body = gz.render.digest_email(group, label, d, numbers, data["coverage"] + [
+            c["last_error"] for c in x["security"].get("coverage", []) if c.get("last_error")])
         sent = None if gz.runtime.refresh_only(hub) else gz.runtime.email_list(hub, email_list, subject, body, art)
         out[group] = {"headline": d["headline"], "merged": now_d["merged"], "page": gz.runtime.link_of(art),
                       "shared_with": art.get("audience"), "emailed": email_list if sent and gz.runtime.delivered(sent) else None, "email_delivery": sent}

@@ -345,3 +345,50 @@ def test_passwords_never_reach_results_records_or_logs(hub, monkeypatch, caplog)
     assert result["status"] == "failed"
     assert "hunter2-secret" not in str(result) and "hunter2-secret" not in caplog.text
     assert "hunter2-secret" not in str(_rows(hub))
+
+
+def test_formatted_email_is_safe_and_retains_plain_text_and_report_links():
+    from html.parser import HTMLParser
+
+    body = ('# GitZoid\n\n## Updates\n\n- **Fix** the retry loop.\n- Keep a plain fallback.\n\n'
+            '<script>alert(1)</script><img src="https://tracker.invalid/pixel">\n\n'
+            '[unsafe](javascript:alert) ![pixel](https://tracker.invalid/pixel) '
+            '[source](https://example.com/pr/1)')
+    msg = mail.build_message(sender=OWNER, recipient=OWNER, subject="Report", body=body,
+                             links=[("Full report", "https://reports.company.com/r/1")],
+                             message_id="<test@company.com>", body_format="markdown")
+    plain, rich = (msg.get_body(preferencelist=(kind,)).get_content() for kind in ("plain", "html"))
+    assert "Fix" in plain and "https://reports.company.com/r/1" in plain
+    tags = []
+    class Inspect(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            tags.append((tag, dict(attrs)))
+    Inspect().feed(rich)
+    assert any(tag == "h2" for tag, _ in tags) and any(tag == "li" for tag, _ in tags)
+    assert not any(tag in {"script", "img", "iframe"} for tag, _ in tags)
+    assert all(not attrs.get("href", "").startswith("javascript:") for _, attrs in tags)
+    assert 'href="https://example.com/pr/1"' in rich
+    assert 'href="https://reports.company.com/r/1"' in rich
+    assert "Sign in to open" in rich
+    default = mail.build_message(sender=OWNER, recipient=OWNER, subject="Report", body="# Literal",
+                                 links=[], message_id="<plain@company.com>")
+    assert "<h1" not in default.get_body(preferencelist=("html",)).get_content()
+
+
+def test_formatted_email_context_preview_replay_and_invalid_format(hub, monkeypatch):
+    from email import policy
+    from email.parser import BytesParser
+    from hubzoid.workflows.context import email_now
+
+    store_for(hub).grant(OWNER, "sales", "use_hub", actor="test")
+    monkeypatch.setenv("HUBZOID_EMAIL_DELIVERY", "preview")
+    request = {"subject": "Preview", "body": "# GitZoid\n\n## Highlights\n\n- Useful update",
+               "body_format": "markdown"}
+    result = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request, "formatted-test")
+    assert result["status"] == "previewed"
+    msg = BytesParser(policy=policy.default).parsebytes(Path(result["outbox"]).read_bytes())
+    assert "<h2" in msg.get_body(preferencelist=("html",)).get_content()
+    again = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request, "formatted-test")
+    assert again["delivery_id"] == result["delivery_id"] and again["repeated"]
+    refused = email_now(str(hub), "sales", ME.to_dict(), "wf", "run", request | {"body_format": "html"})
+    assert refused["status"] == "refused"

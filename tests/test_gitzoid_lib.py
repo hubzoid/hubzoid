@@ -398,3 +398,15 @@ def test_github_rate_limit_reports_reset():
     gh = gz.github.GitHub("t", transport=httpx.MockTransport(handler))
     with pytest.raises(gz.github.RateLimited, match="resets in 3600"):
         gh.pull("a/b", 1)
+
+
+def test_email_external_text_is_literal_and_coverage_survives_clipping():
+    from hubzoid.email_delivery import _formatted_body
+    _, body = gz.render.report_email("code", "group", "period",
+        {"headline": "A & B", "highlights": ["[Click](https://attacker.invalid) <img src=x>"],
+         "watch": ["x" * 3000]}, ["Unavailable patch"])
+    html = _formatted_body(gz.runtime.clip(body))
+    assert "Coverage is limited" in html
+    assert 'href="https://attacker.invalid"' not in html and "<img" not in html
+    assert "A &amp; B" in html and "more on the page" in html
+    assert "\\&lt;" not in html

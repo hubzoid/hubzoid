@@ -330,7 +330,7 @@ def scripted_llm(prompt: str, system: str | None, response_model):
                 "sign_in": "app/auth.py login_required", "data": "SQLite orders", "external_services": [],
                 "sensitive_areas": ["app/orders.py", "app/auth.py"]}
     if name == "Digest":
-        return {"headline": "Two changes shipped.", "for_leadership": ["The sync is more reliable."],
+        return {"headline": "Two changes merged.", "for_leadership": ["The sync is more reliable."],
                 "technical": ["Sync fixes."], "areas": [{"name": "Sync", "changes": ["Fixed the sync (#90)."]}],
                 "watch": [], "poem": ""}
     if name == "ReportNarrative":

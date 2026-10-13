@@ -186,3 +186,37 @@ all three suppression cases; Ruff command isolation used a subprocess seam.
 A missing-key OpenAI E2E invocation skipped specifically for OPENAI_API_KEY.
 No live provider call, release build, main-checkout change, or deployment was
 performed for this follow-up. Existing live-service validation gaps remain.
+
+### Presentation follow-up · 2026-10-13 · 1.3.2
+
+The user approved restoring the older GitZoid presentation and committing to
+main. Keep the current analysis, coverage, finding lifecycle and access controls.
+Restore grouped PR findings, collapsed resolved items and fix prompts, the
+green/ink report identity, narrative-first reports and useful email summaries.
+Reuse the current metrics and model results; add no model calls or dependencies.
+
+The existing email API accepts only plain text. Add an optional Markdown body
+format to the existing delivery path, retaining plain-text MIME content. Render
+only safe structural tags, with no images, raw HTML or contributor-supplied
+styles. Keep recipient checks, body limits, report links and idempotency intact;
+existing callers remain plain text by default. No external email is needed for
+validation. This is a bounded platform addition supporting the presentation.
+
+Presentation validation:
+- Initial focused suite: 155 passed after allowing the localhost SMTP fixture.
+- Broader regression with `-m ''`: 281 passed; one newly added preview assertion
+  had a missing `Path` import. Fixed that test, then reran the affected email,
+  GitZoid library and workflows-from-chat modules: 116 passed. No outstanding
+  failures or skipped checks in this selected scope. These counts overlap.
+- Broader scope included all GitZoid tests, email delivery, workflows, workflow
+  calls/delivery tools, report series, workflows from chat, init and packaging.
+- Generated PR-review, security, weekly, code and delivery previews through the
+  actual template workflows with fictional data and the scripted model. Checked
+  desktop and 390px mobile rendering, disclosure controls and dark mode; no
+  document-level horizontal overflow. Wide report tables retain local scrolling.
+- MIME preview tests cover escaped contributor text, unsafe links/images, HTML
+  and plain-text alternatives, list restrictions, default-text compatibility,
+  and replay idempotency. SMTP acceptance/retry tests use a local fake server.
+- No external email, production GitHub writes or new real-model evaluation was
+  performed. No claim of Outlook/Gmail-client or release-wide certification.
+  `git diff --check` passed. Existing live-provider validation gaps still apply.

@@ -106,7 +106,7 @@ def email_list(hub, list_name: str | None, subject: str, body: str, art: dict | 
     if list_name in configured_lists and not configured_lists[list_name]:
         return None  # an intentionally empty list means email is off
     return hub.send_email(subject[:200], clip(body), artifacts=[art] if art else (), email_list=list_name,
-                          raise_on_failure=False)
+                          raise_on_failure=False, body_format="markdown")
 
 
 def refresh_only(hub) -> bool:
@@ -119,7 +119,7 @@ EMAIL_LIMIT = 2000
 
 
 def clip(body: str) -> str:
-    """Hubzoid email is plain text up to 2,000 characters; the link line is
+    """GitZoid email uses bounded Markdown up to 2,000 characters; the link line is
     added by the platform, so leave room for it."""
     limit = EMAIL_LIMIT - 300
     return body if len(body) <= limit else body[:limit].rsplit("\n", 1)[0] + "\n[... more on the page]"

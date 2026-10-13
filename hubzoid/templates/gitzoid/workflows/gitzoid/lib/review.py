@@ -252,10 +252,21 @@ def combined_prompt(findings: list[dict], pr: dict) -> str:
             f"{items}\n\n{GUARD}\nWhen they are fixed, push, then wait for GitZoid's review of the new commit.")
 
 
+def category_label(category: str) -> str:
+    return {"bug": "⚠️ Bug", "security": "🔒 Security", "tests": "🧪 Tests",
+            "convention": "📐 Team rule"}.get(category, "⚠️ Issue")
+
+
+def finding_row(f: dict) -> str:
+    where = f"`{f['path']}:{f['line']}`" if f.get("line") else (f"`{f['path']}`" if f.get("path") else "whole change")
+    rule = f" _({f['rule']})_" if f.get("rule") else ""
+    return f"- **{f['severity'].title()} · {category_label(f['category'])}** {where} — {f['body']}{rule}"
+
+
 def inline_body(f: dict, pr: dict, commands: bool) -> str:
     rule = f" _({f['rule']})_" if f.get("rule") else ""
     reply = "\n\nReply `@gitzoid dismiss <reason>` or `@gitzoid defer`." if commands else ""
-    return (f"**{f['severity'].title()} · {f['category']}.** {f['body']}{rule}\n\n"
+    return (f"**{category_label(f['category'])} · {f['severity'].title()}**\n\n{f['body']}{rule}\n\n"
             f"<details><summary>Prompt for your AI agent</summary>\n\n```text\n{fix_prompt(f, pr)}\n```\n</details>"
             f"{reply}\n{FINDING_MARKER.format(f['id'])}")
 
@@ -269,14 +280,14 @@ def summary(view: dict, pr: dict, commands: bool) -> str:
     if view.get("paused"):
         return head + f"\n\nAutomatic reviews are paused on this pull request: {view['paused']}." + (
             " Comment `@gitzoid resume` to restart them." if commands else "")
-    out = [head, "", view["summary"] or ""]
-    if open_f:
-        out += ["", "**Potential issues**", ""]
-        for n, f in enumerate(open_f, 1):
-            where = f"`{f['path']}:{f['line']}`" if f.get("line") else (f"`{f['path']}`" if f.get("path") else "whole change")
-            rule = f" _({f['rule']})_" if f.get("rule") else ""
-            out.append(f"{n}. **{f['severity'].title()} · {f['category']}** {where}: {f['body']}{rule}")
-    else:
+    out = [head, "", "## 📝 Summary", "", view["summary"] or ""]
+    issues = [f for f in open_f if f["category"] != "security"]
+    security = [f for f in open_f if f["category"] == "security"]
+    for title, findings in (("⚠️ Potential issues", issues), ("🔒 Security", security)):
+        if findings:
+            out += ["", f"## {title} ({len(findings)})", ""]
+            out += [finding_row(f) for f in findings]
+    if not open_f:
         out += ["", "No issues found that passed GitZoid's checks."]
     changes = []
     if view["fixed"]:
@@ -287,7 +298,11 @@ def summary(view: dict, pr: dict, commands: bool) -> str:
         changes.append(f"{len(view['decided'])} dismissed or deferred")
     if view.get("prior_sha") and changes:
         out += ["", f"**Since the last review** (`{view['prior_sha'][:7]}`): " + ", ".join(changes) + "."]
-        out += [f"- Fixed: {f['body']}" for f in view["fixed"][:5]]
+    if view["fixed"]:
+        out += ["", f"<details><summary>✅ Resolved ({len(view['fixed'])})</summary>", "",
+                "Previously reported findings verified as fixed in the reviewed code:", ""]
+        out += [f"- `{f.get('path') or 'whole change'}` — {f['body']}" for f in view["fixed"]]
+        out += ["", "</details>"]
     cov = [f"Reviewed: {view['reviewed_files']} file(s)."]
     if view["ignored"]:
         cov.append(f"Skipped by review.md ignore: {', '.join(view['ignored'][:10])}.")
@@ -299,12 +314,14 @@ def summary(view: dict, pr: dict, commands: bool) -> str:
     if view.get("incremental"):
         cov.append("Only files changed since the last review were reviewed.")
     cov.extend(view.get("notes") or [])
+    if view["left_out"] or view.get("truncated") or view.get("notes") or view.get("ignored"):
+        out += ["", "> ⚠️ Coverage is limited. Read the coverage notes before relying on this review."]
     out += ["", "<details><summary>Coverage</summary>", "", " ".join(cov), "</details>"]
     if open_f:
         out += ["", "<details><summary>Fix all with your AI agent</summary>", "", "```text",
                 combined_prompt(open_f, pr), "```", "</details>"]
     if view["suggestions"]:
-        out += ["", "<details><summary>Suggestions</summary>", ""] + [f"- {s}" for s in view["suggestions"][:3]] + ["</details>"]
+        out += ["", f"<details><summary>💡 Suggestions ({len(view['suggestions'][:3])})</summary>", ""] + [f"- {s}" for s in view["suggestions"][:3]] + ["</details>"]
     details = [f"Rules: {', '.join(view['rule_files']) or 'none'}.", f"Model: {view['model'] or 'the hub model'}."]
     out += ["", "<details><summary>Run details</summary>", "", " ".join(details)]
     if view["dropped"]:
@@ -322,7 +339,7 @@ def clean_summary(view: dict) -> str:
     if view.get("left_out") or view.get("truncated") or view.get("notes") or view.get("ignored"):
         body = summary(view, view.get("pr", {}), view.get("commands", False))
         return body.replace("Looks good", "No issues found in reviewed code · coverage notes")
-    return (f"{SUMMARY_MARKER}\n### GitZoid review · Looks good\n\n{view['summary'] or ''}\n\n"
+    return (f"{SUMMARY_MARKER}\n### GitZoid review · Looks good\n\n## 📝 Summary\n\n{view['summary'] or ''}\n\n"
             f"Looks good · {view['reviewed_files']} of {view['total_files']} files reviewed · commit `{view['sha'][:7]}`")
 
 

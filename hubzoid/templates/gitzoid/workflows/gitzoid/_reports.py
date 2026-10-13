@@ -183,11 +183,11 @@ def run_report(kind: str) -> dict:
         key = f"gitzoid-{kind}-{gz.reports.slug(t.group or name)}"
         art = gz.runtime.publish(hub, key, html, f"{kind.title()} report · {name}", key,
                                  digest=gz.runtime.digest_of(n, label, data["merged"], data["coverage"]))
-        subject, body = gz.render.report_email(kind, name, label, narrative)
+        subject, body = gz.render.report_email(kind, name, label, narrative, data["coverage"])
         if team and t.group and not gz.runtime.refresh_only(hub):
             gz.runtime.email_list(hub, settings.digest_groups[t.group].email_list, subject, body, art)
         elif hub.trigger == "personal_schedule":
-            hub.send_email(subject, body, artifacts=[art], raise_on_failure=False)
+            hub.send_email(subject[:200], gz.runtime.clip(body), artifacts=[art], raise_on_failure=False, body_format="markdown")
         out.append({"report": name, "period": label, "headline": narrative["headline"],
                     "link": gz.runtime.link_of(art), "shared_with": art.get("audience")})
     return {"reports": out}

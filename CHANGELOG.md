@@ -14,6 +14,11 @@ All notable changes to Hubzoid. Versions follow the package version in
   See [configuration and limits](docs/DEPLOYING.md#claude-credential-failover).
 
 ### Changed
+- GitZoid restores grouped PR findings, collapsed resolved items, green-and-ink
+  reports with highlights and actions first, and formatted email summaries.
+  Reviewed-commit details, coverage warnings and evidence remain visible.
+  Workflows can opt into safe Markdown email with `body_format="markdown"`;
+  plain-text fallback, recipient checks and delivery limits remain in place.
 - Native chat and Open WebUI are permanently supported with equal release-testing
   requirements. Native remains the default; Open WebUI remains an optional install.
 

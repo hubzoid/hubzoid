@@ -1,25 +1,25 @@
-"""HTML pages (published as Hubzoid artifacts, printable) and the short
-plain-text emails that link to them. Everything shown is escaped."""
+"""Printable GitZoid reports and bounded Markdown email summaries.
+Contributor/model text is escaped at each rendering boundary."""
 from __future__ import annotations
 
 from html import escape
 
 CSS = """
-:root{--ink:#1d2329;--muted:#5f6b76;--line:#dfe3e8;--card:#f6f8fa;--bg:#fff;--accent:#2f5bd3;--bad:#b42318;--ok:#067647;--warn:#b54708}
-@media (prefers-color-scheme:dark){:root{--ink:#e6e9ec;--muted:#9aa5b1;--line:#2c333a;--card:#161b21;--bg:#0e1116;--accent:#7da2ff;--bad:#ff8a80;--ok:#6ee7a8;--warn:#ffc46b}}
+:root{--ink:#0b0b0c;--muted:#5f6773;--line:#e7e6e2;--card:#f7f8f6;--bg:#f2f3f1;--paper:#fff;--accent:#087f46;--bad:#b42318;--ok:#067647;--warn:#b54708}
+@media (prefers-color-scheme:dark){:root{--ink:#e6e9ec;--muted:#9aa5b1;--line:#2c333a;--card:#161b21;--bg:#0e1116;--paper:#161b21;--accent:#6ee7a8;--bad:#ff8a80;--ok:#6ee7a8;--warn:#ffc46b}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-main{max-width:920px;margin:0 auto;padding:28px 16px 48px}h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
-.meta{color:var(--muted);font-size:13px;margin:0 0 18px}.lead{font-size:17px;margin:10px 0 16px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:12px 0}
+main{max-width:920px;margin:24px auto;padding:32px;background:var(--paper);border:1px solid var(--line);border-radius:14px}h1{font-size:24px;margin:0 0 4px}h2{font:700 13px/1.5 ui-monospace,Menlo,monospace;letter-spacing:1px;text-transform:uppercase;margin:28px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+.meta{color:var(--muted);font-size:13px;margin:0 0 18px}.lead{font-size:17px;margin:18px 0 24px;padding:16px;background:var(--card);border-left:3px solid #12c46a;border-radius:8px}.brand{display:inline-block;background:#0b0e12;color:#fff;padding:8px 12px;border-radius:8px;font:700 17px ui-monospace,Menlo,monospace;margin-bottom:20px}.brand span{color:#12c46a}summary{cursor:pointer}li{margin:6px 0}.tile b{color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}.tile b{display:block;font-size:20px}.tile span{color:var(--muted);font-size:12px}
 table{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600;white-space:nowrap}td{min-width:90px;overflow-wrap:break-word}
 .bad{color:var(--bad)}.ok{color:var(--ok)}.warn{color:var(--warn)}code{font:12.5px ui-monospace,Menlo,monospace}a{color:var(--accent)}
 .table-scroll{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:8px}
 .table-scroll:focus{outline:2px solid var(--accent)}.table-scroll table{margin:0;min-width:520px}
 main{overflow-wrap:anywhere}.security-item{padding:14px;border:1px solid var(--line);border-radius:8px;margin:12px 0}
-@media(max-width:480px){main{padding:20px 14px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile b{font-size:18px}}
+@media(max-width:600px){main{padding:20px 14px;margin:0;border:0;border-radius:0}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile b{font-size:18px}}
 ul{padding-left:20px}footer{margin-top:32px;color:var(--muted);font-size:12px}
-@media print{body{background:#fff;color:#000}main{padding:0}a{color:#000}}
+@media print{body{background:#fff;color:#000}main{padding:0;margin:0;border:0;background:#fff}a{color:#000}.table-scroll{overflow:visible}.table-scroll table{min-width:0}details{break-inside:avoid}}
 """
 
 
@@ -30,7 +30,7 @@ def esc(x) -> str:
 def page(title: str, meta: str, body: str, footer: str = "") -> str:
     return (f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{esc(title)}</title>"
-            f"<style>{CSS}</style></head><body><main><h1>{esc(title)}</h1><p class=\"meta\">{esc(meta)}</p>"
+            f"<style>{CSS}</style></head><body><main><div class=\"brand\"><span>/</span>gitzoid</div><h1>{esc(title)}</h1><p class=\"meta\">{esc(meta)}</p>"
             f"{body}<footer>{esc(footer or 'Made by GitZoid on Hubzoid. Numbers are computed by code; summaries are written by a model from them.')}</footer>"
             "</main></body></html>")
 
@@ -74,19 +74,20 @@ def hrs(h) -> str:
 def digest_page(group: str, label: str, d: dict, now_d: dict, prev_d: dict, now_c: dict, merged: list[dict],
                 security: dict, card: dict, health: list[dict], coverage: list[str] | None = None) -> str:
     from .metrics import change
-    body = [f"<p class=\"lead\">{esc(d.get('headline', ''))}</p>"]
+    body = [f"<p class=\"lead\">{esc(d.get('headline', ''))}</p>", coverage_notice(coverage or [])]
+    body.append("<h2>Primary updates</h2>" + bullets(d.get("for_leadership") or []))
+    if d.get("technical"):
+        body.append("<h2>Engineering notes</h2>" + bullets(d["technical"]))
+    for a in d.get("areas") or []:
+        body.append(f"<h2>{esc(a['name'])}</h2>" + bullets(a.get("changes") or []))
+    if d.get("watch"):
+        body.append("<h2>Needs attention</h2>" + bullets(d["watch"]))
+    body.append("<h2>By the numbers</h2>")
     body.append(tiles([("pull requests merged", now_d["merged"], change(now_d["merged"], prev_d["merged"])),
                        ("median cycle time", hrs(now_d["cycle_hours_median"]), ""),
                        ("median first human review", hrs(now_d["first_review_hours_median"]), ""),
                        ("open now", now_d["open"], ""), ("stuck 3+ days", now_d["stuck"], ""),
                        ("lines added / removed", f"{now_c['additions']} / {now_c['deletions']}", "")]))
-    body.append("<h2>For leadership</h2>" + bullets(d.get("for_leadership") or []))
-    if d.get("technical"):
-        body.append("<h2>For engineers</h2>" + bullets(d["technical"]))
-    for a in d.get("areas") or []:
-        body.append(f"<h2>{esc(a['name'])}</h2>" + bullets(a.get("changes") or []))
-    if d.get("watch"):
-        body.append("<h2>Worth a look</h2>" + bullets(d["watch"]))
     body.append("<h2>Merged this week</h2>" + table(["Pull request", "Repo", "Author", "Size"], [
         [link(p.get("url", ""), f"#{p['number']} {p['title']}"), p["repo"], p["author"],
          f"+{p.get('additions', 0)} -{p.get('deletions', 0)}"] for p in merged]))
@@ -117,7 +118,12 @@ def security_summary_html(s: dict) -> str:
 
 
 def report_page(kind: str, name: str, label: str, narrative: dict, numbers: dict, sources: list | None = None, coverage: list | None = None) -> str:
-    body = [f"<p class=\"lead\">{esc(narrative.get('headline', ''))}</p>"]
+    body = [f"<p class=\"lead\">{esc(narrative.get('headline', ''))}</p>", coverage_notice(coverage or [])]
+    if narrative.get("highlights"):
+        body.append("<h2>Highlights</h2>" + bullets(narrative["highlights"]))
+    if narrative.get("watch"):
+        body.append("<h2>Needs attention</h2>" + bullets(narrative["watch"]))
+    body.append("<h2>By the numbers</h2>")
     if kind == "delivery":
         d = numbers
         body.append(tiles([("merged", d["merged"], d.get("merged_change", "")),
@@ -141,12 +147,14 @@ def report_page(kind: str, name: str, label: str, narrative: dict, numbers: dict
         g = c["gitzoid"]
         body.append("<h2>GitZoid findings</h2>" + tiles([("opened", g["opened"], ""), ("fixed", g["fixed"], ""),
                                                          ("dismissed", g["dismissed"], ""), ("deferred", g["deferred"], "")]))
-    if narrative.get("highlights"):
-        body.append("<h2>Highlights</h2>" + bullets(narrative["highlights"]))
-    if narrative.get("watch"):
-        body.append("<h2>Worth a look</h2>" + bullets(narrative["watch"]))
     body.append(evidence_section(sources or [], coverage or []))
     return page(f"{kind.title()} report · {name}", label, "".join(body))
+
+
+def coverage_notice(coverage: list[str]) -> str:
+    if not coverage:
+        return ""
+    return '<p class="warn"><strong>Coverage is limited.</strong> See Evidence and scope for ' + str(len(coverage)) + ' coverage note(s).</p>'
 
 
 def evidence_section(sources: list[dict], coverage: list[str]) -> str:
@@ -160,8 +168,10 @@ def evidence_section(sources: list[dict], coverage: list[str]) -> str:
         out.append('<details class="security-item"><summary>' + str(link(p.get("url", ""),
                    f"{p['repo']}#{p['number']} · {p['title']}")) + '</summary>')
         if e:
-            out += ["<p>" + esc(e.get("change")) + "</p>", bullets(e.get("risks", [])),
-                    "<p>" + esc(e.get("tests")) + "</p>", bullets(e.get("follow_ups", []))]
+            out += ["<p><strong>Change:</strong> " + esc(e.get("change")) + "</p>",
+                    ("<p><strong>Risks:</strong></p>" + bullets(e["risks"]) if e.get("risks") else ""),
+                    "<p><strong>Test evidence:</strong> " + esc(e.get("tests")) + "</p>",
+                    ("<p><strong>Follow-up:</strong></p>" + bullets(e["follow_ups"]) if e.get("follow_ups") else "")]
         else:
             out.append("<p>Metadata only; no code-level conclusion.</p>")
         out.append(bullets(p.get("coverage_notes", [])) + "</details>")
@@ -182,11 +192,14 @@ def security_page(group: str, stamp: str, changes: dict, open_rows: list[dict], 
                  link(i.get("url", ""), i.get("advisory") or ""), i["severity"] + (" · exploited now" if i.get("kev") else ""),
                  i.get("impact") or i.get("title") or "", i.get("fix") or ""] for i in items]
     head = ["Repo", "Package or file", "Version", "Advisory", "Severity", "Impact", "Fix"]
-    body = []
+    body = [tiles([("new", len(changes.get("new", [])), ""),
+                   ("escalated", len(changes.get("escalated", [])), ""),
+                   ("resolved", len(changes.get("resolved", [])), ""),
+                   ("open", len(open_rows), "")])]
     if changes.get("new") or changes.get("escalated"):
         body.append("<h2>New</h2>" + table(head, rows(changes.get("new", []))))
         if changes.get("escalated"):
-            body.append("<h2>Got worse</h2>" + table(head, rows(changes["escalated"])))
+            body.append("<h2>Escalated</h2>" + table(head, rows(changes["escalated"])))
     if changes.get("resolved"):
         body.append("<h2>Resolved since the last check</h2>" + table(["Repo", "Package or file", "Advisory"], [
             [r["repo"], r.get("package") or r.get("path") or "", r.get("advisory") or ""] for r in changes["resolved"]]))
@@ -211,30 +224,56 @@ def security_page(group: str, stamp: str, changes: dict, open_rows: list[dict], 
 
 # ------------------------------------------------------------------ emails
 
-def digest_email(group: str, label: str, d: dict) -> tuple[str, str]:
-    lines = [d.get("headline", ""), ""] + [f"- {x}" for x in (d.get("for_leadership") or [])[:5]]
-    return f"GitZoid weekly digest · {group}", "\n".join(lines) + "\n\nThe full digest, with numbers and security status:"
+def email_text(value) -> str:
+    """Model/repository values are content, never Markdown structure."""
+    import re
+    value = " ".join(str(value or "").split())
+    return re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", value)
+
+
+def email_section(title: str, items: list[str], limit: int = 4) -> str:
+    if not items:
+        return ""
+    return f"\n\n## {title}\n\n" + "\n".join(f"- {email_text(x)}" for x in items[:limit])
+
+
+def digest_email(group: str, label: str, d: dict, numbers: dict | None = None, coverage: list | None = None) -> tuple[str, str]:
+    body = f"# /gitzoid\n\nWeekly digest · {email_text(group)} · {email_text(label)}\n\n{email_text(d.get('headline'))}"
+    if numbers:
+        body += (f"\n\n{numbers['merged']} merged · {numbers['open']} open · {numbers['stuck']} stuck · "
+                 f"{numbers['security_open']} open security findings")
+    if coverage:
+        body += f"\n\nCoverage is limited: {len(coverage)} note(s) in the full report."
+    body += email_section("Primary updates", d.get("for_leadership") or [])
+    body += email_section("Engineering notes", d.get("technical") or [], 2)
+    body += email_section("Needs attention", d.get("watch") or [], 3)
+    return f"GitZoid weekly digest · {group}", body + "\n\nFull digest, metrics, security and source evidence below. Merged does not mean deployed."
 
 
 def security_email(group: str, changes: dict, coverage_problems: list[dict]) -> tuple[str, str]:
-    new, worse = changes.get("new", []), changes.get("escalated", [])
-    lines = []
-    for i in (new + worse)[:10]:
-        what = i.get("package") or i.get("path") or ""
-        lines.append(f"- {i['repo']}: {what} {i.get('advisory') or ''} ({i['severity']}"
-                     f"{', exploited now' if i.get('kev') else ''})")
-    for c in coverage_problems[:10]:
-        lines.append(f"- Could not check {c['repo']} ({c['check_name']}): {c['last_error']}")
-    parts = []
-    if new:
-        parts.append(f"{len(new)} new")
-    if worse:
-        parts.append(f"{len(worse)} worse")
+    new, worse, resolved = (changes.get(k, []) for k in ("new", "escalated", "resolved"))
+    body = f"# /gitzoid\n\nSecurity · {email_text(group)}\n\n{len(new)} new · {len(worse)} escalated · {len(resolved)} resolved"
+    # Coverage comes first so bounded emails never imply failed checks were clean.
+    body += email_section("Checks that could not run", [
+        f"Could not check {c['repo']} · {c['check_name']}: {c['last_error']}" for c in coverage_problems], 3)
+    for title, items in (("New findings", new), ("Escalated findings", worse)):
+        body += email_section(title, [
+            f"{i['severity'].title()}{' · exploited now' if i.get('kev') else ''} · {i['repo']} · "
+            f"{i.get('package') or i.get('path') or ''} {i.get('advisory') or ''}: "
+            f"{i.get('impact') or i.get('title') or 'Needs assessment'}. "
+            f"Next action: {i.get('fix') or 'Review the cited finding and confirm remediation.'}"
+            for i in items], 3)
+    parts = [f"{len(new)} new", f"{len(worse)} escalated", f"{len(resolved)} resolved"]
     if coverage_problems:
         parts.append(f"{len(coverage_problems)} check(s) could not run")
     return (f"GitZoid security · {group} · {', '.join(parts)}",
-            "\n".join(lines) + "\n\nDetails, impact and fixes:")
+            body + "\n\nFull findings, remediation and coverage in the report below.")
 
 
-def report_email(kind: str, name: str, label: str, n: dict) -> tuple[str, str]:
-    return f"GitZoid {kind} report · {name} · {label}", f"{n.get('headline', '')}\n\nThe full report:"
+def report_email(kind: str, name: str, label: str, n: dict, coverage: list | None = None) -> tuple[str, str]:
+    body = f"# /gitzoid\n\n{email_text(kind.title())} report · {email_text(name)} · {email_text(label)}\n\n{email_text(n.get('headline'))}"
+    if coverage:
+        body += f"\n\nCoverage is limited: {len(coverage)} note(s) in the full report."
+    body += email_section("Highlights", n.get("highlights") or [])
+    body += email_section("Needs attention", n.get("watch") or [], 3)
+    return f"GitZoid {kind} report · {name} · {label}", body + "\n\nFull report and source evidence below. Merged does not mean deployed."

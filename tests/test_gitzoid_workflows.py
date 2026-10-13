@@ -61,6 +61,9 @@ def test_first_sweep_reviews_the_sample(hub):
     assert "No issues found" in posted(r, 104, "post summary")[0]["text"]
     for n in ("101", "102", "103", "105"):
         assert by_pr[n]["verdict"] == "needs_changes"
+    security_summary = posted(r, 102, "post summary")[0]["text"]
+    assert "## 📝 Summary" in security_summary and "## 🔒 Security (" in security_summary
+    assert "## ⚠️ Potential issues (" in posted(r, 101, "post summary")[0]["text"]
     # 101: the model's retry finding plus the code-checked team rule.
     rules = {f["rule"] for f in store(hub).findings_for(REPO, 101)}
     assert {"Nothing retries forever", "No print in app code"} <= rules
@@ -103,6 +106,7 @@ def test_the_fix_loop_marks_findings_fixed(hub):
     assert review["pr"].endswith("#101") and review["open"] == 0 and review["fixed"] == 2
     summary = posted(r, 101, "post summary")[0]["text"]
     assert "Since the last review" in summary and "2 fixed" in summary
+    assert "<details><summary>✅ Resolved (2)</summary>" in summary
     status = posted(r, 101, "status success")[0]["text"]
     assert status == "No open findings"
 
@@ -341,6 +345,7 @@ def test_reports_for_a_person_and_for_the_team(hub):
     team = h.run_local(delivery, hub_dir=hub, trigger="schedule")
     assert team.artifacts[0]["audience"] == "domain" and team.artifacts[0]["key"] == "gitzoid-delivery-storefront"
     assert team.emails[0]["list"] == "storefront-digest"
+    assert team.emails[0]["body_format"] == "markdown"
     assert "Sep 2026" in team.value["reports"][0]["period"]
     assert h.run_local(wf(hub, "code_report"), hub_dir=hub, trigger="schedule").value["reports"]
     refused = h.run_local(delivery, hub_dir=hub, trigger="tool", inputs={"repos": ["x/y"]})
