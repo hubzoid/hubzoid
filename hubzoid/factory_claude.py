@@ -707,6 +707,8 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
         if pool:
             selected = await asyncio.to_thread(pool.select, attempted)
             if selected is None:
+                if previous_results:
+                    _record_claude_usage(previous_results[-1])
                 raise await asyncio.to_thread(pool.unavailable)
             credential, claim = selected
             attempted.add(credential.key)
@@ -772,7 +774,6 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                                 total_cost_usd=sum(costs) if all(c is not None for c in costs) else None)
                         if message.is_error and failure:
                             confirmed = True
-                            _record_claude_usage(message)
                             previous_results = [message]
                             break
                         if not message.is_error:
@@ -792,12 +793,16 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                         await asyncio.to_thread(pool.recovered, credential, claim)
                         claim = None
                 yield message
-        except Exception as exc:
-            if not pool:
+        except BaseException as exc:
+            if pool and previous_results:
+                _record_claude_usage(previous_results[-1])
+            if not pool or not isinstance(exc, Exception):
                 raise
             # A prior error event does not make a later process crash safe to
             # replay. Require a terminal SDK result before rotating credentials.
-            raise RuntimeError(redact(str(exc))) from None
+            wrapped = RuntimeError(f"{type(exc).__name__}: {redact(str(exc))}")
+            wrapped.api_error_status = getattr(exc, "api_error_status", None)
+            raise wrapped from None
         finally:
             try:
                 if messages is not None:
@@ -810,9 +815,12 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
         if failure is None:
             return
         if not confirmed:
+            if previous_results:
+                _record_claude_usage(previous_results[-1])
             raise failure  # no terminal result: the retry boundary is unknown
         await asyncio.to_thread(pool.failed, credential, failure)
         if progress:
+            _record_claude_usage(previous_results[-1])
             raise failure  # next independent turn may use a backup; this one cannot be replayed
         log.info("Claude credential slot %s failed before work; selecting backup", credential.slot)
 

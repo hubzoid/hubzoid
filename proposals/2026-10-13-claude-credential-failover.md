@@ -183,3 +183,15 @@ native Windows acceptance from Mac tests; run the focused Windows CI job.
   the explicit inventory. No full local suite or build was run.
 - Live quota exhaustion/reset remains untested. No real-SDK provider smoke was
   run for this change; mocked SDK messages do not prove provider acceptance.
+
+
+Post-review stability validation: 444 focused Claude/identity/tool-permission,
+secret, streaming, usage, PostgreSQL recovery and release-workflow checks passed
+in 8.51s. Successful tool-free recovery leaves enclosing request accounting
+unchanged. Confirmed recovery failures honor their provider reset; an SDK crash
+without a terminal result cannot authorize replay. Windows cleanup continues
+waiting for other children after a timeout, using a shared deadline. Relevant
+small lifecycle/failover checks passed (37, with 3 slow cases deselected locally).
+The strengthened paired interface check also passed (2, no skips), verifying
+both user and assistant messages before and after restart. README and deployment
+instructions cover replacement, same-model access and opting back out.

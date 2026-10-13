@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import importlib.resources as resources
 import json
+import logging
 import os
 import re
 import shlex
@@ -1617,8 +1618,13 @@ def _stop_groups(procs, *, timeout: float = 15.0) -> None:
         active = [p for p in procs if p is not None and p.poll() is None]
         for p in active:
             stop_windows_tree(p)
+        deadline = time.monotonic() + max(timeout, 1)
         for p in active:
-            p.wait(timeout=max(timeout, 1))
+            try:
+                p.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                logging.getLogger(__name__).warning(
+                    "Process %s did not exit after forced shutdown", p.pid)
         return
     killpg = getattr(os, "killpg", None)
 

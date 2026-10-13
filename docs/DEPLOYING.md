@@ -500,6 +500,15 @@ Without backups, the existing login behavior is unchanged.
 - There are no alerts or admin UI changes. Logs identify the slot (0 = primary,
   1/2 = backups), failure category and recovery without printing token values.
 
+To replace a token, update only its configured slot and restart the bridges.
+A new token value starts eligible; a rejected old value remains disabled if
+reintroduced. The replacement must have access to the same selected model.
+Changing credentials does not change the Hub files, conversation storage,
+caller access or tool grants. A bad replacement can fail authentication or
+share an exhausted quota, so verify one read-only request after restarting.
+To turn failover off, remove both backup variables and restart; this restores
+the original single-credential selection path. Other runtime backends are unaffected.
+
 Backups must be authorized for the deployment. Different tokens do not establish
 independent quota, and this does not solve a Claude-wide outage. Anthropic's
 [Agent SDK guidance](https://code.claude.com/docs/en/agent-sdk/overview) requires

@@ -82,7 +82,7 @@ jobs:
         run: |
           export PATH="$(pg_config --bindir):$PATH"
           command -v initdb && command -v pg_ctl
-          pytest -q -ra -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py --ignore=tests/test_workflows_from_chat_engine.py
+          pytest -q -ra -m heavy tests/test_workflow*.py tests/test_postgres_acceptance.py tests/test_report_sample_e2e.py tests/test_schedule_controls.py --deselect=tests/test_workflows_from_chat_engine.py
       - name: Both live chat interfaces (sign-in, stream, restart; no model)
         if: matrix.group == 2
         timeout-minutes: 4

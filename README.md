@@ -164,6 +164,12 @@ For a public deployment, configure HTTPS and persistent storage, then restart.
 [Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) ·
 [Backup and restore](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md)
 
+**Optional Claude failover (1.3.2):** add up to two backup credentials to keep
+answering when a Claude credential reaches a confirmed usage limit or its login
+is rejected. Switching keeps the same model and permissions and never replays
+work that has started. Existing single-credential setups are unchanged.
+[Configuration, token replacement and limits →](docs/DEPLOYING.md#claude-credential-failover)
+
 ## Choose your interface
 
 | Interface | Install and select |

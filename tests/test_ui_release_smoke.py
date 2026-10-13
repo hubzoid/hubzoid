@@ -113,7 +113,8 @@ def test_real_interface_signin_stream_and_restart(tmp_path, mode):
                 "c_smoke0001", PROMPT, agent=agents[0]["id"],
                 message_id="m_smoke0001", assistant_id="m_smoke0002"))
             assert response.status_code == 200, response.text
-            assert PROMPT in reply_text(events(response.text)), response.text
+            answer = reply_text(events(response.text))
+            assert PROMPT in answer, response.text
             saved_path = "/api/conversations/c_smoke0001"
         else:
             models = client.get("/api/models").json()["data"]
@@ -134,10 +135,24 @@ def test_real_interface_signin_stream_and_restart(tmp_path, mode):
             saved_path = "/api/v1/chats/" + saved.json()["id"]
         assert response.headers["content-type"].startswith("text/event-stream")
         assert "[DONE]" in response.text
-        assert PROMPT in client.get(saved_path).text
+        assert answer != PROMPT  # a saved user prompt alone is not a saved reply
+
+        def assert_saved_turn(client):
+            saved = client.get(saved_path)
+            assert saved.status_code == 200, saved.text
+            body = saved.json()
+            messages = body["messages"] if mode == "hubzoid" else body["chat"]["messages"]
+            turns = [(message["role"],
+                      "".join(part["text"] for part in message["content"] if part["type"] == "text")
+                      if mode == "hubzoid" else message["content"])
+                     for message in messages]
+            assert turns == [("user", PROMPT), ("assistant", answer)], turns
+            if mode == "hubzoid":
+                assert messages[1]["status"] == "complete"
+
+        assert_saved_turn(client)
 
     # Same data directory, new processes and fresh login, for both interfaces.
     with running() as client:
         sign_in(client)
-        saved = client.get(saved_path)
-        assert saved.status_code == 200 and PROMPT in saved.text, saved.text
+        assert_saved_turn(client)

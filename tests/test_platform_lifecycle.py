@@ -125,3 +125,23 @@ def test_native_windows_hub_run_becomes_ready_and_stops(tmp_path):
         assert proc.poll() is not None
         with socket.socket() as sock:
             assert sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+
+def test_windows_cleanup_timeout_does_not_skip_other_children(monkeypatch, caplog):
+    from hubzoid import cli, _process_tree
+    calls = []
+    class Child:
+        def __init__(self, pid): self.pid = pid
+        def poll(self): return None
+        def wait(self, *, timeout):
+            calls.append((self.pid, timeout))
+            if self.pid == 10:
+                raise subprocess.TimeoutExpired("child", timeout)
+    ticks = iter([1000, 1000, 1001])
+    monkeypatch.setattr(cli, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(_process_tree, "stop_windows_tree", lambda p: None)
+    cli._stop_groups([Child(10), Child(11)], timeout=1)
+    assert calls == [(10, 1), (11, 0)]
+    assert "did not exit after forced shutdown" in caplog.text

@@ -176,7 +176,12 @@ def test_tool_free_calls_recover_and_cancellation_closes_query(configured, monke
         else:
             yield result()
     monkeypatch.setattr(sdk, "query", query)
-    answer, _ = asyncio.run(claude_complete("hi", hub_dir=configured))
+    with _request_ctx.chat_scope("outer request"):
+        _request_ctx.record_usage({"status": "ok", "input_tokens": 17})
+        answer, _ = asyncio.run(claude_complete("hi", hub_dir=configured))
+        # Tool-free completion returns its own usage; retries must not overwrite
+        # the enclosing chat/workflow's accounting or leave it marked failed.
+        assert _request_ctx.drain_usage() == {"status": "ok", "input_tokens": 17}
     assert answer == "done" and calls == ["fake-primary", "fake-secondary"]
     closed = []
     async def cancelled(**kwargs):
@@ -343,3 +348,20 @@ def test_failed_recovery_probe_uses_provider_reset_not_inconclusive_delay(config
     assert pool.select(set())[0].slot == 1
     now[0] = 1151
     assert pool.select(set())[0].slot == 0
+
+
+
+def test_redacted_exception_preserves_status_for_notice_without_failover(configured, monkeypatch):
+    calls = []
+    class ProviderError(RuntimeError):
+        api_error_status = 429
+    async def query(**kwargs):
+        calls.append(1)
+        raise ProviderError("fake-primary")
+        yield
+    monkeypatch.setattr(sdk, "query", query)
+    rt = runtime(configured)
+    answer = asyncio.run(rt.run("hi"))
+    assert "usage limit" in answer and "fake-primary" not in str(rt.last_error)
+    assert "ProviderError" in str(rt.last_error)
+    assert len(calls) == 1  # presentation may classify an error; replay still needs an SDK result
