@@ -129,7 +129,7 @@ def test_judge_runs_and_can_fail_the_case(tmp_path, fake_model, monkeypatch):
     hub = _hub(tmp_path, {"a.md": "## Prompt\nhi\n\n## Criteria\nbe nice\n"})
     fake_model("hello")
 
-    async def ask(model_id, prompt):
+    async def ask(model_id, prompt, **kwargs):
         return '{"score": 3, "reasoning": "curt"}'
 
     monkeypatch.setattr("hubzoid.evals.judge.ask_model", ask)

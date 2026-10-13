@@ -623,12 +623,14 @@ def child_env_overrides(env: Mapping[str, str]) -> dict[str, str]:
     CLAUDE_CODE_USE_BEDROCK is on (the claude CLI then signs in with them).
     Every key the restricted layers set in this process goes back to the hub
     layers' value, or is blanked when those layers do not set it. The claude
-    CLI's own ANTHROPIC_* and CLAUDE_* keys are always kept."""
+    CLI's own ANTHROPIC_* and CLAUDE_* keys are kept, except the two Hubzoid
+    backup OAuth slots. Only the selected credential reaches an agent child."""
     bedrock = _truthy(env.get("CLAUDE_CODE_USE_BEDROCK"))
     vertex = _truthy(env.get("CLAUDE_CODE_USE_VERTEX"))
     out: dict[str, str] = {}
     for key in env:
-        if (key in SECRET_NAME_KEYS or key in SERVICE_SECRET_KEYS or _encryption_key(key)
+        if (key in {"CLAUDE_CODE_OAUTH_TOKEN_SECONDARY", "CLAUDE_CODE_OAUTH_TOKEN_TERTIARY"}
+                or key in SECRET_NAME_KEYS or key in SERVICE_SECRET_KEYS or _encryption_key(key)
                 or (not bedrock and key in AWS_CREDENTIAL_KEYS)):
             out[key] = ""
 

@@ -503,16 +503,12 @@ class ScheduleState:
         """Serialize read-modify-write across threads and processes."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with _STATE_LOCK, open(self.path.with_name(STATE_FILENAME + ".lock"), "a") as fh:
-            try:
-                import fcntl
-            except ImportError:  # not POSIX: the thread lock alone
-                yield
-                return
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            from . import _file_lock
+            _file_lock.lock(fh)
             try:
                 yield
             finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
+                _file_lock.unlock(fh)
 
     def _write(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

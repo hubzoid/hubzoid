@@ -272,13 +272,13 @@ def resolve_model(hub_dir: Path, override: str | None = None) -> str:
     return runtime_lib._resolve_model_id(hub_dir, settingslib.load(hub_dir))
 
 
-async def _ask_claude_local(model_id: str, prompt: str) -> str:
+async def _ask_claude_local(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
     """Single-turn Claude call with no tools, via the bundled `claude` login.
     A judge has no business calling anything: no tools, no MCP servers (not
     even the host account's connectors), no settings."""
     from ..factory_claude import claude_complete
 
-    text, _usage = await claude_complete(prompt, system=_SYSTEM, model_setting=model_id)
+    text, _usage = await claude_complete(prompt, system=_SYSTEM, model_setting=model_id, hub_dir=hub_dir)
     return text
 
 
@@ -295,10 +295,10 @@ async def _ask_litellm(model_id: str, prompt: str) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
-async def ask_model(model_id: str, prompt: str) -> str:
+async def ask_model(model_id: str, prompt: str, *, hub_dir: Path | None = None) -> str:
     """Route to the right backend for a bare, tool-less model call."""
     if model_id.lower().startswith("claude-local"):
-        return await _ask_claude_local(model_id, prompt)
+        return await _ask_claude_local(model_id, prompt, hub_dir=hub_dir)
     return await _ask_litellm(model_id, prompt)
 
 
@@ -310,7 +310,8 @@ def make_judge(hub_dir: Path, *, model: str | None = None, ask=None):
     rather than as a default argument so that patching the module attribute
     also works — a default would bind `ask_model` at import time.
     """
-    ask = ask or ask_model
+    from functools import partial
+    ask = ask or partial(ask_model, hub_dir=hub_dir)
     model_id = resolve_model(hub_dir, model)
     spec = hub_spec(hub_dir)
 

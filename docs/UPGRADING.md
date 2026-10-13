@@ -1,9 +1,23 @@
 # Upgrading
 
+- [Upgrading to 1.3.2](#upgrading-to-132)
 - [Upgrading to 1.3: workflows from chat](#upgrading-to-13-workflows-from-chat)
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
+
+## Upgrading to 1.3.2
+
+Back up the Hub and operational state, install `pip install -U 'hubzoid==1.3.2'`
+(retain `[openwebui]` if used), then restart the gateway and bridges. There are
+no new required Hub files or database schema changes. Claude failover is opt-in;
+one-credential deployments keep their existing behavior. See
+[Claude credential failover](DEPLOYING.md#claude-credential-failover) before adding
+backups. Cooldowns are operational metadata and survive restarts.
+
+Windows locking and process cleanup are corrected in this release. Use a native
+Windows Python 3.11/3.12 environment, or a separate Linux environment inside WSL;
+do not share a virtual environment between them. Do not install `fcntl` on Windows.
 
 ## Upgrading to 1.3: workflows from chat
 

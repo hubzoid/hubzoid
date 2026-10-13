@@ -34,7 +34,7 @@ def ensure(gh, repo: str, data_dir: Path) -> tuple[Path, str]:
     """The checkout of the default branch at its current commit. One writer
     at a time per repo (a file lock), and the new copy replaces the old one in
     a single rename."""
-    import fcntl
+    from hubzoid import _file_lock
     import uuid
 
     root = path_for(data_dir, repo)
@@ -43,8 +43,8 @@ def ensure(gh, repo: str, data_dir: Path) -> tuple[Path, str]:
     if current_sha(data_dir, repo) == sha:
         return root, sha
     root.parent.mkdir(parents=True, exist_ok=True)
-    with open(root.parent / f".{root.name}.lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(root.parent / f".{root.name}.lock", "a") as lock:
+        _file_lock.lock(lock)
         if current_sha(data_dir, repo) == sha:  # another run fetched it while we waited
             return root, sha
         tag = uuid.uuid4().hex[:8]

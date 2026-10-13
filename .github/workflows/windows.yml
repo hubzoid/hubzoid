@@ -1,0 +1,36 @@
+name: Windows startup
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core and test tools (no Open WebUI)
+        run: pip install -e '.[dev]'
+      - name: Native startup, process cleanup, SQLite locks and credential failover
+        run: >-
+          python -m pytest -q -m "" --timeout-method=thread
+          tests/test_platform_lifecycle.py tests/test_claude_credentials.py
+          tests/test_inbound_dedup.py tests/test_migrations.py
+          -k "not postgres"

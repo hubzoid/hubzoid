@@ -83,10 +83,10 @@ For Windows, uv, troubleshooting and source installation, see the
 [quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md).
 
 **Python 3.12 workflows need SQLite 3.42+ or PostgreSQL.** `hubzoid doctor my-hub`
-checks the environment. This checkout targets **1.3.1**; until it is published,
+checks the environment. This checkout targets **1.3.2**; until it is published,
 `pip install hubzoid` installs the earlier release. Use the
 [source-install steps](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
-to try this revision. 1.3.0 will not be released.
+to try this revision. 1.3.0 was skipped.
 
 ## Make it work your way
 

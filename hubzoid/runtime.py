@@ -727,7 +727,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
         elif model_id.lower().startswith("claude-local"):
             from .factory_claude import claude_complete
 
-            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id)))
+            text, usage = asyncio.run(bounded(claude_complete(prompt, system=system, model_setting=model_id, hub_dir=hub_dir)))
         else:
             import litellm
 

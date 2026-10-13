@@ -658,7 +658,9 @@ class _StderrTail:
         self._lines: collections.deque[str] = collections.deque(maxlen=keep)
 
     def __call__(self, line: str) -> None:
-        line = (line or "").rstrip()
+        from .claude_credentials import redact
+
+        line = redact((line or "").rstrip())
         if line:
             self._lines.append(line)
             log.info("claude cli: %s", line)
@@ -675,6 +677,141 @@ class _StderrTail:
 
     def text(self) -> str:
         return "\n".join(self._lines)
+
+
+async def _query_with_failover(*, prompt, options, hub_dir=None):
+    """Rotate explicit credentials only on confirmed model-account failure.
+
+    PreToolUse observes execution even before the SDK emits a ToolUseBlock.
+    No query is replayed after any content or tool activity. No SDK-internal
+    retry, model selection or permission policy is replaced here.
+    """
+    import asyncio
+    import dataclasses
+    import math
+
+    from claude_agent_sdk import query
+    from .claude_credentials import Pool, TOKEN_KEYS, Unavailable, redact
+
+    pool = await asyncio.to_thread(Pool.configured, hub_dir)
+    if pool:
+        from claude_agent_sdk import AssistantMessage, HookMatcher, ResultMessage, UserMessage
+        from claude_agent_sdk.types import StreamEvent, SystemMessage
+        from claude_agent_sdk import types as sdk_types
+    attempted = set()
+    previous_results = []
+    while True:
+        credential = claim = None
+        turn_options = options
+        progress = False
+        if pool:
+            selected = await asyncio.to_thread(pool.select, attempted)
+            if selected is None:
+                raise await asyncio.to_thread(pool.unavailable)
+            credential, claim = selected
+            attempted.add(credential.key)
+
+            async def before_tool(_input, _tool_use_id, _context):
+                nonlocal progress
+                progress = True
+                return {}
+
+            hooks = dict(getattr(options, "hooks", None) or {})
+            hooks["PreToolUse"] = [HookMatcher(hooks=[before_tool]), *hooks.get("PreToolUse", [])]
+            turn_options = dataclasses.replace(options, hooks=hooks, env={
+                **(options.env or {}), **{key: "" for key in TOKEN_KEYS},
+                TOKEN_KEYS[0]: credential.token,
+            })
+        messages = None
+        config = None
+        failure = None
+        quota_reset = None
+        try:
+            config = PrivateMcpConfig(turn_options)
+            messages = query(prompt=prompt() if callable(prompt) else prompt, options=config.options)
+            async for message in messages:
+                if pool:
+                    if isinstance(message, getattr(sdk_types, "RateLimitEvent", ())):
+                        info = message.rate_limit_info
+                        reset = info.resets_at
+                        if info.status == "rejected" and type(reset) in (int, float) and math.isfinite(reset):
+                            quota_reset = reset
+                    kind = None
+                    if isinstance(message, AssistantMessage) and message.parent_tool_use_id is None:
+                        kind = {"rate_limit": "usage_limit", "authentication_failed": "auth"}.get(
+                            getattr(message, "error", None))
+                        failure = None  # a later SDK attempt supersedes its previous error
+                    elif isinstance(message, ResultMessage) and message.is_error:
+                        kind = {429: "usage_limit", 401: "auth"}.get(
+                            getattr(message, "api_error_status", None))
+                    if kind:
+                        # Text is used only for a reset time AFTER a structured
+                        # provider error classified the failure, never as a trigger.
+                        detail = " ".join(str(getattr(b, "text", "")) for b in
+                                          (getattr(message, "content", None) or []))
+                        detail += " " + str(getattr(message, "result", "") or "")
+                        detail += " " + " ".join(getattr(message, "errors", None) or [])
+                        reset = agent_errors.reset_time(detail) if kind == "usage_limit" else None
+                        failure = Unavailable(kind, (quota_reset or (reset.timestamp() if reset else None))
+                                              if kind == "usage_limit" else None)
+                    if isinstance(message, AssistantMessage) and getattr(message, "error", None):
+                        if kind:
+                            continue  # don't leak an intermediate limit message into chat
+                    if isinstance(message, ResultMessage):
+                        progress = progress or message.num_turns > 1 or bool(message.permission_denials)
+                        if getattr(message, "terminal_reason", None) in {"aborted_streaming", "aborted_tools"}:
+                            failure = None  # an interrupted run must never start another query
+                        if previous_results:
+                            attempts = [*previous_results, message]
+                            usage = dict(message.usage or {})
+                            for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                                usage[key] = sum(int((m.usage or {}).get(key, 0) or 0) for m in attempts)
+                            costs = [m.total_cost_usd for m in attempts]
+                            message = dataclasses.replace(message, usage=usage,
+                                total_cost_usd=sum(costs) if all(c is not None for c in costs) else None)
+                        if message.is_error and failure:
+                            _record_claude_usage(message)
+                            previous_results = [message]
+                            break
+                        if not message.is_error:
+                            failure = None
+                            await asyncio.to_thread(pool.recovered, credential, claim)
+                            claim = None
+                    elif isinstance(message, (AssistantMessage, UserMessage)):
+                        progress = progress or bool(message.content)
+                    elif isinstance(message, StreamEvent):
+                        event = message.event or {}
+                        block = event.get("content_block") or event.get("delta") or {}
+                        progress = progress or bool(block.get("text") or block.get("thinking")) or (
+                            block.get("type") in {"tool_use", "input_json_delta"})
+                    elif isinstance(message, SystemMessage):
+                        progress = progress or message.subtype.startswith("task_")
+                    if progress and failure is None and claim:
+                        await asyncio.to_thread(pool.recovered, credential, claim)
+                        claim = None
+                yield message
+        except Exception as exc:
+            if not pool:
+                raise
+            if failure is None:
+                # Never classify arbitrary exceptions, stderr, tool errors, or
+                # numeric text as account failures. Also keep secrets out of logs.
+                raise RuntimeError(redact(str(exc))) from None
+        finally:
+            try:
+                if messages is not None:
+                    await run_events.aclose(messages)
+            finally:
+                if config is not None:
+                    config.close()
+                if pool and claim:
+                    await asyncio.to_thread(pool.release, credential, claim)
+        if failure is None:
+            return
+        await asyncio.to_thread(pool.failed, credential, failure)
+        if progress:
+            raise failure  # next independent turn may use a backup; this one cannot be replayed
+        log.info("Claude credential slot %s failed before work; selecting backup", credential.slot)
 
 
 class ClaudeRuntime:
@@ -797,7 +934,7 @@ class ClaudeRuntime:
         Each event's `legacy` text is exactly what 1.0.x printed, so `stream()`
         is unchanged.
         """
-        from claude_agent_sdk import AssistantMessage, ResultMessage, UserMessage, query
+        from claude_agent_sdk import AssistantMessage, ResultMessage, UserMessage
         from claude_agent_sdk.types import StreamEvent, ToolResultBlock, ToolUseBlock
 
         self.last_error = None
@@ -827,7 +964,9 @@ class ClaudeRuntime:
         if self._hub_dir is not None:
             from . import vision_inject
             enabled, max_edge, max_images = self._vision
-            qprompt = vision_inject.claude_prompt(
+            # An image prompt is an async iterator; recreate it for each safe
+            # credential attempt instead of retrying an already consumed iterator.
+            qprompt = lambda: vision_inject.claude_prompt(
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
@@ -836,8 +975,8 @@ class ClaudeRuntime:
         stderr = _StderrTail()
         error_status: int | None = None
         try:
-            mcp_config = PrivateMcpConfig(stderr.attach(self._options_for_turn()))
-            messages = query(prompt=qprompt, options=mcp_config.options)
+            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(self._options_for_turn()),
+                                            hub_dir=self._hub_dir)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
                 if isinstance(message, StreamEvent):
@@ -981,14 +1120,14 @@ class ClaudeRuntime:
 
 
 async def claude_complete(prompt: str, *, system: str | None = None,
-                          model_setting: str | None = None) -> tuple[str, dict]:
+                          model_setting: str | None = None, hub_dir: Path | None = None) -> tuple[str, dict]:
     """One tool-free, single-turn Claude call for `hub.call_llm` on claude-local.
 
     No tools, no MCP servers (strictly: not even the host account's), no
     skills and no hub instructions: a plain model call through the Claude Agent
     SDK (claude-local has no API key, so this is the direct route). Returns the
     text and a usage dict. Raises when the SDK reports the run failed."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, query
+    from claude_agent_sdk import AssistantMessage, ResultMessage
     from claude_agent_sdk.types import TextBlock
 
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
@@ -998,24 +1137,27 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     final: str | None = None
     usage: dict = {}
     answered_by: str | None = None
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            answered_by = getattr(message, "model", None) or answered_by
-            parts += [b.text for b in message.content if isinstance(b, TextBlock)]
-        elif isinstance(message, ResultMessage):
-            final = getattr(message, "result", None)
-            raw = getattr(message, "usage", None) or {}
-            get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
-            usage = {
-                "input_tokens": int(get("input_tokens", 0) or 0)
-                + int(get("cache_read_input_tokens", 0) or 0)
-                + int(get("cache_creation_input_tokens", 0) or 0),
-                "output_tokens": int(get("output_tokens", 0) or 0),
-                "cost_usd": getattr(message, "total_cost_usd", None),
-                "model": _answering_model(message, answered_by),
-            }
-            if getattr(message, "is_error", False):
-                raise RuntimeError(
-                    f"claude run ended with {getattr(message, 'subtype', 'error')}"
-                )
+    messages = _query_with_failover(prompt=prompt, options=options, hub_dir=hub_dir)
+    from contextlib import aclosing
+    async with aclosing(messages):
+        async for message in messages:
+            if isinstance(message, AssistantMessage):
+                answered_by = getattr(message, "model", None) or answered_by
+                parts += [b.text for b in message.content if isinstance(b, TextBlock)]
+            elif isinstance(message, ResultMessage):
+                final = getattr(message, "result", None)
+                raw = getattr(message, "usage", None) or {}
+                get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
+                usage = {
+                    "input_tokens": int(get("input_tokens", 0) or 0)
+                    + int(get("cache_read_input_tokens", 0) or 0)
+                    + int(get("cache_creation_input_tokens", 0) or 0),
+                    "output_tokens": int(get("output_tokens", 0) or 0),
+                    "cost_usd": getattr(message, "total_cost_usd", None),
+                    "model": _answering_model(message, answered_by),
+                }
+                if getattr(message, "is_error", False):
+                    raise RuntimeError(
+                        f"claude run ended with {getattr(message, 'subtype', 'error')}"
+                    )
     return ("".join(parts) or final or ""), usage
