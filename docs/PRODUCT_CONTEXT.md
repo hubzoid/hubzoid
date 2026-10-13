@@ -94,6 +94,24 @@ Maintain a separate Build with us services path for business and technology lead
 
 After the 1.1.1 release, prioritize stability, testing and friction in first and repeat use. Older architecture plans are reference inventories rather than automatic implementation queues. Porting instructions and named assistant integrations require their own compatibility evidence. Connecting through MCP, adapting an agent and hosting a runtime are different operations.
 
+## Chat interface support · 2026-10-13
+
+Native chat (built with assistant-ui) and Open WebUI are permanently supported
+interfaces with equal support and release-testing requirements. Native chat is
+the default. Open WebUI is an optional install, not a temporary compatibility
+mode, and no removal of either interface is planned. This decision supplements
+HZ-DIRECTION-2026-10-07-v5 and supersedes earlier removal wording.
+
+Validate shared capabilities and each interface's supported user journeys for
+both modes before a release. Equal testing is a release requirement; it must
+not be inferred from installing both interfaces in CI. Record actual results,
+skips and gaps against the [release validation policy](RELEASING.md#chat-interface-validation).
+
+Today, `pip install hubzoid` includes native chat and `hubzoid[openwebui]` adds
+Open WebUI. Symmetric `hubzoid[assistantui]` and `hubzoid[openwebui]` extras may
+be considered later to clarify interface selection. The `assistantui` extra
+does not currently exist; no packaging change is approved by this decision.
+
 ## Open decisions
 
-Implementation designs for the required roadmap, additional onboarding variants and optional Hubzoid-managed hosting require their own assessments. Easy customer hosting is required, with provider-specific implementation and validation still to be scoped. The native web app is the current default in the 1.1 release records. Additional web interfaces are not a standing expansion commitment. This brief authorizes no platform migration. Public statements must reflect the selected release and verified evidence.
+Implementation designs for the required roadmap, additional onboarding variants and optional Hubzoid-managed hosting require their own assessments. Easy customer hosting is required, with provider-specific implementation and validation still to be scoped. Native chat remains the default, with Open WebUI equally and permanently supported. Interfaces beyond these two are not a standing expansion commitment. This brief authorizes no platform migration. Public statements must reflect the selected release and verified evidence.

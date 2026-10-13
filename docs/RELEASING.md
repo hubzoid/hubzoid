@@ -19,6 +19,7 @@ with the `release-candidate` label. Inspect skips, test failures, both native
 image checks and clean-install results. Complete acceptance on a copy of the
 intended deployment, including its runtime, sign-in, permissions and restart
 persistence. Check real email delivery if that deployment promotes email.
+Apply the chat-interface validation requirements below to both supported modes.
 
 1. Update `pyproject.toml` and `CHANGELOG.md` to the new version and push main.
 2. In GitHub, open **Releases → Draft a new release**.
@@ -43,3 +44,52 @@ source; a code or workflow fix needs a new version and release.
 Do not reuse a version already published to PyPI or move an existing release
 tag. Publishing creates external artifacts in sequence; a later failure does
 not undo earlier successful publishing.
+
+## Chat interface validation
+
+Native chat is the default. Native chat and Open WebUI are permanently and
+equally supported, with no removal planned. Both must meet the same release
+quality bar. An optional dependency does not make its interface optional to
+validate. Equal testing means checking the supported behavior in each mode,
+not requiring identical UI features or identical test counts.
+
+Before release, record results for the exact candidate in **both** modes:
+
+| Area | Required validation in native chat and Open WebUI |
+|---|---|
+| Installation and startup | Clean install, selected interface startup, single-hub and gateway operation; validate each promoted container configuration. |
+| Identity and access | Sign-in, sign-out, permitted teammate access, denied access and isolation between people and agents. |
+| Useful chat | A useful agent response, streaming, tools, uploads and artifact access through each interface's supported flow. |
+| Shared capabilities | Console access, personal connectors, workflows and schedules started from chat, and access to their results. |
+| Lifecycle | Upgrade and backup/restore of each mode's data, plus account, conversation and schedule persistence after restart. |
+
+Record the Hubzoid version/commit, interface and dependency versions, runtime,
+configuration, commands or manual steps, results and any provider-dependent
+gaps. Run focused regressions for fixes in either interface. A skipped,
+timed-out or excluded critical check blocks release until it is completed;
+installing a dependency or passing the other interface's tests is not a pass.
+
+### Current automation coverage
+
+The fast workflow installs the core package without Open WebUI. The release
+workflow installs the Open WebUI extra and runs tests covering both modes,
+with heavy-test exclusions and selected explicit regressions. Its paired live
+smoke check starts each real interface through the public edge, verifies
+sign-in and refused credentials, serves JavaScript and the Console, streams a
+scripted reply and verifies the saved chat after restart. A missing Open WebUI
+extra fails this check in CI. The browser job also runs the existing native
+chat journeys and stream contracts alongside Console journeys.
+
+The same two Python lanes remain: critical workflow checks run in lane 1,
+live interface checks in lane 2, and the general shards exclude checks already
+run explicitly. No distinct regression tests are removed. Job counts and
+timeouts are unchanged. Compare candidate timings with the successful 1.3.1
+run 38347956989 (longest validation job: 14m34s); unchanged limits alone do not
+prove unchanged elapsed time.
+
+The clean-wheel and container jobs still validate the default native install;
+the two image jobs are CPU architectures, not chat interfaces. The live smoke
+uses a scripted model and HTTP clients, not an Open WebUI browser journey.
+Complete deployment-specific, Open WebUI browser/container and real-provider
+acceptance where required by the table above. Inspect skips and exclusions;
+these automated checks do not establish full feature parity by themselves.

@@ -58,6 +58,14 @@ need it installed (it brings PyTorch, so use the CPU index):
 
 ## Running tests
 
+Native chat and Open WebUI are permanently and equally supported. They have
+the same release-testing requirements; native chat remains the default and
+Open WebUI is optional to install. Validate affected behavior in both modes
+and follow the [chat-interface release checks](docs/RELEASING.md#chat-interface-validation).
+Release CI runs a paired live sign-in, streamed-chat and restart check for both
+interfaces, plus native-chat and Console browser journeys. Record remaining
+deployment and real-provider acceptance separately.
+
 Every pull request and every push to `main` runs
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) in a few minutes:
 the fast default tests (no `slow` or end-to-end tests) on SQLite, without Open
@@ -82,14 +90,16 @@ pytest -q -m heavy            # the heavy tests CI leaves out
 (cd portal && npm ci && npm run lint)
 ```
 
-Publishing a GitHub release runs the full validation in `ci.yml`: the whole
-suite with the `openwebui` extra, the Console journeys in a browser, a clean
-wheel install and both native Docker images. Maintainers: see
+Publishing a GitHub release runs the automated validation in `ci.yml`: the
+suite with the `openwebui` extra and the exclusions described above, the
+paired live interface checks, native-chat and Console browser journeys, a
+clean core wheel install and native-chat
+Docker images on both CPU architectures. Maintainers: see
 [publishing a release](docs/RELEASING.md).
 
 ```bash
 pytest                       # fast default: no LLM calls, skips `slow` DBOS/Postgres tests
-pytest -m ""                 # everything, as CI runs it
+pytest -m ""                 # everything, including checks excluded from CI
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
 pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker

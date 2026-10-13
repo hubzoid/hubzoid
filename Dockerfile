@@ -46,7 +46,7 @@
 # not start.
 FROM python:3.12-slim-trixie
 
-# true adds the openwebui extra for the legacy chat app. Nothing else differs.
+# true adds the openwebui extra for the optional supported chat interface.
 ARG WITH_OPENWEBUI=false
 
 # The default image needs no system packages: every dependency ships wheels for
@@ -73,7 +73,7 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
     HUBZOID_HOST=0.0.0.0
 
 # Reviewed dependencies first (cached layer), then the package itself. The
-# legacy lock pins the CPU build of PyTorch, so no CUDA libraries are installed.
+# Open WebUI lock pins the CPU build of PyTorch, so no CUDA libraries are installed.
 COPY --chown=hubzoid requirements.lock requirements-openwebui.lock /tmp/hubzoid-src/
 RUN if [ "$WITH_OPENWEBUI" = "true" ]; then \
       pip install --user --extra-index-url https://download.pytorch.org/whl/cpu \

@@ -13,6 +13,10 @@ All notable changes to Hubzoid. Versions follow the package version in
   Turns that have started producing content or invoking tools are never replayed.
   See [configuration and limits](docs/DEPLOYING.md#claude-credential-failover).
 
+### Changed
+- Native chat and Open WebUI are permanently supported with equal release-testing
+  requirements. Native remains the default; Open WebUI remains an optional install.
+
 ### Fixed
 - Native Windows SQLite startup no longer imports the unavailable `fcntl`
   module. Migration, workflow-owner, schedule, eval, inbound and checkout locks

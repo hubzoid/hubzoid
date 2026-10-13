@@ -16,6 +16,12 @@ This brief supersedes older services-led product positioning. It is direction,
 not a release feature list. After 1.1.1, prioritize stability, testing and friction
 in first and repeat use. Older implementation workstreams are a reference
 inventory, not an automatic feature queue. Native chat is the current default.
+The 2026-10-13 interface decision permanently supports both native chat and
+Open WebUI, with equal support and release-testing requirements. Open WebUI is
+optional to install, not a deprecated or temporary mode; no removal is planned.
+Validate both interfaces before a release and record skips and coverage gaps
+honestly (see `docs/RELEASING.md`). A possible future `[assistantui]` extra is a
+packaging idea, not an available install path or an authorized packaging change.
 Easy customer hosting is a framework requirement. Provider-specific implementation,
 memory and additional onboarding variants still need scoped decisions.
 This context update authorizes no migration.

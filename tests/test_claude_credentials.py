@@ -272,3 +272,52 @@ def test_postgres_shared_recovery_claim(configured, monkeypatch, postgres_url):
         assert sorted(c.slot for c, _ in selections) == [0, 1]
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("terminal", [None, "aborted_streaming", "aborted_tools"])
+def test_result_status_only_and_interrupted_runs(configured, monkeypatch, terminal):
+    calls = []
+    async def query(*, prompt, options):
+        calls.append(options.env[creds.TOKEN_KEYS[0]])
+        message = result(len(calls) == 1)
+        if message.is_error:
+            message.api_error_status = 429
+            message.terminal_reason = terminal
+        yield message
+    monkeypatch.setattr(sdk, "query", query)
+    rt = runtime(configured)
+    asyncio.run(rt.run("hello"))
+    assert len(calls) == (1 if terminal else 2)
+    assert (rt.last_error is not None) == bool(terminal)
+
+
+def test_cancelled_recovery_probe_waits_before_another_probe(configured, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(creds.time, "time", lambda: now[0])
+    pool = creds.Pool.configured(configured)
+    pool.failed(pool.credentials[0], creds.Unavailable(reset_at=1100))
+    now[0] = 1101
+    async def query(**kwargs):
+        raise asyncio.CancelledError()
+        yield
+    monkeypatch.setattr(sdk, "query", query)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(claude_complete("hi", hub_dir=configured))
+    assert pool.select(set())[0].slot == 1
+    now[0] += creds.COOLDOWN + 1
+    assert pool.select(set())[0].slot == 0
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_error_event_without_terminal_result_never_replays(configured, monkeypatch, crash):
+    calls = []
+    async def query(**kwargs):
+        calls.append(1)
+        yield failure()
+        if crash:
+            raise RuntimeError("process exited unexpectedly")
+    monkeypatch.setattr(sdk, "query", query)
+    rt = runtime(configured)
+    asyncio.run(rt.run("hi"))
+    assert len(calls) == 1 and rt.last_error is not None
+    assert creds.Pool.configured(configured).select(set())[0].slot == 0

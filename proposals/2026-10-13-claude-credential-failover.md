@@ -165,3 +165,21 @@ Document configuration in `hubzoid/settings.py` and the runtime guide, including
 cooldown, attempts, permission boundaries, absence of alerts, restart behavior and
 the fact that multiple tokens do not guarantee independent quotas. Do not claim
 native Windows acceptance from Mac tests; run the focused Windows CI job.
+
+
+## Implementation validation
+
+- Claude adapter regression: 423 passed, including PostgreSQL recovery claims.
+- Lifecycle, migrations, inbound and eval checks on macOS: 88 passed, one native
+  Windows-only acceptance skipped locally and exercised on the Windows runner.
+- Schedule, eval persistence, Codex and GitZoid regression: 217 passed; two live
+  Codex tool-isolation cases excluded from this focused local run.
+- Final failover/secret/error checks after tightening terminal-result handling:
+  31 passed; the PostgreSQL case was deselected in this final small rerun and
+  had already passed in the broader adapter run.
+- Native Windows CI run 38350734884 passed the headless startup, shutdown,
+  cross-process SQLite locks, migration and credential-pool checks.
+- Release-workflow regression: 13 passed after adding the Windows workflow to
+  the explicit inventory. No full local suite or build was run.
+- Live quota exhaustion/reset remains untested. No real-SDK provider smoke was
+  run for this change; mocked SDK messages do not prove provider acceptance.

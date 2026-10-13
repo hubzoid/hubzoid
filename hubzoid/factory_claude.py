@@ -725,6 +725,7 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
         messages = None
         config = None
         failure = None
+        confirmed = False
         quota_reset = None
         try:
             config = PrivateMcpConfig(turn_options)
@@ -770,6 +771,7 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                             message = dataclasses.replace(message, usage=usage,
                                 total_cost_usd=sum(costs) if all(c is not None for c in costs) else None)
                         if message.is_error and failure:
+                            confirmed = True
                             _record_claude_usage(message)
                             previous_results = [message]
                             break
@@ -793,10 +795,9 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
         except Exception as exc:
             if not pool:
                 raise
-            if failure is None:
-                # Never classify arbitrary exceptions, stderr, tool errors, or
-                # numeric text as account failures. Also keep secrets out of logs.
-                raise RuntimeError(redact(str(exc))) from None
+            # A prior error event does not make a later process crash safe to
+            # replay. Require a terminal SDK result before rotating credentials.
+            raise RuntimeError(redact(str(exc))) from None
         finally:
             try:
                 if messages is not None:
@@ -808,6 +809,8 @@ async def _query_with_failover(*, prompt, options, hub_dir=None):
                     await asyncio.to_thread(pool.release, credential, claim)
         if failure is None:
             return
+        if not confirmed:
+            raise failure  # no terminal result: the retry boundary is unknown
         await asyncio.to_thread(pool.failed, credential, failure)
         if progress:
             raise failure  # next independent turn may use a backup; this one cannot be replayed
@@ -970,7 +973,6 @@ class ClaudeRuntime:
                 prompt, self._hub_dir, _request_ctx.get_chat_id(),
                 enabled=enabled, max_edge=max_edge, max_images=max_images,
             )
-        mcp_config = None
         messages = None
         stderr = _StderrTail()
         error_status: int | None = None
@@ -1076,14 +1078,10 @@ class ClaudeRuntime:
                                       status=getattr(exc, "api_error_status", None))
             return
         finally:
-            try:
-                # Stopped early (cancelled or closed): end the CLI run now, in
-                # this task, rather than when the SDK's generator is collected.
-                if messages is not None:
-                    await run_events.aclose(messages)
-            finally:
-                if mcp_config is not None:
-                    mcp_config.close()
+            # Close in this task so the SDK process and private MCP file are
+            # cleaned up immediately on cancellation or an early consumer exit.
+            if messages is not None:
+                await run_events.aclose(messages)
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.

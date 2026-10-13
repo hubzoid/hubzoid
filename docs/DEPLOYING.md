@@ -3,7 +3,9 @@
 For the current account, owner and permission flow, start with
 [ADMINISTRATION.md](ADMINISTRATION.md). Choose the default Hubzoid web app or
 Open WebUI mode explicitly. Agent permissions are changed in the Console in
-both modes. Test a copied deployment before a production upgrade.
+both modes. Both interfaces are permanently supported with equal support and
+release-testing requirements; no removal is planned. Test a copied deployment
+before a production upgrade.
 
 
 `hubzoid run <hub>` is the production entry point. Wrap it in `systemd`

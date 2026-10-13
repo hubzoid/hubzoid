@@ -410,5 +410,5 @@ ENABLE_SIGNUP=false
 - Rotating `WEBUI_SECRET_KEY` signs everyone out and makes stored personal
   connection tokens unreadable.
 
-GitHub, LDAP, trusted headers and claim-based roles and groups are legacy-mode
+GitHub, LDAP, trusted headers and claim-based roles and groups are Open WebUI mode
 features. The Hubzoid web app does not offer them.

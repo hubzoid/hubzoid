@@ -169,7 +169,12 @@ For a public deployment, configure HTTPS and persistent storage, then restart.
 | Interface | Install and select |
 |---|---|
 | **Hubzoid web app — default** | `pip install hubzoid` includes chat and Console. No separate UI package or Node installation is needed. |
-| **Open WebUI — optional compatibility mode** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
+| **Open WebUI — optional supported interface** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
+
+Both interfaces are permanently supported, with equal support and release-testing
+requirements. Native chat is the default; neither interface has a planned removal.
+See the [release validation policy](docs/RELEASING.md#chat-interface-validation)
+for required checks and current automation coverage.
 
 The default app is built with assistant-ui and bundled with Hubzoid. When
 upgrading an existing deployment, read the [upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)

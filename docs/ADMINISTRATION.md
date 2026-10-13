@@ -20,7 +20,7 @@ hubzoid gateway ./finance ./operations --data-dir ./gateway-data
 On a fresh default-mode deployment this creates the first administrator.
 Sign in with that account, then add people in the Console. It gives one-time
 sign-in links and sends no email. See [authentication](auth.md).
-To keep Open WebUI instead, install `hubzoid[openwebui]`, set
+To choose the equally supported Open WebUI interface, install `hubzoid[openwebui]`, set
 `HUBZOID_UI=openwebui`, and configure an Open WebUI administrator through
 `HUBZOID_GATEWAY_ADMIN_EMAIL` and `HUBZOID_GATEWAY_ADMIN_PASSWORD`, plus
 `WEBUI_AUTH=true` and a stable `WEBUI_SECRET_KEY`.

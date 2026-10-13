@@ -1,8 +1,10 @@
 # Branding and UI configuration
 
-Hubzoid runs Open WebUI as its chat app. Open WebUI's own branding stays
-by default. Add your own files to `<hub>/branding/` and they replace it.
-This page documents what hubzoid sets and how to override anything.
+Hubzoid's native chat is the default; Open WebUI is an optional, permanently
+supported interface. This page describes branding and UI configuration in
+Open WebUI mode (`HUBZOID_UI=openwebui`). Open WebUI's own branding stays by
+default. Add your own files to `<hub>/branding/` to customize it, subject to
+the branding conditions below.
 
 ## Open WebUI branding
 
