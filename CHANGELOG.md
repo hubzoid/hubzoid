@@ -3,6 +3,27 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [1.3.2]
+
+### Added
+- Optional secondary and tertiary Claude OAuth credentials for `claude-local`.
+  Confirmed usage limits or authentication rejection select the next credential
+  without changing the model or Hub permissions. Shared cooldowns prevent every
+  bridge from retrying an exhausted credential; one request probes it after reset.
+  Turns that have started producing content or invoking tools are never replayed.
+  See [configuration and limits](docs/DEPLOYING.md#claude-credential-failover).
+
+### Changed
+- Native chat and Open WebUI are permanently supported with equal release-testing
+  requirements. Native remains the default; Open WebUI remains an optional install.
+
+### Fixed
+- Native Windows SQLite startup no longer imports the unavailable `fcntl`
+  module. Migration, workflow-owner, schedule, eval, inbound and checkout locks
+  use the same portable file-lock helper; PostgreSQL advisory locks are unchanged.
+- Windows child-process cleanup no longer assumes `SIGKILL` or `killpg` exists.
+  Hub, gateway, Codex and timed-out scheduled commands use Windows tree cleanup.
+
 ## [1.3.1]
 
 1.3.0 will not be released; 1.3.1 is the first release of this functionality.

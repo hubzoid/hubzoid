@@ -427,7 +427,11 @@ def _run_command(cmd: list[str], *, shell: bool, cwd: str,
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                if os.name == "nt":
+                    from ._process_tree import stop_windows_tree
+                    stop_windows_tree(proc)
+                else:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError, OSError):
                 proc.kill()
             try:

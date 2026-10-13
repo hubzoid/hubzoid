@@ -1,10 +1,37 @@
 # Branding and UI configuration
 
-Hubzoid runs Open WebUI as its chat app. Open WebUI's own branding stays
-by default. Add your own files to `<hub>/branding/` and they replace it.
-This page documents what hubzoid sets and how to override anything.
+Hubzoid's native chat is the default; Open WebUI is an optional, permanently
+supported interface. Both use files under `<hub>/branding/`. The sections below
+separate their branding settings and defaults.
+
+## Native chat branding
+
+For the default interface (`HUBZOID_UI=hubzoid`), set the agent's display name
+in the main `AGENTS.md` frontmatter and add your assets under `<hub>/branding/`.
+Filenames are case-insensitive; the first available filename in each row wins.
+
+| Surface | Files or setting |
+|---|---|
+| Agent name and standalone app name | `name:` in the main `AGENTS.md` frontmatter |
+| Logo and agent avatar | `logo.svg`, `logo.png`, `logo.webp`, then `favicon.svg`, `favicon.png` |
+| Browser favicon | `favicon.svg`, `favicon.png`, `favicon.ico`, then `logo.svg`, `logo.png` |
+| Custom stylesheet | `custom.css` |
+
+Without a custom logo, native chat displays Hubzoid's own mark; unchanged
+Hubzoid template marks are treated as the default. Native chat serves these
+files directly and does not use the Open WebUI asset-patching settings below.
+
+In a gateway, `hubzoid gateway --name` sets the shared app name. Shared branding
+comes from `HUBZOID_GATEWAY_BRANDING` (a hub slug or a path containing
+`branding/`), then a populated `<gateway data dir>/branding/`, then the first
+hub. Each agent keeps its own name and avatar. Restart after configuration
+changes and refresh the browser to check the result.
 
 ## Open WebUI branding
+
+The remaining Open WebUI-specific settings apply with `HUBZOID_UI=openwebui`.
+Open WebUI's own branding stays by default. Custom branding is subject to the
+conditions below. Agent prompt suggestions apply to both interfaces.
 
 With no assets in `<hub>/branding/`, the chat app shows Open WebUI's stock
 logo and the name reads `<your name> (Open WebUI)`. As soon as the folder

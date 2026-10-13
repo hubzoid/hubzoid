@@ -273,4 +273,4 @@ def test_local_judge_uses_the_tool_free_runtime_adapter(monkeypatch):
     monkeypatch.setattr(factory_claude, 'claude_complete', complete)
     assert asyncio.run(judge_lib._ask_claude_local('claude-local/sonnet', 'Grade this')) == '{"score": 9}'
     assert seen == {'prompt': 'Grade this', 'system': judge_lib._SYSTEM,
-                    'model_setting': 'claude-local/sonnet'}
+                    'model_setting': 'claude-local/sonnet', 'hub_dir': None}

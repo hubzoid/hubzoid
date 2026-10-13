@@ -21,7 +21,7 @@
 #
 # For PostgreSQL, add the override file (see docker-compose.postgres.yml).
 #
-# Legacy Open WebUI chat app (this release only): set HUBZOID_UI=openwebui in
+# Permanently supported optional Open WebUI interface: set HUBZOID_UI=openwebui in
 # the hub's .env and build the image with the openwebui extra:
 #   HUBZOID_WITH_OPENWEBUI=true docker compose -f docker/docker-compose.yml up -d --build
 #

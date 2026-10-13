@@ -83,10 +83,10 @@ For Windows, uv, troubleshooting and source installation, see the
 [quickstart](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md).
 
 **Python 3.12 workflows need SQLite 3.42+ or PostgreSQL.** `hubzoid doctor my-hub`
-checks the environment. This checkout targets **1.3.1**; until it is published,
+checks the environment. This checkout targets **1.3.2**; until it is published,
 `pip install hubzoid` installs the earlier release. Use the
 [source-install steps](https://github.com/hubzoid/hubzoid/blob/main/docs/quickstart.md#run-this-checkout)
-to try this revision. 1.3.0 will not be released.
+to try this revision. 1.3.0 was skipped.
 
 ## Make it work your way
 
@@ -164,12 +164,23 @@ For a public deployment, configure HTTPS and persistent storage, then restart.
 [Deployment](https://github.com/hubzoid/hubzoid/blob/main/docs/DEPLOYING.md) ·
 [Backup and restore](https://github.com/hubzoid/hubzoid/blob/main/docs/BACKUP.md)
 
+**Optional Claude failover (1.3.2):** add up to two backup credentials to keep
+answering when a Claude credential reaches a confirmed usage limit or its login
+is rejected. Switching keeps the same model and permissions and never replays
+work that has started. Existing single-credential setups are unchanged.
+[Configuration, token replacement and limits →](docs/DEPLOYING.md#claude-credential-failover)
+
 ## Choose your interface
 
 | Interface | Install and select |
 |---|---|
 | **Hubzoid web app — default** | `pip install hubzoid` includes chat and Console. No separate UI package or Node installation is needed. |
-| **Open WebUI — optional compatibility mode** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
+| **Open WebUI — optional supported interface** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
+
+Both interfaces are permanently supported, with equal support and release-testing
+requirements. Native chat is the default; neither interface has a planned removal.
+See the [release validation policy](docs/RELEASING.md#chat-interface-validation)
+for required checks and current automation coverage.
 
 The default app is built with assistant-ui and bundled with Hubzoid. When
 upgrading an existing deployment, read the [upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)

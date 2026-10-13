@@ -3,7 +3,9 @@
 For the current account, owner and permission flow, start with
 [ADMINISTRATION.md](ADMINISTRATION.md). Choose the default Hubzoid web app or
 Open WebUI mode explicitly. Agent permissions are changed in the Console in
-both modes. Test a copied deployment before a production upgrade.
+both modes. Both interfaces are permanently supported with equal support and
+release-testing requirements; no removal is planned. Test a copied deployment
+before a production upgrade.
 
 
 `hubzoid run <hub>` is the production entry point. Wrap it in `systemd`
@@ -453,6 +455,66 @@ The token lasts ~1 year; re-mint when it expires. Heavy automated use shares
 your subscription's rate limits with interactive Claude Code use — if latency
 or limits bite, `MODEL=claude-local/haiku` is ~3× faster TTFT, or switch that
 hub to a metered API-key provider.
+
+#### Claude credential failover
+
+Available in **1.3.2**. Add up to two optional backups alongside the existing
+primary in the bridge environment or each Hub’s secret store. In a gateway, use the
+same slots for Hubs that should share these credentials. Do not put tokens in
+Hub knowledge, chat, source control or agent instructions.
+
+```dotenv
+CLAUDE_CODE_OAUTH_TOKEN=<primary credential>
+CLAUDE_CODE_OAUTH_TOKEN_SECONDARY=<first backup>
+CLAUDE_CODE_OAUTH_TOKEN_TERTIARY=<second backup>
+```
+
+This requires an explicit primary and Claude OAuth authentication only. Remove
+conflicting API-key/auth-token or alternate-provider settings before opting in;
+Hubzoid refuses ambiguous authentication rather than silently charging another
+account. Blank backup slots are ignored; identical token values are tried once.
+Without backups, the existing login behavior is unchanged.
+
+- The same model, Hub, caller identity and tools are used on every attempt.
+- Only structured Claude usage/rate-limit and authentication failures trigger
+  switching. Warnings that a limit is approaching do not. Unknown errors, bad
+  inputs, refusals, tool/MCP failures, timeouts and provider-wide outages do not.
+- If the request fails before any content or tool activity, the next credential
+  is tried within the same request. After work starts, the partial turn ends
+  with the existing error; the next independent request can use a backup. Never
+  assume an interrupted action was undone or automatically repeat it.
+- Each request tries at most three distinct credentials. SDK-internal retries
+  still apply, within the calling surface's existing deadline. Failover can add
+  latency, but does not wait for an hours-long limit to reset.
+- A limited credential stays unavailable until its reported reset, or five
+  minutes when no usable reset is provided. One request probes recovery; other
+  requests keep using backups. An inconclusive probe waits another five minutes.
+  A crashed probe's lease expires after five minutes. Only a successful terminal SDK result restores
+  the earlier credential's priority; there is no round-robin switching.
+- A rejected login stays disabled until its token is replaced. Restarting with
+  the same token does not clear the failure. Restart the bridges after changing
+  environment/secret-store configuration, as for other credentials.
+- Hubs sharing the operational database share cooldowns, keyed by a token digest.
+  Raw credentials are never stored in this metadata. Separate standalone stores
+  cannot coordinate; use a gateway or a deliberately shared operational store.
+- There are no alerts or admin UI changes. Logs identify the slot (0 = primary,
+  1/2 = backups), failure category and recovery without printing token values.
+
+To replace a token, update only its configured slot and restart the bridges.
+A new token value starts eligible; a rejected old value remains disabled if
+reintroduced. The replacement must have access to the same selected model.
+Changing credentials does not change the Hub files, conversation storage,
+caller access or tool grants. A bad replacement can fail authentication or
+share an exhausted quota, so verify one read-only request after restarting.
+To turn failover off, remove both backup variables and restart; this restores
+the original single-credential selection path. Other runtime backends are unaffected.
+
+Backups must be authorized for the deployment. Different tokens do not establish
+independent quota, and this does not solve a Claude-wide outage. Anthropic's
+[Agent SDK guidance](https://code.claude.com/docs/en/agent-sdk/overview) requires
+prior approval for third-party products offering claude.ai login or rate limits;
+this feature is not a claim of approved shared subscription hosting.
+
 
 ### 6. Reverse proxy + TLS (optional, recommended)
 

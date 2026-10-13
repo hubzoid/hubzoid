@@ -68,12 +68,12 @@ class Owner:
         from sqlalchemy.engine import make_url
         url = make_url(db.sqlalchemy_url(db.dbos_url(self.hub_dir)))
         if url.get_backend_name() == 'sqlite':
-            import fcntl
+            from .. import _file_lock
             path = Path(url.database).resolve()
             path.parent.mkdir(parents=True, exist_ok=True)
             lock = open(str(path) + '.owner.lock', 'a')
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _file_lock.lock(lock, blocking=False)
             except BlockingIOError:
                 lock.close()
                 raise OwnerBusy('This hub already has a workflow engine owner') from None

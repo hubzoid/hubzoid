@@ -73,7 +73,7 @@ def test_missing_changelog_prevents_new_release(tmp_path):
 def test_release_candidates_can_validate_without_publishing():
     workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
     assert workflows == [ROOT / ".github/workflows/ci.yml", ROOT / ".github/workflows/secrets.yml",
-                         ROOT / ".github/workflows/tests.yml"]
+                         ROOT / ".github/workflows/tests.yml", ROOT / ".github/workflows/windows.yml"]
     # BaseLoader preserves GitHub's YAML 1.2 'on' key (not YAML 1.1 True).
     config = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert config["on"] == {

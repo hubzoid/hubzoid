@@ -51,15 +51,16 @@ class Dedup:
         it now. Inside the block the caller checks `seen`, stores, then `claim`s.
         The lock is an flock on a side file, which the kernel drops when the
         process dies, so a crash before the claim leaves no marker and the
-        provider's retry is accepted. POSIX only, like the migration lock.
+        provider's retry is accepted. Windows retains the side file because an
+        open lock file cannot be unlinked there.
         """
-        import fcntl
+        from .. import _file_lock
 
         lock = self.dir / (_marker_name(message_id) + ".lock")
         fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _file_lock.lock(fd, blocking=False)
             except BlockingIOError:
                 yield False
                 return
@@ -67,7 +68,7 @@ class Dedup:
             # Once claimed, every later holder finds the marker, so the lock file
             # can go. Without a claim it stays: removing it could let two
             # deliveries lock two different files and both store.
-            if self.seen(message_id):
+            if self.seen(message_id) and os.name != "nt":
                 lock.unlink(missing_ok=True)
         finally:
             os.close(fd)

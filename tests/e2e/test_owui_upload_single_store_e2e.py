@@ -85,12 +85,18 @@ def _cleanup():
 def client(monkeypatch):
     monkeypatch.setenv("HUBZOID_HUB_DIR", str(TEST_HUB))
     monkeypatch.setenv("BRIDGE_API_KEYS", "dev")
+    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     # build_app loads the fixture's .env with override=True. Register all its
     # keys with monkeypatch so they cannot disable unrelated scheduler tests.
     monkeypatch.setenv("MODEL", "claude-local")
     monkeypatch.setenv("HUBZOID_DISABLE_SCHEDULE", "1")
     from hubzoid.server import build_app
-    return TestClient(build_app())
+    from hubzoid.access import store_for
+    from hubzoid.access.store import USE_HUB
+
+    app = build_app()
+    store_for(TEST_HUB).grant("upload-test@example.test", TEST_HUB.name, USE_HUB)
+    return TestClient(app)
 
 
 def _stage_owui_file(name: str, payload: bytes) -> str:
@@ -111,7 +117,10 @@ def _post(client, chat_id: str, prompt: str, captured: dict):
     with patch("hubzoid.factory_claude.ClaudeRuntime.run", new=fake_run):
         return client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer dev"},
+            headers={
+                "Authorization": "Bearer dev",
+                "X-OpenWebUI-User-Email": "upload-test@example.test",
+            },
             json={
                 "model": "test",
                 "chat_id": chat_id,

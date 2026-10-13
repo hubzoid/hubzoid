@@ -47,6 +47,14 @@ Environment variables explicitly supported:
                          falls back to OPENROUTER_API_KEY.
   OPENAI_API_KEY         Key for OpenAI direct.
   ANTHROPIC_API_KEY      Key for Anthropic direct.
+  CLAUDE_CODE_OAUTH_TOKEN  Explicit Claude login credential (claude-local).
+  CLAUDE_CODE_OAUTH_TOKEN_SECONDARY / CLAUDE_CODE_OAUTH_TOKEN_TERTIARY
+                         Optional ordered backups for the same Claude model.
+                         Requires an explicit primary and OAuth-only auth.
+                         Confirmed usage limits/auth rejection only; never
+                         replay after content or tool activity. Shared operational
+                         store holds cooldowns, not tokens. No admin alerts.
+                         See docs/DEPLOYING.md, Claude credential failover.
   AZURE_API_KEY          Key for Azure OpenAI (when MODEL starts with azure/).
   AZURE_API_BASE         Azure resource endpoint, e.g.
                          https://<resource>.openai.azure.com

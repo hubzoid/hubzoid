@@ -21,6 +21,18 @@ hubzoid init my-hub
 hubzoid run my-hub
 ```
 
+On Windows PowerShell, use Python 3.12 and Hubzoid **1.3.2 or newer** for the
+migration-lock and process-cleanup fixes. Until 1.3.2 is published, use the
+[source-install steps](#run-this-checkout) instead of the package install below.
+Calling the virtual environment's Python directly avoids activation-policy changes:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install "hubzoid>=1.3.2"
+.\.venv\Scripts\python -m hubzoid init my-hub
+.\.venv\Scripts\python -m hubzoid run my-hub
+```
+
 `pip install hubzoid` installs the Hubzoid web app and the Python runtime
 adapters. It no longer installs Open WebUI (see [upgrading](UPGRADING.md)).
 

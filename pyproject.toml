@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hubzoid"
-version = "1.3.1"
+version = "1.3.2"
 description = "An open-source framework for production AI agents."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -48,7 +48,7 @@ dependencies = [
   "claude-agent-sdk>=0.2.159,<0.3",
   "fastmcp>=3.4.7,<4",    # mcp_server.py hosted MCP endpoint (Streamable HTTP)
   "starlette>=0.47,<2",     # edge.py reverse-proxy app
-  "websockets>=15,<18",     # edge.py websocket passthrough (legacy Open WebUI mode)
+  "websockets>=15,<18",     # edge.py websocket passthrough (Open WebUI mode)
   "PyYAML>=6.0.3,<7",
   "python-dotenv>=1.2,<2",
   "composio>=0.15,<0.16",  # connections.py broker. 0.16+ needs openai>=2.42 (connected_accounts / auth_configs / link)
@@ -92,8 +92,9 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.3,<4"]  # only when DATABASE_URL points at Postgres
-# Legacy chat app for one release (HUBZOID_UI=openwebui), removed in the next
-# minor. PINNED: per-user MCP OAuth and branding patches couple to Open WebUI
+# Permanently supported optional chat interface (HUBZOID_UI=openwebui), with
+# the same support and release-testing requirements as the default native chat.
+# No removal is planned. PINNED: integration and branding patches couple to Open WebUI
 # internals, so upgrades are deliberate. Re-run tests/ and HubzoidTests before
 # bumping. Its own dependencies (PyTorch, PyAV and many more) make it large.
 openwebui = ["open-webui==0.11.4"]

@@ -37,17 +37,17 @@ from contextlib import contextmanager
 
 @contextmanager
 def _locked(d):
-    import fcntl
+    from .. import _file_lock
     import os
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(d, 0o700)
     fd = os.open(d / ".lock", os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(fd, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        _file_lock.lock(lock)
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            _file_lock.unlock(lock)
 
 
 def _atomic(path, data):

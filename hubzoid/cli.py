@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import importlib.resources as resources
 import json
+import logging
 import os
 import re
 import shlex
@@ -53,6 +54,9 @@ def _stop_processes(procs, *, timeout: float = 8.0) -> None:
     In a container, exiting PID 1 kills its remaining children immediately.
     Signal all services first, then give them a shared, bounded grace period.
     """
+    if os.name == "nt":
+        _stop_groups(procs, timeout=timeout)
+        return
     active = [p for p in procs if p is not None and p.poll() is None]
     for p in active:
         p.terminate()
@@ -1609,6 +1613,19 @@ def _stop_groups(procs, *, timeout: float = 15.0) -> None:
     """Stop child services and everything they started. Each was started in its
     own session (process group), so a bridge's server process stops with the
     `hubzoid run` that supervises it, even if that one is killed mid-start."""
+    if os.name == "nt":
+        from ._process_tree import stop_windows_tree
+        active = [p for p in procs if p is not None and p.poll() is None]
+        for p in active:
+            stop_windows_tree(p)
+        deadline = time.monotonic() + max(timeout, 1)
+        for p in active:
+            try:
+                p.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                logging.getLogger(__name__).warning(
+                    "Process %s did not exit after forced shutdown", p.pid)
+        return
     killpg = getattr(os, "killpg", None)
 
     def signal_group(p, sig) -> None:

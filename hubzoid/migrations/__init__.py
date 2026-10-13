@@ -70,15 +70,15 @@ def _cross_process_lock(engine: Engine, store: str):
         return
     db = engine.url.database
     if engine.dialect.name == "sqlite" and db and db != ":memory:":
-        import fcntl
+        from .. import _file_lock
 
         lock_path = Path(db).with_name(Path(db).name + f".{store}.migrate.lock")
         with open(lock_path, "a") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            _file_lock.lock(fh)
             try:
                 yield
             finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
+                _file_lock.unlock(fh)
         return
     yield
 

@@ -454,13 +454,13 @@ def _persist_refreshed_auth(original: Path, temporary: Path, initial: bytes) -> 
     This is the operator's chosen Codex credential store, never a hub credential.
     File contents are never logged or sent to the model.
     """
-    import fcntl
+    from . import _file_lock
     try:
         updated = temporary.read_bytes()
         if updated == initial:
             return
         with (original.parent / ".hubzoid-auth-refresh.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            _file_lock.lock(lock)
             if original.read_bytes() != initial:
                 return
             fd, name = tempfile.mkstemp(prefix=".hubzoid-auth-", dir=original.parent)
@@ -485,6 +485,11 @@ def _flatten(values, prefix=""):
 
 async def _stop(proc):
     if proc.returncode is not None:
+        return
+    if os.name == "nt":
+        from ._process_tree import stop_windows_tree
+        await asyncio.to_thread(stop_windows_tree, proc)
+        await proc.wait()
         return
     # killpg(1) means kill(-1): every process this user owns.
     if type(proc.pid) is not int or proc.pid <= 1:
