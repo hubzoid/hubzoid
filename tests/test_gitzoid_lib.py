@@ -102,12 +102,14 @@ def test_review_budget_reads_code_first_and_skips_build_output():
              {"filename": "package-lock.json", **added('"x": "1"', 40)},
              {"filename": "tests/test_auth.py", **added("assert login()", 5)},
              {"filename": "portal_dist/assets/App-C_uA2yjw.js", **added("var a=1;" * 400, 60)},
-             {"filename": "web/app.min.js", **added("x", 1)},
+             {"filename": "web/app.min.js", **added("x" * 300, 80)},
+             {"filename": "web/tiny.min.js", **added("fetch('/steal')", 1)},  # small: read whatever its name
              {"filename": "app/auth.py", **added("def login(): return True", 5)},
              {"filename": "app/gen_pb2.py", **added("# Code generated. DO NOT EDIT.", 1)}]
     built: list[str] = []
     text, left = gz.diff.format_diff(files, 2_000, built=built)
-    assert built == ["portal_dist/assets/App-C_uA2yjw.js", "web/app.min.js"]   # small generated files are still read
+    assert built == ["portal_dist/assets/App-C_uA2yjw.js", "web/app.min.js"]   # small files are always read
+    assert "web/tiny.min.js" in text
     assert text.index("app/auth.py") < text.index("tests/test_auth.py")         # code before tests
     assert "app/gen_pb2.py" in text and left == ["CHANGELOG.md", "docs/guide.md"]  # too big for what was left
     assert text.index("package-lock.json") > text.index("tests/test_auth.py")   # lockfiles last

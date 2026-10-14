@@ -57,7 +57,7 @@ October and approved this plan.
   - **Partial reviews** are flagged only when files or checks were actually
     missed.
   - **Review budget:** 200,000 characters of diff (was 60,000), code first.
-    Build output and large minified or generated files are skipped. On our
+    Large build output and minified or generated files are skipped. On our
     own repository, #65 and #67 were read in 31 of 49 and 17 of 40 files;
     now they are read in full.
 - **Alerts:** off by default. With no destination configured, nothing is

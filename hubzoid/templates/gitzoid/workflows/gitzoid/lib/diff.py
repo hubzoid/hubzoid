@@ -63,15 +63,14 @@ def priority(f: dict) -> int:
 
 
 def is_built(f: dict) -> bool:
-    """Build output and large minified or generated code, which nobody reviews
-    line by line. Small files are always read, whatever their header says."""
-    if BUILT_NAME.search(f["filename"]):
-        return True
+    """Large build output and minified or generated code, which nobody reviews
+    line by line. A change under 20 KB is always read, whatever its name or
+    header says, so neither can hide a small hand-written file."""
     added = [t for kind, _, t in walk(f.get("patch") or "") if kind == "+"]
     size = sum(map(len, added))
     if size < 20_000:
         return False
-    if GENERATED.search("\n".join(added[:5])):
+    if BUILT_NAME.search(f["filename"]) or GENERATED.search("\n".join(added[:5])):
         return True
     return max(map(len, added)) > 1000 and size / len(added) > 200
 

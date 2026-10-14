@@ -257,7 +257,8 @@ can carry a one-line committable suggestion, and every advisory for one
 package version is one finding, with the upgrade as the suggestion when the
 line is a plain pin. A partial review says so above the fold. A review reads
 up to 200,000 characters of diff (`review.max_diff_chars`), code first, and
-skips build output and large minified or generated files.
+skips large build output and minified or generated files (anything under 20 KB
+is always read).
 
 The security watch skips lockfiles in test, sample, fixture and example
 folders, and the deep audit skips large minified and generated files whatever

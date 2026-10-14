@@ -30,8 +30,8 @@ All notable changes to Hubzoid. Versions follow the package version in
   committable suggestion; a package's advisories are one finding with the
   upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
 - GitZoid reads up to 200,000 characters of a pull request's diff (was 60,000),
-  code first, then other files, tests, docs and lockfiles. Build output and
-  large minified or generated files are skipped (secret checks still read
+  code first, then other files, tests, docs and lockfiles. Large build output
+  and minified or generated files are skipped (secret checks still read
   them) and listed under run details.
 
 ### Fixed
