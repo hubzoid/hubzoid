@@ -731,11 +731,11 @@ def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, b
         return dict(status="refused", sent=False, results=[],
                     message="Email body_format must be text, markdown or html.")
     body = body or ""
+    too_long = (f"An html list email shows at most {MAX_LIST_HTML_TEXT} characters of text "
+                f"in {MAX_HTML} characters of markup. Link the report instead.")
     if body_format == "html":
-        if len(body) > MAX_HTML or len(_html_text(body)) > MAX_LIST_HTML_TEXT:
-            return dict(status="refused", sent=False, results=[],
-                        message=f"An html list email shows at most {MAX_LIST_HTML_TEXT} characters of text "
-                                f"in {MAX_HTML} characters of markup. Link the report instead.")
+        if len(body) > MAX_HTML:
+            return dict(status="refused", sent=False, results=[], message=too_long)
     elif len(body) > MAX_LIST_BODY:
         return dict(status="refused", sent=False, results=[],
                     message=f"A list email body is at most {MAX_LIST_BODY} characters. Link the report instead.")
@@ -746,6 +746,13 @@ def send_to_list(hub_dir, *, hub: str, identity, list_name: str, subject: str, b
             return dict(status="refused", sent=False, results=[],
                         message=f"Artifact {aid!r} is not a report this run published.")
         links.append((art.title, _list_link(hub_dir, art)))
+    if body_format == "html":
+        # Measured as sent: the layout's text plus the report links and list footer.
+        shown = build_message(sender="list@hubzoid.invalid", recipient="member@hubzoid.invalid", subject=subject,
+                              body=body, links=links, message_id="<limit@hubzoid.invalid>", body_format="html",
+                              footer=_list_footer(list_name, hub, body_format))
+        if len(shown.get_body(preferencelist=("plain",)).get_content().strip()) > MAX_LIST_HTML_TEXT:
+            return dict(status="refused", sent=False, results=[], message=too_long)
     gs = store_for(Path(hub_dir))
     share = set(domains.share_domains())
     results = []

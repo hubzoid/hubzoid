@@ -457,6 +457,9 @@ def test_list_email_goes_one_by_one_to_accounts_and_company_addresses(hub, monke
     assert "Numbers are in" in plain and "To stop, ask" in plain
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
                                        body="<p>" + "y" * 5001 + "</p>", body_format="html")["status"] == "refused"
+    # The limit counts what is read, list footer included.
+    assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",
+                                       body="<p>" + "y" * 4990 + "</p>", body_format="html")["status"] == "refused"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="nope", subject="x",
                                        body="")["status"] == "refused"
     assert email_delivery.send_to_list(hub, hub="irs", identity=ident, list_name="leads", subject="x",

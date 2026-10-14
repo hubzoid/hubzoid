@@ -58,9 +58,10 @@ October and approved this plan.
     missed.
 - **Alerts:** off by default. With no destination configured, nothing is
   recorded or sent.
-- **Repeated audit alerts:** an open audit finding of the same kind within 20
-  lines in the same file is the same finding, and the audit sees the open
-  findings so it repeats them in the same words. A second pass
+- **Repeated audit alerts:** an open audit finding of the same kind in the
+  same function (or within 20 lines outside one) is the same finding; two
+  neighbouring handlers stay two findings. The audit sees the open findings
+  so it repeats them in the same words. A second pass
   (`audit.verify`, on by default) tries to refute each finding before
   alerting. The audit instructions name what is not a finding on its own.
 - **Security watch and deep audit:**

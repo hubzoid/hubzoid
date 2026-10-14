@@ -69,7 +69,7 @@ def audit_prepare(repo: str, queued_only: bool) -> dict:
         state = store.audit(repo)
     elif state["sha"] != sha:
         # A busy repo gets new commits every day. Keep what was read and go on at the
-        # new commit; only changed parts of files are read again.
+        # new commit; a window whose content changed has a new identity and is read again.
         store.save_audit(repo, sha=sha)
         state = store.audit(repo)
     profile = store.profile(repo) or {"facts": gz.profiles.facts(root)}

@@ -42,8 +42,8 @@ def _selected(hub_dir, workflow=None):
         task = next((t for t in load_tasks(hub_dir)[0] if t.name == workflow[3:]), None)
         if task and task.alert_to is not None:
             selected = task.alert_to
-    if wf and wf.on_failure and wf.alert_to is None:
-        selected = [{'webhook': wf.on_failure}]
+    if wf and wf.on_failure and wf.alert_to is None and selected != []:
+        selected = [{'webhook': wf.on_failure}]  # legacy; a hub that turned alerts off stays off
     return selected
 
 

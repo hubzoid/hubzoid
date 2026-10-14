@@ -197,11 +197,13 @@ def test_one_click_suggestion_only_when_confirmed_and_fenced():
     f = {**_view()["open"][0], "k": 0, "suggestion": "    log.info(\"```x\")"}
     kept, _ = gz.review.apply_verdicts([f], [f], [{"index": 0, "verdict": "uncertain", "severity": "high"}])
     assert kept[0]["suggestion"] == ""
+    kept, _ = gz.review.apply_verdicts([f], [f], [])  # the second pass skipped it
+    assert kept[0]["suggestion"] == ""
     kept, _ = gz.review.apply_verdicts([f], [f], [{"index": 0, "verdict": "confirmed", "severity": "high"}])
     inline = gz.review.inline_body(kept[0], pr, True)
     assert inline.startswith("**🐛 Bug** · high severity\n\n")
     assert "````suggestion\n    log.info(\"```x\")\n````" in inline  # its own backticks cannot close the block
-    assert "```suggestion" not in gz.review.inline_body({**f, "suggestion": "x\n" * 9}, pr, True)
+    assert "```suggestion" not in gz.review.inline_body({**f, "suggestion": "x = 1\ny = 2"}, pr, True)
     assert "```suggestion" not in gz.review.inline_body({**f, "line": None, "suggestion": "x"}, pr, True)
 
 
@@ -209,7 +211,7 @@ def test_dependency_advisories_are_one_finding_per_package():
     dep = {"ecosystem": "PyPI", "name": "gunicorn", "version": "21.2.0"}
     advs = [{"key": "GHSA-1", "cves": ["CVE-1"], "severity": "high", "summary": "Smuggling.", "fixed": "22.0.0", "dep": dep},
             {"key": "GHSA-2", "cves": [], "severity": "unknown", "summary": "Bypass", "fixed": "21.3.1", "dep": dep}]
-    lines = [(1, "flask==3.0.0"), (2, "gunicorn==21.2.0  # py3.8")]
+    lines = [(1, "gunicorn-extras==21.2.0"), (2, "gunicorn==21.2.0  # py3.8")]
     [group] = gz.security.by_package(advs)
     f = gz.security.pr_finding("requirements.txt", group, set(), lines)
     assert f["line"] == 2 and f["severity"] == "high" and f["checked"]
@@ -237,6 +239,15 @@ def test_audit_rewording_is_the_same_finding_and_verdicts_apply(tmp_path):
     assert gz.audit.record(st, "o/r", [moved], ["app/a.py"], tmp_path, "t2", seen=seen) == []
     [row] = st.ledger_rows(["o/r"], kind="audit")
     assert row["key"] in seen and row["line"] == 25 and row["last_seen"] == "t2"
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "b.py").write_text("def list_orders():\n    return rows()\n\n\ndef export_orders():\n"
+                                         "    return all_rows()\n")
+    one = {**f, "path": "app/b.py", "line": 2, "evidence": "return rows()"}
+    two = {**f, "path": "app/b.py", "line": 6, "evidence": "return all_rows()"}
+    assert len(gz.audit.record(st, "o/r", [one], ["app/b.py"], tmp_path, "t2")) == 1
+    assert len(gz.audit.record(st, "o/r", [two], ["app/b.py"], tmp_path, "t2")) == 1  # another handler: news
+    reworded = {**one, "evidence": "rows()", "body": "Anyone lists orders."}
+    assert gz.audit.record(st, "o/r", [reworded], ["app/b.py"], tmp_path, "t2") == []  # same function: not news
     far = {**f, "line": 80, "evidence": "def b():"}
     other = {**f, "kind": "injection", "evidence": "sql"}
     assert len(gz.audit.record(st, "o/r", [far, other], ["app/a.py"], tmp_path, "t3")) == 2
@@ -247,6 +258,11 @@ def test_audit_rewording_is_the_same_finding_and_verdicts_apply(tmp_path):
     prompt = gz.audit.prompt("o/r", "", [("app/a.py", "x = 1", 0)], [{"path": "app/a.py", "line": 10,
                                                                        "kind": "authorization", "title": "No check."}])
     assert "<already_reported" in prompt and "app/a.py:10 authorization: No check." in prompt
+    # Progress survives a new commit only for windows whose content did not change.
+    (tmp_path / "app" / "c.py").write_text("x = 1\n")
+    done = gz.audit.windows(tmp_path, ["app/b.py", "app/c.py"], [])
+    (tmp_path / "app" / "c.py").write_text("x = 2\n")
+    assert [gz.audit.unit(u)[0] for u in gz.audit.windows(tmp_path, ["app/b.py", "app/c.py"], done)] == ["app/c.py"]
 
 # ------------------------------------------------------------------ commands
 

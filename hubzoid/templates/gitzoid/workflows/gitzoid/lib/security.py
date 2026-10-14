@@ -370,7 +370,9 @@ def pr_finding(path: str, group: list[dict], kev: set[str], lines: list[tuple[in
     version, on the line that adds it. A requirements-style pin gets the
     upgrade as a one-line suggestion when every advisory lists a fix."""
     d = group[0]["dep"]
-    hit = next(((n, t) for n, t in lines if d["name"].lower() in t.lower()), (None, ""))
+    name = re.compile(rf"(?<![\w.-]){re.escape(d['name'])}(?![\w.-])", re.I)
+    pinned = [(n, t) for n, t in lines if name.search(t) and d["version"] in t]
+    hit = next(iter(pinned or [(n, t) for n, t in lines if name.search(t)]), (None, ""))
     exploited = any(set(a["cves"]) & kev for a in group)
     worst = min((a["severity"] for a in group), key=lambda s: (RANK.get(s, 1), s == "unknown"))
     fixes = [a.get("fixed") for a in group]

@@ -160,6 +160,7 @@ def apply_verdicts(kept: list[dict], todo: list[dict], verdicts: list[dict]) -> 
     """Only an active refutation drops a finding; an unclear answer keeps it.
     A verdict's index is the finding's position in `todo`."""
     by_k = {todo[v["index"]]["k"]: v for v in verdicts if isinstance(v.get("index"), int) and 0 <= v["index"] < len(todo)}
+    asked = {t["k"] for t in todo}
     dropped, out = [], []
     for f in kept:
         v = by_k.get(f["k"])
@@ -168,7 +169,7 @@ def apply_verdicts(kept: list[dict], todo: list[dict], verdicts: list[dict]) -> 
             continue
         if v and str(v.get("severity", "")).strip().lower() in SEVERITY:
             f = {**f, "severity": v["severity"].strip().lower()}
-        if v and str(v.get("verdict", "")).strip().lower() != "confirmed":
+        if f["k"] in asked and str((v or {}).get("verdict", "")).strip().lower() != "confirmed":
             f = {**f, "suggestion": ""}  # a one-click change only for a finding the second pass confirmed
         out.append(f)
     return out, dropped
@@ -263,7 +264,7 @@ ICONS = {"bug": "🐛 Bug", "security": "🔒 Security", "tests": "🧪 Tests", 
 # Analyzer and CI notes describe the run; any other note means part of the review is missing.
 RUN_NOTE = re.compile(r"^(CI |[\w.-]+: (\d+ result\(s\) on added lines|not installed, skipped|timed out, skipped|"
                       r"no SARIF output|skipped; custom commands|custom command opted in))")
-SUGGESTION_LINES, SUGGESTION_CHARS = 8, 800
+SUGGESTION_CHARS = 400
 
 
 def category_label(category: str) -> str:
@@ -295,10 +296,10 @@ def finding_row(f: dict) -> str:
 
 
 def suggestion_block(f: dict) -> str:
-    """A committable GitHub suggestion that replaces the commented line. Only a
-    short replacement is shown, fenced so its text cannot close the block."""
+    """A committable GitHub suggestion that replaces the commented line with
+    one line, fenced so its text cannot close the block."""
     text = (f.get("suggestion") or "").rstrip("\n")
-    if not f.get("line") or not text.strip() or len(text) > SUGGESTION_CHARS or text.count("\n") >= SUGGESTION_LINES:
+    if not f.get("line") or not text.strip() or len(text) > SUGGESTION_CHARS or "\n" in text:
         return ""
     ticks = "`" * max(3, max((len(r) for r in re.findall(r"`+", text)), default=0) + 1)
     return f"\n\n{ticks}suggestion\n{text}\n{ticks}"

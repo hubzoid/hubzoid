@@ -262,8 +262,9 @@ folders, and the deep audit skips minified and generated code whatever its
 name. Add your own globs with `security.exclude_paths` or a repo's
 `exclude_paths`. The deep audit keeps its progress when the default branch
 moves, and an audit that is still in progress is not reported as a check that
-could not run. A finding the model words differently next week, near the same
-lines, is the same finding and is not emailed again. A second pass
+could not run; a window whose content changed is read again. A finding the
+model words differently next week, in the same function, is the same finding
+and is not emailed again. A second pass
 (`audit.verify`) tries to refute each finding before anyone is alerted.
 
 ## Presentation in 1.3.2

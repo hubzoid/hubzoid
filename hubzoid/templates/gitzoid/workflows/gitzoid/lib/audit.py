@@ -14,6 +14,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .checkout import text_files
+from .diff import enclosing_function
 from .profiles import content
 from .untrusted import fence
 
@@ -23,7 +24,7 @@ SENSITIVE = re.compile(r"(?i)(auth|login|session|permission|admin|role|acl|rbac|
 CODE = re.compile(r"\.(py|js|jsx|ts|tsx|mjs|cjs|go|rb|php|java|kt|rs|cs)$")
 BATCH_CHARS = 40_000
 KINDS = ("authorization", "secret", "backdoor", "injection", "other")
-NEARBY = 20  # an open finding of the same kind this close in the same file is the same finding
+NEARBY = 20  # outside any function, an open finding of the same kind this close is the same finding
 NOT_FINDINGS = ("Not findings on their own: routes meant to be public (health checks, API docs and OpenAPI pages, "
                 "sign-in and sign-up, static files, webhooks that verify a signature); keys meant to be public "
                 "(publishable or frontend keys, public client IDs); test, sample, fixture and example code; and "
@@ -97,7 +98,10 @@ def windows(root: Path, files: list[str], done: list[str], *, oversized: list[st
     import json
     units = []
     def emit(path, start, end, size):
-        value = json.dumps([path, start, end])
+        # The window's content is part of its identity: an edited window is read again,
+        # an unchanged one stays done when the default branch moves.
+        digest = hashlib.sha1("".join(lines[start:end]).encode()).hexdigest()[:12]
+        value = json.dumps([path, start, end, digest])
         if size > BATCH_CHARS and oversized is not None:
             oversized.append(value)  # unavailable, never recorded as successfully audited
         else:
@@ -116,7 +120,7 @@ def windows(root: Path, files: list[str], done: list[str], *, oversized: list[st
 
 def unit(value: str) -> tuple[str, int, int]:
     import json
-    return tuple(json.loads(value))
+    return tuple(json.loads(value)[:3])
 
 
 def batches(root: Path, files: list[str], limit: int = BATCH_CHARS) -> list[list[tuple[str, str]]]:
@@ -202,11 +206,17 @@ def key(repo: str, f: dict) -> str:
     return f"audit:{repo}:{f['path']}:{hashlib.sha1((f['kind'] + basis).encode()).hexdigest()[:10]}"
 
 
-def same_place(row: dict, f: dict) -> bool:
+def same_place(row: dict, f: dict, text: str | None = None) -> bool:
+    """A reworded report of an open finding: same file and kind, in the same
+    function, or within NEARBY lines when either is outside a function. Two
+    handlers next to each other stay two findings."""
     if row["path"] != f["path"] or (row.get("advisory") or "") != f["kind"]:
         return False
     a, b = row.get("line"), f.get("line")
-    return (a is None and b is None) or (a is not None and b is not None and abs(a - b) <= NEARBY)
+    if a is None or b is None:
+        return a is None and b is None
+    was, now = enclosing_function(text, a), enclosing_function(text, b)
+    return was == now if was and now else abs(a - b) <= NEARBY
 
 
 def record(store, repo: str, kept: list[dict], audited: list[str], root: Path, stamp: str,
@@ -217,11 +227,15 @@ def record(store, repo: str, kept: list[dict], audited: list[str], root: Path, s
     new = []
     keys = set() if seen is None else seen
     open_rows = store.ledger_rows([repo], state="open", kind="audit")
+    texts: dict[str, str | None] = {}
     for f in kept:
         k = key(repo, f)
         row = store.ledger(k)
         if row is None:
-            twin = next((r for r in open_rows if r["key"] not in keys and same_place(r, f)), None)
+            if f["path"] not in texts:
+                source = Path(root) / f["path"]
+                texts[f["path"]] = source.read_text(errors="replace") if source.is_file() else None
+            twin = next((r for r in open_rows if r["key"] not in keys and same_place(r, f, texts[f["path"]])), None)
             if twin:
                 k, row = twin["key"], twin
         keys.add(k)

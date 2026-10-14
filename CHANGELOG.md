@@ -32,9 +32,10 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ### Fixed
 - GitZoid's deep audit no longer re-alerts a finding the model words
-  differently. An open finding of the same kind within 20 lines in the same
-  file is the same finding, and the audit is shown the open findings to
-  repeat. A second pass (`audit.verify`, on by default) tries to refute each
+  differently. An open finding of the same kind in the same function (or
+  within 20 lines outside one) is the same finding, and the audit is shown
+  the open findings to repeat. Audit progress kept across commits now re-reads
+  any window whose content changed. A second pass (`audit.verify`, on by default) tries to refute each
   finding before anyone is alerted. The audit instructions name what is not
   a finding on its own (public docs and health routes, public frontend keys,
   test and sample code).

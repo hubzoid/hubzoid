@@ -70,6 +70,11 @@ def test_an_empty_destination_list_turns_alerts_off(hub, monkeypatch):
     assert _rows(hub) == [] and alerts.destinations(hub, "check") == []
     (hub / "workflows" / "settings.yaml").write_text("workflow_timeout: 1h\n")
     assert alerts.destinations(hub, "check") == [{"webhook": "HUBZOID_ALERT_URL"}]   # unset still falls back
+    legacy = SimpleNamespace(alert_to=None, on_failure="https://legacy.invalid/hook")
+    monkeypatch.setitem(runtime._REGISTRY, "legacy", legacy)
+    assert alerts.destinations(hub, "legacy") == [{"webhook": "https://legacy.invalid/hook"}]
+    (hub / "workflows" / "settings.yaml").write_text("alerts:\n  to: []\n")
+    assert alerts.destinations(hub, "legacy") == []  # the hub's off switch covers on_failure too
 
 
 def test_concurrent_delivery_claim_sends_once(hub):
