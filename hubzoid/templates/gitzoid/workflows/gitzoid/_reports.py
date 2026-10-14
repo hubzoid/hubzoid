@@ -129,7 +129,8 @@ def enrich(data: dict) -> dict:
             used += size
     omitted = sum(not p["in_synthesis"] for p in data["merged"])
     if omitted:
-        data["coverage"].append(f"{omitted} PRs omitted from narrative synthesis by reports.synthesis_chars; listed in sources")
+        data["coverage"].append(f"The written summary leaves out {omitted} smaller pull requests; they are listed on "
+                                "the full page (reports.synthesis_chars)")
     return data
 
 
@@ -183,11 +184,12 @@ def run_report(kind: str) -> dict:
         key = f"gitzoid-{kind}-{gz.reports.slug(t.group or name)}"
         art = gz.runtime.publish(hub, key, html, f"{kind.title()} report · {name}", key,
                                  digest=gz.runtime.digest_of(n, label, data["merged"], data["coverage"]))
-        subject, body = gz.render.report_email(kind, name, label, narrative, data["coverage"])
+        subject, body = gz.mail.report_email(kind, name, label, narrative, n, data["coverage"], gz.runtime.link_of(art),
+                                             gz.runtime.pr_repos(settings))
         if team and t.group and not gz.runtime.refresh_only(hub):
             gz.runtime.email_list(hub, settings.digest_groups[t.group].email_list, subject, body, art)
         elif hub.trigger == "personal_schedule":
-            hub.send_email(subject[:200], gz.runtime.clip(body), artifacts=[art], raise_on_failure=False, body_format="markdown")
+            hub.send_email(subject[:200], body, artifacts=[art], raise_on_failure=False, body_format="html")
         out.append({"report": name, "period": label, "headline": narrative["headline"],
                     "link": gz.runtime.link_of(art), "shared_with": art.get("audience")})
     return {"reports": out}

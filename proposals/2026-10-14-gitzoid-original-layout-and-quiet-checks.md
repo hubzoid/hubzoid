@@ -1,0 +1,112 @@
+# GitZoid: original email and PR layout, quieter security checks
+
+## Problem
+GitZoid's first runs on a real repository (hubzoid/hubzoid, 13 October) showed
+four problems.
+
+- **1.3.2 emails were broken.** Their Markdown left stray headings and literal
+  backticks, cut text off mid-list, and doubled full stops. Workflow email had
+  no way to keep GitZoid's own layout.
+- **Every failed run emailed a JSON alert.** Its link went to a 404 page, and
+  a deployment could not turn alerts off cleanly.
+- **The security watch read fixtures.** It flagged lockfiles in the
+  template's own sample fixtures (pyyaml 5.3.1, gunicorn 21.2.0).
+- **The deep audit could not finish.** It spent its budget on built bundles
+  (`portal_dist/assets/*.js`) and started over whenever `main` moved. It also
+  emailed its own progress as a "check that could not run".
+
+The original WaveAssist GitZoid, analysed on 14 October, sent the same
+security finding again in about 1 in 5 alert emails. A finding the model did
+not repeat one week was marked resolved, then alerted as new when it came
+back, and low-value findings (public docs pages, public keys) were rated high.
+Hubzoid's GitZoid resolves only with quoted evidence. But it identifies an audit
+finding by the model's quoted code, so a reworded finding would also be
+re-sent, and audit findings had no second check.
+
+PR comments had drifted from the original WaveAssist GitZoid too:
+
+- "Coverage is limited" appeared on almost every PR, triggered by analyzer
+  notes alone.
+- Each advisory for one package was a separate finding on the same line, and
+  the model repeated them.
+- The original's one-click suggestions were missing.
+
+## Why now
+GitZoid went live on our own repositories on 13 October, and the first full
+run sent these emails. The maintainers reviewed side-by-side previews on 14
+October and approved this plan.
+
+## What should happen
+- **Emails** keep GitZoid's original layout:
+  - the chip, a title that matches the subject, a stats bar and a summary box;
+  - security issues grouped per package, code issues first;
+  - one link to the full page.
+- **Workflow email layout:** workflows can send their own HTML layout. Hubzoid
+  keeps only email-safe markup and derives the plain-text part.
+- **Alerts:** `alerts: {to: []}` turns failure alerts off.
+- **PR comments** keep the 1.3.2 header (verdict, merge risk, commit, files
+  reviewed). Below it, they use the original layout:
+  - summary bullets, then `_high_` `path:line` finding rows;
+  - suggestions, resolved findings, the fix-all prompt and run details
+    collapsed;
+  - inline `🐛 Bug · high severity`.
+  - **One-click suggestions:** a finding can carry a one-line committable
+    suggestion, but only once the second pass has confirmed the finding.
+  - **Dependency advisories:** one finding per package version, with the
+    upgrade as the suggestion when the line is a plain pin.
+  - **Partial reviews** are flagged only when files or checks were actually
+    missed.
+  - **Review budget:** 200,000 characters of diff (was 60,000), code first.
+    Large build output and minified or generated files are skipped. On our
+    own repository, #65 and #67 were read in 31 of 49 and 17 of 40 files;
+    now they are read in full.
+- **Alerts:** off by default. With no destination configured, nothing is
+  recorded or sent.
+- **Repeated audit alerts:** an open audit finding of the same kind in the
+  same function (or within 20 lines outside one) is the same finding; two
+  neighbouring handlers stay two findings. The audit sees the open findings
+  so it repeats them in the same words. A second pass
+  (`audit.verify`, on by default) tries to refute each finding before
+  alerting. The audit instructions name what is not a finding on its own.
+- **Security watch and deep audit:**
+  - The watch skips lockfiles in test, sample, fixture and example folders.
+  - The audit skips large minified and generated files (a "generated" header alone never hides a file under 20 KB).
+  - Both take `exclude_paths` globs.
+  - The audit keeps its progress across commits, and progress is not reported
+    as a failure.
+
+## Scope and non-goals
+- **Core changes kept minimal:**
+  - `body_format="html"` with a sanitizer and plain-text fallback;
+  - empty alert destinations mean off.
+- **Included:** the `Markdown` runtime dependency that 1.3.2 imports
+  without declaring. Without it, Markdown emails fail in an install without
+  the Open WebUI extra, and so do the email tests on `main`'s CI.
+- **Not in this PR:** the alert email's format and link are unchanged; they
+  matter less once teams can turn alerts off.
+- **Out of scope:** review thread resolution, new review categories and
+  changes to the review gate itself.
+
+## Open questions
+- The 5,000-character limit for the visible text of an HTML list email is a
+  policy choice. Markdown list emails keep 2,000.
+- The original showed "Potential Optimizations" in full. Hubzoid keeps its
+  suggestions collapsed to keep comments short.
+
+## Definition of done
+- On the real repository, GitZoid's emails match the approved previews.
+- Fixture lockfiles and built bundles no longer produce findings or coverage
+  errors.
+- A pull request comment matches the approved PR preview.
+- Turning alerts off sends nothing and records nothing.
+
+## Local validation
+- **GitZoid, email and alert suites:** 218 passed, 4 slow tests deselected.
+- **Fast suite:** 3,793 passed. The same 50 tests also fail on unchanged
+  `main` in the validation environment (chat runs, Codex runtime, connector
+  and MCP environment tests), so they are not caused by this change.
+- **Packaging:** `tests/test_packaging.py`, 11 passed.
+- **Previews from real data:** emails were generated from hubzoid/hubzoid
+  data with `HUBZOID_EMAIL_DELIVERY=preview`. PR comments were generated by
+  sweeping the five sample pull requests with Opus, with posting off.
+  Nothing was sent or posted.

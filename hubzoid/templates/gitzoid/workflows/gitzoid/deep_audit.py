@@ -64,12 +64,18 @@ def audit_prepare(repo: str, queued_only: bool) -> dict:
         store.coverage_error(repo, "audit", f"{type(exc).__name__}: {exc}")
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
     state = store.audit(repo)
-    if not state["started_at"] or state["sha"] != sha:
+    if not state["started_at"]:
         store.save_audit(repo, started_at=datetime.now(timezone.utc).isoformat(), sha=sha, done=[])
+        state = store.audit(repo)
+    elif state["sha"] != sha:
+        # A busy repo gets new commits every day. Keep what was read and go on at the
+        # new commit; a window whose content changed has a new identity and is read again.
+        store.save_audit(repo, sha=sha)
         state = store.audit(repo)
     profile = store.profile(repo) or {"facts": gz.profiles.facts(root)}
     queued = state["queued"]
-    files = gz.audit.select(root, profile, queued, [], 1_000_000)
+    skipped: list[str] = []
+    files = gz.audit.select(root, profile, queued, [], 1_000_000, exclude=settings.exclude_for(repo), skipped=skipped)
     if queued_only:
         files = [f for f in files if f in queued]
     scan_notes = []
@@ -89,7 +95,8 @@ def audit_prepare(repo: str, queued_only: bool) -> dict:
                           "not audited: " + ", ".join(labels[:10]))
     units = pending[:settings.audit.max_files_per_repo]
     return {"sha": sha, "batches": [[u] for u in units], "remaining": len(pending) - len(units),
-            "profile": gz.profiles.text(profile), "queued_only": queued_only, "scan_notes": scan_notes}
+            "profile": gz.profiles.text(profile), "queued_only": queued_only, "scan_notes": scan_notes,
+            "skipped": len(skipped)}
 
 
 @step()
@@ -118,6 +125,12 @@ def coverage_problem(repo: str, problem: str) -> None:
 
 
 @step()
+def progressing(repo: str) -> None:
+    """The audit ran cleanly and continues next time: still in progress, not a failure."""
+    gz.store.Store(hub.data_dir).coverage_ok(repo, "audit")
+
+
+@step()
 def audit_after_email(sent_ok: bool, keys: list[str], coverage: list[dict]) -> None:
     store = gz.store.Store(hub.data_dir)
     if not sent_ok:
@@ -133,13 +146,21 @@ def time_left(deadline: float) -> bool:
 
 
 @step()
+def known_findings(repo: str, paths: list[str]) -> list[dict]:
+    """Open audit findings in these files, shown to the audit so it repeats them in the same words."""
+    names = {gz.audit.unit(p)[0] for p in paths}
+    return [{"path": r["path"], "line": r["line"], "kind": r["advisory"], "title": r["title"]}
+            for r in gz.store.Store(hub.data_dir).ledger_rows([repo], state="open", kind="audit") if r["path"] in names]
+
+
+@step()
 def audit_record(repo: str, findings: list[dict], paths: list[str], stamp: str, resolved: dict | None = None) -> list[dict]:
     store = gz.store.Store(hub.data_dir)
     names = [gz.audit.unit(p)[0] for p in paths]
     kept = gz.audit.gate(findings, set(names))
     root = gz.checkout.path_for(hub.data_dir, repo)
-    new = gz.audit.record(store, repo, kept, names, root, stamp)
-    reported = {gz.audit.key(repo, f) for f in kept}
+    reported: set = set()
+    new = gz.audit.record(store, repo, kept, names, root, stamp, seen=reported)
     for key, evidence in (resolved or {}).items():
         row = store.ledger(key)
         if row and row["repo"] == repo and row["kind"] == "audit" and row["path"] in names and key not in reported:
@@ -181,6 +202,7 @@ def deep_audit():
     settings = gz.settings.load(hub.setting("gitzoid"))
     new_by_group: dict[str, list] = {}
     done, unfinished = [], []
+    dropped_by_check: dict[str, int] = {}
     for item in p["todo"]:
         repo = item["repo"]
         prep = audit_prepare(repo, bool(item.get("queued_only")))
@@ -210,7 +232,8 @@ def deep_audit():
                 coverage_problem(repo, problem)
                 break
             try:
-                result = flow.ask(gz.audit.prompt(repo, prep["profile"], [tuple(b) for b in batch]),
+                result = flow.ask(gz.audit.prompt(repo, prep["profile"], [tuple(b) for b in batch],
+                                                  known_findings(repo, paths)),
                                   system=gz.audit.SYSTEM, response_model=gz.models.Audit,
                                   model=settings.audit.model, timeout=600)
             except flow.Unreadable as exc:
@@ -218,6 +241,16 @@ def deep_audit():
                 unfinished.append({"repo": repo, "error": f"{exc}; resumes on the next run"})
                 coverage_problem(repo, str(exc))
                 break
+            found = gz.audit.gate([f.model_dump() for f in result.findings], {gz.audit.unit(x)[0] for x in paths})
+            if found and settings.audit.verify and not flow.charge(1):
+                try:
+                    checked = flow.ask(gz.audit.verify_prompt(repo, prep["profile"], found, [tuple(b) for b in batch]),
+                                       system=gz.review.VERIFY_SYSTEM, response_model=gz.models.Verification,
+                                       model=settings.audit.model, timeout=600)
+                    found, refuted = gz.audit.apply_verdicts(found, [v.model_dump() for v in checked.verdicts])
+                    dropped_by_check[repo] = dropped_by_check.get(repo, 0) + len(refuted)
+                except flow.Unreadable:
+                    pass  # unverified findings are kept, as in pull request reviews
             resolved = {}
             prior = prior_audit_findings(repo, batch)
             if prior and not flow.charge(1):
@@ -233,25 +266,30 @@ def deep_audit():
                                 if r.id in allowed and r.resolved and r.evidence.strip()}
                 except flow.Unreadable:
                     pass  # unresolved findings stay open
-            new = audit_record(repo, [f.model_dump() for f in result.findings], paths, p["stamp"], resolved)
+            new = audit_record(repo, found, paths, p["stamp"], resolved)
             new_by_group.setdefault(item["group"], []).extend({**n, "repo": repo} for n in new)
         if prep["scan_notes"]:
             finished = False
-            message = "; ".join(prep["scan_notes"])
-            unfinished.append({"repo": repo, "error": message})
-            coverage_problem(repo, message)
+            unfinished.append({"repo": repo, "error": "; ".join(prep["scan_notes"])})
         if prep["remaining"]:
             finished = False
-            message = f"{prep['remaining']} audit windows remain at {prep['sha'][:7]}; resumes next run"
-            unfinished.append({"repo": repo, "error": message})
-            coverage_problem(repo, message)
+            unfinished.append({"repo": repo, "in_progress": True,
+                               "error": f"{prep['remaining']} {'part' if prep['remaining'] == 1 else 'parts'} of files "
+                                        "left to read; the audit resumes on the next run"})
         if finished:
             complete(repo, bool(prep.get("queued_only")))
-            done.append({"repo": repo, "reason": item["reason"], "batches": len(prep["batches"])})
+            done.append({"repo": repo, "reason": item["reason"], "batches": len(prep["batches"]),
+                         "skipped_generated_or_excluded": prep["skipped"],
+                         "refuted_by_second_pass": dropped_by_check.get(repo, 0)})
         elif not any(u["repo"] == repo for u in unfinished):
-            unfinished.append({"repo": repo, "error": "time budget used; resumes on the next run"})
+            unfinished.append({"repo": repo, "in_progress": True,
+                               "error": "time budget used; the audit resumes on the next run"})
         if not finished:
-            coverage_problem(repo, "; ".join(u["error"] for u in unfinished if u["repo"] == repo))
+            errors = [u["error"] for u in unfinished if u["repo"] == repo and not u.get("in_progress")]
+            if errors:
+                coverage_problem(repo, "; ".join(errors))
+            else:
+                progressing(repo)
     pages = {}
     for group, repos in p["group_repos"].items():
         new = new_by_group.get(group, [])
@@ -263,8 +301,9 @@ def deep_audit():
         html = gz.render.security_page(group, p["stamp"], changes, view["open"], view["coverage"])
         art = gz.runtime.publish(hub, f"audit-{group}", html, f"Security audit · {group} · {p['stamp'][:10]}",
                                  key=None, team_audience="hub")
-        subject, body = gz.render.security_email(group, changes, problems)
-        sent = gz.runtime.email_list(hub, p["groups"].get(group), subject.replace("security", "security audit"), body, art)
+        subject, body = gz.mail.security_email(changes, problems, len(repos), gz.runtime.link_of(art), audit=True,
+                                               repos=gz.runtime.pr_repos(settings))
+        sent = gz.runtime.email_list(hub, p["groups"].get(group), subject, body, art)
         audit_after_email(gz.runtime.delivered(sent), [n["key"] for n in new], problems)
         pages[group] = gz.runtime.link_of(art)
     return {"audited": done, "unfinished": unfinished, "new_findings": sum(len(v) for v in new_by_group.values()),

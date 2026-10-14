@@ -32,6 +32,7 @@ class RepoSettings(_Strict):
     context: str = ""
     commands: bool | None = None
     status_check: StatusCheck | None = None
+    exclude_paths: list[str] = []   # added to security.exclude_paths for this repo
 
     @field_validator("name")
     @classmethod
@@ -60,7 +61,7 @@ class ReviewSettings(_Strict):
     max_prs_per_run: int = Field(5, ge=1)
     max_findings: int = Field(8, ge=1, le=30)
     max_age_days: int = Field(0, ge=0)
-    max_diff_chars: int = Field(60_000, ge=5_000)
+    max_diff_chars: int = Field(200_000, ge=5_000)  # code first; bigger changes are reviewed in part, and say so
     verify: bool = True
     post_to_github: bool = False
     summary_on_clean: bool = True
@@ -75,12 +76,17 @@ class ReviewSettings(_Strict):
 class SecuritySettings(_Strict):
     severity_floor: Literal["critical", "high", "medium", "low"] = "high"
     model: str | None = None
+    # Globs the security watch and the deep audit skip, on top of the built-in
+    # test, sample, fixture, vendored and build folders. `docs/` or `docs/**`
+    # is a folder; other patterns are fnmatch, where * also crosses `/`.
+    exclude_paths: list[str] = []
 
 
 class AuditSettings(_Strict):
     budget_minutes: int = Field(20, ge=1, le=120)
     safety_days: int = Field(8, ge=1)
     max_files_per_repo: int = Field(40, ge=1)
+    verify: bool = True  # a second pass tries to refute each finding before it is recorded or emailed
     model: str | None = None
 
 
@@ -170,6 +176,10 @@ class Settings(_Strict):
 
     def status_for(self, name: str) -> StatusCheck:
         return self.repo(name).status_check or self.review.status_check
+
+    def exclude_for(self, name: str) -> list[str]:
+        """The globs the security watch and deep audit skip in this repo."""
+        return [*self.security.exclude_paths, *(self.repo(name).exclude_paths if name in self.repo_names() else [])]
 
     def model_for(self, name: str) -> str | None:
         return self.repo(name).model or self.review.model

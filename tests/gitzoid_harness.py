@@ -194,8 +194,13 @@ def run_local(fn, *, hub_dir: Path, inputs: dict | None = None, as_user: str | N
     links = {f"local{n}": a for n, a in enumerate(out.artifacts, 1)}
     artifacts = [{**a, "html": Path(a["path"]).read_text()} for a in out.artifacts]
     emails = []
+    from hubzoid.email_delivery import MAX_HTML, MAX_LIST_HTML_TEXT, _html_text
     for e in out.emails:
-        assert len(e.get("body") or "") <= 2000, "Hubzoid email bodies are at most 2,000 characters"
+        body = e.get("body") or ""
+        if e.get("body_format") == "html":   # Hubzoid's html list email limits
+            assert len(body) <= MAX_HTML and len(_html_text(body)) <= MAX_LIST_HTML_TEXT, "html email too long"
+        else:
+            assert len(body) <= 2000, "Hubzoid email bodies are at most 2,000 characters"
         emails.append({**e, "list": e.get("email_list"),
                        "links": [_url(links.get(i), hub_dir) for i in e.get("artifacts") or ()]})
     return Result(out.result, artifacts, emails, calls)

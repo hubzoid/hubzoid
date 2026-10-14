@@ -77,6 +77,10 @@ MIGRATIONS = [
         PRIMARY KEY (repo, number, sha, fingerprint));
     ALTER TABLE security_ledger ADD COLUMN assessment_fp TEXT;
     """,
+    # 3: a committable one-line suggestion on a finding's inline comment.
+    """
+    ALTER TABLE findings ADD COLUMN suggestion TEXT;
+    """,
 ]
 
 
@@ -202,7 +206,7 @@ class Store:
                      by_user: str | None = None, reason: str | None = None) -> None:
         stamp = now_iso()
         fields = {k: f.get(k) for k in ("repo", "number", "path", "line", "function", "anchor", "category",
-                                         "rule", "severity", "confidence", "body", "state", "reason",
+                                         "rule", "severity", "confidence", "body", "suggestion", "state", "reason",
                                          "by_user", "first_sha", "last_sha", "comment_id", "created_at")}
         fields["created_at"] = fields["created_at"] or stamp
         self._upsert("findings", {"id": f["id"]}, {**fields, "updated_at": stamp})

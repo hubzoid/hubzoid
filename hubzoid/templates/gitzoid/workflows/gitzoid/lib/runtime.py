@@ -97,32 +97,23 @@ def publish(hub, name: str, html: str, title: str, key: str, team_audience: str 
     return {**hub.publish_artifact(path, title=title, key=key, audience="hub", digest=digest), "audience": "hub"}
 
 
-def email_list(hub, list_name: str | None, subject: str, body: str, art: dict | None) -> dict | None:
-    """Email an admin-set list (workflows/settings.yaml email_lists) with a
-    link. No list configured: nothing is sent and the result says so."""
+def email_list(hub, list_name: str | None, subject: str, html: str, art: dict | None) -> dict | None:
+    """Email an admin-set list (workflows/settings.yaml email_lists) one of
+    mail.py's emails, with the page linked. No list configured: nothing is
+    sent and the result says so."""
     if not list_name:
         return None
     configured_lists = hub.setting("email_lists", {}) or {}
     if list_name in configured_lists and not configured_lists[list_name]:
         return None  # an intentionally empty list means email is off
-    return hub.send_email(subject[:200], clip(body), artifacts=[art] if art else (), email_list=list_name,
-                          raise_on_failure=False, body_format="markdown")
+    return hub.send_email(subject[:200], html, artifacts=[art] if art else (), email_list=list_name,
+                          raise_on_failure=False, body_format="html")
 
 
 def refresh_only(hub) -> bool:
     """Update now on a live page reruns its workflow to refresh the page. The
     list was emailed when the report was made, so it is not emailed again."""
     return hub.trigger == "update"
-
-
-EMAIL_LIMIT = 2000
-
-
-def clip(body: str) -> str:
-    """GitZoid email uses bounded Markdown up to 2,000 characters; the link line is
-    added by the platform, so leave room for it."""
-    limit = EMAIL_LIMIT - 300
-    return body if len(body) <= limit else body[:limit].rsplit("\n", 1)[0] + "\n[... more on the page]"
 
 
 def delivered(result) -> bool:
@@ -145,6 +136,12 @@ def due_coverage(rows: list[dict], days: int = 3) -> list[dict]:
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     return [c for c in rows if c.get("last_error") and (not c.get("alerted_at") or c["alerted_at"] < cutoff)]
+
+
+def pr_repos(settings) -> set[str]:
+    """Repos whose owner/repo#123 mentions link to GitHub in emails; none for
+    the fictional sample."""
+    return set(settings.repo_names()) if settings.source == "github" else set()
 
 
 def link_of(art: dict | None) -> str:

@@ -102,7 +102,7 @@ def test_open_webui_is_an_optional_extra():
 def test_web_app_dependencies_are_declared_with_bounds():
     core = _requirement_names(PYPROJECT["project"]["dependencies"])
     assert core["pwdlib"].startswith("pwdlib[argon2,bcrypt]")
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "markdown"):
         assert ">=" in core[name] and "<" in core[name], core[name]
 
 
@@ -153,7 +153,7 @@ def test_core_lock_is_slim_and_legacy_lock_keeps_open_webui():
     core, legacy = _pins("requirements.lock"), _pins("requirements-openwebui.lock")
     for heavy in ("open-webui", "torch", "av", "transformers", "sentence-transformers", "chromadb"):
         assert heavy not in core, heavy
-    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg"):
+    for name in ("pwdlib", "authlib", "itsdangerous", "python-multipart", "fastapi", "psycopg", "markdown"):
         assert name in core, name
     assert legacy["open-webui"] == "0.11.4"
     # One reviewed set: every package both locks pin has the same version.

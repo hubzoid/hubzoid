@@ -3,6 +3,53 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Added
+- Workflow email can send its own layout with `body_format="html"`. Hubzoid keeps
+  only email-safe tags, inline styles and HTTP(S) or mailto links, removes
+  scripts, styles, forms and images, derives the plain-text part, and adds report
+  links and the list footer after the layout. A list email shows at most 5,000
+  characters of text. See [Artifacts and email](docs/reports-and-email.md#email).
+- `alerts: {to: []}` (or `alert_to=[]`) turns failure alerts off: nothing is
+  recorded or sent, and `HUBZOID_ALERT_URL` is not used for that hub.
+
+### Changed
+- Failure alerts are off by default. With no destination configured (no
+  `alerts:`, `alert_to`, `on_failure` or `HUBZOID_ALERT_URL`), nothing is
+  recorded or sent. Before, each alert was recorded as undeliverable and
+  retried five times with warnings. Failed runs still show in the Console.
+- GitZoid emails use GitZoid's own layout again (chip, title matching the
+  subject, stats bar, summary box, grouped security cards, one link to the page).
+  The security watch skips lockfiles in test, sample, fixture and example
+  folders; the deep audit skips large minified and generated files. Both take
+  `exclude_paths` globs.
+- GitZoid's pull request comments keep the verdict and merge-risk header and
+  use GitZoid's own layout below it (summary, `_high_` finding rows, collapsed
+  suggestions, resolved findings and run details). A confirmed finding can carry a one-line
+  committable suggestion; a package's advisories are one finding with the
+  upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
+- GitZoid reads up to 200,000 characters of a pull request's diff (was 60,000),
+  code first, then other files, tests, docs and lockfiles. Large build output
+  and minified or generated files are skipped (secret checks still read
+  them) and listed under run details.
+
+### Fixed
+- GitZoid's deep audit no longer re-alerts a finding the model words
+  differently. An open finding of the same kind in the same function (or
+  within 20 lines outside one) is the same finding, and the audit is shown
+  the open findings to repeat. Audit progress kept across commits now re-reads
+  any window whose content changed. A second pass (`audit.verify`, on by default) tries to refute each
+  finding before anyone is alerted. The audit instructions name what is not
+  a finding on its own (public docs and health routes, public frontend keys,
+  test and sample code).
+- Hubzoid declares its `Markdown` dependency. 1.3.2 imported it for formatted
+  email without declaring it, so Markdown emails failed with
+  `No module named 'markdown'` unless the Open WebUI extra was installed.
+- GitZoid's deep audit no longer starts over whenever the default branch moves,
+  so it finishes on busy repositories, and an audit still in progress is no
+  longer emailed as a check that could not run.
+
 ## [1.3.2]
 
 ### Added
