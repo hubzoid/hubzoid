@@ -41,7 +41,8 @@ gz = reports.gz
 def extras(repos: list[str], since_30d: str, start: str) -> dict:
     store = gz.store.Store(hub.data_dir)
     rules = gz.rules.hub_rules(flow.HUB_DIR)
-    return {"security": {"open": store.ledger_rows(repos, state="open"), "coverage": store.coverage(repos)},
+    return {"security": {"open": store.ledger_rows(repos, state="open"), "coverage": store.coverage(repos),
+                         "audit_in_progress": [r for r in repos if store.audit(r)["started_at"]]},
             "health": gz.digest.rule_health(rules, store.finding_events(since_30d, repos))}
 
 
@@ -54,6 +55,7 @@ def weekly_digest():
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=settings.digest.days)
     label = f"{start:%d %b} to {(end - timedelta(days=1)):%d %b %Y}"
+    week_of = f"{(end - timedelta(days=1)):%d %b %Y}"
     out = {}
     for group, (repos, email_list) in groups.items():
         data = reports.enrich(reports.gather(repos, start.isoformat(), end.isoformat(), prev=True, patches=True))
@@ -66,7 +68,8 @@ def weekly_digest():
                    "cycle_hours_median": now_d["cycle_hours_median"],
                    "first_review_hours_median": now_d["first_review_hours_median"],
                    "open": now_d["open"], "stuck": now_d["stuck"], "additions": now_c["additions"],
-                   "deletions": now_c["deletions"], "security_open": len(x["security"]["open"])}
+                   "deletions": now_c["deletions"], "security_open": len(x["security"]["open"]),
+                   "contributors": len({p.get("author") for p in data["merged"] if p.get("author")})}
         problem = None if not data["merged"] else flow.charge(1)
         d = None
         if data["merged"] and not problem:
@@ -86,8 +89,9 @@ def weekly_digest():
                                      x["health"], data["coverage"])
         art = gz.runtime.publish(hub, f"digest-{group}", html, f"Weekly digest · {group}", f"gitzoid-digest-{gz.reports.slug(group)}",
                                  digest=gz.runtime.digest_of(d, numbers, label))
-        subject, body = gz.render.digest_email(group, label, d, numbers, data["coverage"] + [
-            c["last_error"] for c in x["security"].get("coverage", []) if c.get("last_error")])
+        subject, body = gz.mail.digest_email(group, label, week_of, d, numbers, x["security"], data["coverage"],
+                                             gz.runtime.link_of(art), gz.runtime.pr_repos(settings),
+                                             implicit=not settings.digest_groups)
         sent = None if gz.runtime.refresh_only(hub) else gz.runtime.email_list(hub, email_list, subject, body, art)
         out[group] = {"headline": d["headline"], "merged": now_d["merged"], "page": gz.runtime.link_of(art),
                       "shared_with": art.get("audience"), "emailed": email_list if sent and gz.runtime.delivered(sent) else None, "email_delivery": sent}

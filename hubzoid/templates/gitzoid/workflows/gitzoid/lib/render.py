@@ -1,5 +1,5 @@
-"""Printable GitZoid reports and bounded Markdown email summaries.
-Contributor/model text is escaped at each rendering boundary."""
+"""Printable GitZoid reports: the pages its emails link to (the emails are in
+mail.py). Contributor/model text is escaped at each rendering boundary."""
 from __future__ import annotations
 
 from html import escape
@@ -220,60 +220,3 @@ def security_page(group: str, stamp: str, changes: dict, open_rows: list[dict], 
     if not open_rows:
         body.append("<p>No open findings in the completed checks. Review coverage above.</p>")
     return page(f"Security · {group}", f"Checked {stamp}", "".join(body))
-
-
-# ------------------------------------------------------------------ emails
-
-def email_text(value) -> str:
-    """Model/repository values are content, never Markdown structure."""
-    import re
-    value = " ".join(str(value or "").split())
-    return re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", value)
-
-
-def email_section(title: str, items: list[str], limit: int = 4) -> str:
-    if not items:
-        return ""
-    return f"\n\n## {title}\n\n" + "\n".join(f"- {email_text(x)}" for x in items[:limit])
-
-
-def digest_email(group: str, label: str, d: dict, numbers: dict | None = None, coverage: list | None = None) -> tuple[str, str]:
-    body = f"# /gitzoid\n\nWeekly digest · {email_text(group)} · {email_text(label)}\n\n{email_text(d.get('headline'))}"
-    if numbers:
-        body += (f"\n\n{numbers['merged']} merged · {numbers['open']} open · {numbers['stuck']} stuck · "
-                 f"{numbers['security_open']} open security findings")
-    if coverage:
-        body += f"\n\nCoverage is limited: {len(coverage)} note(s) in the full report."
-    body += email_section("Primary updates", d.get("for_leadership") or [])
-    body += email_section("Engineering notes", d.get("technical") or [], 2)
-    body += email_section("Needs attention", d.get("watch") or [], 3)
-    return f"GitZoid weekly digest · {group}", body + "\n\nFull digest, metrics, security and source evidence below. Merged does not mean deployed."
-
-
-def security_email(group: str, changes: dict, coverage_problems: list[dict]) -> tuple[str, str]:
-    new, worse, resolved = (changes.get(k, []) for k in ("new", "escalated", "resolved"))
-    body = f"# /gitzoid\n\nSecurity · {email_text(group)}\n\n{len(new)} new · {len(worse)} escalated · {len(resolved)} resolved"
-    # Coverage comes first so bounded emails never imply failed checks were clean.
-    body += email_section("Checks that could not run", [
-        f"Could not check {c['repo']} · {c['check_name']}: {c['last_error']}" for c in coverage_problems], 3)
-    for title, items in (("New findings", new), ("Escalated findings", worse)):
-        body += email_section(title, [
-            f"{i['severity'].title()}{' · exploited now' if i.get('kev') else ''} · {i['repo']} · "
-            f"{i.get('package') or i.get('path') or ''} {i.get('advisory') or ''}: "
-            f"{i.get('impact') or i.get('title') or 'Needs assessment'}. "
-            f"Next action: {i.get('fix') or 'Review the cited finding and confirm remediation.'}"
-            for i in items], 3)
-    parts = [f"{len(new)} new", f"{len(worse)} escalated", f"{len(resolved)} resolved"]
-    if coverage_problems:
-        parts.append(f"{len(coverage_problems)} check(s) could not run")
-    return (f"GitZoid security · {group} · {', '.join(parts)}",
-            body + "\n\nFull findings, remediation and coverage in the report below.")
-
-
-def report_email(kind: str, name: str, label: str, n: dict, coverage: list | None = None) -> tuple[str, str]:
-    body = f"# /gitzoid\n\n{email_text(kind.title())} report · {email_text(name)} · {email_text(label)}\n\n{email_text(n.get('headline'))}"
-    if coverage:
-        body += f"\n\nCoverage is limited: {len(coverage)} note(s) in the full report."
-    body += email_section("Highlights", n.get("highlights") or [])
-    body += email_section("Needs attention", n.get("watch") or [], 3)
-    return f"GitZoid {kind} report · {name} · {label}", body + "\n\nFull report and source evidence below. Merged does not mean deployed."

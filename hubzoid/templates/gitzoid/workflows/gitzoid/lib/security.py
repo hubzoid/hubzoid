@@ -34,6 +34,10 @@ PYPI_MODULE = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "pyth
                "scikit-learn": "sklearn", "opencv-python": "cv2", "pyjwt": "jwt", "python-dotenv": "dotenv",
                "protobuf": "google.protobuf", "pymysql": "pymysql", "psycopg2-binary": "psycopg2",
                "python-multipart": "multipart", "attrs": "attr", "pycryptodome": "Crypto"}
+# Lockfiles in these folders are test, sample or fixture data, not what the
+# product installs (OSV-Scanner has no default; Renovate and OpenQodex skip these).
+FIXTURE_DIRS = {"test", "tests", "__tests__", "testdata", "test_data", "fixtures", "__fixtures__", "mocks",
+                "__mocks__", "sample", "samples", "examples"}
 LOCKFILES = ("requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock", "package-lock.json", "yarn.lock",
              "pnpm-lock.yaml", "go.mod", "Cargo.lock", "Gemfile.lock", "composer.lock")
 DECLARATIONS = ("pyproject.toml", "requirements.in", "package.json", "Gemfile", "Cargo.toml", "go.mod")
@@ -185,19 +189,28 @@ def declared(files: dict[str, str]) -> set[tuple[str, str]]:
     return out
 
 
-def manifest_files(root: Path, limit: int = 300) -> tuple[dict[str, str], bool]:
-    """Lockfiles and declarations in a checkout, skipping vendored folders, and
-    whether that is all of them (False when the limit cut the list)."""
+def manifest_files(root: Path, limit: int = 300, exclude: list[str] = (),
+                   skipped: list[str] | None = None) -> tuple[dict[str, str], bool]:
+    """Lockfiles and declarations in a checkout, skipping vendored, build,
+    test, sample and fixture folders and the `exclude` globs, and whether that
+    is all of them (False when the limit cut the list). `skipped` collects the
+    dependency files left out by folder or glob."""
+    from .rules import match_glob
     out: dict[str, str] = {}
     root = Path(root)
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts[:-1]) or not path.is_file():
             continue
-        if _is_lockfile(path.name) or path.name in DECLARATIONS:
-            if len(out) >= limit:
-                return out, False
-            out[rel.as_posix()] = path.read_text(errors="replace")
+        if not (_is_lockfile(path.name) or path.name in DECLARATIONS):
+            continue
+        if any(part.lower() in FIXTURE_DIRS for part in rel.parts[:-1]) or any(match_glob(rel.as_posix(), g) for g in exclude):
+            if skipped is not None:
+                skipped.append(rel.as_posix())
+            continue
+        if len(out) >= limit:
+            return out, False
+        out[rel.as_posix()] = path.read_text(errors="replace")
     return out, True
 
 
@@ -341,6 +354,39 @@ def passes_gate(adv: dict, kev: set[str], floor: str) -> bool:
     if adv["severity"] == "unknown":
         return True
     return RANK[adv["severity"]] <= RANK.get(floor, 1)
+
+
+def by_package(advisories: list[dict]) -> list[list[dict]]:
+    """Advisories grouped per package version, in first-seen order."""
+    groups: dict[tuple, list[dict]] = {}
+    for a in advisories:
+        d = a["dep"]
+        groups.setdefault((d["ecosystem"], d["name"], d["version"]), []).append(a)
+    return list(groups.values())
+
+
+def pr_finding(path: str, group: list[dict], kev: set[str], lines: list[tuple[int, str]]) -> dict:
+    """One pull request finding for every advisory on one added package
+    version, on the line that adds it. A requirements-style pin gets the
+    upgrade as a one-line suggestion when every advisory lists a fix."""
+    d = group[0]["dep"]
+    hit = next(((n, t) for n, t in lines if d["name"].lower() in t.lower()), (None, ""))
+    exploited = any(set(a["cves"]) & kev for a in group)
+    worst = min((a["severity"] for a in group), key=lambda s: (RANK.get(s, 1), s == "unknown"))
+    fixes = [a.get("fixed") for a in group]
+    fix = max(fixes, key=_vkey) if fixes and all(fixes) else None
+    rated = "actively exploited" if exploited else (worst if worst != "unknown" else "no severity rating")
+    if len(group) == 1:
+        a = group[0]
+        found = f"{d['name']} {d['version']} has {a['key']} ({rated}): {' '.join(a['summary'].split()).rstrip('.')}."
+    else:
+        found = (f"{d['name']} {d['version']} has {len(group)} known vulnerabilities, the worst {rated}: "
+                 + ", ".join(f"{a['key']} ({' '.join(a['summary'].split()).rstrip('.')})" for a in group) + ".")
+    found += f" Upgrade to {fix} or later." if fix else " No fixed version is listed yet."
+    pin = re.fullmatch(rf"(\s*{re.escape(d['name'])}\s*==\s*){re.escape(d['version'])}(\s*(?:[;#].*)?)", hit[1], re.I)
+    return {"path": path, "line": hit[0], "severity": "high" if exploited or worst in ("critical", "high") else "medium",
+            "confidence": "high", "category": "security", "rule": "dependency advisory", "checked": True, "body": found,
+            "suggestion": f"{pin.group(1)}{fix}{pin.group(2)}" if pin and fix else ""}
 
 
 # ------------------------------------------------------------------- feeds
@@ -498,7 +544,8 @@ def ignore(store, repo: str, item: dict, reason: str, stamp: str) -> None:
                       alerted_kev=int(bool(item.get("kev"))), assessment_fp=item.get("assessment_fp"))
 
 
-def reconcile(store, repo: str, items: list[dict], stamp: str, complete: bool = True) -> dict:
+def reconcile(store, repo: str, items: list[dict], stamp: str, complete: bool = True,
+              skipped_files=()) -> dict:
     """Compare today's advisories for one repo with the ledger. Returns the
     new, escalated and resolved entries. Assessed-unreachable ones are kept
     as 'ignored' and come back only if they escalate. Nothing is resolved
@@ -516,7 +563,7 @@ def reconcile(store, repo: str, items: list[dict], stamp: str, complete: bool = 
                       advisory=item["key"], severity=item["severity"], kev=int(kev), title=item["summary"],
                       impact=item.get("impact") or (row or {}).get("impact", ""), fix=item.get("fix") or (f"Upgrade to {item['fixed']}" if item.get("fixed") else ""),
                       path=item["dep"]["file"], last_seen=stamp, assessment_fp=item.get("assessment_fp"))
-        if row is None or row["state"] == "resolved" or (row["state"] == "open" and not row["alerted_at"]):
+        if row is None or row["state"] in ("resolved", "skipped") or (row["state"] == "open" and not row["alerted_at"]):
             store.save_ledger(key, **fields, state="open", first_seen=(row or {}).get("first_seen") or stamp,
                               alerted_at=stamp, alerted_severity=item["severity"], alerted_kev=int(kev))
             out["new"].append({**fields, "key": key, "url": item["url"]})
@@ -532,7 +579,10 @@ def reconcile(store, repo: str, items: list[dict], stamp: str, complete: bool = 
         else:
             store.save_ledger(key, **fields)
     for row in store.ledger_rows([repo], state="open", kind="dependency") if complete else []:
-        if row["key"] not in seen:
+        if row["key"] not in seen and row.get("path") in skipped_files:
+            # Not fixed: its file is now in a skipped folder, so it is no longer checked.
+            store.save_ledger(row["key"], state="skipped", last_seen=stamp)
+        elif row["key"] not in seen:
             store.save_ledger(row["key"], state="resolved", last_seen=stamp)
             out["resolved"].append(row)
     return out

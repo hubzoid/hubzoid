@@ -58,18 +58,22 @@ def test_first_sweep_reviews_the_sample(hub):
     assert set(by_pr) == {"101", "102", "103", "104", "105"}  # 106 is a draft
     assert store(hub).review(REPO, 106)["note"] == "draft"
     assert by_pr["104"]["verdict"] == "looks_good"
-    assert "No issues found" in posted(r, 104, "post summary")[0]["text"]
+    clean = posted(r, 104, "post summary")[0]["text"]
+    assert "### GitZoid review · Looks good" in clean and "## 📝 Summary" in clean and "## ⚠️" not in clean
     for n in ("101", "102", "103", "105"):
         assert by_pr[n]["verdict"] == "needs_changes"
     security_summary = posted(r, 102, "post summary")[0]["text"]
     assert "## 📝 Summary" in security_summary and "## 🔒 Security (" in security_summary
-    assert "## ⚠️ Potential issues (" in posted(r, 101, "post summary")[0]["text"]
+    assert "## ⚠️ Potential Issues (" in posted(r, 101, "post summary")[0]["text"]
     # 101: the model's retry finding plus the code-checked team rule.
     rules = {f["rule"] for f in store(hub).findings_for(REPO, 101)}
     assert {"Nothing retries forever", "No print in app code"} <= rules
-    # 105: dependency advisories from the sample OSV feed, no model needed to find them.
+    # 105: dependency advisories from the sample OSV feed, no model needed to find them,
+    # as one finding for the package with the upgrade as a one-click suggestion.
     deps = store(hub).findings_for(REPO, 105)
-    assert len(deps) == 2 and all("gunicorn 21.2.0" in f["body"] for f in deps)
+    assert len(deps) == 1 and "gunicorn 21.2.0 has 2 known vulnerabilities" in deps[0]["body"]
+    assert deps[0]["suggestion"] == "gunicorn==22.0.0"
+    assert "```suggestion\ngunicorn==22.0.0\n```" in posted(r, 105, "inline comment")[0]["text"]
     # Every reviewed PR got a status, and nothing went to the network.
     assert all(by_pr[n]["status"] == "success" for n in by_pr)
     inline = posted(r, 102, "inline comment")[0]["text"]
@@ -105,8 +109,7 @@ def test_the_fix_loop_marks_findings_fixed(hub):
     review = r.value["reviews"][0]
     assert review["pr"].endswith("#101") and review["open"] == 0 and review["fixed"] == 2
     summary = posted(r, 101, "post summary")[0]["text"]
-    assert "Since the last review" in summary and "2 fixed" in summary
-    assert "<details><summary>✅ Resolved (2)</summary>" in summary
+    assert "<details><summary>✅ Resolved (2)</summary>" in summary and "## ⚠️" not in summary
     status = posted(r, 101, "status success")[0]["text"]
     assert status == "No open findings"
 
@@ -281,7 +284,7 @@ def test_security_watch_reports_a_check_that_could_not_run(hub):
     r = h.run_local(wf(hub, "security_watch"), hub_dir=hub, trigger="schedule")
     assert "error" in r.value["platform"]["repos"][0]
     assert "could not run" in r.emails[0]["subject"]
-    assert "Could not check" in r.emails[0]["body"]
+    assert "Checks that could not run" in r.emails[0]["body"]
 
 
 def test_deep_audit_first_run_and_findings(hub):
@@ -345,7 +348,7 @@ def test_reports_for_a_person_and_for_the_team(hub):
     team = h.run_local(delivery, hub_dir=hub, trigger="schedule")
     assert team.artifacts[0]["audience"] == "domain" and team.artifacts[0]["key"] == "gitzoid-delivery-storefront"
     assert team.emails[0]["list"] == "storefront-digest"
-    assert team.emails[0]["body_format"] == "markdown"
+    assert team.emails[0]["body_format"] == "html" and "GitZoid Storefront Delivery Report" in team.emails[0]["body"]
     assert "Sep 2026" in team.value["reports"][0]["period"]
     assert h.run_local(wf(hub, "code_report"), hub_dir=hub, trigger="schedule").value["reports"]
     refused = h.run_local(delivery, hub_dir=hub, trigger="tool", inputs={"repos": ["x/y"]})
@@ -512,7 +515,7 @@ def test_an_alert_whose_email_failed_is_sent_again(hub, monkeypatch):
     assert first.emails  # tried
     monkeypatch.undo()
     second = h.run_local(security, hub_dir=hub, trigger="schedule")
-    assert second.emails and "1 new" in second.emails[0]["subject"]
+    assert second.emails and "1 issue found" in second.emails[0]["subject"]
     assert h.run_local(security, hub_dir=hub, trigger="schedule").emails == []
 
 
@@ -543,7 +546,7 @@ def test_audit_that_cannot_run_is_reported(hub):
 
 def test_partly_reviewed_pull_requests_never_pass_the_gate():
     gz = h.template_lib()
-    assert gz.review.status_for("gate", [], 3) == ("failure", "Partly reviewed: 3 file(s) not reviewed. No open findings")
+    assert gz.review.status_for("gate", [], 3) == ("failure", "Partly reviewed: 3 files not reviewed. No open findings")
     assert gz.review.status_for("report", [], 3)[0] == "success"
     assert gz.review.status_for("gate", [], 0) == ("success", "No open findings")
 

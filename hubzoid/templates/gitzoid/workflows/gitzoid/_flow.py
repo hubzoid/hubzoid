@@ -292,18 +292,9 @@ def dependency_check(job: dict) -> dict:
             notes.append(f"{path}: {exc}")
             continue
         lines = gz.diff.added_lines(patch)
-        for a in advisories:
-            if not gz.security.passes_gate(a, kev, settings.security.severity_floor):
-                continue
-            d = a["dep"]
-            line = next((n for n, t in lines if d["name"].lower() in t.lower()), None)
-            exploited = bool(set(a["cves"]) & kev)
-            sev = "high" if exploited or a["severity"] in ("critical", "high") else "medium"
-            fixed = f" Fixed in {a['fixed']}." if a.get("fixed") else ""
-            findings.append({"path": path, "line": line, "severity": sev, "confidence": "high", "category": "security",
-                             "rule": "dependency advisory", "checked": True,
-                             "body": f"{d['name']} {d['version']} has {a['key']} ({a['severity']}"
-                                     f"{', exploited now' if exploited else ''}): {a['summary']}{fixed}"})
+        kept = [a for a in advisories if gz.security.passes_gate(a, kev, settings.security.severity_floor)]
+        for group in gz.security.by_package(kept):
+            findings.append(gz.security.pr_finding(path, group, kev, lines))
     return {"findings": findings, "notes": notes}
 
 
@@ -399,7 +390,7 @@ def post(view: dict, post_ids: list[str], commentable: list) -> dict:
         created = gh.post_review(repo, number, head,
                                  [{"path": f["path"], "line": f["line"], "body": gz.review.inline_body(f, pr, view["commands"])}
                                   for f in todo],
-                                 f"GitZoid found {len(todo)} issue(s). The summary comment has the full review.\n<!-- gitzoid:review -->")
+                                 gz.review.review_body(len(todo)))
         by_marker = {m: c["id"] for c in created for m in re.findall(gz.review.FINDING_PATTERN, c.get("body") or "")}
         for f, c in zip(todo, created):
             cid = by_marker.get(f["id"], c.get("id") if not by_marker else None)

@@ -19,6 +19,7 @@ gitzoid:
       # severity_floor: high          # per repo; the repo's review.md can also set it
       # model: anthropic/claude-sonnet-4-5
       context: "Customer emails and addresses live in the orders table."
+      # exclude_paths: [legacy/]      # this repo only, added to security.exclude_paths
 
   # Security groups: who hears about which repos. A repo belongs to at most
   # one; repos in none alert to owner_list. audit_day is the deep audit day.
@@ -41,13 +42,17 @@ gitzoid:
     max_age_days: 0             # 0: no age cutoff; otherwise older PRs wait for a push or manual review
     verify: true                # a second pass tries to refute each finding against the whole file
     post_to_github: false       # true: post summary, inline comments and status (see README.md)
-    summary_on_clean: true      # a clean PR still gets "Looks good · 4 of 4 files reviewed"
+    summary_on_clean: true      # a clean PR still gets the summary comment (what it does, suggestions)
     auto_pause_after: 0         # 0: keep reviewing pushes; optional positive limit pauses busy PRs
     skip_label: gitzoid-skip
     status_check: report        # off · report: pending, then success with counts · gate: failure while blocking findings are open
 
   security:
     severity_floor: high        # plus anything CISA lists as exploited now, and advisories with no rating
+    # The security watch and deep audit always skip test, sample, fixture, example,
+    # vendored and build folders, and minified or generated code. Globs to skip too:
+    # `docs/` or `docs/**` is a folder; other patterns are fnmatch (* crosses /).
+    exclude_paths: []
 
   audit:
     budget_minutes: 20          # per run; the audit resumes the next day

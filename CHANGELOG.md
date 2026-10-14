@@ -3,6 +3,34 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Added
+- Workflow email can send its own layout with `body_format="html"`. Hubzoid keeps
+  only email-safe tags, inline styles and HTTP(S) or mailto links, removes
+  scripts, styles, forms and images, derives the plain-text part, and adds report
+  links and the list footer after the layout. A list email shows at most 5,000
+  characters of text. See [Artifacts and email](docs/reports-and-email.md#email).
+- `alerts: {to: []}` (or `alert_to=[]`) turns failure alerts off: nothing is
+  recorded or sent, and `HUBZOID_ALERT_URL` is not used for that hub.
+
+### Changed
+- GitZoid emails use GitZoid's own layout again (chip, title matching the
+  subject, stats bar, summary box, grouped security cards, one link to the page).
+  The security watch skips lockfiles in test, sample, fixture and example
+  folders; the deep audit skips minified and generated code. Both take
+  `exclude_paths` globs.
+- GitZoid's pull request comments keep the verdict and merge-risk header and
+  use GitZoid's own layout below it (summary, `_high_` finding rows, collapsed
+  suggestions, resolved findings and run details). A confirmed finding can carry a one-line
+  committable suggestion; a package's advisories are one finding with the
+  upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
+
+### Fixed
+- GitZoid's deep audit no longer starts over whenever the default branch moves,
+  so it finishes on busy repositories, and an audit still in progress is no
+  longer emailed as a check that could not run.
+
 ## [1.3.2]
 
 ### Added
