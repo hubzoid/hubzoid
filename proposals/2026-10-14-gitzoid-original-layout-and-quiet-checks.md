@@ -15,6 +15,14 @@ four problems.
   (`portal_dist/assets/*.js`) and started over whenever `main` moved. It also
   emailed its own progress as a "check that could not run".
 
+The original WaveAssist GitZoid, analysed on 14 October, sent the same
+security finding again in about 1 in 5 alert emails. A finding the model did
+not repeat one week was marked resolved, then alerted as new when it came
+back, and low-value findings (public docs pages, public keys) were rated high.
+Hubzoid's GitZoid resolves only with quoted evidence. But it identifies an audit
+finding by the model's quoted code, so a reworded finding would also be
+re-sent, and audit findings had no second check.
+
 PR comments had drifted from the original WaveAssist GitZoid too:
 
 - "Coverage is limited" appeared on almost every PR, triggered by analyzer
@@ -48,6 +56,13 @@ October and approved this plan.
     upgrade as the suggestion when the line is a plain pin.
   - **Partial reviews** are flagged only when files or checks were actually
     missed.
+- **Alerts:** off by default. With no destination configured, nothing is
+  recorded or sent.
+- **Repeated audit alerts:** an open audit finding of the same kind within 20
+  lines in the same file is the same finding, and the audit sees the open
+  findings so it repeats them in the same words. A second pass
+  (`audit.verify`, on by default) tries to refute each finding before
+  alerting. The audit instructions name what is not a finding on its own.
 - **Security watch and deep audit:**
   - The watch skips lockfiles in test, sample, fixture and example folders.
   - The audit skips minified and generated code.

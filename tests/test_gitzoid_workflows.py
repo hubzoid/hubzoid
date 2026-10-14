@@ -301,6 +301,40 @@ def test_deep_audit_first_run_and_findings(hub):
     assert second.value["new_findings"] >= 1 and second.emails[0]["list"] == "platform-security"
     assert any(r["kind"] == "audit" for r in st.ledger_rows([REPO]))
 
+    # Next week the model words the same problem differently, a few lines away: not news.
+    st.save_audit(REPO, last_full=None, started_at=None)
+    prompts = []
+
+    def reworded(prompt, system, response_model):
+        prompts.append(prompt)
+        if response_model.__name__ == "Verification":
+            return {"verdicts": [{"index": 0, "verdict": "confirmed", "severity": "high", "reason": "No check."}]}
+        return {"findings": [{"path": "app/orders.py", "line": 33, "kind": "authorization", "severity": "high",
+                              "confidence": "high", "body": "Anyone can read the latest orders.",
+                              "evidence": "return jsonify(recent)"}]}
+    third = h.run_local(audit, hub_dir=hub, trigger="schedule", llm=h.scripted(reworded))
+    assert third.value["new_findings"] == 0 and third.emails == []
+    assert any("<already_reported" in x and "Recent orders leak to anyone." in x for x in prompts)
+    assert len([r for r in st.ledger_rows([REPO], kind="audit") if r["path"] == "app/orders.py"]) == 1
+
+
+def test_deep_audit_second_pass_refutes_before_anyone_is_alerted(hub):
+    audit = wf(hub, "deep_audit")
+    h.run_local(audit, hub_dir=hub, trigger="schedule")
+    store(hub).save_audit(REPO, last_full=None, started_at=None)
+
+    def llm(prompt, system, response_model):
+        if response_model.__name__ == "Verification":
+            assert "## Finding 0" in prompt and "API docs" in prompt
+            return {"verdicts": [{"index": 0, "verdict": "refuted", "severity": "low",
+                                  "reason": "The docs page is public on purpose."}]}
+        return {"findings": [{"path": "app/orders.py", "line": 30, "kind": "authorization", "severity": "high",
+                              "confidence": "high", "body": "The docs page has no sign-in.", "evidence": "@bp.get"}]}
+    r = h.run_local(audit, hub_dir=hub, trigger="schedule", llm=h.scripted(llm))
+    assert r.value["new_findings"] == 0 and r.emails == []
+    assert r.value["audited"][0]["refuted_by_second_pass"] == 1
+    assert not store(hub).ledger_rows([REPO], kind="audit")
+
 
 def test_repo_profiles_build_then_stay_fresh(hub):
     profiles = wf(hub, "repo_profiles")

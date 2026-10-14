@@ -86,6 +86,7 @@ class AuditSettings(_Strict):
     budget_minutes: int = Field(20, ge=1, le=120)
     safety_days: int = Field(8, ge=1)
     max_files_per_repo: int = Field(40, ge=1)
+    verify: bool = True  # a second pass tries to refute each finding before it is recorded or emailed
     model: str | None = None
 
 

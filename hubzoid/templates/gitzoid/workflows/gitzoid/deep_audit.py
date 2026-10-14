@@ -146,13 +146,21 @@ def time_left(deadline: float) -> bool:
 
 
 @step()
+def known_findings(repo: str, paths: list[str]) -> list[dict]:
+    """Open audit findings in these files, shown to the audit so it repeats them in the same words."""
+    names = {gz.audit.unit(p)[0] for p in paths}
+    return [{"path": r["path"], "line": r["line"], "kind": r["advisory"], "title": r["title"]}
+            for r in gz.store.Store(hub.data_dir).ledger_rows([repo], state="open", kind="audit") if r["path"] in names]
+
+
+@step()
 def audit_record(repo: str, findings: list[dict], paths: list[str], stamp: str, resolved: dict | None = None) -> list[dict]:
     store = gz.store.Store(hub.data_dir)
     names = [gz.audit.unit(p)[0] for p in paths]
     kept = gz.audit.gate(findings, set(names))
     root = gz.checkout.path_for(hub.data_dir, repo)
-    new = gz.audit.record(store, repo, kept, names, root, stamp)
-    reported = {gz.audit.key(repo, f) for f in kept}
+    reported: set = set()
+    new = gz.audit.record(store, repo, kept, names, root, stamp, seen=reported)
     for key, evidence in (resolved or {}).items():
         row = store.ledger(key)
         if row and row["repo"] == repo and row["kind"] == "audit" and row["path"] in names and key not in reported:
@@ -194,6 +202,7 @@ def deep_audit():
     settings = gz.settings.load(hub.setting("gitzoid"))
     new_by_group: dict[str, list] = {}
     done, unfinished = [], []
+    dropped_by_check: dict[str, int] = {}
     for item in p["todo"]:
         repo = item["repo"]
         prep = audit_prepare(repo, bool(item.get("queued_only")))
@@ -223,7 +232,8 @@ def deep_audit():
                 coverage_problem(repo, problem)
                 break
             try:
-                result = flow.ask(gz.audit.prompt(repo, prep["profile"], [tuple(b) for b in batch]),
+                result = flow.ask(gz.audit.prompt(repo, prep["profile"], [tuple(b) for b in batch],
+                                                  known_findings(repo, paths)),
                                   system=gz.audit.SYSTEM, response_model=gz.models.Audit,
                                   model=settings.audit.model, timeout=600)
             except flow.Unreadable as exc:
@@ -231,6 +241,16 @@ def deep_audit():
                 unfinished.append({"repo": repo, "error": f"{exc}; resumes on the next run"})
                 coverage_problem(repo, str(exc))
                 break
+            found = gz.audit.gate([f.model_dump() for f in result.findings], {gz.audit.unit(x)[0] for x in paths})
+            if found and settings.audit.verify and not flow.charge(1):
+                try:
+                    checked = flow.ask(gz.audit.verify_prompt(repo, prep["profile"], found, [tuple(b) for b in batch]),
+                                       system=gz.review.VERIFY_SYSTEM, response_model=gz.models.Verification,
+                                       model=settings.audit.model, timeout=600)
+                    found, refuted = gz.audit.apply_verdicts(found, [v.model_dump() for v in checked.verdicts])
+                    dropped_by_check[repo] = dropped_by_check.get(repo, 0) + len(refuted)
+                except flow.Unreadable:
+                    pass  # unverified findings are kept, as in pull request reviews
             resolved = {}
             prior = prior_audit_findings(repo, batch)
             if prior and not flow.charge(1):
@@ -246,7 +266,7 @@ def deep_audit():
                                 if r.id in allowed and r.resolved and r.evidence.strip()}
                 except flow.Unreadable:
                     pass  # unresolved findings stay open
-            new = audit_record(repo, [f.model_dump() for f in result.findings], paths, p["stamp"], resolved)
+            new = audit_record(repo, found, paths, p["stamp"], resolved)
             new_by_group.setdefault(item["group"], []).extend({**n, "repo": repo} for n in new)
         if prep["scan_notes"]:
             finished = False
@@ -259,7 +279,8 @@ def deep_audit():
         if finished:
             complete(repo, bool(prep.get("queued_only")))
             done.append({"repo": repo, "reason": item["reason"], "batches": len(prep["batches"]),
-                         "skipped_generated_or_excluded": prep["skipped"]})
+                         "skipped_generated_or_excluded": prep["skipped"],
+                         "refuted_by_second_pass": dropped_by_check.get(repo, 0)})
         elif not any(u["repo"] == repo for u in unfinished):
             unfinished.append({"repo": repo, "in_progress": True,
                                "error": "time budget used; the audit resumes on the next run"})

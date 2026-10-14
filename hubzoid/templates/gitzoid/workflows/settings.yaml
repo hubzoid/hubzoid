@@ -57,6 +57,7 @@ gitzoid:
   audit:
     budget_minutes: 20          # per run; the audit resumes the next day
     safety_days: 8              # audit anyway if the audit day was missed
+    verify: true                # a second pass tries to refute each finding before anyone is alerted
 
   digest:
     days: 7

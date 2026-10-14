@@ -226,6 +226,28 @@ def test_dependency_advisories_are_one_finding_per_package():
     kept = gz.review.gate([f, model], {("requirements.txt", 2)}, "high", 8)
     assert [k["body"] for k in kept] == [f["body"]]
 
+
+def test_audit_rewording_is_the_same_finding_and_verdicts_apply(tmp_path):
+    st = gz.store.Store(tmp_path)
+    f = {"path": "app/a.py", "line": 10, "kind": "authorization", "severity": "high", "body": "No check.",
+         "evidence": "def a():"}
+    assert len(gz.audit.record(st, "o/r", [f], ["app/a.py"], tmp_path, "t1")) == 1
+    seen: set = set()
+    moved = {**f, "line": 25, "body": "Anyone can call a.", "evidence": "return a_rows()"}
+    assert gz.audit.record(st, "o/r", [moved], ["app/a.py"], tmp_path, "t2", seen=seen) == []
+    [row] = st.ledger_rows(["o/r"], kind="audit")
+    assert row["key"] in seen and row["line"] == 25 and row["last_seen"] == "t2"
+    far = {**f, "line": 80, "evidence": "def b():"}
+    other = {**f, "kind": "injection", "evidence": "sql"}
+    assert len(gz.audit.record(st, "o/r", [far, other], ["app/a.py"], tmp_path, "t3")) == 2
+    kept, dropped = gz.audit.apply_verdicts([f, far], [{"index": 0, "verdict": "refuted", "reason": "public"},
+                                                      {"index": 1, "verdict": "confirmed", "severity": "low"}])
+    assert [d["line"] for d in dropped] == [10] and kept[0]["severity"] == "low"
+    assert gz.audit.gate(kept, {"app/a.py"}) == []  # lowered to low: not alerted
+    prompt = gz.audit.prompt("o/r", "", [("app/a.py", "x = 1", 0)], [{"path": "app/a.py", "line": 10,
+                                                                       "kind": "authorization", "title": "No check."}])
+    assert "<already_reported" in prompt and "app/a.py:10 authorization: No check." in prompt
+
 # ------------------------------------------------------------------ commands
 
 @pytest.mark.parametrize("body, verb, arg", [

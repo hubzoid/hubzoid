@@ -15,6 +15,10 @@ All notable changes to Hubzoid. Versions follow the package version in
   recorded or sent, and `HUBZOID_ALERT_URL` is not used for that hub.
 
 ### Changed
+- Failure alerts are off by default. With no destination configured (no
+  `alerts:`, `alert_to`, `on_failure` or `HUBZOID_ALERT_URL`), nothing is
+  recorded or sent. Before, each alert was recorded as undeliverable and
+  retried five times with warnings. Failed runs still show in the Console.
 - GitZoid emails use GitZoid's own layout again (chip, title matching the
   subject, stats bar, summary box, grouped security cards, one link to the page).
   The security watch skips lockfiles in test, sample, fixture and example
@@ -27,6 +31,13 @@ All notable changes to Hubzoid. Versions follow the package version in
   upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
 
 ### Fixed
+- GitZoid's deep audit no longer re-alerts a finding the model words
+  differently. An open finding of the same kind within 20 lines in the same
+  file is the same finding, and the audit is shown the open findings to
+  repeat. A second pass (`audit.verify`, on by default) tries to refute each
+  finding before anyone is alerted. The audit instructions name what is not
+  a finding on its own (public docs and health routes, public frontend keys,
+  test and sample code).
 - Hubzoid declares its `Markdown` dependency. 1.3.2 imported it for formatted
   email without declaring it, so Markdown emails failed with
   `No module named 'markdown'` unless the Open WebUI extra was installed.
