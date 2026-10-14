@@ -94,6 +94,26 @@ def test_diff_lines():
     assert "a.py" in text and left == ["b.py"]
 
 
+def test_review_budget_reads_code_first_and_skips_build_output():
+    def added(text, n=1):
+        return {"patch": "@@ -0,0 +1,%d @@\n" % n + "\n".join("+" + text for _ in range(n))}
+    files = [{"filename": "CHANGELOG.md", **added("Notes " * 20, 40)},
+             {"filename": "docs/guide.md", **added("Words " * 20, 40)},
+             {"filename": "package-lock.json", **added('"x": "1"', 40)},
+             {"filename": "tests/test_auth.py", **added("assert login()", 5)},
+             {"filename": "portal_dist/assets/App-C_uA2yjw.js", **added("var a=1;" * 400, 60)},
+             {"filename": "web/app.min.js", **added("x", 1)},
+             {"filename": "app/auth.py", **added("def login(): return True", 5)},
+             {"filename": "app/gen_pb2.py", **added("# Code generated. DO NOT EDIT.", 1)}]
+    built: list[str] = []
+    text, left = gz.diff.format_diff(files, 2_000, built=built)
+    assert built == ["portal_dist/assets/App-C_uA2yjw.js", "web/app.min.js"]   # small generated files are still read
+    assert text.index("app/auth.py") < text.index("tests/test_auth.py")         # code before tests
+    assert "app/gen_pb2.py" in text and left == ["CHANGELOG.md", "docs/guide.md"]  # too big for what was left
+    assert text.index("package-lock.json") > text.index("tests/test_auth.py")   # lockfiles last
+    assert gz.settings.load({}).review.max_diff_chars == 200_000
+
+
 def test_anchor_survives_moves_and_detects_change():
     code = "def f():\n    x = load()\n    while True:\n        retry(x)\n    return x\n"
     a = gz.diff.anchor(code, 3)

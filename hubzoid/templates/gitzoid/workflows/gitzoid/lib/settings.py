@@ -61,7 +61,7 @@ class ReviewSettings(_Strict):
     max_prs_per_run: int = Field(5, ge=1)
     max_findings: int = Field(8, ge=1, le=30)
     max_age_days: int = Field(0, ge=0)
-    max_diff_chars: int = Field(60_000, ge=5_000)
+    max_diff_chars: int = Field(200_000, ge=5_000)  # code first; bigger changes are reviewed in part, and say so
     verify: bool = True
     post_to_github: bool = False
     summary_on_clean: bool = True

@@ -39,6 +39,7 @@ gitzoid:
     first_run_limit: 6          # first sweep: with backlog: latest, select the newest N eligible PRs
     max_prs_per_run: 5          # reviews per sweep, to bound cost
     max_findings: 8             # inline comments per review
+    max_diff_chars: 200000      # diff read per review, code first; a bigger change is reviewed in part and says so
     max_age_days: 0             # 0: no age cutoff; otherwise older PRs wait for a push or manual review
     verify: true                # a second pass tries to refute each finding against the whole file
     post_to_github: false       # true: post summary, inline comments and status (see README.md)

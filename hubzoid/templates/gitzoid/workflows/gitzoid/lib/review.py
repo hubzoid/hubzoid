@@ -236,6 +236,8 @@ def diff_answer(result: dict) -> str:
     tail = []
     if result.get("left_out_for_size"):
         tail.append("Not reviewed (missing patch or size budget): " + ", ".join(result["left_out_for_size"][:20]))
+    if result.get("built_output"):
+        tail.append("Skipped as build output or minified code: " + ", ".join(result["built_output"][:20]))
     if result.get("ignored_by_review_md"):
         tail.append("Ignored by review.md: " + ", ".join(result["ignored_by_review_md"][:20]))
     tail.append(result.get("note", "Nothing was posted."))
@@ -377,6 +379,8 @@ def run_details(view: dict) -> list[str]:
         out.append("GitHub lists at most 3,000 files; files beyond that were not reviewed.")
     if view.get("ignored"):
         out.append(f"Skipped by review.md: {listed(view['ignored'])}.")
+    if view.get("built"):
+        out.append(f"Skipped as build output or minified code (secret checks still read them): {listed(view['built'])}.")
     out += [sentence(n) for n in view.get("notes") or []]
     if view.get("decided"):
         out.append(f"Dismissed or deferred by the team: {len(view['decided'])}.")

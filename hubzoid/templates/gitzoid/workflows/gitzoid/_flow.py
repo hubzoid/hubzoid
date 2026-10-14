@@ -213,7 +213,8 @@ def prepare(repo: str, number: int, force: bool = False) -> dict:
     names = {f["filename"] for f in changed} if changed is not None else None
     review_files = [f for f in keep if names is None or f["filename"] in names] or keep
     incremental = names is not None and len(review_files) < len(keep)
-    diff_text, left_out = gz.diff.format_diff(review_files, rc.max_diff_chars)
+    built: list[str] = []
+    diff_text, left_out = gz.diff.format_diff(review_files, rc.max_diff_chars, built=built)
     sweep = gz.checks.sweep(review_files)
     analyzer_hits, notes = gz.checks.run_analyzers(review_files, lambda p: gh.file(repo, p, head),
                                                    [a.model_dump() for a in settings.analyzers])
@@ -243,7 +244,7 @@ def prepare(repo: str, number: int, force: bool = False) -> dict:
         "open": [{k: f[k] for k in ("path", "line", "body")} for f in prior
                  if f["state"] == "open" and (names is None or f["path"] in reviewed_paths)],
         "incremental": incremental, "diff": diff_text, "left_out": left_out, "ignored": ignored,
-        "total_files": len(files), "reviewed_files": len(review_files) - len(left_out),
+        "total_files": len(files), "reviewed_files": len(review_files) - len(left_out) - len(built), "built": built,
         "truncated": len(files) >= gz.github.MAX_FILES,
         "files": [{k: f.get(k) for k in ("filename", "status", "additions", "previous_filename")} for f in files],
         "commentable": sorted(gz.diff.commentable(keep)), "fp": fp, "version": version, "pushes": pushes,
@@ -354,7 +355,8 @@ def build_view(store, job: dict, summary_text: str, suggestions: list[str], fixe
             "summary": summary_text, "suggestions": suggestions, "verdict": gz.review.verdict(open_now),
             "risk": gz.review.merge_risk(open_now, files, job["sensitive"]), "sha": job["head"],
             "prior_sha": job.get("prior_sha"), "reviewed_files": job["reviewed_files"], "total_files": job["total_files"],
-            "ignored": job["ignored"], "left_out": job["left_out"], "incremental": job["incremental"],
+            "ignored": job["ignored"], "left_out": job["left_out"], "built": job.get("built", []),
+            "incremental": job["incremental"],
             "rule_files": job["rule_files"], "model": job["model"], "dropped": dropped, "paused": paused,
             "status_mode": job["status_mode"], "commands": job["commands"], "pr": job["pr"], "files": files,
             "sensitive": job["sensitive"], "repo": job["repo"], "number": job["number"],
