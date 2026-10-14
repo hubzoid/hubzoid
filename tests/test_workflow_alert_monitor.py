@@ -56,6 +56,15 @@ def test_outbox_deduplicates_and_retries_with_injected_sender(hub):
     assert _rows(hub)[0].state == "sent"
 
 
+def test_an_empty_destination_list_turns_alerts_off(hub, monkeypatch):
+    monkeypatch.setenv("HUBZOID_ALERT_URL", "https://alerts.invalid/hook")
+    (hub / "workflows" / "settings.yaml").write_text("alerts:\n  to: []\n")
+    alerts.record(hub, hub.name, "run_failed", "run-off", {"workflow": "check", "run_id": "run-off"})
+    assert _rows(hub) == [] and alerts.destinations(hub, "check") == []
+    (hub / "workflows" / "settings.yaml").write_text("workflow_timeout: 1h\n")
+    assert alerts.destinations(hub, "check") == [{"webhook": "HUBZOID_ALERT_URL"}]   # unset still falls back
+
+
 def test_concurrent_delivery_claim_sends_once(hub):
     alerts.record(hub, hub.name, "run_failed", "run-2", {"workflow": "check", "run_id": "run-2"})
     with events._engine(hub).connect() as conn:

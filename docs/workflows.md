@@ -595,7 +595,9 @@ Destinations under `alerts.to` accept `webhook: ENV_VAR`, `slack: ENV_VAR` (inco
 webhook), and `email: address`. Email uses the existing deployment SMTP settings.
 Preview mode writes private `.hubzoid/alert-preview/` files. `@workflow(alert_to=...)`
 or a markdown task's `alert_to:` overrides the hub destinations. `HUBZOID_ALERT_URL`
-is the deployment fallback. Missing destinations and exhausted deliveries are
+is the deployment fallback. `alerts: {to: []}` (or `alert_to=[]`) turns alerts off:
+nothing is recorded or sent, and the fallback is not used. Failed runs still show
+in the Console. Missing destinations and exhausted deliveries are
 visible in `schedule deliveries`. They do not disappear as successful sends.
 
 `on_failure` from 1.0.x still works, with three changes:

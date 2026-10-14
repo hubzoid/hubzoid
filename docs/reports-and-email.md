@@ -226,6 +226,14 @@ Anyone else sees one "This report isn't available" page, whatever the reason.
   and styles are fixed by Hubzoid. The message retains a plain-text MIME part.
   Text is the default; recipient checks, body limits and retries are unchanged.
   Escape Markdown in external text before interpolating it into a styled body.
+- **Your own layout (1.3.3+).** `body_format="html"` sends the workflow's own
+  email HTML on Hubzoid's email background. Only email-safe structure is kept:
+  text, block and table tags, inline styles without URLs, and HTTP(S) or mailto
+  links. Scripts, styles, forms, images and comments are removed, and the
+  plain-text part is derived from the visible text. Report links and the list
+  footer follow your layout. A list email shows at most 5,000 characters of
+  text in 100,000 of markup. Escape external text (`html.escape`) before
+  interpolating it.
 - **Return value.** It returns the delivery result. Unless the result is
   `accepted` or `previewed`, it raises `hubzoid.email_delivery.EmailError`. With
   `raise_on_failure=False` it returns the result instead.

@@ -26,14 +26,16 @@ def _env(hub_dir, key):
     return value if value is not None else os.environ.get(key, '')
 
 
-def destinations(hub_dir, workflow=None):
+def _selected(hub_dir, workflow=None):
+    """The configured destinations, or None when nothing is configured. An
+    explicit empty list (`alerts: {to: []}`, `alert_to=[]`) means off."""
     from . import runtime
     try:
         cfg = events.settings(hub_dir).get('alerts', {})
     except Exception:
         cfg = {}
     wf = runtime._REGISTRY.get(workflow)
-    selected = wf.alert_to if wf and wf.alert_to is not None else cfg.get('to', [])
+    selected = wf.alert_to if wf and wf.alert_to is not None else (cfg or {}).get('to')
     if workflow and workflow.startswith('md:'):
         from ..scheduling import load_tasks
         task = next((t for t in load_tasks(hub_dir)[0] if t.name == workflow[3:]), None)
@@ -41,7 +43,12 @@ def destinations(hub_dir, workflow=None):
             selected = task.alert_to
     if wf and wf.on_failure and wf.alert_to is None:
         selected = [{'webhook': wf.on_failure}]
-    if not selected and _env(hub_dir, 'HUBZOID_ALERT_URL'):
+    return selected
+
+
+def destinations(hub_dir, workflow=None):
+    selected = _selected(hub_dir, workflow)
+    if selected is None and _env(hub_dir, 'HUBZOID_ALERT_URL'):
         selected = [{'webhook': 'HUBZOID_ALERT_URL'}]
     return selected or []
 
@@ -58,6 +65,8 @@ def record(hub_dir, hub, kind, source, payload):
         link += '/'+quote(payload['workflow'],safe='')+'/'+quote(payload['run_id'],safe='')
     data.update(hub=hub, kind=kind, url=link)
     data = redact(data)
+    if _selected(hub_dir, payload.get('workflow')) == []:
+        return  # alerts are turned off for this hub or workflow
     targets = destinations(hub_dir, payload.get('workflow')) or [{'unconfigured': True}]
     with events._engine(hub_dir).begin() as conn:
         for target in targets:
