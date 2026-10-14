@@ -27,6 +27,9 @@ All notable changes to Hubzoid. Versions follow the package version in
   upgrade as the suggestion. Analyzer notes no longer mark a review as partial.
 
 ### Fixed
+- Hubzoid declares its `Markdown` dependency. 1.3.2 imported it for formatted
+  email without declaring it, so Markdown emails failed with
+  `No module named 'markdown'` unless the Open WebUI extra was installed.
 - GitZoid's deep audit no longer starts over whenever the default branch moves,
   so it finishes on busy repositories, and an audit still in progress is no
   longer emailed as a check that could not run.
