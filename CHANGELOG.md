@@ -22,7 +22,7 @@ All notable changes to Hubzoid. Versions follow the package version in
 - GitZoid emails use GitZoid's own layout again (chip, title matching the
   subject, stats bar, summary box, grouped security cards, one link to the page).
   The security watch skips lockfiles in test, sample, fixture and example
-  folders; the deep audit skips minified and generated code. Both take
+  folders; the deep audit skips large minified and generated files. Both take
   `exclude_paths` globs.
 - GitZoid's pull request comments keep the verdict and merge-risk header and
   use GitZoid's own layout below it (summary, `_high_` finding rows, collapsed

@@ -66,7 +66,7 @@ October and approved this plan.
   alerting. The audit instructions name what is not a finding on its own.
 - **Security watch and deep audit:**
   - The watch skips lockfiles in test, sample, fixture and example folders.
-  - The audit skips minified and generated code.
+  - The audit skips large minified and generated files (a "generated" header alone never hides a file under 20 KB).
   - Both take `exclude_paths` globs.
   - The audit keeps its progress across commits, and progress is not reported
     as a failure.

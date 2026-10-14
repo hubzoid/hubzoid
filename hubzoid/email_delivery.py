@@ -285,6 +285,7 @@ _HTML_TAGS = {"a", "b", "strong", "i", "em", "u", "s", "code", "pre", "br", "hr"
               "table", "thead", "tbody", "tfoot", "tr", "td", "th"}
 _HTML_DROPPED = {"script", "style", "head", "title", "template", "noscript", "iframe", "object", "embed",
                  "svg", "math", "textarea", "select", "button", "form"}   # removed with their content
+_HTML_VOID = {"embed"}  # dropped, but has no content or end tag: never hides what follows it
 _HTML_ATTRS = {"style", "align", "valign", "width", "height", "cellpadding", "cellspacing", "border",
                "role", "colspan", "rowspan", "bgcolor", "dir", "lang"}
 _UNSAFE_STYLE = re.compile(r"(?i)url\s*\(|expression\s*\(|javascript:|@import|behaviou?r\s*:|-moz-binding|[<>\\]")
@@ -311,7 +312,7 @@ def _safe_html(body: str) -> str:
             self.parts, self.dropped = [], 0
 
         def handle_starttag(self, tag, attrs):
-            if tag in _HTML_DROPPED:
+            if tag in _HTML_DROPPED and tag not in _HTML_VOID:
                 self.dropped += 1
             if self.dropped or tag not in _HTML_TAGS:
                 return
@@ -326,10 +327,12 @@ def _safe_html(body: str) -> str:
 
         def handle_startendtag(self, tag, attrs):
             self.handle_starttag(tag, attrs)
-            if tag in _HTML_DROPPED:
+            if tag in _HTML_DROPPED and tag not in _HTML_VOID:
                 self.dropped -= 1
 
         def handle_endtag(self, tag):
+            if tag in _HTML_VOID:
+                return
             if tag in _HTML_DROPPED:
                 self.dropped = max(0, self.dropped - 1)
             elif not self.dropped and tag in _HTML_TAGS and tag not in {"br", "hr"}:
@@ -356,6 +359,8 @@ def _html_text(body: str) -> str:
             self.out, self.dropped, self.href, self.label = [], 0, None, ""
 
         def handle_starttag(self, tag, attrs):
+            if tag in _HTML_VOID:
+                return
             if tag in _HTML_DROPPED:
                 self.dropped += 1
             elif tag == "li":
@@ -369,6 +374,8 @@ def _html_text(body: str) -> str:
                 self.href, self.label = (href if _safe_href(href) else None), ""
 
         def handle_endtag(self, tag):
+            if tag in _HTML_VOID:
+                return
             if tag in _HTML_DROPPED:
                 self.dropped = max(0, self.dropped - 1)
             elif tag == "a" and self.href:

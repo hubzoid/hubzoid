@@ -399,14 +399,16 @@ def test_html_email_keeps_only_email_safe_layout_and_derives_plain_text():
             '<table role="presentation" cellpadding="0"><tr><td style="color:#12c46a">14</td><td>merged</td></tr></table>'
             '<script>alert(1)</script><style>p{color:red}</style><img src="https://tracker.invalid/p.gif">'
             '<p onclick="steal()" style="background:url(https://tracker.invalid/bg)">Fixed &lt;b&gt; the loop</p>'
-            '<a href="javascript:alert(1)">bad</a> <a href="https://example.com/pull/16">#16</a></div>')
+            '<a href="javascript:alert(1)">bad</a> <a href="https://example.com/pull/16">#16</a>'
+            '<embed src="https://tracker.invalid/x.swf"><p>After the embed</p></div>')
     msg = mail.build_message(sender=OWNER, recipient=OWNER, subject="Digest", body=body,
                              links=[("Full digest", "https://reports.company.com/r/1")],
                              message_id="<html@company.com>", body_format="html", footer="You get this because.")
     plain, rich = (msg.get_body(preferencelist=(kind,)).get_content() for kind in ("plain", "html"))
     assert '<td style="color:#12c46a">14</td>' in rich and 'cellpadding="0"' in rich
-    for gone in ("<script", "alert(1)", "<style", "color:red", "<img", "onclick", "url(", "javascript:"):
+    for gone in ("<script", "alert(1)", "<style", "color:red", "<img", "onclick", "url(", "javascript:", "<embed"):
         assert gone not in rich, gone
+    assert "After the embed" in rich and "After the embed" in plain  # a void tag never hides what follows
     assert "Fixed &lt;b&gt; the loop" in rich and 'href="https://example.com/pull/16"' in rich
     assert 'href="https://reports.company.com/r/1"' in rich and "You get this because." in rich
     assert "GitZoid Digest" in plain and "14 merged" in " ".join(plain.split())

@@ -258,8 +258,8 @@ package version is one finding, with the upgrade as the suggestion when the
 line is a plain pin. A partial review says so above the fold.
 
 The security watch skips lockfiles in test, sample, fixture and example
-folders, and the deep audit skips minified and generated code whatever its
-name. Add your own globs with `security.exclude_paths` or a repo's
+folders, and the deep audit skips large minified and generated files whatever
+their name. Add your own globs with `security.exclude_paths` or a repo's
 `exclude_paths`. The deep audit keeps its progress when the default branch
 moves, and an audit that is still in progress is not reported as a check that
 could not run; a window whose content changed is read again. A finding the
