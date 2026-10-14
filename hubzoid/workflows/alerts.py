@@ -1,7 +1,8 @@
 """Opt-in alert outbox. Importing this module never sends a message.
 
 Only the running product's configured sender calls deliver(). Tests inject a
-local sender. Destinations are configured by the deployment operator.
+local sender. Destinations are configured by the deployment operator; with
+none configured, alerts are off and nothing is recorded.
 """
 from __future__ import annotations
 import asyncio
@@ -65,9 +66,9 @@ def record(hub_dir, hub, kind, source, payload):
         link += '/'+quote(payload['workflow'],safe='')+'/'+quote(payload['run_id'],safe='')
     data.update(hub=hub, kind=kind, url=link)
     data = redact(data)
-    if _selected(hub_dir, payload.get('workflow')) == []:
-        return  # alerts are turned off for this hub or workflow
-    targets = destinations(hub_dir, payload.get('workflow')) or [{'unconfigured': True}]
+    targets = destinations(hub_dir, payload.get('workflow'))
+    if not targets:
+        return  # off: nothing configured, or turned off with an empty list
     with events._engine(hub_dir).begin() as conn:
         for target in targets:
             aid = 'alert:' + hashlib.sha256(json.dumps([hub,kind,source,target],sort_keys=True).encode()).hexdigest()

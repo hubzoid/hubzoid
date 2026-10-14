@@ -56,6 +56,13 @@ def test_outbox_deduplicates_and_retries_with_injected_sender(hub):
     assert _rows(hub)[0].state == "sent"
 
 
+def test_alerts_are_off_until_a_destination_is_configured(hub, monkeypatch):
+    monkeypatch.delenv("HUBZOID_ALERT_URL", raising=False)
+    (hub / "workflows" / "settings.yaml").write_text("workflow_timeout: 1h\n")
+    alerts.record(hub, hub.name, "run_failed", "run-none", {"workflow": "check", "run_id": "run-none"})
+    assert _rows(hub) == [] and alerts.destinations(hub, "check") == []
+
+
 def test_an_empty_destination_list_turns_alerts_off(hub, monkeypatch):
     monkeypatch.setenv("HUBZOID_ALERT_URL", "https://alerts.invalid/hook")
     (hub / "workflows" / "settings.yaml").write_text("alerts:\n  to: []\n")
