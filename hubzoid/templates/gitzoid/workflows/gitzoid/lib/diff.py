@@ -55,22 +55,26 @@ def priority(f: dict) -> int:
     name = f["filename"]
     if LOCKS.search(name):
         return 4
-    if DOCS.search(name):
-        return 3
     if TESTS.search(name):
         return 2
-    return 0 if CODE.search(name) else 1
+    if CODE.search(name):
+        return 0  # code first, even in a docs/ folder
+    if DOCS.search(name) and not re.search(r"(^|/)requirements[^/]*\.txt$", name):
+        return 3
+    return 1
 
 
 def is_built(f: dict) -> bool:
     """Large build output and minified or generated code, which nobody reviews
     line by line. A change under 20 KB is always read, whatever its name or
     header says, so neither can hide a small hand-written file."""
-    added = [t for kind, _, t in walk(f.get("patch") or "") if kind == "+"]
+    lines = list(walk(f.get("patch") or ""))
+    added = [t for kind, _, t in lines if kind == "+"]
     size = sum(map(len, added))
     if size < 20_000:
         return False
-    if BUILT_NAME.search(f["filename"]) or GENERATED.search("\n".join(added[:5])):
+    header = "\n".join(t for _, n, t in lines if n and n <= 5)  # the file's own first lines, added or not
+    if BUILT_NAME.search(f["filename"]) or GENERATED.search(header):
         return True
     return max(map(len, added)) > 1000 and size / len(added) > 200
 

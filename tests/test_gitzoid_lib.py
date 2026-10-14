@@ -114,6 +114,13 @@ def test_review_budget_reads_code_first_and_skips_build_output():
     assert "app/gen_pb2.py" in text and left == ["CHANGELOG.md", "docs/guide.md"]  # too big for what was left
     assert text.index("package-lock.json") > text.index("tests/test_auth.py")   # lockfiles last
     assert gz.settings.load({}).review.max_diff_chars == 200_000
+    assert gz.diff.priority({"filename": "docs/conf.py"}) == 0 and gz.diff.priority({"filename": "requirements.txt"}) == 1
+    # Only the file's own first lines count as a "generated" header: a big edit lower down is still read.
+    edit = {"filename": "app/models.py", "patch": "@@ -400,1 +400,401 @@\n x = 1\n+# do not edit by hand\n"
+                                                    + "".join(f"+value_{i} = {'1' * 60}\n" for i in range(400))}
+    header = {"filename": "app/models_pb2.py", "patch": "@@ -1,2 +1,402 @@\n # Generated code. DO NOT EDIT.\n x = 1\n"
+                                                         + "".join(f"+value_{i} = {'1' * 60}\n" for i in range(400))}
+    assert not gz.diff.is_built(edit) and gz.diff.is_built(header)
 
 
 def test_anchor_survives_moves_and_detects_change():
