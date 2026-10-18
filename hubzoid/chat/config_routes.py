@@ -210,6 +210,17 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
         p = await authz.principal(request, hub_dir)
         out = await call(svc().capabilities, p)
         out["features"] = await asyncio.to_thread(features.for_person, hub_dir, p.email)
+
+        def helpers_on() -> bool:
+            from .feedback import FeedbackService
+
+            try:
+                return FeedbackService(hub_dir, None, "").helper_allowed("followups", p.id)
+            except Exception:  # noqa: BLE001 - unknown: the chat simply doesn't ask
+                return False
+
+        # Whether the chat should ask for follow-up suggestions (deployment and person both on).
+        out["features"]["helper_followups"] = await asyncio.to_thread(helpers_on)
         return out
 
     @app.get("/api/chat/preferences")

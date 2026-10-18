@@ -4,7 +4,7 @@
 // graph (runtime.ts): the server owns messages, branches, runs and the queue.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantRuntimeProvider, WebSpeechDictationAdapter, WebSpeechSynthesisAdapter } from "@assistant-ui/react";
-import { Archive, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
+import { Archive, Files, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
 import { ApiError, enc, get, post } from "../lib/api";
@@ -31,6 +31,7 @@ import { ChatSession } from "./session";
 import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
 import { FeedContext, type Features } from "./feed-context";
 import { Thread } from "./Thread";
+import { ArtifactPanel, loadArtifacts, type Artifact } from "./ArtifactPanel";
 import { AgentSwitcher } from "./AgentPicker";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
 
@@ -369,6 +370,31 @@ function ChatView({
     };
   }, [feed]);
 
+  // Documents the agent made here, beside the conversation. A new or changed
+  // document opens the panel once when a reply finishes (wide screens only).
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [panel, setPanel] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
+  const known = useRef<Map<string, string>>(new Map());
+  const refreshArtifacts = useCallback(
+    async (autoOpen: boolean) => {
+      const cid = feed.conversationId ?? conversationRef.current?.id;
+      if (!cid) return;
+      try {
+        const list = await loadArtifacts(session.apiBase, cid);
+        const fresh = list.find((a) => known.current.get(a.artifact_id) !== a.current_version_id);
+        known.current = new Map(list.map((a) => [a.artifact_id, a.current_version_id]));
+        setArtifacts(list);
+        if (autoOpen && fresh && window.innerWidth >= 1024) setPanel({ open: true, id: fresh.artifact_id });
+      } catch {
+        /* the conversation still works without its documents list */
+      }
+    },
+    [feed, session],
+  );
+  useEffect(() => {
+    void refreshArtifacts(false);
+  }, [refreshArtifacts, conversation?.id]);
+
   // The server's title and run endings flow back to the page and the list.
   const wasRunning = useRef(false);
   useEffect(
@@ -380,10 +406,11 @@ function ChatView({
         if (wasRunning.current && !running && feed.conversationId) {
           session.events.onRunSettled(feed.conversationId);
           announce(t.chat.responseDone);
+          void refreshArtifacts(true);
         }
         wasRunning.current = running;
       }),
-    [feed, session, title],
+    [feed, session, title, refreshArtifacts],
   );
   useEffect(() => {
     session.countAttachments = () => runtime.thread.composer.getState().attachments.length;
@@ -398,14 +425,19 @@ function ChatView({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <FilesContext.Provider value={{ conversationId: conversation?.id ?? null, apiBase: session.apiBase }}>
+       <div className="flex min-h-0 min-w-0 flex-1">
+       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ChatHeader
           agent={agent}
           title={shownTitle}
           conversation={conversation}
           onRenamed={(next) => setTitle(next)}
           picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
+          documents={artifacts.length ? { count: artifacts.length, open: panel.open,
+            onToggle: () => setPanel((p) => ({ open: !p.open, id: p.id })) } : null}
         />
-        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features }}>
+        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features, apiBase: session.apiBase,
+          ensureConversation: () => session.ensureConversation() }}>
           <Thread
             agent={agent}
             canPickAgent={canPick}
@@ -420,6 +452,19 @@ function ChatView({
             }
           />
         </FeedContext.Provider>
+       </div>
+        {panel.open && artifacts.length > 0 && (
+          <ArtifactPanel
+            apiBase={session.apiBase}
+            artifacts={artifacts}
+            selectedId={panel.id}
+            onSelect={(id) => setPanel({ open: true, id })}
+            onClose={() => setPanel((p) => ({ open: false, id: p.id }))}
+            onChanged={() => void refreshArtifacts(false)}
+            canEdit={feed.snapshot?.permissions?.write ?? true}
+          />
+        )}
+       </div>
       </FilesContext.Provider>
     </AssistantRuntimeProvider>
   );
@@ -431,11 +476,14 @@ function ChatHeader({
   conversation,
   onRenamed,
   picker,
+  documents,
 }: {
   agent: Agent;
   title: string;
   conversation: Conversation | null;
   onRenamed: (title: string) => void;
+  /** The conversation's documents: the button that shows or hides them. */
+  documents: { count: number; open: boolean; onToggle: () => void } | null;
   /** A new chat with several agents: the title opens the agent menu. */
   picker: { open: boolean; onOpenChange: (open: boolean) => void; onPick: (agent: Agent) => void } | null;
 }) {
@@ -529,6 +577,17 @@ function ChatHeader({
       </div>
       {conversation && (
         <div className="flex flex-none items-center gap-1">
+          {documents && (
+            <Button
+              size="sm"
+              variant={documents.open ? "primary" : "secondary"}
+              icon={<Files size={14} aria-hidden />}
+              onClick={documents.onToggle}
+              aria-pressed={documents.open}
+            >
+              {t.artifacts.openCount(documents.count)}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="secondary"

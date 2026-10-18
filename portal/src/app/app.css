@@ -667,6 +667,25 @@
     max-width: 100%;
     border-radius: 10px;
   }
+  .hz-md .hz-table { position: relative; margin: 0 0 16px; }
+  .hz-md .hz-table .hz-table-wrap { margin: 0; max-height: 520px; overflow: auto; }
+  .hz-md .hz-table-tools { display: flex; justify-content: flex-end; margin-bottom: 2px; }
+  .hz-md .katex-display { margin: 0 0 16px; overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+  .hz-md .katex { font-size: 1.05em; }
+  .hz-diagram {
+    margin: 0 0 16px; padding: 12px; overflow-x: auto; text-align: center;
+    border: 1px solid var(--hz-line); border-radius: 10px; background: var(--hz-code-bg);
+  }
+  .hz-diagram svg { max-width: 100%; height: auto; }
+  .hz-render-note { padding: 8px 14px 0; font-family: var(--font-sans); font-size: 12px; color: var(--hz-mute); }
+  .hz-code-collapsed { position: relative; }
+  .hz-code-collapsed .hz-code-body { max-height: 560px; overflow: hidden; }
+  .hz-code-more {
+    position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border-radius: 13px;
+    border: 1px solid var(--hz-line); background: var(--hz-raised); color: var(--hz-ink); font-size: 12px;
+  }
+  .hz-code-more:hover { background: var(--hz-hover); }
 
   .hz-code-head {
     display: flex;
@@ -925,4 +944,39 @@
   padding: 1px 6px;
   font: 500 11.5px var(--hz-font-mono, ui-monospace, monospace);
   color: var(--hz-body);
+}
+
+/* Documents beside the conversation (ArtifactPanel). */
+@layer components {
+  .hz-artifact-panel {
+    display: flex; flex-direction: column; width: min(46vw, 640px); min-width: 340px; flex: none;
+    border-left: 1px solid var(--hz-line); background: var(--hz-bg); min-height: 0;
+  }
+  @media (max-width: 1023px) {
+    .hz-artifact-panel { position: fixed; inset: 0; z-index: 40; width: auto; min-width: 0; border-left: 0; }
+  }
+  .hz-artifact-head { display: flex; align-items: center; gap: 6px; height: 48px; padding: 0 8px 0 12px;
+    border-bottom: 1px solid var(--hz-line); }
+  .hz-artifact-select { max-width: 220px; height: 28px; padding: 0 6px; border: 1px solid var(--hz-line);
+    border-radius: 6px; background: var(--hz-raised); color: var(--hz-ink); font-size: 12px; }
+  .hz-icon-link { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+    border-radius: 6px; color: var(--hz-mute); }
+  .hz-icon-link:hover { background: var(--hz-hover); color: var(--hz-ink); }
+  .hz-artifact-tabs { display: flex; align-items: center; gap: 2px; padding: 6px 10px; border-bottom: 1px solid var(--hz-line-soft); }
+  .hz-artifact-tabs [role="tab"] { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12px; color: var(--hz-mute); }
+  .hz-artifact-tabs [role="tab"][aria-selected="true"] { background: var(--hz-hover); color: var(--hz-ink); }
+  .hz-artifact-edit { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px;
+    border-radius: 6px; font-size: 12px; color: var(--hz-mute); }
+  .hz-artifact-edit:hover { background: var(--hz-hover); color: var(--hz-ink); }
+  .hz-artifact-body { flex: 1; min-height: 0; overflow: auto; background: var(--hz-canvas); }
+  .hz-artifact-body:fullscreen { background: var(--hz-canvas); }
+  .hz-artifact-frame { display: block; width: 100%; height: 100%; min-height: 360px; border: 0; background: #fff; }
+  .hz-artifact-source { margin: 0; padding: 14px 16px; font-family: var(--font-mono); font-size: 12.5px;
+    line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--hz-ink); }
+  .hz-artifact-doc { padding: 16px 20px; }
+  .hz-artifact-img { display: block; max-width: 100%; margin: 16px auto; }
+  .hz-artifact-empty { padding: 24px; font-size: 13px; color: var(--hz-mute); }
+  .hz-artifact-editor { flex: 1; min-height: 240px; padding: 12px; border: 1px solid var(--hz-line); border-radius: 8px;
+    background: var(--hz-raised); color: var(--hz-ink); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; resize: none; }
+  .hz-artifact-foot { padding: 6px 12px; border-top: 1px solid var(--hz-line-soft); font-size: 11.5px; color: var(--hz-mute); }
 }

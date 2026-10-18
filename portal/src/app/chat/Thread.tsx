@@ -3,7 +3,7 @@
 // attachments, and the empty state with the agent's greeting and suggestions.
 import { useEffect, useState, type ReactNode } from "react";
 import { Popover } from "radix-ui";
-import { get, post, put } from "../lib/api";
+import { enc, get, hubUrl, post, put } from "../lib/api";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -40,10 +40,13 @@ import {
   Trash2,
   Upload,
   X,
+  FileText,
+  FolderOpen,
 } from "lucide-react";
 import { t } from "../i18n/en";
-import { displayName } from "../lib/format";
-import type { Agent } from "../lib/types";
+import { displayName, formatBytes } from "../lib/format";
+import type { Agent, FileRef } from "../lib/types";
+import { attachmentFromFile } from "./convert";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, IconButton, Notice, cx } from "../components/ui";
 import { useFeed } from "./feed-context";
@@ -503,6 +506,67 @@ function EditComposer() {
 
 // ---- composer -----------------------------------------------------------------
 
+type MyFile = { file_id: string; name: string; mime_type: string; size_bytes: number; state: string; created_at: number };
+
+/** Attach a file you uploaded before (here or in another conversation): a new
+ * reference to the same bytes, no upload. Lists only files you can read. */
+function ReuseFile() {
+  const aui = useAui();
+  const value = useFeed();
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<MyFile[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    setItems(null);
+    get<{ items: MyFile[] }>(hubUrl(value?.apiBase ?? "", "/api/chat/files?limit=30"))
+      .then((out) => setItems(out.items.filter((f) => f.state === "ready")))
+      .catch(() => setItems([]));
+  }, [open, value?.apiBase]);
+  if (!value?.ensureConversation) return null;
+  const pick = async (f: MyFile) => {
+    setBusy(f.file_id);
+    try {
+      const cid = await value.ensureConversation!();
+      const ref = await post<FileRef & { id: string }>(
+        hubUrl(value.apiBase ?? "", `/api/conversations/${enc(cid)}/files/reuse`), { file_id: f.file_id });
+      const att = attachmentFromFile(ref);
+      await aui.composer().addAttachment({ id: att.id, type: att.type, name: att.name, contentType: att.contentType,
+        content: att.content });
+      setOpen(false);
+    } catch (e) {
+      value.onError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <IconButton label={t.chat.reuseFile} size="lg" className="!h-9 !w-9">
+          <FolderOpen size={18} aria-hidden />
+        </IconButton>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content className="hz-menu w-72" side="top" align="start" sideOffset={6}>
+          <div className="px-2 pb-1 pt-1.5 text-[12px] font-semibold text-mute">{t.chat.reuseTitle}</div>
+          {items === null && <div className="px-2 py-2 text-[13px] text-mute">{t.loading}</div>}
+          {items?.length === 0 && <div className="px-2 py-2 text-[13px] text-mute">{t.chat.reuseEmpty}</div>}
+          <div className="max-h-64 overflow-auto">
+            {items?.map((f) => (
+              <button key={f.file_id} type="button" className="hz-menu-item w-full" disabled={!!busy} onClick={() => void pick(f)}>
+                <FileText size={14} aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-left">{f.name}</span>
+                <span className="text-[11px] text-mute">{formatBytes(f.size_bytes)}</span>
+              </button>
+            ))}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }: ThreadProps) {
   const aui = useAui();
   const submitMode = useSubmitMode();
@@ -555,6 +619,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
               <Paperclip size={18} aria-hidden />
             </IconButton>
           </ComposerPrimitive.AddAttachment>
+          {!disabled && <ReuseFile />}
           {!disabled && <Dictation />}
         </div>
         <div className="flex items-center gap-1.5">
@@ -853,8 +918,9 @@ function FollowUps() {
   const branch = value?.feed.viewedBranch;
   const conv = value?.feed.conversationId;
   const key = branch ? `${branch.id}:${branch.revision}` : "";
+  const enabled = !!value?.features?.helper_followups;
   useEffect(() => {
-    if (!conv || !branch) return;
+    if (!conv || !branch || !enabled) return;
     let stop = false;
     setItems([]);
     post<{ id: string; state: string; result: { items: { title: string; prompt: string }[] } | null }>("/api/chat/helpers", {
@@ -881,7 +947,7 @@ function FollowUps() {
       stop = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, conv]);
+  }, [key, conv, enabled]);
   if (!items.length) return null;
   return (
     <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t.chat.followUps} data-testid="followups">
