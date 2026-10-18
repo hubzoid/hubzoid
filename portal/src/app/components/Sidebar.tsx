@@ -8,7 +8,12 @@ import {
   ArchiveRestore,
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
+  Folder as FolderIcon,
+  FolderInput,
+  FolderPlus,
   LayoutGrid,
   LogOut,
   Monitor,
@@ -16,6 +21,8 @@ import {
   Moon,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Plug,
   Search,
   Share2,
@@ -26,7 +33,9 @@ import {
   X,
 } from "lucide-react";
 import { t } from "../i18n/en";
-import { post } from "../lib/api";
+import { get, post } from "../lib/api";
+import { createFolder, loadOrganization, organize, useOrganization } from "../lib/organization";
+import { NotificationsButton } from "./Notifications";
 import { agentById, useApp } from "../lib/app-context";
 import {
   deleteConversation,
@@ -43,7 +52,9 @@ import type { Conversation } from "../lib/types";
 import { describeError } from "../lib/errors";
 import { ShareDialog } from "./ShareDialog";
 import { toast } from "./toast";
-import { AgentAvatar, BrandMark, Button, ConfirmDialog, IconButton, Notice, Spinner, UserAvatar, cx } from "./ui";
+import { AgentAvatar, BrandMark, Button, ConfirmDialog, Field, IconButton, Modal, Notice, Spinner, UserAvatar, cx } from "./ui";
+
+type Hit = { kind: string; title: string; snippet: string; open_target: { conversation_id: string; message_id?: string | null } };
 
 const GROUPS: { key: DateGroup; label: string }[] = [
   { key: "today", label: t.sidebar.today },
@@ -121,12 +132,36 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const org = useOrganization();
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const [newFolderFor, setNewFolderFor] = useState<Conversation | "none" | null>(null);
+  const [folderName, setFolderName] = useState("");
+  const [hits, setHits] = useState<Hit[]>([]);
 
   // First load, and a debounced search.
   useEffect(() => {
     if (!list.loaded && !list.loading) void loadConversations(list.q, list.archived);
+    if (!org.loaded) void loadOrganization();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Full-text matches inside messages, next to the title matches.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setHits([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      get<{ items: Hit[] }>(`/api/chat/search?q=${encodeURIComponent(q)}&types=message&limit=20`, { quiet401: true })
+        .then((r) => {
+          // One row per chat: its best match.
+          const seen = new Set<string>();
+          setHits(r.items.filter((h) => !seen.has(h.open_target.conversation_id) && !!seen.add(h.open_target.conversation_id)));
+        })
+        .catch(() => setHits([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
   useEffect(() => {
     const q = query.trim();
     if (q === list.q) return;
@@ -136,15 +171,65 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
 
   const multiAgent = app.agents.list.length > 1;
 
+  const placed = (c: Conversation) => org.placements.get(c.id);
+  const pinned = useMemo(
+    () =>
+      list.archived || list.q
+        ? []
+        : list.items
+            .filter((c) => placed(c)?.pinned_position != null)
+            .sort((a, b) => (placed(a)!.pinned_position ?? 0) - (placed(b)!.pinned_position ?? 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [list.items, list.archived, list.q, org.placements],
+  );
+  const inFolder = (folderId: string) =>
+    list.items.filter((c) => placed(c)?.folder_id === folderId && placed(c)?.pinned_position == null);
+  const loose = (c: Conversation) =>
+    !!list.archived || !!list.q || (placed(c)?.pinned_position == null && !placed(c)?.folder_id);
+
+  const onOrganize = async (c: Conversation, change: Parameters<typeof organize>[1]) => {
+    try {
+      await organize(c.id, change);
+    } catch (error) {
+      toast(describeError(error), "error");
+    }
+  };
+
+  const rowProps = (c: Conversation) => ({
+    conversation: c,
+    active: c.id === activeId,
+    archivedView: list.archived,
+    agentAvatar: multiAgent ? agentById(app.agents.list, c.agent) : undefined,
+    renaming: renaming === c.id,
+    pinned: placed(c)?.pinned_position != null,
+    folders: org.folders,
+    folderId: placed(c)?.folder_id ?? null,
+    onRenameStart: () => setRenaming(c.id),
+    onRenameEnd: () => setRenaming(null),
+    onShare: () => setShareTarget(c),
+    onArchive: (archived: boolean) => void onArchive(c, archived),
+    onPin: (pin: boolean) => void onOrganize(c, { pinned_position: pin ? 1 : null }),
+    onMove: (folderId: string | null) => void onOrganize(c, { folder_id: folderId }),
+    onNewFolder: () => {
+      setFolderName("");
+      setNewFolderFor(c);
+    },
+    onDelete: () => {
+      setDeleteError(null);
+      setDeleteTarget(c);
+    },
+  });
+
   const groups = useMemo(() => {
     const now = new Date();
     const map = new Map<DateGroup, Conversation[]>();
-    for (const c of list.items) {
+    for (const c of list.items.filter(loose)) {
       const g = dateGroup(c.updated_at ?? c.created_at, now);
       map.set(g, [...(map.get(g) ?? []), c]);
     }
     return GROUPS.map((g) => ({ ...g, items: map.get(g.key) ?? [] })).filter((g) => g.items.length > 0);
-  }, [list.items]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.items, org.placements, list.archived, list.q]);
 
   const showArchived = (archived: boolean) => {
     setQuery("");
@@ -206,13 +291,75 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
     );
   } else if (list.items.length === 0) {
     body = (
-      <p className="px-3 py-2 text-[13.5px] leading-relaxed text-mute">
+      <p className="px-3 py-2 text-[13px] leading-relaxed text-mute">
         {list.q ? t.sidebar.emptySearch(list.q) : list.archived ? t.sidebar.emptyArchived : t.sidebar.empty}
       </p>
     );
   } else {
     body = (
       <>
+        {pinned.length > 0 && (
+          <section aria-label={t.sidebar.pinned} className="mb-2">
+            <h2 className="hz-side-heading">{t.sidebar.pinned}</h2>
+            <ul className="m-0 list-none space-y-px p-0">
+              {pinned.map((c) => (
+                <ConversationRow key={c.id} {...rowProps(c)} />
+              ))}
+            </ul>
+          </section>
+        )}
+        {!list.archived && !list.q && org.folders.length > 0 && (
+          <section aria-label={t.sidebar.folders} className="mb-2">
+            <h2 className="hz-side-heading">{t.sidebar.folders}</h2>
+            <ul className="m-0 list-none space-y-px p-0">
+              {org.folders.map((f) => {
+                const open = openFolders[f.id] ?? false;
+                const items = inFolder(f.id);
+                return (
+                  <li key={f.id}>
+                    <button
+                      type="button"
+                      className="hz-folder"
+                      aria-expanded={open}
+                      onClick={() => setOpenFolders((o) => ({ ...o, [f.id]: !open }))}
+                    >
+                      {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
+                      <FolderIcon size={14} aria-hidden className="text-mute" />
+                      <span className="truncate">{f.name}</span>
+                      <span className="ml-auto text-[11px] text-mute">{items.length || ""}</span>
+                    </button>
+                    {open && (
+                      <ul className="m-0 list-none space-y-px p-0 pl-4">
+                        {items.map((c) => (
+                          <ConversationRow key={c.id} {...rowProps(c)} />
+                        ))}
+                        {items.length === 0 && <li className="px-2.5 py-1 text-[12px] text-mute">{t.sidebar.folderEmpty}</li>}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+        {hits.length > 0 && (
+          <section aria-label={t.sidebar.inMessages} className="mb-2">
+            <h2 className="hz-side-heading">{t.sidebar.inMessages}</h2>
+            <ul className="m-0 list-none space-y-px p-0">
+              {hits.map((hit) => {
+                const href = `/c/${encodeURIComponent(hit.open_target.conversation_id)}`;
+                return (
+                  <li key={`${hit.open_target.conversation_id}:${hit.open_target.message_id}`}>
+                    <a href={href} onClick={(e) => linkClick(e, href)} className="hz-hit">
+                      <span className="block truncate text-[12.5px] text-ink">{hit.title || t.sidebar.untitled}</span>
+                      <span className="block truncate text-[12px] text-mute">{hit.snippet}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         {groups.map((group) => (
           <section key={group.key} aria-labelledby={`grp-${group.key}${inDrawer ? "-d" : ""}`} className="mb-3">
             <h2
@@ -223,22 +370,7 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
             </h2>
             <ul className="m-0 list-none space-y-px p-0">
               {group.items.map((c) => (
-                <ConversationRow
-                  key={c.id}
-                  conversation={c}
-                  active={c.id === activeId}
-                  archivedView={list.archived}
-                  agentAvatar={multiAgent ? agentById(app.agents.list, c.agent) : undefined}
-                  renaming={renaming === c.id}
-                  onRenameStart={() => setRenaming(c.id)}
-                  onRenameEnd={() => setRenaming(null)}
-                  onShare={() => setShareTarget(c)}
-                  onArchive={(archived) => void onArchive(c, archived)}
-                  onDelete={() => {
-                    setDeleteError(null);
-                    setDeleteTarget(c);
-                  }}
-                />
+                <ConversationRow key={c.id} {...rowProps(c)} />
               ))}
             </ul>
           </section>
@@ -324,16 +456,53 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
           <button
             type="button"
             onClick={() => showArchived(true)}
-            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] text-mute hover:bg-hover hover:text-ink"
+            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute hover:bg-hover hover:text-ink"
           >
             <Archive size={15} aria-hidden />
             {t.sidebar.archived}
           </button>
         )}
+        {!list.archived && (
+          <button
+            type="button"
+            onClick={() => {
+              setFolderName("");
+              setNewFolderFor("none");
+            }}
+            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute hover:bg-hover hover:text-ink"
+          >
+            <FolderPlus size={15} aria-hidden />
+            {t.sidebar.newFolder}
+          </button>
+        )}
+        <NotificationsButton />
         <AccountMenu />
       </div>
 
       <ShareDialog conversation={shareTarget} onClose={() => setShareTarget(null)} />
+      <Modal open={newFolderFor !== null} onOpenChange={(o) => !o && setNewFolderFor(null)} title={t.sidebar.newFolder}>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const target = newFolderFor;
+            void createFolder(folderName)
+              .then((f) => {
+                if (target && target !== "none") return organize(target.id, { folder_id: f.id });
+              })
+              .then(() => setNewFolderFor(null))
+              .catch((error) => toast(describeError(error), "error"));
+          }}
+        >
+          <Field label={t.sidebar.folderName} value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus maxLength={80} />
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setNewFolderFor(null)}>{t.cancel}</Button>
+            <Button type="submit" variant="primary" disabled={!folderName.trim()}>
+              {t.save}
+            </Button>
+          </div>
+        </form>
+      </Modal>
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}
@@ -354,10 +523,16 @@ function ConversationRow({
   archivedView,
   agentAvatar,
   renaming,
+  pinned,
+  folders,
+  folderId,
   onRenameStart,
   onRenameEnd,
   onShare,
   onArchive,
+  onPin,
+  onMove,
+  onNewFolder,
   onDelete,
 }: {
   conversation: Conversation;
@@ -365,10 +540,16 @@ function ConversationRow({
   archivedView: boolean;
   agentAvatar?: { name: string; avatar_url?: string | null };
   renaming: boolean;
+  pinned: boolean;
+  folders: { id: string; name: string }[];
+  folderId: string | null;
   onRenameStart: () => void;
   onRenameEnd: () => void;
   onShare: () => void;
   onArchive: (archived: boolean) => void;
+  onPin: (pin: boolean) => void;
+  onMove: (folderId: string | null) => void;
+  onNewFolder: () => void;
   onDelete: () => void;
 }) {
   const title = c.title?.trim() || t.sidebar.untitled;
@@ -429,6 +610,43 @@ function ConversationRow({
                 <Share2 size={15} aria-hidden />
                 {t.sidebar.share}
               </Menu.Item>
+            )}
+            {!archivedView && (
+              <Menu.Item className="hz-menu-item" onSelect={() => onPin(!pinned)}>
+                {pinned ? <PinOff size={15} aria-hidden /> : <Pin size={15} aria-hidden />}
+                {pinned ? t.sidebar.unpin : t.sidebar.pin}
+              </Menu.Item>
+            )}
+            {!archivedView && (
+              <Menu.Sub>
+                <Menu.SubTrigger className="hz-menu-item">
+                  <FolderInput size={15} aria-hidden />
+                  {t.sidebar.moveToFolder}
+                  <ChevronRight size={13} aria-hidden className="ml-auto" />
+                </Menu.SubTrigger>
+                <Menu.Portal>
+                  <Menu.SubContent className="hz-menu" sideOffset={4}>
+                    {folders.map((f) => (
+                      <Menu.Item key={f.id} className="hz-menu-item" onSelect={() => onMove(f.id)}>
+                        <FolderIcon size={14} aria-hidden />
+                        <span className="truncate">{f.name}</span>
+                        {folderId === f.id && <Check size={13} aria-hidden className="ml-auto" />}
+                      </Menu.Item>
+                    ))}
+                    {folderId && (
+                      <Menu.Item className="hz-menu-item" onSelect={() => onMove(null)}>
+                        <X size={14} aria-hidden />
+                        {t.sidebar.noFolder}
+                      </Menu.Item>
+                    )}
+                    <Menu.Separator className="hz-menu-sep" />
+                    <Menu.Item className="hz-menu-item" onSelect={onNewFolder}>
+                      <FolderPlus size={14} aria-hidden />
+                      {t.sidebar.newFolder}
+                    </Menu.Item>
+                  </Menu.SubContent>
+                </Menu.Portal>
+              </Menu.Sub>
             )}
             <Menu.Item className="hz-menu-item" onSelect={() => onArchive(!archivedView)}>
               {archivedView ? <ArchiveRestore size={15} aria-hidden /> : <Archive size={15} aria-hidden />}

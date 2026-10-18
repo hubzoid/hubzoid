@@ -1,7 +1,9 @@
 // The conversation itself, built from assistant-ui primitives: messages with
 // their parts, branch picker, copy, edit and regenerate, the composer with
 // attachments, and the empty state with the agent's greeting and suggestions.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Popover } from "radix-ui";
+import { get, post, put } from "../lib/api";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -25,6 +27,9 @@ import {
   Paperclip,
   Pencil,
   ListOrdered,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Play,
   RefreshCw,
   Square,
@@ -100,7 +105,7 @@ export function Thread(props: ThreadProps) {
       {isEmpty && !readOnly ? (
         <EmptyThread {...props} />
       ) : (
-        <div className="mx-auto w-full max-w-[780px] flex-1 px-4 pb-6 pt-6 sm:px-6">
+        <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pb-6 pt-5 sm:px-6">
           <ThreadPrimitive.Messages>
             {({ message }) =>
               message.role === "user" ? (
@@ -109,6 +114,8 @@ export function Thread(props: ThreadProps) {
                 ) : (
                   <UserMessage readOnly={readOnly} />
                 )
+              ) : message.composer.isEditing ? (
+                <EditComposer />
               ) : (
                 <AssistantMessage agent={agent} readOnly={readOnly} />
               )
@@ -152,7 +159,7 @@ export function Thread(props: ThreadProps) {
           >
             <div className="flex flex-col items-center gap-2 text-accent-text">
               <Upload size={26} aria-hidden />
-              <span className="text-[15px] font-medium">{t.chat.dropHere}</span>
+              <span className="text-[14px] font-medium">{t.chat.dropHere}</span>
             </div>
           </div>
         </ComposerPrimitive.AttachmentDropzone>
@@ -189,17 +196,17 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
       )}
       <div className="flex flex-col items-center text-center">
         <AgentAvatar name={agent.name} src={agent.avatar_url} size={52} />
-        <h1 className="m-0 mt-4 text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
+        <h1 className="m-0 mt-4 text-[19px] font-semibold leading-tight tracking-tight text-ink sm:text-[22px]">
           {t.agents.greeting(name)}
         </h1>
         {agent.description && (
-          <p className="m-0 mt-2 max-w-xl text-[15px] leading-relaxed text-mute">{agent.description}</p>
+          <p className="m-0 mt-2 max-w-xl text-[14px] leading-relaxed text-mute">{agent.description}</p>
         )}
         {canPickAgent && (
           <button
             type="button"
             onClick={onChangeAgent}
-            className="mt-3 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13.5px] font-medium text-accent-text hover:bg-hover"
+            className="mt-3 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium text-accent-text hover:bg-hover"
           >
             {t.agents.change}
             <ChevronDown size={14} aria-hidden />
@@ -208,7 +215,7 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
       </div>
       {(brandCopy?.welcome_title || brandCopy?.welcome_body) && (
         <div data-brand-slot="brand.welcome" className="mt-6 rounded-xl text-center">
-          {brandCopy.welcome_title && <p className="m-0 text-[15px] font-medium text-ink">{brandCopy.welcome_title}</p>}
+          {brandCopy.welcome_title && <p className="m-0 text-[14px] font-medium text-ink">{brandCopy.welcome_title}</p>}
           {brandCopy.welcome_body && (
             <p className="m-0 mt-1 whitespace-pre-line text-[14px] text-mute">{brandCopy.welcome_body}</p>
           )}
@@ -222,7 +229,7 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
               <ThreadPrimitive.Suggestion key={s} prompt={s} send={false} asChild>
                 <button
                   type="button"
-                  className="rounded-full border border-line bg-raised px-3 py-1.5 text-left text-[13.5px] text-body hover:bg-hover"
+                  className="rounded-full border border-line bg-raised px-3 py-1.5 text-left text-[13px] text-body hover:bg-hover"
                 >
                   {s}
                 </button>
@@ -321,6 +328,7 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
           {!readOnly && <DeleteAction />}
         </ActionBarPrimitive.Root>
       </div>
+      {!readOnly && isLast && <RespondAction />}
       <ContextNote />
     </MessagePrimitive.Root>
   );
@@ -388,7 +396,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
       role="article"
     >
       <div className="hidden pt-0.5 sm:block">
-        <AgentAvatar name={agent.name} src={agent.avatar_url} size={28} />
+        <AgentAvatar name={agent.name} src={agent.avatar_url} size={24} />
       </div>
       <div className="min-w-0 flex-1">
         <MessagePrimitive.Parts
@@ -408,6 +416,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
         )}
         <MessageStatusNote readOnly={readOnly} />
         <ContextNote />
+        {!readOnly && isLast && !running && <FollowUps />}
         <div className="-ml-1.5 mt-1 flex min-h-7 items-center gap-0.5">
           <BranchPicker />
           <ActionBarPrimitive.Root hideWhenRunning className="hz-actions flex items-center gap-0.5">
@@ -419,6 +428,14 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
                 </IconButton>
               </ActionBarPrimitive.Reload>
             )}
+            {!readOnly && (
+              <ActionBarPrimitive.Edit asChild>
+                <IconButton label={t.chat.editAnswer} className="!h-7 !w-7">
+                  <Pencil size={14} aria-hidden />
+                </IconButton>
+              </ActionBarPrimitive.Edit>
+            )}
+            {!readOnly && <FeedbackActions />}
             {!readOnly && <DeleteAction />}
           </ActionBarPrimitive.Root>
           {watermark && !running && (
@@ -444,15 +461,17 @@ function EditAttachments() {
 }
 
 function EditComposer() {
+  const aui = useAui();
+  const role = useAuiState((s) => s.message.role);
   return (
-    <MessagePrimitive.Root className="flex justify-end py-3" data-role="user-editing">
+    <MessagePrimitive.Root className={cx("flex py-3", role === "user" ? "justify-end" : "justify-start")} data-role={`${role}-editing`}>
       <ComposerPrimitive.Root className="w-full max-w-[min(90%,640px)] rounded-2xl border border-accent/60 bg-raised p-2">
         <EditAttachments />
         <ComposerPrimitive.Input
           autoFocus
           submitMode="enter"
           aria-label={t.chat.edit}
-          className="block max-h-72 min-h-[44px] w-full resize-none bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-ink outline-none"
+          className="block max-h-72 min-h-[44px] w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none"
         />
         <div className="flex justify-end gap-2 px-1 pb-0.5 pt-1">
           <ComposerPrimitive.Cancel asChild>
@@ -460,11 +479,16 @@ function EditComposer() {
               {t.chat.editCancel}
             </Button>
           </ComposerPrimitive.Cancel>
-          <ComposerPrimitive.Send asChild>
-            <Button size="sm" variant="primary">
-              {t.chat.editSave}
-            </Button>
-          </ComposerPrimitive.Send>
+          <Button size="sm" variant={role === "user" ? "secondary" : "primary"} onClick={() => aui.composer().send({ startRun: false })} data-testid="edit-save-only">
+            {t.chat.editSaveOnly}
+          </Button>
+          {role === "user" && (
+            <ComposerPrimitive.Send asChild>
+              <Button size="sm" variant="primary" data-testid="edit-save-generate">
+                {t.chat.editSave}
+              </Button>
+            </ComposerPrimitive.Send>
+          )}
         </div>
       </ComposerPrimitive.Root>
     </MessagePrimitive.Root>
@@ -488,7 +512,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
   return (
     <ComposerPrimitive.Root
       className={cx(
-        "rounded-[20px] border border-line bg-raised transition-colors focus-within:border-[color-mix(in_srgb,var(--hz-accent)_55%,var(--hz-line))]",
+        "rounded-2xl border border-line bg-raised transition-colors focus-within:border-[color-mix(in_srgb,var(--hz-accent)_55%,var(--hz-line))]",
         disabled && "opacity-70",
       )}
       data-testid="composer"
@@ -506,7 +530,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
         placeholder={disabled ? composerDisabledReason! : t.chat.placeholder(name)}
         aria-label={t.chat.placeholder(name)}
         maxRows={12}
-        className="block max-h-[40dvh] min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-mute"
+        className="block max-h-[40dvh] min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-mute"
       />
       <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
         <ComposerPrimitive.AddAttachment asChild disabled={disabled}>
@@ -597,6 +621,38 @@ function QueueList() {
   );
 }
 
+/** A saved message with no reply yet (a save-only edit) can be answered. */
+function RespondAction() {
+  const value = useFeed();
+  const id = useAuiState((s) => s.message.id);
+  const [busy, setBusy] = useState(false);
+  const feed = value?.feed;
+  const branch = feed?.viewedBranch;
+  if (!feed || !branch || id.startsWith("pending") || feed.activeRun || !feed.snapshot?.permissions.write) return null;
+  if (branch.head_id !== id || branch.writer_actor_id !== feed.me) return null;
+  return (
+    <div className="flex justify-end">
+      <Button
+        size="sm"
+        variant="ghost"
+        loading={busy}
+        icon={<Play size={12} aria-hidden />}
+        data-testid="respond"
+        onClick={() => {
+          setBusy(true);
+          void feed
+            .operation({ kind: "respond", branch_id: branch.id, expected_revision: branch.revision, target_message_id: id })
+            .then(() => feed.load())
+            .catch(value!.onError)
+            .finally(() => setBusy(false));
+        }}
+      >
+        {t.chat.respond}
+      </Button>
+    </div>
+  );
+}
+
 function ContinueAction() {
   const value = useFeed();
   const id = useAuiState((s) => s.message.id);
@@ -679,4 +735,151 @@ function ContextNote() {
   const changed = value?.feed.snapshot?.messages.find((m) => m.id === id)?.context_changed;
   if (!changed) return null;
   return <p className="m-0 mt-0.5 text-[12px] text-mute" data-testid="context-changed">{t.chat.contextChanged}</p>;
+}
+
+// ---- feedback and follow-ups ----------------------------------------------------
+
+const REASONS = ["accurate", "useful", "missing_source", "incorrect", "other"] as const;
+
+/** Rate this answer. A rating belongs to you and to this exact answer. */
+function FeedbackActions() {
+  const value = useFeed();
+  const id = useAuiState((s) => s.message.id);
+  const status = useAuiState((s) => (s.message.role === "assistant" ? s.message.status.type : null));
+  const [mine, setMine] = useState<{ rating: string; revision: number } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [comment, setComment] = useState("");
+  const conv = value?.feed.conversationId;
+  const temporary = value?.feed.snapshot?.conversation.temporary;
+  if (!value || !conv || id.startsWith("pending") || status === "running" || temporary) return null;
+  const url = `/api/conversations/${encodeURIComponent(conv)}/messages/${encodeURIComponent(id)}/feedback`;
+  const save = async (rating: "positive" | "negative", extra: Record<string, unknown> = {}) => {
+    try {
+      const cur = mine ?? (await get<{ feedback: { rating: string; revision: number } | null }>(url)).feedback;
+      const out = await put<{ rating: string; revision: number }>(url, {
+        expected_revision: cur ? cur.revision : "absent",
+        rating,
+        ...extra,
+      });
+      setMine(out);
+      toast(t.chat.feedbackThanks);
+    } catch (e) {
+      value.onError(e);
+    }
+  };
+  return (
+    <>
+      <IconButton
+        label={t.chat.feedbackGood}
+        className={cx("!h-7 !w-7", mine?.rating === "positive" && "!text-accent")}
+        onClick={() => void save("positive")}
+        data-testid="feedback-positive"
+      >
+        <ThumbsUp size={14} aria-hidden />
+      </IconButton>
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger asChild>
+          <IconButton label={t.chat.feedbackBad} className={cx("!h-7 !w-7", mine?.rating === "negative" && "!text-accent")} data-testid="feedback-negative">
+            <ThumbsDown size={14} aria-hidden />
+          </IconButton>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content className="hz-menu w-72 space-y-2 !p-3" sideOffset={6} align="start">
+            <p className="m-0 text-[13px] font-medium text-ink">{t.chat.feedbackWhat}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {REASONS.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className="hz-chip"
+                  aria-pressed={reasons.includes(r)}
+                  onClick={() => setReasons((all) => (all.includes(r) ? all.filter((x) => x !== r) : [...all, r]))}
+                >
+                  {t.chat.feedbackReason[r]}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="hz-input !min-h-16 w-full text-[13px]"
+              placeholder={t.chat.feedbackComment}
+              value={comment}
+              maxLength={4000}
+              onChange={(e) => setComment(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  setOpen(false);
+                  void save("negative", { reason_ids: reasons, comment: comment.trim() || null });
+                }}
+              >
+                {t.chat.feedbackSend}
+              </Button>
+            </div>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    </>
+  );
+}
+
+/** Suggested next questions for the latest answer, when the helper is on. */
+function FollowUps() {
+  const value = useFeed();
+  const aui = useAui();
+  const [items, setItems] = useState<{ title: string; prompt: string }[]>([]);
+  const branch = value?.feed.viewedBranch;
+  const conv = value?.feed.conversationId;
+  const key = branch ? `${branch.id}:${branch.revision}` : "";
+  useEffect(() => {
+    if (!conv || !branch) return;
+    let stop = false;
+    setItems([]);
+    post<{ id: string; state: string; result: { items: { title: string; prompt: string }[] } | null }>("/api/chat/helpers", {
+      kind: "followups",
+      conversation_id: conv,
+      branch_id: branch.id,
+      input_revision: branch.revision,
+    }, { quiet401: true })
+      .then(async (job) => {
+        for (let i = 0; i < 20 && !stop; i++) {
+          if (job.state === "complete" && job.result) return setItems(job.result.items.slice(0, 4));
+          if (job.state === "failed" || job.state === "stale") return;
+          await new Promise((r) => setTimeout(r, 1000));
+          const list = await get<{ items: typeof job[] }>(
+            `/api/chat/helpers?conversation_id=${encodeURIComponent(conv)}&branch_id=${encodeURIComponent(branch.id)}`,
+          );
+          job = list.items.find((j) => j.id === job.id) ?? job;
+        }
+      })
+      .catch(() => {
+        /* helper off or unavailable: no suggestions */
+      });
+    return () => {
+      stop = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, conv]);
+  if (!items.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t.chat.followUps} data-testid="followups">
+      {items.map((item) => (
+        <button
+          key={item.prompt}
+          type="button"
+          className="hz-chip"
+          onClick={() => {
+            aui.composer().setText(item.prompt);
+            aui.composer().send();
+          }}
+        >
+          <Sparkles size={12} aria-hidden />
+          {item.title}
+        </button>
+      ))}
+    </div>
+  );
 }

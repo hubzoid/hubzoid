@@ -138,6 +138,11 @@ export type SharedConversation = {
   agent?: string | null;
   owner_name?: string | null;
   created_at?: Timestamp;
+  /** "snapshot" (2.0 link) or "legacy" (pre-2.0 link). */
+  kind?: "snapshot" | "legacy";
+  audience?: "named" | "deployment" | "public";
+  allow_copy?: boolean;
+  omissions?: string[];
   messages: ServerMessage[];
 };
 

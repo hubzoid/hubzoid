@@ -135,7 +135,7 @@ function AgentMenu({ agent, agents, onPick }: { agent: Agent; agents: Agent[]; o
         />
       </div>
       <ul id={listId} role="listbox" aria-label={t.agents.choose} className="m-0 max-h-[min(380px,60vh)] list-none overflow-y-auto p-1.5">
-        {!flat.length && <li className="px-3 py-4 text-center text-[13.5px] text-mute">{t.agents.noMatch(query.trim())}</li>}
+        {!flat.length && <li className="px-3 py-4 text-center text-[13px] text-mute">{t.agents.noMatch(query.trim())}</li>}
         {groups.map((g) =>
           g.items.length ? (
             <li key={g.label ?? "all"} role="presentation">

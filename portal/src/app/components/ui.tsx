@@ -146,7 +146,7 @@ export function Notice({
       <span className="mt-0.5 flex-none">{toneIcon[tone]}</span>
       <div className="min-w-0 flex-1 leading-relaxed">
         {title && <div className="font-semibold">{title}</div>}
-        {children && <div className={cx(title ? "mt-0.5" : "", "text-[13.5px]")}>{children}</div>}
+        {children && <div className={cx(title ? "mt-0.5" : "", "text-[13px]")}>{children}</div>}
         {action && <div className="mt-2.5">{action}</div>}
       </div>
       {onDismiss && (
@@ -297,7 +297,7 @@ export function BrandMark({
           }}
           className={cx("flex-none object-contain", wordmark ? "h-6 max-w-[170px]" : "h-7 w-7 rounded-md")}
         />
-        {!wordmark && <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>}
+        {!wordmark && <span className="truncate text-[14px] font-semibold tracking-tight text-ink">{name}</span>}
       </>
     );
   if (name === t.product) return <Wordmark className="text-[17px]" />;
@@ -310,7 +310,7 @@ export function BrandMark({
         <span className="text-brand">/</span>
         {name.slice(0, 1).toLowerCase()}
       </span>
-      <span className="truncate text-[15px] font-semibold tracking-tight text-ink">{name}</span>
+      <span className="truncate text-[14px] font-semibold tracking-tight text-ink">{name}</span>
     </>
   );
 }

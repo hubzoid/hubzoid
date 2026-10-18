@@ -7,7 +7,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Archive, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
-import { ApiError, enc, get } from "../lib/api";
+import { ApiError, enc, get, post } from "../lib/api";
 import { agentById, useApp } from "../lib/app-context";
 import {
   deleteConversation,
@@ -161,7 +161,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
   }, [title, app.brandName]);
   return (
     <>
-      <header className="flex h-14 flex-none items-center gap-2 border-b border-line px-3 lg:hidden">
+      <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-3 lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />
         </IconButton>
@@ -174,7 +174,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
 function ChatSkeleton() {
   return (
     <div className="flex h-full flex-col" aria-busy="true">
-      <div className="flex h-14 flex-none items-center gap-3 border-b border-line px-4">
+      <div className="flex h-12 flex-none items-center gap-3 border-b border-line px-4">
         <div className="hz-skeleton h-7 w-7 rounded-lg" />
         <div className="hz-skeleton h-4 w-40" />
       </div>
@@ -323,6 +323,31 @@ function ChatView({
   const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError });
 
+  // Tell the server this person is looking at this chat (no notice for it then).
+  useEffect(() => {
+    let device = "";
+    try {
+      device = localStorage.getItem("hz.device") || "";
+      if (!device) {
+        device = Math.random().toString(36).slice(2, 14);
+        localStorage.setItem("hz.device", device);
+      }
+    } catch {
+      device = "tab-" + Math.random().toString(36).slice(2, 10);
+    }
+    const ping = () => {
+      if (!feed.conversationId) return;
+      void post("/api/chat/notification-presence", { device_id: device, conversation_id: feed.conversationId, focused: !document.hidden }, { quiet401: true }).catch(() => {});
+    };
+    ping();
+    const timer = setInterval(ping, 15000);
+    document.addEventListener("visibilitychange", ping);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", ping);
+    };
+  }, [feed]);
+
   // The server's title and run endings flow back to the page and the list.
   const wasRunning = useRef(false);
   useEffect(
@@ -403,10 +428,10 @@ function ChatHeader({
   const agentName = displayName(agent.name);
   const titleBlock = (
     <>
-      <AgentAvatar name={agent.name} src={agent.avatar_url} size={28} />
+      <AgentAvatar name={agent.name} src={agent.avatar_url} size={24} />
       <span className="min-w-0">
         <span
-          className="block truncate text-[15px] font-semibold leading-tight text-ink"
+          className="block truncate text-[14px] font-semibold leading-tight text-ink"
           data-testid="chat-title"
           {...(picker ? {} : { role: "heading", "aria-level": 1 })}
         >
@@ -466,7 +491,7 @@ function ChatHeader({
   };
 
   return (
-    <header className="flex h-14 flex-none items-center gap-2 border-b border-line bg-bg px-2 sm:px-4">
+    <header className="flex h-12 flex-none items-center gap-2 border-b border-line bg-bg px-2 sm:px-4">
       <div className="lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />

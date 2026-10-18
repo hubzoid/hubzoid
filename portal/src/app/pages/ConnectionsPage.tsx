@@ -144,7 +144,7 @@ export default function ConnectionsPage({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[15px] font-semibold text-ink">{c.name}</span>
+                    <span className="text-[14px] font-semibold text-ink">{c.name}</span>
                     <span className={cx("hz-badge", badge[kind].className)}>
                       {kind === "connected" && <CheckCircle2 size={12} aria-hidden />}
                       {badge[kind].text}

@@ -244,7 +244,7 @@ export function MessageAttachment({ attachment }: { attachment: Attachment }) {
         <FileText size={16} aria-hidden />
       </span>
       <span className="min-w-0">
-        <span className="block truncate text-[13.5px] font-medium text-ink">{attachment.name}</span>
+        <span className="block truncate text-[13px] font-medium text-ink">{attachment.name}</span>
         <span className="block text-xs text-mute">
           {[fileKind(attachment.name, ref?.mime), ref?.size ? formatBytes(ref.size) : ""].filter(Boolean).join(" · ") ||
             t.chat.file}
