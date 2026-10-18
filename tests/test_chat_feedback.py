@@ -65,6 +65,13 @@ def test_feedback_list_needs_manager_and_csv_is_safe(client, hub, monkeypatch):
     assert rows[1][rows[0].index("comment")].startswith("'=")
     as_people(monkeypatch)
     assert client.get("/api/chat/feedback", headers=who("ben")).status_code == 403
+    # A manager sees the rating, but not a comment quoting a conversation they can't open.
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("ben@example.org", hub.name, "manage_access", actor="t")
+    item = client.get("/api/chat/feedback", headers=who("ben")).json()["items"][0]
+    assert item["rating"] == "negative" and item["comment"] is None and item["comment_hidden"]
+    assert "HYPERLINK" not in client.get("/api/chat/feedback/export?format=csv", headers=who("ben")).text
 
 
 def test_helper_followups_native_structured_and_stale_check(client, hub, monkeypatch):
@@ -185,6 +192,19 @@ def test_webhook_delivery_signed_and_ambiguous_not_resent(client, hub, monkeypat
     hist = service.delivery_history(scope, "ops")
     assert hist[0]["state"] == "ambiguous"
     assert service.deliver_due(send=ok_send, now=time.time() + 3600) == 0  # never resent automatically
+    # A delivery waits for the target exactly as approved: change the target and it is suppressed.
+    service.on_run_terminal(run_id="r2", conversation_id="c", branch_id="b", message_id="m2", actor_id=owner,
+                            status="complete", stopped_by_self=False)
+    service.put_target(scope, "ops", {"type": "webhook", "recipient_ref": "https://other.example.com/hz",
+                                      "connection_ref": "env:HZ_HOOK", "events": ["run.completed"]},
+                       owner_id=owner, expected_revision=3)
+    sent = len(seen)
+    service.deliver_due(send=ok_send, now=time.time() + 3600)
+    assert len(seen) == sent and service.delivery_history(scope, "ops")[0]["state"] == "suppressed"
+    # The checked address is the one connected to; the name stays for Host and TLS.
+    url, host, ext = fb.pinned_request("https://hooks.example.com:8443/hz?a=1", "93.184.216.34")
+    assert url == "https://93.184.216.34:8443/hz?a=1" and host == {"host": "hooks.example.com:8443"}
+    assert ext == {"sni_hostname": "hooks.example.com"}
     assert fb.sign(b"k", "1", b"{}") == fb.sign(b"k", "1", b"{}") and fb.sign(b"k", "1", b"{}").startswith("v1=")
     assert json.loads(json.dumps(seen[0]))["type"] == "hubzoid.verification"
 

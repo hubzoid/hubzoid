@@ -122,6 +122,17 @@ def test_search_indexes_new_messages_by_itself(client):
     assert client.get("/api/chat/search", params={"q": "reconciliation"}).json()["items"]
 
 
+def test_expired_temporary_conversation_vanishes_from_search(client):
+    from hubzoid.chat.store import conversations
+
+    cid, _ = chat(client, "fleeting thought")
+    reindexed(client, cid)
+    assert client.get("/api/chat/search", params={"q": "fleeting"}).json()["items"]
+    with client.app.state.chat.engine.engine.begin() as conn:
+        conn.execute(conversations.update().where(conversations.c.id == cid).values(temporary=1, expires_at=1.0))
+    assert client.get("/api/chat/search", params={"q": "fleeting"}).json()["items"] == []  # before cleanup runs
+
+
 def test_deleted_conversation_vanishes_from_search_at_once(client):
     cid, _ = chat(client, "secret merger notes")
     reindexed(client, cid)
@@ -166,14 +177,16 @@ def test_portable_zip_traversal_and_corrupt_blob_rejected(client):
     import hashlib
 
     manifest = {"version": 1, "format": "hubzoid-exchange", "records_sha256": hashlib.sha256(body).hexdigest(),
-                "record_count": 1, "blobs": [{"sha256": "0" * 64, "size": 1}]}
+                "record_count": 1, "blobs": [{"sha256": "0" * 64, "size": 13}, {"sha256": "1" * 64, "size": 2}]}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("manifest.json", json.dumps(manifest))
         zf.writestr("records.jsonl", body)
         zf.writestr("blobs/" + "0" * 64, b"not that hash")
+        zf.writestr("blobs/" + "1" * 64, b"larger than declared")  # never decompressed past its size
     pv = _preview(client, buf.getvalue()).json()
     assert any(o["reason"] == "hash_mismatch" and o["disposition"] == "reject" for o in pv["objects"])
+    assert any(o["reason"] == "size_mismatch" and o["disposition"] == "reject" for o in pv["objects"])
 
 
 def test_openwebui_and_librechat_imports(client):

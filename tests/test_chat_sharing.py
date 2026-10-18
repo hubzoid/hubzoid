@@ -45,12 +45,23 @@ def test_snapshot_publish_bound_to_preview_and_revoke(client, monkeypatch):
     assert pv["projection"]["messages"][0]["content"][0]["text"] == "the plan"
     bad = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": "sha256:00"})
     assert bad.status_code == 409 and bad.json()["detail"]["code"] == "snapshot_changed"
-    made = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    keyed = {**ORIGIN, "Idempotency-Key": "publish-1"}
+    made = client.post("/api/shares", headers=keyed, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
     assert made.status_code == 201, made.text
     share = made.json()
     token = share["url"].rsplit("/", 1)[1]
-    again = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
-    assert again.json()["id"] == share["id"]  # a retry gives the same link
+    again = client.post("/api/shares", headers=keyed, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    assert again.json()["id"] == share["id"] and again.json()["url"] == share["url"]  # a keyed retry: same link
+    used = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    assert used.status_code == 404  # a preview publishes once
+    # Another hub's manager can't reach this hub's links by id.
+    from hubzoid.chat.sharing import SharingService
+
+    svc = client.app.state.chat.sharing
+    other = SharingService(svc.hub_dir, svc.engine, "another-hub")
+    with pytest.raises(Exception) as exc:
+        other.revoke(share["id"], "u_someone", None, manager=True)
+    assert getattr(exc.value, "status", None) == 404
     r = client.get(f"/api/shares/{token}")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
     assert r.json()["messages"][1]["role"] == "assistant"
@@ -137,7 +148,33 @@ def test_collaborators_write_on_own_branch_and_lose_access(client, hub, monkeypa
                       json={"from_message_id": out["assistant_message_id"]}).json()["branch"]
     mine = send(client, cid, "my take", own, who("ana"), parent=out["assistant_message_id"])
     wait_run(client, mine["run_id"], who("ana"))
+    # Queued work is admitted like a direct send: a suspended person can't queue.
+    from hubzoid.access import store_for
+
+    store_for(hub).suspend("ana@example.org", actor="t")
+    queued = client.post(f"/api/conversations/{cid}/queue", headers=h(who("ana")),
+                         json={"branch_id": own["id"], "content": "more"})
+    assert queued.status_code == 403, queued.text
+    store_for(hub).suspend("ana@example.org", actor="t", suspended=False)
     sharing = client.app.state.chat.sharing
     conv = {"id": cid, "owner_id": snap(client, cid, who("ana"))["conversation"]["owner_id"]}
     sharing.set_collaborators(conv, conv["owner_id"], [], 1)
     assert client.get(f"/api/conversations/{cid}", headers=who("ana")).status_code == 404
+
+
+def test_deleting_a_shared_message_revokes_its_snapshot_links(client):
+    cid, out = as_owner_conversation(client)
+    pv = client.post("/api/shares/previews", headers=ORIGIN,
+                     json={"conversation_id": cid, "head_message_id": out["assistant_message_id"]}).json()
+    share = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"],
+                                                               "digest": pv["digest"]}).json()
+    token = share["url"].rsplit("/", 1)[1]
+    rev = snap(client, cid)["conversation"]["graph_revision"]
+    prev = client.post(f"/api/conversations/{cid}/deletion-preview", headers=ORIGIN,
+                       json={"message_id": out["assistant_message_id"], "expected_revision": rev}).json()
+    assert prev["snapshot_links"] == [share["id"]]
+    done = client.post(f"/api/conversations/{cid}/operations", headers={**ORIGIN, "Idempotency-Key": "del-1"},
+                       json={"kind": "delete", "target_message_id": out["assistant_message_id"],
+                             "expected_revision": rev, "preview_hash": prev["preview_hash"]})
+    assert done.status_code == 200 and done.json()["snapshot_links_revoked"] == [share["id"]]
+    assert client.get(f"/api/shares/{token}").status_code == 404

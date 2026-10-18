@@ -410,9 +410,16 @@ def test_interrupted_run_is_not_rerun(client):
     cid, b = new_conv(client)
     first = send(client, cid, "slow", b)
     eng = client.app.state.chat.engine
-    # A restart: the process that held the run is gone.
-    assert eng.sweep() >= 1
     from hubzoid.chat import graph
+
+    # Another worker starting while this one writes the reply interrupts nothing.
+    assert eng.sweep() == 0
+    # The worker is gone: once its lease has expired, the run is recovered...
+    with eng.engine.begin() as conn:
+        conn.execute(graph.leases.update().where(graph.leases.c.run_id == first["run_id"]).values(expires_at=0))
+    assert eng.sweep() == 1
+    # ...and the old writer, fenced out, stops without saving over it.
+    assert eng.run_state(first["run_id"], b["id"], 1) == "lost"
 
     with eng.engine.connect() as conn:
         status = conn.execute(graph.runs.select().where(graph.runs.c.id == first["run_id"])).first().status
@@ -454,3 +461,24 @@ def test_branch_binds_native_session_and_invalidates(client, monkeypatch):
     three = send(client, cid, "third", b, parent=two["assistant_message_id"])
     wait_run(client, three["run_id"])
     assert seen[3][0] == "sess-2"
+
+
+def test_queued_message_whose_context_changed_needs_review(client):
+    cid, b = new_conv(client)
+    first = send(client, cid, "slow first", b)
+    item = client.post(f"/api/conversations/{cid}/queue", headers=h(),
+                       json={"branch_id": b["id"], "content": "two"}).json()["item"]
+    client.post(f"/api/runs/{first['run_id']}/cancel", headers=ORIGIN, json={"park_queue": True})
+    assert wait_run(client, first["run_id"])["status"] == "stopped"
+    # The answer the queued message followed is deleted while it waits.
+    rev = snap(client, cid)["conversation"]["graph_revision"]
+    prev = client.post(f"/api/conversations/{cid}/deletion-preview", headers=ORIGIN,
+                       json={"message_id": first["assistant_message_id"], "expected_revision": rev}).json()
+    assert op(client, cid, {"kind": "delete", "target_message_id": first["assistant_message_id"],
+                            "expected_revision": rev, "preview_hash": prev["preview_hash"]}).status_code == 200
+    bnow = branch_of(client, cid, b["id"])
+    client.post(f"/api/conversations/{cid}/queue-control", headers=ORIGIN,
+                json={"branch_id": b["id"], "action": "resume", "expected_revision": bnow["queue_revision"]})
+    q = {i["id"]: i for i in client.get(f"/api/conversations/{cid}/queue").json()["items"]}
+    assert q[item["id"]]["state"] == "needs_review"
+    assert not snap(client, cid)["runs"]
