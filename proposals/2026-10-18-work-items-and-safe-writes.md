@@ -1,4 +1,4 @@
-# Durable work items and safe external writes
+# Durable work items, safe external writes and isolated agents
 
 Status: implementation authorized by the owner on 18 October 2026, for 2.0.
 
@@ -70,8 +70,18 @@ Hubzoid adds only what DBOS does not do:
    `hubzoid operations ...`, the matching HTTP routes, and a Console screen that
    uses those routes.
 
+7. **Isolated agents (stations).** An agent marked `isolated: true` is called
+   from a work-item workflow for one stage, with only its own instructions and
+   exactly the tools it lists, on its own engine. Its result is checked against
+   its JSON Schema using the engine's own structured output. The call is saved
+   as one engine step, so it never runs twice. The workflow may direct one
+   retry with a clarification; a crash is recovered once, separately. Stations
+   pass long documents to each other as immutable handoffs scoped to the work
+   item.
+
 Existing hubs are unchanged until a workflow opts in with
-`@workflow(work_items=...)` or the hub adds `work-items.yaml`.
+`@workflow(work_items=...)`, an agent sets `isolated: true`, or the hub adds
+`work-items.yaml`.
 
 ## Scope and non-goals
 
@@ -80,8 +90,9 @@ Existing hubs are unchanged until a workflow opts in with
 - Approval requests in this change are a small adapter with the shape a full
   approvals service will provide later. Approval inside a single agent turn is
   out of scope here.
-- Isolated agents, sandboxes and budgets are separate changes that build on
-  these records.
+- Sandboxes and budgets are separate changes that build on these records.
+- Questions and approvals from inside a station's turn wait for the shared
+  approvals service.
 
 ## Open questions
 
@@ -98,5 +109,8 @@ Existing hubs are unchanged until a workflow opts in with
   resolves it.
 - `off` hides the action, `draft` saves only a draft, and `approve` sends only
   the exact content a person approved, once.
+- A station sees only what it is given, uses only its listed tools on both
+  installed runtimes, and returns a result that matches its schema or a typed
+  error the workflow can retry once.
 - Everything above works from the CLI, the API and the Console, with focused
   tests on SQLite and the same tests running on PostgreSQL in CI.
