@@ -173,7 +173,9 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
             type={w.state === "failed" ? "error" : "info"} showIcon title={STATE_LABELS[w.state]} description={w.error} />}
 
           <Card size="small" title="Stages">
-            {(w.stages?.length ?? 0) === 0 ? <Text type="secondary">No stage has finished yet.</Text> : (
+            {(w.stages?.length ?? 0) === 0 ? <Text type="secondary">
+              {["completed", "stopped", "failed", "cancelled"].includes(w.state)
+                ? "This work saved no stages." : "No stage has finished yet."}</Text> : (
               <Steps direction="vertical" size="small" current={w.stages!.length}
                 items={w.stages!.map((s) => ({ title: s.stage, status: s.status === "done" ? "finish" : "error",
                   description: s.finished ? `Saved ${when(s.finished)}` : undefined }))} />
@@ -415,7 +417,7 @@ function ItemControls({ base, w, busy, act }: {
             </Space>
           </Space>
         )}
-        {terminal && <Text type="secondary">This work has finished. Its record stays.</Text>}
+        {["completed", "cancelled"].includes(w.state) && <Text type="secondary">This work has finished. Its record stays.</Text>}
       </Space>
     </Card>
   );
