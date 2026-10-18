@@ -797,6 +797,7 @@ class ChatEngine:
         for mid in preview["reparented"]:
             conn.execute(messages.update().where(messages.c.id == mid)
                          .values(parent_id=target_parent, context_changed=1))
+        conn.execute(g.bindings.delete().where(g.bindings.c.branch_id.in_(preview["branches_moved"])))
         for bid in preview["branches_moved"]:
             conn.execute(g.branches.update().where(g.branches.c.id == bid)
                          .values(head_id=target_parent, revision=g.branches.c.revision + 1, updated_at=t))
@@ -1196,6 +1197,35 @@ class ChatEngine:
                 self.notify(it.conversation_id)
                 return None
         return None
+
+    # -- native runtime sessions ----------------------------------------------------------
+    def binding_for(self, plan: RunPlan, config_digest: str) -> str | None:
+        """The native session this run may resume: only a ``send`` or
+        ``respond`` that continues exactly where the branch's bound session
+        ended, under the same runtime configuration. Anything else (an edit,
+        a regeneration, a continuation, a deleted or moved head, a changed
+        agent or model) starts from the full history."""
+        if plan.kind not in ("send", "respond") or plan.extra_turns:
+            return None
+        with self.engine.connect() as conn:
+            b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()
+            if b is None or b.config_digest != config_digest:
+                return None
+            prompt_parent = conn.execute(sa.select(messages.c.parent_id).where(
+                messages.c.id == plan.prompt_message_id)).scalar()
+        return b.native_session_id if prompt_parent == b.head_message_id else None
+
+    def record_binding(self, *, branch_id: str, conversation_id: str, runtime: str | None,
+                       session_id: str | None, head_message_id: str, config_digest: str, ok: bool) -> None:
+        """After a run: keep the session it ended in, or drop the binding when
+        the run did not complete (its session state is uncertain)."""
+        with self.engine.begin() as conn:
+            conn.execute(g.bindings.delete().where(g.bindings.c.branch_id == branch_id))
+            if ok and session_id and runtime:
+                conn.execute(g.bindings.insert().values(
+                    branch_id=branch_id, conversation_id=conversation_id, runtime=runtime,
+                    native_session_id=session_id[:255], head_message_id=head_message_id,
+                    config_digest=config_digest, updated_at=_now()))
 
     # -- recovery ---------------------------------------------------------------------------
     def sweep(self) -> int:

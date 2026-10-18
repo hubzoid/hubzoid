@@ -418,3 +418,39 @@ def test_interrupted_run_is_not_rerun(client):
         status = conn.execute(graph.runs.select().where(graph.runs.c.id == first["run_id"])).first().status
     assert status == "interrupted"
     assert branch_of(client, cid, b["id"])["queue_paused"]
+
+
+def test_branch_binds_native_session_and_invalidates(client, monkeypatch):
+    """B038: a branch resumes the runtime's own session for its next turn; an
+    edit or regeneration (a new branch) and a failed run start from full history."""
+    from hubzoid import _request_ctx
+
+    runtime = client.app.state.chat.runtime
+    original = runtime.stream_events
+    seen = []
+
+    def fake(prompt):
+        slot = _request_ctx.native_session()
+        seen.append((slot.resume_id if slot else None, slot.delta_prompt if slot else None, prompt))
+        if slot is not None:
+            slot.runtime = "fake"
+            slot.session_id = f"sess-{len(seen)}"
+        return original(prompt)
+
+    monkeypatch.setattr(runtime, "stream_events", fake)
+    cid, b = new_conv(client)
+    one = send(client, cid, "first question", b)
+    wait_run(client, one["run_id"])
+    b = branch_of(client, cid, b["id"])
+    two = send(client, cid, "second question", b, parent=one["assistant_message_id"])
+    wait_run(client, two["run_id"])
+    assert seen[0][0] is None
+    assert seen[1][0] == "sess-1" and seen[1][1] == "second question" and "first question" in seen[1][2]
+    regen = op(client, cid, {"kind": "regenerate", "target_message_id": two["user_message_id"]}).json()
+    wait_run(client, regen["run_id"])
+    assert seen[2][0] is None
+    # A stale binding (head moved by someone resuming from an earlier message) is not used.
+    b = branch_of(client, cid, b["id"])
+    three = send(client, cid, "third", b, parent=two["assistant_message_id"])
+    wait_run(client, three["run_id"])
+    assert seen[3][0] == "sess-2"

@@ -10,6 +10,8 @@
 * ``hz_chat_queue``: acknowledged follow-ups per branch.
 * ``hz_chat_events``: the per-conversation event log for replay.
 * ``hz_chat_copy_lineage``: where a copied message came from.
+* ``hz_chat_runtime_bindings``: a branch's native runtime session (Claude
+  session id, Codex thread, OpenAI Session) and the head it ended at.
 * ``hz_chat_members`` / ``hz_chat_member_sets``: live collaborators of a
   conversation (people or groups, editor or viewer) and their revision.
 
@@ -146,9 +148,19 @@ def upgrade() -> None:
         sa.Column("revision", sa.Integer, nullable=False),
         sa.Column("updated_at", sa.Float, nullable=False),
     )
+    op.create_table(
+        "hz_chat_runtime_bindings",
+        sa.Column("branch_id", sa.String(64), primary_key=True),
+        sa.Column("conversation_id", sa.String(64), nullable=False),
+        sa.Column("runtime", sa.String(32), nullable=False),
+        sa.Column("native_session_id", sa.String(255), nullable=False),
+        sa.Column("head_message_id", sa.String(64), nullable=False),
+        sa.Column("config_digest", sa.String(80), nullable=False),
+        sa.Column("updated_at", sa.Float, nullable=False),
+    )
 
 
 def downgrade() -> None:
-    for table in ("hz_chat_member_sets", "hz_chat_members", "hz_chat_copy_lineage", "hz_chat_events", "hz_chat_queue", "hz_chat_branch_leases",
+    for table in ("hz_chat_runtime_bindings", "hz_chat_member_sets", "hz_chat_members", "hz_chat_copy_lineage", "hz_chat_events", "hz_chat_queue", "hz_chat_branch_leases",
                   "hz_chat_runs", "hz_chat_views", "hz_chat_branches"):
         op.drop_table(table)

@@ -947,6 +947,7 @@ class ClaudeRuntime:
 
         self.last_error = None
         streamed_any = False
+        stepped = False
         final_result: str | None = None
         shown: list[str] = []
         # Surface Claude's thinking as an Open WebUI <think> panel. 'off' never
@@ -967,6 +968,15 @@ class ClaudeRuntime:
         # *is* that account holder. We prepend the resolved caller
         # (current_identity()) to the USER turn — not the cached system prompt —
         # so the model serves the OWUI user while prompt caching still hits.
+        # A chat branch bound to a Claude session resumes it with only the new
+        # turn (``_request_ctx.SessionSlot``); the full prompt is the fallback.
+        slot = _request_ctx.native_session()
+        full_prompt = prompt
+        resuming = bool(slot is not None and slot.resume_id and slot.delta_prompt)
+        if slot is not None:
+            slot.runtime = "claude"
+        if resuming:
+            prompt = slot.delta_prompt
         prompt = _identity_preamble() + prompt
         qprompt = prompt
         if self._hub_dir is not None:
@@ -982,7 +992,12 @@ class ClaudeRuntime:
         stderr = _StderrTail()
         error_status: int | None = None
         try:
-            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(self._options_for_turn()),
+            turn_options = self._options_for_turn()
+            if resuming:
+                import dataclasses as _dc
+
+                turn_options = _dc.replace(turn_options, resume=slot.resume_id)
+            messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
                                             hub_dir=self._hub_dir)
             async for message in messages:
                 # --- Token-level deltas: thinking + assistant text ---
@@ -1034,6 +1049,7 @@ class ClaudeRuntime:
                                 if closing:
                                     yield run_events.ReasoningEnd(legacy=closing)
                             reasoning_signalled = False
+                            stepped = True  # a step ran: never replay this turn
                             yield run_events.ToolCall(id=tid, name=short, args=args, legacy=line)
                     continue
 
@@ -1063,6 +1079,9 @@ class ClaudeRuntime:
                 if isinstance(message, ResultMessage):
                     final_result = getattr(message, "result", None)
                     _record_claude_usage(message, answered_by)
+                    if slot is not None and not getattr(message, "is_error", False):
+                        slot.session_id = getattr(message, "session_id", None)
+                        slot.resumed = resuming
                     if getattr(message, "is_error", False):
                         detail = (getattr(message, "errors", None) or [final_result or ""])[0]
                         self.last_error = RuntimeError(
@@ -1071,6 +1090,13 @@ class ClaudeRuntime:
                         )
                         error_status = getattr(message, "api_error_status", None)
         except Exception as exc:  # noqa: BLE001
+            if resuming and not streamed_any and not stepped:
+                # The bound session is gone or refused: run the turn in full instead.
+                log.warning("claude: resuming session failed (%s); sending the full history", exc)
+                slot.resume_id = None
+                async for item in self.stream_events(full_prompt):
+                    yield item
+                return
             log.exception("claude stream failed")
             self.last_error = exc
             _request_ctx.note_usage(status="error")
@@ -1090,6 +1116,12 @@ class ClaudeRuntime:
 
         # The SDK reported a failed run (ResultMessage.is_error): surface it the
         # same way as an exception, as the OpenAI backend does.
+        if self.last_error is not None and resuming and not streamed_any and not stepped:
+            log.warning("claude: resumed session ended with an error; sending the full history")
+            slot.resume_id = None
+            async for item in self.stream_events(full_prompt):
+                yield item
+            return
         if self.last_error is not None:
             closing = tw.close()
             if closing:

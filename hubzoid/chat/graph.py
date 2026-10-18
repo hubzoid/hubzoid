@@ -142,6 +142,17 @@ member_sets = sa.Table(
     sa.Column("updated_at", sa.Float, nullable=False),
 )
 
+bindings = sa.Table(
+    "hz_chat_runtime_bindings", metadata,
+    sa.Column("branch_id", sa.String(64), primary_key=True),
+    sa.Column("conversation_id", sa.String(64), nullable=False),
+    sa.Column("runtime", sa.String(32), nullable=False),
+    sa.Column("native_session_id", sa.String(255), nullable=False),
+    sa.Column("head_message_id", sa.String(64), nullable=False),
+    sa.Column("config_digest", sa.String(80), nullable=False),
+    sa.Column("updated_at", sa.Float, nullable=False),
+)
+
 ACTIVE_RUN = ("admitted", "streaming", "waiting", "stopping")
 TERMINAL_RUN = ("complete", "stopped", "interrupted", "failed")
 QUEUE_LIVE = ("queued", "paused", "needs_review", "blocked")

@@ -154,11 +154,19 @@ class Orchestrator:
 
                 turns_prompt = "\n\n".join(x for x in (turns_prompt, server._flatten_messages(plan.extra_turns)) if x)
             user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email)
+            from .. import _request_ctx
+            from .history import user_text
+
+            resume = await db(self.engine.binding_for, plan, self.config_digest())
+            slot = _request_ctx.SessionSlot(
+                resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
+                if resume and path else None)
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
                                       run_id=plan.run_id, branch_id=plan.branch_id, fence=plan.fence,
-                                      prefix=plan.prefix, on_update=self._update, on_finish=self._finished)
+                                      prefix=plan.prefix, on_update=self._update, on_finish=self._finished,
+                                      session_slot=slot)
         except Exception as exc:  # noqa: BLE001 - the admission is released, never left running
             log.exception("chat: could not start run %s", plan.run_id)
             await db(self.ctx.store.update_message, plan.message_id, status="error",
@@ -174,6 +182,11 @@ class Orchestrator:
                                                                {"type": "conversation.titled", "title": title})))
         self._ensure_heartbeat()
         return run
+
+    def config_digest(self) -> str:
+        """What a native session depends on: the agent, its runtime and model."""
+        rt = self.ctx.runtime
+        return "|".join((self.ctx.model_label, type(rt).__name__, str(getattr(rt, "name", ""))))[:80]
 
     def _update(self, run) -> None:
         now = time.monotonic()
@@ -191,6 +204,14 @@ class Orchestrator:
         self._seq.pop(run.message_id, None)
         if run.run_id is None:
             return
+        slot = run.session_slot
+        try:
+            await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
+                     runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
+                     head_message_id=run.message_id, config_digest=self.config_digest(),
+                     ok=status == "complete")
+        except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
+            log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
         try:
             nxt = await db(self.engine.run_finished, run.run_id, status, error_text)
         except Exception:  # noqa: BLE001

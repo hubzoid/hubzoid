@@ -64,6 +64,7 @@ class Run:
     fence: int = 0
     on_update: Any = None     # (run) -> None after each published chunk
     on_finish: Any = None     # async (run, status, error) after the reply is saved
+    session_slot: Any = None  # _request_ctx.SessionSlot: the runtime's own session
 
     @property
     def finished(self) -> bool:
@@ -114,7 +115,8 @@ class RunManager:
 
     def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
               title: str | None = None, run_id: str | None = None, branch_id: str | None = None,
-              fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None) -> Run:
+              fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None,
+              session_slot=None) -> Run:
         """Begin writing ``message_id`` (already stored as 'running'). Must be
         called on the event loop, with the conversation claimed. ``chat_key``
         is the conversation's ``store.chat_key``, the run's chat scope."""
@@ -125,7 +127,8 @@ class RunManager:
         run = Run(message_id=message_id, conversation_id=conversation_id, chat_key=chat_key,
                   owner_id=user.id, email=user.email, builder=builder,
                   loop=asyncio.get_running_loop(), started=time.monotonic(), run_id=run_id,
-                  branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish)
+                  branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish,
+                  session_slot=session_slot)
         self._runs[message_id] = run
         self._publish(run, builder.start())
         if title:
@@ -227,7 +230,8 @@ class RunManager:
             ctx.inflight.enter()
         try:
             identity = await asyncio.to_thread(web_identity, ctx.hub_dir, run.email)
-            with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity):
+            with _request_ctx.chat_scope(run.chat_key), access.identity_scope(identity), \
+                    _request_ctx.native_session_scope(run.session_slot):
                 stream = run_events.stream_items(ctx.runtime, prompt)
                 try:
                     async for item in stream:
