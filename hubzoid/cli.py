@@ -2947,6 +2947,7 @@ app.add_typer(
 # Open WebUI install (hubzoid/migrate_openwebui.py). Each lives in its own module.
 from .auth.cli import admin_app  # noqa: E402
 from .migrate_openwebui import migrate_app  # noqa: E402
+from .secretstore.cli import secrets_app  # noqa: E402
 
 app.add_typer(
     admin_app,
@@ -2958,6 +2959,12 @@ app.add_typer(
     migrate_app,
     name="migrate",
     help="Move an Open WebUI install to the Hubzoid web app.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    secrets_app,
+    name="secrets",
+    help="Secrets stored for the Console: list, set and delete. Values are never shown.",
     rich_help_panel="Commands",
 )
 
@@ -2979,6 +2986,8 @@ _STARTER_BRIDGE_KEY_LINE = "# BRIDGE_API_KEYS=dev           # comma-separated ke
 
 _STARTER_ENV = """\
 # Hub configuration. This file is git-ignored and can hold keys: keep it private.
+# Secrets saved in the Console or with `hubzoid secrets set` are stored in the
+# database, not here. `hubzoid secrets list` shows both. A value in this file wins.
 #
 # --- Model -----------------------------------------------------------------
 # The default uses your installed `claude` CLI and Pro/Max subscription for

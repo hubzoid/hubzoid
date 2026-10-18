@@ -21,7 +21,7 @@ const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) 
 const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
 const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.MyAgents })));
 
-const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
+const TABS: AgentTab[] = ["access", "connectors", "secrets", "runs", "evals", "activity"];
 
 export default function Portal() {
   const { mode, setMode, isDark } = useThemeMode();

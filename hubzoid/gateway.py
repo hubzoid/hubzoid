@@ -98,6 +98,7 @@ class GatewayPlan:
 
     def edge_routes(self, *, artifact_prefix: str = "/artifacts", web_app: bool = False) -> list[dict]:
         """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
+        /api/hubs/<key> (the hub-scoped API, by hub key, unstripped), plus
         /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
         With `web_app` (the web app mode) also /b/<slug>/api and
         /b/<slug>/branding, the hub-scoped web app calls.
@@ -120,6 +121,12 @@ class GatewayPlan:
             routes.append({"prefix": base + "/portal/api",
                            "upstream": f"http://127.0.0.1:{b.bridge_port}",
                            "strip_prefix": base})
+            # Hub-scoped API by hub key, not slug: /api/hubs/<key>/* reaches this
+            # hub's bridge unchanged, and the bridge refuses any other key.
+            from .assertions import hub_key
+
+            routes.append({"prefix": f"/api/hubs/{hub_key(b.hub_dir)}",
+                           "upstream": f"http://127.0.0.1:{b.bridge_port}"})
             if web_app:
                 for part in ("/api", "/branding"):
                     routes.append({

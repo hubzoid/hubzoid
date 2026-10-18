@@ -15,7 +15,7 @@ testing an unreleased branch.
 | Try PR reviews and engineering reports | [GitZoid sample and GitHub setup](../hubzoid/templates/gitzoid/README.md) |
 | Connect assistants and tools | [MCP server](mcp-server.md), [MCP connectors](mcp.md), [browser tools](BROWSER.md) |
 | Use other chat channels | [Slack](slack.md), [inbound surfaces](inbound-surfaces.md) |
-| Operate and recover | [Deployment](DEPLOYING.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
+| Operate and recover | [Deployment](DEPLOYING.md), [secrets](secrets.md), [upgrading](UPGRADING.md), [backup and restore](BACKUP.md) |
 | Evaluate and observe | [Evals](evals.md), [observability](OBSERVABILITY.md) |
 | Brand a deployment | [Branding and attribution](branding.md) |
 

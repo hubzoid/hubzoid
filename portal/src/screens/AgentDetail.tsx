@@ -7,8 +7,9 @@ import { RunsScreen } from "./RunsScreen";
 import { ActivityScreen } from "./ActivityScreen";
 import { EvalsScreen } from "./EvalsScreen";
 import { AgentConnectors } from "./ConnectorsScreen";
+import { AgentSecrets } from "./SecretsScreen";
 
-export type AgentTab = "access" | "connectors" | "runs" | "evals" | "activity";
+export type AgentTab = "access" | "connectors" | "secrets" | "runs" | "evals" | "activity";
 
 export function AgentDetail({
   hub,
@@ -38,7 +39,7 @@ export function AgentDetail({
         }
         description={
           <>
-            <span className="identity">{hub.key}</span> <InfoHelp text="Manage agent access and connections, check workflows and evals, and review activity." />
+            <span className="identity">{hub.key}</span> <InfoHelp text="Manage agent access, connections and secrets, check workflows and evals, and review activity." />
           </>
         }
       />
@@ -49,6 +50,7 @@ export function AgentDetail({
         items={[
           { key: "access", label: <a href={agentHref(hub.key, "access")}>Access</a> },
           { key: "connectors", label: <a href={agentHref(hub.key, "connectors")}>Connectors</a> },
+          { key: "secrets", label: <a href={agentHref(hub.key, "secrets")}>Secrets</a> },
           { key: "runs", label: <a href={agentHref(hub.key, "runs")}>Runs &amp; schedules</a> },
           { key: "evals", label: <a href={agentHref(hub.key, "evals")}>Evals</a> },
           { key: "activity", label: <a href={agentHref(hub.key, "activity")}>Activity</a> },
@@ -57,6 +59,7 @@ export function AgentDetail({
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} />}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} />}
+        {tab === "secrets" && <AgentSecrets hub={hub} />}
         {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
         {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
         {tab === "activity" && <ActivityScreen hubs={hubs} hub={hub} />}
