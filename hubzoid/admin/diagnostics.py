@@ -411,8 +411,7 @@ class DiagnosticsService:
     # -- recovery ----------------------------------------------------------------
     def recover(self, now: float | None = None) -> int:
         """Reports whose worker died (lease expired) become ``interrupted``.
-        Never rerun. Also deletes expired bundles and, when retention is set,
-        old reports."""
+        Never rerun. Also removes expired support bundles."""
         now = time.time() if now is None else now
         with self.engine.begin() as conn:
             n = conn.execute(reports.update().where(
@@ -467,7 +466,7 @@ class DiagnosticsService:
                                  "Active checks contact other services. Confirm with consent_network: true.")
         now = time.time()
         rhash = hashlib.sha256(json.dumps([profile, sorted(c.id for c in selected), hub_id]).encode()).hexdigest()
-        retention = settings["report_retention_days"]
+        retention = None  # reports are kept until deleted (B037)
         with self.engine.begin() as conn:
             if idempotency_key:
                 prior = conn.execute(sa.select(reports).where(

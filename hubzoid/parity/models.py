@@ -85,6 +85,17 @@ class Obligation(_Strict):
     acceptance: list[Acceptance]
     status: Literal["evidence_missing", "mapped", "exception_pending", "exception_approved"]
     aliases: list[str] = Field(default_factory=list)
+    #: "selected": a 2.0 release obligation. "non_release": kept as dated
+    #: evidence with a reason (B037: providers beyond the key ones, deferred
+    #: features); it never gates the release.
+    release_scope: Literal["selected", "non_release"] = "selected"
+    disposition_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _scope(self):
+        if self.release_scope == "non_release" and not self.disposition_reason:
+            raise ValueError("a non_release obligation needs disposition_reason")
+        return self
 
     @field_validator("id")
     @classmethod

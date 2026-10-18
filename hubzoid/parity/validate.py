@@ -234,6 +234,8 @@ def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
             elif o.migration.founder_decision == "F4" and o.migration.omitted_destination != "community":
                 errors.append(_err("invalid_schema", f"{o.id}: F4 omits only the Open WebUI Community destination.",
                                    ids=[o.id]))
+        if o.release_scope == "non_release":
+            continue  # dated evidence with a reason; never gates the release
         if o.status == "evidence_missing" or not o.source_occurrences:
             blockers.append(_err("missing_evidence", f"{o.id} has no verified source evidence yet.", ids=[o.id]))
         if o.status == "exception_pending":
@@ -273,7 +275,8 @@ def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
                                      "were inspected. Inspect them again.", files=changed[:50]))
 
     for p in providers:
-        if p.customer_required and not p.adapter_owner:
+        selected = p.disposition in ("required", "key_provider")
+        if selected and p.customer_required and not p.adapter_owner:
             blockers.append(_err("missing_evidence", f"provider {p.id} is required but has no adapter owner.",
                                  provider=p.id))
         if p.adapter_owner and p.adapter_owner not in models.OWNERS:
@@ -297,7 +300,8 @@ def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
 
     by_owner: dict[str, int] = {}
     for o in obligations:
-        by_owner[o.owner_issue] = by_owner.get(o.owner_issue, 0) + 1
+        if o.release_scope == "selected":
+            by_owner[o.owner_issue] = by_owner.get(o.owner_issue, 0) + 1
     settings_summary = {}
     for dep_id, dep in deployments.items():
         kinds: dict[str, int] = {}
@@ -307,7 +311,10 @@ def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
     return {
         "valid": not errors,
         "digest": bundle.digest(),
-        "counts": {"obligations": len(obligations), "by_owner": dict(sorted(by_owner.items())),
+        "counts": {"obligations": len(obligations),
+                   "selected": sum(1 for o in obligations if o.release_scope == "selected"),
+                   "non_release": sum(1 for o in obligations if o.release_scope == "non_release"),
+                   "by_owner": dict(sorted(by_owner.items())),
                    "acceptance_cases": sum(len(o.acceptance) for o in obligations),
                    "sources": len(sources.sources), "locators": len(sources.locators),
                    "unmapped_locators": len(unmapped), "providers": len(providers),

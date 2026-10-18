@@ -31,8 +31,8 @@ def client(hub):
 
 def test_admin_schema_defaults_and_bounds():
     d = admin_cfg.defaults()["diagnostics"]
-    assert d == {"check_timeout_seconds": 10, "max_parallel_checks": 4, "report_retention_days": None,
-                 "bundle_ttl_minutes": 60, "allow_network_probes": False}
+    assert d == {"check_timeout_seconds": 10, "max_parallel_checks": 4, "bundle_ttl_minutes": 60,
+                 "allow_network_probes": False}  # no report retention by default (B037)
     with pytest.raises(AdminError) as exc:
         admin_cfg.validate({"version": 1, "diagnostics": {"check_timeout_seconds": 99}})
     assert exc.value.extra["pointer"] == "/diagnostics/check_timeout_seconds"

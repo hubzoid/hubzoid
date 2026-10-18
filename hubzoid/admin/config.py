@@ -7,7 +7,6 @@ runs::
     diagnostics:
       check_timeout_seconds: 10    # 1 to 30
       max_parallel_checks: 4       # 1 to 8
-      report_retention_days: null  # null keeps reports until deleted, or 1 to 90
       bundle_ttl_minutes: 60       # 5 to 1440
       allow_network_probes: false  # active probes still need a consent per run
 
@@ -49,16 +48,11 @@ class _Strict(BaseModel):
 class Diagnostics(_Strict):
     check_timeout_seconds: int = Field(10, ge=1, le=30)
     max_parallel_checks: int = Field(4, ge=1, le=8)
-    report_retention_days: int | None = None
     bundle_ttl_minutes: int = Field(60, ge=5, le=1440)
     allow_network_probes: bool = False
 
-    @field_validator("report_retention_days")
-    @classmethod
-    def _retention(cls, v: int | None) -> int | None:
-        if v is not None and not 1 <= v <= 90:
-            raise ValueError("report_retention_days is null (keep) or 1 to 90")
-        return v
+    # Reports are kept until deleted (no default retention). Optional
+    # retention is a deployment-wide policy owned with backups and traces.
 
 
 class AdminDoc(_Strict):
@@ -102,7 +96,6 @@ def validate(values: Any, *, loaded: yamlfile.Loaded | None = None) -> dict:
 def _ranges() -> dict[str, str]:
     return {"/diagnostics/check_timeout_seconds": "1 to 30",
             "/diagnostics/max_parallel_checks": "1 to 8",
-            "/diagnostics/report_retention_days": "null or 1 to 90",
             "/diagnostics/bundle_ttl_minutes": "5 to 1440",
             "/diagnostics/allow_network_probes": "true or false"}
 

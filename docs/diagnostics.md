@@ -11,7 +11,6 @@ version: 1
 diagnostics:
   check_timeout_seconds: 10    # 1 to 30
   max_parallel_checks: 4       # 1 to 8
-  report_retention_days: null  # null keeps reports; or 1 to 90
   bundle_ttl_minutes: 60       # 5 to 1440
   allow_network_probes: false
 ```
@@ -43,7 +42,7 @@ They never call a model or show a secret value. Each check ends `ok`, `info`,
 `warn`, `fail`, `skipped` or `timeout` with the next step. A report whose
 worker stopped is marked `interrupted` and is not rerun; run it again.
 
-A support bundle is a zip of `manifest.json`, `checks.json`, `versions.json`
+Reports are kept until you delete them. A support bundle is a zip of `manifest.json`, `checks.json`, `versions.json`
 and `config-provenance.json`. It has no chat content, prompts, files,
 environment or secrets, and expires after `bundle_ttl_minutes`.
 

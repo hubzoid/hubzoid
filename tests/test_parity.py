@@ -119,10 +119,24 @@ def test_parent_git_head_is_not_upstream_identity():
     assert not check(bundle(sources=s))["valid"]
 
 
-def test_missing_provider_adapter_blocks():
+def test_missing_selected_provider_adapter_blocks():
     r = check(bundle(providers=[{"id": "p1", "family": "search", "reference": "x", "customer_required": True,
-                                 "disposition": "required"}]))
+                                 "disposition": "key_provider"}]))
     assert any("no adapter owner" in b["message"] for b in r["blockers"])
+    unselected = check(bundle(providers=[{"id": "p2", "family": "search", "reference": "x",
+                                          "customer_required": True, "disposition": "deferred"}]))
+    assert not unselected["blockers"]
+
+
+def test_selected_scope_disposition():
+    gap = ob(3, status="evidence_missing", source_occurrences=[])
+    assert check(bundle(ledger=[ob(1), gap]))["blockers"]
+    later = ob(3, status="evidence_missing", source_occurrences=[], release_scope="non_release",
+               disposition_reason="Not a 2.0 key provider (B037).")
+    r = check(bundle(ledger=[ob(1), later]))
+    assert not r["blockers"] and r["counts"]["non_release"] == 1
+    no_reason = ob(3, release_scope="non_release")
+    assert not check(bundle(ledger=[ob(1), no_reason]))["valid"]
 
 
 def test_f4_only_omits_community_destination():
@@ -169,7 +183,7 @@ def hub(tmp_path, monkeypatch):
     return make_hub(tmp_path, monkeypatch)
 
 
-def test_review_bound_to_exact_digest_and_blocked_never_freezes(hub):
+def test_review_bound_to_exact_digest(hub):
     svc = store.ParityService(hub)
     clean = svc.create(bundle(), actor="owner")
     assert clean["status"] == "needs_review"
@@ -196,18 +210,29 @@ def test_unsigned_review_cannot_freeze(hub):
         svc.freeze(c["id"], digest=c["digest"], review_id=rv["review_id"], actor="o")
 
 
-def test_cross_deployment_and_revoked_reviewer(hub, monkeypatch):
-    client = TestClient(build_app())
-    raw = bundle().canonical()
-    made = client.post("/api/parity/candidates", headers=ORIGIN, json={"bundle": raw}).json()
+def test_cross_deployment_denied(hub):
+    made = store.ParityService(hub).create(bundle(), actor="o")
     other = store.ParityService(hub)
     other.deployment_id = "dep_other"
     with pytest.raises(ParityError):
         other.get(made["id"])
+
+
+def test_revoked_reviewer_cannot_freeze(hub, monkeypatch):
+    from hubzoid.access import store_for
+
+    client = TestClient(build_app())
+    raw = bundle().canonical()
+    made = client.post("/api/parity/candidates", headers=ORIGIN, json={"bundle": raw}).json()
+    store_for(hub).grant("ana@example.org", "*", "manage_access", actor="test")
     as_people(monkeypatch)
+    review = client.post(f"/api/parity/candidates/{made['id']}/reviews", headers=who("ana"),
+                         json={"digest": made["digest"], "expected_revision": 1, "decision": "approve"})
+    assert review.status_code == 201, review.text
+    store_for(hub).revoke("ana@example.org", "*", "manage_access", actor="test")
     assert client.get(f"/api/parity/candidates/{made['id']}", headers=who("ana")).status_code == 403
     r = client.post(f"/api/parity/candidates/{made['id']}/freeze", headers=who("ana"),
-                    json={"digest": made["digest"], "review_id": "x"})
+                    json={"digest": made["digest"], "review_id": review.json()["review_id"]})
     assert r.status_code == 403
 
 

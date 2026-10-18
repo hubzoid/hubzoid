@@ -10,7 +10,6 @@ const { Text, Paragraph } = Typography;
 type Diagnostics = {
   check_timeout_seconds: number;
   max_parallel_checks: number;
-  report_retention_days: number | null;
   bundle_ttl_minutes: number;
   allow_network_probes: boolean;
 };
@@ -122,10 +121,6 @@ export function AdminSettings() {
           </label>
           <label>
             Checks at once <InputNumber min={1} max={8} value={draft.max_parallel_checks} onChange={(v) => edit({ max_parallel_checks: Number(v) })} />
-          </label>
-          <label>
-            Keep reports for (days, empty keeps them){" "}
-            <InputNumber min={1} max={90} value={draft.report_retention_days ?? undefined} onChange={(v) => edit({ report_retention_days: v == null ? null : Number(v) })} />
           </label>
           <label>
             Support bundles expire after (minutes){" "}
