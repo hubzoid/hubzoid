@@ -1,17 +1,21 @@
 import { useEffect, type ReactNode } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, MoonStar, Sun } from "lucide-react";
 import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { useTheme, type ThemeMode } from "../lib/theme";
 import { BrandMark, cx } from "../components/ui";
 
 export function ThemeSwitch({ className }: { className?: string }) {
-  const { mode, setMode } = useTheme();
-  const options: { value: ThemeMode; label: string; icon: ReactNode }[] = [
-    { value: "light", label: t.theme.light, icon: <Sun size={14} aria-hidden /> },
-    { value: "dark", label: t.theme.dark, icon: <Moon size={14} aria-hidden /> },
-    { value: "system", label: t.theme.system, icon: <Monitor size={14} aria-hidden /> },
-  ];
+  const { mode, setMode, allowed, locked } = useTheme();
+  const options: { value: ThemeMode; label: string; icon: ReactNode }[] = (
+    [
+      { value: "light", label: t.theme.light, icon: <Sun size={14} aria-hidden /> },
+      { value: "dark", label: t.theme.dark, icon: <Moon size={14} aria-hidden /> },
+      { value: "oled", label: t.theme.oled, icon: <MoonStar size={14} aria-hidden /> },
+      { value: "system", label: t.theme.system, icon: <Monitor size={14} aria-hidden /> },
+    ] as { value: ThemeMode; label: string; icon: ReactNode }[]
+  ).filter((o) => allowed.includes(o.value));
+  if (locked) return null;
   return (
     <div role="radiogroup" aria-label={t.theme.label} className={cx("inline-flex rounded-lg border border-line bg-raised p-0.5", className)}>
       {options.map((o) => (

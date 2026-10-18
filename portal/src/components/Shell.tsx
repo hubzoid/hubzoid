@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, MoonStar, Plug, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -101,6 +101,7 @@ function ThemeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void
       options={[
         { value: "light", icon: <Sun size={14} />, title: "Light", label: <span className="sr-only">Light</span> },
         { value: "dark", icon: <Moon size={14} />, title: "Dark", label: <span className="sr-only">Dark</span> },
+        { value: "oled", icon: <MoonStar size={14} />, title: "Black (OLED)", label: <span className="sr-only">Black (OLED)</span> },
         { value: "system", icon: <Monitor size={14} />, title: "Match system", label: <span className="sr-only">Match system</span> },
       ]}
     />

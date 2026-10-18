@@ -23,7 +23,19 @@ export const en = {
     label: "Theme",
     light: "Light",
     dark: "Dark",
+    oled: "Black (OLED)",
     system: "Match system",
+    managed: "Managed by your administrator",
+    textSize: "Text size",
+    density: "Spacing",
+    comfortable: "Comfortable",
+    compact: "Compact",
+    appearance: "Appearance",
+    appearanceHint: "These follow your account to every device you sign in on.",
+    saving: "Saving…",
+    saved: "Saved",
+    saveFailed: "Couldn't save your appearance settings. They apply on this device for now.",
+    scale: (n: number) => `${Math.round(n * 100)}%`,
   },
 
   errors: {
@@ -186,7 +198,7 @@ export const en = {
     localNote:
       "Sign-in is off on this server, so there's no password to manage. Everyone who can open this page uses the local owner account.",
     appearance: "Appearance",
-    appearanceHelp: "Choose how Hubzoid looks on this device.",
+    appearanceHelp: "Choose how Hubzoid looks. When you are signed in, your choice follows you to every device.",
     session: "Session",
     sessionHelp: "Sign out of Hubzoid on this device.",
   },

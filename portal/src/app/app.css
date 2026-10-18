@@ -121,8 +121,8 @@
   --color-info: var(--hz-info);
   --color-info-soft: var(--hz-info-soft);
   --color-code: var(--hz-code-bg);
-  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: var(--hz-font-sans, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  --font-mono: var(--hz-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
 }
 
 @layer base {
@@ -136,15 +136,22 @@
     background: var(--hz-bg);
     color: var(--hz-ink);
     font-family: var(--font-sans);
-    font-size: 15px;
-    line-height: 1.5;
+    /* rem, so the person's text size (the root font size) scales it */
+    font-size: 0.9375rem;
+    line-height: var(--hz-line-height, 1.5);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-feature-settings: "cv11", "ss01";
   }
   ::selection {
-    background: color-mix(in srgb, var(--hz-brand) 24%, transparent);
+    background: var(--hz-selection, color-mix(in srgb, var(--hz-brand) 24%, transparent));
+    color: var(--hz-selection-ink, inherit);
+  }
+  /* Compact spacing: tighter message rhythm, same touch targets. */
+  :root[data-density="compact"] .hz-message {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
   }
   :focus-visible {
     outline: 2px solid var(--hz-focus);

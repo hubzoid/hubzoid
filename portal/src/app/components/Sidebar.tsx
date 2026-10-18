@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   LogOut,
   Monitor,
+  MoonStar,
   Moon,
   MoreHorizontal,
   Pencil,
@@ -508,12 +509,13 @@ function RenameField({
 const themeOptions: { value: ThemeMode; label: string; icon: ReactNode }[] = [
   { value: "light", label: t.theme.light, icon: <Sun size={15} aria-hidden /> },
   { value: "dark", label: t.theme.dark, icon: <Moon size={15} aria-hidden /> },
+  { value: "oled", label: t.theme.oled, icon: <MoonStar size={15} aria-hidden /> },
   { value: "system", label: t.theme.system, icon: <Monitor size={15} aria-hidden /> },
 ];
 
 function AccountMenu() {
   const app = useApp();
-  const { mode, setMode } = useTheme();
+  const { mode, setMode, allowed, locked } = useTheme();
   const [signingOut, setSigningOut] = useState(false);
   const name = app.isLocal ? t.account.local : app.user?.name || app.user?.email || "";
   const email = app.user?.email && app.user.email !== name ? app.user.email : "";
@@ -572,9 +574,12 @@ function AccountMenu() {
             </Menu.Item>
           )}
           <Menu.Separator className="hz-menu-sep" />
-          <Menu.Label className="hz-menu-label !pb-1 !pt-1">{t.theme.label}</Menu.Label>
+          <Menu.Label className="hz-menu-label !pb-1 !pt-1">
+            {t.theme.label}
+            {locked && <span className="block text-xs font-normal">{t.theme.managed}</span>}
+          </Menu.Label>
           <Menu.RadioGroup value={mode} onValueChange={(v) => setMode(v as ThemeMode)}>
-            {themeOptions.map((o) => (
+            {themeOptions.filter((o) => !locked && allowed.includes(o.value)).map((o) => (
               <Menu.RadioItem key={o.value} value={o.value} className="hz-menu-item" onSelect={(e) => e.preventDefault()}>
                 {o.icon}
                 <span className="flex-1">{o.label}</span>

@@ -9,6 +9,7 @@ import type { SessionUser } from "../lib/types";
 import { toast } from "../components/toast";
 import { Button, Field, Notice } from "../components/ui";
 import { ThemeSwitch } from "./AuthLayout";
+import { setDensity, setTextScale, usePresentation } from "../../lib/presentation";
 import { Section, SettingsFrame } from "./SettingsFrame";
 import { authErrorText } from "./SignInPage";
 
@@ -136,6 +137,70 @@ function PasswordForm() {
   );
 }
 
+/** Appearance, text size and spacing: the person's account preferences,
+ *  within what the deployment allows. Locked choices say who manages them. */
+function AppearanceForm() {
+  const view = usePresentation();
+  const choice = <T extends string | number>(
+    label: string,
+    value: T,
+    options: T[],
+    render: (v: T) => string,
+    onPick: (v: T) => void,
+    locked: boolean,
+  ) => (
+    <div>
+      <div className="hz-label" id={`pref-${label}`}>{label}</div>
+      {locked ? (
+        <p className="m-0 text-[15px] text-body">
+          {render(value)} <span className="text-mute">· {t.theme.managed}</span>
+        </p>
+      ) : (
+        <div role="radiogroup" aria-labelledby={`pref-${label}`} className="inline-flex flex-wrap gap-1 rounded-lg border border-line bg-raised p-0.5">
+          {options.map((o) => (
+            <button
+              key={String(o)}
+              type="button"
+              role="radio"
+              aria-checked={o === value}
+              onClick={() => onPick(o)}
+              className={`min-h-9 rounded-md px-3 text-sm ${o === value ? "bg-sunken text-ink" : "text-mute hover:text-ink"}`}
+            >
+              {render(o)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="hz-label">{t.theme.label}</div>
+        {view.locked.mode ? (
+          <p className="m-0 text-[15px] text-body">
+            {t.theme[view.mode]} <span className="text-mute">· {t.theme.managed}</span>
+          </p>
+        ) : (
+          <ThemeSwitch />
+        )}
+      </div>
+      {choice(t.theme.textSize, view.textScale, view.allowed.textScales, (v) => t.theme.scale(v), setTextScale, view.locked.text_scale)}
+      {choice(
+        t.theme.density,
+        view.density,
+        view.allowed.densities,
+        (v) => (v === "compact" ? t.theme.compact : t.theme.comfortable),
+        setDensity,
+        view.locked.density,
+      )}
+      <p className="m-0 text-xs text-mute" aria-live="polite">
+        {view.saveError ? t.theme.saveFailed : view.saving ? t.theme.saving : view.signedIn ? t.theme.appearanceHint : ""}
+      </p>
+    </div>
+  );
+}
+
 export default function AccountPage() {
   const app = useApp();
   const [signingOut, setSigningOut] = useState(false);
@@ -169,7 +234,7 @@ export default function AccountPage() {
         </>
       )}
       <Section title={t.account.appearance} description={t.account.appearanceHelp}>
-        <ThemeSwitch />
+        <AppearanceForm />
       </Section>
       {!app.isLocal && (
         <Section title={t.account.session} description={t.account.sessionHelp}>

@@ -11,6 +11,7 @@ import { upsertConversation } from "./lib/conversations";
 import { displayName } from "./lib/format";
 import { navigate, parseRoute, signInHref, useLocation, type Route } from "./lib/router";
 import { applyTheme, useTheme } from "./lib/theme";
+import { clearAccount, loadAccount, loadPublic } from "../lib/presentation";
 import type { AgentsResponse, Branding, Conversation, Session, SessionUser } from "./lib/types";
 import { Sidebar } from "./components/Sidebar";
 import { announce, LiveRegion, Toaster } from "./components/toast";
@@ -76,6 +77,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void loadPublic();
     void loadSession();
     get<Branding>("/api/branding", { quiet401: true })
       .then((b) => setBranding(b ?? {}))
@@ -92,6 +94,12 @@ export default function App() {
   }, [location.path]);
 
   const authenticated = !!session?.authenticated;
+
+  // Account preferences follow the person; signing out drops them.
+  useEffect(() => {
+    if (authenticated) void loadAccount();
+    else clearAccount();
+  }, [authenticated, session?.user?.id]);
   const isPublic = PUBLIC_ROUTES.includes(route.name);
 
   useEffect(() => {

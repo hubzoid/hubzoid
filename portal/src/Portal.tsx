@@ -6,7 +6,7 @@ import { useRoute } from "./hooks/useRoute";
 import { PersonShell, Shell, type Area } from "./components/Shell";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
-import { lightTheme, darkTheme, useThemeMode } from "./lib/theme";
+import { useThemeMode } from "./lib/theme";
 import { displayName } from "./app/lib/format";
 import "./portal.css";
 
@@ -24,9 +24,9 @@ const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ d
 const TABS: AgentTab[] = ["access", "connectors", "runs", "evals", "activity"];
 
 export default function Portal() {
-  const { mode, setMode, isDark } = useThemeMode();
+  const { mode, setMode, isDark, config } = useThemeMode();
   return (
-    <ConfigProvider theme={isDark ? darkTheme : lightTheme}>
+    <ConfigProvider theme={config}>
       <App>
         <Router mode={mode} setMode={setMode} isDark={isDark} />
       </App>
