@@ -975,8 +975,10 @@ class ChatEngine:
                 if status != "complete":
                     self._block_dependents(conn, r.conversation_id, item.id, f"the earlier message {status}", t)
         self.notify(r.conversation_id)
-        if status != "complete":
+        if status not in ("complete", "stopped"):
             return None
+        # After a stop the queue was parked unless the person chose "send next
+        # and stop current": dispatch_next sends nothing from a paused queue.
         return self.dispatch_next(r.branch_id)
 
     # -- queue ----------------------------------------------------------------------------
