@@ -641,7 +641,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
         className="block max-h-[40dvh] min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-mute"
       />
       <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="flex items-center gap-0.5">
+        <div className="hz-composer-tools flex min-w-0 flex-1 items-center gap-0.5">
           <ComposerPrimitive.AddAttachment asChild disabled={disabled}>
             <IconButton label={t.chat.attach} size="lg" className="!h-9 !w-9">
               <Paperclip size={18} aria-hidden />
@@ -653,7 +653,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
           {!disabled && <ModelPicker />}
           {!disabled && <Dictation />}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-none items-center gap-1.5">
           {running && (
             <IconButton
               label={t.chat.stop}

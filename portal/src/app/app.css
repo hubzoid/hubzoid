@@ -1059,3 +1059,11 @@
     justify-content: center; border-radius: 4px; color: var(--hz-mute); }
   .hz-event:hover .hz-event-x { display: inline-flex; }
 }
+
+@layer components {
+  /* The composer's tools scroll sideways on a narrow screen; Send never moves off it. */
+  .hz-composer-tools { overflow-x: auto; scrollbar-width: none; }
+  .hz-composer-tools::-webkit-scrollbar { display: none; }
+  .hz-composer-tools > * { flex: none; }
+  @media (max-width: 480px) { .hz-model-select { max-width: 104px; } }
+}

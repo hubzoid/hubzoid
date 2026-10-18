@@ -84,7 +84,9 @@ function Mermaid({ code }: { code: string }) {
         const { default: mermaid } = await import("mermaid");
         const dark = document.documentElement.dataset.theme !== "light";
         mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default",
-          maxTextSize: MERMAID_MAX, maxEdges: 1000 });
+          maxTextSize: MERMAID_MAX, maxEdges: 1000,
+          // The dark theme's edge labels sit below 4.5:1 contrast; a darker label background fixes it.
+          ...(dark ? { themeVariables: { edgeLabelBackground: "#262625" } } : {}) });
         const id = `hz-mmd-${Math.random().toString(36).slice(2)}`;
         const out = await mermaid.render(id, code);
         if (!cancelled) setSvg({ code, svg: out.svg });
