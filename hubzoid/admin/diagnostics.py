@@ -80,6 +80,8 @@ reports = sa.Table(
     sa.Column("error_code", sa.String(64)),
     sa.Column("cancel_requested", sa.Integer, nullable=False),
     sa.Column("previous_report_id", sa.String(64)),
+    sa.UniqueConstraint("deployment_id", "requested_by_user_id", "idempotency_key",
+                        name="uq_hz_admin_diag_idempotency"),
 )
 
 checks_table = sa.Table(
@@ -399,6 +401,9 @@ class DiagnosticsService:
             migrations.upgrade(engine, "operational")
         self.engine = engine
         self.bundle_dir = self.root / ".hubzoid" / "admin" / "bundles"
+        self._inflight: set[str] = set()
+        self._beating = False
+        self._last_recover = 0.0
 
     def _pool(self) -> cf.ThreadPoolExecutor:
         with _pools_lock:
@@ -408,10 +413,66 @@ class DiagnosticsService:
                 _pools[self.deployment_id] = pool
             return pool
 
+    def _heartbeat(self) -> None:
+        """Keep the leases of this process's queued and running reports alive,
+        so another bridge's recovery never interrupts work that is waiting
+        its turn here."""
+        while True:
+            with _pools_lock:
+                ids = list(self._inflight)
+            if not ids:
+                with _pools_lock:
+                    if not self._inflight:
+                        self._beating = False
+                        return
+            try:
+                with self.engine.begin() as conn:
+                    conn.execute(reports.update().where(
+                        reports.c.id.in_(ids), reports.c.lease_owner == WORKER_ID,
+                        reports.c.status.in_(("queued", "running")))
+                        .values(lease_expires_at=time.time() + LEASE_SECONDS))
+            except Exception:  # noqa: BLE001 - the next beat retries
+                log.warning("diagnostics: lease heartbeat failed", exc_info=True)
+            time.sleep(RENEW_SECONDS)
+
+    def _track(self, report_id: str) -> None:
+        with _pools_lock:
+            self._inflight.add(report_id)
+            if self._beating:
+                return
+            self._beating = True
+        threading.Thread(target=self._heartbeat, name="hz-diagnostics-lease", daemon=True).start()
+
+    def _untrack(self, report_id: str) -> None:
+        with _pools_lock:
+            self._inflight.discard(report_id)
+
+    def _target(self, hub_id: str | None) -> Path:
+        """The hub a report examines: the named hub of this deployment, or this
+        bridge's hub for a deployment-wide report."""
+        if not hub_id:
+            return self.hub_dir
+        from .. import deployment
+
+        try:
+            return deployment.hub_path(self.hub_dir, hub_id)
+        except KeyError:
+            raise AdminError(404, "not_found", f"No hub {hub_id!r} in this deployment.")
+
+    def _maybe_recover(self) -> None:
+        if time.time() - self._last_recover > RENEW_SECONDS:
+            self._last_recover = time.time()
+            try:
+                self.recover()
+            except Exception:  # noqa: BLE001 - a failed sweep is retried on the next request
+                log.warning("diagnostics: recovery sweep failed", exc_info=True)
+
     # -- recovery ----------------------------------------------------------------
     def recover(self, now: float | None = None) -> int:
         """Reports whose worker died (lease expired) become ``interrupted``.
-        Never rerun. Also removes expired support bundles."""
+        Never rerun. Runs at bridge start and again, at most every few seconds,
+        whenever reports are read or requested. Nothing is deleted here:
+        reports and bundles are kept until someone deletes them."""
         now = time.time() if now is None else now
         with self.engine.begin() as conn:
             n = conn.execute(reports.update().where(
@@ -419,23 +480,15 @@ class DiagnosticsService:
                 reports.c.status.in_(("queued", "running")),
                 sa.or_(reports.c.lease_expires_at.is_(None) & (reports.c.created_at < now - LEASE_SECONDS),
                        reports.c.lease_expires_at < now))
-                .values(status="interrupted", completed_at=now, error_code="worker_lost")).rowcount
+                .values(status="interrupted", completed_at=now, error_code="worker_lost",
+                        lease_expires_at=None)).rowcount
         self.purge(now)
         return n
 
     def purge(self, now: float | None = None) -> None:
+        """Remove bundle files no row refers to (a crash between write and
+        commit). Retained bundles stay until deleted."""
         now = time.time() if now is None else now
-        with self.engine.begin() as conn:
-            expired = conn.execute(sa.select(bundles).where(bundles.c.deployment_id == self.deployment_id,
-                                                            bundles.c.expires_at < now,
-                                                            bundles.c.status != "expired")).all()
-            for b in expired:
-                if b.relative_storage_key:
-                    (self.bundle_dir / b.relative_storage_key).unlink(missing_ok=True)
-                conn.execute(bundles.update().where(bundles.c.id == b.id).values(status="expired"))
-            conn.execute(reports.delete().where(reports.c.deployment_id == self.deployment_id,
-                                                reports.c.expires_at.is_not(None), reports.c.expires_at < now))
-        # Orphaned files (a crash between write and commit).
         if self.bundle_dir.is_dir():
             with self.engine.connect() as conn:
                 known = {r[0] for r in conn.execute(sa.select(bundles.c.relative_storage_key)
@@ -450,6 +503,8 @@ class DiagnosticsService:
               previous_report_id: str | None = None, run_inline: bool = False) -> dict:
         if profile not in ("passive", "active"):
             raise AdminError(400, "invalid_request", "profile is passive or active.")
+        self._target(hub_id)
+        self._maybe_recover()
         settings = config_service(self.hub_dir).diagnostics_settings()
         selected = [c for c in CHECKS if (check_ids is None and (c.profile == "passive" or profile == "active"))
                     or (check_ids is not None and c.id in check_ids)]
@@ -465,18 +520,46 @@ class DiagnosticsService:
                 raise AdminError(422, "validation_failed",
                                  "Active checks contact other services. Confirm with consent_network: true.")
         now = time.time()
-        rhash = hashlib.sha256(json.dumps([profile, sorted(c.id for c in selected), hub_id]).encode()).hexdigest()
-        retention = None  # reports are kept until deleted (B037)
-        with self.engine.begin() as conn:
-            if idempotency_key:
+        rhash = hashlib.sha256(json.dumps([profile, sorted(c.id for c in selected), hub_id,
+                                           bool(consent_network), previous_report_id]).encode()).hexdigest()
+        retention = None  # reports are kept until deleted
+
+        def replay():
+            with self.engine.connect() as conn:
                 prior = conn.execute(sa.select(reports).where(
                     reports.c.deployment_id == self.deployment_id, reports.c.requested_by_user_id == actor,
                     reports.c.idempotency_key == idempotency_key)).first()
-                if prior is not None:
-                    if prior.request_hash != rhash:
-                        raise AdminError(409, "idempotency_key_reused",
-                                         "That Idempotency-Key was used for a different request.")
-                    return {"report_id": prior.id, "status": prior.status, "replayed": True}
+            if prior is None:
+                return None
+            if prior.request_hash != rhash:
+                raise AdminError(409, "idempotency_key_reused",
+                                 "That Idempotency-Key was used for a different request.")
+            return {"report_id": prior.id, "status": prior.status, "replayed": True,
+                    "location": f"/api/admin/diagnostics/reports/{prior.id}"}
+
+        if idempotency_key:
+            found = replay()
+            if found is not None:
+                return found
+        try:
+            report_id = self._admit(actor=actor, profile=profile, selected=selected, hub_id=hub_id,
+                                    idempotency_key=idempotency_key, rhash=rhash, now=now, retention=retention,
+                                    previous_report_id=previous_report_id)
+        except sa.exc.IntegrityError:
+            found = replay() if idempotency_key else None
+            if found is None:
+                raise
+            return found  # a concurrent retry with the same key won the admission
+        self._track(report_id)
+        if run_inline:
+            self._run(report_id)
+        else:
+            self._pool().submit(self._run, report_id)
+        return {"report_id": report_id, "status": "queued", "location": f"/api/admin/diagnostics/reports/{report_id}"}
+
+    def _admit(self, *, actor, profile, selected, hub_id, idempotency_key, rhash, now, retention,
+               previous_report_id) -> str:
+        with self.engine.begin() as conn:
             live = conn.execute(sa.select(sa.func.count()).select_from(reports).where(
                 reports.c.deployment_id == self.deployment_id,
                 reports.c.status.in_(("queued", "running")))).scalar() or 0
@@ -490,22 +573,19 @@ class DiagnosticsService:
                 created_at=now, expires_at=(now + retention * 86400) if retention else None,
                 config_revision=config_service(self.hub_dir).active().revision,
                 idempotency_key=idempotency_key, request_hash=rhash, cancel_requested=0,
-                previous_report_id=previous_report_id))
+                previous_report_id=previous_report_id, lease_owner=WORKER_ID,
+                lease_expires_at=now + LEASE_SECONDS))
             from ..control import audit
 
             audit.write(conn, actor, "diagnostic.requested", subject=report_id, hub=hub_id,
                         detail={"profile": profile, "checks": len(selected)}, surface="admin")
-        if run_inline:
-            self._run(report_id)
-        else:
-            self._pool().submit(self._run, report_id)
-        return {"report_id": report_id, "status": "queued", "location": f"/api/admin/diagnostics/reports/{report_id}"}
+        return report_id
 
     def _claim(self, report_id: str) -> bool:
         now = time.time()
         with self.engine.begin() as conn:
             return conn.execute(reports.update().where(
-                reports.c.id == report_id, reports.c.status == "queued")
+                reports.c.id == report_id, reports.c.status == "queued", reports.c.lease_owner == WORKER_ID)
                 .values(status="running", started_at=now, lease_owner=WORKER_ID,
                         lease_expires_at=now + LEASE_SECONDS)).rowcount == 1
 
@@ -521,11 +601,18 @@ class DiagnosticsService:
 
     def _run(self, report_id: str) -> None:
         try:
+            self._run_claimed(report_id)
+        finally:
+            self._untrack(report_id)
+
+    def _run_claimed(self, report_id: str) -> None:
+        try:
             if not self._claim(report_id):
                 return
             settings = config_service(self.hub_dir).diagnostics_settings()
             with self.engine.connect() as conn:
                 row = conn.execute(sa.select(reports).where(reports.c.id == report_id)).first()
+            target = self._target(row.hub_id)
             selected = [BY_ID[c] for c in json.loads(row.check_ids_json or "[]") if c in BY_ID]
             deadline = time.monotonic() + REPORT_WALL_SECONDS
             timeout = settings["check_timeout_seconds"]
@@ -543,7 +630,7 @@ class DiagnosticsService:
                         pending = []
                     while pending and len(running) < settings["max_parallel_checks"]:
                         c = pending.pop(0)
-                        running[pool.submit(c.fn, self.hub_dir)] = (c, time.monotonic())
+                        running[pool.submit(c.fn, target)] = (c, time.monotonic())
                     done, _ = cf.wait(list(running), timeout=0.5, return_when=cf.FIRST_COMPLETED)
                     now = time.monotonic()
                     for fut in list(running):
@@ -573,8 +660,11 @@ class DiagnosticsService:
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
             with self.engine.begin() as conn:
-                conn.execute(reports.update().where(reports.c.id == report_id, reports.c.lease_owner == WORKER_ID)
-                             .values(status=status, completed_at=time.time(), lease_expires_at=None))
+                if conn.execute(reports.update().where(
+                        reports.c.id == report_id, reports.c.lease_owner == WORKER_ID,
+                        reports.c.status == "running", reports.c.lease_expires_at >= time.time())
+                        .values(status=status, completed_at=time.time(), lease_expires_at=None)).rowcount != 1:
+                    return  # the lease was lost: the report stays interrupted
                 from ..control import audit
 
                 audit.write(conn, row.requested_by_user_id, "diagnostic.completed", subject=report_id,
@@ -582,8 +672,10 @@ class DiagnosticsService:
         except Exception:  # noqa: BLE001 - recorded as failed, never crashes the bridge
             log.exception("diagnostics: report %s failed", report_id)
             with self.engine.begin() as conn:
-                conn.execute(reports.update().where(reports.c.id == report_id)
-                             .values(status="failed", completed_at=time.time(), error_code="internal"))
+                conn.execute(reports.update().where(reports.c.id == report_id, reports.c.status == "running",
+                                                    reports.c.lease_owner == WORKER_ID)
+                             .values(status="failed", completed_at=time.time(), error_code="internal",
+                                     lease_expires_at=None))
 
     def _record(self, report_id: str, c: CheckDef, r: Result, ms: int) -> None:
         details = scrub(r.details)
@@ -592,6 +684,11 @@ class DiagnosticsService:
             raw = json.dumps({"truncated": True})
         now = time.time()
         with self.engine.begin() as conn:
+            live = conn.execute(sa.select(reports.c.id).where(
+                reports.c.id == report_id, reports.c.status == "running",
+                reports.c.lease_owner == WORKER_ID)).first()
+            if live is None:
+                return  # interrupted or taken over: a late worker writes nothing
             exists = conn.execute(sa.select(checks_table.c.check_id).where(
                 checks_table.c.report_id == report_id, checks_table.c.check_id == c.id)).first()
             if exists:
@@ -616,6 +713,7 @@ class DiagnosticsService:
         return self.get(report_id)
 
     def get(self, report_id: str) -> dict:
+        self._maybe_recover()
         with self.engine.connect() as conn:
             row = conn.execute(sa.select(reports).where(reports.c.id == report_id,
                                                         reports.c.deployment_id == self.deployment_id)).first()
@@ -638,6 +736,7 @@ class DiagnosticsService:
 
     def list(self, *, hub_ids: list[str] | None = None, limit: int = 50, cursor: str | None = None) -> dict:
         limit = max(1, min(limit, 200))
+        self._maybe_recover()
         stmt = sa.select(reports).where(reports.c.deployment_id == self.deployment_id)
         if hub_ids is not None:
             stmt = stmt.where(reports.c.hub_id.in_(hub_ids))
@@ -671,6 +770,20 @@ class DiagnosticsService:
         if report["status"] in ("queued", "running"):
             raise AdminError(409, "run_in_progress", "Wait for the report to finish, then make a bundle.")
         settings = config_service(self.hub_dir).diagnostics_settings()
+        with self.engine.begin() as conn:
+            kept = conn.execute(sa.select(bundles).where(
+                bundles.c.report_id == report_id, bundles.c.deployment_id == self.deployment_id,
+                bundles.c.status == "ready").order_by(bundles.c.created_at.desc())).first()
+            if kept is not None:
+                # The report is finished, so its bundle is the same: a fresh link, not a second copy.
+                conn.execute(bundles.update().where(bundles.c.id == kept.id).values(
+                    expires_at=time.time() + settings["bundle_ttl_minutes"] * 60))
+                from ..control import audit
+
+                audit.write(conn, actor, "bundle.link_renewed", subject=kept.id, detail={"report": report_id},
+                            surface="admin")
+        if kept is not None:
+            return self.bundle_info(kept.id)
         from .. import doctor
 
         versions = scrub(doctor._versions().detail or {})
@@ -682,16 +795,17 @@ class DiagnosticsService:
             "versions.json": versions,
             "config-provenance.json": provenance,
         }
+        members = {name: json.dumps(body, indent=2, sort_keys=True, default=str).encode()
+                   for name, body in docs.items()}
         manifest = {"format": "hubzoid-support-bundle-v1", "report_id": report_id, "created_at": time.time(),
-                    "files": {name: hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
-                              for name, body in docs.items()},
+                    "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in members.items()},
                     "omitted": ["message bodies", "prompts", "attachments", "environment", "secrets", "raw logs",
                                 "host paths"]}
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("manifest.json", json.dumps(manifest, indent=2, default=str))
-            for name, body in docs.items():
-                zf.writestr(name, json.dumps(body, indent=2, sort_keys=True, default=str))
+            for name, raw in members.items():
+                zf.writestr(name, raw)
         data = buf.getvalue()
         if len(data) > 10 * 1024 * 1024:
             raise AdminError(413, "too_large", "The bundle would be larger than 10 MiB.")
@@ -720,8 +834,11 @@ class DiagnosticsService:
                                                       bundles.c.deployment_id == self.deployment_id)).first()
         if b is None:
             raise AdminError(404, "not_found", "That bundle was not found.")
-        if b.status != "ready" or b.expires_at < time.time():
-            raise AdminError(410, "report_expired", "That bundle expired. Make a new one from the report.")
+        if b.status != "ready":
+            raise AdminError(410, "report_expired", "That bundle was deleted. Make a new one from the report.")
+        if b.expires_at < time.time():
+            raise AdminError(410, "download_expired", "This download link expired. The bundle is kept: "
+                                                      "make a new link from the report.")
         return {"bundle_id": b.id, "report_id": b.report_id, "sha256": b.sha256, "size_bytes": b.size_bytes,
                 "expires_at": b.expires_at, "manifest": json.loads(b.manifest_json or "{}"),
                 "download": f"/api/admin/diagnostics/bundles/{b.id}/download"}
@@ -738,7 +855,28 @@ class DiagnosticsService:
         return data
 
     def bundle_report(self, bundle_id: str) -> str:
-        return self.bundle_info(bundle_id)["report_id"]
+        with self.engine.connect() as conn:
+            row = conn.execute(sa.select(bundles.c.report_id).where(
+                bundles.c.id == bundle_id, bundles.c.deployment_id == self.deployment_id)).first()
+        if row is None:
+            raise AdminError(404, "not_found", "That bundle was not found.")
+        return row.report_id
+
+    def delete_bundle(self, bundle_id: str, *, actor: str) -> dict:
+        """Delete a bundle's bytes. The only way a retained bundle goes away."""
+        with self.engine.begin() as conn:
+            b = conn.execute(sa.select(bundles).where(bundles.c.id == bundle_id,
+                                                      bundles.c.deployment_id == self.deployment_id)).first()
+            if b is None:
+                raise AdminError(404, "not_found", "That bundle was not found.")
+            if b.status == "ready":
+                conn.execute(bundles.update().where(bundles.c.id == bundle_id).values(status="deleted"))
+                from ..control import audit
+
+                audit.write(conn, actor, "bundle.deleted", subject=bundle_id, surface="admin")
+        if b.relative_storage_key:
+            (self.bundle_dir / b.relative_storage_key).unlink(missing_ok=True)
+        return {"bundle_id": bundle_id, "status": "deleted"}
 
 
 def _domains(hub: Path) -> list[dict]:

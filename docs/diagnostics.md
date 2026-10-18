@@ -44,7 +44,10 @@ worker stopped is marked `interrupted` and is not rerun; run it again.
 
 Reports are kept until you delete them. A support bundle is a zip of `manifest.json`, `checks.json`, `versions.json`
 and `config-provenance.json`. It has no chat content, prompts, files,
-environment or secrets, and expires after `bundle_ttl_minutes`.
+environment or secrets. Its download link expires after `bundle_ttl_minutes`;
+the bundle itself is kept. Making a bundle again for the same report renews
+the link. Delete a bundle with `hubzoid admin diagnostics bundle-delete <id>`
+or `DELETE /api/admin/diagnostics/bundles/<id>`.
 
 Monitoring commands print JSON with `--json`: `schedule list`, `schedule
 status`, `schedule deliveries`, `access check`, `access list`, `admin list`,

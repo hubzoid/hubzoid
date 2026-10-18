@@ -106,10 +106,15 @@ def review(candidate_id: str, hub: Path = HUB, digest: str = typer.Option(..., "
 
 @parity_app.command("freeze")
 def freeze(candidate_id: str, hub: Path = HUB, digest: str = typer.Option(..., "--digest"),
-           review: str = typer.Option(..., "--review"), as_json: bool = JSON) -> None:
+           review: str = typer.Option(..., "--review"),
+           expected_revision: int = typer.Option(..., "--expected-revision"),
+           source_root: Path = typer.Option(None, "--source-root",
+                                            help="Reference files to re-hash (default: source_root in parity.yaml)."),
+           as_json: bool = JSON) -> None:
     with _guard(as_json):
-        cc.emit(store.service_for(hub).freeze(candidate_id, digest=digest, review_id=review, actor=cc.actor()),
-                as_json)
+        cc.emit(store.service_for(hub).freeze(candidate_id, digest=digest, review_id=review,
+                                              expected_revision=expected_revision, source_root=source_root,
+                                              actor=cc.actor()), as_json)
 
 
 @parity_app.command("diff")

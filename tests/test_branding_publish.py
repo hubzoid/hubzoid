@@ -174,6 +174,42 @@ def test_changed_candidate_invalidates_review(client):
     assert a.status_code == 409 and a.json()["detail"]["code"] == "revision_conflict"
 
 
+def test_rejection_supersedes_earlier_approval(client):
+    d = client.post("/api/branding/drafts", headers=ORIGIN,
+                    json={"configuration": CONF, "files": b64(FILES)}).json()
+    body = {"digest": d["digest"], "expected_revision": d["revision"]}
+    ok = client.post(f"/api/branding/drafts/{d['id']}/reviews", headers=ORIGIN,
+                     json={**body, "decision": "approve"}).json()
+    client.post(f"/api/branding/drafts/{d['id']}/reviews", headers=ORIGIN, json={**body, "decision": "reject"})
+    a = client.post(f"/api/branding/drafts/{d['id']}/activate", headers=ORIGIN,
+                    json={"review_id": ok["review_id"], "expected_revision": 0})
+    assert a.status_code == 409 and a.json()["detail"]["code"] == "review_superseded"
+
+
+def test_legacy_folder_serves_only_logo_and_icon_until_a_brand_is_active(hub, client):
+    (hub / "branding" / "page.html").write_text("<script>alert(1)</script>")
+    (hub / "branding" / "logo.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    assert client.get("/branding/page.html").status_code == 404
+    logo = client.get("/branding/logo.svg")
+    assert logo.status_code == 200 and "sandbox" in logo.headers["content-security-policy"]
+    publish(client)
+    assert client.get("/branding/logo.svg").status_code == 404  # only published assets once a brand is live
+
+
+def test_terms_check_fails_closed(client, monkeypatch):
+    from hubzoid.ui import branding_store
+    from tests.chat_helpers import chat_body
+
+    def broken(*_a, **_k):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(branding_store.BrandingService, "me", broken)
+    agent = client.get("/api/agents").json()["default_agent"]
+    r = client.post("/api/chat", headers=ORIGIN, json=chat_body("c_terms_down_1", "hi", agent=agent,
+                                                               message_id="m_terms_down1"))
+    assert r.status_code == 503
+
+
 def test_retry_gives_one_activation_and_stale_generation_conflicts(client):
     d, review, a = publish(client, key="act-1")
     again = client.post(f"/api/branding/drafts/{d['id']}/activate",

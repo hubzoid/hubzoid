@@ -15,7 +15,7 @@
   GET  /api/admin/diagnostics/reports[/{id}]         reports, one report
   POST /api/admin/diagnostics/reports/{id}/cancel    cancel
   POST /api/admin/diagnostics/reports/{id}/bundles   a support bundle
-  GET  /api/admin/diagnostics/bundles/{id}[/download]
+  GET  /api/admin/diagnostics/bundles/{id}[/download] · DELETE /api/admin/diagnostics/bundles/{id}
 
 Entry needs ``admin.access``; each operation its own capability, checked
 again on every poll and download (``hubzoid.control.authz``).
@@ -311,3 +311,12 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
         return Response(data, media_type="application/zip", headers={
             "Content-Disposition": f'attachment; filename="hubzoid-support-{bundle_id[:8]}.zip"',
             "Cache-Control": "no-store"})
+
+    @app.delete("/api/admin/diagnostics/bundles/{bundle_id}")
+    async def bundle_delete(bundle_id: str, request: Request):
+        p = await authz.require_request(request, hub_dir, "admin.access", mutation=True)
+        svc = diag.service_for(hub_dir)
+        report_id = await call(svc.bundle_report, bundle_id)
+        await owned_report(p, report_id)
+        scope_hub(p, await call(svc.hub_of, report_id), "admin.diagnostics.export")
+        return await call(svc.delete_bundle, bundle_id, actor=p.email)

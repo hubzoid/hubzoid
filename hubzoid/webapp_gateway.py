@@ -44,6 +44,7 @@ log = logging.getLogger("hubzoid.webapp")
 
 _LOGO_CANDIDATES = ("logo.svg", "logo.png", "logo.webp", "favicon.svg", "favicon.png")
 _FAVICON_CANDIDATES = ("favicon.svg", "favicon.png", "favicon.ico", "logo.svg", "logo.png")
+_LEGACY_SERVED = frozenset(_LOGO_CANDIDATES + _FAVICON_CANDIDATES)
 _PREFIX_HEADER = "x-forwarded-prefix"
 
 
@@ -332,8 +333,20 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         except Exception:  # noqa: BLE001
             log.exception("webapp: branding unavailable")
             return None
-        if scope.folder is None or filename.lower() == "custom.css":
+        # Only the legacy logo and icon names, and only while no brand is
+        # published: everything else under branding/ (drafts, unpublished
+        # files) is reachable only through the reviewed branding service.
+        if scope.folder is None or filename.lower() not in _LEGACY_SERVED:
             return None
+        if not (request.headers.get(_PREFIX_HEADER) or "").rstrip("/"):
+            try:
+                from .ui import branding_store
+
+                if branding_store.service_for(hub_dir).active_manifest() is not None:
+                    return None
+            except Exception:  # noqa: BLE001 - fail closed: nothing legacy is served
+                log.exception("webapp: active branding unavailable")
+                return None
         base = scope.folder.resolve()
         real = _find(base, (filename.lower(),))
         if real is None:
@@ -350,4 +363,7 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         target = await run_in_threadpool(branding_path, filename, request)
         if target is None:
             raise HTTPException(404, "not found")
-        return FileResponse(str(target), headers={"Cache-Control": "public, max-age=300"})
+        return FileResponse(str(target), headers={
+            "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff",
+            # An SVG opened directly runs in an opaque origin with no scripts.
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})

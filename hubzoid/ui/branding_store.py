@@ -452,11 +452,18 @@ class BrandingService:
             base = rev.id if rev is not None else NO_BASE
             listed, missing, css_text = self._ingest(conn, configuration, files)
             state, validation, dig = self._evaluate(configuration, theme, listed, missing, base, css_text)
-            conn.execute(drafts.update().where(drafts.c.id == draft_id, drafts.c.revision == expected_revision)
-                         .values(configuration_json=json.dumps(configuration), theme_json=json.dumps(theme),
-                                 assets_json=json.dumps(listed), digest=dig, revision=expected_revision + 1,
-                                 state=state, validation_json=json.dumps(validation), base_revision=base,
-                                 validator_version=models.VALIDATOR_VERSION, updated_at=time.time()))
+            moved = conn.execute(drafts.update().where(drafts.c.id == draft_id,
+                                                       drafts.c.revision == expected_revision)
+                                 .values(configuration_json=json.dumps(configuration), theme_json=json.dumps(theme),
+                                         assets_json=json.dumps(listed), digest=dig,
+                                         revision=expected_revision + 1, state=state,
+                                         validation_json=json.dumps(validation), base_revision=base,
+                                         validator_version=models.VALIDATOR_VERSION,
+                                         updated_at=time.time())).rowcount
+            if moved != 1:  # a concurrent edit won between the read and this write
+                raise BrandError(409, "revision_conflict",
+                                 "This draft changed at the same moment. Reload it and try again.",
+                                 current_revision=expected_revision + 1)
             _audit(conn, actor, "branding.draft_updated", subject=draft_id, detail={"digest": dig})
         return self.get_draft(draft_id)
 
@@ -591,6 +598,12 @@ class BrandingService:
                 raise BrandError(409, "revision_conflict",
                                  "The draft changed after it was reviewed. Review the current version.",
                                  current_revision=row.revision)
+            latest = conn.execute(sa.select(reviews.c.id, reviews.c.decision).where(
+                reviews.c.draft_id == draft_id).order_by(reviews.c.created_at.desc(), reviews.c.id.desc())).first()
+            if latest.id != review_id or row.state != "reviewed":
+                raise BrandError(409, "review_superseded",
+                                 "A later review replaced this approval. Activate needs the latest review "
+                                 "to approve the current version.")
             head, cur = self._active_row(conn)
             generation = head.generation if head is not None else 0
             base = cur.id if cur is not None else NO_BASE

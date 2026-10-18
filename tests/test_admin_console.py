@@ -107,7 +107,7 @@ def test_network_probe_requires_double_opt_in(hub):
     assert "connectors.reachability" in {c["check_id"] for c in svc.get(ok["report_id"])["checks"]}
 
 
-def test_report_lease_interrupted_not_rerun(hub):
+def test_report_lease_interrupted_not_rerun(hub, monkeypatch):
     svc = diag.service_for(hub)
     with svc.engine.begin() as conn:
         conn.execute(diag.reports.insert().values(
@@ -117,6 +117,26 @@ def test_report_lease_interrupted_not_rerun(hub):
     assert svc.recover() == 1
     assert svc.get("r-dead")["status"] == "interrupted"
     assert svc.get("r-dead")["checks"] == []
+    # A late worker of the dead process writes nothing over the interruption.
+    monkeypatch.setattr(diag, "WORKER_ID", "gone")
+    svc._record("r-dead", diag.CHECKS[0], diag.Result("ok", "late"), 1)
+    assert svc.get("r-dead")["checks"] == [] and svc.get("r-dead")["status"] == "interrupted"
+
+
+def test_concurrent_retry_admits_one_report(hub):
+    import sqlalchemy as sa
+
+    svc = diag.service_for(hub)
+    first = svc.start(actor="t", idempotency_key="k-1", run_inline=True)
+    again = svc.start(actor="t", idempotency_key="k-1", run_inline=True)
+    assert again["report_id"] == first["report_id"] and again["replayed"]
+    # A retry that missed the lookup still can't admit a second report.
+    with pytest.raises(sa.exc.IntegrityError):
+        svc._admit(actor="t", profile="passive", selected=[], hub_id=None, idempotency_key="k-1", rhash="x",
+                   now=time.time(), retention=None, previous_report_id=None)
+    with pytest.raises(AdminError) as exc:  # the request hash covers every input
+        svc.start(actor="t", idempotency_key="k-1", previous_report_id=first["report_id"])
+    assert exc.value.code == "idempotency_key_reused"
 
 
 def test_slow_check_times_out(hub, monkeypatch):
@@ -144,17 +164,44 @@ def test_bundle_allowlist_limits_and_expiry(client, hub):
         assert sorted(zf.namelist()) == ["checks.json", "config-provenance.json", "manifest.json", "versions.json"]
         blob = b"".join(zf.read(n) for n in zf.namelist())
     assert b"SECRET" not in blob and str(hub).encode() not in blob
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:  # the manifest hashes the archived bytes
+        files = json.loads(zf.read("manifest.json"))["files"]
+        import hashlib
+
+        assert all(hashlib.sha256(zf.read(n)).hexdigest() == h for n, h in files.items())
     with diag.service_for(hub).engine.begin() as conn:
         conn.execute(diag.bundles.update().values(expires_at=time.time() - 1))
-    assert client.get(b.json()["download"]).status_code == 410
+    expired = client.get(b.json()["download"])
+    assert expired.status_code == 410 and expired.json()["detail"]["code"] == "download_expired"
+    diag.service_for(hub).recover()
+    kept = diag.service_for(hub).bundle_dir / f"{b.json()['bundle_id']}.zip"
+    assert kept.is_file()  # the link expired, the bundle is kept
+    renewed = client.post(f"/api/admin/diagnostics/reports/{rid}/bundles", headers=ORIGIN).json()
+    assert renewed["bundle_id"] == b.json()["bundle_id"] and client.get(renewed["download"]).status_code == 200
+    gone = client.delete(f"/api/admin/diagnostics/bundles/{renewed['bundle_id']}", headers=ORIGIN)
+    assert gone.status_code == 200 and not kept.exists()
 
 
 def test_hub_admin_cannot_read_other_hub_report(client, hub, monkeypatch):
     from hubzoid.access import store_for
 
+    from hubzoid import deployment
+
+    other_dir = hub.parent / "other-hub"
+    other_dir.mkdir()
+    real_hubs = deployment.hubs
+    monkeypatch.setattr(deployment, "hubs", lambda d: real_hubs(d) + [
+        {"key": "other-hub", "name": "Other", "path": str(other_dir), "model_id": "other"}])
     store_for(hub).grant("ana@example.org", hub.name, "manage_access", actor="test")
     svc = diag.service_for(hub)
-    other = svc.start(actor="t", hub_id="other-hub", run_inline=True)["report_id"]
+    with pytest.raises(AdminError) as exc:
+        svc.start(actor="t", hub_id="not-a-hub")
+    assert exc.value.status == 404
+    seen = []
+    monkeypatch.setattr(diag, "BY_ID", {**diag.BY_ID, "storage.disk": diag.CheckDef(
+        "storage.disk", "passive", "x", "HUB-109", lambda h: seen.append(h) or diag.Result("ok", "x"))})
+    other = svc.start(actor="t", hub_id="other-hub", check_ids=["storage.disk"], run_inline=True)["report_id"]
+    assert seen == [other_dir]  # the named hub is examined, not the receiving bridge's
     mine = svc.start(actor="t", hub_id=hub.name, run_inline=True)["report_id"]
     as_people(monkeypatch)
     assert client.get(f"/api/admin/diagnostics/reports/{other}", headers=who("ana")).status_code == 404

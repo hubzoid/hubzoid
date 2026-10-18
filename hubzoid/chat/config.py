@@ -282,19 +282,44 @@ def defaults() -> dict:
     return validate_document({"version": VERSION})
 
 
+def _hoist(sub: dict, prefix: str, defs: dict) -> dict:
+    """Move a namespace schema's ``$defs`` to the document root under
+    ``<namespace>.<Name>`` and point its references there."""
+    local = sub.pop("$defs", {})
+    rename = {k: f"{prefix}.{k}" for k in local}
+
+    def fix(node):
+        if isinstance(node, dict):
+            out = {}
+            for k, v in node.items():
+                if k == "$ref" and isinstance(v, str) and v.startswith("#/$defs/"):
+                    out[k] = "#/$defs/" + rename.get(v[len("#/$defs/"):], v[len("#/$defs/"):])
+                else:
+                    out[k] = fix(v)
+            return out
+        if isinstance(node, list):
+            return [fix(v) for v in node]
+        return node
+
+    for k, v in local.items():
+        defs[rename[k]] = fix(v)
+    return fix(sub)
+
+
 def schema() -> dict:
     """JSON Schema of the document, with defaults, scope and personal keys."""
     props: dict = {"version": {"const": VERSION}}
+    defs: dict = {}
     meta: dict = {}
     for name, ns in sorted(namespaces().items()):
         if ns.installed:
-            props[name] = ns.model.model_json_schema()
+            props[name] = _hoist(ns.model.model_json_schema(), name, defs)
         meta[name] = {"owner": ns.owner, "installed": ns.installed, "scope": "deployment",
                       "personal_keys": list(ns.personal_keys), "applies": ns.applies}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "chat/config.yaml", "type": "object", "required": ["version"],
-        "additionalProperties": False, "properties": props,
+        "additionalProperties": False, "properties": props, "$defs": defs,
         "x-hubzoid": {"file": FILE, "version": VERSION, "namespaces": meta,
                       "limits": {"document_bytes": MAX_DOCUMENT_BYTES,
                                  "preference_writes_per_minute": PREFERENCE_WRITES_PER_MINUTE}},

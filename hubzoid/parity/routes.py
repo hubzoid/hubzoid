@@ -99,6 +99,7 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
     async def freeze(cid: str, request: Request):
         p = await authz.require_request(request, hub_dir, "parity.review", mutation=True)
         body = await hz.body(request)
+        expected = hz.expected_revision(body.get("expected_revision"), allow_absent=False)
         return await call(store.service_for(hub_dir).freeze, cid, digest=str(body.get("digest") or ""),
-                          review_id=str(body.get("review_id") or ""), actor=p.email,
+                          review_id=str(body.get("review_id") or ""), expected_revision=expected, actor=p.email,
                           idempotency_key=hz.idempotency_key(request))

@@ -76,16 +76,31 @@ def _err(code: str, message: str, **extra) -> dict:
     return {"code": code, "message": message, **{k: v for k, v in extra.items() if v is not None}}
 
 
+def _reserved(parts) -> bool:
+    return any(str(p).lower() in _RESERVED for p in parts)
+
+
 def safe_path(root: Path, rel: str) -> Path:
-    parts = [p.lower() for p in Path(rel).parts]
-    if any(p in _RESERVED for p in parts):
+    """``rel`` under ``root``: no absolute paths, ``..``, symlinks or
+    credential locations, checked on the path as written and as resolved."""
+    if _reserved(Path(rel).parts):
         raise ParityError(422, "unsafe_path", f"{rel} is in a credential location. Copy a redacted file under "
                                               "parity/input instead.", path=rel)
     try:
-        return deploy.resolve_inside(root, rel)
+        target = deploy.resolve_inside(root, rel)
     except ValueError as exc:
         raise ParityError(422, "unsafe_path", f"{rel}: {exc} Copy the file under the deployment folder.",
                           path=rel) from exc
+    base = Path(root).resolve()
+    walk = Path(root)
+    for part in Path(rel).parts:
+        walk = walk / part
+        if walk.is_symlink():
+            raise ParityError(422, "unsafe_path", f"{rel} goes through a symbolic link. Copy the file instead.",
+                              path=rel)
+    if _reserved(target.relative_to(base).parts):
+        raise ParityError(422, "unsafe_path", f"{rel} is in a credential location.", path=rel)
+    return target
 
 
 def _read(root: Path, rel: str) -> bytes:
@@ -151,24 +166,79 @@ def load(root: Path, manifest_path: Path | str = "parity.yaml") -> Bundle:
     return Bundle(manifest, ledger, sources, providers, deployments)
 
 
+_CREDENTIAL_URL = re.compile(r"[a-z][a-z0-9+.-]*://[^/\s@]*:[^/\s@]*@", re.I)
+_SECRET_QUERY = re.compile(r"[?&](token|access_token|api[_-]?key|key|secret|password|sig|signature|auth)=",
+                           re.I)
+_MAX_SETTING_TEXT = 500
+
+
+def _unsafe_value(key: str, value: Any, path: str, out: list[tuple[str, str]], depth: int = 0) -> None:
+    """Collect every part of a setting value outside the safe representations:
+    plain scalars and short text with no credential inside, and for secret
+    keys only the presence words."""
+    if depth > 6:
+        out.append((path, "nests too deeply"))
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _unsafe_value(f"{key}.{k}", v, f"{path}/{k}", out, depth + 1)
+        return
+    if isinstance(value, list):
+        for i, v in enumerate(value):
+            _unsafe_value(key, v, f"{path}/{i}", out, depth + 1)
+        return
+    if _SECRET_KEY.search(key) and value not in _SAFE_SECRET_VALUES:
+        out.append((path, "is a secret setting; record only present, absent or redacted"))
+        return
+    if isinstance(value, str):
+        if _SECRET_VALUE.search(value):
+            out.append((path, "looks like a credential"))
+        elif _CREDENTIAL_URL.search(value):
+            out.append((path, "is a URL with a user name or password in it; record it without them"))
+        elif _SECRET_QUERY.search(value):
+            out.append((path, "is a URL carrying a token or key; record it without the query"))
+        elif len(value) > _MAX_SETTING_TEXT:
+            out.append((path, f"is longer than {_MAX_SETTING_TEXT} characters; record a summary"))
+    elif value is not None and not isinstance(value, (bool, int, float)):
+        out.append((path, "is not a plain value"))
+
+
 def _sensitive(dep_id: str, inventory: dict) -> list[dict]:
     found = []
     for i, row in enumerate(inventory.get("settings") or []):
+        if not isinstance(row, dict):
+            continue
         key = str(row.get("key", ""))
         for field_name in ("declared_value", "upstream_default", "sdk_default", "persisted_override",
                            "effective_value"):
-            value = row.get(field_name)
-            secretish_key = bool(_SECRET_KEY.search(key))
-            secretish_value = isinstance(value, str) and bool(_SECRET_VALUE.search(value))
-            if (secretish_key and value not in _SAFE_SECRET_VALUES) or secretish_value:
-                found.append(_err("sensitive_field",
-                                  f"{dep_id}: settings[{i}] {key}.{field_name} looks like a secret value. Replace it "
-                                  "with present, absent or redacted.", pointer=f"/deployments/{dep_id}/settings/{i}/"
-                                  f"{field_name}"))
+            bad: list[tuple[str, str]] = []
+            _unsafe_value(key, row.get(field_name), f"/deployments/{dep_id}/settings/{i}/{field_name}", bad)
+            for pointer, why in bad:
+                found.append(_err("sensitive_field", f"{dep_id}: settings[{i}] {key}.{field_name} {why}.",
+                                  pointer=pointer))
     return found
 
 
-def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_ARCHIVE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _immutable(s: models.Source) -> bool:
+    if not s.files:
+        return False
+    if s.identity_kind == "upstream_commit":
+        return bool(s.upstream_commit and _COMMIT.match(s.upstream_commit))
+    if s.identity_kind == "archive":
+        return bool(s.archive_digest and _ARCHIVE.match(s.archive_digest))
+    return False
+
+
+def source_root_of(root: Path, manifest: dict) -> Path | None:
+    rel = manifest.get("source_root")
+    return safe_path(Path(root), rel) if rel else None
+
+
+def check(bundle: Bundle, *, source_root: Path | None = None, require_sources: bool = False) -> dict:
     errors: list[dict] = list(bundle.errors)
     blockers: list[dict] = []
     obligations: list[models.Obligation] = []
@@ -263,10 +333,24 @@ def check(bundle: Bundle, *, source_root: Path | None = None) -> dict:
         if not s.upstream_verified:
             blockers.append(_err("missing_evidence", f"source {s.id} is not matched to an immutable upstream commit "
                                  "yet.", source=s.id))
-        if source_root is not None:
+        elif not _immutable(s):
+            errors.append(_err("invalid_schema", f"source {s.id} says upstream_verified but records no immutable "
+                               "identity: a 40-character upstream_commit or a sha256: archive_digest, and the "
+                               "hash of every inspected file.", source=s.id))
+        if source_root is None:
+            if require_sources:
+                blockers.append(_err("source_unverified", f"source {s.id}: its files were not re-hashed. Set "
+                                     "source_root in parity.yaml (or pass --source-root) to verify them.",
+                                     source=s.id))
+        else:
             changed = []
             for rel, expected in s.files.items():
-                path = Path(source_root) / rel
+                try:
+                    path = safe_path(Path(source_root), rel)
+                except ParityError:
+                    errors.append(_err("unsafe_path", f"source {s.id}: {rel} is not a safe relative path.",
+                                       source=s.id))
+                    continue
                 actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
                 if actual != expected:
                     changed.append(rel)

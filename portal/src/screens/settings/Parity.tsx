@@ -134,7 +134,8 @@ export function Parity() {
               {
                 title: "",
                 render: (_, c) => {
-                  const approved = c.reviews.find((r) => r.decision === "approve" && r.digest === c.digest);
+                  const last = c.reviews[c.reviews.length - 1];
+                  const approved = last && last.decision === "approve" && last.digest === c.digest ? last : undefined;
                   if (c.freeze) return <Text type="secondary">Frozen. Requirements fixed, implementation not yet qualified.</Text>;
                   return (
                     <Space>
@@ -162,7 +163,7 @@ export function Parity() {
                           onClick={() =>
                             void step(
                               `freeze:${c.id}`,
-                              () => control(`/api/parity/candidates/${c.id}/freeze`, { idempotencyKey: newKey(), body: { digest: c.digest, review_id: approved.id } }),
+                              () => control(`/api/parity/candidates/${c.id}/freeze`, { idempotencyKey: newKey(), body: { digest: c.digest, review_id: approved.id, expected_revision: c.revision } }),
                               "Frozen.",
                             )
                           }

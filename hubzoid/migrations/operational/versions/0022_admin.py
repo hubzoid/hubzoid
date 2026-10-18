@@ -75,6 +75,8 @@ def upgrade() -> None:
         sa.Column('error_code', sa.String(64)),
         sa.Column('cancel_requested', sa.Integer, nullable=False),
         sa.Column('previous_report_id', sa.String(64)),
+        sa.UniqueConstraint('deployment_id', 'requested_by_user_id', 'idempotency_key',
+                            name='uq_hz_admin_diag_idempotency'),
     )
     op.create_table(
         "hz_admin_diagnostic_checks",

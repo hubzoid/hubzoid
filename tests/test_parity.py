@@ -3,6 +3,7 @@ and digest-bound review and freeze through the service, API and CLI."""
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -37,7 +38,8 @@ def bundle(**over) -> Bundle:
         "ledger": [ob(1), ob(2)],
         "sources": {"version": 1, "sources": [{"id": "ref", "repository": "x", "release": "1", "license": "MIT",
                                                "upstream_verified": True, "identity_kind": "upstream_commit",
-                                               "upstream_commit": "abc"}],
+                                               "upstream_commit": "a" * 40,
+                                               "files": {"src/a1.svelte": hashlib.sha256(b"ref").hexdigest()}}],
                     "locators": [{"id": "L1", "source": "ref", "path": "src/a1.svelte", "line": 10,
                                   "kind": "appendix_row"}]},
         "providers": [], "deployments": {}}
@@ -109,6 +111,7 @@ def test_source_hash_drift_blocks_freeze(tmp_path):
     s = copy.deepcopy(bundle().sources)
     s["sources"][0]["files"] = {"src/a.svelte": hashlib.sha256(b"one").hexdigest()}
     assert not check(bundle(sources=s), source_root=tmp_path)["blockers"]
+    assert check(bundle(sources=s), require_sources=True)["blockers"][0]["code"] == "source_unverified"
     (tmp_path / "src" / "a.svelte").write_text("two")
     assert check(bundle(sources=s), source_root=tmp_path)["blockers"][0]["code"] == "source_changed"
 
@@ -117,6 +120,9 @@ def test_parent_git_head_is_not_upstream_identity():
     s = copy.deepcopy(bundle().sources)
     s["sources"][0]["identity_kind"] = "parent_repo_head"
     assert not check(bundle(sources=s))["valid"]
+    loose = copy.deepcopy(bundle().sources)
+    loose["sources"][0]["upstream_commit"] = "abc"  # verified claims need an immutable identity
+    assert not check(bundle(sources=loose))["valid"]
 
 
 def test_missing_selected_provider_adapter_blocks():
@@ -156,6 +162,11 @@ def test_secret_field_never_logged():
     r = check(bundle(deployments={"dep-example": inv}))
     err = next(e for e in r["errors"] if e["code"] == "sensitive_field")
     assert "sk-live" not in json.dumps(r) and "OPENAI_API_KEY" in err["message"]
+    for value in ("postgres://user:hunter2@db/x", "https://h/x?token=abc", {"nested": {"url": "s3://k:v@b"}}):
+        inv = inventory(settings=[{"key": "DATABASE_URL", "declared_value": value, "evidence_kind": "observed"}])
+        r = check(bundle(deployments={"dep-example": inv}))
+        assert any(e["code"] == "sensitive_field" for e in r["errors"]), value
+        assert "hunter2" not in json.dumps(r["errors"])
 
 
 def test_symlink_and_reserved_path_rejected(tmp_path):
@@ -176,6 +187,17 @@ def test_symlink_and_reserved_path_rejected(tmp_path):
                                           "source_release: '1'\n")
     with pytest.raises(ParityError):
         load(tmp_path)
+    (tmp_path / "Keys").mkdir()
+    (tmp_path / "Keys" / "secret.json").write_text("{}")
+    (tmp_path / "ok.jsonl").symlink_to(tmp_path / "Keys" / "secret.json")  # in-root link to a credential
+    (tmp_path / "parity.yaml").write_text("version: 1\nledger: ok.jsonl\nsources: s\nproviders: p\n"
+                                          "source_release: '1'\n")
+    with pytest.raises(ParityError) as exc:
+        load(tmp_path)
+    assert exc.value.code == "unsafe_path"
+    s = copy.deepcopy(bundle().sources)
+    s["sources"][0]["files"] = {"../../.env": "0" * 64}
+    assert any(e["code"] == "unsafe_path" for e in check(bundle(sources=s), source_root=tmp_path)["errors"])
 
 
 @pytest.fixture
@@ -183,31 +205,59 @@ def hub(tmp_path, monkeypatch):
     return make_hub(tmp_path, monkeypatch)
 
 
-def test_review_bound_to_exact_digest(hub):
+@pytest.fixture
+def refs(tmp_path):
+    """The inspected reference file the test bundle's source records."""
+    root = tmp_path / "refs"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "a1.svelte").write_bytes(b"ref")
+    return root
+
+
+def test_review_bound_to_exact_digest(hub, refs):
     svc = store.ParityService(hub)
     clean = svc.create(bundle(), actor="owner")
     assert clean["status"] == "needs_review"
     with pytest.raises(ParityError):
         svc.review(clean["id"], digest="sha256:00", expected_revision=1, decision="approve", actor="owner")
     rv = svc.review(clean["id"], digest=clean["digest"], expected_revision=1, decision="approve", actor="owner")
-    frozen = svc.freeze(clean["id"], digest=clean["digest"], review_id=rv["review_id"], actor="owner")
+    with pytest.raises(ParityError) as exc:  # the reference files were not re-hashed
+        svc.freeze(clean["id"], digest=clean["digest"], review_id=rv["review_id"], expected_revision=2,
+                   actor="owner")
+    assert exc.value.code == "missing_evidence"
+    frozen = svc.freeze(clean["id"], digest=clean["digest"], review_id=rv["review_id"], expected_revision=2,
+                        source_root=refs, actor="owner")
     assert svc.get(clean["id"])["status"] == "frozen" and frozen["digest"] == clean["digest"]
     blocked = svc.create(bundle(ledger=[ob(1), ob(5, status="evidence_missing")]), actor="owner")
     assert blocked["status"] == "blocked"
     rv2 = svc.review(blocked["id"], digest=blocked["digest"], expected_revision=1, decision="approve", actor="o")
     with pytest.raises(ParityError) as exc:
-        svc.freeze(blocked["id"], digest=blocked["digest"], review_id=rv2["review_id"], actor="o")
+        svc.freeze(blocked["id"], digest=blocked["digest"], review_id=rv2["review_id"], expected_revision=2,
+                   source_root=refs, actor="o")
     assert exc.value.code == "missing_evidence"
     later = svc.create(bundle(ledger=[ob(1), ob(2), ob(3)]), actor="owner", base_id=clean["id"])
     assert svc.diff(clean["id"], later["id"])["added"] == ["HZP-000003"]
 
 
-def test_unsigned_review_cannot_freeze(hub):
+def test_unsigned_review_cannot_freeze(hub, refs):
     svc = store.ParityService(hub)
     c = svc.create(bundle(), actor="o")
     rv = svc.review(c["id"], digest=c["digest"], expected_revision=1, decision="approve", actor="o", signed=False)
     with pytest.raises(ParityError):
-        svc.freeze(c["id"], digest=c["digest"], review_id=rv["review_id"], actor="o")
+        svc.freeze(c["id"], digest=c["digest"], review_id=rv["review_id"], expected_revision=2, source_root=refs,
+                   actor="o")
+
+
+def test_rejection_supersedes_earlier_approval(hub, refs):
+    svc = store.ParityService(hub)
+    c = svc.create(bundle(), actor="o")
+    ok = svc.review(c["id"], digest=c["digest"], expected_revision=1, decision="approve", actor="o")
+    svc.review(c["id"], digest=c["digest"], expected_revision=2, decision="reject", actor="o")
+    for rev in (2, 3):
+        with pytest.raises(ParityError) as exc:
+            svc.freeze(c["id"], digest=c["digest"], review_id=ok["review_id"], expected_revision=rev,
+                       source_root=refs, actor="o")
+        assert exc.value.code in ("revision_conflict", "review_superseded")
 
 
 def test_cross_deployment_denied(hub):
@@ -232,7 +282,8 @@ def test_revoked_reviewer_cannot_freeze(hub, monkeypatch):
     store_for(hub).revoke("ana@example.org", "*", "manage_access", actor="test")
     assert client.get(f"/api/parity/candidates/{made['id']}", headers=who("ana")).status_code == 403
     r = client.post(f"/api/parity/candidates/{made['id']}/freeze", headers=who("ana"),
-                    json={"digest": made["digest"], "review_id": review.json()["review_id"]})
+                    json={"digest": made["digest"], "review_id": review.json()["review_id"],
+                          "expected_revision": 2})
     assert r.status_code == 403
 
 

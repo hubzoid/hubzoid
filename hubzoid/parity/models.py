@@ -219,3 +219,6 @@ class Manifest(_Strict):
     deployments: list[DeploymentRef] = Field(default_factory=list)
     source_release: str
     report_dir: str = "parity/reports"
+    #: Where copies of the inspected reference files live, relative to the
+    #: deployment folder. A freeze re-hashes every recorded file there.
+    source_root: str | None = None

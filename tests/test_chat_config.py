@@ -142,6 +142,26 @@ def test_teammate_cannot_read_or_apply(client, monkeypatch):
     assert client.get("/api/chat/preferences", headers=who("ana")).status_code == 200
 
 
+def test_schema_references_resolve_from_the_root():
+    from hubzoid.chat import config as cfg
+
+    doc = cfg.schema()
+    refs = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("$ref"), str):
+                refs.append(node["$ref"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(doc["properties"])
+    assert refs and all(r.split("/", 2)[2] in doc["$defs"] for r in refs)
+
+
 def test_theme_contrast_pairs_and_shape():
     with pytest.raises(theme.ThemeError) as exc:
         theme.resolve({"version": 1, "palettes": {"light": {"action": "#FFE0D0"}}})

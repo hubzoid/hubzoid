@@ -220,6 +220,13 @@ def diag_bundle(report_id: str, hub: Path = HUB, out: Path = typer.Option(None, 
     cc.emit(info, as_json)
 
 
+@diagnostics_app.command("bundle-delete")
+def diag_bundle_delete(bundle_id: str, hub: Path = HUB, as_json: bool = JSON) -> None:
+    """Delete a kept support bundle. Bundles are never deleted automatically."""
+    with _guard(as_json):
+        cc.emit(diag.service_for(hub).delete_bundle(bundle_id, actor=cc.actor()), as_json)
+
+
 def capabilities(hub: Path = HUB, as_json: bool = JSON) -> None:
     """What this operator may do, the settings domains and diagnostic checks."""
     owner = _LocalOwner()

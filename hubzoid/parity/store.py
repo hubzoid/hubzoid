@@ -19,7 +19,7 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from ..control import deploy, idempotency
-from .validate import Bundle, ParityError, check
+from .validate import Bundle, ParityError, check, source_root_of
 
 metadata = sa.MetaData()
 
@@ -80,7 +80,7 @@ class ParityService:
 
     def create(self, bundle: Bundle, *, actor: str, base_id: str | None = None,
                idempotency_key: str | None = None) -> dict:
-        report = check(bundle)
+        report = check(bundle, source_root=source_root_of(self.root, bundle.manifest))
         if not report["valid"]:
             raise ParityError(422, "invalid_schema", "The bundle has errors. Fix them before making a candidate.",
                               errors=report["errors"][:50])
@@ -159,38 +159,61 @@ class ParityService:
             conn.execute(reviews.insert().values(id=rid, candidate_id=candidate_id, digest=digest, actor=actor,
                                                  decision=decision, reason=reason, signed=1 if signed else 0,
                                                  created_at=time.time()))
+            # Every review moves the revision, so an earlier approval can't be
+            # used after a later decision.
+            moved = conn.execute(candidates.update().where(candidates.c.id == candidate_id,
+                                                           candidates.c.revision == expected_revision)
+                                 .values(revision=expected_revision + 1)).rowcount
+            if moved != 1:
+                raise ParityError(409, "revision_conflict", "Someone reviewed this candidate at the same moment. "
+                                  "Reload it.", current_revision=expected_revision + 1)
             from ..control import audit
 
             audit.write(conn, actor, "parity.reviewed", subject=candidate_id,
                         detail={"digest": digest, "decision": decision}, surface="parity")
             return 201, {"review_id": rid, "candidate_id": candidate_id, "digest": digest, "decision": decision,
-                         "actor": actor, "signed": signed}
+                         "actor": actor, "signed": signed, "revision": expected_revision + 1}
 
         return idempotency.run(self.engine, deployment_id=self.deployment_id, actor_id=actor,
                                route=f"POST /api/parity/candidates/{candidate_id}/reviews", key=idempotency_key,
-                               body={"digest": digest, "decision": decision, "reason": reason},
+                               body={"digest": digest, "decision": decision, "reason": reason,
+                                     "expected_revision": expected_revision},
                                change=change, kind="parity.review").body
 
-    def freeze(self, candidate_id: str, *, digest: str, review_id: str, actor: str,
-               idempotency_key: str | None = None) -> dict:
+    def freeze(self, candidate_id: str, *, digest: str, review_id: str, expected_revision: int, actor: str,
+               source_root: Path | None = None, idempotency_key: str | None = None) -> dict:
+        # Recheck the exact stored bundle, re-hashing the inspected source
+        # files; the saved status is not trusted.
+        bundle = self.bundle(candidate_id)
+        if source_root is None:
+            source_root = source_root_of(self.root, bundle.manifest)
+        report = check(bundle, source_root=source_root, require_sources=True)
+
         def change(conn):
             row = conn.execute(sa.select(candidates).where(candidates.c.id == candidate_id,
                                                            candidates.c.deployment_id == self.deployment_id)).first()
             if row is None:
                 raise ParityError(404, "not_found", "That candidate was not found.")
-            if row.digest != digest:
+            if row.digest != digest or report["digest"] != digest:
                 raise ParityError(409, "revision_conflict", "The digest is not this candidate's.",
                                   current_digest=row.digest)
+            if row.revision != expected_revision:
+                raise ParityError(409, "revision_conflict", "The candidate was reviewed again since you loaded it.",
+                                  current_revision=row.revision)
             rv = conn.execute(sa.select(reviews).where(reviews.c.id == review_id,
                                                        reviews.c.candidate_id == candidate_id)).first()
             if rv is None or rv.decision != "approve" or rv.digest != digest:
                 raise ParityError(409, "review_required", "Freezing needs an approving review of this exact digest.")
+            latest = conn.execute(sa.select(reviews.c.id).where(reviews.c.candidate_id == candidate_id)
+                                  .order_by(reviews.c.created_at.desc(), reviews.c.id.desc())).first()
+            if latest.id != review_id:
+                raise ParityError(409, "review_superseded", "A later review replaced this approval.")
             if not rv.signed:
                 raise ParityError(409, "review_required", "An unsigned offline review can't freeze. Publish the "
                                   "review through an authorised session.")
-            if row.status == "blocked":
+            if not report["valid"] or report["blockers"]:
                 raise ParityError(409, "missing_evidence", "The candidate still has blockers. Resolve them in a new "
-                                  "candidate.", blockers=json.loads(row.report_json)["blockers"][:20])
+                                  "candidate.", blockers=(report["errors"] + report["blockers"])[:20])
             existing = conn.execute(sa.select(freezes).where(freezes.c.candidate_id == candidate_id)).first()
             if existing is not None:
                 return 201, {"freeze_id": existing.id, "digest": existing.digest}
@@ -206,7 +229,8 @@ class ParityService:
 
         return idempotency.run(self.engine, deployment_id=self.deployment_id, actor_id=actor,
                                route=f"POST /api/parity/candidates/{candidate_id}/freeze", key=idempotency_key,
-                               body={"digest": digest, "review_id": review_id}, change=change,
+                               body={"digest": digest, "review_id": review_id,
+                                     "expected_revision": expected_revision}, change=change,
                                kind="parity.freeze").body
 
     def diff(self, base_id: str, candidate_id: str) -> dict:

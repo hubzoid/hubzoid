@@ -357,9 +357,9 @@ async def _require_terms(hub_dir: Path, user) -> None:
 
     try:
         me = await asyncio.to_thread(branding_store.service_for(hub_dir).me, user.id)
-    except Exception:  # noqa: BLE001 - branding unavailable: no terms to enforce
+    except Exception:  # noqa: BLE001 - fail closed: required terms can't be confirmed
         log.warning("chat: terms state unavailable", exc_info=True)
-        return
+        raise error(503, "unavailable", "Couldn't check the terms of use just now. Try again shortly.")
     if me.get("terms_required"):
         raise error(403, "terms_required",
                     "Accept the current terms of use first. Reload the page to see them.")
