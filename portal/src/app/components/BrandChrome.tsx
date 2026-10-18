@@ -114,6 +114,9 @@ export function TermsGate({ manifest, policyHash, onAccepted }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    document.title = `${t.brand.terms} · ${manifest.identity.name}`;
+  }, [manifest.identity.name]);
   const accept = async () => {
     setBusy(true);
     setError(null);

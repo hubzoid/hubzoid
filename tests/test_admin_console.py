@@ -212,6 +212,19 @@ def test_hub_admin_cannot_read_other_hub_report(client, hub, monkeypatch):
     assert client.get("/api/admin/capabilities", headers=who("ben")).status_code == 403  # no admin.access
 
 
+def test_bundle_denied_after_grant_revoked(client, hub, monkeypatch):
+    from hubzoid.access import store_for
+
+    store_for(hub).grant("ana@example.org", hub.name, "manage_access", actor="test")
+    rid = diag.service_for(hub).start(actor="t", hub_id=hub.name, run_inline=True)["report_id"]
+    as_people(monkeypatch)
+    made = client.post(f"/api/admin/diagnostics/reports/{rid}/bundles", headers=who("ana"))
+    assert made.status_code == 201, made.text
+    assert client.get(made.json()["download"], headers=who("ana")).status_code == 200
+    store_for(hub).revoke("ana@example.org", hub.name, "manage_access", actor="test")
+    assert client.get(made.json()["download"], headers=who("ana")).status_code in (403, 404)
+
+
 def test_monitoring_commands_json_match(hub):
     from hubzoid.cli import app as cli_app
 
