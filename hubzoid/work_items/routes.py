@@ -81,10 +81,25 @@ async def _call(fn: Callable, *args, **kwargs):
         _raise(exc)
 
 
+def _writer(require_person: Callable) -> Callable:
+    """`require_person` for a change: a session caller carries an ambient
+    cookie, so its write must come from this site's own pages. An API-key
+    caller sends its credential explicitly."""
+
+    def writer(request: Request, actor=Depends(require_person)):
+        if getattr(actor, "via", None) != "api-key":
+            from ..access.session import require_same_origin
+            require_same_origin(request)
+        return actor
+
+    return writer
+
+
 def register(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:
     """Add the routes to `router`. `require_person(request)` returns the
     verified caller (with `.subject` and `.surface`). `hub_path(actor, hub)`
     returns the hub folder or raises 404."""
+    writer = _writer(require_person)
 
     def hub_for(actor, hub: str) -> Path:
         try:
@@ -100,7 +115,7 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
 
     @router.post("/hubs/{hub}/work-items")
     async def start(hub: str, request: Request, response: Response, body: StartBody,
-                    actor=Depends(require_person)):
+                    actor=Depends(writer)):
         hub_dir = hub_for(actor, hub)
 
         def produce():
@@ -131,25 +146,25 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
         return await _call(service.show, hub_for(actor, hub), item_id, actor.subject)
 
     @router.post("/hubs/{hub}/work-items/{item_id}/messages", status_code=202)
-    async def message(hub: str, item_id: str, body: MessageBody, actor=Depends(require_person)):
+    async def message(hub: str, item_id: str, body: MessageBody, actor=Depends(writer)):
         return await _call(service.message, hub_for(actor, hub), item_id, actor.subject, body.message,
                            client_message_id=body.client_message_id,
                            expected_revision=body.expected_revision)
 
     @router.post("/hubs/{hub}/work-items/{item_id}/cancel", status_code=202)
     async def cancel(hub: str, item_id: str, body: CancelBody = Body(default_factory=CancelBody),
-                     actor=Depends(require_person)):
+                     actor=Depends(writer)):
         return await _call(service.cancel, hub_for(actor, hub), item_id, actor.subject, reason=body.reason,
                            surface=actor.surface, expected_revision=body.expected_revision)
 
     @router.post("/hubs/{hub}/work-items/{item_id}/resume", status_code=202)
     async def resume(hub: str, item_id: str, body: RevisionBody = Body(default_factory=RevisionBody),
-                     actor=Depends(require_person)):
+                     actor=Depends(writer)):
         return await _call(service.resume, hub_for(actor, hub), item_id, actor.subject,
                            expected_revision=body.expected_revision, surface=actor.surface)
 
     @router.post("/hubs/{hub}/work-items/{item_id}/restart", status_code=202)
-    async def restart(hub: str, item_id: str, body: RestartBody, actor=Depends(require_person)):
+    async def restart(hub: str, item_id: str, body: RestartBody, actor=Depends(writer)):
         return await _call(service.restart, hub_for(actor, hub), item_id, actor.subject, stage=body.stage,
                            reason=body.reason, expected_revision=body.expected_revision,
                            surface=actor.surface)
@@ -170,18 +185,18 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
         return await _call(service.operation_detail, hub_for(actor, hub), op_id, actor.subject)
 
     @router.post("/hubs/{hub}/operations/{op_id}/approve")
-    async def approve(hub: str, op_id: str, body: ApproveBody, actor=Depends(require_person)):
+    async def approve(hub: str, op_id: str, body: ApproveBody, actor=Depends(writer)):
         return await _call(service.approve, hub_for(actor, hub), op_id, actor.subject, digest=body.digest,
                            expected_revision=body.expected_revision, surface=actor.surface)
 
     @router.post("/hubs/{hub}/operations/{op_id}/deny")
     async def deny(hub: str, op_id: str, body: DenyBody = Body(default_factory=DenyBody),
-                   actor=Depends(require_person)):
+                   actor=Depends(writer)):
         return await _call(service.deny, hub_for(actor, hub), op_id, actor.subject, reason=body.reason,
                            expected_revision=body.expected_revision, surface=actor.surface)
 
     @router.post("/hubs/{hub}/operations/{op_id}/resolve")
-    async def resolve(hub: str, op_id: str, body: ResolveBody, actor=Depends(require_person)):
+    async def resolve(hub: str, op_id: str, body: ResolveBody, actor=Depends(writer)):
         return await _call(service.resolve, hub_for(actor, hub), op_id, actor.subject,
                            decision=body.decision, evidence=body.evidence,
                            acknowledge_duplicate_risk=body.acknowledge_duplicate_risk,
@@ -193,6 +208,8 @@ def register_stations(router: APIRouter, require_person: Callable, hub_path: Cal
     item's workflow. An operator may direct a call's single retry once that
     workflow has stopped without using it."""
     from ..stations import service as station_service
+
+    writer = _writer(require_person)
 
     def hub_for(actor, hub: str) -> Path:
         try:
@@ -206,7 +223,7 @@ def register_stations(router: APIRouter, require_person: Callable, hub_path: Cal
 
     @router.post("/hubs/{hub}/work-items/{item_id}/stations/{call_id}/retry", status_code=202)
     async def station_retry(hub: str, item_id: str, call_id: str, body: StationRetryBody,
-                            actor=Depends(require_person)):
+                            actor=Depends(writer)):
         return await _call(station_service.operator_retry, hub_for(actor, hub), item_id, call_id,
                            actor.subject, clarification=body.clarification,
                            expected_revision=body.expected_revision, surface=actor.surface)

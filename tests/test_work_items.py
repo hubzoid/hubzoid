@@ -683,3 +683,24 @@ def test_partial_redaction_is_not_kept():
     from hubzoid import redaction
 
     assert redaction.scrub_text("token=[redacted]remaining-secret") == "token=[redacted]"
+
+
+def test_session_writes_need_the_sites_own_origin(hub_dir):
+    from fastapi import APIRouter, FastAPI
+    from fastapi.testclient import TestClient
+
+    from hubzoid.access.service import Actor
+    from hubzoid.work_items import routes
+
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", requester=OWNER)
+    via = {"value": "session"}
+    router = APIRouter()
+    routes.register(router, lambda: Actor(OWNER, "console", via["value"]), lambda actor, hub: hub_dir)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    url = f"/hubs/desk/work-items/{item['id']}/cancel"
+    assert client.post(url, json={}, headers={"Origin": "https://elsewhere.example"}).status_code == 403
+    assert client.get(f"/hubs/desk/work-items/{item['id']}").status_code == 200       # reads need no origin
+    via["value"] = "api-key"                                       # an explicit credential
+    assert client.post(url, json={}, headers={"Origin": "https://elsewhere.example"}).status_code == 202
