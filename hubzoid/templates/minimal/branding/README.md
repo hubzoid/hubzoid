@@ -15,8 +15,12 @@ own, or delete them to use the Hubzoid defaults.
 
 ## Open WebUI mode
 
-With `HUBZOID_UI=openwebui`, `hubzoid run` copies these files into Open WebUI
-on every start. There, filenames are case-insensitive, `logo.webp`,
-`logo.jpg` and `logo.jpeg` also work, `splash.*` (png, svg, webp, jpg, jpeg)
+With `HUBZOID_UI=openwebui`, Open WebUI's own branding stays by default, as
+its license requires above 50 end users. If your deployment has 50 or fewer
+end users in any rolling 30 days, or you hold Open WebUI's written permission
+or an enterprise license, set `HUBZOID_OWUI_REMOVE_BRANDING=50-users-or-fewer`
+or `=licensed` in `.env` (see `docs/branding.md`). `hubzoid run` then copies
+these files into Open WebUI on every start. There, filenames are
+case-insensitive, `logo.webp`, `logo.jpg` and `logo.jpeg` also work, `splash.*` (png, svg, webp, jpg, jpeg)
 sets the loading screen, and when both `logo.*` and `favicon.*` exist,
 `favicon.*` wins.

@@ -30,22 +30,43 @@ changes and refresh the browser to check the result.
 ## Open WebUI branding
 
 The remaining Open WebUI-specific settings apply with `HUBZOID_UI=openwebui`.
-Open WebUI's own branding stays by default. Custom branding is subject to the
-conditions below. Agent prompt suggestions apply to both interfaces.
+Open WebUI's own branding stays by default. Agent prompt suggestions apply to
+both interfaces. Native chat is Hubzoid's own interface and is not affected
+by this section.
 
-With no assets in `<hub>/branding/`, the chat app shows Open WebUI's stock
-logo and the name reads `<your name> (Open WebUI)`. As soon as the folder
-holds at least one asset (a logo, favicon or splash; a README doesn't
-count), the hub is branded: each file replaces its Open WebUI counterpart,
-the `(Open WebUI)` suffix is removed, and the static surfaces below use your
-name. Remove the assets to go back to Open WebUI's branding.
+Open WebUI's license (clause 4) forbids altering, removing or replacing its
+branding, including its name and logo, except in deployments with 50 or fewer
+end users in any rolling 30 days, or with Open WebUI's prior written
+permission or an enterprise license that allows it. End users are the
+individual people with direct access to the application. Hubzoid can't count
+them for you, so it keeps Open WebUI's branding until you say which exception
+applies:
 
-Open WebUI's license allows removing its branding only for deployments with
-50 or fewer end users in any rolling 30 days, or with an Open WebUI
-enterprise license. Above that, set `HUBZOID_KEEP_OWUI_SUFFIX=true`, which
-keeps Open WebUI's branding even when your files are present. In gateway
-mode the decision follows the branding source the gateway uses (its own
-`branding/` folder, `HUBZOID_GATEWAY_BRANDING`, or the first hub's).
+| `HUBZOID_OWUI_REMOVE_BRANDING` | Set it when |
+|---|---|
+| `50-users-or-fewer` | No more than 50 people have access to this deployment in any rolling 30 days. |
+| `licensed` | You hold Open WebUI's written permission or an enterprise license that allows removing its branding. |
+| not set (default) | Neither applies. Open WebUI's logo, favicon, splash and name stay. |
+
+Set it in the hub's `.env` (in gateway mode, the gateway's environment) and
+restart. Any other value keeps Open WebUI's branding and logs a warning.
+Check the count again as your team grows.
+
+With the setting and at least one asset in `<hub>/branding/` (a logo, favicon
+or splash, not a README), the hub is branded: each file replaces its Open
+WebUI counterpart, the `(Open WebUI)` suffix is removed, and the static
+surfaces below use your name. Without the setting, the chat app shows Open
+WebUI's stock logo, the name reads `<your name> (Open WebUI)`, and Hubzoid
+restores any Open WebUI file an earlier run replaced. If your branding files
+are present but the setting is not, Hubzoid logs a warning at startup saying
+so. Your own `custom.css` applies either way. Don't use it to hide Open
+WebUI's branding.
+
+`HUBZOID_KEEP_OWUI_SUFFIX=true`, the setting up to 1.3.2, still keeps Open
+WebUI's branding even when `HUBZOID_OWUI_REMOVE_BRANDING` is set. It is no
+longer needed for that. In gateway mode the decision follows the branding
+source the gateway uses (its own `branding/` folder,
+`HUBZOID_GATEWAY_BRANDING`, or the first hub's).
 
 ## Per-hub identity
 
@@ -56,12 +77,13 @@ one lives in a folder.
 |---|---|---|
 | Top-bar name + tab title | `WEBUI_NAME` in `.env` | Cascades: `WEBUI_NAME` → `MODEL_LABEL` → main agent's `name:` from `AGENTS.md` → `"Hubzoid"` |
 | Watermark on copied messages | `RESPONSE_WATERMARK` in `.env` | Hub folder name |
-| Logo, favicon, splash | `<hub>/branding/` folder (see below) | Open WebUI defaults |
+| Logo, favicon, splash | `<hub>/branding/` folder (see below), used only with `HUBZOID_OWUI_REMOVE_BRANDING` | Open WebUI defaults |
 
 ### Branding folder
 
-Drop files into `<hub>/branding/`. Filenames are case-insensitive. Open
-WebUI's defaults render for any slot you leave empty.
+Drop files into `<hub>/branding/`. Filenames are case-insensitive. They
+replace Open WebUI's only when `HUBZOID_OWUI_REMOVE_BRANDING` is set (see
+above). Open WebUI's defaults render for any slot you leave empty.
 
 | Slot | Accepted filenames |
 |---|---|
@@ -72,9 +94,9 @@ WebUI's defaults render for any slot you leave empty.
 If both `logo.*` and `favicon.*` exist, favicon wins. Open WebUI uses one
 mark in both top-bar and tab positions.
 
-The demo-hub template ships sample Hubzoid SVGs, so it starts branded.
-Replace them with your own, or delete them to fall back to Open WebUI's
-branding.
+The demo-hub template ships sample Hubzoid SVGs. In Open WebUI mode they are
+used only once `HUBZOID_OWUI_REMOVE_BRANDING` is set. Replace them with your
+own, or delete them.
 
 ### Static surfaces (tab title, link previews, PWA name)
 
@@ -87,10 +109,10 @@ runtime. Three surfaces are served as **static files** that ship as
   someone pastes the hub URL into Slack/iMessage/etc.,
 - the PWA `site.webmanifest` name.
 
-For a branded hub, Hubzoid rewrites all three on every `hubzoid run`, using
-the same resolved name as the cascade above. An unbranded hub (or
-`HUBZOID_KEEP_OWUI_SUFFIX=true`) keeps Open WebUI's originals, restoring
-them if an earlier run had rewritten them. The patch is idempotent and
+For a branded hub (branding files plus `HUBZOID_OWUI_REMOVE_BRANDING`),
+Hubzoid rewrites all three on every `hubzoid run`, using the same resolved
+name as the cascade above. Otherwise Hubzoid keeps Open WebUI's originals,
+restoring them if an earlier run had rewritten them. The patch is idempotent and
 reverts cleanly on a `pip install --upgrade open-webui`.
 
 ## Admins and other people's chats
@@ -140,12 +162,12 @@ to flip one back on.
 | `ENABLE_CHANNELS` | Slack-style channels. |
 | `ENABLE_CODE_INTERPRETER` | Open WebUI's own Python sandbox. **Bypasses hubzoid's tool model: no audit, no whitelist.** Add a `tools_local/` Python tool instead. |
 | `ENABLE_IMAGE_GENERATION` | Inline image generation. Requires a separate image-gen account. |
-| `ENABLE_RAG_WEB_SEARCH` | Open WebUI's web search. Hubzoid already has `web_search`. |
+| `ENABLE_WEB_SEARCH` | Open WebUI's web search. Hubzoid already has `web_search`. Up to 1.3.2 Hubzoid set `ENABLE_RAG_WEB_SEARCH`, which Open WebUI 0.11.4 does not read. Its own default is also off. |
 | `ENABLE_USER_WEBHOOKS` | Per-user outbound webhooks. |
 | `ENABLE_TAGS_GENERATION` | Auto-tags chats with an extra LLM call. |
-| `ENABLE_API_KEY` | Per-user API keys (defeats auth: a user can export hub access into a script). |
+| `ENABLE_API_KEYS` | Per-user API keys (defeats auth: a user can export hub access into a script). Hubzoid also sets the older name `ENABLE_API_KEY`, read only by Open WebUI 0.9.5 and earlier. |
 | `ENABLE_VERSION_UPDATE_CHECK` | Phones home to check for OWUI updates. |
-| `ENABLE_MEMORY` | OWUI's user-memory feature. Conflicts with hubzoid's per-session memory tools. Will revisit when hubzoid ships per-user memory. |
+| `ENABLE_MEMORIES`, `ENABLE_MEMORY_SYSTEM_CONTEXT`, `ENABLE_MEMORY_BACKGROUND_REVIEW` | Open WebUI's per-user memory: saved memories, its memory tool, adding memories to the system prompt and background review. Conflicts with Hubzoid's own memory. To turn it on, set `ENABLE_MEMORIES=true`. The other two then keep Open WebUI's defaults (system context on, background review off) unless you set them. Up to 1.3.2 Hubzoid set `ENABLE_MEMORY`, which Open WebUI does not read, so memory was on. An `ENABLE_MEMORY` in your `.env` is still honoured as `ENABLE_MEMORIES`. |
 | `ENABLE_OLLAMA_API` | Proxies Ollama. Hubzoid does not. |
 | `ENABLE_SIGNUP`, `ENABLE_OAUTH_SIGNUP` | Public email and SSO account registration. Administrators add accounts; explicit operator opt-in remains supported. |
 | `SHOW_ADMIN_DETAILS` | Shows admin emails to regular users. |
@@ -186,7 +208,8 @@ Admin users still see all tabs. These four hide them from regular users.
 
 - `USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS`
 - `USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS`
-- `USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS`
+- `USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS` (no effect on Open WebUI
+  0.11.4, which has no such permission and lets only admins manage Functions)
 - `USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS`
 - `USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS`
 

@@ -66,12 +66,14 @@ _OFF_BY_DEFAULT = [
     "ENABLE_CHANNELS",
     "ENABLE_CODE_INTERPRETER",
     "ENABLE_IMAGE_GENERATION",
-    "ENABLE_RAG_WEB_SEARCH",
+    "ENABLE_WEB_SEARCH",
     "ENABLE_USER_WEBHOOKS",
     "ENABLE_TAGS_GENERATION",
     "ENABLE_API_KEY",
     "ENABLE_VERSION_UPDATE_CHECK",
-    "ENABLE_MEMORY",
+    "ENABLE_MEMORIES",
+    "ENABLE_MEMORY_SYSTEM_CONTEXT",
+    "ENABLE_MEMORY_BACKGROUND_REVIEW",
     "ENABLE_OLLAMA_API",
     "SHOW_ADMIN_DETAILS",
     "ENABLE_PERSISTENT_CONFIG",
@@ -99,6 +101,82 @@ def test_feature_flag_defaults(captured_env, tmp_path, monkeypatch):
     env = _start(captured_env, tmp_path)
     assert {f: env[f] for f in _OFF_BY_DEFAULT} == dict.fromkeys(_OFF_BY_DEFAULT, "False")
     assert {f: env[f] for f in _ON_BY_DEFAULT} == dict.fromkeys(_ON_BY_DEFAULT, "True")
+
+
+# ---------------------------------------------------------------------------
+# Open WebUI's own memory. Up to 1.3.2 Hubzoid set ENABLE_MEMORY, which Open
+# WebUI never reads, so memory stayed on.
+# ---------------------------------------------------------------------------
+_MEMORY_FLAGS = ["ENABLE_MEMORY", "ENABLE_MEMORIES", "ENABLE_MEMORY_SYSTEM_CONTEXT",
+                 "ENABLE_MEMORY_BACKGROUND_REVIEW"]
+
+
+def test_open_webui_memory_is_off_by_the_names_it_reads(captured_env, tmp_path, monkeypatch):
+    for flag in _MEMORY_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+    env = _start(captured_env, tmp_path)
+    assert {f: env.get(f) for f in _MEMORY_FLAGS} == {
+        "ENABLE_MEMORY": None,
+        "ENABLE_MEMORIES": "False",
+        "ENABLE_MEMORY_SYSTEM_CONTEXT": "False",
+        "ENABLE_MEMORY_BACKGROUND_REVIEW": "False",
+    }
+
+
+@pytest.mark.parametrize("setting, value, expected", [
+    ("ENABLE_MEMORIES", "true", "true"),
+    # The old template's name is honoured, so turning it on keeps working.
+    ("ENABLE_MEMORY", "true", "True"),
+])
+def test_operator_turns_open_webui_memory_on(captured_env, tmp_path, monkeypatch,
+                                             setting, value, expected):
+    for flag in _MEMORY_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+    monkeypatch.setenv(setting, value)
+    env = _start(captured_env, tmp_path)
+    assert env["ENABLE_MEMORIES"] == expected
+    # The sub-switches keep Open WebUI's own defaults.
+    assert "ENABLE_MEMORY_SYSTEM_CONTEXT" not in env
+    assert "ENABLE_MEMORY_BACKGROUND_REVIEW" not in env
+
+
+def test_new_memory_name_wins_over_the_old_one(captured_env, tmp_path, monkeypatch):
+    for flag in _MEMORY_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+    monkeypatch.setenv("ENABLE_MEMORY", "true")
+    monkeypatch.setenv("ENABLE_MEMORIES", "false")
+    env = _start(captured_env, tmp_path)
+    assert env["ENABLE_MEMORIES"] == "false"
+    assert env["ENABLE_MEMORY_SYSTEM_CONTEXT"] == "False"
+
+
+# Names Hubzoid sets that the pinned Open WebUI does not read, each on purpose.
+_NOT_READ_BY_OPEN_WEBUI = {
+    "MALLOC_ARENA_MAX",                             # read by glibc in the child
+    "ENABLE_API_KEY",                               # Open WebUI <= 0.9.5 name of ENABLE_API_KEYS
+    "USER_PERMISSIONS_WORKSPACE_FUNCTIONS_ACCESS",  # no such permission in 0.11.4, harmless
+}
+
+
+def test_every_default_is_a_name_the_installed_open_webui_reads():
+    """Guards against a setting that silently does nothing, like ENABLE_MEMORY.
+    Runs where the openwebui extra is installed (CI); the package is located,
+    never imported."""
+    import importlib.util
+    import re
+
+    spec = importlib.util.find_spec("open_webui")
+    if spec is None or not spec.submodule_search_locations:
+        pytest.skip("the openwebui extra is not installed")
+    root = Path(next(iter(spec.submodule_search_locations)))
+    source = "\n".join(p.read_text(errors="ignore") for p in root.rglob("*.py")
+                       if "migrations" not in p.parts)
+    names = {*webui._DEFAULT_OWUI_ENV, *webui._OWUI_MEMORY_OFF, *webui._MCP_API_KEY_ENV}
+    unread = sorted(
+        name for name in names - _NOT_READ_BY_OPEN_WEBUI
+        if not re.search(r"""(?:getenv|environ\.get)\(\s*['"]%s['"]""" % re.escape(name), source)
+    )
+    assert unread == []
 
 
 def test_operator_can_turn_on_admin_chat_access_and_signup(captured_env, tmp_path, monkeypatch):

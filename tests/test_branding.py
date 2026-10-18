@@ -315,3 +315,21 @@ def test_switching_brands_restores_slots_the_new_brand_lacks(tmp_path):
     branding.apply(second, static)
     assert (static / "splash.png").read_text() == "owui-splash"
     assert (static / "favicon.svg").read_text() == "<svg>second</svg>"
+
+
+def test_kept_marks_restore_open_webui_images_but_apply_custom_css(tmp_path):
+    """Without confirmation that Open WebUI's license allows it, its logo,
+    favicon and splash stay, even where an earlier run replaced them."""
+    static = tmp_path / "static"
+    _write(static / "favicon.png", "owui-favicon")
+    hub = tmp_path / "hub"
+    _write(hub / "branding" / "logo.png", "acme-logo")
+    _write(hub / "branding" / "custom.css", "/* acme */")
+    branding.apply(hub, static)
+    assert (static / "favicon.png").read_text() == "acme-logo"
+
+    applied = branding.apply(hub, static, replace_marks=False)
+    assert set(applied) == {"custom.css"}
+    assert (static / "favicon.png").read_text() == "owui-favicon"
+    assert not (static / "splash.png").exists()
+    assert (static / "custom.css").read_text() == "/* acme */"

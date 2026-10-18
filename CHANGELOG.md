@@ -3,6 +3,25 @@
 All notable changes to Hubzoid. Versions follow the package version in
 `pyproject.toml`; each release tag `vX.Y.Z` must have a section here.
 
+## [Unreleased]
+
+### Changed
+- Open WebUI mode keeps Open WebUI's branding by default, as its license
+  requires above 50 end users. Hub branding files replace its logo, favicon,
+  splash and name only when `HUBZOID_OWUI_REMOVE_BRANDING` is
+  `50-users-or-fewer` or `licensed`. `HUBZOID_KEEP_OWUI_SUFFIX=true` still
+  keeps the branding, and now also keeps the logo, favicon and splash. See
+  [the upgrade note](docs/UPGRADING.md#after-132-open-webui-memory-and-branding-unreleased).
+
+### Fixed
+- Open WebUI's per-user memory is now off in Open WebUI mode. Hubzoid set
+  `ENABLE_MEMORY`, which Open WebUI does not read. It now sets
+  `ENABLE_MEMORIES`, `ENABLE_MEMORY_SYSTEM_CONTEXT` and
+  `ENABLE_MEMORY_BACKGROUND_REVIEW`. `ENABLE_MEMORIES=true` turns it back on,
+  and an existing `ENABLE_MEMORY` value is honoured as `ENABLE_MEMORIES`.
+- Open WebUI's web search is turned off with `ENABLE_WEB_SEARCH`, the name
+  Open WebUI 0.11.4 reads, in place of `ENABLE_RAG_WEB_SEARCH`.
+
 ## [1.3.2]
 
 ### Added

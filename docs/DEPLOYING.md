@@ -754,7 +754,9 @@ separate [upgrade and migration procedure](UPGRADING.md).
 Shared login, favicon and tab chrome are deployment-wide. Put branding files
 in `<data-dir>/branding/`, or select a source with
 `HUBZOID_GATEWAY_BRANDING`. Per-agent names and avatars identify agents in the
-picker. See [branding](branding.md).
+picker. In Open WebUI mode, Open WebUI's own logo and name stay unless
+`HUBZOID_OWUI_REMOVE_BRANDING` confirms its license allows replacing them. See
+[branding](branding.md#open-webui-branding).
 
 **Artifact downloads** route per hub: each bridge advertises
 `<public-url>/b/<hub-slug>` so its download links come back through the edge

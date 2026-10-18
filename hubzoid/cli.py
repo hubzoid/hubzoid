@@ -924,9 +924,11 @@ def _start_openwebui(hub: Path, settings, *, host: str, ui_port: int, br_port: i
 
         # Apply per-hub branding into every OWUI static dir
         # (frontend/ and static/, see branding.static_dirs). No-op
-        # when <hub>/branding/ is absent or empty.
+        # when <hub>/branding/ is absent or empty. Open WebUI's own marks
+        # stay unless its license allows replacing them (debrand_requested).
+        replace_marks = webui.debrand_requested(hub)
         for sd in branding.static_dirs():
-            branding.apply(hub, sd)
+            branding.apply(hub, sd, replace_marks=replace_marks)
 
         # Pull suggestions from the main agent's frontmatter so the
         # empty-chat screen has quick-start buttons.
@@ -1263,10 +1265,14 @@ def gateway(
     brand_src = gp.branding_source(gw_data, os.environ.get("HUBZOID_GATEWAY_BRANDING"))
     try:
         static_roots = branding.static_dirs()
+        replace_marks = webui.debrand_requested(brand_src)
         for sd in static_roots:
-            branding.apply(brand_src, sd, baseline_css=branding.GATEWAY_BASELINE_CSS)
-        if static_roots:
+            branding.apply(brand_src, sd, baseline_css=branding.GATEWAY_BASELINE_CSS,
+                           replace_marks=replace_marks)
+        if static_roots and replace_marks:
             console.print(f"[cyan]→ branding[/cyan]  chrome from {brand_src}/branding")
+        elif static_roots:
+            console.print("[cyan]→ branding[/cyan]  Open WebUI branding kept (see docs/branding.md)")
         else:
             console.print("[yellow]→ branding[/yellow]  Open WebUI static dirs not found; default look kept")
     except OSError as exc:
@@ -3088,8 +3094,11 @@ _STARTER_ENV = """\
 # WEBUI_AUTH=true                # Open WebUI sign-in
 # WEBUI_SECRET_KEY=              # required with WEBUI_AUTH: openssl rand -hex 32
 # WEBUI_NAME=                    # display name; blank = the agent's name
-# ENABLE_MEMORY=true             # Open WebUI's per-user memories (Beta)
-# HUBZOID_KEEP_OWUI_SUFFIX=True  # keep Open WebUI branding with files in ./branding/
+# ENABLE_MEMORIES=true           # Open WebUI's per-user memories (off by default)
+# Open WebUI's branding stays unless its license allows replacing it with your
+# ./branding/ files: 50 or fewer end users in any rolling 30 days, or written
+# permission or an enterprise license. Say which applies (docs/branding.md):
+# HUBZOID_OWUI_REMOVE_BRANDING=50-users-or-fewer   # or: licensed
 # Hubzoid sets about 24 Open WebUI flags to strip platform surfaces; add any of
 # them here to override. See docs/branding.md.
 """
