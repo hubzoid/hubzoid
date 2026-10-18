@@ -830,9 +830,11 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
         raise AgentRunError(f"Stations run on claude-local or codex-local, not {engine!r}.")
 
     async def bounded():
+        from .sandbox.tools import closing
         from .workflows.deadlines import remaining
-        async with asyncio.timeout(remaining(timeout)):
-            return await go()
+        async with closing():
+            async with asyncio.timeout(remaining(timeout)):
+                return await go()
 
     try:
         ident = Identity.make(subject, surface="workflow") if subject else None

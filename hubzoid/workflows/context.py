@@ -439,7 +439,8 @@ class Hub:
         return _validated(result["json"], response_model, result["text"])
 
     def call_agent(self, task: str, *, response_model=None, timeout: float | str | None = _UNSET,
-                   agent: str | None = None, stage: str | None = None, revision: int = 1):
+                   agent: str | None = None, stage: str | None = None, revision: int = 1,
+                   checkout: dict | None = None):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
         `response_model`, the agent ends with JSON and a validated instance is
@@ -449,7 +450,9 @@ class Hub:
         item's `stage` instead: its own instructions and tools only, a result
         checked against its schema, saved so it never runs twice. A failed or
         malformed result raises `hubzoid.stations.StationOutputError` (or
-        `StationError`) carrying the `call_id` for `hub.retry_station`."""
+        `StationError`) carrying the `call_id` for `hub.retry_station`. For a
+        station with a sandbox, `checkout={"url": ..., "ref": ...}` copies a
+        repository into it first, without any credential."""
         if agent is not None:
             from ..stations import service as station_service
 
@@ -457,7 +460,7 @@ class Hub:
                 raise ValueError("A station call needs stage=, the work item stage it runs in.")
             return station_service.call(agent, task, stage=stage, revision=revision,
                                         response_model=response_model,
-                                        timeout=None if timeout is _UNSET else timeout)
+                                        timeout=None if timeout is _UNSET else timeout, checkout=checkout)
         if timeout is _UNSET:
             timeout = 600
         if _AGENT is None:

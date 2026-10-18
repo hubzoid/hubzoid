@@ -149,11 +149,13 @@ def _build(hub_dir: Path, loaded) -> Station:
 
 
 def available_tools(hub_dir) -> set[str]:
-    """Tool names a station may list: the hub's pre-shipped and local tools and
-    Hubzoid's station tools."""
+    """Tool names a station may list: the hub's pre-shipped and local tools,
+    Hubzoid's station tools, and the sandbox tools (with a sandbox only)."""
+    from ..sandbox import tools as sandbox_tools
     from .tools import hub_registry
 
-    return set(hub_registry(Path(hub_dir))) | set(STATION_TOOLS)
+    return (set(hub_registry(Path(hub_dir))) | set(STATION_TOOLS) | set(sandbox_tools.NAMES)
+            | set(sandbox_tools.HUB_ALIASES))
 
 
 def validate(hub_dir) -> dict:
@@ -179,6 +181,12 @@ def validate(hub_dir) -> dict:
                                    f"{'/' + station.model if station.model else ''}, "
                                    f"tools [{', '.join(station.tools) or 'none'}], "
                                    f"{'schema' if station.schema else 'no schema'}, {station.digest[:19]}")})
+        from ..sandbox import tools as sandbox_tools
+        boxed = [t for t in station.tools if t in sandbox_tools.NAMES or t in sandbox_tools.HUB_ALIASES]
+        if boxed and not station.sandbox:
+            checks.append({"code": "sandbox_tool_without_sandbox", "path": station.source, "status": "fail",
+                           "message": f"{station.name}: {', '.join(boxed)} need a sandbox profile. Add "
+                                      "sandbox: <profile> to its frontmatter."})
         if station.sandbox:
             problem = _sandbox_problem(hub_dir, station.sandbox)
             if problem:
