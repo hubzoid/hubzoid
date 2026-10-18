@@ -1246,6 +1246,9 @@ class ChatEngine:
                 g.emit(conn, r.conversation_id, "run.changed", r.id, {"status": "interrupted",
                                                                      "message_id": r.message_id,
                                                                      "branch_id": r.branch_id})
+            # Native sessions are not restored across a restart until pending calls
+            # can be reconciled first: the next turn rebuilds from the graph.
+            conn.execute(g.bindings.delete().where(g.bindings.c.conversation_id.in_(own)))
             conn.execute(g.queue.update().where(g.queue.c.conversation_id.in_(own), g.queue.c.state == "dispatching")
                          .values(state="needs_review", reason="interrupted while sending", updated_at=t))
         return len(stale)

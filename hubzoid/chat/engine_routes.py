@@ -157,7 +157,7 @@ class Orchestrator:
             from .. import _request_ctx
             from .history import user_text
 
-            resume = await db(self.engine.binding_for, plan, self.config_digest())
+            resume = await db(self.engine.binding_for, plan, self.config_digest(plan.actor_id))
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
                 if resume and path else None)
@@ -183,10 +183,25 @@ class Orchestrator:
         self._ensure_heartbeat()
         return run
 
-    def config_digest(self) -> str:
-        """What a native session depends on: the agent, its runtime and model."""
+    def config_digest(self, actor_id: str = "") -> str:
+        """What a native session depends on: the acting person, the agent, its
+        runtime and model, its instructions and the chat policy revision. Any
+        change starts a new native context from the graph."""
+        from ..control import canonical
+        from .config import service_for
+
         rt = self.ctx.runtime
-        return "|".join((self.ctx.model_label, type(rt).__name__, str(getattr(rt, "name", ""))))[:80]
+        try:
+            instructions = (Path(self.ctx.hub_dir) / "AGENTS.md").read_bytes()
+        except OSError:
+            instructions = b""
+        try:
+            policy = service_for(self.ctx.hub_dir).active().digest
+        except Exception:  # noqa: BLE001 - unknown policy: never reuse a session
+            policy = str(time.time())
+        return canonical.digest({"actor": actor_id, "agent": self.ctx.model_label, "runtime": type(rt).__name__,
+                                 "model": str(getattr(rt, "name", "")),
+                                 "instructions": canonical.digest_bytes(instructions), "policy": policy})
 
     def _update(self, run) -> None:
         now = time.monotonic()
@@ -208,7 +223,7 @@ class Orchestrator:
         try:
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
-                     head_message_id=run.message_id, config_digest=self.config_digest(),
+                     head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
                      ok=status == "complete")
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
