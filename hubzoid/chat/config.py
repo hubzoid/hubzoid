@@ -57,9 +57,9 @@ class LocaleSettings(_Strict):
 
 
 class AppearanceSettings(_Strict):
-    default_mode: Mode = "system"
+    default_mode: Mode = "dark"
     allowed_modes: list[Mode] = Field(default_factory=lambda: ["light", "dark", "oled", "system"])
-    default_density: Density = "comfortable"
+    default_density: Density = "compact"
     allowed_densities: list[Density] = Field(default_factory=lambda: ["comfortable", "compact"])
     default_text_scale: float = 1
     allowed_text_scales: list[float] = Field(default_factory=lambda: [1, 1.125, 1.25, 1.5])

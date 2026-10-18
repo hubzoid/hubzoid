@@ -62,35 +62,36 @@
 }
 
 :root[data-theme="dark"] {
-  --hz-bg: #151516;
-  --hz-canvas: #1b1b1d;
-  --hz-raised: #222224;
-  --hz-sunken: #26262a;
-  --hz-hover: #2a2a2e;
-  --hz-active: #333338;
-  --hz-ink: #fafaf8;
-  --hz-body: #e9e9e6;
-  --hz-mute: #b5b5bc;
-  --hz-line: #3c3c40;
-  --hz-line-soft: #2e2e32;
-  --hz-accent: #e5572a;
-  --hz-accent-hover: #f26b40;
-  --hz-accent-ink: #0b0b0c;
-  --hz-accent-soft: #2a160f;
-  --hz-accent-text: #f28b66;
-  --hz-brand: #e5572a;
-  --hz-danger: #ffb4b4;
-  --hz-danger-solid: #e0605a;
-  --hz-danger-soft: #3c2023;
-  --hz-success: #a1d8b6;
-  --hz-success-soft: #183328;
-  --hz-warning: #e6bf72;
-  --hz-warning-soft: #352b19;
-  --hz-info: #adccf0;
-  --hz-info-soft: #1c2d43;
-  --hz-code-bg: #1b1b1d;
+  /* first paint before the server's tokens arrive; matches the built-in dark palette */
+  --hz-bg: #1c1c1b;
+  --hz-canvas: #181817;
+  --hz-raised: #232322;
+  --hz-sunken: #141413;
+  --hz-hover: #2a2a28;
+  --hz-active: #323230;
+  --hz-ink: #ececea;
+  --hz-body: #dcdcd8;
+  --hz-mute: #9d9d97;
+  --hz-line: #2f2f2d;
+  --hz-line-soft: #262624;
+  --hz-accent: #d9805f;
+  --hz-accent-hover: #e3916f;
+  --hz-accent-ink: #141413;
+  --hz-accent-soft: #2c211c;
+  --hz-accent-text: #e39a7e;
+  --hz-brand: #d9805f;
+  --hz-danger: #f2aaa6;
+  --hz-danger-solid: #e0716a;
+  --hz-danger-soft: #331d1d;
+  --hz-success: #9fd3b2;
+  --hz-success-soft: #17291f;
+  --hz-warning: #e2be7a;
+  --hz-warning-soft: #2d2516;
+  --hz-info: #a9c6ea;
+  --hz-info-soft: #18263a;
+  --hz-code-bg: #181817;
   --hz-overlay: rgb(0 0 0 / 0.55);
-  --hz-focus: #f28b66;
+  --hz-focus: #e39a7e;
 }
 
 @theme inline {
@@ -808,4 +809,95 @@
     color: var(--hz-mute);
     background: none;
   }
+}
+
+/* -- quiet, compact chrome (sidebar sections, chips, badges, tabs, queue) -- */
+.hz-side-heading {
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--hz-mute);
+}
+.hz-folder {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--hz-body);
+  text-align: left;
+}
+.hz-folder:hover {
+  background: var(--hz-hover);
+}
+.hz-hit {
+  display: block;
+  border-radius: 6px;
+  padding: 5px 10px;
+  text-decoration: none;
+}
+.hz-hit:hover {
+  background: var(--hz-hover);
+}
+.hz-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--hz-line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  color: var(--hz-body);
+  background: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.hz-chip:hover,
+.hz-chip[aria-pressed="true"] {
+  background: var(--hz-hover);
+  border-color: color-mix(in srgb, var(--hz-accent) 45%, var(--hz-line));
+}
+.hz-badge {
+  min-width: 18px;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--hz-accent-ink);
+  background: var(--hz-accent);
+}
+.hz-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--hz-accent);
+  vertical-align: middle;
+}
+.hz-tabs {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--hz-line);
+  border-radius: 8px;
+  padding: 2px;
+}
+.hz-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--hz-mute);
+}
+.hz-tabs > button[aria-selected="true"] {
+  background: var(--hz-hover);
+  color: var(--hz-ink);
+}
+.hz-queue {
+  font-size: 13px;
 }

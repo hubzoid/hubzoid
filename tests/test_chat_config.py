@@ -40,7 +40,7 @@ def test_config_defaults_without_files(client):
     body = r.json()
     assert body["revision"] == 0 and body["file"] == {"path": "chat/config.yaml", "exists": False}
     assert body["config"]["presentation"]["locale"] == {"default": "en", "allowed": ["en"]}
-    assert body["sources"]["/presentation/appearance/default_mode"] == {"value": "system",
+    assert body["sources"]["/presentation/appearance/default_mode"] == {"value": "dark",
                                                                         "source": "default"}
     assert r.headers["X-Request-ID"]
 
@@ -182,7 +182,7 @@ def test_theme_route_serves_css_for_both_surfaces(client):
     body = client.get("/api/chat/theme").json()
     assert body["revision"] == "builtin"
     dark = body["css"]["dark"]
-    assert dark["--hz-accent"] == "#E5572A" and dark["--paper"] == "#222224"
+    assert dark["--hz-accent"] == "#D9805F" and dark["--paper"] == "#232322"
 
 
 def test_cli_apply_matches_api(hub, client, tmp_path):
@@ -190,7 +190,7 @@ def test_cli_apply_matches_api(hub, client, tmp_path):
 
     (hub / "chat").mkdir()
     (hub / "chat" / "config.yaml").write_text(
-        "version: 1\npresentation:\n  appearance:\n    default_mode: dark\n")
+        "version: 1\npresentation:\n  appearance:\n    default_mode: light\n")
     runner = CliRunner()
     diff = runner.invoke(cli_app, ["chat", "config", "diff", str(hub), "--json"])
     assert diff.exit_code == 0, diff.output

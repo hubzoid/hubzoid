@@ -57,18 +57,20 @@ _LIGHT = {
 }
 
 _DARK = {
-    "canvas": "#151516", "surface": "#1B1B1D", "elevated": "#222224", "sunken": "#26262A",
-    "hover": "#2A2A2E", "pressed": "#333338",
-    "text": "#FAFAF8", "bodyText": "#E9E9E6", "mutedText": "#B5B5BC",
-    "border": "#3C3C40", "borderSoft": "#2E2E32", "input": "#76767E",
-    "action": "#E5572A", "actionText": "#0B0B0C", "actionHover": "#F26B40",
-    "actionActive": "#D64C20", "actionSoft": "#2A160F", "link": "#F28B66",
-    "focus": "#F28B66", "selection": "#2A160F", "selectionText": "#FAFAF8",
-    "danger": "#E0605A", "dangerText": "#0B0B0C",
-    "successText": "#A1D8B6", "successBackground": "#183328", "successBorder": "#315B43",
-    "warningText": "#E6BF72", "warningBackground": "#352B19", "warningBorder": "#67512C",
-    "errorText": "#FFB4B4", "errorBackground": "#3C2023", "errorBorder": "#754049",
-    "infoText": "#ADCCF0", "infoBackground": "#1C2D43", "infoBorder": "#395477",
+    # Warm graphite, in the style of desktop coding tools: low-contrast
+    # surfaces, quiet borders, a muted clay accent.
+    "canvas": "#1C1C1B", "surface": "#181817", "elevated": "#232322", "sunken": "#141413",
+    "hover": "#2A2A28", "pressed": "#323230",
+    "text": "#ECECEA", "bodyText": "#DCDCD8", "mutedText": "#9D9D97",
+    "border": "#2F2F2D", "borderSoft": "#262624", "input": "#6E6E68",
+    "action": "#D9805F", "actionText": "#141413", "actionHover": "#E3916F",
+    "actionActive": "#C8714F", "actionSoft": "#2C211C", "link": "#E39A7E",
+    "focus": "#E39A7E", "selection": "#33271F", "selectionText": "#ECECEA",
+    "danger": "#E0716A", "dangerText": "#141413",
+    "successText": "#9FD3B2", "successBackground": "#17291F", "successBorder": "#2D4A39",
+    "warningText": "#E2BE7A", "warningBackground": "#2D2516", "warningBorder": "#5A4826",
+    "errorText": "#F2AAA6", "errorBackground": "#331D1D", "errorBorder": "#633838",
+    "infoText": "#A9C6EA", "infoBackground": "#18263A", "infoBorder": "#32496A",
 }
 
 # OLED: true black surfaces for OLED screens, otherwise the dark palette.
@@ -92,9 +94,9 @@ MONO_FONTS = {
     "jetbrains-mono": '"JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
     "system-mono": 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
 }
-TYPOGRAPHY_DEFAULTS = {"fontFamily": "inter", "monoFamily": "jetbrains-mono", "baseSize": 16,
-                       "lineHeight": 1.5}
-SHAPE_DEFAULTS = {"controlRadius": 8, "cardRadius": 14}
+TYPOGRAPHY_DEFAULTS = {"fontFamily": "inter", "monoFamily": "jetbrains-mono", "baseSize": 14,
+                       "lineHeight": 1.55}
+SHAPE_DEFAULTS = {"controlRadius": 7, "cardRadius": 10}
 
 # (foreground, background, minimum ratio, what it is)
 PAIRS = (
