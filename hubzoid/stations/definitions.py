@@ -181,8 +181,8 @@ def validate(hub_dir) -> dict:
                                    f"{'/' + station.model if station.model else ''}, "
                                    f"tools [{', '.join(station.tools) or 'none'}], "
                                    f"{'schema' if station.schema else 'no schema'}, {station.digest[:19]}")})
-        from ..sandbox import tools as sandbox_tools
-        boxed = [t for t in station.tools if t in sandbox_tools.NAMES or t in sandbox_tools.HUB_ALIASES]
+        from .tools import sandbox_names
+        boxed = sandbox_names(hub_dir, station.tools, sandbox=bool(station.sandbox))
         if boxed and not station.sandbox:
             checks.append({"code": "sandbox_tool_without_sandbox", "path": station.source, "status": "fail",
                            "message": f"{station.name}: {', '.join(boxed)} need a sandbox profile. Add "

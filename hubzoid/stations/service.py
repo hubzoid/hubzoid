@@ -418,15 +418,26 @@ def _attempt(ctx, work, call_id: str, kind: str):
 
 
 def _station_sandbox(hub_dir, work, row: dict, kind: str) -> str:
-    """The call's sandbox, ready. A crash recovery reattaches the same one;
-    if it disappeared the call stops with `sandbox_lost` instead of starting
-    empty. Only an explicit retry gets a fresh sandbox, from the same source."""
+    """The call's sandbox, ready. A crash recovery reattaches the same one; if
+    it is gone (disappeared, removed by an operator or expired) the call stops
+    with `sandbox_lost` instead of starting empty. Only an explicit retry gets
+    a fresh sandbox, from the same checkout, and only when the old one is gone.
+    A first allocation that never became ready (nothing ran in it) is simply
+    made again."""
     from ..sandbox import service as sandbox_service
 
     definition = row["definition_json"]
-    history = sandbox_service.list_rows(hub_dir, owner_kind="station_call", owner_id=row["id"], limit=5)
+    history = sandbox_service.list_rows(hub_dir, owner_kind="station_call", owner_id=row["id"], limit=10)
+    live = [b for b in history if b.get("live_key")]
     try:
-        if history and history[0]["state"] == "lost" and kind != "retry":
+        if live and live[0]["state"] in ("ready", "stopped"):
+            try:
+                return sandbox_service.attach(hub_dir, live[0]["id"])["id"]
+            except WorkItemError as exc:
+                if exc.code != "sandbox_lost" or kind != "retry":
+                    raise
+        elif not live and kind != "retry" and any(
+                b["state"] not in ("start_failed", "setup_failed") for b in history):
             raise sandbox_service._lost(history[0])
         box = sandbox_service.allocate(
             hub_dir, owner_kind="station_call", owner_id=row["id"], profile_id=definition["sandbox"],

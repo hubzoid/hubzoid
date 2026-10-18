@@ -69,8 +69,11 @@ def _squid_conf(hosts: list[str]) -> bytes:
             f"acl allowed dstdomain {allowed}\n"
             "acl SSL_ports port 443\n"
             "acl Safe_ports port 80 443\n"
+            "acl to_private dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 "
+            "172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 ::1 fc00::/7 fe80::/10\n"
             "http_access deny !Safe_ports\n"
             "http_access deny CONNECT !SSL_ports\n"
+            "http_access deny to_private\n"
             "http_access allow allowed\n"
             "http_access deny all\n"
             "cache deny all\n"
@@ -154,8 +157,14 @@ class DockerProvider:
                                 f"Run `hubzoid sandbox profiles prepare . {profile.id}`.", status=503)
         network = None
         if with_setup_network:
-            network = self.client.networks.create(f"hz-sbx-{sandbox_id[:12]}", driver="bridge", internal=True,
-                                                  labels=self._labels(deployment, sandbox_id, "network"))
+            # Internal, and with no gateway address on the host: the proxy is
+            # the only other member, so setup has no route of its own (needs
+            # Docker Engine 28 or later; an older engine refuses, never widens).
+            network = self.client.networks.create(
+                f"hz-sbx-{sandbox_id[:12]}", driver="bridge", internal=True,
+                options={"com.docker.network.bridge.gateway_mode_ipv4": "isolated",
+                         "com.docker.network.bridge.gateway_mode_ipv6": "isolated"},
+                labels=self._labels(deployment, sandbox_id, "network"))
         kwargs = dict(
             image=name, name=f"hz-sbx-{sandbox_id[:12]}", hostname="sandbox", detach=True, user=USER,
             working_dir=WORKSPACE, environment=dict(profile.env, HOME="/home/hubzoid"),
@@ -181,15 +190,30 @@ class DockerProvider:
                                     "Set require_disk_limit: false or use a storage driver that can.",
                                     status=422) from None
             raise
+        container.reload()
+        runtime = (container.attrs.get("HostConfig") or {}).get("Runtime") or "runc"
+        if runtime != self.binding.get("runtime", "runc"):
+            self._remove(container)
+            if network is not None:
+                network.remove()
+            raise WorkItemError("isolation_insufficient", f"The engine started the sandbox with {runtime}, not "
+                                f"{self.binding.get('runtime')}.", status=422)
         container.start()
-        return {"container_id": container.id, "network": network.name if network else None, "image": name}
+        return {"container_id": container.id, "network": network.name if network else None, "image": name,
+                "deployment": deployment, "binding": dict(self.binding)}
 
-    def container(self, state: dict):
-        """The sandbox's container, or None when it no longer exists."""
+    def container(self, state: dict, sandbox_id: str | None = None):
+        """The sandbox's container, or None when it no longer exists or is not
+        the one this deployment created for this sandbox."""
         try:
-            return self.client.containers.get(state["container_id"])
+            container = self.client.containers.get(state["container_id"])
         except self._docker.errors.NotFound:
             return None
+        labels = container.labels or {}
+        if (state.get("deployment") and labels.get("hubzoid.deployment") != state["deployment"]) or \
+                (sandbox_id and labels.get(LABEL) != sandbox_id):
+            return None
+        return container
 
     def run_setup(self, sandbox_id: str, deployment: str, state: dict, profile, *, hosts: list[str]) -> dict:
         """Run the profile's reviewed setup command once, through the setup
@@ -266,6 +290,13 @@ class DockerProvider:
         return {"mode": "deny_all", "verified": ok, "networks": sorted(networks), "reached": reached,
                 "processes": [p.strip() for p in processes if p.strip()]}
 
+    def quiesce(self, state: dict) -> None:
+        """End every process in the sandbox, including detached ones, and
+        start it again with its files (and still no network)."""
+        container = self.container(state)
+        container.stop(timeout=5)
+        container.start()
+
     def start(self, state: dict) -> None:
         container = self.container(state)
         container.reload()
@@ -277,13 +308,15 @@ class DockerProvider:
         if container is not None:
             container.stop(timeout=5)
 
-    def delete(self, sandbox_id: str) -> int:
-        """Remove every resource labelled with this sandbox. Idempotent."""
+    def delete(self, sandbox_id: str, deployment: str) -> int:
+        """Remove every resource labelled with this sandbox and this
+        deployment, and nothing else. Idempotent."""
         removed = 0
-        for c in self.client.containers.list(all=True, filters={"label": f"{LABEL}={sandbox_id}"}):
+        labels = [f"{LABEL}={sandbox_id}", f"hubzoid.deployment={deployment}"]
+        for c in self.client.containers.list(all=True, filters={"label": labels}):
             self._remove(c)
             removed += 1
-        for n in self.client.networks.list(filters={"label": f"{LABEL}={sandbox_id}"}):
+        for n in self.client.networks.list(filters={"label": labels}):
             try:
                 n.remove()
                 removed += 1

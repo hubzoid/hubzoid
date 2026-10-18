@@ -126,20 +126,31 @@ def _end(hub_dir, sandbox_id: str, state: str, reason: str, *, error: str | None
 def provider(binding: dict):
     from .docker_provider import DockerProvider
 
-    key = binding.get("endpoint") or "default"
+    key = tuple(sorted((k, str(v)) for k, v in binding.items()))
     if key not in _PROVIDERS:
         _PROVIDERS[key] = DockerProvider(binding)
     return _PROVIDERS[key]
 
 
-def _provider_for(hub_dir, row_or_binding) -> object:
+def _provider_for(hub_dir, row: dict) -> object:
+    """The provider a sandbox was created on: the binding pinned in its row,
+    never whatever sandbox.yaml says now."""
+    pinned = (row.get("provider_json") or {}).get("binding")
+    if pinned:
+        return provider(pinned)
     deployment = config_lib.load_deployment(hub_dir)
-    name = row_or_binding.get("provider_binding") if "provider_binding" in row_or_binding else None
-    if name is not None:
-        if name not in deployment.providers:
-            raise WorkItemError("provider_missing", f"Provider {name!r} is no longer in sandbox.yaml.", status=503)
-        return provider(deployment.providers[name])
-    return provider(row_or_binding)
+    name = row.get("provider_binding")
+    if name not in deployment.providers:
+        raise WorkItemError("provider_missing", f"Provider {name!r} is no longer in sandbox.yaml.", status=503)
+    return provider(deployment.providers[name])
+
+
+def _summary(exc: BaseException) -> str:
+    """What a sandbox record keeps about a failure: the code and its first
+    line, never command output."""
+    code = getattr(exc, "code", None) or type(exc).__name__
+    first = (getattr(exc, "message", None) or str(exc)).split("\n", 1)[0]
+    return redaction.scrub_text(f"{code}: {first}")[:500]
 
 
 # -- lifecycle -----------------------------------------------------------------------
@@ -149,7 +160,12 @@ def allocate(hub_dir, *, owner_kind: str, owner_id: str, profile_id: str, item_i
     """The owner's live sandbox, made ready. An existing live sandbox is
     attached (never replaced); a lost one raises `sandbox_lost`."""
     existing = list_rows(hub_dir, owner_kind=owner_kind, owner_id=owner_id, live=True, limit=1)
-    if existing:
+    if existing and existing[0]["state"] in ("allocating", "setting_up"):
+        # Its owner runs one attempt at a time, so this allocation was cut off
+        # (the process stopped). No agent tool ran in it: clean it up and start
+        # again.
+        _discard_interrupted(hub_dir, existing[0])
+    elif existing:
         return attach(hub_dir, existing[0]["id"])
     deployment = config_lib.load_deployment(hub_dir)
     profile = (config_lib.Profile(**profile_json) if profile_json is not None
@@ -161,9 +177,9 @@ def allocate(hub_dir, *, owner_kind: str, owner_id: str, profile_id: str, item_i
     from sqlalchemy.exc import IntegrityError
 
     with wi_store.locked(hub_dir, f"sandbox-allocate:{_hub(hub_dir)}") as conn:
-        live = conn.execute(text("SELECT count(*) FROM hz_sandboxes WHERE hub=:h AND live_key IS NOT NULL "
-                                 "AND owner_kind <> 'probe'"), {"h": _hub(hub_dir)}).scalar()
-        if owner_kind != "probe" and live >= deployment.max_active_per_hub:
+        live = conn.execute(text("SELECT count(*) FROM hz_sandboxes WHERE hub=:h AND live_key IS NOT NULL"),
+                            {"h": _hub(hub_dir)}).scalar()
+        if live >= deployment.max_active_per_hub:
             raise WorkItemError("capacity_exceeded", f"This hub already has {live} active sandboxes, its limit. "
                                 "Wait, stop idle sandboxes or raise limits.max_active_per_hub.", status=429)
         try:
@@ -192,6 +208,7 @@ def _bring_up(hub_dir, sandbox_id: str, profile, binding: dict, checkout: dict |
     deployment = deployment_id(hub_dir)
     try:
         prov.prepare(profile, needs_proxy=bool(hosts))
+        _update(hub_dir, sandbox_id, provider_json={"binding": dict(binding), "deployment": deployment})
         state = prov.create(sandbox_id, deployment, profile, with_setup_network=bool(hosts))
         row = _update(hub_dir, sandbox_id, state="setting_up", provider_json=state,
                       image=state.get("image") or "")
@@ -221,11 +238,20 @@ def _bring_up(hub_dir, sandbox_id: str, profile, binding: dict, checkout: dict |
         code = getattr(exc, "code", None)
         state_name = "setup_failed" if code in ("setup_failed", "network_mode_unsupported") else "start_failed"
         try:
-            prov.delete(sandbox_id)
+            prov.delete(sandbox_id, deployment)
         except Exception:  # noqa: BLE001 - the reaper retries by label
             log.warning("could not remove sandbox %s after a failed start", sandbox_id)
-        _end(hub_dir, sandbox_id, state_name, "failed", error=redaction.scrub_error(exc))
+        _end(hub_dir, sandbox_id, state_name, "failed", error=_summary(exc))
         raise
+
+
+def _discard_interrupted(hub_dir, row: dict) -> None:
+    try:
+        _provider_for(hub_dir, row).delete(row["id"], row["deployment"])
+    except WorkItemError:
+        log.warning("sandbox %s: provider unavailable, the reaper will remove it", row["id"])
+    _end(hub_dir, row["id"], "setup_failed" if row["state"] == "setting_up" else "start_failed", "interrupted",
+         error="interrupted: Hubzoid stopped while preparing this sandbox.")
 
 
 def attach(hub_dir, sandbox_id: str) -> dict:
@@ -241,7 +267,7 @@ def attach(hub_dir, sandbox_id: str) -> dict:
         raise WorkItemError("lifetime_exceeded", "The sandbox reached its maximum lifetime and was removed.",
                             status=409, sandbox_id=sandbox_id)
     prov = _provider_for(hub_dir, row)
-    if prov.container(row["provider_json"]) is None:
+    if prov.container(row["provider_json"], sandbox_id) is None:
         _end(hub_dir, sandbox_id, "lost", "missing", error="The container no longer exists.")
         raise _lost(row)
     prov.start(row["provider_json"])
@@ -263,7 +289,7 @@ def stop(hub_dir, sandbox_id: str, *, reason: str = "idle") -> dict:
     if row["state"] != "ready":
         return row
     prov = _provider_for(hub_dir, row)
-    if prov.container(row["provider_json"]) is None:
+    if prov.container(row["provider_json"], sandbox_id) is None:
         return _end(hub_dir, sandbox_id, "lost", "missing", error="The container no longer exists.")
     prov.stop(row["provider_json"])
     return _update(hub_dir, sandbox_id, state="stopped", stopped_at=time.time(), end_reason=reason)
@@ -276,7 +302,7 @@ def release(hub_dir, sandbox_id: str, reason: str) -> dict:
     if row["state"] in TERMINAL:
         return row
     try:
-        _provider_for(hub_dir, row).delete(sandbox_id)
+        _provider_for(hub_dir, row).delete(sandbox_id, row["deployment"])
     except WorkItemError:
         log.warning("sandbox %s: provider unavailable, the reaper will remove it", sandbox_id)
     return _end(hub_dir, sandbox_id, "deleted", reason)
@@ -371,30 +397,45 @@ def _owner_done(hub_dir, row) -> bool:
 
 
 def reap(hub_dir, *, dry_run: bool = True) -> dict:
-    """Stop idle sandboxes, remove expired ones and those whose owner is done,
-    and delete labelled provider resources with no live row. With `dry_run`
-    nothing changes; the plan is returned."""
+    """Stop idle sandboxes, remove expired ones, interrupted ones and those
+    whose owner is done, and delete leftover provider resources labelled for
+    this deployment that have no live record. With `dry_run` nothing
+    changes; the plan is returned."""
     deployment = config_lib.load_deployment(hub_dir)
     now = time.time()
-    plan = {"stop": [], "release": [], "orphans": [], "lost": []}
-    for row in list_rows(hub_dir, live=True, limit=500):
+    plan = {"stop": [], "release": [], "interrupted": [], "orphans": []}
+    live_rows = list_rows(hub_dir, live=True, limit=500)
+    for row in live_rows:
         life = (row.get("profile_json") or {}).get("lifecycle") or {}
-        if now > row["lifetime_deadline"]:
+        setup_limit = ((row.get("profile_json") or {}).get("setup") or {}).get("timeout_seconds", 900)
+        if row["state"] in ("allocating", "setting_up"):
+            if now - row["updated"] > setup_limit + 600:
+                plan["interrupted"].append({"id": row["id"], "reason": "interrupted"})
+        elif now > row["lifetime_deadline"]:
             plan["release"].append({"id": row["id"], "reason": "expired"})
         elif _owner_done(hub_dir, row) and now >= (row.get("last_activity") or row["created"]) + deployment.terminal_seconds:
             plan["release"].append({"id": row["id"], "reason": "completed"})
         elif row["state"] == "ready" and now > (row.get("last_activity") or row["created"]) + life.get(
                 "idle_stop_seconds", 900):
             plan["stop"].append({"id": row["id"], "reason": "idle"})
-    live_ids = {r["id"] for r in list_rows(hub_dir, live=True, limit=500)}
-    prov = None
-    if deployment.enabled and deployment.default_provider:
+    live_ids = {r["id"] for r in live_rows}
+    bindings = {tuple(sorted((k, str(v)) for k, v in b.items())): b for b in deployment.providers.values()}
+    for row in live_rows:
+        pinned = (row.get("provider_json") or {}).get("binding")
+        if pinned:
+            bindings[tuple(sorted((k, str(v)) for k, v in pinned.items()))] = pinned
+    providers, seen_endpoints = [], set()
+    for binding in bindings.values():
+        endpoint = binding.get("endpoint") or "default"
+        if endpoint in seen_endpoints:
+            continue                # one engine is listed once
+        seen_endpoints.add(endpoint)
         try:
-            prov = provider(deployment.providers[deployment.default_provider])
+            providers.append(provider(binding))
         except WorkItemError:
-            prov = None
-    if prov is not None:
-        seen = set()
+            continue
+    seen = set()
+    for prov in providers:
         for res in prov.resources(deployment_id(hub_dir)):
             sid = res.get("sandbox_id")
             if sid in live_ids or sid in seen:
@@ -407,14 +448,37 @@ def reap(hub_dir, *, dry_run: bool = True) -> dict:
             stop(hub_dir, entry["id"], reason="idle")
         for entry in plan["release"]:
             release(hub_dir, entry["id"], entry["reason"])
+        for entry in plan["interrupted"]:
+            _discard_interrupted(hub_dir, get(hub_dir, entry["id"]))
         for entry in plan["orphans"]:
-            if prov is not None and entry["id"]:
-                prov.delete(entry["id"])
+            for prov in providers:
+                if entry["id"]:
+                    prov.delete(entry["id"], deployment_id(hub_dir))
     result = {"dry_run": dry_run, "at": now, **plan}
     if not dry_run:
         _LAST_REAP[_hub(hub_dir)] = {"at": now, "orphans": len(plan["orphans"]),
-                                     "released": len(plan["release"]), "stopped": len(plan["stop"])}
+                                     "released": len(plan["release"]) + len(plan["interrupted"]),
+                                     "stopped": len(plan["stop"])}
     return result
+
+
+async def reaper_loop(hub_dir) -> None:
+    """Run the cleanup every `reaper.interval_seconds` while sandboxes are
+    on. Started with the bridge; a quiet no-op otherwise."""
+    import asyncio
+
+    while True:
+        interval = 300
+        try:
+            deployment = config_lib.load_deployment(hub_dir)
+            interval = deployment.reaper_interval_seconds
+            if deployment.enabled:
+                await asyncio.to_thread(reap, hub_dir, dry_run=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - cleanup retries next time; it never stops the bridge
+            log.warning("sandbox cleanup failed; it runs again in %ss", interval, exc_info=True)
+        await asyncio.sleep(interval)
 
 
 # -- probes and doctor -------------------------------------------------------------------
@@ -566,6 +630,7 @@ def export_patches(hub_dir, sandbox_id: str, out_dir: Path) -> list[dict]:
     its SHA-256. The sandbox gives bytes only; Git runs with hooks off."""
     row = attach(hub_dir, sandbox_id)
     prov = _provider_for(hub_dir, row)
+    prov.quiesce(row["provider_json"])        # nothing the agent left running can change the commits now
     max_bytes = (row["profile_json"].get("transfer") or {}).get("max_export_bytes", 2 * 2**30)
     exports = []
     for co in row.get("checkouts_json") or []:

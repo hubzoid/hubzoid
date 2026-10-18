@@ -162,6 +162,8 @@ def build_app() -> FastAPI:
         visibility_task = (asyncio.create_task(visibility_loop())
             if deployment.read(hub_dir) and Path(registered[0]['path']) == hub_dir.resolve()
             and owui_lib.configured(hub_dir) else None)
+        from .sandbox import service as sandbox_service
+        reaper_task = asyncio.create_task(sandbox_service.reaper_loop(hub_dir))  # idle when sandboxes are off
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -172,6 +174,11 @@ def build_app() -> FastAPI:
             else:
                 yield
         finally:
+            reaper_task.cancel()
+            try:
+                await reaper_task
+            except asyncio.CancelledError:
+                pass
             if visibility_task is not None:
                 visibility_task.cancel()
                 try:

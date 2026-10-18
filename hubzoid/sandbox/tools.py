@@ -146,12 +146,29 @@ def _obj(props: dict, required=()) -> dict:
     return {"type": "object", "properties": props, "required": list(required), "additionalProperties": False}
 
 
+MAX_READ = 8 * 1024 * 1024
+
+
 async def _read_bytes(box: Box, path) -> bytes:
+    """A regular file's bytes, refused before transfer when it is too large,
+    and bounded in time."""
     session = await box.session()
-    try:
-        return (await session.read(path)).read()
-    except Exception:  # noqa: BLE001
-        raise _ToolError("not_found", f"{path} does not exist or is not a readable file.") from None
+    limit = min(MAX_READ, (box.row["profile_json"].get("transfer") or {}).get("max_file_bytes", MAX_READ))
+    probe = await session.exec("stat", "-L", "-c", "%F %s", "--", str(path), shell=False, timeout=10)
+    kind, _, size = probe.stdout.decode(errors="replace").strip().rpartition(" ")
+    if probe.exit_code != 0:
+        raise _ToolError("not_found", f"{path} does not exist.")
+    if kind not in ("regular file", "regular empty file"):
+        raise _ToolError("not_a_file", f"{path} is a {kind or 'special file'}, not a regular file.")
+    if int(size or 0) > limit:
+        raise _ToolError("file_too_large", f"{path} is {size} bytes; at most {limit} can be read. Use "
+                         "exec_command with head, tail or grep for part of it.", size=int(size))
+    res = await session.exec("head", "-c", str(limit + 1), "--", str(path), shell=False, timeout=30)
+    if res.exit_code != 0:
+        raise _ToolError("not_found", f"{path} could not be read.")
+    if len(res.stdout) > limit:
+        raise _ToolError("file_too_large", f"{path} grew past {limit} bytes while being read.")
+    return res.stdout
 
 
 async def _exists(box: Box, path) -> bool:
@@ -276,12 +293,16 @@ def make(hub_dir, sandbox_id: str | None) -> dict:
         await _write(b, path, after.encode())
         diff = "".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True), str(path), str(path)))
         return {"path": str(path), "replacements": count if args.get("replace_all") else 1,
-                "sha256": hashlib.sha256(after.encode()).hexdigest(), "diff": diff[:8192]}
+                "sha256": hashlib.sha256(after.encode()).hexdigest(),
+                "diff": redaction.scrub_text(diff[:8192])}
 
-    async def _rg(b: Box, argv: list[str]) -> list[str]:
+    async def _rg(b: Box, argv: list[str], limit: int) -> list[str]:
+        """At most `limit + 1` lines of output, so a huge result never reaches
+        this process whole."""
         session = await b.session()
-        res = await session.exec(*argv, shell=False, timeout=60)
-        if res.exit_code not in (0, 1):
+        command = " ".join(shlex.quote(a) for a in argv) + f" | head -n {limit + 1} | head -c 4194304"
+        res = await session.exec("bash", "-c", "set -o pipefail; " + command, shell=False, timeout=60)
+        if res.exit_code not in (0, 1, 141):          # 141: head closed the pipe early
             raise _ToolError("search_failed", redaction.scrub_text(res.stderr.decode(errors="replace"))[-500:])
         return res.stdout.decode("utf-8", errors="replace").splitlines()
 
@@ -292,8 +313,8 @@ def make(hub_dir, sandbox_id: str | None) -> dict:
             raise _ToolError("invalid_request", "pattern is a glob such as **/*.py.")
         root = await b.path(args.get("path") or ".")
         limit = max(1, min(1000, int(args.get("limit") or 200)))
-        paths = await _rg(b, ["rg", "--files", "--glob", pattern, str(root)])
-        return {"paths": sorted(paths)[:limit], "truncated": len(paths) > limit}
+        paths = await _rg(b, ["rg", "--files", "--sort", "path", "--glob", pattern, str(root)], limit)
+        return {"paths": [redaction.scrub_text(p) for p in paths[:limit]], "truncated": len(paths) > limit}
 
     async def grep(args):
         b = need_box()
@@ -307,7 +328,7 @@ def make(hub_dir, sandbox_id: str | None) -> dict:
             argv.append("--ignore-case")
         if args.get("glob"):
             argv += ["--glob", str(args["glob"])]
-        lines = await _rg(b, argv + ["--regexp", pattern, "--", str(root)])
+        lines = await _rg(b, argv + ["--regexp", pattern, "--", str(root)], limit)
         matches = []
         for line in lines[:limit]:
             parts = line.split(":", 2)

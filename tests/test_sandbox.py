@@ -95,6 +95,9 @@ def test_sandbox_tools_need_a_sandbox(hub_dir):
     assert any(c["code"] == "sandbox_tool_without_sandbox" for c in report["checks"])
     with pytest.raises(WorkItemError):
         tools.for_station(hub_dir, ["exec_command"])
+    plain = tools.for_station(hub_dir, ["read_file"])           # no sandbox: still the hub's own reader
+    assert plain["read_file"].description != tools.for_station(hub_dir, ["read_file"], sandbox=True)[
+        "read_file"].description
     boxed = tools.for_station(hub_dir, ["exec_command", "read_file", "read_hub_file"], sandbox=True)
     assert list(boxed) == ["exec_command", "read_file", "read_hub_file"]
     assert boxed["read_file"] is not boxed["read_hub_file"]          # the hub's file tool keeps working
@@ -165,6 +168,21 @@ def test_a_lost_sandbox_is_not_recreated_on_recovery(hub_dir, monkeypatch):
             stations._attempt(context._ctx(), {"item": item}, call_id, "initial")
     assert err.value.code == "sandbox_lost"
     assert len([c for c in boxes.calls if c[0] == "allocate"]) == allocations
+    # Removed by an operator counts the same: recovery never starts it empty.
+    boxes.rows = [{"id": "box-1", "state": "deleted", "live_key": None}]
+    stations._update_call(hub_dir, call_id, expected_revision=stations.get_call(hub_dir, call_id)["revision"],
+                          attempts_json=attempts, status="started", recovery_count=0)
+    with scope_for(hub_dir, item):
+        with pytest.raises(StationError) as err:
+            stations._attempt(context._ctx(), {"item": item}, call_id, "initial")
+    assert err.value.code == "sandbox_lost"
+    # An explicit retry is the one way to a fresh sandbox.
+    row = stations.get_call(hub_dir, call_id)
+    stations._update_call(hub_dir, call_id, expected_revision=row["revision"], attempts_json=[], status="started",
+                          retry_used=1, clarification="Start again.")
+    with scope_for(hub_dir, item):
+        assert stations._attempt(context._ctx(), {"item": item}, call_id, "retry") == {"text": "x"}
+    assert len([c for c in boxes.calls if c[0] == "allocate"]) == allocations + 1
 
 
 def _raises(exc):
@@ -200,6 +218,20 @@ def test_restart_keeps_files_and_a_deleted_sandbox_is_lost(hub_dir, monkeypatch)
 
     async def call(box_tools, name, args):
         return json.loads(await box_tools[name].on_invoke_tool(None, json.dumps(args)))
+
+    # Setup reaches only the allowed registries through the proxy: no direct
+    # route, no host gateway, and the proxy refuses private addresses.
+    (hub_dir / "sandboxes" / "net.yaml").write_text(PROFILE.replace(
+        "setup: {mode: deny_all}", "setup: {mode: allowlist, presets: [registries-v1]}") + textwrap.dedent("""\
+        setup:
+          command: >-
+            curl -s -m 5 -o /dev/null -w '%{http_code}' http://169.254.169.254/latest/ > meta.txt;
+            curl -s -m 5 --noproxy '*' -o /dev/null -w '%{http_code}' http://172.17.0.1/ > direct.txt;
+            exit 0
+    """))
+    sandbox_service.prepare(hub_dir, "net")
+    net = sandbox_service.probe(hub_dir, "net", ["cat", "meta.txt", "direct.txt"])
+    assert net["exit_code"] == 0 and net["stdout"] == "403000" and net["network"] == "deny_all"
 
     sandbox_service.prepare(hub_dir, "work")
     row = sandbox_service.allocate(hub_dir, owner_kind="probe", owner_id="p1", profile_id="work")

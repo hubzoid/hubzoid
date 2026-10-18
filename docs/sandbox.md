@@ -16,13 +16,22 @@ without it.
    checkout. If the profile has a `setup` command, Hubzoid runs it once. That
    command comes from the reviewed profile file, never from a model. It can
    reach only the package registries the profile allows, through a proxy
-   created for this sandbox alone. The sandbox has no other route and no DNS.
+   created for this sandbox alone, which also refuses private and link-local
+   addresses. The sandbox has no other route, no DNS and no way to the host
+   (its network has no gateway; this needs Docker Engine 28 or later).
 2. **Offline.** Hubzoid then stops the container, so every setup process ends,
    removes all its network, starts it again and checks that it is offline.
 3. **Agent work.** Only now does the agent get its tools. Its commands run as
    an unprivileged user, offline.
-4. **Done.** When the call completes, any new commits in a checkout are
-   exported as a patch into the hub's `output/`, and the sandbox is deleted.
+4. **Done.** When the call completes, every process in the sandbox is ended,
+   any new commits in a checkout are exported as a patch into the hub's
+   `output/`, and the sandbox is deleted. A failed call keeps its sandbox
+   (paused, files intact) for its one retry.
+
+Cleanup also runs on its own every `reaper.interval_seconds` while Hubzoid
+runs: it pauses idle sandboxes, removes expired ones and those whose work is
+done, and deletes leftover containers and networks labelled for this
+deployment, never anything else.
 
 If Hubzoid restarts, the same sandbox is found again with its files. A sandbox
 that disappeared (deleted by hand, or the Docker host was reset) is reported as
@@ -118,7 +127,7 @@ The same names, inputs and outputs on Claude and Codex.
 |---|---|
 | `exec_command` | Runs a shell command in the sandbox. A command still running after `command_timeout_seconds` keeps going and returns a session id. |
 | `write_stdin` | Sends input to, or reads more output from, such a session. |
-| `read_file` | A text file with line numbers. Needed before changing a file. |
+| `read_file` | A text file with line numbers, up to `transfer.max_file_bytes` (8 MiB at most). Needed before changing a file. |
 | `write_file` | Creates a file, or replaces one the agent has read and that has not changed since. |
 | `edit_file` | Replaces an exact string, once unless `replace_all`. |
 | `glob`, `grep` | Find files and search their contents (ripgrep). |
@@ -127,7 +136,8 @@ The same names, inputs and outputs on Claude and Codex.
 tools. File paths are inside `/workspace`, checked against their real path
 inside the sandbox. Output is scrubbed of credentials before the agent sees it.
 An agent with a sandbox that also needs the hub's files lists `read_hub_file`
-and `list_hub_files`.
+and `list_hub_files`. Without a sandbox, `read_file` stays the hub's own file
+reader.
 
 ## Check, try and clean up
 

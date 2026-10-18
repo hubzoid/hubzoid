@@ -32,7 +32,7 @@ def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str 
     names = list(names or ())
     if not names:
         return {}
-    boxed = [n for n in names if n in sandbox_tools.NAMES or n in sandbox_tools.HUB_ALIASES]
+    boxed = sandbox_names(hub_dir, names, sandbox=sandbox)
     if boxed and not sandbox:
         raise WorkItemError("sandbox_tool_without_sandbox", f"{', '.join(boxed)} need a sandbox profile "
                             "(sandbox: in the agent's frontmatter).", status=422)
@@ -54,6 +54,18 @@ def for_station(hub_dir: Path, names, *, sandbox: bool = False, sandbox_id: str 
         else:
             raise WorkItemError("unknown_tool", f"Unknown tool {name!r} for this station.", status=422)
     return out
+
+
+def sandbox_names(hub_dir: Path, names, *, sandbox: bool) -> list[str]:
+    """The names in `names` that mean a sandbox tool. Without a sandbox, a
+    name the hub also has (`read_file`) keeps meaning the hub's own tool."""
+    from ..sandbox import tools as sandbox_tools
+
+    boxed = [n for n in names if n in sandbox_tools.NAMES or n in sandbox_tools.HUB_ALIASES]
+    if sandbox or not boxed:
+        return boxed
+    hub_names = set(hub_registry(hub_dir))
+    return [n for n in boxed if n not in hub_names]
 
 
 def _save_handoff_tool():

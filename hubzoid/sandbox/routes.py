@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..work_items.errors import WorkItemError
-from ..work_items.routes import _call
+from ..work_items.routes import _call, _writer
 
 
 class ReasonBody(BaseModel):
@@ -36,6 +36,8 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
     from ..work_items import service as wi_service
     from . import config, service
 
+    writer = _writer(require_person)
+
     def hub_for(actor, hub: str, permission: str) -> Path:
         try:
             hub_dir = hub_path(actor, hub)
@@ -54,7 +56,7 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
                            owner_kind=owner_kind, limit=limit)
 
     @router.post("/hubs/{hub}/sandboxes/doctor")
-    async def doctor(hub: str, actor=Depends(require_person)):
+    async def doctor(hub: str, actor=Depends(writer)):
         return await _call(service.doctor, hub_for(actor, hub, "workflows_view"))
 
     @router.get("/hubs/{hub}/sandboxes/profiles")
@@ -74,16 +76,16 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
         return await _call(build)
 
     @router.post("/hubs/{hub}/sandboxes/profiles/{profile}/prepare")
-    async def prepare(hub: str, profile: str, actor=Depends(require_person)):
+    async def prepare(hub: str, profile: str, actor=Depends(writer)):
         return await _call(service.prepare, hub_for(actor, hub, "workflows_manage"), profile)
 
     @router.post("/hubs/{hub}/sandboxes/probes")
-    async def probe(hub: str, body: ProbeBody, actor=Depends(require_person)):
+    async def probe(hub: str, body: ProbeBody, actor=Depends(writer)):
         return await _call(service.probe, hub_for(actor, hub, "workflows_manage"), body.profile, body.argv,
                            actor=actor.subject)
 
     @router.post("/hubs/{hub}/sandboxes/reaper")
-    async def reaper(hub: str, body: ReapBody = Body(default_factory=ReapBody), actor=Depends(require_person)):
+    async def reaper(hub: str, body: ReapBody = Body(default_factory=ReapBody), actor=Depends(writer)):
         hub_dir = hub_for(actor, hub, "workflows_manage" if not body.dry_run else "workflows_view")
         return await _call(service.reap, hub_dir, dry_run=body.dry_run)
 
@@ -93,11 +95,11 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
         return service.view(await _call(service.require, hub_dir, sandbox_id))
 
     @router.post("/hubs/{hub}/sandboxes/{sandbox_id}/stop")
-    async def stop(hub: str, sandbox_id: str, body: ReasonBody, actor=Depends(require_person)):
+    async def stop(hub: str, sandbox_id: str, body: ReasonBody, actor=Depends(writer)):
         return await _call(service.operator_stop, hub_for(actor, hub, "workflows_manage"), sandbox_id,
                            actor.subject, reason=body.reason, expected_revision=body.expected_revision)
 
     @router.delete("/hubs/{hub}/sandboxes/{sandbox_id}")
-    async def delete(hub: str, sandbox_id: str, body: ReasonBody, actor=Depends(require_person)):
+    async def delete(hub: str, sandbox_id: str, body: ReasonBody, actor=Depends(writer)):
         return await _call(service.operator_delete, hub_for(actor, hub, "workflows_manage"), sandbox_id,
                            actor.subject, reason=body.reason, expected_revision=body.expected_revision)
