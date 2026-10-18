@@ -7,12 +7,14 @@ import { href } from "../hooks/useRoute";
 
 const ChatSettings = lazy(() => import("./settings/ChatSettings").then((m) => ({ default: m.ChatSettings })));
 const Appearance = lazy(() => import("./settings/Appearance").then((m) => ({ default: m.Appearance })));
+const Parity = lazy(() => import("./settings/Parity").then((m) => ({ default: m.Parity })));
 const AdminSettings = lazy(() => import("./settings/AdminSettings").then((m) => ({ default: m.AdminSettings })));
 
 const TABS = [
   { key: "chat", label: "Chat", node: <ChatSettings /> },
   { key: "appearance", label: "Appearance", node: <Appearance /> },
   { key: "admin", label: "Admin", node: <AdminSettings /> },
+  { key: "parity", label: "Parity ledger", node: <Parity /> },
 ];
 
 export function SettingsScreen({ tab }: { tab?: string }) {

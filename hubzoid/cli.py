@@ -3025,10 +3025,17 @@ from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
 from .ui.branding_cli import branding_app  # noqa: E402
 from .admin.cli import register as _register_admin_cli  # noqa: E402
+from .parity.cli import parity_app  # noqa: E402
 
 _register_admin_cli(admin_app)
 from .migrate_openwebui import migrate_app  # noqa: E402
 
+app.add_typer(
+    parity_app,
+    name="parity",
+    help="The chat parity ledger: validate, coverage, candidate, review, freeze.",
+    rich_help_panel="Commands",
+)
 app.add_typer(
     branding_app,
     name="branding",

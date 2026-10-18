@@ -34,7 +34,8 @@ LATER_TABLES = ("hz_chat_operations", "hz_chat_config_revisions", "hz_chat_confi
                 "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",
                 "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
                 "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans",
-                "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles")
+                "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles",
+                "hz_parity_candidates", "hz_parity_reviews", "hz_parity_freezes")
 
 
 @pytest.fixture(autouse=True)

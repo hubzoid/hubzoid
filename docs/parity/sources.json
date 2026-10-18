@@ -1,0 +1,4573 @@
+{
+ "locators": [
+  {
+   "id": "L000001",
+   "kind": "appendix_row",
+   "line": 179,
+   "path": "src/lib/components/chat/Messages/Markdown/MarkdownTokens.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000002",
+   "kind": "appendix_row",
+   "line": 989,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000003",
+   "kind": "appendix_row",
+   "line": 428,
+   "path": "src/lib/components/chat/Messages/Markdown/MarkdownTokens.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000004",
+   "kind": "appendix_row",
+   "line": 73,
+   "path": "src/lib/components/chat/Messages/StructuredOutputRenderer.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000005",
+   "kind": "appendix_row",
+   "line": 461,
+   "path": "src/lib/components/chat/Messages/CodeBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000006",
+   "kind": "appendix_row",
+   "line": 485,
+   "path": "src/lib/components/chat/Messages/CodeBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000007",
+   "kind": "appendix_row",
+   "line": 473,
+   "path": "src/lib/components/chat/Messages/CodeBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000008",
+   "kind": "appendix_row",
+   "line": 870,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000009",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/chat/Messages/DiffBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000010",
+   "kind": "appendix_row",
+   "line": 141,
+   "path": "src/lib/components/chat/Messages/CodeBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000011",
+   "kind": "appendix_row",
+   "line": 34,
+   "path": "src/lib/components/chat/Messages/Markdown/KatexRenderer.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000012",
+   "kind": "appendix_row",
+   "line": 380,
+   "path": "src/lib/components/chat/Messages/CodeBlock.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000013",
+   "kind": "appendix_row",
+   "line": 27,
+   "path": "src/lib/components/common/SvgPanZoom.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000014",
+   "kind": "appendix_row",
+   "line": 139,
+   "path": "src/lib/components/chat/Messages/Markdown/MarkdownTokens.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000015",
+   "kind": "appendix_row",
+   "line": 42,
+   "path": "src/lib/components/chat/Messages/Markdown/SourceToken.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000016",
+   "kind": "appendix_row",
+   "line": 170,
+   "path": "src/lib/components/chat/Messages/Citations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000017",
+   "kind": "appendix_row",
+   "line": 106,
+   "path": "src/lib/components/chat/Messages/Citations/CitationModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000018",
+   "kind": "appendix_row",
+   "line": 701,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000019",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "src/lib/components/common/Image.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000020",
+   "kind": "appendix_row",
+   "line": 81,
+   "path": "src/lib/components/common/ImagePreview.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000021",
+   "kind": "appendix_row",
+   "line": 21,
+   "path": "src/lib/components/chat/Messages/Markdown/HTMLToken.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000022",
+   "kind": "appendix_row",
+   "line": 725,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000023",
+   "kind": "appendix_row",
+   "line": 82,
+   "path": "src/lib/components/chat/Artifacts.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000024",
+   "kind": "appendix_row",
+   "line": 136,
+   "path": "src/lib/components/chat/Messages/ContentRenderer.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000025",
+   "kind": "appendix_row",
+   "line": 130,
+   "path": "src/lib/components/chat/Messages/TerminalOutputFile.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000026",
+   "kind": "appendix_row",
+   "line": 95,
+   "path": "src/lib/apis/streaming/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000027",
+   "kind": "appendix_row",
+   "line": 80,
+   "path": "src/lib/components/chat/Messages/Markdown.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000028",
+   "kind": "appendix_row",
+   "line": 897,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000029",
+   "kind": "appendix_row",
+   "line": 193,
+   "path": "packages/react-markdown/src/primitives/MarkdownText.tsx",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000030",
+   "kind": "appendix_row",
+   "line": 2117,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000031",
+   "kind": "appendix_row",
+   "line": 905,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000032",
+   "kind": "appendix_row",
+   "line": 37,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000033",
+   "kind": "appendix_row",
+   "line": 95,
+   "path": "src/lib/apis/streaming/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000034",
+   "kind": "appendix_row",
+   "line": 164,
+   "path": "packages/react/src/utils/smooth/useSmooth.ts",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000035",
+   "kind": "appendix_row",
+   "line": 1600,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000036",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/chat/Messages/Name.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000037",
+   "kind": "appendix_row",
+   "line": 215,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000038",
+   "kind": "appendix_row",
+   "line": 1127,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000039",
+   "kind": "appendix_row",
+   "line": 78,
+   "path": "src/lib/components/chat/Messages/UserMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000040",
+   "kind": "appendix_row",
+   "line": 394,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000041",
+   "kind": "appendix_row",
+   "line": 1369,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000042",
+   "kind": "appendix_row",
+   "line": 37,
+   "path": "src/lib/components/chat/Messages/ResponseMessage/RegenerateMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000043",
+   "kind": "appendix_row",
+   "line": 465,
+   "path": "src/lib/components/chat/Messages/UserMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000044",
+   "kind": "appendix_row",
+   "line": 963,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000045",
+   "kind": "appendix_row",
+   "line": 1332,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000046",
+   "kind": "appendix_row",
+   "line": 1527,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000047",
+   "kind": "appendix_row",
+   "line": 595,
+   "path": "src/lib/components/chat/Messages/UserMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000048",
+   "kind": "appendix_row",
+   "line": 1558,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000049",
+   "kind": "appendix_row",
+   "line": 228,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000050",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000051",
+   "kind": "appendix_row",
+   "line": 459,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000052",
+   "kind": "appendix_row",
+   "line": 17,
+   "path": "src/lib/components/chat/Messages/RateComment.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000053",
+   "kind": "appendix_row",
+   "line": 1209,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000054",
+   "kind": "appendix_row",
+   "line": 1378,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000055",
+   "kind": "appendix_row",
+   "line": 23,
+   "path": "src/lib/components/chat/ContentRenderer/FloatingButtons.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000056",
+   "kind": "appendix_row",
+   "line": 179,
+   "path": "src/lib/components/chat/Messages/ContentRenderer.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000057",
+   "kind": "appendix_row",
+   "line": 1474,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000058",
+   "kind": "appendix_row",
+   "line": 1633,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000059",
+   "kind": "appendix_row",
+   "line": 1293,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000060",
+   "kind": "appendix_row",
+   "line": 1219,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000061",
+   "kind": "appendix_row",
+   "line": 2377,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000062",
+   "kind": "appendix_row",
+   "line": 130,
+   "path": "src/lib/components/chat/ShareChatModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000063",
+   "kind": "appendix_row",
+   "line": 942,
+   "path": "src/lib/components/chat/Messages/ResponseMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000064",
+   "kind": "appendix_row",
+   "line": 38,
+   "path": "src/lib/components/chat/ShareChatModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000065",
+   "kind": "appendix_row",
+   "line": 2031,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000066",
+   "kind": "appendix_row",
+   "line": 1566,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000067",
+   "kind": "appendix_row",
+   "line": 701,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000068",
+   "kind": "appendix_row",
+   "line": 2121,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000069",
+   "kind": "appendix_row",
+   "line": 2117,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000070",
+   "kind": "appendix_row",
+   "line": 4032,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000071",
+   "kind": "appendix_row",
+   "line": 918,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000072",
+   "kind": "appendix_row",
+   "line": 1978,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000073",
+   "kind": "appendix_row",
+   "line": 918,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000074",
+   "kind": "appendix_row",
+   "line": 1132,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000075",
+   "kind": "appendix_row",
+   "line": 1885,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000076",
+   "kind": "appendix_row",
+   "line": 2080,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000077",
+   "kind": "appendix_row",
+   "line": 861,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000078",
+   "kind": "appendix_row",
+   "line": 242,
+   "path": "src/lib/components/chat/MessageInput/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000079",
+   "kind": "appendix_row",
+   "line": 265,
+   "path": "src/lib/components/chat/MessageInput/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000080",
+   "kind": "appendix_row",
+   "line": 207,
+   "path": "src/lib/components/chat/MessageInput/Commands/Knowledge.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000081",
+   "kind": "appendix_row",
+   "line": 291,
+   "path": "src/lib/components/chat/MessageInput/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000082",
+   "kind": "appendix_row",
+   "line": 1221,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000083",
+   "kind": "appendix_row",
+   "line": 1858,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000084",
+   "kind": "appendix_row",
+   "line": 433,
+   "path": "src/lib/components/chat/MessageInput/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000085",
+   "kind": "appendix_row",
+   "line": 690,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000086",
+   "kind": "appendix_row",
+   "line": 53,
+   "path": "src/lib/components/chat/MessageInput/Commands/SlashCommands.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000087",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/AtCommands.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000088",
+   "kind": "appendix_row",
+   "line": 104,
+   "path": "src/lib/components/Skills.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000089",
+   "kind": "appendix_row",
+   "line": 68,
+   "path": "src/lib/components/Emojis.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000090",
+   "kind": "appendix_row",
+   "line": 57,
+   "path": "src/lib/components/chat/MessageInput/CommandSuggestionList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000091",
+   "kind": "appendix_row",
+   "line": 263,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000092",
+   "kind": "appendix_row",
+   "line": 110,
+   "path": "src/lib/components/chat/MessageInput/InputVariablesModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000093",
+   "kind": "appendix_row",
+   "line": 283,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000094",
+   "kind": "appendix_row",
+   "line": 2081,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000095",
+   "kind": "appendix_row",
+   "line": 1798,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000096",
+   "kind": "appendix_row",
+   "line": 76,
+   "path": "src/lib/components/chat/MessageInput/QueuedMessageItem.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000097",
+   "kind": "appendix_row",
+   "line": 307,
+   "path": "src/lib/components/chat/MessageInput/VoiceRecording.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000098",
+   "kind": "appendix_row",
+   "line": 218,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000099",
+   "kind": "appendix_row",
+   "line": 987,
+   "path": "src/lib/components/chat/MessageInput/CallOverlay.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000100",
+   "kind": "appendix_row",
+   "line": 60,
+   "path": "src/lib/components/chat/MessageInput/CallOverlay.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000101",
+   "kind": "appendix_row",
+   "line": 2774,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000102",
+   "kind": "appendix_row",
+   "line": 227,
+   "path": "src/lib/components/chat/ModelSelector/Selector.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000103",
+   "kind": "appendix_row",
+   "line": 263,
+   "path": "src/lib/components/chat/ModelSelector/Selector.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000104",
+   "kind": "appendix_row",
+   "line": 107,
+   "path": "src/lib/components/chat/ModelSelector/ModelItemMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000105",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/chat/MessageInput/Commands/AtCommands.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000106",
+   "kind": "appendix_row",
+   "line": 1909,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000107",
+   "kind": "appendix_row",
+   "line": 83,
+   "path": "src/lib/components/chat/ModelSelector.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000108",
+   "kind": "appendix_row",
+   "line": 258,
+   "path": "src/lib/components/chat/Messages/MultiResponseMessages.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000109",
+   "kind": "appendix_row",
+   "line": 172,
+   "path": "src/lib/components/chat/ModelSelector/ModelItem.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000110",
+   "kind": "appendix_row",
+   "line": 1136,
+   "path": "src/lib/components/chat/ModelSelector/Selector.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000111",
+   "kind": "appendix_row",
+   "line": 542,
+   "path": "src/lib/components/chat/MessageInput/IntegrationsMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000112",
+   "kind": "appendix_row",
+   "line": 824,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000113",
+   "kind": "appendix_row",
+   "line": 364,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000114",
+   "kind": "appendix_row",
+   "line": 57,
+   "path": "src/lib/components/chat/MessageInput/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000115",
+   "kind": "appendix_row",
+   "line": 37,
+   "path": "src/lib/components/chat/AskUserCard.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000116",
+   "kind": "appendix_row",
+   "line": 240,
+   "path": "src/lib/components/common/ToolCallDisplay.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000117",
+   "kind": "appendix_row",
+   "line": 31,
+   "path": "src/lib/components/chat/Messages/ResponseMessage/StatusHistory.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000118",
+   "kind": "appendix_row",
+   "line": 14,
+   "path": "src/lib/components/StatusHistory/StatusItem.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000119",
+   "kind": "appendix_row",
+   "line": 14,
+   "path": "src/lib/components/TaskList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000120",
+   "kind": "appendix_row",
+   "line": 63,
+   "path": "src/lib/components/chat/Messages/Markdown/MarkdownTokens.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000121",
+   "kind": "appendix_row",
+   "line": 19,
+   "path": "src/lib/components/chat/Messages/SubagentResultRow.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000122",
+   "kind": "appendix_row",
+   "line": 796,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000123",
+   "kind": "appendix_row",
+   "line": 56,
+   "path": "src/lib/components/chat/ChatControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000124",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/chat/Overview.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000125",
+   "kind": "appendix_row",
+   "line": 28,
+   "path": "src/lib/components/chat/Overview/View.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000126",
+   "kind": "appendix_row",
+   "line": 1817,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000127",
+   "kind": "appendix_row",
+   "line": 214,
+   "path": "src/lib/components/Commands/SlashCommands.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000128",
+   "kind": "appendix_row",
+   "line": 109,
+   "path": "src/lib/components/chat/Controls/Controls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000129",
+   "kind": "appendix_row",
+   "line": 127,
+   "path": "src/lib/components/chat/Settings/Advanced/AdvancedParams.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000130",
+   "kind": "appendix_row",
+   "line": 568,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000131",
+   "kind": "appendix_row",
+   "line": 181,
+   "path": "src/lib/components/Commands/SlashCommands.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000132",
+   "kind": "appendix_row",
+   "line": 4480,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000133",
+   "kind": "appendix_row",
+   "line": 2469,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000134",
+   "kind": "appendix_row",
+   "line": 1681,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000135",
+   "kind": "appendix_row",
+   "line": 482,
+   "path": "src/lib/components/chat/Messages.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000136",
+   "kind": "appendix_row",
+   "line": 68,
+   "path": "src/lib/components/chat/Messages.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000137",
+   "kind": "appendix_row",
+   "line": 2440,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000138",
+   "kind": "appendix_row",
+   "line": 85,
+   "path": "src/lib/components/chat/Messages/UserMessage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000139",
+   "kind": "appendix_row",
+   "line": 1150,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000140",
+   "kind": "appendix_row",
+   "line": 94,
+   "path": "src/lib/components/chat/Placeholder.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000141",
+   "kind": "appendix_row",
+   "line": 98,
+   "path": "src/lib/components/chat/Placeholder.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000142",
+   "kind": "appendix_row",
+   "line": 17,
+   "path": "src/lib/components/chat/Suggestions.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000143",
+   "kind": "appendix_row",
+   "line": 1196,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000144",
+   "kind": "appendix_row",
+   "line": 116,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000145",
+   "kind": "appendix_row",
+   "line": 132,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000146",
+   "kind": "appendix_row",
+   "line": 243,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000147",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/chat/Settings/DataControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000148",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/chat/Settings/ArchivedChats.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000149",
+   "kind": "appendix_row",
+   "line": 1451,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000150",
+   "kind": "appendix_row",
+   "line": 594,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000151",
+   "kind": "appendix_row",
+   "line": 22,
+   "path": "src/lib/components/NotificationToast.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000152",
+   "kind": "appendix_row",
+   "line": 60,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000153",
+   "kind": "appendix_row",
+   "line": 68,
+   "path": "src/lib/components/NotificationToast.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000154",
+   "kind": "appendix_row",
+   "line": 29,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000155",
+   "kind": "appendix_row",
+   "line": 666,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000156",
+   "kind": "appendix_row",
+   "line": 2769,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000157",
+   "kind": "appendix_row",
+   "line": 85,
+   "path": "src/lib/shortcuts.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000158",
+   "kind": "appendix_row",
+   "line": 63,
+   "path": "src/lib/components/chat/Settings/Shortcuts.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000159",
+   "kind": "appendix_row",
+   "line": 469,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000160",
+   "kind": "appendix_row",
+   "line": 260,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000161",
+   "kind": "appendix_row",
+   "line": 815,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000162",
+   "kind": "appendix_row",
+   "line": 620,
+   "path": "src/lib/components/common/InterfaceSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000163",
+   "kind": "appendix_row",
+   "line": 271,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000164",
+   "kind": "appendix_row",
+   "line": 165,
+   "path": "src/lib/components/roadmap/chat-interface-plan.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000165",
+   "kind": "appendix_row",
+   "line": 2135,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000166",
+   "kind": "appendix_row",
+   "line": 2072,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000167",
+   "kind": "appendix_row",
+   "line": 98,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000168",
+   "kind": "appendix_row",
+   "line": 1684,
+   "path": "src/lib/components/chat/MessageInput.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000169",
+   "kind": "appendix_row",
+   "line": 480,
+   "path": "src/lib/components/chat/Messages.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000170",
+   "kind": "appendix_row",
+   "line": 87,
+   "path": "src/lib/components/NotificationToast.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000171",
+   "kind": "appendix_row",
+   "line": 439,
+   "path": "portal/src/app/chat/Thread.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000172",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/chat/shares.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000173",
+   "kind": "appendix_row",
+   "line": 78,
+   "path": "portal/src/app/chat/AgentPicker.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000174",
+   "kind": "appendix_row",
+   "line": 439,
+   "path": "portal/src/app/chat/Thread.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000175",
+   "kind": "appendix_row",
+   "line": 439,
+   "path": "portal/src/app/chat/Thread.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000176",
+   "kind": "appendix_row",
+   "line": 89,
+   "path": "portal/src/app/chat/convert.ts",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000177",
+   "kind": "appendix_row",
+   "line": 13,
+   "path": "hubzoid/chat/routes.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000178",
+   "kind": "appendix_row",
+   "line": 95,
+   "path": "portal/src/app/chat/Markdown.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000179",
+   "kind": "appendix_row",
+   "line": 174,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000180",
+   "kind": "appendix_row",
+   "line": 110,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000181",
+   "kind": "appendix_row",
+   "line": 106,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000182",
+   "kind": "appendix_row",
+   "line": 101,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000183",
+   "kind": "appendix_row",
+   "line": 125,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000184",
+   "kind": "appendix_row",
+   "line": 98,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000185",
+   "kind": "appendix_row",
+   "line": 114,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000186",
+   "kind": "appendix_row",
+   "line": 121,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000187",
+   "kind": "appendix_row",
+   "line": 116,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000188",
+   "kind": "appendix_row",
+   "line": 154,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000189",
+   "kind": "appendix_row",
+   "line": 574,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000190",
+   "kind": "appendix_row",
+   "line": 458,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000191",
+   "kind": "appendix_row",
+   "line": 571,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000192",
+   "kind": "appendix_row",
+   "line": 44,
+   "path": "hubzoid/branding.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000193",
+   "kind": "appendix_row",
+   "line": 80,
+   "path": "hubzoid/branding.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000194",
+   "kind": "appendix_row",
+   "line": 202,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000195",
+   "kind": "appendix_row",
+   "line": 31,
+   "path": "packages/react/src/primitives/thread/ThreadViewport.tsx",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000196",
+   "kind": "appendix_row",
+   "line": 76,
+   "path": "src/lib/components/useThreadViewportAutoScroll.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000197",
+   "kind": "appendix_row",
+   "line": 51,
+   "path": "packages/react/src/primitives/composer/ComposerInput.tsx",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000198",
+   "kind": "appendix_row",
+   "line": 149,
+   "path": "src/lib/components/E/thread.aui.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000199",
+   "kind": "appendix_row",
+   "line": 53,
+   "path": "src/lib/components/E/follow-up-suggestions.aui.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000200",
+   "kind": "appendix_row",
+   "line": 8,
+   "path": "src/lib/components/E/feedback-dialog.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000201",
+   "kind": "appendix_row",
+   "line": 8,
+   "path": "src/lib/components/E/artifact-card.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000202",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/E/streaming-text.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000203",
+   "kind": "appendix_row",
+   "line": 19,
+   "path": "src/lib/components/E/tooltip-icon-button.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000204",
+   "kind": "appendix_row",
+   "line": 418,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000205",
+   "kind": "appendix_row",
+   "line": 96,
+   "path": "src/lib/components/layout/Sidebar/ChatItem.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000206",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/thread-list.aui.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000207",
+   "kind": "appendix_row",
+   "line": 97,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000208",
+   "kind": "appendix_row",
+   "line": 21,
+   "path": "src/lib/components/layout/Sidebar/PinnedModelList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000209",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/threadlist-sidebar.aui.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000210",
+   "kind": "appendix_row",
+   "line": 376,
+   "path": "src/lib/components/layout/Sidebar/ChatMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000211",
+   "kind": "appendix_row",
+   "line": 208,
+   "path": "src/lib/components/layout/Sidebar/ChatItem.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000212",
+   "kind": "appendix_row",
+   "line": 388,
+   "path": "src/lib/components/layout/Sidebar/ChatMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000213",
+   "kind": "appendix_row",
+   "line": 470,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000214",
+   "kind": "appendix_row",
+   "line": 197,
+   "path": "src/lib/components/layout/Sidebar/RecursiveFolder.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000215",
+   "kind": "appendix_row",
+   "line": 205,
+   "path": "src/lib/components/routes.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000216",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/layout/Sidebar/Folders/FolderModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000217",
+   "kind": "appendix_row",
+   "line": 74,
+   "path": "src/lib/components/layout/Sidebar/Folders/FolderShareModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000218",
+   "kind": "appendix_row",
+   "line": 27,
+   "path": "src/lib/components/chat/Tags.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000219",
+   "kind": "appendix_row",
+   "line": 285,
+   "path": "src/lib/components/layout/SearchModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000220",
+   "kind": "appendix_row",
+   "line": 462,
+   "path": "src/lib/components/layout/Sidebar/ChatMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000221",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/chat/Settings/ArchivedChats.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000222",
+   "kind": "appendix_row",
+   "line": 159,
+   "path": "src/lib/components/chat/Settings/DataControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000223",
+   "kind": "appendix_row",
+   "line": 30,
+   "path": "src/lib/components/chat/ShareChatModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000224",
+   "kind": "appendix_row",
+   "line": 97,
+   "path": "src/lib/components/layout/SharedChatsModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000225",
+   "kind": "appendix_row",
+   "line": 342,
+   "path": "src/lib/components/layout/Sidebar/ChatMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000226",
+   "kind": "appendix_row",
+   "line": 486,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000227",
+   "kind": "appendix_row",
+   "line": 159,
+   "path": "src/lib/components/chat/Settings/DataControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000228",
+   "kind": "appendix_row",
+   "line": 180,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000229",
+   "kind": "appendix_row",
+   "line": 2025,
+   "path": "src/lib/components/chat/Chat.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000230",
+   "kind": "appendix_row",
+   "line": 263,
+   "path": "src/lib/components/layout/Sidebar/UserMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000231",
+   "kind": "appendix_row",
+   "line": 176,
+   "path": "src/lib/components/layout/Sidebar/ChannelModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000232",
+   "kind": "appendix_row",
+   "line": 197,
+   "path": "src/lib/components/channel/MessageInput/MentionList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000233",
+   "kind": "appendix_row",
+   "line": 57,
+   "path": "src/lib/components/InputMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000234",
+   "kind": "appendix_row",
+   "line": 222,
+   "path": "src/lib/components/channel/Messages/Message.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000235",
+   "kind": "appendix_row",
+   "line": 449,
+   "path": "src/lib/components/notes/Notes.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000236",
+   "kind": "appendix_row",
+   "line": 124,
+   "path": "src/lib/components/notes/Notes/NoteMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000237",
+   "kind": "appendix_row",
+   "line": 62,
+   "path": "src/lib/components/notes/Notes/NoteMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000238",
+   "kind": "appendix_row",
+   "line": 154,
+   "path": "src/lib/components/notes/NoteEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000239",
+   "kind": "appendix_row",
+   "line": 100,
+   "path": "src/lib/components/chat/Settings/Personalization.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000240",
+   "kind": "appendix_row",
+   "line": 25,
+   "path": "src/lib/components/chat/Settings/Personalization/MemoryModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000241",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/memory.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000242",
+   "kind": "appendix_row",
+   "line": 96,
+   "path": "src/lib/components/workspace/Prompts.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000243",
+   "kind": "appendix_row",
+   "line": 348,
+   "path": "src/lib/components/workspace/Prompts/PromptEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000244",
+   "kind": "appendix_row",
+   "line": 80,
+   "path": "src/lib/components/workspace/Knowledge.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000245",
+   "kind": "appendix_row",
+   "line": 69,
+   "path": "src/lib/components/workspace/Knowledge/KnowledgeBase/AddContentMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000246",
+   "kind": "appendix_row",
+   "line": 670,
+   "path": "src/lib/components/KnowledgeBase.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000247",
+   "kind": "appendix_row",
+   "line": 22,
+   "path": "src/lib/components/layout/Sidebar/UserStatusModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000248",
+   "kind": "appendix_row",
+   "line": 145,
+   "path": "src/lib/components/layout/Sidebar/UserMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000249",
+   "kind": "appendix_row",
+   "line": 72,
+   "path": "src/lib/components/chat/SettingsModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000250",
+   "kind": "appendix_row",
+   "line": 38,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000251",
+   "kind": "appendix_row",
+   "line": 8,
+   "path": "src/lib/components/pages/SettingsFrame.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000252",
+   "kind": "appendix_row",
+   "line": 74,
+   "path": "src/lib/i18n/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000253",
+   "kind": "appendix_row",
+   "line": 132,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000254",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/i18n/en.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000255",
+   "kind": "appendix_row",
+   "line": 91,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000256",
+   "kind": "appendix_row",
+   "line": 202,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000257",
+   "kind": "appendix_row",
+   "line": 124,
+   "path": "src/lib/components/Account/UserProfileImage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000258",
+   "kind": "appendix_row",
+   "line": 233,
+   "path": "hubzoid/auth/routes.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000259",
+   "kind": "appendix_row",
+   "line": 70,
+   "path": "hubzoid/auth/oidc.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000260",
+   "kind": "appendix_row",
+   "line": 57,
+   "path": "src/lib/components/chat/Settings/Connections.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000261",
+   "kind": "appendix_row",
+   "line": 88,
+   "path": "src/lib/components/chat/Settings/Integrations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000262",
+   "kind": "appendix_row",
+   "line": 108,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000263",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/chat/Settings/Usage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000264",
+   "kind": "appendix_row",
+   "line": 159,
+   "path": "src/lib/components/DataControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000265",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "src/lib/components/About.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000266",
+   "kind": "appendix_row",
+   "line": 94,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000267",
+   "kind": "appendix_row",
+   "line": 2868,
+   "path": "backend/open_webui/main.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000268",
+   "kind": "appendix_row",
+   "line": 41,
+   "path": "src/lib/components/OnBoarding.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000269",
+   "kind": "appendix_row",
+   "line": 300,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000270",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "hubzoid/branding.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000271",
+   "kind": "appendix_row",
+   "line": 205,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000272",
+   "kind": "appendix_row",
+   "line": 284,
+   "path": "hubzoid/webapp_gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000273",
+   "kind": "appendix_row",
+   "line": 24,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000274",
+   "kind": "appendix_row",
+   "line": 74,
+   "path": "src/lib/i18n/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000275",
+   "kind": "appendix_row",
+   "line": 80,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000276",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000277",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000278",
+   "kind": "appendix_row",
+   "line": 45,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000279",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000280",
+   "kind": "appendix_row",
+   "line": 53,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000281",
+   "kind": "appendix_row",
+   "line": 56,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000282",
+   "kind": "appendix_row",
+   "line": 61,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000283",
+   "kind": "appendix_row",
+   "line": 65,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000284",
+   "kind": "appendix_row",
+   "line": 70,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000285",
+   "kind": "appendix_row",
+   "line": 1492,
+   "path": "src/lib/components/chat/Settings/Advanced/AdvancedParams.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000286",
+   "kind": "appendix_row",
+   "line": 67,
+   "path": "src/lib/components/chat/Settings/Interface/ManageFloatingActionButtonsModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000287",
+   "kind": "appendix_row",
+   "line": 100,
+   "path": "src/lib/components/chat/Settings/Personalization.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000288",
+   "kind": "appendix_row",
+   "line": 426,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000289",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "src/lib/components/chat/Settings/Personalization.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000290",
+   "kind": "appendix_row",
+   "line": 25,
+   "path": "src/lib/components/chat/Settings/Personalization/MemoryModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000291",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/chat/Settings/Personalization/MemoryModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000292",
+   "kind": "appendix_row",
+   "line": 27,
+   "path": "src/lib/components/chat/Settings/Personalization/MemoryModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000293",
+   "kind": "appendix_row",
+   "line": 97,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000294",
+   "kind": "appendix_row",
+   "line": 98,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000295",
+   "kind": "appendix_row",
+   "line": 94,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000296",
+   "kind": "appendix_row",
+   "line": 100,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000297",
+   "kind": "appendix_row",
+   "line": 101,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000298",
+   "kind": "appendix_row",
+   "line": 95,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000299",
+   "kind": "appendix_row",
+   "line": 92,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000300",
+   "kind": "appendix_row",
+   "line": 103,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000301",
+   "kind": "appendix_row",
+   "line": 109,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000302",
+   "kind": "appendix_row",
+   "line": 202,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000303",
+   "kind": "appendix_row",
+   "line": 56,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000304",
+   "kind": "appendix_row",
+   "line": 124,
+   "path": "src/lib/components/chat/Settings/Account/UserProfileImage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000305",
+   "kind": "appendix_row",
+   "line": 9,
+   "path": "src/lib/components/chat/Settings/Account/UpdatePassword.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000306",
+   "kind": "appendix_row",
+   "line": 381,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000307",
+   "kind": "appendix_row",
+   "line": 48,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000308",
+   "kind": "appendix_row",
+   "line": 403,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000309",
+   "kind": "appendix_row",
+   "line": 459,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000310",
+   "kind": "appendix_row",
+   "line": 381,
+   "path": "src/lib/components/chat/Settings/Account.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000311",
+   "kind": "appendix_row",
+   "line": 60,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000312",
+   "kind": "appendix_row",
+   "line": 187,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000313",
+   "kind": "appendix_row",
+   "line": 97,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000314",
+   "kind": "appendix_row",
+   "line": 108,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000315",
+   "kind": "appendix_row",
+   "line": 114,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000316",
+   "kind": "appendix_row",
+   "line": 29,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000317",
+   "kind": "appendix_row",
+   "line": 116,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000318",
+   "kind": "appendix_row",
+   "line": 176,
+   "path": "src/lib/components/chat/Settings/Notifications.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000319",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "src/lib/components/chat/Settings/About.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000320",
+   "kind": "appendix_row",
+   "line": 45,
+   "path": "src/lib/components/chat/Settings/About.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000321",
+   "kind": "appendix_row",
+   "line": 57,
+   "path": "src/lib/components/chat/Settings/Connections.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000322",
+   "kind": "appendix_row",
+   "line": 34,
+   "path": "src/lib/components/AddConnectionModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000323",
+   "kind": "appendix_row",
+   "line": 247,
+   "path": "src/lib/components/AddConnectionModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000324",
+   "kind": "appendix_row",
+   "line": 422,
+   "path": "src/lib/components/AddConnectionModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000325",
+   "kind": "appendix_row",
+   "line": 34,
+   "path": "src/lib/components/AddConnectionModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000326",
+   "kind": "appendix_row",
+   "line": 88,
+   "path": "src/lib/components/chat/Settings/Integrations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000327",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000328",
+   "kind": "appendix_row",
+   "line": 450,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000329",
+   "kind": "appendix_row",
+   "line": 756,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000330",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000331",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/openapi.js",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000332",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000333",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000334",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "src/lib/components/AddTerminalServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000335",
+   "kind": "appendix_row",
+   "line": 969,
+   "path": "src/lib/components/AddTerminalServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000336",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "src/lib/components/AddTerminalServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000337",
+   "kind": "appendix_row",
+   "line": 565,
+   "path": "src/lib/components/AddTerminalServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000338",
+   "kind": "appendix_row",
+   "line": 80,
+   "path": "src/lib/components/AddTerminalServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000339",
+   "kind": "appendix_row",
+   "line": 33,
+   "path": "src/lib/components/chat/Settings/Integrations/Terminals.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000340",
+   "kind": "appendix_row",
+   "line": 159,
+   "path": "src/lib/components/chat/Settings/DataControls.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000341",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/chat/Settings/ArchivedChats.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000342",
+   "kind": "appendix_row",
+   "line": 50,
+   "path": "src/lib/components/chat/Settings/ArchivedChats.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000343",
+   "kind": "appendix_row",
+   "line": 101,
+   "path": "src/lib/components/chat/Settings/ArchivedChats.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000344",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/chat/Settings/Usage.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000345",
+   "kind": "appendix_row",
+   "line": 127,
+   "path": "src/lib/stores/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000346",
+   "kind": "appendix_row",
+   "line": 600,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000347",
+   "kind": "appendix_row",
+   "line": 668,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000348",
+   "kind": "appendix_row",
+   "line": 97,
+   "path": "src/lib/components/layout/Sidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000349",
+   "kind": "appendix_row",
+   "line": 108,
+   "path": "src/lib/stores/index.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000350",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/layout/Sidebar/Folders/FolderModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000351",
+   "kind": "appendix_row",
+   "line": 27,
+   "path": "src/lib/components/layout/Sidebar/Folders/FolderModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000352",
+   "kind": "appendix_row",
+   "line": 58,
+   "path": "src/lib/components/layout/Sidebar/RecursiveFolder.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000353",
+   "kind": "appendix_row",
+   "line": 77,
+   "path": "src/lib/components/layout/Sidebar/Folders/FolderShareModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000354",
+   "kind": "appendix_row",
+   "line": 58,
+   "path": "src/lib/components/layout/Sidebar/UserStatusModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000355",
+   "kind": "appendix_row",
+   "line": 13,
+   "path": "src/lib/components/common/Banner.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000356",
+   "kind": "appendix_row",
+   "line": 308,
+   "path": "src/lib/components/chat/Navbar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000357",
+   "kind": "appendix_row",
+   "line": 79,
+   "path": "src/lib/components/admin/Settings/Interface/Banners.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000358",
+   "kind": "appendix_row",
+   "line": 233,
+   "path": "hubzoid/auth/routes.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000359",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/chat/shares.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000360",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "portal/src/app/lib/router.ts",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000361",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "portal/src/app/lib/router.ts",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000362",
+   "kind": "appendix_row",
+   "line": 280,
+   "path": "hubzoid/chat/store.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000363",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/chat/shares.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000364",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "portal/src/app/lib/router.ts",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000365",
+   "kind": "appendix_row",
+   "line": 98,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000366",
+   "kind": "appendix_row",
+   "line": 101,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000367",
+   "kind": "appendix_row",
+   "line": 104,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000368",
+   "kind": "appendix_row",
+   "line": 106,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000369",
+   "kind": "appendix_row",
+   "line": 110,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000370",
+   "kind": "appendix_row",
+   "line": 114,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000371",
+   "kind": "appendix_row",
+   "line": 116,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000372",
+   "kind": "appendix_row",
+   "line": 117,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000373",
+   "kind": "appendix_row",
+   "line": 118,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000374",
+   "kind": "appendix_row",
+   "line": 426,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000375",
+   "kind": "appendix_row",
+   "line": 119,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000376",
+   "kind": "appendix_row",
+   "line": 121,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000377",
+   "kind": "appendix_row",
+   "line": 125,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000378",
+   "kind": "appendix_row",
+   "line": 154,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000379",
+   "kind": "appendix_row",
+   "line": 155,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000380",
+   "kind": "appendix_row",
+   "line": 157,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000381",
+   "kind": "appendix_row",
+   "line": 200,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000382",
+   "kind": "appendix_row",
+   "line": 171,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000383",
+   "kind": "appendix_row",
+   "line": 174,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000384",
+   "kind": "appendix_row",
+   "line": 182,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000385",
+   "kind": "appendix_row",
+   "line": 186,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000386",
+   "kind": "appendix_row",
+   "line": 572,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000387",
+   "kind": "appendix_row",
+   "line": 574,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000388",
+   "kind": "appendix_row",
+   "line": 55,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000389",
+   "kind": "appendix_row",
+   "line": 78,
+   "path": "hubzoid/gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000390",
+   "kind": "appendix_row",
+   "line": 602,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000391",
+   "kind": "appendix_row",
+   "line": 564,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000392",
+   "kind": "appendix_row",
+   "line": 345,
+   "path": "hubzoid/gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000393",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "hubzoid/branding.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000394",
+   "kind": "appendix_row",
+   "line": 75,
+   "path": "src/lib/components/branding.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000395",
+   "kind": "appendix_row",
+   "line": 205,
+   "path": "src/lib/components/webui.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000396",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/portal_navigation.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000397",
+   "kind": "appendix_row",
+   "line": 228,
+   "path": "hubzoid/edge.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000398",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "hubzoid/gateway_provision.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000399",
+   "kind": "appendix_row",
+   "line": 22,
+   "path": "packages/core/src/runtimes/remote-thread-list/types.ts",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000400",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "packages/ui/src/components/react/assistant-ui/elements/thread-list.aui.tsx",
+   "source": "assistant-ui"
+  },
+  {
+   "id": "L000401",
+   "kind": "appendix_row",
+   "line": 16,
+   "path": "src/lib/components/threadlist-sidebar.aui.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000402",
+   "kind": "appendix_row",
+   "line": 22,
+   "path": "client/src/components/Nav/Settings/Dialog.tsx",
+   "source": "librechat"
+  },
+  {
+   "id": "L000403",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "src/lib/components/Sidebar.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000404",
+   "kind": "appendix_row",
+   "line": 26,
+   "path": "src/lib/components/search.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000405",
+   "kind": "appendix_row",
+   "line": 24,
+   "path": "client/src/components/Prompts/editor/PromptEditor.tsx",
+   "source": "librechat"
+  },
+  {
+   "id": "L000406",
+   "kind": "appendix_row",
+   "line": 16,
+   "path": "src/lib/components/Nav/ExportConversation/ExportModal.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000407",
+   "kind": "appendix_row",
+   "line": 33,
+   "path": "src/lib/components/SidePanel/Memories/MemoryPanel.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000408",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/calendar/CalendarView.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000409",
+   "kind": "appendix_row",
+   "line": 106,
+   "path": "src/lib/components/CalendarSidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000410",
+   "kind": "appendix_row",
+   "line": 47,
+   "path": "src/lib/components/calendar/CreateCalendarModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000411",
+   "kind": "appendix_row",
+   "line": 96,
+   "path": "src/lib/components/CalendarSidebar.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000412",
+   "kind": "appendix_row",
+   "line": 118,
+   "path": "src/lib/components/calendar/CalendarEventModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000413",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "src/lib/components/calendar/CalendarEventModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000414",
+   "kind": "appendix_row",
+   "line": 184,
+   "path": "backend/open_webui/routers/calendar.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000415",
+   "kind": "appendix_row",
+   "line": 262,
+   "path": "src/lib/components/calendar/CalendarEventModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000416",
+   "kind": "appendix_row",
+   "line": 725,
+   "path": "backend/open_webui/models/calendar.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000417",
+   "kind": "appendix_row",
+   "line": 89,
+   "path": "backend/open_webui/routers/calendar.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000418",
+   "kind": "appendix_row",
+   "line": 62,
+   "path": "backend/open_webui/routers/calendar.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000419",
+   "kind": "appendix_row",
+   "line": 31,
+   "path": "src/lib/components/AutomationModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000420",
+   "kind": "appendix_row",
+   "line": 27,
+   "path": "src/lib/components/automations/ScheduleDropdown.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000421",
+   "kind": "appendix_row",
+   "line": 54,
+   "path": "src/lib/components/AutomationModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000422",
+   "kind": "appendix_row",
+   "line": 151,
+   "path": "src/lib/components/automations/AutomationEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000423",
+   "kind": "appendix_row",
+   "line": 193,
+   "path": "src/lib/components/admin/Users/UserList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000424",
+   "kind": "appendix_row",
+   "line": 177,
+   "path": "src/lib/components/admin/Users/UserList/AddUserModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000425",
+   "kind": "appendix_row",
+   "line": 116,
+   "path": "src/lib/components/EditUserModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000426",
+   "kind": "appendix_row",
+   "line": 19,
+   "path": "src/lib/components/admin/Users/Groups/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000427",
+   "kind": "appendix_row",
+   "line": 314,
+   "path": "src/lib/components/Groups/Users.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000428",
+   "kind": "appendix_row",
+   "line": 220,
+   "path": "src/lib/components/admin/Users/Groups.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000429",
+   "kind": "appendix_row",
+   "line": 146,
+   "path": "src/lib/components/Groups/EditGroupModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000430",
+   "kind": "appendix_row",
+   "line": 338,
+   "path": "backend/open_webui/routers/groups.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000431",
+   "kind": "appendix_row",
+   "line": 111,
+   "path": "backend/open_webui/utils/access_control/__init__.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000432",
+   "kind": "appendix_row",
+   "line": 724,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000433",
+   "kind": "appendix_row",
+   "line": 406,
+   "path": "src/lib/components/admin/Users/UserList.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000434",
+   "kind": "appendix_row",
+   "line": 123,
+   "path": "src/lib/components/admin/Settings/Database.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000435",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000436",
+   "kind": "appendix_row",
+   "line": 17,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000437",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000438",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000439",
+   "kind": "appendix_row",
+   "line": 62,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000440",
+   "kind": "appendix_row",
+   "line": 76,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000441",
+   "kind": "appendix_row",
+   "line": 724,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000442",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/AGENTS.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000443",
+   "kind": "appendix_row",
+   "line": 1101,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000444",
+   "kind": "appendix_row",
+   "line": 194,
+   "path": "src/lib/components/admin/Settings/Models/ModelDefaultsPanel.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000445",
+   "kind": "appendix_row",
+   "line": 1195,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000446",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/workspace/Models/Capabilities.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000447",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/DefaultFeatures.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000448",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/BuiltinTools.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000449",
+   "kind": "appendix_row",
+   "line": 1190,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000450",
+   "kind": "appendix_row",
+   "line": 233,
+   "path": "src/lib/components/admin/Settings/Models/ModelDefaultsPanel.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000451",
+   "kind": "appendix_row",
+   "line": 724,
+   "path": "src/lib/components/workspace/Models/ModelEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000452",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "src/lib/components/src/lib/constants/permissions.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000453",
+   "kind": "appendix_row",
+   "line": 348,
+   "path": "src/lib/components/workspace/Prompts/PromptEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000454",
+   "kind": "appendix_row",
+   "line": 384,
+   "path": "backend/open_webui/routers/prompts.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000455",
+   "kind": "appendix_row",
+   "line": 76,
+   "path": "src/lib/components/workspace/Skills.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000456",
+   "kind": "appendix_row",
+   "line": 128,
+   "path": "src/lib/components/workspace/Skills/SkillEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000457",
+   "kind": "appendix_row",
+   "line": 254,
+   "path": "src/lib/components/workspace/Tools/ToolkitEditor.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000458",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/workspace/common/ValvesModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000459",
+   "kind": "appendix_row",
+   "line": 296,
+   "path": "backend/open_webui/utils/plugin.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000460",
+   "kind": "appendix_row",
+   "line": 69,
+   "path": "backend/open_webui/routers/functions.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000461",
+   "kind": "appendix_row",
+   "line": 277,
+   "path": "src/lib/components/admin/Settings/Pipelines.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000462",
+   "kind": "appendix_row",
+   "line": 24,
+   "path": "src/lib/components/admin/Settings/Subagents.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000463",
+   "kind": "appendix_row",
+   "line": 69,
+   "path": "src/lib/components/workspace/Knowledge/KnowledgeBase/AddContentMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000464",
+   "kind": "appendix_row",
+   "line": 172,
+   "path": "backend/open_webui/routers/knowledge.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000465",
+   "kind": "appendix_row",
+   "line": 107,
+   "path": "src/lib/components/workspace/Knowledge/KnowledgeBase/AddContentMenu.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000466",
+   "kind": "appendix_row",
+   "line": 1224,
+   "path": "backend/open_webui/routers/knowledge.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000467",
+   "kind": "appendix_row",
+   "line": 442,
+   "path": "src/lib/components/admin/Settings/Documents.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000468",
+   "kind": "appendix_row",
+   "line": 905,
+   "path": "src/lib/components/admin/Settings/Documents.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000469",
+   "kind": "appendix_row",
+   "line": 29,
+   "path": "src/lib/components/admin/Settings/ExternalKnowledge.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000470",
+   "kind": "appendix_row",
+   "line": 691,
+   "path": "backend/open_webui/routers/knowledge.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000471",
+   "kind": "appendix_row",
+   "line": 1456,
+   "path": "src/lib/components/admin/Settings/Documents.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000472",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "src/lib/components/admin/Evaluations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000473",
+   "kind": "appendix_row",
+   "line": 102,
+   "path": "src/lib/components/admin/Settings/Evaluations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000474",
+   "kind": "appendix_row",
+   "line": 86,
+   "path": "src/lib/components/Evaluations/ArenaModelModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000475",
+   "kind": "appendix_row",
+   "line": 242,
+   "path": "src/lib/components/admin/Evaluations/Feedbacks.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000476",
+   "kind": "appendix_row",
+   "line": 62,
+   "path": "src/lib/components/FeedbackModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000477",
+   "kind": "appendix_row",
+   "line": 177,
+   "path": "src/lib/components/admin/Evaluations/Leaderboard.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000478",
+   "kind": "appendix_row",
+   "line": 222,
+   "path": "backend/open_webui/routers/evaluations.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000479",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "src/lib/components/admin/Settings/Connections.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000480",
+   "kind": "appendix_row",
+   "line": 215,
+   "path": "src/lib/components/AddConnectionModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000481",
+   "kind": "appendix_row",
+   "line": 622,
+   "path": "src/lib/components/admin/Settings/Models/Manage/ManageOllama.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000482",
+   "kind": "appendix_row",
+   "line": 145,
+   "path": "src/lib/components/ManageProviderModels.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000483",
+   "kind": "appendix_row",
+   "line": 378,
+   "path": "src/lib/components/admin/Settings/Connections.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000484",
+   "kind": "appendix_row",
+   "line": 43,
+   "path": "src/lib/components/AddToolServerModal.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000485",
+   "kind": "appendix_row",
+   "line": 792,
+   "path": "backend/open_webui/routers/retrieval.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000486",
+   "kind": "appendix_row",
+   "line": 1132,
+   "path": "src/lib/components/admin/Settings/WebSearch.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000487",
+   "kind": "appendix_row",
+   "line": 228,
+   "path": "backend/open_webui/routers/images.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000488",
+   "kind": "appendix_row",
+   "line": 311,
+   "path": "src/lib/components/admin/Settings/Images.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000489",
+   "kind": "appendix_row",
+   "line": 49,
+   "path": "src/lib/components/admin/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000490",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "src/lib/components/admin/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000491",
+   "kind": "appendix_row",
+   "line": 53,
+   "path": "src/lib/components/admin/Settings/CodeExecution.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000492",
+   "kind": "appendix_row",
+   "line": 239,
+   "path": "src/lib/components/admin/Settings/Integrations.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000493",
+   "kind": "appendix_row",
+   "line": 148,
+   "path": "src/lib/components/admin/Settings/Authentication.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000494",
+   "kind": "appendix_row",
+   "line": 769,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000495",
+   "kind": "appendix_row",
+   "line": 570,
+   "path": "src/lib/components/admin/Settings/Authentication.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000496",
+   "kind": "appendix_row",
+   "line": 2494,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000497",
+   "kind": "appendix_row",
+   "line": 879,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000498",
+   "kind": "appendix_row",
+   "line": 316,
+   "path": "src/lib/components/admin/Settings/Authentication.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000499",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "backend/open_webui/routers/scim.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000500",
+   "kind": "appendix_row",
+   "line": 802,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000501",
+   "kind": "appendix_row",
+   "line": 732,
+   "path": "backend/open_webui/routers/auths.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000502",
+   "kind": "appendix_row",
+   "line": 193,
+   "path": "src/lib/components/admin/Settings/Authentication.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000503",
+   "kind": "appendix_row",
+   "line": 15,
+   "path": "src/lib/components/admin/Settings/Interface/Banners.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000504",
+   "kind": "appendix_row",
+   "line": 41,
+   "path": "src/lib/components/admin/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000505",
+   "kind": "appendix_row",
+   "line": 19,
+   "path": "src/lib/components/I18nSettings.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000506",
+   "kind": "appendix_row",
+   "line": 24,
+   "path": "src/lib/components/admin/Settings/Interface.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000507",
+   "kind": "appendix_row",
+   "line": 46,
+   "path": "src/lib/components/admin/Settings/Interface.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000508",
+   "kind": "appendix_row",
+   "line": 225,
+   "path": "src/lib/components/roadmap/foreman-sdk-plan.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000509",
+   "kind": "appendix_row",
+   "line": 31,
+   "path": "src/lib/components/admin/Settings/Events.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000510",
+   "kind": "appendix_row",
+   "line": 91,
+   "path": "backend/open_webui/routers/auths.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000511",
+   "kind": "appendix_row",
+   "line": 883,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000512",
+   "kind": "appendix_row",
+   "line": 1025,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000513",
+   "kind": "appendix_row",
+   "line": 35,
+   "path": "src/lib/components/admin/Analytics/Dashboard.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000514",
+   "kind": "appendix_row",
+   "line": 37,
+   "path": "backend/open_webui/utils/audit.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000515",
+   "kind": "appendix_row",
+   "line": 1220,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000516",
+   "kind": "appendix_row",
+   "line": 1265,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000517",
+   "kind": "appendix_row",
+   "line": 87,
+   "path": "src/lib/components/admin/Settings/Database.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000518",
+   "kind": "appendix_row",
+   "line": 271,
+   "path": "backend/open_webui/env.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000519",
+   "kind": "appendix_row",
+   "line": 150,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000520",
+   "kind": "appendix_row",
+   "line": 62,
+   "path": "backend/open_webui/storage/provider.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000521",
+   "kind": "appendix_row",
+   "line": 336,
+   "path": "src/lib/components/admin/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000522",
+   "kind": "appendix_row",
+   "line": 373,
+   "path": "src/lib/components/admin/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000523",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/workspace/Models/BuiltinTools.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000524",
+   "kind": "appendix_row",
+   "line": 320,
+   "path": "src/lib/components/admin/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000525",
+   "kind": "appendix_row",
+   "line": 12,
+   "path": "src/lib/components/workspace/Models/Capabilities.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000526",
+   "kind": "appendix_row",
+   "line": 283,
+   "path": "src/lib/components/admin/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000527",
+   "kind": "appendix_row",
+   "line": 9,
+   "path": "hubzoid/auth/sessions.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000528",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "hubzoid/access/groups.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000529",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/loaders/skills.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000530",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/loaders/skills.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000531",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/connectors/registry.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000532",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/connectors/registry.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000533",
+   "kind": "appendix_row",
+   "line": 1147,
+   "path": "hubzoid/portal.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000534",
+   "kind": "appendix_row",
+   "line": 67,
+   "path": "hubzoid/chat/store.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000535",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/uploads.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000536",
+   "kind": "appendix_row",
+   "line": 230,
+   "path": "hubzoid/chat/stream.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000537",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "portal/src/app/pages/ConnectionsPage.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000538",
+   "kind": "appendix_row",
+   "line": 2,
+   "path": "hubzoid/artifacts/web.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000539",
+   "kind": "appendix_row",
+   "line": 40,
+   "path": "hubzoid/upload_previews.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000540",
+   "kind": "appendix_row",
+   "line": 172,
+   "path": "hubzoid/chat/routes.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000541",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/Fork.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000542",
+   "kind": "appendix_row",
+   "line": 235,
+   "path": "hubzoid/chat/store.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000543",
+   "kind": "appendix_row",
+   "line": 158,
+   "path": "portal/src/app/chat/Thread.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000544",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "hubzoid/chat/routes.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000545",
+   "kind": "appendix_row",
+   "line": 71,
+   "path": "portal/src/screens/HomeScreen.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000546",
+   "kind": "appendix_row",
+   "line": 1,
+   "path": "portal/src/screens/access/AccessEditor.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000547",
+   "kind": "appendix_row",
+   "line": 71,
+   "path": "portal/src/screens/HomeScreen.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000548",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/Appearance/Selectors.tsx",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000549",
+   "kind": "appendix_row",
+   "line": 126,
+   "path": "portal/src/app/App.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000550",
+   "kind": "appendix_row",
+   "line": 284,
+   "path": "hubzoid/webapp_gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000551",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "hubzoid/usage.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000552",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/vector/factory.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000553",
+   "kind": "appendix_row",
+   "line": 264,
+   "path": "src/lib/components/admin/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000554",
+   "kind": "appendix_row",
+   "line": 511,
+   "path": "src/lib/components/admin/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000555",
+   "kind": "appendix_row",
+   "line": 255,
+   "path": "src/lib/components/chat/Settings/Audio.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000556",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/utils/code_interpreter.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000557",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/workers/pyodide.worker.ts",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000558",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/retrieval/loaders/youtube.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000559",
+   "kind": "appendix_row",
+   "line": 13,
+   "path": "src/lib/components/docs/branding.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000560",
+   "kind": "appendix_row",
+   "line": 53,
+   "path": "hubzoid/branding.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000561",
+   "kind": "appendix_row",
+   "line": 39,
+   "path": "portal/src/app/pages/AuthLayout.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000562",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/tokens/tokens.js",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000563",
+   "kind": "appendix_row",
+   "line": 15,
+   "path": "src/lib/components/brand/visual.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000564",
+   "kind": "appendix_row",
+   "line": 3,
+   "path": "src/app.css",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000565",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/tokens/tokens.js",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000566",
+   "kind": "appendix_row",
+   "line": 24,
+   "path": "src/lib/components/chat/Settings/General.svelte",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000567",
+   "kind": "appendix_row",
+   "line": 1680,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000568",
+   "kind": "appendix_row",
+   "line": 142,
+   "path": "hubzoid/webapp_gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000569",
+   "kind": "appendix_row",
+   "line": 28,
+   "path": "portal/src/app/lib/types.ts",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000570",
+   "kind": "appendix_row",
+   "line": 574,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000571",
+   "kind": "appendix_row",
+   "line": 56,
+   "path": "portal/src/app/pages/AuthLayout.tsx",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000572",
+   "kind": "appendix_row",
+   "line": 1672,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000573",
+   "kind": "appendix_row",
+   "line": 1733,
+   "path": "backend/open_webui/config.py",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000574",
+   "kind": "appendix_row",
+   "line": null,
+   "path": "src/lib/components/custom.css",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000575",
+   "kind": "appendix_row",
+   "line": 165,
+   "path": "src/lib/components/roadmap/chat-interface-plan.md",
+   "source": "owui-0.11.4"
+  },
+  {
+   "id": "L000576",
+   "kind": "appendix_row",
+   "line": 195,
+   "path": "hubzoid/webapp_gateway.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000577",
+   "kind": "setting",
+   "line": 98,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000578",
+   "kind": "setting",
+   "line": 99,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000579",
+   "kind": "setting",
+   "line": 101,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000580",
+   "kind": "setting",
+   "line": 102,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000581",
+   "kind": "setting",
+   "line": 103,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000582",
+   "kind": "setting",
+   "line": 104,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000583",
+   "kind": "setting",
+   "line": 105,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000584",
+   "kind": "setting",
+   "line": 106,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000585",
+   "kind": "setting",
+   "line": 107,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000586",
+   "kind": "setting",
+   "line": 108,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000587",
+   "kind": "setting",
+   "line": 109,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000588",
+   "kind": "setting",
+   "line": 110,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000589",
+   "kind": "setting",
+   "line": 111,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000590",
+   "kind": "setting",
+   "line": 112,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000591",
+   "kind": "setting",
+   "line": 113,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000592",
+   "kind": "setting",
+   "line": 114,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000593",
+   "kind": "setting",
+   "line": 115,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000594",
+   "kind": "setting",
+   "line": 116,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000595",
+   "kind": "setting",
+   "line": 117,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000596",
+   "kind": "setting",
+   "line": 118,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000597",
+   "kind": "setting",
+   "line": 119,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000598",
+   "kind": "setting",
+   "line": 120,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000599",
+   "kind": "setting",
+   "line": 121,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000600",
+   "kind": "setting",
+   "line": 122,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000601",
+   "kind": "setting",
+   "line": 125,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000602",
+   "kind": "setting",
+   "line": 126,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000603",
+   "kind": "setting",
+   "line": 127,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000604",
+   "kind": "setting",
+   "line": 128,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000605",
+   "kind": "setting",
+   "line": 129,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000606",
+   "kind": "setting",
+   "line": 154,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000607",
+   "kind": "setting",
+   "line": 155,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000608",
+   "kind": "setting",
+   "line": 156,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000609",
+   "kind": "setting",
+   "line": 157,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000610",
+   "kind": "setting",
+   "line": 171,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000611",
+   "kind": "setting",
+   "line": 174,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000612",
+   "kind": "setting",
+   "line": 175,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000613",
+   "kind": "setting",
+   "line": 182,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000614",
+   "kind": "setting",
+   "line": 183,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000615",
+   "kind": "setting",
+   "line": 191,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000616",
+   "kind": "setting",
+   "line": 192,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000617",
+   "kind": "setting",
+   "line": 193,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000618",
+   "kind": "setting",
+   "line": 194,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000619",
+   "kind": "setting",
+   "line": 195,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000620",
+   "kind": "setting",
+   "line": 196,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  },
+  {
+   "id": "L000621",
+   "kind": "setting",
+   "line": 197,
+   "path": "hubzoid/webui.py",
+   "source": "hubzoid-sdk"
+  }
+ ],
+ "sources": [
+  {
+   "excluded_paths": [],
+   "files": {
+    "backend/open_webui/config.py": "0ab5a98b6b1500177d25c37f5604795267c6df6ca9e9e02f6ecc25a81d957dec",
+    "backend/open_webui/env.py": "579be3ac75d68c2d0a07f48e4e4d3200de8c317ee5d285dc01d50544dff0927d",
+    "backend/open_webui/main.py": "7c824a89040aa7472d499584d19e56e60baa4890760414374e9e49ebf7dd0d3b",
+    "backend/open_webui/models/calendar.py": "7031279e98402d980a8933f885c3b373226e684758b6a57e558588776c6a7731",
+    "backend/open_webui/routers/auths.py": "4be0ed8e69bba85c0392fdddf006efe5592c322a4973c669120a0a0c3c2424c7",
+    "backend/open_webui/routers/calendar.py": "1c284407997992f745eb8e36221de219caac98ae408a8a503fffeee9642a7e13",
+    "backend/open_webui/routers/evaluations.py": "5ec61771d1616c322b862a6c1c69fd5ce51e50fcea8dd68d251c6de21ec9030f",
+    "backend/open_webui/routers/functions.py": "8f06b5cf9e6ca34afc86d92ec08460028c6ce6dbf8b90abba0cc0ee6d0d95189",
+    "backend/open_webui/routers/groups.py": "be2181a97cc371b1ebc67794a81ff4196b57c8aa4996a02b54424053af23b7ba",
+    "backend/open_webui/routers/images.py": "c4ae43597244ad04facbd4f35814cb379b06b919f91b508f4b7227aafc61b2b8",
+    "backend/open_webui/routers/knowledge.py": "95e05f5c316bb03720dc82067c623084c99b31e0e4f882d6700fe6a5b9ab93bf",
+    "backend/open_webui/routers/prompts.py": "fd780b052c3bfff1193e8549fdd49c6bb4824705549d263e06ac8ec04ff459b3",
+    "backend/open_webui/routers/retrieval.py": "dc059401957d4f5534be457793137f01883e21c96988952e41fcdc7d523133ed",
+    "backend/open_webui/routers/scim.py": "d6dffaed79bbd62d0738a097f148e27dac619fbdd0d79de9b50f32fff47d7adc",
+    "backend/open_webui/storage/provider.py": "a257c0800023a4d5bf424a07b7528bcec4f174af4bbfbedc840b241d3035f618",
+    "backend/open_webui/utils/access_control/__init__.py": "f0c4d033fcb1c6829b1d2506d0d54fab3061625db4c8e93b637b0ab8f01f0bd4",
+    "backend/open_webui/utils/audit.py": "4e457edb04ab1a9006ddf3c447e711057b83815368bacea87cbb32c8977bdc89",
+    "backend/open_webui/utils/plugin.py": "3c5d5c66cd81f242b595b4ab71b73fbf92c617b2c7b8655a9a4ffe46b1c1b83e",
+    "src/app.css": "67185d804b31aa3280d06320dd4072c52f9d39da7e9899666f2cba53972599fd",
+    "src/lib/apis/streaming/index.ts": "4add0813d62459dbfcf263b092395ed2acbc315a53eb5c2eac26e765d8eee07d",
+    "src/lib/components/AddConnectionModal.svelte": "d85e27db494f2d5685f87c03a159a742ebc4db75ba55c00c23a79e424e06870e",
+    "src/lib/components/AddTerminalServerModal.svelte": "e0ae3fb7f559ac9f6b098b515a0e1aadadb0c836baf94ffc0e9acd1140af6071",
+    "src/lib/components/AddToolServerModal.svelte": "4e31835bc7542d730c5807a3446d1160077ed68d0971bb9e1de17ea13847f2bb",
+    "src/lib/components/AutomationModal.svelte": "02bbbe25ce616d2733e6a63112e95bcc65a2e1f83af89882599d36b25d9d9193",
+    "src/lib/components/NotificationToast.svelte": "fca1250e639b42e5d7be846072cf4834019f1439602534d01bbc2392a782693c",
+    "src/lib/components/OnBoarding.svelte": "de09dffb716a0ed57326909b2b1f102b71d4d7e243349bb6154c8cedc943fcd1",
+    "src/lib/components/admin/Analytics/Dashboard.svelte": "30b01772cf9df5a3db3cda5b0bd926b2e3292cb59068f9599cdd1a7770b8a456",
+    "src/lib/components/admin/Evaluations.svelte": "0330d96d5efda5eb7d947fa3a597ef03632d36da1eeed5fe674f781d8e4b1c04",
+    "src/lib/components/admin/Evaluations/Feedbacks.svelte": "655f2ba6b560f0f281253c9fc8fde46501cf708107a2815dcedba60f3c071fb3",
+    "src/lib/components/admin/Evaluations/Leaderboard.svelte": "0b31cfe83d2ea2354c9035809b8120326645daf311d96935707ba86a599b4c15",
+    "src/lib/components/admin/Settings/Audio.svelte": "f3fbe6e13aa5e9091f041128786c469aa86b2bc1bafa7a1d98682e242be46784",
+    "src/lib/components/admin/Settings/Authentication.svelte": "c738395a79a00a749aa52076573265a128e4e145650ef2f66740d41c71b31dcf",
+    "src/lib/components/admin/Settings/CodeExecution.svelte": "387a9aca6eb38169a95027ab58dfa7d05dafbe644e2c24df89bac4121dafe947",
+    "src/lib/components/admin/Settings/Connections.svelte": "77cf92cf3e2f6b77d3cccec643c15371972b1be68ccbd6521eb6607ce4003007",
+    "src/lib/components/admin/Settings/Database.svelte": "3a586c50b6565379d531f86013b0000854f7b4ed16070ea33b694333e9df2d14",
+    "src/lib/components/admin/Settings/Documents.svelte": "fffe96ca3d289dbcabee99614cfe682fe9557ad71924982309f587bfd50cb6ff",
+    "src/lib/components/admin/Settings/Evaluations.svelte": "1ccdf7b884ca75c8a95ce2e8db9df960b81d056dc7115de3a1d509a494625bd3",
+    "src/lib/components/admin/Settings/Events.svelte": "ba5f59be9f87d1391a4fd6a51379f5733856b85be460711666fc97efdfea0098",
+    "src/lib/components/admin/Settings/ExternalKnowledge.svelte": "02037acee6fbd12b48476e43405f10bb88409b8a70b0f8e3b457f2a61818bda1",
+    "src/lib/components/admin/Settings/General.svelte": "3fe85a3bf8ae479d21396d370b9f4359887be9d9fd97e02f39bf97499ea7ac31",
+    "src/lib/components/admin/Settings/Images.svelte": "af011598e933cc1ac78809d4b8e00d2037334fc3c05f05f27735d7b7738e9b39",
+    "src/lib/components/admin/Settings/Integrations.svelte": "e4cc0e47e740b0659865b8c533818a893cdd166f34eb26064a46adc7ae736c67",
+    "src/lib/components/admin/Settings/Interface.svelte": "8e4f5528272f3784a6f3ffd95b9f9fe45886865889a9415ba52db21e0a72f019",
+    "src/lib/components/admin/Settings/Interface/Banners.svelte": "77882bdb96cf9840b9f01ca4fc9bcd9ab04ad793648f2a74c94a54eeb78e1e71",
+    "src/lib/components/admin/Settings/Models/Manage/ManageOllama.svelte": "3f09b60c9b88b320e1223811cf518e3ee769d876dd3a4e0157c66644c9698db9",
+    "src/lib/components/admin/Settings/Models/ModelDefaultsPanel.svelte": "fe77a765dbf9949f51667204a01d30fabbc270829f626038875773b83bf1ef44",
+    "src/lib/components/admin/Settings/Pipelines.svelte": "e519073433b17df547d5ae814ded7c307949f9be38e4497ee1be60bb44efbc34",
+    "src/lib/components/admin/Settings/Subagents.svelte": "8312694829ceea96e205fc1e7176b94cf41863507b423a67453f50bd1d600779",
+    "src/lib/components/admin/Settings/WebSearch.svelte": "a779d07d14362701c207a0416e1380c2ff804fa9c6f763bdc04ba3ffd4b50ed5",
+    "src/lib/components/admin/Users/Groups.svelte": "c7cc2fc23fcbe8c309c7707da34b0fb8447d88840fd5dff683899c5adf30c72b",
+    "src/lib/components/admin/Users/Groups/General.svelte": "02e83080e6909d36fa4593b62a40996e286bc60409e5d215e64f42932b882fcf",
+    "src/lib/components/admin/Users/UserList.svelte": "e03b87b4cfd6bbfbaefe606faadf1a3b1e8c43629920c561d5006c408add6fb8",
+    "src/lib/components/admin/Users/UserList/AddUserModal.svelte": "03e78bf686000c1b130306c84379cf240d57de6e30d9ce01bce4a5faccb29ecb",
+    "src/lib/components/automations/AutomationEditor.svelte": "1caae65e6b9ad71dde0756cee2fc003b124bf812677e6391f32244fe613006ae",
+    "src/lib/components/automations/ScheduleDropdown.svelte": "9c4f7956ba12060212c16e22dc2207fe9938cfd668420b447e8d2b909a90539a",
+    "src/lib/components/calendar/CalendarEventModal.svelte": "dbef8d01e13d33e8aa0934c59a3fd48492ffb403635fe0871000079d616abdf5",
+    "src/lib/components/calendar/CalendarView.svelte": "3ceb8c65690b60f5e16f50a5d9777a5299d2bd657f9b045fc7e13cdba51068da",
+    "src/lib/components/calendar/CreateCalendarModal.svelte": "dba068e00adf7a347a597cfb448f06efb3500d9336ae85805d8b4a86def2ee54",
+    "src/lib/components/channel/MessageInput/MentionList.svelte": "9101e5bbd33ef2c8d5d2a458d12e7990311f7dc3f80330eceaaa7664f1eab226",
+    "src/lib/components/channel/Messages/Message.svelte": "19e447fb360fdb05b7e3a80c580f114f05f1bd6c088f9e83f5f8568ade07e737",
+    "src/lib/components/chat/Artifacts.svelte": "a0e6d40821b8a7e901995405602fbf6d2e4a11682e9199a4d14a4a94f3467b6c",
+    "src/lib/components/chat/AskUserCard.svelte": "c33f1897a63899a3da98362fb2828669ca4f367eaa48f6a71e993e30b85200b4",
+    "src/lib/components/chat/Chat.svelte": "dae54d76ee05cc36c69f225212186349380bf05b696605cc5b86df44eaeaa430",
+    "src/lib/components/chat/ChatControls.svelte": "c0248240892abf1af9115bbd86f3da230c80ca9867ec565666c4ad60da0a3f74",
+    "src/lib/components/chat/ContentRenderer/FloatingButtons.svelte": "dac9d05d5b650e92ed57fb5e1f90b37213432fd4d0baa2e903dbde6c1d440308",
+    "src/lib/components/chat/Controls/Controls.svelte": "6666dc2ecd4e9965423546a663a4312acd942f7f7d742283e842aff792cafd08",
+    "src/lib/components/chat/MessageInput.svelte": "d9ebd9b4534611c26ecf05a530b77571624e7a55b43acea032b54eed7547fbd3",
+    "src/lib/components/chat/MessageInput/CallOverlay.svelte": "25021328d523d030f07a2dfbf7cd099a6f06773fe0a8e16fbe2c7de4378db90d",
+    "src/lib/components/chat/MessageInput/CommandSuggestionList.svelte": "bcb2afc46c22b79153b4a1857ba57117c0117a6e564f3ab361fe104e2e97986f",
+    "src/lib/components/chat/MessageInput/Commands/AtCommands.svelte": "bdb430b0f768ff6a8802f16873bf3c9ee09f63b10ee6e7fb76e967b80b1f5a8f",
+    "src/lib/components/chat/MessageInput/Commands/Knowledge.svelte": "53b9d6bf560f950d278c7dbb5a4cccba90288c06d9fee8e66056e1fe1eea0f0c",
+    "src/lib/components/chat/MessageInput/Commands/SlashCommands.svelte": "11a3a373f3a19ec1836a6823cf2948d84dcff2d4f75ef48ec3590fbae354cc18",
+    "src/lib/components/chat/MessageInput/InputMenu.svelte": "c4b9b55924a6d8fdce10b93827a450cd909af6c46dab7f6a40b8f8c7a4339743",
+    "src/lib/components/chat/MessageInput/InputVariablesModal.svelte": "2ccfb60d02bf85074553e01cb799fb6bd132b7bb241ef6f1c61a8996cc414032",
+    "src/lib/components/chat/MessageInput/IntegrationsMenu.svelte": "90c7df1a565463d1111c9f2f71c857a1454aac912c697a3ec9c4a39d566ccd57",
+    "src/lib/components/chat/MessageInput/QueuedMessageItem.svelte": "87dba7960ef4cd1e962f945294be1e21dd95a8f9064b869b7cbc50f29562ba56",
+    "src/lib/components/chat/MessageInput/VoiceRecording.svelte": "b5abcb43c62db1b1d92fc876b2bc344859e3d9f3ae273c2d52fe4a4bc3807393",
+    "src/lib/components/chat/Messages.svelte": "e58a4555357b746f5af4d7242726f338b00dc3b575b3702b745c3fd4c57c7837",
+    "src/lib/components/chat/Messages/Citations.svelte": "f7e7065203b5ead9389cc807b46108f369c5697cef8dea43d313bbdebfaf9356",
+    "src/lib/components/chat/Messages/Citations/CitationModal.svelte": "1c9dff2f9babab68b208b153d403bcea0ad49c381197e43ac7f6b827c7190bc1",
+    "src/lib/components/chat/Messages/CodeBlock.svelte": "a713ed6455541491c68eb930bad9a45204bb2ab41eafdb05419e8f6042caec33",
+    "src/lib/components/chat/Messages/ContentRenderer.svelte": "800cdf3a0e15ad5e2b9f9846756904db127b2db17306f69e1a28cf497d997bfa",
+    "src/lib/components/chat/Messages/DiffBlock.svelte": "951c78c1f06013e05987606dc6b07f211100726e0e8a4631b5694d0dd1c5ff83",
+    "src/lib/components/chat/Messages/Markdown.svelte": "0f9a963f34aed182b84995c6de9f7e6a4990635e32a58f41f24f4e79d6d2ebe2",
+    "src/lib/components/chat/Messages/Markdown/HTMLToken.svelte": "22707d75de91c6d141dc74b0e20491a34655e0c370f3dd48ad4410fcf586cce4",
+    "src/lib/components/chat/Messages/Markdown/KatexRenderer.svelte": "6af7b54d3fe6d148edebc58c22b9efdf09393cef0f08df77428e8e8a1f774c5d",
+    "src/lib/components/chat/Messages/Markdown/MarkdownTokens.svelte": "9c023320c111deb35bb7b62992ff5599b0466f4997410bcc0d2dacd1fe5c48a3",
+    "src/lib/components/chat/Messages/Markdown/SourceToken.svelte": "c64adf516d1569ca41844c6679c22472b85f001b07ff33e5f4ba8f7956b4f875",
+    "src/lib/components/chat/Messages/MultiResponseMessages.svelte": "d8fbe9bb86ddafdefc4adeabda872fc730e75b7bdc4be62f949e5e1c5cf27ab5",
+    "src/lib/components/chat/Messages/Name.svelte": "eb71a1ecb8b8d34674b606cb4cf09b942697cba9e381ffc96b5d03db3a4daec6",
+    "src/lib/components/chat/Messages/RateComment.svelte": "29bd91b703d127ff8f9ba57907aa72d9fecf708d4bf3ea8d7f69130aaff2cbf2",
+    "src/lib/components/chat/Messages/ResponseMessage.svelte": "c572c58529dd1d1251ef1661133071d88ca305164ddb54b684741e9258f676f1",
+    "src/lib/components/chat/Messages/ResponseMessage/RegenerateMenu.svelte": "e120f19fedc3fe9cace2716ddedfb3c3dc8c993a251ec286eb30002d72e74f67",
+    "src/lib/components/chat/Messages/ResponseMessage/StatusHistory.svelte": "20ebf893eafde866c446a5865954112ac631f30d3235e73a850440e2f6f60d5f",
+    "src/lib/components/chat/Messages/StructuredOutputRenderer.svelte": "3a347d3b19b0d07a91c95a1a71ceb993d4d7def5d74b3219d4327a696f916947",
+    "src/lib/components/chat/Messages/SubagentResultRow.svelte": "15065b2cb8c651167f34cd68029d498cc58e2360061e515d9457419468d0765d",
+    "src/lib/components/chat/Messages/TerminalOutputFile.svelte": "c8764b83de0ab89d3c91e7965cc34f4c2683f602a2e98ab8d934928a3e39423e",
+    "src/lib/components/chat/Messages/UserMessage.svelte": "6ae25822674eed265064fbcd09751dd1fa00f7a283bdda74a11b5629cadf5506",
+    "src/lib/components/chat/ModelSelector.svelte": "c89e741305ec6d28cd22dfac98f5dcf6e05b2c9cb318f847cf87976dbf7f10cf",
+    "src/lib/components/chat/ModelSelector/ModelItem.svelte": "e5cfc12aecc400b785eac063ccc80c312a23767603f579ee91c960009f79757c",
+    "src/lib/components/chat/ModelSelector/ModelItemMenu.svelte": "7ea026366b65c4bbaf559fd8fbae90a5969d248c2db0850a90a976a1e31550ae",
+    "src/lib/components/chat/ModelSelector/Selector.svelte": "7f2420cd7935273c0a05e9b7ad4f262c01ae2c23de00b2d761cf4f7143b069e4",
+    "src/lib/components/chat/Navbar.svelte": "e41256d7a268dca97ad25b459bae8696892bda0f2e565a48c9fdfe9355473785",
+    "src/lib/components/chat/Overview.svelte": "24318157a54a98b255a3d9e889d5715ac7e36829e095ea722a68f1f956d3b661",
+    "src/lib/components/chat/Overview/View.svelte": "4fae709f0c7ffd772b4c43bfa18b02be28731fb4320d5a8846837e57d68793fb",
+    "src/lib/components/chat/Placeholder.svelte": "d93e5245b39a2eff17c37820968ab67057de5450c1aad6932c1e8434ebba6e8f",
+    "src/lib/components/chat/Settings/About.svelte": "ce2bc1f2448b6012c7188747585e0eeaf5f2c6559c97ebc631c3dd103bf3b248",
+    "src/lib/components/chat/Settings/Account.svelte": "639f3bef3ad4a1d85b9aab2e0d243b8c1bf74f1fd3fc99d6d29be9e508db2c3f",
+    "src/lib/components/chat/Settings/Account/UpdatePassword.svelte": "9f847912c2f32bbe3215b5670707a39440164ef5e7914a26fcd09c68844e447f",
+    "src/lib/components/chat/Settings/Account/UserProfileImage.svelte": "c536a08e55838944d4a3ba804924d6aa86c1d20ac5054e144415d8926a4f137e",
+    "src/lib/components/chat/Settings/Advanced/AdvancedParams.svelte": "53309a1ddfb8ef3db7fce20cdffbe894b5fce00f646f7e17aa33bdd4ee5250fa",
+    "src/lib/components/chat/Settings/ArchivedChats.svelte": "55be3c1bfcb416d0da00f9c36b18c1d9be57b66832546d021ce8a660fa91d196",
+    "src/lib/components/chat/Settings/Audio.svelte": "835467e1fdf42c1f719beb203a7747b7832d0f948ef2c0bd532c950f044765f8",
+    "src/lib/components/chat/Settings/Connections.svelte": "002a577489f59d6951ccc97e5657ee7e4162c2839acf0e9374f3c339d726998d",
+    "src/lib/components/chat/Settings/DataControls.svelte": "1dc559e203b3195f6cf87d75839fd0076a5874a236347272bedd8ae50498321c",
+    "src/lib/components/chat/Settings/General.svelte": "3a9a299919362055ae2d970eb2c5076f8c44fee169625782cf119e75eeabd043",
+    "src/lib/components/chat/Settings/Integrations.svelte": "20af5a2297a5ca93b67270e42f9b274c493b32ca4b47f64f48794d60d255a320",
+    "src/lib/components/chat/Settings/Integrations/Terminals.svelte": "b9b4d2651eb4174f9c03e0ac61a0453e4717e7b1e019c056738a0267b636377b",
+    "src/lib/components/chat/Settings/Interface/ManageFloatingActionButtonsModal.svelte": "d53ecb97458d3b5164cba02acdcab72d2eceb1d1155642f33851e7390398d8e9",
+    "src/lib/components/chat/Settings/Notifications.svelte": "72da3aa0330d21207a89ea5716fb17bdc3111b0328d46c0634e8fccc4b9e99da",
+    "src/lib/components/chat/Settings/Personalization.svelte": "8640324ccbaf6c88a4ccf8124692e843e66161a822c55c286b0d705976a51594",
+    "src/lib/components/chat/Settings/Personalization/MemoryModal.svelte": "c71ec18938d88eeaf367e65aa602aeff01547422900f91fd6f765b9766d3d62b",
+    "src/lib/components/chat/Settings/Shortcuts.svelte": "4dce4ddb04d3ed34d817096f7c7225a27f3c1c03c815cb23f7c373867163c5ed",
+    "src/lib/components/chat/Settings/Usage.svelte": "abceb99b58b92d592ef0ee24fb56041f66e7ba1b4faff8d4f4d5e56d579366c2",
+    "src/lib/components/chat/SettingsModal.svelte": "52c05d74f977b211c433a8f739b3869a2e3950ec7de9af81aa32046fb7a506f3",
+    "src/lib/components/chat/ShareChatModal.svelte": "d79a3506dc450234d31f552c53226de9f677192841cf394585869a8590786475",
+    "src/lib/components/chat/Suggestions.svelte": "9f45f15a3deab0ddbe03c9ddf8582083bc2ad50d99d490f1db31e393f864defd",
+    "src/lib/components/chat/Tags.svelte": "dbc672fa00dbdecda9a333abe1d15b9832d6998ea464880706c5fc669c506b54",
+    "src/lib/components/common/Banner.svelte": "46575b355bf0a5629d835f3c7e7e917152ea173ae9df3cc14fe575ce24fd9f00",
+    "src/lib/components/common/Image.svelte": "4bd2809bdbb704b912e5744cfba3c381fe5c2a25dfacb32c31837b9109737281",
+    "src/lib/components/common/ImagePreview.svelte": "41e8f54904daa22eb955e9f03f861c178396664f950113d825d841ba9dc9369f",
+    "src/lib/components/common/InterfaceSettings.svelte": "6320de200ee9d6421289c4520941e92b3638c084a8a78118a3e5522a051fb3e0",
+    "src/lib/components/common/SvgPanZoom.svelte": "07aa1037bdc7ea8c351dd28d9e1c6a7881ed69b2a262f17a9d419d091d175e97",
+    "src/lib/components/common/ToolCallDisplay.svelte": "2afe57e3fb06829e7f8ab9a034c70084632a2eee10af7235b38ca427a2009db5",
+    "src/lib/components/layout/SearchModal.svelte": "2125dba0a17af0841993b3ff7d7b007b3ffb89bec9d0f8cedb7d6f556b4f95f1",
+    "src/lib/components/layout/SharedChatsModal.svelte": "b43908955d0cbc0d61145229d34d7d2707abb2fa2dc21af6ae7a29ccac047740",
+    "src/lib/components/layout/Sidebar.svelte": "d85be4ef05b1108e413420464997814285aca422d1254e8027e60951a405429e",
+    "src/lib/components/layout/Sidebar/ChannelModal.svelte": "285b98c8bd5fa736107666deedfb4eaffea97100d1143b699d2a2fd9fd830911",
+    "src/lib/components/layout/Sidebar/ChatItem.svelte": "a66cb6bae6a19a155d4f9c0c70b33d867b7b0ebc4d4e89677094c359697daab0",
+    "src/lib/components/layout/Sidebar/ChatMenu.svelte": "b9b850a50e9c051f275d3200638905817b036bc166a2575e6a3ccdc8b27cbfe0",
+    "src/lib/components/layout/Sidebar/Folders/FolderModal.svelte": "1a4a1465005e662ff0e2b6bb6a98d92717ccf756a41907791082a8bca3ae8e61",
+    "src/lib/components/layout/Sidebar/Folders/FolderShareModal.svelte": "12999c1a02dd1b7ae6fcf2d3ed26c10df006d69686a76cee45fa16a364498b60",
+    "src/lib/components/layout/Sidebar/PinnedModelList.svelte": "60d2a49fcf715042b1d8b032f03f371e21866cadfbefd4e99ffafa51174dc12c",
+    "src/lib/components/layout/Sidebar/RecursiveFolder.svelte": "db30185375ef85288db219766ffcb8d64fbf91ba7e448d223f030be6ff55f5eb",
+    "src/lib/components/layout/Sidebar/UserMenu.svelte": "ff5c1469af40d5afb67ead6828aa964a4b0c11f2093cfb508531d51408969598",
+    "src/lib/components/layout/Sidebar/UserStatusModal.svelte": "ea670b49a7a9b058c047f037d5af1f733067cbf9c0e7feed4afdd75b0c06b9b3",
+    "src/lib/components/notes/NoteEditor.svelte": "c1e74a3f8f6426c3ee440545778945e60ea360d5eb3a898be9d49502ceb66e6c",
+    "src/lib/components/notes/Notes.svelte": "4858be451721fa55eaf43067faaacbc0d609ffa4698039b2d80599697519b88f",
+    "src/lib/components/notes/Notes/NoteMenu.svelte": "eb98ec3ecbff10050cea9a169dd03087d77e62ff64d7aff3953dac6b5d7ec743",
+    "src/lib/components/workspace/Knowledge.svelte": "9fbd8ec0e20b41bd25a56f87ac5d4a56fe9fb22c997ac462d67e0a0cbcdd1af8",
+    "src/lib/components/workspace/Knowledge/KnowledgeBase/AddContentMenu.svelte": "4c26a1e8f7c33c0b20aa846459963e11c61d40ce9a19029581d3471cd7ee8e5d",
+    "src/lib/components/workspace/Models/BuiltinTools.svelte": "8551ac9cf97373427514e3d08bf3c9389a3eaa5725a8705139bf89b27ff61e12",
+    "src/lib/components/workspace/Models/Capabilities.svelte": "9415693d432b8620f22b4c65ee4ed151075dc06ca71cbd608227a9fb6d6b1f71",
+    "src/lib/components/workspace/Models/ModelEditor.svelte": "84ba9fa9d7a7d83ccbbccad458ce8c61124018b39ed1c7659ee172be92727733",
+    "src/lib/components/workspace/Prompts.svelte": "1033995ca7eeb304f4d7d694174ba83266005e172bb0150f92e1c7875a9a9afa",
+    "src/lib/components/workspace/Prompts/PromptEditor.svelte": "2b97f767ef5a09550546c10516d831686b1acb65d8a5f6901d7c74e9216eac97",
+    "src/lib/components/workspace/Skills.svelte": "6c22e0ffdbf00bd8ca85d2f165d35013f5bbd18d5f5b32bc3d217ba9fe7076e2",
+    "src/lib/components/workspace/Skills/SkillEditor.svelte": "5fed1daee646332a454bc51bf73f2290f05f705f0caaa81780bc0c980efe6165",
+    "src/lib/components/workspace/Tools/ToolkitEditor.svelte": "e6000622f0bf76fb291525ba5d9dc3995d54c94eaae211ec62c5709dfceae83c",
+    "src/lib/components/workspace/common/ValvesModal.svelte": "dd21fd672cf498f2ac11172fb61d1002705103d23e1220af7af5806ec0b09e3a",
+    "src/lib/i18n/index.ts": "c1953782ab286653ae2829cde396ff4bb2d7652dfd403d55381fd26d3e0f627c",
+    "src/lib/shortcuts.ts": "e0d10624fccd77e47fe5c8d05f66e9323e125d07b80249a1959e064a131d0422",
+    "src/lib/stores/index.ts": "fafcc8b60f25f8ff0abb8fa1cd5657502cf79cd6560ad00d6f7514505b897f0e",
+    "src/lib/workers/pyodide.worker.ts": "c3bb6afb3f572327397d599bbfcebdd17980d5ca080ca02ca4ed34155ad7fda1"
+   },
+   "id": "owui-0.11.4",
+   "identity_kind": "archive",
+   "inspected_paths": [],
+   "license": "Open WebUI License (design reference only, no code copied)",
+   "release": "0.11.4",
+   "repository": "https://github.com/open-webui/open-webui",
+   "unresolved": [
+    "Match the inspected archive to an immutable upstream commit."
+   ],
+   "upstream_verified": false
+  },
+  {
+   "excluded_paths": [],
+   "files": {},
+   "id": "librechat",
+   "identity_kind": "archive",
+   "inspected_paths": [],
+   "license": "MIT (per-file check)",
+   "release": "e081b566a42d3a83b8102157bd7806cf4ff63b17",
+   "repository": "https://github.com/danny-avila/LibreChat",
+   "unresolved": [
+    "Match the inspected archive to an immutable upstream commit."
+   ],
+   "upstream_verified": false
+  },
+  {
+   "excluded_paths": [],
+   "files": {},
+   "id": "hubzoid-sdk",
+   "identity_kind": "archive",
+   "inspected_paths": [],
+   "license": "Apache-2.0",
+   "release": "1.3.2",
+   "repository": "https://github.com/hubzoid/hubzoid",
+   "unresolved": [],
+   "upstream_verified": true
+  },
+  {
+   "excluded_paths": [],
+   "files": {},
+   "id": "assistant-ui",
+   "identity_kind": "archive",
+   "inspected_paths": [],
+   "license": "MIT",
+   "release": "0.15.22",
+   "repository": "https://github.com/assistant-ui/assistant-ui",
+   "unresolved": [
+    "Match the inspected archive to an immutable upstream commit."
+   ],
+   "upstream_verified": false
+  }
+ ],
+ "version": 1
+}
