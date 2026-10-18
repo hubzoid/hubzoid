@@ -531,7 +531,7 @@ def _record_round_usage(hub_dir: Path, task: ScheduledTask, status: str, t0: flo
         model=raw.get("model") or task.model,
         input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
         cost_usd=raw.get("cost_usd"), status=raw.get("status") or status,
-        duration_ms=int((time.monotonic() - t0) * 1000),
+        duration_ms=int((time.monotonic() - t0) * 1000), reservation=raw.get("budget_reservation"),
     )
 
 
@@ -586,6 +586,8 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
     log_path = scratch / "runs" / f"{started_dt.strftime('%Y%m%dT%H%M%S')}.jsonl"
     rlog = RunLog(log_path)
     result = RunResult(task=task.name, run_log=log_path, result="error")
+    from . import usage as usage_lib
+    run_key = f"schedule-{task.name}-{started_dt.strftime('%Y%m%dT%H%M%S')}"
 
     ident = task.run_identity or {}
     rlog.emit(event="run_start", task=task.name, schedule=task.schedule,
@@ -672,7 +674,8 @@ async def _run_task(hub_dir: Path, task: ScheduledTask, *,
             round_status = "error"
             failure = None
             try:
-                with _request_ctx.chat_scope(None):
+                # All rounds of this run are one run for budgets.yaml.
+                with _request_ctx.chat_scope(None), usage_lib.run_tag(run_key):
                     try:
                         reply = await asyncio.wait_for(rt.run(prompt), timeout=task.timeout)
                         # A usage limit (or refused login, or overload) reads as a

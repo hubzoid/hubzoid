@@ -486,9 +486,10 @@ def _export(hub_dir, sandbox_id: str, item_id: str, call_id: str) -> None:
         sandbox_service.export_patches(hub_dir, sandbox_id, Path(hub_dir) / "output" / "work-items" / item_id
                                        / call_id)
     except WorkItemError as exc:
-        _finish(hub_dir, call_id, "failed", error_code="export_failed", error=exc.message[:4000])
+        code = exc.code if exc.code == "sandbox_lost" else "export_failed"
+        _finish(hub_dir, call_id, "failed", error_code=code, error=exc.message[:4000])
         _keep_or_release(hub_dir, sandbox_id, call_id)
-        raise StationError("export_failed", exc.message, call_id) from None
+        raise StationError(code, exc.message, call_id) from None
 
 
 def _time_limit(definition: dict, settings: dict):

@@ -97,6 +97,21 @@ def _streams(rt) -> bool:
             or getattr(rt, "stream", None) is not None)
 
 
+async def _record_usage(hub_dir, case, started: float) -> None:
+    """An eval turn spends like any other: its usage row counts toward the
+    hub's usage limits (budgets.yaml) and settles the turn's hold."""
+    from .. import usage as usage_lib
+
+    raw = _request_ctx.drain_usage()
+    if hub_dir is None or not raw:
+        return
+    await asyncio.to_thread(
+        usage_lib.record, hub_dir, hub=Path(hub_dir).name, surface="workflow", kind="eval",
+        subject=None, chat_id=_chat_id(case), model=raw.get("model"), input_tokens=raw.get("input_tokens"),
+        output_tokens=raw.get("output_tokens"), cost_usd=raw.get("cost_usd"), status=raw.get("status") or "ok",
+        duration_ms=int((time.monotonic() - started) * 1000), reservation=raw.get("budget_reservation"))
+
+
 async def _consume(rt, prompt: str, turn_no: int, out: _Turn) -> None:
     """Run one turn, filling `out` as items arrive, so a timeout or a crash
     keeps what was seen."""
@@ -269,12 +284,14 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
                 done.append(turn)
                 with (_request_ctx.tool_call_recorder() as recorded,
                       _request_ctx.tool_result_recorder() as results):
+                    turn_started = time.monotonic()
                     try:
                         await asyncio.wait_for(_consume(rt, prompt, turn_no, turn),
                                                timeout=max(0, deadline-time.monotonic()))
                     finally:
                         names += [c.get("name", "?") for c in recorded]
                         _finish_turn(turn, turn_no, recorded, results)
+                        await _record_usage(hub_dir, case, turn_started)
                 failure = _request_ctx.run_failure()
                 if failure is not None or _AGENT_ERROR_MARKER in turn.raw:
                     break

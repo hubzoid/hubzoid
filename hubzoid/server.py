@@ -594,6 +594,7 @@ async def _record_turn(hub_dir, identity, chat_id, raw: dict, started: float) ->
         cost_usd=raw.get("cost_usd"),
         status=raw.get("status") or "ok",
         duration_ms=int((time.monotonic() - started) * 1000),
+        reservation=raw.get("budget_reservation"),
     )
 
 

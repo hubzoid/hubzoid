@@ -19,7 +19,9 @@ limits:
 ```
 
 Each scope takes `max_input_tokens`, `max_output_tokens` and `max_cost_usd`.
-`run` also takes `max_turns`. Leave out anything you do not want to limit.
+`run` also takes `max_turns`: the turns of one agent call (one chat reply, or
+each `hub.call_agent` and isolated agent call of a workflow). On Codex it
+counts tool calls, the limit Codex exposes. Leave out anything you do not want to limit.
 Amounts are text such as `"2.00"`; `"0"` blocks paid work.
 
 ## How it works
@@ -34,18 +36,24 @@ Amounts are text such as `"2.00"`; `"0"` blocks paid work.
   a limit. Without a run limit, runs already going when a limit fills up may
   each finish.
 - **Stopped inside a run.** The runtime's own caps are set from what is left:
-  Claude's `max_turns` and `max_budget_usd`, and the turn limit on Codex and
-  the OpenAI Agents runtime. A reply stopped there says so; the person replies
+  Claude's `max_turns` and `max_budget_usd`, the turn limit on Codex and the
+  OpenAI Agents runtime, a cost check after each model call on the OpenAI
+  Agents runtime, and an output-token bound on single completions. A reply stopped there says so; the person replies
   "continue" to start a new run, which is checked again and can never go past
   a work-item or monthly limit. Token limits stop the next call, not one that
   is already running.
 - **Prices.** Claude reports the cost of each run. Other models are priced
-  from LiteLLM's price table. Subscription logins work with token and turn
+  from the price table pinned with the installed LiteLLM (never one fetched at
+  start-up). Subscription logins work with token and turn
   limits. A model with no price (a Codex login) is refused while a dollar
   limit applies (`unpriced_model`) rather than run without a bound.
-- **Usage that never reported.** If Hubzoid stops in the middle of a call, the
-  amount that call held keeps counting until an administrator checks the
-  provider's usage and releases it.
+- **Usage that never reported.** A call's hold is settled in the same write as
+  its usage record. If Hubzoid stops in the middle of a call, or the record
+  cannot be written, the hold keeps counting (across a month boundary too)
+  until an administrator checks the provider's usage and releases it.
+- **Everything counts**: chat on every channel, workflows, Jev, isolated
+  agents, scheduled tasks (all rounds of one run are one run) and evals,
+  including their judge.
 
 ## Commands
 

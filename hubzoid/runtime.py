@@ -326,7 +326,9 @@ class OpenAIAgentsRuntime:
         result = None
         try:
             from . import budgets
-            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns))
+            hooks = budgets.cost_hooks(getattr(agent, "model", None))
+            result = Runner.run_streamed(agent, run_input, max_turns=budgets.cap_turns(self._max_turns),
+                                         **({"hooks": hooks} if hooks is not None else {}))
             async for event in result.stream_events():
                 if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     if event.data.delta:
@@ -689,6 +691,7 @@ def run_once(hub_dir, prompt: str, *, subject: str | None = None, **_kw) -> str:
             input_tokens=raw.get("input_tokens"), output_tokens=raw.get("output_tokens"),
             cost_usd=raw.get("cost_usd"), status=status,
             duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=raw.get("budget_reservation"),
         )
 
 
@@ -752,6 +755,9 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             messages = ([{"role": "system", "content": system}] if system else []) + [
                 {"role": "user", "content": prompt}]
             kwargs: dict = {"model": model_id, "messages": messages, "num_retries": 0, "timeout": budget}
+            bound = budgets.output_bound(model_id, prompt + (system or ""))
+            if bound is not None:
+                kwargs["max_tokens"] = bound      # what the dollar limit still allows
             if want_json:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = asyncio.run(bounded(litellm.acompletion(**kwargs)))
@@ -775,6 +781,7 @@ def complete_once(hub_dir, spec: dict, *, subject: str | None = None,
             model=usage.get("model") or model_id, input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"), cost_usd=usage.get("cost_usd"),
             status=status, duration_ms=int((time.monotonic() - started) * 1000),
+            reservation=budgets.current_id(),
         )
         admission.__exit__(None, None, None)
 
@@ -886,5 +893,5 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             model=(usage or {}).get("model") or model_setting,
             input_tokens=(usage or {}).get("input_tokens"), output_tokens=(usage or {}).get("output_tokens"),
             cost_usd=(usage or {}).get("cost_usd"), status=status,
-            duration_ms=int((time.monotonic() - started) * 1000))
+            duration_ms=int((time.monotonic() - started) * 1000), reservation=budgets.current_id())
         admission.__exit__(None, None, None)

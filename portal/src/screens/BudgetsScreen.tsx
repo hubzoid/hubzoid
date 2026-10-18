@@ -109,6 +109,10 @@ export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
         <Select aria-label="Agent" value={hub} onChange={setHub} style={{ minWidth: 200, marginBottom: 16 }}
           options={hubs.map((h) => ({ value: h.key, label: h.name }))} />
       )}
+      {data.error && s && (
+        <Alert type="warning" showIcon style={{ marginBottom: 16 }} title="Couldn’t refresh. What you see may be out of date."
+          description={data.error} action={<Button onClick={data.reload}>Try again</Button>} />
+      )}
       {data.error && !s ? (
         <Alert type="error" showIcon title="Couldn’t load usage limits" description={data.error}
           action={<Button onClick={data.reload}>Try again</Button>} />
@@ -152,7 +156,7 @@ export function BudgetsScreen({ hubs }: { hubs: HubOption[] }) {
               {problem && <Alert type="error" showIcon title={problem} />}
               <Space>
                 <Button onClick={check}>Check</Button>
-                <Button type="primary" loading={busy} onClick={save}>Save</Button>
+                <Button type="primary" loading={busy} disabled={!!data.error || data.refreshing} onClick={save}>Save</Button>
                 <Text type="secondary">Revision {s.revision}</Text>
               </Space>
             </Space>

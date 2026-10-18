@@ -29,8 +29,8 @@ def show(hub: Path = typer.Argument(Path(".")), as_json: bool = typer.Option(Fal
     out = _run(budgets.status, as_json, _hub(hub))
 
     def render(v):
-        if not v["present"]:
-            console.print("No budgets.yaml: nothing is limited.")
+        console.print(f"Revision {v['revision']}" + (" (no budgets.yaml: nothing is limited)" if not v["present"]
+                                                      else ""))
         for scope, caps in v["limits"].items():
             console.print(_limit_line(scope, caps))
         m = v["month"]
@@ -53,6 +53,8 @@ def validate(hub: Path = typer.Argument(Path(".")), file: Optional[Path] = typer
 
     hub = _hub(hub)
     source = file or hub / budgets.FILE
+    if file is not None and not file.is_file():
+        _fail(WorkItemError("invalid_request", f"There is no file {file}."), as_json)
     if not source.is_file():
         _out({"valid": True, "present": False, "limits": {}}, as_json,
              lambda v: console.print("No budgets.yaml: nothing is limited."))

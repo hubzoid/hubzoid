@@ -1170,6 +1170,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
     final: str | None = None
     usage: dict = {}
     answered_by: str | None = None
+    options = _budget_caps(options)
     messages = _query_with_failover(prompt=prompt, options=options, hub_dir=hub_dir)
     from contextlib import aclosing
     async with aclosing(messages):

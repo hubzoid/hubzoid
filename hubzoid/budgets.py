@@ -146,7 +146,8 @@ def parse(text_: str, source: str = FILE) -> Config:
                     amount = Decimal(str(value))
                 except InvalidOperation:
                     amount = Decimal(-1)
-                if isinstance(value, bool) or amount < 0 or amount.as_tuple().exponent < -6:
+                if (isinstance(value, bool) or not amount.is_finite() or amount < 0
+                        or amount.as_tuple().exponent < -6):
                     _fail(source, root, ("limits", scope, key),
                           "max_cost_usd is an amount such as \"2.00\" (0 or more, at most 6 decimals)")
                 parsed[key] = amount
@@ -170,15 +171,22 @@ def load(hub_dir) -> Config:
 def apply(hub_dir, text_: str, *, expected_revision: str | None, actor: str = "") -> dict:
     """Write budgets.yaml after validating it, only if it is still at
     `expected_revision` ("absent" for a new file)."""
+    import os
+    import tempfile
+
+    from .work_items import store
+
     new = parse(text_)
-    current = load(hub_dir)
-    if expected_revision is None or expected_revision != current.revision:
-        raise BudgetError("revision_conflict", "budgets.yaml changed since you read it. Reload it, review the "
-                          "change and try again.", status=409, current_revision=current.revision)
     path = Path(hub_dir) / FILE
-    tmp = path.with_suffix(".yaml.tmp")
-    tmp.write_text(text_, encoding="utf-8")
-    tmp.replace(path)
+    with store.locked(hub_dir, f"budgets-file:{Path(hub_dir).name}"):
+        current = load(hub_dir)
+        if expected_revision is None or expected_revision != current.revision:
+            raise BudgetError("revision_conflict", "budgets.yaml changed since you read it. Reload it, review the "
+                              "change and try again.", status=409, current_revision=current.revision)
+        fd, tmp = tempfile.mkstemp(prefix=".budgets-", suffix=".yaml", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text_)
+        os.replace(tmp, path)
     _audit(hub_dir, actor, "budgets_apply", new.revision)
     return {"revision": new.revision, "previous_revision": current.revision, "limits": new.to_dict()}
 
@@ -236,9 +244,8 @@ def _reserved(conn, hub: str, scope: str, *, run_id=None, item_id=None) -> dict:
     elif scope == "work_item":
         sql += " AND item_id=:i"
         args["i"] = item_id
-    else:
-        sql += " AND month=:m"
-        args["m"] = _month_key()
+    # For the month: every open hold, also one from last month that never
+    # reported, until it settles or an administrator releases it.
     row = conn.execute(text(sql), args).mappings().first()
     return {"input_tokens": int(row["inp"] or 0), "output_tokens": int(row["outp"] or 0),
             "cost_usd": Decimal(str(row["cost"] or 0))}
@@ -332,8 +339,20 @@ def settle(hub_dir, ticket: Ticket | None) -> None:
     if ticket is None or ticket.id is None:
         return
     with _engine(hub_dir).begin() as c:
-        c.execute(text("UPDATE hz_budget_reservations SET state='settled', settled=:t WHERE id=:i AND state='open'"),
-                  {"t": time.time(), "i": ticket.id})
+        settle_in(c, ticket.id)
+
+
+def settle_in(conn, reservation_id: str | None) -> None:
+    """Settle in the transaction that writes the call's usage row, so the
+    hold and the recorded usage never both disappear."""
+    if reservation_id:
+        conn.execute(text("UPDATE hz_budget_reservations SET state='settled', settled=:t "
+                          "WHERE id=:i AND state='open'"), {"t": time.time(), "i": reservation_id})
+
+
+def current_id() -> str | None:
+    ticket = _CURRENT.get()
+    return ticket.id if ticket is not None else None
 
 
 def release(hub_dir, reservation_id: str, actor: str, *, reason: str) -> dict:
@@ -416,9 +435,10 @@ class call:
         return self.ticket
 
     def __exit__(self, *exc):
+        # The hold is settled with the call's usage row (`usage.record`); one
+        # whose row was never written stays open, as unknown usage.
         if self._token is not None:
             _CURRENT.reset(self._token)
-            settle(self.hub_dir, self.ticket)
 
 
 async def guarded(hub_dir, model: str | None, inner, on_refuse):
@@ -446,6 +466,9 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
         return
     token = _CURRENT.set(ticket)
     capped = ticket.max_turns is not None or ticket.max_budget_usd is not None
+    # The caller writes this turn's usage row from the request's usage; the
+    # hold goes with it and is settled in the same transaction.
+    handed_off = _request_ctx._current_usage.get() is not None
     try:
         async for item in inner():
             if capped and isinstance(item, Notice) and item.kind == "error" and _STOPPED.search(item.text or ""):
@@ -457,4 +480,69 @@ async def guarded(hub_dir, model: str | None, inner, on_refuse):
             _CURRENT.reset(token)
         except ValueError:
             pass
-        await asyncio.to_thread(settle, hub_dir, ticket)
+        if handed_off and ticket.id:
+            _request_ctx.note_usage(budget_reservation=ticket.id)
+        elif ticket.id:
+            await asyncio.to_thread(settle, hub_dir, ticket)
+
+
+# -- dollar bounds where the runtime has no cost cap of its own ----------------------
+
+def _prices(model: str | None) -> tuple[float, float] | None:
+    """(input, output) USD per token from LiteLLM's pinned table, or None."""
+    if not model:
+        return None
+    try:
+        import litellm
+    except ImportError:
+        return None
+    for name in (model, model.split("/", 1)[-1], model.rsplit("/", 1)[-1]):
+        info = litellm.model_cost.get(name)
+        if info and info.get("output_cost_per_token"):
+            return float(info.get("input_cost_per_token") or 0), float(info["output_cost_per_token"])
+    return None
+
+
+def output_bound(model: str | None, prompt: str) -> int | None:
+    """The most output tokens one completion may produce within this call's
+    dollar allowance, or None when no dollar limit applies."""
+    ticket = _CURRENT.get()
+    if ticket is None or ticket.max_budget_usd is None:
+        return None
+    prices = _prices(model)
+    if prices is None:
+        return None
+    left = ticket.max_budget_usd - prices[0] * (len(prompt) / 3)      # a cautious prompt estimate
+    tokens = int(left / prices[1]) if prices[1] else 0
+    if tokens < 1:
+        raise BudgetError("budget_exhausted", "What is left of the dollar limit does not cover this request.",
+                          status=429, scope="run", limit="max_cost_usd")
+    return min(tokens, 1_000_000)
+
+
+def cost_hooks(model):
+    """Agents SDK run hooks that end the run between model calls once this
+    call's dollar allowance is spent (the OpenAI Agents runtime has no cost
+    cap of its own). None when no dollar limit applies."""
+    ticket = _CURRENT.get()
+    if ticket is None or ticket.max_budget_usd is None:
+        return None
+    from agents import RunHooks
+
+    from .usage import estimate_cost
+
+    name = getattr(model, "model", model)
+    allowance = ticket.max_budget_usd
+
+    class _Hooks(RunHooks):
+        spent = 0.0
+
+        async def on_llm_end(self, context, agent, response):
+            usage = getattr(response, "usage", None)
+            cost = estimate_cost(str(name) if name else None, getattr(usage, "input_tokens", 0),
+                                 getattr(usage, "output_tokens", 0)) if usage else None
+            self.spent += cost or 0.0
+            if self.spent >= allowance:
+                raise RuntimeError(f"error_max_budget_usd: this run used its {allowance:.4f} USD")
+
+    return _Hooks()

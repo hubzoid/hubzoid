@@ -158,3 +158,57 @@ def test_a_stop_at_the_run_limit_says_how_to_continue(hub_dir):
 
     items = asyncio.run(collect())
     assert items[0] == "partial" and items[1].error_kind == "run_limit" and "continue" in items[1].text
+
+
+def test_a_hold_settles_only_with_its_usage_row(hub_dir):
+    from hubzoid import _request_ctx, usage
+
+    limits(hub_dir, "  run:\n    max_output_tokens: 100\n  month:\n    max_output_tokens: 150\n")
+
+    async def inner():
+        yield "answer"
+
+    async def turn():
+        with _request_ctx.chat_scope("chat-1"):
+            items = [item async for item in budgets.guarded(hub_dir, "claude-local", inner, lambda e: None)]
+            return items, _request_ctx.drain_usage()
+
+    _, raw = asyncio.run(turn())
+    assert budgets.status(hub_dir)["open_reservations"]          # handed to the caller, still held
+    usage.record(hub_dir, hub=hub_dir.name, surface="web", kind="chat", subject="a", chat_id="chat-1",
+                 model="claude-local", output_tokens=20, reservation=raw["budget_reservation"])
+    assert budgets.status(hub_dir)["open_reservations"] == []    # settled with the row that records it
+
+
+def test_a_hold_from_last_month_still_counts(hub_dir):
+    limits(hub_dir, "  run:\n    max_output_tokens: 100\n  month:\n    max_output_tokens: 100\n")
+    held = budgets.admit(hub_dir, model="claude-local", run_id="late-night")
+    with budgets._engine(hub_dir).begin() as c:
+        c.execute(text("UPDATE hz_budget_reservations SET month='2026-09' WHERE id=:i"), {"i": held.id})
+    with pytest.raises(WorkItemError):
+        budgets.admit(hub_dir, model="claude-local", run_id="new-month")
+
+
+def test_amounts_must_be_finite():
+    for bad in ('"NaN"', '"Infinity"', '"-0.5"'):
+        with pytest.raises(WorkItemError):
+            budgets.parse(f"version: 1\nlimits:\n  month:\n    max_cost_usd: {bad}\n")
+
+
+def test_the_eval_judge_is_checked_and_bounded(hub_dir, monkeypatch):
+    from hubzoid.evals import judge
+
+    limits(hub_dir, "  run:\n    max_cost_usd: \"0.01\"\n  month:\n    max_cost_usd: \"1\"\n")
+    seen = {}
+
+    async def fake(model_id, prompt):
+        seen["bound"] = budgets.output_bound(model_id, prompt)
+        return "ok", {"output_tokens": 5, "cost_usd": 0.001, "model": model_id}
+
+    monkeypatch.setattr(judge, "_ask_litellm", fake)
+    assert asyncio.run(judge.ask_model("gpt-4o-mini", "Score this.", hub_dir=hub_dir)) == "ok"
+    assert 0 < seen["bound"] < 20000                              # $0.01 of gpt-4o-mini output
+    assert budgets.status(hub_dir)["open_reservations"] == []     # recorded and settled
+    spend(hub_dir, cost=2.0)
+    with pytest.raises(WorkItemError):
+        asyncio.run(judge.ask_model("gpt-4o-mini", "Score this.", hub_dir=hub_dir))
