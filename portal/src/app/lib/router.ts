@@ -57,7 +57,7 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|auth(?:\/|$)|account(?:\/|$))/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$))/.test(path);
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
@@ -93,6 +93,7 @@ export type Route =
   | { name: "new"; agent: string | null }
   | { name: "conversation"; id: string }
   | { name: "share"; id: string }
+  | { name: "brand-preview"; id: string }
   | { name: "signin"; redirect: string; error: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
@@ -111,6 +112,7 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
     return { name: "new", agent: search.get("agent") || search.get("models") || parts[1] || null };
   if (parts[0] === "c" && parts[1] && parts.length === 2) return { name: "conversation", id: parts[1] };
   if (parts[0] === "s" && parts[1] && parts.length === 2) return { name: "share", id: parts[1] };
+  if (parts[0] === "branding-preview" && parts[1] && parts.length === 2) return { name: "brand-preview", id: parts[1] };
   if (parts[0] === "auth") {
     if (parts.length === 1)
       return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error") };

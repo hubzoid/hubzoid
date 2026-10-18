@@ -116,13 +116,16 @@ export default function SignInPage({ redirect, error }: { redirect: string; erro
     }
   };
 
-  const heading = mode === "signin" ? t.auth.title(app.brandName) : t.auth.signupTitle(app.brandName);
+  const brandCopy = app.branding.manifest?.copy;
+  const heading =
+    mode === "signin" ? brandCopy?.signin_title || t.auth.title(app.brandName) : t.auth.signupTitle(app.brandName);
+  const subtitle = mode === "signin" ? brandCopy?.signin_body || t.auth.subtitle : t.auth.signupSubtitle;
 
   return (
     <AuthLayout title={mode === "signin" ? t.auth.signIn : t.auth.signupSubmit}>
       <div className="hz-card px-6 py-7 sm:px-8 sm:py-8">
         <h1 className="m-0 text-[22px] font-semibold tracking-tight text-ink">{heading}</h1>
-        <p className="m-0 mt-1.5 text-[14px] text-mute">{mode === "signin" ? t.auth.subtitle : t.auth.signupSubtitle}</p>
+        <p className="m-0 mt-1.5 whitespace-pre-line text-[14px] text-mute">{subtitle}</p>
 
         {message && (
           <Notice tone={message.tone} className="mt-5">

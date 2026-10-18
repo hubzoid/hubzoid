@@ -68,7 +68,7 @@ export default function SharePage({ shareId }: { shareId: string }) {
   const header = (
     <header className="flex h-14 flex-none items-center justify-between border-b border-line px-4 sm:px-6">
       <a href="/" onClick={(e) => linkClick(e, "/")} className="flex min-w-0 items-center gap-2.5 no-underline">
-        <BrandMark logoUrl={app.branding.logo_url} name={app.brandName} />
+        <BrandMark logoUrl={app.branding.logo_url} darkLogoUrl={app.branding.logo_dark_url} name={app.brandName} />
       </a>
       <ThemeSwitch />
     </header>

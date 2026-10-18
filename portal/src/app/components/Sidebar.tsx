@@ -104,9 +104,10 @@ function Brand() {
     <a
       href="/"
       onClick={(e) => linkClick(e, "/")}
+      data-brand-slot="brand.logoFrame"
       className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 text-ink no-underline"
     >
-      <BrandMark logoUrl={branding.logo_url} name={brandName} />
+      <BrandMark logoUrl={branding.logo_url} darkLogoUrl={branding.logo_dark_url} name={brandName} />
     </a>
   );
 }
@@ -516,6 +517,8 @@ const themeOptions: { value: ThemeMode; label: string; icon: ReactNode }[] = [
 function AccountMenu() {
   const app = useApp();
   const { mode, setMode, allowed, locked } = useTheme();
+  // Concealment only: the server still decides what each person may do.
+  const hidden = app.branding.manifest?.presentation.hidden_features ?? [];
   const [signingOut, setSigningOut] = useState(false);
   const name = app.isLocal ? t.account.local : app.user?.name || app.user?.email || "";
   const email = app.user?.email && app.user.email !== name ? app.user.email : "";
@@ -559,15 +562,15 @@ function AccountMenu() {
             <UserRound size={15} aria-hidden />
             {t.account.account}
           </Menu.Item>
-          <Menu.Item className="hz-menu-item" onSelect={() => navigate("/account/connections")}>
+          {!hidden.includes("connections") && <Menu.Item className="hz-menu-item" onSelect={() => navigate("/account/connections")}>
             <Plug size={15} aria-hidden />
             {t.account.connections}
-          </Menu.Item>
-          <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/#/schedules")}>
+          </Menu.Item>}
+          {!hidden.includes("schedules") && <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/#/schedules")}>
             <LayoutGrid size={15} aria-hidden />
             {t.account.schedules}
-          </Menu.Item>
-          {(app.isAdmin || app.user?.console) && (
+          </Menu.Item>}
+          {(app.isAdmin || app.user?.console) && !hidden.includes("console_link") && (
             <Menu.Item className="hz-menu-item" onSelect={() => location.assign("/portal/")}>
               <ExternalLink size={15} aria-hidden />
               {t.account.console}

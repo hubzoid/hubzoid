@@ -3,7 +3,9 @@
   GET   /api/branding/source                         where the brand is authored, legacy files
   GET   /api/branding/drafts                         drafts, newest first
   POST  /api/branding/drafts                         create (configuration, theme, files)
+  POST  /api/branding/drafts/from-source             create from the deployment's branding.yaml
   GET   /api/branding/drafts/{id}                    one draft
+  GET   /api/branding/active                         the active revision's authored files
   PATCH /api/branding/drafts/{id}                    replace configuration and theme
   PUT   /api/branding/drafts/{id}/assets?path=...    upload one referenced file (raw bytes)
   POST  /api/branding/drafts/{id}/validate           re-check against base and validator
@@ -94,15 +96,35 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
     async def create_draft(request: Request):
         p = await authz.require_request(request, hub_dir, "branding.manage", mutation=True)
         body = await hz.body(request)
+        files = _files(body.get("files"))
+        if body.get("keep_active_files"):
+            # Files the new manifest still references come from the active brand.
+            kept = await call(svc().active_files)
+            files = {**kept, **files}
         draft = await call(svc().create_draft, body.get("configuration"), body.get("theme"),
-                           _files(body.get("files")), actor=p.email,
-                           idempotency_key=hz.idempotency_key(request))
+                           files, actor=p.email, idempotency_key=hz.idempotency_key(request))
+        return await call(svc().view, draft)
+
+    @app.post("/api/branding/drafts/from-source", status_code=201)
+    async def draft_from_source(request: Request):
+        """A draft from the deployment folder's branding.yaml, theme.json and
+        files: what `hubzoid branding draft create` does, from the Console."""
+        p = await authz.require_request(request, hub_dir, "branding.manage", mutation=True)
+        service = svc()
+        configuration, theme, files = await call(service.read_source)
+        draft = await call(service.create_draft, configuration, theme, files, actor=p.email,
+                           idempotency_key=hz.idempotency_key(request), source="console")
         return draft.public()
 
     @app.get("/api/branding/drafts/{draft_id}")
     async def get_draft(draft_id: str, request: Request):
         await authz.require_request(request, hub_dir, "branding.read")
-        return (await call(svc().get_draft, draft_id)).public()
+        return await call(svc().view, await call(svc().get_draft, draft_id))
+
+    @app.get("/api/branding/active")
+    async def active_source(request: Request):
+        await authz.require_request(request, hub_dir, "branding.read")
+        return {"active": await call(svc().active_source)}
 
     @app.patch("/api/branding/drafts/{draft_id}")
     async def patch_draft(draft_id: str, request: Request):

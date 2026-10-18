@@ -4,6 +4,7 @@ import { t } from "../i18n/en";
 import { useApp } from "../lib/app-context";
 import { useTheme, type ThemeMode } from "../lib/theme";
 import { BrandMark, cx } from "../components/ui";
+import { BrandFooter } from "../components/BrandChrome";
 
 export function ThemeSwitch({ className }: { className?: string }) {
   const { mode, setMode, allowed, locked } = useTheme();
@@ -46,11 +47,15 @@ export function AuthLayout({ title, children }: { title: string; children: React
     document.title = `${title} · ${app.brandName}`;
   }, [title, app.brandName]);
   const logo = app.branding.logo_url;
+  const background = app.branding.manifest?.assets.signin_background;
   return (
-    <div className="flex min-h-dvh flex-col bg-canvas">
+    <div
+      className="flex min-h-dvh flex-col bg-canvas bg-cover bg-center"
+      style={background ? { backgroundImage: `url("${background}")` } : undefined}
+    >
       <header className="flex items-center justify-between px-5 py-4 sm:px-8">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <BrandMark logoUrl={logo} name={app.brandName} />
+        <span data-brand-slot="brand.logoFrame" className="flex min-w-0 items-center gap-2.5">
+          <BrandMark logoUrl={logo} darkLogoUrl={app.branding.logo_dark_url} name={app.brandName} />
         </span>
         <ThemeSwitch />
       </header>
@@ -58,6 +63,7 @@ export function AuthLayout({ title, children }: { title: string; children: React
         <div className="w-full max-w-[400px]">{children}</div>
       </main>
       <footer className="px-5 py-5 text-center text-xs text-mute">
+        <BrandFooter manifest={app.branding.manifest} className="mb-2" />
         {app.brandName !== t.product && (
           <span>
             <span className="text-brand">/</span>

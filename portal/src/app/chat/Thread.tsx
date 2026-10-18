@@ -33,6 +33,7 @@ import { displayName } from "../lib/format";
 import type { Agent } from "../lib/types";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, IconButton, Notice, cx } from "../components/ui";
+import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
 
@@ -164,6 +165,10 @@ function suggestionText(s: NonNullable<Agent["suggestions"]>[number]): { label: 
 
 function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: ThreadProps) {
   const name = displayName(agent.name);
+  // The deployment's welcome copy and workspace suggestions (its brand),
+  // kept apart from the agent's own suggestions.
+  const brandCopy = useApp().branding.manifest?.copy;
+  const workspaceSuggestions = (brandCopy?.suggestions ?? []).filter((s) => s.trim()).slice(0, 6);
   const suggestions = (agent.suggestions ?? []).map(suggestionText).filter(Boolean).slice(0, 4) as {
     label: string;
     prompt: string;
@@ -194,6 +199,31 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
           </button>
         )}
       </div>
+      {(brandCopy?.welcome_title || brandCopy?.welcome_body) && (
+        <div data-brand-slot="brand.welcome" className="mt-6 rounded-xl text-center">
+          {brandCopy.welcome_title && <p className="m-0 text-[15px] font-medium text-ink">{brandCopy.welcome_title}</p>}
+          {brandCopy.welcome_body && (
+            <p className="m-0 mt-1 whitespace-pre-line text-[14px] text-mute">{brandCopy.welcome_body}</p>
+          )}
+        </div>
+      )}
+      {workspaceSuggestions.length > 0 && (
+        <section aria-label={t.brand.workspaceSuggestions} className="mt-5">
+          <h2 className="m-0 mb-2 text-xs font-medium uppercase tracking-wide text-mute">{t.brand.workspaceSuggestions}</h2>
+          <div className="flex flex-wrap gap-2">
+            {workspaceSuggestions.map((s) => (
+              <ThreadPrimitive.Suggestion key={s} prompt={s} send={false} asChild>
+                <button
+                  type="button"
+                  className="rounded-full border border-line bg-raised px-3 py-1.5 text-left text-[13.5px] text-body hover:bg-hover"
+                >
+                  {s}
+                </button>
+              </ThreadPrimitive.Suggestion>
+            ))}
+          </div>
+        </section>
+      )}
       {suggestions.length > 0 && (
         <section aria-label={t.agents.suggestions} className="mt-6 grid gap-2 sm:mt-8 sm:grid-cols-2 sm:gap-2.5">
           {suggestions.map((s) => (
@@ -335,6 +365,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   const hasContent = useAuiState((s) => s.message.content.length > 0);
+  const watermark = useApp().branding.manifest?.presentation.response_watermark;
   return (
     <MessagePrimitive.Root
       className="hz-message flex gap-3 pb-3 pt-2"
@@ -376,6 +407,11 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
               </ActionBarPrimitive.Reload>
             )}
           </ActionBarPrimitive.Root>
+          {watermark && !running && (
+            <span className="ml-auto truncate pl-2 text-[11.5px] text-mute" data-testid="response-watermark">
+              {watermark}
+            </span>
+          )}
         </div>
       </div>
     </MessagePrimitive.Root>

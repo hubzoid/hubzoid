@@ -13,6 +13,7 @@ import { Dialog as RDialog, Tooltip as RTooltip } from "radix-ui";
 import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle } from "lucide-react";
 import { t } from "../i18n/en";
 import { displayName, initials } from "../lib/format";
+import { useTheme } from "../lib/theme";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
@@ -272,8 +273,18 @@ export function Wordmark({ className }: { className?: string }) {
  * The deployment's mark: its logo (a square icon beside the name, or a
  * wordmark on its own), the Hubzoid wordmark by default, or the name.
  */
-export function BrandMark({ logoUrl, name }: { logoUrl?: string | null; name: string }) {
+export function BrandMark({
+  logoUrl: lightUrl,
+  darkLogoUrl,
+  name,
+}: {
+  logoUrl?: string | null;
+  darkLogoUrl?: string | null;
+  name: string;
+}) {
   const [wordmark, setWordmark] = useState(false);
+  const { resolved } = useTheme();
+  const logoUrl = resolved === "dark" && darkLogoUrl ? darkLogoUrl : lightUrl;
   if (logoUrl)
     return (
       <>

@@ -306,7 +306,40 @@ class BrandingService:
         with self.engine.connect() as conn:
             rows = conn.execute(sa.select(drafts).where(drafts.c.deployment_id == self.deployment_id)
                                 .order_by(drafts.c.updated_at.desc()).limit(50)).all()
-        return [_draft(r).public() for r in rows]
+        return [self.view(_draft(r)) for r in rows]
+
+    def view(self, draft: Draft) -> dict:
+        """A draft's public view plus the review that covers its current bytes."""
+        with self.engine.connect() as conn:
+            rv = conn.execute(sa.select(reviews).where(
+                reviews.c.draft_id == draft.id, reviews.c.digest == draft.digest,
+                reviews.c.draft_revision == draft.revision).order_by(reviews.c.created_at.desc())).first()
+        out = draft.public()
+        out["review"] = None if rv is None else {"review_id": rv.id, "decision": rv.decision,
+                                                 "actor": rv.actor, "created_at": rv.created_at}
+        return out
+
+    def active_source(self) -> dict | None:
+        """The active revision's authored files (configuration, theme, asset
+        list), for editing from the Console."""
+        with self.engine.connect() as conn:
+            head, rev = self._active_row(conn)
+        if head is None:
+            return None
+        return {"revision": rev.id, "generation": head.generation, "digest": rev.digest,
+                "configuration": json.loads(rev.configuration_json), "theme": json.loads(rev.theme_json),
+                "assets": json.loads(rev.assets_json)}
+
+    def active_files(self) -> dict[str, bytes]:
+        src = self.active_source()
+        out: dict[str, bytes] = {}
+        for a in (src or {}).get("assets", []):
+            if a.get("generated"):
+                continue
+            got = self.asset_bytes(a["digest"])
+            if got is not None:
+                out[a["path"]] = got[0]
+        return out
 
     # -- drafts -------------------------------------------------------------------
     def _evaluate(self, configuration: dict, theme: dict | None, assets: list[dict],

@@ -38,6 +38,23 @@ export const en = {
     scale: (n: number) => `${Math.round(n * 100)}%`,
   },
 
+  brand: {
+    dismiss: "Dismiss announcement",
+    termsTitle: (name: string) => `Before you continue to ${name}`,
+    termsBody: (version: string) =>
+      `Please read and accept the terms of use${version ? ` (version ${version})` : ""}. You can't use the workspace until you accept them.`,
+    readTerms: "Read the terms",
+    accept: "Accept and continue",
+    termsFailed: "Couldn't record your acceptance. Try again.",
+    help: "Help",
+    privacy: "Privacy",
+    terms: "Terms",
+    workspaceSuggestions: "Workspace suggestions",
+    previewOnly: "Preview only. Teammates still see the active brand.",
+    previewTitle: "Brand preview",
+    previewMissing: "That draft was not found, or you can't preview it.",
+  },
+
   errors: {
     network: "Can't reach Hubzoid. Check your connection and try again.",
     generic: "Something went wrong. Try again in a moment.",
