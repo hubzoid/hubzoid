@@ -333,20 +333,11 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         except Exception:  # noqa: BLE001
             log.exception("webapp: branding unavailable")
             return None
-        # Only the legacy logo and icon names, and only while no brand is
-        # published: everything else under branding/ (drafts, unpublished
-        # files) is reachable only through the reviewed branding service.
+        # Only the hub's logo and icon names (its agent's avatar), served
+        # sandboxed: everything else under branding/ (drafts, unpublished
+        # files, pages) is reachable only through the reviewed branding service.
         if scope.folder is None or filename.lower() not in _LEGACY_SERVED:
             return None
-        if not (request.headers.get(_PREFIX_HEADER) or "").rstrip("/"):
-            try:
-                from .ui import branding_store
-
-                if branding_store.service_for(hub_dir).active_manifest() is not None:
-                    return None
-            except Exception:  # noqa: BLE001 - fail closed: nothing legacy is served
-                log.exception("webapp: active branding unavailable")
-                return None
         base = scope.folder.resolve()
         real = _find(base, (filename.lower(),))
         if real is None:

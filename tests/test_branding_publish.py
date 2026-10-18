@@ -193,14 +193,16 @@ def test_rejection_supersedes_earlier_approval(client):
     assert a.status_code == 409 and a.json()["detail"]["code"] == "review_superseded"
 
 
-def test_legacy_folder_serves_only_logo_and_icon_until_a_brand_is_active(hub, client):
+def test_legacy_folder_serves_only_logo_and_icon(hub, client):
     (hub / "branding" / "page.html").write_text("<script>alert(1)</script>")
     (hub / "branding" / "logo.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
     assert client.get("/branding/page.html").status_code == 404
     logo = client.get("/branding/logo.svg")
     assert logo.status_code == 200 and "sandbox" in logo.headers["content-security-policy"]
     publish(client)
-    assert client.get("/branding/logo.svg").status_code == 404  # only published assets once a brand is live
+    # The hub's own logo stays its agent's avatar; other files stay private.
+    assert client.get("/branding/logo.svg").status_code == 200
+    assert client.get("/branding/page.html").status_code == 404
 
 
 def test_terms_check_fails_closed(client, monkeypatch):
