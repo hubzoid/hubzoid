@@ -276,6 +276,13 @@ def attach(hub_dir, sandbox_id: str) -> dict:
         release(hub_dir, sandbox_id, "failed")
         raise WorkItemError("network_mode_unsupported", "The sandbox was no longer offline and was removed.",
                             status=503, sandbox_id=sandbox_id)
+    if row["state"] == "ready":
+        # Activity is not a change an operator must have seen: it does not
+        # move the revision that stop and delete check.
+        with _engine(hub_dir).begin() as c:
+            c.execute(text("UPDATE hz_sandboxes SET last_activity=:t, updated=:t WHERE id=:i AND state='ready'"),
+                      {"t": time.time(), "i": sandbox_id})
+        return get(hub_dir, sandbox_id)
     return _update(hub_dir, sandbox_id, state="ready", last_activity=time.time(), stopped_at=None)
 
 

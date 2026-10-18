@@ -244,6 +244,11 @@ def test_restart_keeps_files_and_a_deleted_sandbox_is_lost(hub_dir, monkeypatch)
         again = tools.make(hub_dir, row["id"])
         assert asyncio.run(call(again, "read_file", {"path": "notes.txt"}))["content"].endswith("kept")
         assert asyncio.run(call(again, "write_file", {"path": "notes.txt", "content": "x"}))["bytes"] == 1
+        # The agent's own activity does not make an operator's revision stale.
+        seen = sandbox_service.get(hub_dir, row["id"])["revision"]
+        asyncio.run(call(again, "read_file", {"path": "notes.txt"}))
+        assert sandbox_service.operator_stop(hub_dir, row["id"], "cli:admin", reason="check",
+                                             expected_revision=seen)["state"] == "stopped"
         # Deleted out of band: reported lost, never recreated.
         prov = sandbox_service._provider_for(hub_dir, row)
         prov.container(row["provider_json"]).remove(force=True)

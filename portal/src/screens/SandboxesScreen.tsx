@@ -223,7 +223,8 @@ function SandboxDrawer({ base, id, onClose }: { base: string; id: string; onClos
               ? <>Offline <Text type="secondary">(checked {when(s.network.verified_at)})</Text></> : "Not ready" },
             { key: "setupr", label: "Setup result", children: s.setup ? `exit ${s.setup.exit_code}${s.setup.timed_out ? " (timed out)" : ""}` : "No setup command" },
             { key: "created", label: "Started", children: when(s.created) },
-            { key: "life", label: "Removed by", children: s.ended_at ? when(s.ended_at) : when(s.lifetime_deadline) },
+            s.ended_at ? { key: "life", label: "Ended", children: when(s.ended_at) }
+              : { key: "life", label: "Expires", children: when(s.lifetime_deadline) },
           ]} />
           {s.checkouts.length > 0 && (
             <Card size="small" title="Checkouts">
