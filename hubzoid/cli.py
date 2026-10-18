@@ -3063,6 +3063,12 @@ app.add_typer(
     help="Chat settings, theme and personal preferences.",
     rich_help_panel="Commands",
 )
+from .chat.files_cli import artifacts_app as _artifacts_app, files_app as _files_app  # noqa: E402
+
+app.add_typer(_files_app, name="files", help="Chat files: upload, reuse, download, delete, storage doctor.",
+              rich_help_panel="Commands")
+app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversations and their versions.",
+              rich_help_panel="Commands")
 app.add_typer(
     admin_app,
     name="admin",

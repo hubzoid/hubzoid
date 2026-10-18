@@ -65,12 +65,15 @@ class _Local:
             from fastapi import HTTPException
 
             try:
-                return _message_parts(self.ctx, chat_key(conv), {"content": content})
+                return _message_parts(self.ctx, chat_key(conv), {"content": content}, conv["id"])
             except HTTPException as exc:
                 raise g.GraphError(exc.status_code, exc.detail["code"], exc.detail["message"])
 
         self.engine = ChatEngine(hub, self.ctx.store, self.ctx.hub, part_validator=validate)
         self.ctx.engine = self.engine
+        from .file_service import service_for
+
+        self.ctx.files = service_for(hub, self.engine.engine, self.ctx.hub, self.engine)
 
     def actor(self, email: str | None):
         from .. import auth

@@ -234,6 +234,14 @@ class Orchestrator:
                      ok=status == "complete")
         except Exception:  # noqa: BLE001 - a lost binding only means a full prompt next time
             log.warning("chat: could not record the runtime session of %s", run.run_id, exc_info=True)
+        files = getattr(self.ctx, "files", None)
+        if files is not None and not run.fenced_out:
+            try:  # documents the run wrote become artifact versions
+                await db(files.capture_artifacts, conversation_id=run.conversation_id, branch_id=run.branch_id,
+                         actor_id=run.owner_id, run_id=run.run_id, message_id=run.message_id,
+                         since=time.time() - (time.monotonic() - run.started))
+            except Exception:  # noqa: BLE001 - the reply stands; its files stay in the folder
+                log.warning("chat: could not record the artifacts of %s", run.run_id, exc_info=True)
         try:
             nxt = await db(self.engine.run_finished, run.run_id, status, error_text)
         except Exception:  # noqa: BLE001

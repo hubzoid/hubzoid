@@ -67,7 +67,7 @@ def _store_error(exc: StoreError):
     return error(409 if isinstance(exc, IdConflict) else 400, exc.code, exc.message)
 
 
-def _message_parts(ctx: ChatContext, key: str, message: dict) -> list[dict]:
+def _message_parts(ctx: ChatContext, key: str, message: dict, conversation_id: str | None = None) -> list[dict]:
     """Validate a new user message's parts; files come from the server's own
     upload records in the conversation's folder (its ``store.chat_key``).
     Raises HTTPException."""
@@ -102,6 +102,10 @@ def _message_parts(ctx: ChatContext, key: str, message: dict) -> list[dict]:
             if stored is None:
                 raise error(400, "file_not_found",
                             f"The attached file {file_id!r} was not found. Upload it again.")
+            svc = getattr(ctx, "files", None)
+            blob = svc.file_for_local(conversation_id, file_id) if svc is not None and conversation_id else None
+            if blob:
+                stored["id"] = blob
             parts.append(stored)
         else:
             raise error(400, "invalid_message", "Messages hold text and file parts only.")
@@ -142,7 +146,7 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
 
     def validate_parts(conv: dict, content) -> list[dict]:
         try:
-            return _message_parts(ctx, chat_key(conv), {"content": content})
+            return _message_parts(ctx, chat_key(conv), {"content": content}, conv["id"])
         except HTTPException as exc:
             from .graph import GraphError
 
@@ -160,9 +164,10 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     # The engine's event bus first: the feature routes below chain onto its
     # notify hook (search reindexing) and its run-end hook (notices).
     engine_routes.mount(app, ctx)
-    from . import feedback_routes, organization_routes, sharing_routes
+    from . import feedback_routes, file_routes, organization_routes, sharing_routes
 
     feedback_routes.mount(app, ctx)
+    file_routes.mount(app, ctx)
     sharing_routes.mount(app, ctx)
     organization_routes.mount(app, ctx)
     try:
