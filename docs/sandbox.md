@@ -119,6 +119,10 @@ hub.call_agent("Fix the failing test.", agent="coder", stage="code",
                checkout={"url": "https://github.com/acme/app.git", "ref": "main"})
 ```
 
+`depth` (optional) makes a shallow clone. A private repository is cloned with
+the host's own Git access (its SSH agent or credential helper); a user name or
+token written into the URL is removed and not used.
+
 ## The tools
 
 The same names, inputs and outputs on Claude and Codex.

@@ -595,6 +595,8 @@ def _checkout(prov, state: dict, spec: dict) -> dict:
         args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--quiet", "--no-local"]
         if ref:
             args += ["--branch", ref]
+        if spec.get("depth"):
+            args += ["--depth", str(int(spec["depth"]))]
         result = subprocess.run(args + ["--", url, str(dest)], capture_output=True, text=True, timeout=600,
                                 env=_git_env())
         if result.returncode != 0:
