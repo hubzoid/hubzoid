@@ -80,9 +80,8 @@ class _Remote:
         self.client.cancel_workflow(workflow_id)
 
     def status(self, workflow_id):
-        handle = self.client.retrieve_workflow(workflow_id)
         try:
-            return handle.get_status()
+            return self.client.retrieve_workflow(workflow_id).get_status()
         except Exception:  # noqa: BLE001 - an unknown id reads as no status
             return None
 

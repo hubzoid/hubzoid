@@ -166,22 +166,29 @@ def admit(hub_dir, *, workflow: str, key: str, route: str | None = None, input=N
 
 
 def start(hub_dir, item: dict) -> dict:
-    """Queue the first execution of an accepted item on the live engine. Safe
-    to repeat: the execution id is fixed, so the engine runs it once."""
-    if item["execution"] > 0 or item["state"] != "accepted":
+    """Queue the first execution of an accepted item on the live engine.
+
+    The execution is recorded on the item before it is queued, so a worker
+    that starts at once finds itself expected. Queueing uses a fixed id, so
+    repeating it (after a crash between the two) runs the work once."""
+    if item["state"] != "accepted" or item["execution"] > 1:
         return item
     wid = engine_lib.execution_id(item["id"], 1)
+    if item["execution"] == 0:
+        try:
+            item = store.update_item(hub_dir, item["id"], expected_revision=item["revision"],
+                                     expect_state=("accepted",), execution=1, workflow_id=wid)
+        except WorkItemError:
+            item = store.require_item(hub_dir, item["id"])
+            if item["execution"] != 1 or item["workflow_id"] != wid:
+                return item
     with engine_lib.live(hub_dir) as eng:
         options = {"workflow_name": item["workflow"], "queue_name": engine_lib.queue_name(item["hub"]),
                    "queue_partition_key": item["id"], "workflow_id": wid}
         envelope = {"trigger": "work_item", "scope": "team", "work_item": item["id"],
                     "started_by": item.get("requester") or None}
         eng.enqueue(options, item["hub"], None, envelope)
-    try:
-        return store.update_item(hub_dir, item["id"], expected_revision=item["revision"],
-                                 execution=1, workflow_id=wid)
-    except WorkItemError:
-        return store.require_item(hub_dir, item["id"])
+    return store.require_item(hub_dir, item["id"])
 
 
 def admit_and_start(hub_dir, **kwargs) -> tuple[dict, bool]:
@@ -195,54 +202,65 @@ def admit_and_start(hub_dir, **kwargs) -> tuple[dict, bool]:
 
 def bind(hub_dir, item_id: str, workflow_id: str, app_version: str | None) -> dict | None:
     """Called when an execution begins. Returns the item to run, or None when
-    it must not run (cancelled, finished or superseded by a newer execution)."""
-    item = store.get_item(hub_dir, item_id)
-    if item is None or item["state"] in store.TERMINAL or item["cancel_requested"]:
-        return None
-    if item.get("workflow_id") and item["workflow_id"] != workflow_id:
-        return None
-    try:
-        return store.update_item(hub_dir, item_id, expected_revision=item["revision"], state="running",
-                                 reason=None, workflow_id=workflow_id, app_version=app_version)
-    except WorkItemError:
-        return store.get_item(hub_dir, item_id)
+    it must not run: cancelled, finished, or not the item's current execution.
+    The checks are made again after any concurrent change."""
+    for _ in range(10):
+        item = store.get_item(hub_dir, item_id)
+        if item is None or item["state"] in store.TERMINAL or item["cancel_requested"]:
+            return None
+        if item.get("workflow_id") != workflow_id:
+            return None
+        try:
+            return store.update_item(hub_dir, item_id, expected_revision=item["revision"],
+                                     expect_workflow_id=workflow_id, state="running", reason=None,
+                                     app_version=item.get("app_version") or app_version)
+        except WorkItemError:
+            continue
+    return None
 
 
-def parked(hub_dir, item_id: str, kind: str, operation_id: str, reason: str | None = None) -> None:
+def _fenced(hub_dir, item_id: str, workflow_id: str, **fields) -> dict | None:
+    """Record an execution's outcome only while it is still the item's
+    current, live execution. A cancellation or newer execution wins."""
+    for _ in range(10):
+        item = store.get_item(hub_dir, item_id)
+        if item is None or item["state"] in store.TERMINAL or item.get("workflow_id") != workflow_id:
+            return None
+        try:
+            return store.update_item(hub_dir, item_id, expected_revision=item["revision"],
+                                     expect_workflow_id=workflow_id, **fields)
+        except WorkItemError:
+            continue
+    return None
+
+
+def parked(hub_dir, item_id: str, workflow_id: str, kind: str, operation_id: str,
+           reason: str | None = None) -> None:
     op = store.get_op(hub_dir, operation_id) or {}
-    state = "waiting" if kind == "approval" else "needs_input"
-    item = store.get_item(hub_dir, item_id)
-    if item is None:
-        return
-    store.update_item(hub_dir, item_id, state=state,
-                      reason=reason or ("approval_required" if kind == "approval" else "operation_ambiguous"),
-                      resume_step=op.get("resume_step"))
+    _fenced(hub_dir, item_id, workflow_id,
+            state="waiting" if kind == "approval" else "needs_input",
+            reason=reason or ("approval_required" if kind == "approval" else "operation_ambiguous"),
+            resume_step=op.get("resume_step"))
 
 
-def finished(hub_dir, item_id: str, *, result=None, error: BaseException | None = None) -> None:
+def finished(hub_dir, item_id: str, workflow_id: str, *, result=None,
+             error: BaseException | None = None) -> None:
     from .operations import OperationFailed
 
-    item = store.get_item(hub_dir, item_id)
-    if item is None or item["state"] in store.TERMINAL:
-        return
     cfg = config_lib.load(hub_dir)
     if error is None:
         encoded = json.dumps(result, default=str)
         if len(encoded.encode()) > cfg.max_result_bytes:
             result = {"note": f"The result was larger than {cfg.max_result_bytes} bytes and was not "
                               "stored. Publish large results as a file."}
-        store.update_item(hub_dir, item_id, state="completed", reason=None,
-                          result_json={"result": json.loads(json.dumps(result, default=str))})
-        return
-    if isinstance(error, OperationFailed):
-        store.update_item(hub_dir, item_id, state="stopped", reason=error.code,
-                          error=redaction.scrub_text(error.message))
-    elif isinstance(error, WorkItemError):
-        store.update_item(hub_dir, item_id, state="stopped", reason=error.code,
-                          error=redaction.scrub_text(error.message))
+        _fenced(hub_dir, item_id, workflow_id, state="completed", reason=None,
+                result_json={"result": json.loads(json.dumps(result, default=str))})
+    elif isinstance(error, (OperationFailed, WorkItemError)):
+        _fenced(hub_dir, item_id, workflow_id, state="stopped", reason=error.code,
+                error=redaction.scrub_text(error.message))
     else:
-        store.update_item(hub_dir, item_id, state="failed", reason="stage_failed",
-                          error=redaction.scrub_error(error))
+        _fenced(hub_dir, item_id, workflow_id, state="failed", reason="stage_failed",
+                error=redaction.scrub_error(error))
 
 
 def definition_changed(hub_dir, workflow_id: str, old_version: str | None, new_version: str | None) -> None:
@@ -252,12 +270,9 @@ def definition_changed(hub_dir, workflow_id: str, old_version: str | None, new_v
     if not workflow_id.startswith("wi-"):
         return
     item_id = workflow_id[3:].rsplit("-e", 1)[0]
-    item = store.get_item(hub_dir, item_id)
-    if item is None or item["state"] in store.TERMINAL or item.get("workflow_id") != workflow_id:
-        return
-    store.update_item(hub_dir, item_id, state="needs_input", reason="definition_changed",
-                      error=f"The workflow code changed from {old_version} to {new_version} while this "
-                            "work was active. Restart it from a saved stage once you have checked it.")
+    _fenced(hub_dir, item_id, workflow_id, state="needs_input", reason="definition_changed",
+            error=f"The workflow code changed from {old_version} to {new_version} while this "
+                  "work was active. Restart it from a saved stage once you have checked it.")
 
 
 # -- reading --------------------------------------------------------------------
@@ -382,7 +397,7 @@ def cancel(hub_dir, item_id: str, actor: str, *, reason: str = "", surface: str 
     if not (_is_requester(item, actor) or _can(hub_dir, actor, "workflows_manage")):
         raise denied("Only the person who asked for this work, or a manager, can cancel it.")
     if item["state"] in store.TERMINAL:
-        return _view(item, full=True)
+        return _view(item, full=_may_see(hub_dir, item, actor)[1])
     rev = expected_revision if expected_revision is not None else item["revision"]
     item = store.update_item(hub_dir, item_id, expected_revision=rev, cancel_requested=1)
     running = item["state"] == "running"
@@ -393,29 +408,71 @@ def cancel(hub_dir, item_id: str, actor: str, *, reason: str = "", surface: str 
     item = store.update_item(hub_dir, item_id, state="cancelled",
                              reason="cancelled", error=(reason or "")[:500] or None)
     _audit(hub_dir, actor, "work_item_cancel", item_id, surface=surface)
-    return _view(item, full=_is_requester(item, actor) or actor.startswith("cli:"))
+    return _view(item, full=_may_see(hub_dir, item, actor)[1])
 
 
 def _continue(hub_dir, item: dict, start_step: int | None, *, new_version: bool = False) -> dict:
     """Continue an item from a saved step in a new execution of the same
-    workflow, on the live engine. Steps before `start_step` are reused."""
-    if not item.get("workflow_id"):
+    workflow, on the live engine. Steps before `start_step` are reused.
+
+    An ordinary continuation stays on the code version the work started on.
+    If the hub now runs different code, the work stops for an explicit restart
+    instead of moving silently (`new_version` is that restart). The next
+    execution is recorded first, under a fixed id, then created; if Hubzoid
+    stops in between, continuing again finds and adopts it."""
+    if not item.get("workflow_id") or item["execution"] < 1:
         raise WorkItemError("not_waiting", "This work has not run yet.", status=409)
     if start_step is None:
         raise WorkItemError("not_waiting", "There is no saved step to continue from.", status=409)
-    previous = item["workflow_id"]
+    previous = engine_lib.execution_id(item["id"], item["execution"])
     nxt = item["execution"] + 1
     wid = engine_lib.execution_id(item["id"], nxt)
     with engine_lib.live(hub_dir) as eng:
-        kw = {"queue_name": engine_lib.queue_name(item["hub"]), "queue_partition_key": item["id"]}
-        if new_version and eng.version:
-            kw["application_version"] = eng.version
-        # Claim the next execution first, so a repeated call forks once.
+        if not new_version and eng.version and item.get("app_version") and eng.version != item["app_version"]:
+            store.update_item(hub_dir, item["id"], expected_revision=item["revision"],
+                              state="needs_input", reason="definition_changed",
+                              error=f"The workflow code changed from {item['app_version']} to {eng.version} "
+                                    "while this work waited. Restart it once you have checked the change.")
+            raise WorkItemError("definition_changed",
+                                "The workflow code changed while this work waited. Restart it from a "
+                                "saved stage once you have checked the change.", status=409)
+        version = eng.version if new_version else (item.get("app_version") or eng.version)
         item = store.update_item(hub_dir, item["id"], expected_revision=item["revision"],
                                  expect_state=("waiting", "needs_input"), state="accepted",
-                                 execution=nxt, workflow_id=wid, reason=None, error=None)
-        eng.fork(previous, start_step, wid, **kw)
-    return item
+                                 execution=nxt, workflow_id=wid, reason=None, error=None,
+                                 resume_step=start_step,
+                                 app_version=version if new_version else item.get("app_version"))
+        _create_execution(eng, previous, start_step, wid, item, version)
+    return store.require_item(hub_dir, item["id"])
+
+
+def _create_execution(eng, previous: str, start_step: int, wid: str, item: dict, version: str | None) -> None:
+    if eng.status(wid) is not None:
+        return                                  # created before a crash: adopt it
+    kw = {"queue_name": engine_lib.queue_name(item["hub"]), "queue_partition_key": item["id"]}
+    if version:
+        kw["application_version"] = version
+    eng.fork(previous, start_step, wid, **kw)
+
+
+def reconcile_stranded(hub_dir) -> int:
+    """Executions recorded on an item but never created (Hubzoid stopped
+    between the two) are created now, from the same saved step. Returns how
+    many. Called by the engine at start and by resume."""
+    count = 0
+    for item in store.list_items(hub_dir, _hub(hub_dir), state="accepted", limit=100):
+        if item["execution"] < 1 or not item.get("workflow_id"):
+            continue
+        with engine_lib.live(hub_dir) as eng:
+            if eng.status(item["workflow_id"]) is not None:
+                continue
+            if item["execution"] == 1:
+                start(hub_dir, item)
+            else:
+                _create_execution(eng, engine_lib.execution_id(item["id"], item["execution"] - 1),
+                                  item.get("resume_step"), item["workflow_id"], item, item.get("app_version"))
+        count += 1
+    return count
 
 
 def approve(hub_dir, op_id: str, actor: str, *, digest: str, expected_revision: int | None = None,
@@ -517,24 +574,30 @@ def _stop_item(hub_dir, row: dict, reason: str, message: str) -> dict | None:
 
 
 def _resume_after_decision(hub_dir, row: dict) -> dict | None:
+    """Continue the work item whose operation was just decided, once nothing
+    else blocks it. An operation outside a work item never parked a run: the
+    decision is recorded and the next run finds it."""
     if not row.get("item_id"):
-        # Work outside an item: continue the run that parked, from its step.
-        if row.get("workflow_id") and row.get("resume_step") is not None:
-            with engine_lib.live(hub_dir) as eng:
-                eng.fork(row["workflow_id"], row["resume_step"], row["workflow_id"] + ":" +
-                         hashlib.sha256(json.dumps(row["resolution_json"] or row["approval_json"],
-                                                   sort_keys=True, default=str).encode()).hexdigest()[:8])
         return None
     item = store.get_item(hub_dir, row["item_id"])
     if item is None or item["state"] not in ("waiting", "needs_input"):
         return item
-    blocking = [o for o in store.list_ops(hub_dir, item["hub"], item_id=item["id"])
-                if o["state"] in ("ambiguous",) or (o["state"] == "awaiting_approval" and
-                                                    not (o.get("approval_json") or {}).get("digest") == o["args_digest"])]
-    if blocking:
+    if item.get("reason") == "definition_changed" or _blocking(hub_dir, item):
         return item
-    return _continue(hub_dir, item, row.get("resume_step") if row.get("resume_step") is not None
-                     else item.get("resume_step"))
+    try:
+        return _continue(hub_dir, item, row.get("resume_step") if row.get("resume_step") is not None
+                         else item.get("resume_step"))
+    except WorkItemError as exc:
+        if exc.code == "definition_changed":
+            return store.require_item(hub_dir, item["id"])
+        raise
+
+
+def _blocking(hub_dir, item: dict) -> list[dict]:
+    return [o for o in store.list_ops(hub_dir, item["hub"], item_id=item["id"])
+            if o["state"] in store.OP_UNRESOLVED
+            or (o["state"] == "awaiting_approval"
+                and (o.get("approval_json") or {}).get("digest") != o["args_digest"])]
 
 
 def resume(hub_dir, item_id: str, actor: str, *, expected_revision: int | None = None,
@@ -543,12 +606,13 @@ def resume(hub_dir, item_id: str, actor: str, *, expected_revision: int | None =
     item = store.require_item(hub_dir, item_id, _hub(hub_dir))
     if not (_is_requester(item, actor) or _can(hub_dir, actor, "workflows_manage")):
         raise denied("Only the person who asked for this work, or a manager, can resume it.")
+    if item["state"] == "accepted" and item["execution"] >= 1:
+        reconcile_stranded(hub_dir)             # recorded but never created: create it now
+        return _view(store.require_item(hub_dir, item_id), full=_may_see(hub_dir, item, actor)[1])
     if item["state"] not in ("waiting", "needs_input") or item.get("reason") == "definition_changed":
         raise WorkItemError("not_waiting", "Only work waiting on a settled decision can resume. Work "
                             "stopped by a code change needs a restart from a stage.", status=409)
-    unresolved = [o for o in store.list_ops(hub_dir, item["hub"], item_id=item_id)
-                  if o["state"] in store.OP_UNRESOLVED or o["state"] == "awaiting_approval"
-                  and (o.get("approval_json") or {}).get("digest") != o["args_digest"]]
+    unresolved = _blocking(hub_dir, item)
     if unresolved:
         raise WorkItemError("operation_unresolved", "An operation still needs a decision first.",
                             status=409, operation_id=unresolved[0]["id"])
@@ -557,7 +621,7 @@ def resume(hub_dir, item_id: str, actor: str, *, expected_revision: int | None =
         raise revision_conflict(item["revision"])
     item = _continue(hub_dir, item, item.get("resume_step"))
     _audit(hub_dir, actor, "work_item_resume", item_id, surface=surface)
-    return _view(item, full=True)
+    return _view(item, full=_may_see(hub_dir, item, actor)[1])
 
 
 def restart(hub_dir, item_id: str, actor: str, *, stage: str | None = None, reason: str,
@@ -603,4 +667,4 @@ def restart(hub_dir, item_id: str, actor: str, *, stage: str | None = None, reas
                                  state="needs_input", reason="restart_requested")
     item = _continue(hub_dir, item, start_step, new_version=True)
     _audit(hub_dir, actor, "work_item_restart", item_id, surface=surface)
-    return _view(item, full=True)
+    return _view(item, full=_may_see(hub_dir, item, actor)[1])

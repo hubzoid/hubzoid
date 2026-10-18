@@ -2,9 +2,10 @@
 
 Each command calls the same service as the HTTP API and the Console, so the
 rules and the errors are identical. Commands act with the authority of whoever
-can run commands on this server. `--as EMAIL` names the person a decision is
-made as (default: the hub's workflow account, `admin@localhost` in local
-quickstart). Only the person who asked for the work may approve or resolve it.
+can run commands on this server. `--as EMAIL` on `start` records who asked for
+the work (default: the hub's workflow account). Decisions (approve, deny,
+resolve) belong to that person: the CLI makes them only in local mode with
+sign-in off, as the machine's single account. Elsewhere, use the Console or API.
 
 Exit codes: 0 done, 1 failed, 2 invalid input, 3 denied, 4 conflict,
 5 unavailable, 6 waiting for a person or uncertain.
@@ -34,6 +35,7 @@ def _operator() -> str:
 
 
 def _person(hub: Path, as_: Optional[str]) -> str:
+    """Who asked for new work: `--as EMAIL`, else the hub's workflow account."""
     from ..access import normalize
     from ..workflows import identity
 
@@ -44,6 +46,22 @@ def _person(hub: Path, as_: Optional[str]) -> str:
                                 legacy_subject="cli", what="This command").subject
     except identity.IdentityError as exc:
         _fail(WorkItemError("invalid_request", f"{exc} Pass --as EMAIL.", status=400), False)
+
+
+def _decider(hub: Path, as_json: bool) -> str:
+    """Who makes a decision from the CLI. A decision belongs to the person who
+    asked for the work, so the CLI can make it only where that person is the
+    machine's own single account: local mode with sign-in off. Elsewhere,
+    decide in the Console or the API, signed in as that person."""
+    from ..access.session import LOCAL_OWNER
+    from ..workflows import identity
+
+    if identity.local_quickstart(hub):
+        return LOCAL_OWNER
+    _fail(WorkItemError(
+        "decide_as_requester",
+        "Approvals and decisions are made by the person who asked for the work, signed in. "
+        "Use the Console's Work items page or the API as that person.", status=403), as_json)
 
 
 def _exit_code(status: int) -> int:
@@ -201,14 +219,14 @@ def show(hub: Path = typer.Argument(Path(".")), item_id: str = typer.Argument(..
 
 @work_items_app.command("message")
 def message(hub: Path = typer.Argument(Path(".")), item_id: str = typer.Argument(...),
-            text: str = typer.Option(..., "--text"), as_: Optional[str] = typer.Option(None, "--as"),
+            text: str = typer.Option(..., "--text"),
             expected_revision: Optional[int] = typer.Option(None, "--expected-revision"),
             as_json: bool = typer.Option(False, "--json")) -> None:
     """Send a follow-up to active work. It is read at the next stage boundary."""
     from . import service
 
     hub = _hub(hub)
-    out = _run(service.message, as_json, hub, item_id, _person(hub, as_), text,
+    out = _run(service.message, as_json, hub, item_id, _operator(), text,
                expected_revision=expected_revision)
     _out(out, as_json, lambda v: console.print(f"Queued follow-up {v['message_id']}."))
 
@@ -299,28 +317,27 @@ def ops_show(hub: Path = typer.Argument(Path(".")), op_id: str = typer.Argument(
 @operations_app.command("approve")
 def ops_approve(hub: Path = typer.Argument(Path(".")), op_id: str = typer.Argument(...),
                 digest: str = typer.Option(..., "--digest", help="The digest you reviewed (sha256:...)."),
-                as_: Optional[str] = typer.Option(None, "--as"),
                 expected_revision: Optional[int] = typer.Option(None, "--expected-revision"),
                 as_json: bool = typer.Option(False, "--json")) -> None:
     """Approve the exact content of a waiting operation. The work continues and sends it once."""
     from . import service
 
     hub = _hub(hub)
-    out = _run(service.approve, as_json, hub, op_id, _person(hub, as_), digest=digest,
+    out = _run(service.approve, as_json, hub, op_id, _decider(hub, as_json), digest=digest,
                expected_revision=expected_revision, surface="cli")
     _out(out, as_json, lambda v: console.print(f"Approved. Work item is {(v['work_item'] or {}).get('state')}."))
 
 
 @operations_app.command("deny")
 def ops_deny(hub: Path = typer.Argument(Path(".")), op_id: str = typer.Argument(...),
-             reason: str = typer.Option("", "--reason"), as_: Optional[str] = typer.Option(None, "--as"),
+             reason: str = typer.Option("", "--reason"),
              expected_revision: Optional[int] = typer.Option(None, "--expected-revision"),
              as_json: bool = typer.Option(False, "--json")) -> None:
     """Deny a waiting operation. The work stops; nothing is sent."""
     from . import service
 
     hub = _hub(hub)
-    out = _run(service.deny, as_json, hub, op_id, _person(hub, as_), reason=reason,
+    out = _run(service.deny, as_json, hub, op_id, _decider(hub, as_json), reason=reason,
                expected_revision=expected_revision, surface="cli")
     _out(out, as_json, lambda v: console.print("Denied. Nothing was sent."))
 
@@ -331,7 +348,6 @@ def ops_resolve(hub: Path = typer.Argument(Path(".")), op_id: str = typer.Argume
                 evidence: Optional[str] = typer.Option(None, "--evidence",
                                                        help="Where you confirmed it: text, or a file."),
                 acknowledge_duplicate_risk: bool = typer.Option(False, "--acknowledge-duplicate-risk"),
-                as_: Optional[str] = typer.Option(None, "--as"),
                 expected_revision: Optional[int] = typer.Option(None, "--expected-revision"),
                 as_json: bool = typer.Option(False, "--json")) -> None:
     """Decide an operation whose outcome is unknown: done, retry or abandon."""
@@ -341,7 +357,7 @@ def ops_resolve(hub: Path = typer.Argument(Path(".")), op_id: str = typer.Argume
     proof = evidence
     if evidence and Path(evidence).is_file():
         proof = Path(evidence).read_text(encoding="utf-8")
-    out = _run(service.resolve, as_json, hub, op_id, _person(hub, as_), decision=decision, evidence=proof,
+    out = _run(service.resolve, as_json, hub, op_id, _decider(hub, as_json), decision=decision, evidence=proof,
                acknowledge_duplicate_risk=acknowledge_duplicate_risk,
                expected_revision=expected_revision, surface="cli")
     _out(out, as_json, lambda v: console.print(f"Resolved as {decision}. Operation is {v['operation']['state']}."))

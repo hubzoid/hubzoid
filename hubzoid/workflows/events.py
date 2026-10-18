@@ -246,17 +246,24 @@ async def _admit_work_item(DBOS, hub_dir, hub, row, wf, event, owner):
     except WorkItemError as exc:
         await asyncio.to_thread(fail, hub_dir, hub, row, exc.code, owner=owner)
         return
-    if item['state'] == 'accepted' and item['execution'] == 0:
+    if item['state'] == 'accepted' and item['execution'] <= 1:
         wid = wi_engine.execution_id(item['id'], 1)
+        if item['execution'] == 0:
+            # Record the execution first, so a worker that starts at once finds
+            # itself expected. The fixed id makes a repeated queueing run once.
+            try:
+                await asyncio.to_thread(store.update_item, hub_dir, item['id'],
+                                        expected_revision=item['revision'], expect_state=('accepted',),
+                                        execution=1, workflow_id=wid)
+            except WorkItemError:
+                current = await asyncio.to_thread(store.get_item, hub_dir, item['id'])
+                if not current or current.get('workflow_id') != wid:
+                    await asyncio.to_thread(update, hub_dir, eid, 'succeeded', owner=owner)
+                    return
         options = {'workflow_name': wf.name, 'queue_name': wi_engine.queue_name(hub),
                    'queue_partition_key': item['id'], 'workflow_id': wid}
         await DBOS.enqueue_workflow_with_options_async(
             options, hub, None, {'trigger': 'webhook', 'scope': 'team', 'work_item': item['id']})
-        try:
-            await asyncio.to_thread(store.update_item, hub_dir, item['id'],
-                                    expected_revision=item['revision'], execution=1, workflow_id=wid)
-        except WorkItemError:
-            pass  # a concurrent delivery recorded the same execution
     await asyncio.to_thread(update, hub_dir, eid, 'succeeded', owner=owner)
 
 

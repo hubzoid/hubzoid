@@ -470,7 +470,7 @@ def workflow(
                 # Waiting for a person: the run ends cleanly and nothing holds
                 # a thread. The decision continues the work from its saved step.
                 if item_id:
-                    wi_service.parked(_HUB_DIR, item_id, parked.kind, parked.operation_id, parked.reason)
+                    wi_service.parked(_HUB_DIR, item_id, run_id, parked.kind, parked.operation_id, parked.reason)
                 result = {"parked": parked.kind, "operation": parked.operation_id,
                           "message": parked.message}
                 outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
@@ -479,7 +479,7 @@ def workflow(
             except (OperationFailed, WorkItemError) as exc:
                 if item_id:
                     # A clean stop (denied, abandoned, out of scope), recorded on the item.
-                    wi_service.finished(_HUB_DIR, item_id, error=exc)
+                    wi_service.finished(_HUB_DIR, item_id, run_id, error=exc)
                     outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
                                       published=published, tool_wait=chat["tool_wait"])
                     return {"stopped": exc.code}
@@ -488,12 +488,12 @@ def workflow(
                 raise
             except Exception as exc:
                 if item_id:
-                    wi_service.finished(_HUB_DIR, item_id, error=exc)
+                    wi_service.finished(_HUB_DIR, item_id, run_id, error=exc)
                 outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=False,
                                   error=exc, published=published, tool_wait=chat["tool_wait"])
                 raise
             if item_id:
-                wi_service.finished(_HUB_DIR, item_id, result=result)
+                wi_service.finished(_HUB_DIR, item_id, run_id, result=result)
             outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
                               published=published, tool_wait=chat["tool_wait"])
             return result
@@ -699,18 +699,24 @@ def _wrap_seams_as_steps() -> None:
         context._JEV_STEP = _jev_step
 
 
-def _step_key() -> str | None:
+def _step_key(request: dict | None = None) -> str | None:
     """A key unique to the running step of the running workflow, stable across
     recovery (DBOS re-runs an interrupted step with the same id). In a work
-    item it names the item and generation instead of the execution, so a
-    continued or restarted execution finds the delivery already recorded."""
+    item it names the item, generation and the exact request instead of the
+    execution: a continued execution finds the delivery already recorded, and
+    a restarted stage that changed the content is a new delivery, never the
+    old one reported as this one."""
     wid, sid = _DBOS.workflow_id, _DBOS.step_id
     if not wid or sid is None:
         return None
     ctx = context._run.get()
     item = ((ctx.work or {}).get("item") if ctx else None) or None
     if item:
-        return f"wi:{item['id']}:g{item['generation']}:{sid}"
+        import hashlib
+        import json
+
+        content = hashlib.sha256(json.dumps(request or {}, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        return f"wi:{item['id']}:g{item['generation']}:{sid}:{content}"
     return f"{wid}:{sid}"
 
 
@@ -726,7 +732,7 @@ def _wrap_delivery_steps() -> None:
         def _publish_step(hub_dir: str, hub: str, identity: dict, workflow: str,
                           run_id: str, request: dict) -> dict:
             return context.publish_now(hub_dir, hub, identity, workflow, run_id, request,
-                                       idem_key=_step_key())
+                                       idem_key=_step_key(request))
 
         context._PUBLISH_STEP = _publish_step
     if context._EMAIL_STEP is None:
@@ -735,7 +741,7 @@ def _wrap_delivery_steps() -> None:
         def _email_step(hub_dir: str, hub: str, identity: dict, workflow: str,
                         run_id: str, request: dict) -> dict:
             return context.email_now(hub_dir, hub, identity, workflow, run_id, request,
-                                     idem_key=_step_key())
+                                     idem_key=_step_key(request))
 
         context._EMAIL_STEP = _email_step
 
@@ -794,6 +800,13 @@ def launch(*, target: str | None = None) -> None:
     else:
         _cancel_runs_from_other_code()
     _LAUNCHED = True
+    if not target:
+        try:
+            # Work items whose next execution was recorded but never created.
+            from ..work_items import service as wi_service
+            wi_service.reconcile_stranded(_HUB_DIR)
+        except Exception:  # noqa: BLE001 - never block startup; resume repairs it too
+            log.exception("workflows: could not reconcile work items")
     log.info("workflows: DBOS launched (%d workflow(s))", len(_REGISTRY))
     # Publish this hub's workflow catalog to the shared store so the org portal
     # (served by one bridge) can list every hub's workflows.

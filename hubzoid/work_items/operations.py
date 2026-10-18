@@ -129,14 +129,16 @@ def run(*, name: str, target: dict, arguments: dict, recovery: str,
         channel: str | None = None, draft: Callable | None = None,
         target_version: Callable | None = None, provider_key_ttl: float | None = None,
         key: str | None = None) -> Any:
-    """Perform one consequential external write, recorded and recoverable.
+    """Perform one external write, recorded and recoverable.
 
     `dispatch(arguments)` sends; `draft(arguments)` saves a real draft; both
     return a JSON-serializable result. With `recovery="provider_key"` they are
-    called as `fn(arguments, provider_key=...)`. `actions` names the registered
-    consequential actions this write performs (for write modes), `channel` the
-    channel it goes out on. `key` distinguishes deliberate repeats of the same
-    name and target within one stage."""
+    called as `fn(arguments, provider_key=...)`. `actions` names the actions
+    this write performs: inside a work item it is required and must be allowed
+    by the item's route, and a consequential action (email.send, erp.submit,
+    customer_reply.send or one a hub registered) follows its write mode.
+    `channel` is the channel it goes out on. `key` distinguishes deliberate
+    repeats of the same name and target within one stage."""
     from ..workflows import context
 
     ctx = context._ctx()
@@ -156,18 +158,26 @@ def run(*, name: str, target: dict, arguments: dict, recovery: str,
     work = ctx.work or {}
     item = work.get("item")
     stage = work.get("stage")
-    if isinstance(actions, str):
-        actions = [actions]
+    actions = [actions] if isinstance(actions, str) else list(actions or [])
+    for action in actions:
+        if not config_lib.ACTION_RE.match(action):
+            raise WorkItemError("invalid_definition",
+                                f"{action!r} is not an action id like 'email.send'.", status=422)
+    if item is not None:
+        if not actions:
+            raise WorkItemError(
+                "invalid_definition",
+                f"Operation {name!r} must name the action it performs (actions=...), so the work "
+                "item's route and the hub's write modes can govern it.", status=422)
+        allowed = (item.get("route_json") or {}).get("actions")
+        for action in actions:
+            if allowed is not None and action not in allowed:
+                raise WorkItemError(
+                    "scope_exceeded",
+                    f"Route {item['route']!r} does not allow {action}. A wider route needs a "
+                    "new request from someone allowed to ask for it.", status=403)
     mode, fn = "direct", dispatch
     if actions:
-        if item is not None:
-            allowed = (item.get("route_json") or {}).get("actions")
-            for action in actions:
-                if allowed is not None and action not in allowed:
-                    raise WorkItemError(
-                        "scope_exceeded",
-                        f"Route {item['route']!r} does not allow {action}. A wider route needs a "
-                        "new request from someone allowed to ask for it.", status=403)
         mode = config_lib.mode_for(config_lib.load(hub_dir), actions, channel)
         if mode == "off":
             raise WorkItemError(
@@ -181,6 +191,11 @@ def run(*, name: str, target: dict, arguments: dict, recovery: str,
                     f"{', '.join(actions)} is set to draft, but {name!r} has no real draft in "
                     "its target system. Set the action to off or approve.", status=422)
             fn = draft
+    if mode == "approve" and item is None:
+        raise WorkItemError(
+            "approval_needs_work_item",
+            f"{', '.join(actions)} needs a person's approval, which only work items can wait for. "
+            "Declare the workflow with work_items=... and start it as a work item.", status=422)
     if item is not None:
         parts = [hub, "item", item["id"], item["generation"], stage, name, target, key]
         requester = item.get("requester") or context._identity(ctx).subject
@@ -190,7 +205,7 @@ def run(*, name: str, target: dict, arguments: dict, recovery: str,
         requester = context._identity(ctx).subject
     lkey = logical_key(parts)
     payload = {"name": name, "target": target, "arguments": arguments, "mode": mode,
-               "actions": sorted(actions or [])}
+               "actions": sorted(actions)}
     args_digest = digest(payload)
     from .. import secretbox
 
@@ -214,7 +229,16 @@ def run(*, name: str, target: dict, arguments: dict, recovery: str,
     return _drive(ctx, row, fn, arguments, reconcile, target_version)
 
 
+_UNKNOWN = ("We cannot confirm whether this action completed. The person who asked for this "
+            "work must decide: done, retry or abandon.")
+
+
 def _park(ctx, row, kind: str, message: str, reason: str | None = None):
+    """Wait for a person. Only a work item can wait: outside one, an
+    uncertain outcome stops the run and stays recorded for a person."""
+    if not (ctx.work or {}).get("item"):
+        raise OperationFailed("operation_ambiguous" if kind == "ambiguous" else "approval_needs_work_item",
+                              message, row["id"])
     step = _resume_step()
     store.update_op(ctx.hub_dir, row["id"], resume_step=step, workflow_id=ctx.run_id or row["workflow_id"])
     raise Parked(kind, row["id"], message, reason=reason)
@@ -233,22 +257,29 @@ def _drive(ctx, row, fn, arguments, reconcile, target_version):
             code = "approval_denied" if res.get("decision") == "deny" else "operation_abandoned"
             raise OperationFailed(code, "A person stopped this operation.", row["id"])
         if state == "ambiguous":
-            _park(ctx, row, "ambiguous",
-                  "We cannot confirm whether this action completed. The person who asked for this "
-                  "work must decide: done, retry or abandon.")
-        if state == "awaiting_approval":
-            row = _check_approval(ctx, row, target_version)
-            row = _claim(hub_dir, row, ("awaiting_approval",))
+            _park(ctx, row, "ambiguous", _UNKNOWN)
+        if state == "sending":
+            resend, row = _recover(ctx, row, reconcile)
+            if not resend:                    # settled by the check, or now ambiguous
+                continue
+            # The earlier attempt may be resent: the same gate as a first send.
+            row = _gate(ctx, row, target_version)
+            row = _claim(hub_dir, row, (row["state"],))
             return _send(ctx, row, fn, arguments)
-        if state in ("pending", "failed_before_send"):
+        if state in ("awaiting_approval", "pending", "failed_before_send"):
+            row = _gate(ctx, row, target_version)
             row = _claim(hub_dir, row, (state,))
             return _send(ctx, row, fn, arguments)
-        if state == "sending":
-            row = _recover(ctx, row, fn, arguments, reconcile)
-            if row["state"] == "sending":   # recovered into a fresh attempt
-                return _send(ctx, row, fn, arguments)
-            continue
         raise WorkItemError("invalid_state", f"Operation is in an unknown state {state!r}.", status=500)
+
+
+def _gate(ctx, row, target_version):
+    """Before any dispatch, first or resent: an operation in approve mode needs
+    a current approval of this exact digest, by someone who still has access,
+    of a target that has not changed since."""
+    if row["mode"] != "approve":
+        return row
+    return _check_approval(ctx, row, target_version)
 
 
 def _check_approval(ctx, row, target_version):
@@ -262,14 +293,15 @@ def _check_approval(ctx, row, target_version):
         _park(ctx, row, "approval",
               "This action waits for a person to approve the exact content before it is sent.")
     if not _approver_still_allowed(hub_dir, ctx.hub, approval.get("approver") or ""):
-        row = store.update_op(hub_dir, row["id"], expected_revision=row["revision"], approval_json=None)
+        row = store.update_op(hub_dir, row["id"], expected_revision=row["revision"], approval_json=None,
+                              state="awaiting_approval")
         _park(ctx, row, "approval", "The person who approved this no longer has access. "
               "It needs a fresh approval.", reason="approver_revoked")
     if target_version is not None:
         current = str(target_version())
         if current != approval.get("target_version"):
             row = store.update_op(hub_dir, row["id"], expected_revision=row["revision"],
-                                  approval_json=None, target_version=current)
+                                  approval_json=None, target_version=current, state="awaiting_approval")
             _park(ctx, row, "approval", "The target changed after it was approved. "
                   "It needs a fresh approval of the current version.", reason="target_changed")
     return row
@@ -284,37 +316,45 @@ def _claim(hub_dir, row, from_states):
                            error=None)
 
 
-def _recover(ctx, row, fn, arguments, reconcile):
-    """An earlier attempt was interrupted while sending. Decide by class."""
+def _recover(ctx, row, reconcile):
+    """An earlier attempt was interrupted while sending, or failed with an
+    unknown outcome. Decide by class. Returns (resend, row): resend is True
+    when the same request may be sent again, else the row is settled or
+    ambiguous."""
     hub_dir = ctx.hub_dir
     recovery = row["recovery"]
     if recovery == "idempotent":
-        return _claim(hub_dir, row, ("sending",))
+        return True, row
     if recovery == "provider_key":
         if row.get("provider_key_expires") and time.time() < row["provider_key_expires"]:
-            return _claim(hub_dir, row, ("sending",))
-        return store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
-                               error="Interrupted after the provider's idempotency window ended.")
+            return True, row
+        return False, store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
+                                      error="Interrupted after the provider's idempotency window ended.")
     if recovery == "reconcile" and reconcile is not None:
         try:
-            found = reconcile(arguments)
+            found = reconcile(row_arguments(ctx.hub_dir, row))
         except Exception as exc:  # noqa: BLE001 - a failed check proves nothing
             found = Reconciled(UNKNOWN, evidence={"error": redaction.scrub_error(exc)})
         if not isinstance(found, Reconciled):
             raise WorkItemError("invalid_definition", "reconcile must return a Reconciled value.", status=500)
+        evidence = _jsonable(redaction.redact(found.evidence))
         if found.status == APPLIED:
-            return store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="succeeded",
-                                   result_json=_jsonable(found.result),
-                                   evidence_json=_jsonable(redaction.redact(found.evidence)))
+            return False, store.update_op(hub_dir, row["id"], expected_revision=row["revision"],
+                                          state="succeeded", result_json=_jsonable(found.result),
+                                          evidence_json=evidence)
         if found.status == SAFE_TO_RETRY:
-            row = store.update_op(hub_dir, row["id"], expected_revision=row["revision"],
-                                  evidence_json=_jsonable(redaction.redact(found.evidence)))
-            return _claim(hub_dir, row, ("sending",))
-        return store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
-                               evidence_json=_jsonable(redaction.redact(found.evidence)),
-                               error="The check could not confirm whether the earlier attempt applied.")
-    return store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
-                           error="Interrupted while sending. The outcome is unknown.")
+            return True, store.update_op(hub_dir, row["id"], expected_revision=row["revision"],
+                                         evidence_json=evidence)
+        return False, store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
+                                      evidence_json=evidence,
+                                      error="The check could not confirm whether the earlier attempt applied.")
+    return False, store.update_op(hub_dir, row["id"], expected_revision=row["revision"], state="ambiguous",
+                                  error="Interrupted while sending. The outcome is unknown.")
+
+
+def row_arguments(hub_dir, row) -> dict:
+    """The recorded arguments of an operation: what a check or resend uses."""
+    return payload(hub_dir, row).get("arguments") or {}
 
 
 def _jsonable(value):
@@ -350,14 +390,14 @@ def _send(ctx, row, fn, arguments):
     except Exception as exc:  # noqa: BLE001 - the outcome is now unknown
         message = redaction.scrub_error(exc)
         if row["recovery"] in ("idempotent", "provider_key"):
-            # A resend of the same request is safe, so it stays sendable.
-            _settle(hub_dir, row, token, "pending", error=message)
+            # The outcome is unknown but a resend may be safe. It stays
+            # `sending`, so the next attempt goes through recovery: the class's
+            # own check (a provider key's window) and the approval gate.
+            _settle(hub_dir, row, token, "sending", error=message)
             raise
         row = _settle(hub_dir, row, token, "ambiguous", error=message)
         if row is not None and row["state"] == "ambiguous":
-            _park(ctx, row, "ambiguous",
-                  "We cannot confirm whether this action completed. The person who asked for this "
-                  "work must decide: done, retry or abandon.")
+            _park(ctx, row, "ambiguous", _UNKNOWN)
         raise
     row = _settle(hub_dir, row, token, "succeeded", result=_jsonable(result))
     if row is None or row["state"] not in ("succeeded", "resolved_done"):
@@ -374,7 +414,8 @@ def _settle(hub_dir, row, token, state, *, result=None, error=None):
     attempts = current.get("attempts_json") or []
     if current["state"] != "sending" or not attempts or attempts[-1].get("token") != token:
         return current
-    fields = {"state": state, "attempts_json": _finish_attempt(current, state), "error": error}
+    fields = {"state": state, "error": error,
+              "attempts_json": _finish_attempt(current, "unknown" if state == "sending" else state)}
     if result is not None or state == "succeeded":
         fields["result_json"] = result
     try:
@@ -386,18 +427,20 @@ def _settle(hub_dir, row, token, state, *, result=None, error=None):
 
 def view(row: dict, *, full: bool) -> dict:
     """An operation as people and the API see it. Payloads are never returned.
-    `full` adds results and evidence, for the person allowed to decide."""
+    `full` adds the target, results, errors and evidence, for the person
+    allowed to decide. Others see what it is and its state only."""
     out = {k: row.get(k) for k in (
         "id", "item_id", "generation", "stage", "name", "action", "mode", "recovery", "state",
-        "args_digest", "target_version", "revision", "created", "updated")}
-    out["target"] = row.get("target_json")
+        "args_digest", "revision", "created", "updated")}
     out["attempts"] = [{k: a.get(k) for k in ("n", "state", "started", "ended")}
                        for a in (row.get("attempts_json") or [])]
     approval = row.get("approval_json") or None
     out["approval"] = ({"approver": approval.get("approver"), "at": approval.get("at")}
                        if approval else None)
-    out["error"] = row.get("error")
     if full:
+        out["target"] = row.get("target_json")
+        out["target_version"] = row.get("target_version")
+        out["error"] = row.get("error")
         out["result"] = row.get("result_json")
         out["evidence"] = row.get("evidence_json")
         out["resolution"] = row.get("resolution_json")

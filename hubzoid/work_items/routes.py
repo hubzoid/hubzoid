@@ -105,7 +105,7 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
                 origin={"source": "api", "surface": actor.surface})
             return (202 if created else 200), service.show(hub_dir, item["id"], actor.subject)
 
-        status, payload = await _call(store.idempotent, hub_dir, actor.subject, "work_items.start",
+        status, payload = await _call(store.idempotent, hub_dir, actor.subject, f"{hub}:work_items.start",
                                       request.headers.get("Idempotency-Key"), body.model_dump(), produce)
         response.status_code = status
         payload["status_url"] = f"/portal/api/hubs/{hub}/work-items/{payload['id']}"

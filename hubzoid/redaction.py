@@ -74,7 +74,7 @@ def _scrub_string(text: str, secrets: tuple[str, ...]) -> str:
     text = _BEARER_RE.sub(lambda m: m.group(1) + " " + REDACTED, text)
     text = _TOKEN_SHAPES.sub(REDACTED, text)
     text = _SECRET_TEXT_RE.sub(
-        lambda m: m.group(0) if REDACTED in m.group(2) or m.group(2).lower() in ("bearer", "basic")
+        lambda m: m.group(0) if m.group(2).strip("\"'") == REDACTED or m.group(2).lower() in ("bearer", "basic")
         else m.group(1) + REDACTED, text)
     return redact_url_credentials(text)
 

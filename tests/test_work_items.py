@@ -24,7 +24,8 @@ WORKFLOW = textwrap.dedent('''
     from hubzoid.work_items import Route
 
     @workflow(work_items={"answer": Route(stages=("plan",), actions=()),
-                          "act": Route(stages=("plan", "send"), actions=("email.send",))})
+                          "act": Route(stages=("plan", "send"), actions=("email.send",)),
+                          "ops": Route()})
     def desk():
         return hub.work_item.checkpoint("plan", lambda: {"ok": True})
 ''')
@@ -301,84 +302,110 @@ def test_approval_dispatch_recheck(hub_dir):
     assert parked.value.reason == "approver_revoked" and send.calls == []
 
 
+def ops_item(hub_dir, key="ops-1"):
+    return service.admit(hub_dir, workflow="desk", key=key, route="ops", requester=OWNER)[0]
+
+
 def _interrupted(hub_dir, recovery, **extra):
     """An operation left `sending` by a process that died mid-call."""
     send = Sender()
-    with run_ctx(hub_dir):
+    item = ops_item(hub_dir)
+    with run_ctx(hub_dir, item):
         operations.run(name="probe", target={"n": recovery}, arguments={}, recovery=recovery,
-                       dispatch=send, **extra)
+                       actions="probe.call", dispatch=send, **extra)
     row = store.list_ops(hub_dir, "desk")[0]
     store.update_op(hub_dir, row["id"], state="sending", result_json=None)
-    return row
+    return row, item
 
 
 def test_crash_after_provider_acceptance(hub_dir):
-    row = _interrupted(hub_dir, "escalate")
+    row, item = _interrupted(hub_dir, "escalate")
     send = Sender()
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
         with pytest.raises(Parked) as parked:
             operations.run(name="probe", target={"n": "escalate"}, arguments={},
-                           recovery="escalate", dispatch=send)
+                           recovery="escalate", actions="probe.call", dispatch=send)
     assert parked.value.kind == "ambiguous" and send.calls == []
     assert store.get_op(hub_dir, row["id"])["state"] == "ambiguous"
 
 
 def test_reconcile_classes(hub_dir):
-    _interrupted(hub_dir, "reconcile", reconcile=lambda a: Reconciled("unknown"))
+    _, item = _interrupted(hub_dir, "reconcile", reconcile=lambda a: Reconciled("unknown"))
     send = Sender()
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
         # A check that finds the earlier write settles it with no resend.
         result = operations.run(name="probe", target={"n": "reconcile"}, arguments={},
-                                recovery="reconcile", dispatch=send,
+                                recovery="reconcile", actions="probe.call", dispatch=send,
                                 reconcile=lambda a: Reconciled("applied", {"id": 9}, {"found": 9}))
     assert result == {"id": 9} and send.calls == []
 
 
 def test_empty_lookup_is_not_retry_proof(hub_dir):
-    row = _interrupted(hub_dir, "reconcile", reconcile=lambda a: Reconciled("unknown"))
+    row, item = _interrupted(hub_dir, "reconcile", reconcile=lambda a: Reconciled("unknown"))
     send = Sender()
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
         with pytest.raises(Parked):
             operations.run(name="probe", target={"n": "reconcile"}, arguments={}, recovery="reconcile",
-                           dispatch=send, reconcile=lambda a: Reconciled("unknown", evidence={"listing": []}))
+                           actions="probe.call", dispatch=send,
+                           reconcile=lambda a: Reconciled("unknown", evidence={"listing": []}))
     assert send.calls == [] and store.get_op(hub_dir, row["id"])["state"] == "ambiguous"
 
 
 def test_provider_key_expired(hub_dir):
-    row = _interrupted(hub_dir, "provider_key", provider_key_ttl=60)
+    row, item = _interrupted(hub_dir, "provider_key", provider_key_ttl=60)
     store.update_op(hub_dir, row["id"], provider_key_expires=1.0)
     send = Sender()
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
         with pytest.raises(Parked):
             operations.run(name="probe", target={"n": "provider_key"}, arguments={},
-                           recovery="provider_key", dispatch=send, provider_key_ttl=60)
+                           recovery="provider_key", actions="probe.call", dispatch=send, provider_key_ttl=60)
     assert send.calls == []
 
 
-def test_idempotent_resend_and_outcome_classes(hub_dir):
-    _interrupted(hub_dir, "idempotent")
+def test_provider_key_timeout_keeps_its_window(hub_dir):
+    """Review finding: a timed-out provider-key send must not become freely
+    resendable after the provider's window ends."""
+    item = ops_item(hub_dir)
+    args = dict(name="charge", target={"order": 1}, arguments={"amount": 5}, recovery="provider_key",
+                actions="probe.call", provider_key_ttl=60)
+    with run_ctx(hub_dir, item):
+        with pytest.raises(TimeoutError):
+            operations.run(dispatch=Sender(TimeoutError("read timed out")), **args)
+    row = store.list_ops(hub_dir, "desk")[0]
+    assert row["state"] == "sending"
+    store.update_op(hub_dir, row["id"], provider_key_expires=1.0)   # the window has ended
     send = Sender()
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
+        with pytest.raises(Parked):
+            operations.run(dispatch=send, **args)
+    assert send.calls == [] and store.get_op(hub_dir, row["id"])["state"] == "ambiguous"
+
+
+def test_idempotent_resend_and_outcome_classes(hub_dir):
+    _, item = _interrupted(hub_dir, "idempotent")
+    send = Sender()
+    with run_ctx(hub_dir, item):
         operations.run(name="probe", target={"n": "idempotent"}, arguments={}, recovery="idempotent",
-                       dispatch=send)
+                       actions="probe.call", dispatch=send)
         assert len(send.calls) == 1
         with pytest.raises(NotSent):
-            operations.run(name="x", target={}, arguments={}, recovery="escalate",
+            operations.run(name="x", target={}, arguments={}, recovery="escalate", actions="probe.call",
                            dispatch=Sender(NotSent("no connection")))
-        assert operations.run(name="x", target={}, arguments={}, recovery="escalate",
+        assert operations.run(name="x", target={}, arguments={}, recovery="escalate", actions="probe.call",
                               dispatch=send) == {"message_id": "m-2"}
         with pytest.raises(operations.OperationFailed) as failed:
-            operations.run(name="y", target={}, arguments={}, recovery="escalate",
+            operations.run(name="y", target={}, arguments={}, recovery="escalate", actions="probe.call",
                            dispatch=Sender(Rejected("400 bad address token=abc123secret")))
     assert failed.value.code == "operation_rejected" and "abc123secret" not in failed.value.message
 
 
 def test_resolution_race_and_late_result(hub_dir):
     send = Sender(TimeoutError("socket closed"))
-    with run_ctx(hub_dir):
+    item = ops_item(hub_dir)
+    with run_ctx(hub_dir, item):
         with pytest.raises(Parked):
             operations.run(name="mail", target={"to": "c"}, arguments={}, recovery="escalate",
-                           dispatch=send)
+                           actions="probe.call", dispatch=send)
     op = store.list_ops(hub_dir, "desk")[0]
     assert op["state"] == "ambiguous"
     # Only the requester decides, with evidence or an acknowledged risk.
@@ -396,9 +423,9 @@ def test_resolution_race_and_late_result(hub_dir):
     row = store.get_op(hub_dir, op["id"])
     settled = operations._settle(hub_dir, row, "stale-token", "succeeded", result={"late": True})
     assert settled["state"] == "resolved_done"
-    with run_ctx(hub_dir):
+    with run_ctx(hub_dir, item):
         assert operations.run(name="mail", target={"to": "c"}, arguments={}, recovery="escalate",
-                              dispatch=Sender())["resolved_by_person"] is True
+                              actions="probe.call", dispatch=Sender())["resolved_by_person"] is True
 
 
 def test_view_hides_payloads_from_managers(hub_dir):
@@ -468,3 +495,188 @@ def test_redaction_and_classes():
     assert tool_classes.classify("some_mcp_tool") == "external_write"
     with pytest.raises(ValueError):
         tool_classes.check("admin")
+
+
+
+# -- review findings -------------------------------------------------------------
+
+def test_retry_after_not_sent_rechecks_the_approval(hub_dir):
+    write_config(hub_dir, "version: 1\nwrite_modes:\n  email.send: approve\n")
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", route="act", requester=OWNER)
+    version = {"v": "1"}
+    args = dict(name="send", target={"t": 1}, arguments={"b": 1}, recovery="escalate", actions="email.send",
+                target_version=lambda: version["v"])
+    with run_ctx(hub_dir, item):
+        with pytest.raises(Parked) as parked:
+            operations.run(dispatch=Sender(), **args)
+    op = store.get_op(hub_dir, parked.value.operation_id)
+    store.update_op(hub_dir, op["id"], approval_json={"digest": op["args_digest"], "approver": OWNER,
+                                                        "target_version": "1"})
+    with run_ctx(hub_dir, item):
+        with pytest.raises(NotSent):
+            operations.run(dispatch=Sender(NotSent("connection refused")), **args)
+    version["v"] = "2"                       # the target changed before the retry
+    send = Sender()
+    with run_ctx(hub_dir, item):
+        with pytest.raises(Parked) as parked:
+            operations.run(dispatch=send, **args)
+    assert parked.value.reason == "target_changed" and send.calls == []
+
+
+def test_governed_writes_must_name_an_allowed_action(hub_dir):
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", route="answer", requester=OWNER)
+    with run_ctx(hub_dir, item):
+        with pytest.raises(WorkItemError) as err:
+            operations.run(name="post", target={}, arguments={}, recovery="escalate", dispatch=Sender())
+        assert err.value.code == "invalid_definition"
+        with pytest.raises(WorkItemError) as err:
+            operations.run(name="post", target={}, arguments={}, recovery="escalate",
+                           actions="github.comment", dispatch=Sender())
+        assert err.value.code == "scope_exceeded"
+
+
+def test_approval_outside_a_work_item_is_refused(hub_dir):
+    write_config(hub_dir, "version: 1\nwrite_modes:\n  email.send: approve\n")
+    with run_ctx(hub_dir):
+        with pytest.raises(WorkItemError) as err:
+            operations.run(name="send", target={}, arguments={}, recovery="escalate",
+                           actions="email.send", dispatch=Sender())
+    assert err.value.code == "approval_needs_work_item"
+    with run_ctx(hub_dir):                    # uncertain outside an item: the run stops, recorded
+        with pytest.raises(operations.OperationFailed) as failed:
+            operations.run(name="notify", target={}, arguments={}, recovery="escalate",
+                           dispatch=Sender(TimeoutError("lost")))
+    assert failed.value.code == "operation_ambiguous"
+
+
+class FakeEngine:
+    def __init__(self, version="v1", existing=()):
+        self.version, self.existing, self.calls = version, set(existing), []
+
+    def enqueue(self, options, *args):
+        self.calls.append(("enqueue", options["workflow_id"]))
+        return options["workflow_id"]
+
+    def fork(self, previous, start_step, new_id, **kw):
+        self.calls.append(("fork", previous, start_step, new_id, kw.get("application_version")))
+        self.existing.add(new_id)
+        return new_id
+
+    def cancel(self, wid):
+        self.calls.append(("cancel", wid))
+
+    def status(self, wid):
+        return object() if wid in self.existing else None
+
+    def steps(self, wid):
+        return []
+
+
+@pytest.fixture
+def fake_engine(monkeypatch):
+    from contextlib import contextmanager
+
+    from hubzoid.work_items import engine as engine_lib
+
+    eng = FakeEngine()
+
+    @contextmanager
+    def live(hub_dir, *, require=True):
+        yield eng
+
+    monkeypatch.setattr(engine_lib, "live", live)
+    return eng
+
+
+def test_start_records_the_execution_before_queueing(hub_dir, fake_engine):
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", requester=OWNER)
+    seen = {}
+
+    def enqueue(options, *args):
+        seen["row"] = store.get_item(hub_dir, item["id"])       # a worker starting at once
+        seen["bound"] = service.bind(hub_dir, item["id"], options["workflow_id"], "v1")
+        return options["workflow_id"]
+
+    fake_engine.enqueue = enqueue
+    service.start(hub_dir, item)
+    assert seen["row"]["execution"] == 1 and seen["bound"]["state"] == "running"
+
+
+def test_bind_rechecks_after_a_concurrent_cancel(hub_dir, fake_engine):
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", requester=OWNER)
+    item = service.start(hub_dir, item)
+    service.cancel(hub_dir, item["id"], OWNER)
+    assert service.bind(hub_dir, item["id"], item["workflow_id"], "v1") is None
+    service.finished(hub_dir, item["id"], item["workflow_id"], result={"late": True})
+    assert store.get_item(hub_dir, item["id"])["state"] == "cancelled"   # a late result is ignored
+
+
+def test_continuation_stays_on_its_code_and_survives_a_crash(hub_dir, fake_engine):
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", requester=OWNER)
+    item = service.start(hub_dir, item)
+    item = service.bind(hub_dir, item["id"], item["workflow_id"], "v1")
+    store.update_item(hub_dir, item["id"], state="waiting", resume_step=4)
+    fake_engine.version = "v2"                     # the hub now runs different code
+    with pytest.raises(WorkItemError) as err:
+        service.resume(hub_dir, item["id"], OWNER)
+    assert err.value.code == "definition_changed"
+    assert store.get_item(hub_dir, item["id"])["reason"] == "definition_changed"
+    # Same code: the next execution is recorded, then created, pinned to v1.
+    fake_engine.version = "v1"
+    store.update_item(hub_dir, item["id"], state="waiting", reason=None)
+    boom = {"fail": True}
+    real_fork = fake_engine.fork
+
+    def flaky_fork(*a, **kw):
+        if boom.pop("fail", False):
+            raise RuntimeError("engine went away")
+        return real_fork(*a, **kw)
+
+    fake_engine.fork = flaky_fork
+    with pytest.raises(RuntimeError):
+        service.resume(hub_dir, item["id"], OWNER)
+    stranded = store.get_item(hub_dir, item["id"])
+    assert stranded["state"] == "accepted" and stranded["execution"] == 2
+    assert service.reconcile_stranded(hub_dir) == 1          # created on the next start
+    assert fake_engine.calls[-1][:4] == ("fork", item["workflow_id"], 4, stranded["workflow_id"])
+    assert fake_engine.calls[-1][4] == "v1"
+
+
+def test_manager_responses_carry_no_content(hub_dir, fake_engine, monkeypatch):
+    item, _ = service.admit(hub_dir, workflow="desk", key="k", input={"secret": "x"}, requester=OWNER)
+    store.update_item(hub_dir, item["id"], state="completed", result_json={"result": {"secret": "y"}})
+    monkeypatch.setattr(service, "_can", lambda hub_dir, actor, perm: actor == "manager@company.org")
+    out = service.cancel(hub_dir, item["id"], "manager@company.org")
+    assert "input" not in out and "result" not in out
+
+
+def test_cli_decisions_need_local_mode(hub_dir, monkeypatch):
+    import typer
+
+    from hubzoid.work_items import cli as wi_cli
+
+    assert wi_cli._decider(hub_dir, False) == OWNER
+    monkeypatch.setenv("WEBUI_AUTH", "true")
+    with pytest.raises(typer.Exit) as exited:
+        wi_cli._decider(hub_dir, True)
+    assert exited.value.exit_code == 3
+
+
+def test_idempotency_key_is_reserved_before_creating(hub_dir):
+    def first():
+        # A second request with the same key arrives while the first runs.
+        with pytest.raises(WorkItemError) as err:
+            store.idempotent(hub_dir, "a@x.org", "desk:start", "k", {"x": 2}, lambda: (202, {}))
+        assert err.value.code == "idempotency_key_reused"
+        with pytest.raises(WorkItemError) as err:
+            store.idempotent(hub_dir, "a@x.org", "desk:start", "k", {"x": 1}, lambda: (202, {}))
+        assert err.value.code == "request_in_progress"
+        return 202, {"n": 1}
+
+    assert store.idempotent(hub_dir, "a@x.org", "desk:start", "k", {"x": 1}, first) == (202, {"n": 1})
+
+
+def test_partial_redaction_is_not_kept():
+    from hubzoid import redaction
+
+    assert redaction.scrub_text("token=[redacted]remaining-secret") == "token=[redacted]"

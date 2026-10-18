@@ -47,8 +47,10 @@ MODES = ("off", "draft", "approve")
 _ORDER = {"off": 0, "draft": 1, "approve": 2}
 ACTION_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-#: The actions Hubzoid itself registers. Hubs and channels may add their own
-#: (see `register_action`).
+#: Consequential actions: they reach customers, suppliers or books of record,
+#: so each has a write mode and is off until enabled. Hubzoid registers these;
+#: hubs and channels may add their own (see `register_action`). Any other
+#: action a work item declares is still limited by its route, but has no mode.
 BUILTIN_ACTIONS = {"email.send": True, "erp.submit": True, "customer_reply.send": True}
 _ACTIONS: dict[str, bool] = dict(BUILTIN_ACTIONS)   # id -> has a real draft somewhere
 #: Channels that cannot hold a real draft (a chat message has no drafts).
@@ -62,8 +64,13 @@ _LIMITS = {
 }
 
 
+def is_consequential(action: str) -> bool:
+    return action in _ACTIONS
+
+
 def register_action(action: str, *, supports_draft: bool = True) -> str:
-    """Register a consequential action id, such as ``crm.update``."""
+    """Register a consequential action id, such as ``crm.update``: it gets a
+    write mode and is off until the hub's work-items.yaml enables it."""
     if not ACTION_RE.match(action):
         raise ValueError(f"Action ids look like 'area.verb', for example 'email.send', not {action!r}.")
     _ACTIONS[action] = supports_draft
@@ -204,6 +211,9 @@ def mode_for(cfg: Config, actions, channel: str | None = None) -> str:
     actions = [actions] if isinstance(actions, str) else list(actions)
     if not actions:
         raise ValueError("mode_for needs at least one action")
+    actions = [a for a in actions if is_consequential(a)]
+    if not actions:
+        return "direct"      # no consequential action: governed by the route only
     per_channel = cfg.overrides.get(channel or "", {})
     modes = [per_channel.get(a, cfg.write_modes.get(a, "off")) for a in actions]
     return min(modes, key=_ORDER.__getitem__)

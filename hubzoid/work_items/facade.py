@@ -48,6 +48,19 @@ def _step(name: str, fn: Callable[[], Any]) -> Any:
     return fn()
 
 
+def _step_id():
+    try:
+        from dbos import DBOS
+
+        sid = DBOS.step_id
+        if sid is not None:
+            return sid
+    except Exception:  # noqa: BLE001 - outside the engine (tests, run_local)
+        pass
+    import uuid
+    return "local-" + uuid.uuid4().hex   # no replay outside the engine: each read is new
+
+
 def _jsonable(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -142,15 +155,26 @@ class WorkItem:
         ctx, work = _work()
 
         def body():
-            item = store.get_item(ctx.hub_dir, work["item"]["id"])
-            inbox = list(item.get("inbox_json") or [])
-            fresh = [m for m in inbox if not m.get("consumed")]
-            if not fresh:
-                return []
-            for m in inbox:
-                m["consumed"] = True
-            store.update_item(ctx.hub_dir, item["id"], expected_revision=item["revision"], inbox_json=inbox)
-            return [{k: m.get(k) for k in ("id", "from", "text", "at")} for m in fresh]
+            # Each read is keyed by the item's generation and this step's
+            # position, which a replay or continuation repeats exactly. A read
+            # interrupted after marking messages returns the same messages
+            # again instead of losing them.
+            reader = f"g{work['item']['generation']}:s{_step_id()}"
+            for _ in range(10):
+                item = store.get_item(ctx.hub_dir, work["item"]["id"])
+                inbox = list(item.get("inbox_json") or [])
+                mine = [m for m in inbox if m.get("consumed") == reader]
+                fresh = [m for m in inbox if not m.get("consumed")]
+                if fresh:
+                    for m in fresh:
+                        m["consumed"] = reader
+                    try:
+                        store.update_item(ctx.hub_dir, item["id"], expected_revision=item["revision"],
+                                          inbox_json=inbox)
+                    except WorkItemError:
+                        continue
+                return [{k: m.get(k) for k in ("id", "from", "text", "at")} for m in mine + fresh]
+            raise WorkItemError("revision_conflict", "Could not read follow-ups; try again.", status=409)
 
         return _step("hz_inbox", body)
 

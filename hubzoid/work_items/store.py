@@ -123,9 +123,11 @@ def insert_item(conn, **fields) -> dict:
 
 
 def update_item(hub_dir, item_id: str, *, expected_revision: int | None = None,
-                expect_state: tuple | None = None, conn=None, **fields) -> dict:
-    """Change an item with a compare-and-set. `expected_revision` and
-    `expect_state` guard against a concurrent change. Returns the new row."""
+                expect_state: tuple | None = None, expect_workflow_id: str | None = None,
+                conn=None, **fields) -> dict:
+    """Change an item with a compare-and-set. `expected_revision`,
+    `expect_state` and `expect_workflow_id` (the execution that owns it) guard
+    against a concurrent change. Returns the new row."""
     fields = {k: (dumps(v) if k in _ITEM_JSON and v is not None and not isinstance(v, str) else v)
               for k, v in fields.items()}
     sets = ", ".join(f"{k}=:{k}" for k in fields)
@@ -137,6 +139,9 @@ def update_item(hub_dir, item_id: str, *, expected_revision: int | None = None,
     if expect_state:
         where += " AND state IN (" + ", ".join(f":_s{i}" for i in range(len(expect_state))) + ")"
         params.update({f"_s{i}": s for i, s in enumerate(expect_state)})
+    if expect_workflow_id is not None:
+        where += " AND workflow_id=:_wid"
+        params["_wid"] = expect_workflow_id
     sql = text(f"UPDATE hz_work_items SET {sets + ', ' if sets else ''}revision=revision+1, "
                f"updated=:_t WHERE {where}")
 
@@ -262,9 +267,13 @@ def list_ops(hub_dir, hub: str, *, item_id: str | None = None, state: str | None
 # -- idempotency keys -------------------------------------------------------
 
 def idempotent(hub_dir, caller: str, route: str, key: str | None, body, produce):
-    """Run `produce()` once per (caller, route, key). A repeat with the same
-    body returns the first (status, response). The same key with a different
-    body is refused. Without a key, `produce()` simply runs."""
+    """Run `produce()` once per (caller, route, key). The key is reserved
+    before anything is created, so two concurrent requests with one key create
+    one thing. A repeat with the same body returns the first (status,
+    response). The same key with a different body is refused. Without a key,
+    `produce()` simply runs."""
+    from sqlalchemy.exc import IntegrityError
+
     from .errors import WorkItemError
 
     if not key:
@@ -272,24 +281,36 @@ def idempotent(hub_dir, caller: str, route: str, key: str | None, body, produce)
     if len(key) > 255:
         raise WorkItemError("invalid_request", "Idempotency-Key is at most 255 characters.")
     digest = "sha256:" + hashlib.sha256(dumps(body).encode()).hexdigest()
-    with engine(hub_dir).connect() as c:
-        row = c.execute(text("SELECT digest, status_code, response_json FROM hz_idempotency "
-                             "WHERE caller=:c AND route=:r AND key=:k"),
-                        {"c": caller, "r": route, "k": key}).mappings().first()
-    if row is not None:
+    params = {"c": caller, "r": route, "k": key}
+    try:
+        with engine(hub_dir).begin() as c:
+            c.execute(text("INSERT INTO hz_idempotency (caller, route, key, digest, status_code, "
+                           "response_json, created) VALUES (:c, :r, :k, :d, 0, '{}', :t)"),
+                      dict(params, d=digest, t=now()))
+    except IntegrityError:
+        with engine(hub_dir).connect() as c:
+            row = c.execute(text("SELECT digest, status_code, response_json FROM hz_idempotency "
+                                 "WHERE caller=:c AND route=:r AND key=:k"), params).mappings().first()
+        if row is None:
+            raise WorkItemError("unavailable", "Could not reserve the Idempotency-Key. Try again.",
+                                status=503, retryable=True)
         if row["digest"] != digest:
             raise WorkItemError("idempotency_key_reused",
                                 "This Idempotency-Key was already used with a different request. "
                                 "Use a new key for a new request.", status=409)
+        if row["status_code"] == 0:
+            raise WorkItemError("request_in_progress", "The first request with this key is still being "
+                                "handled. Try again shortly with the same key.", status=409, retryable=True)
         return row["status_code"], json.loads(row["response_json"])
-    status, response = produce()
-    from sqlalchemy.exc import IntegrityError
     try:
-        with engine(hub_dir).begin() as c:
-            c.execute(text("INSERT INTO hz_idempotency (caller, route, key, digest, status_code, "
-                           "response_json, created) VALUES (:c, :r, :k, :d, :s, :j, :t)"),
-                      {"c": caller, "r": route, "k": key, "d": digest, "s": status,
-                       "j": dumps(response), "t": now()})
-    except IntegrityError:
-        pass  # a concurrent identical request recorded it first
+        status, response = produce()
+    except BaseException:
+        with engine(hub_dir).begin() as c:   # nothing was recorded: free the key for a retry
+            c.execute(text("DELETE FROM hz_idempotency WHERE caller=:c AND route=:r AND key=:k "
+                           "AND status_code=0"), params)
+        raise
+    with engine(hub_dir).begin() as c:
+        c.execute(text("UPDATE hz_idempotency SET status_code=:s, response_json=:j "
+                       "WHERE caller=:c AND route=:r AND key=:k"),
+                  dict(params, s=status, j=dumps(response)))
     return status, response

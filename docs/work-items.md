@@ -58,6 +58,13 @@ Call operations between stages, not inside a stage function. If an operation
 waits for a person inside a stage, that stage runs again when the work
 continues.
 
+Inside a work item every operation names the actions it performs
+(`actions="github.comment"`), and the item's route must allow them. The
+consequential actions (`email.send`, `erp.submit`, `customer_reply.send`, and any
+a hub registers with `hubzoid.work_items.config.register_action`) also follow
+their write mode. Approval needs a work item: outside one, an `approve` action is
+refused, and an uncertain outcome stops the run and stays recorded for a person.
+
 ## Operations and recovery
 
 `hub.operation.run(name, target=..., arguments=..., recovery=..., dispatch=...)`
@@ -138,8 +145,11 @@ redrive finds the same item.
 
 Every command takes `--json`. Exit codes: 0 done, 1 failed, 2 invalid input,
 3 denied, 4 conflict, 5 unavailable, 6 waiting for a person or uncertain.
-`--as EMAIL` names the person a decision is made as. It defaults to the hub's
-workflow account (`admin@localhost` in local quickstart).
+`start --as EMAIL` records who asked for the work (default: the hub's workflow
+account). Approve, deny and resolve belong to that person, so the CLI makes
+them only in local mode with sign-in off, as the machine's single account
+(`admin@localhost`). Elsewhere, use the Console or the API signed in as that
+person.
 
 The same actions are HTTP routes under `/portal/api/hubs/{hub}/`:
 `work-items` (GET, POST with `Idempotency-Key`), `work-items/{id}`,
@@ -163,8 +173,8 @@ operations, the exact content waiting for approval, and the decision form.
 ## Code changes and restarts
 
 Work belongs to the workflow code that started it. If the code changes while
-work is interrupted, the work stops as `needs_input` (`definition_changed`)
-instead of continuing on new code. Check what changed, then restart it:
+work is interrupted or waiting for a person, the work stops as `needs_input`
+(`definition_changed`) instead of continuing on new code. Check what changed, then restart it:
 `hubzoid work-items restart HUB ITEM --reason "..."` continues after the last
 saved stage. `--stage NAME` re-runs that stage and everything after it. Earlier
 stages are reused. Every uncertain operation must be decided first. There are
