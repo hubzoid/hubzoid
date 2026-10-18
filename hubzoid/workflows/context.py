@@ -85,6 +85,7 @@ class RunCtx:
     inputs: Any = None                # the validated `hub.input`, or None
     run: dict = field(default_factory=dict)        # how this run started (its envelope)
     published: list = field(default_factory=list)  # report links this run touched
+    work: dict = field(default_factory=dict)       # the work item this run executes, and its stage
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -277,6 +278,22 @@ class Hub:
 
         ctx = _ctx()
         return WorkflowState(ctx.engine, ctx.hub, ctx.workflow, owner=SHARED)
+
+    @property
+    def work_item(self):
+        """The durable work item this run executes (`hubzoid.work_items`):
+        `checkpoint`, `allows`, `narrow`, `messages` and `reserve`."""
+        from ..work_items.facade import WorkItem
+
+        return WorkItem()
+
+    @property
+    def operation(self):
+        """`hub.operation.run(...)`: one recorded, recoverable external write
+        with its write mode and exact approval (`hubzoid.work_items`)."""
+        from ..work_items.facade import Operation
+
+        return Operation()
 
     @property
     def user(self) -> HubUser:
@@ -556,7 +573,8 @@ def current_user(hub_dir=None):
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
               identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None,
-              inputs=None, run: dict | None = None, published: list | None = None) -> Iterator[None]:
+              inputs=None, run: dict | None = None, published: list | None = None,
+              work: dict | None = None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -569,6 +587,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
         identity=identity, run_id=run_id or "", event=event, owner=owner,
         inputs=inputs, run=dict(run or {}), published=published if published is not None else [],
+        work=work if work is not None else {},
     )
     token = _run.set(ctx)
     from ..usage import run_tag

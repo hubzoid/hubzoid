@@ -317,6 +317,7 @@ def workflow(
     min_interval: float | str | None = None,
     catch_up: bool = False,
     max_input_kb: int | None = None,
+    work_items: Any = None,
 ):
     """Declare a scheduled durable workflow. The wrapped run binds the per-run
     `hub` proxy and takes only the hub name (never secrets). Retries are a
@@ -340,7 +341,13 @@ def workflow(
         `min_interval` raises the shortest cadence they may choose.
       * `max_input_kb` raises the inputs limit (4 KB) for a large value such
         as a diff, up to 256 KB. Not with `schedulable=True`.
-      * `catch_up=True` runs the declared schedule once after downtime."""
+      * `catch_up=True` runs the declared schedule once after downtime.
+
+    Durable work items, optional:
+      * `work_items=True`, or a mapping of route name to
+        `hubzoid.work_items.Route(stages=..., actions=...)`, makes each run a
+        work item: started by key, with saved stages (`hub.work_item`) and
+        recorded external writes (`hub.operation.run`)."""
     defining = _DEFINING.get() is not None
     if not defining:
         _require_init()
@@ -362,6 +369,11 @@ def workflow(
     seconds(timeout)
     from .events import validate_destinations
     validate_destinations(alert_to)
+    work_routes = None
+    if work_items:
+        from ..work_items import normalize_routes
+
+        work_routes = normalize_routes(work_items)
     chat = _chat_options(inputs=inputs, schedule_input=schedule_input, as_tool=as_tool,
                          confirm=confirm, tool_wait=tool_wait, surfaces=surfaces,
                          sensitive=sensitive, schedulable=schedulable,
@@ -388,7 +400,8 @@ def workflow(
                 name=name, fn=fn, wrapped=fn, schedule=schedule, timezone=timezone,
                 on_failure=on_failure, run_as=run_as, on_webhook=on_webhook,
                 concurrency=concurrency, concurrency_key=concurrency_key, timeout=timeout,
-                alert_to=alert_to, doc=doc, title=title_for(name), **chat)
+                alert_to=alert_to, doc=doc, title=title_for(name),
+                extra={"work_items": work_routes} if work_routes else {}, **chat)
             return fn
         if name.lower() in {n.lower() for n in _REGISTRY}:
             raise ValueError(f"duplicate workflow name: {name}")
@@ -421,6 +434,22 @@ def workflow(
             deadline = run_deadline()
             run_id = _DBOS.workflow_id or ""
             published: list = []
+            work = None
+            item_id = env.get("work_item") if work_routes else None
+            if item_id:
+                from ..work_items import service as wi_service
+
+                bound = wi_service.bind(_HUB_DIR, item_id, run_id, _APP_VERSION)
+                if bound is None:
+                    # Cancelled, finished or replaced by a newer execution.
+                    return {"skipped": True, "work_item": item_id}
+                work = {"item": bound, "stage": None}
+                origin = bound.get("origin_json") or {}
+                if event is None and origin.get("source") == "webhook":
+                    event = {"id": origin.get("event_id"),
+                             "body": (bound.get("input_json") or {}).get("input")}
+            from ..work_items.errors import Parked, WorkItemError
+            from ..work_items.operations import OperationFailed
             try:
                 values = _run_inputs(chat, env)
                 with scope(absolute=deadline, check_exit=False), context.run_scope(
@@ -432,15 +461,39 @@ def workflow(
                     identity=identity,
                     run_id=run_id,
                     event=event, owner=owner,
-                    inputs=values, run=env, published=published,
+                    inputs=values, run=env, published=published, work=work,
                 ):
                     from .alerts import track_run
                     with track_run(_HUB_DIR, hub_name, name, _DBOS.workflow_id, deadline):
                         result = fn()
-            except Exception as exc:
+            except Parked as parked:
+                # Waiting for a person: the run ends cleanly and nothing holds
+                # a thread. The decision continues the work from its saved step.
+                if item_id:
+                    wi_service.parked(_HUB_DIR, item_id, parked.kind, parked.operation_id, parked.reason)
+                result = {"parked": parked.kind, "operation": parked.operation_id,
+                          "message": parked.message}
+                outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
+                                  published=published, tool_wait=chat["tool_wait"])
+                return result
+            except (OperationFailed, WorkItemError) as exc:
+                if item_id:
+                    # A clean stop (denied, abandoned, out of scope), recorded on the item.
+                    wi_service.finished(_HUB_DIR, item_id, error=exc)
+                    outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
+                                      published=published, tool_wait=chat["tool_wait"])
+                    return {"stopped": exc.code}
                 outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=False,
                                   error=exc, published=published, tool_wait=chat["tool_wait"])
                 raise
+            except Exception as exc:
+                if item_id:
+                    wi_service.finished(_HUB_DIR, item_id, error=exc)
+                outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=False,
+                                  error=exc, published=published, tool_wait=chat["tool_wait"])
+                raise
+            if item_id:
+                wi_service.finished(_HUB_DIR, item_id, result=result)
             outcomes.finished(_HUB_DIR, hub_name.lower(), name, run_id, env, ok=True,
                               published=published, tool_wait=chat["tool_wait"])
             return result
@@ -455,7 +508,8 @@ def workflow(
             on_failure=on_failure,
             run_as=run_as, on_webhook=on_webhook, concurrency=concurrency,
             concurrency_key=concurrency_key, timeout=timeout, alert_to=alert_to,
-            doc=doc, title=title_for(name), **chat,
+            doc=doc, title=title_for(name),
+            extra={"work_items": work_routes} if work_routes else {}, **chat,
         )
         log.info("workflows: registered %r (schedule=%r)", name, schedule)
         return wrapped
@@ -647,9 +701,17 @@ def _wrap_seams_as_steps() -> None:
 
 def _step_key() -> str | None:
     """A key unique to the running step of the running workflow, stable across
-    recovery (DBOS re-runs an interrupted step with the same id)."""
+    recovery (DBOS re-runs an interrupted step with the same id). In a work
+    item it names the item and generation instead of the execution, so a
+    continued or restarted execution finds the delivery already recorded."""
     wid, sid = _DBOS.workflow_id, _DBOS.step_id
-    return f"{wid}:{sid}" if wid and sid is not None else None
+    if not wid or sid is None:
+        return None
+    ctx = context._run.get()
+    item = ((ctx.work or {}).get("item") if ctx else None) or None
+    if item:
+        return f"wi:{item['id']}:g{item['generation']}:{sid}"
+    return f"{wid}:{sid}"
 
 
 def _wrap_delivery_steps() -> None:
@@ -716,6 +778,9 @@ def launch(*, target: str | None = None) -> None:
             wf.queue = _QUEUE
     _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-events",
                          on_conflict="always_update")
+    # Work items: one execution per item at a time (a partition per item).
+    _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-wi", partition_concurrency=1,
+                         on_conflict="always_update")
     _DBOS.register_queue(f"{_app_name(_HUB_NAME)}-alerts", worker_concurrency=4,
                          on_conflict="always_update")
     if target:
@@ -772,6 +837,14 @@ def _cancel_runs_from_other_code() -> None:
     for w in stale:
         if not _requeue_markdown(w):
             continue
+        if str(w.workflow_id).startswith("wi-"):
+            # Work never moves silently to new code: the item stops for a
+            # person to restart it from a saved stage.
+            try:
+                from ..work_items import service as wi_service
+                wi_service.definition_changed(_HUB_DIR, w.workflow_id, w.app_version, _APP_VERSION)
+            except Exception:  # noqa: BLE001
+                log.exception("workflows: could not mark work item for %s", w.workflow_id)
         try:
             _DBOS.cancel_workflow(w.workflow_id)
             log.warning(
