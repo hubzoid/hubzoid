@@ -42,6 +42,11 @@ class RevisionBody(BaseModel):
     expected_revision: int | None = None
 
 
+class StationRetryBody(BaseModel):
+    clarification: str = Field(min_length=1, max_length=20000)
+    expected_revision: int | None = None
+
+
 class RestartBody(BaseModel):
     stage: str | None = Field(default=None, max_length=100)
     reason: str = Field(min_length=1, max_length=500)
@@ -184,8 +189,9 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
 
 
 def register_stations(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:
-    """Station calls and handoffs of a work item, read-only. Calls are made by
-    the work item's workflow; their single retry is directed by it too."""
+    """Station calls and handoffs of a work item. Calls are made by the work
+    item's workflow. An operator may direct a call's single retry once that
+    workflow has stopped without using it."""
     from ..stations import service as station_service
 
     def hub_for(actor, hub: str) -> Path:
@@ -197,6 +203,13 @@ def register_stations(router: APIRouter, require_person: Callable, hub_path: Cal
     @router.get("/hubs/{hub}/work-items/{item_id}/stations")
     async def stations(hub: str, item_id: str, actor=Depends(require_person)):
         return await _call(station_service.view_for, hub_for(actor, hub), item_id, actor.subject)
+
+    @router.post("/hubs/{hub}/work-items/{item_id}/stations/{call_id}/retry", status_code=202)
+    async def station_retry(hub: str, item_id: str, call_id: str, body: StationRetryBody,
+                            actor=Depends(require_person)):
+        return await _call(station_service.operator_retry, hub_for(actor, hub), item_id, call_id,
+                           actor.subject, clarification=body.clarification,
+                           expected_revision=body.expected_revision, surface=actor.surface)
 
     @router.get("/hubs/{hub}/work-items/{item_id}/handoffs/{doc_id}")
     async def handoff(hub: str, item_id: str, doc_id: str, actor=Depends(require_person)):

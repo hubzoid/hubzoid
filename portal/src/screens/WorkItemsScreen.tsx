@@ -180,7 +180,8 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
             )}
           </Card>
 
-          <StationsCard base={base} id={w.id} active={!!active} />
+          <StationsCard base={base} id={w.id} active={!!active} busy={busy} act={act}
+            stopped={["needs_input", "failed", "stopped"].includes(w.state)} />
 
           <Card size="small" title="Actions outside the hub">
             {(w.operations?.length ?? 0) === 0 ? <Text type="secondary">None recorded.</Text> : (
@@ -208,17 +209,34 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
 
 type StationCall = {
   id: string; agent: string; stage: string; status: string; engine: string | null; error_code: string | null;
-  retry_used: number; recovery_count: number; definition_digest: string;
+  retry_used: number; recovery_count: number; definition_digest: string; revision: number;
   attempts: { n: number; kind: string; status: string; started: number; ended?: number }[];
   output?: unknown; error?: string | null; message?: string; tools?: string[];
 };
+/** The call's one retry, directed by a person after the workflow stopped
+ *  without using it. */
+function StationRetry({ busy, onRetry }: { busy: boolean; onRetry: (clarification: string) => Promise<void> }) {
+  const [text, setText] = useState("");
+  return (
+    <Space direction="vertical" style={{ width: "100%", marginTop: 8 }}>
+      <Text type="secondary">This call has one retry left. Say what the agent should do differently.</Text>
+      <Input.TextArea rows={2} value={text} onChange={(e) => setText(e.target.value)}
+        placeholder="Return exactly the summary field." aria-label="Clarification for the retry" />
+      <Button loading={busy} disabled={!text.trim()} onClick={() => onRetry(text.trim())}>Retry once</Button>
+    </Space>
+  );
+}
+
 type Handoff = { id: string; kind: string; title?: string; character_count?: number; characters?: number; created: number };
 
 const CALL_COLORS: Record<string, string> = { started: "processing", completed: "green", failed: "red", cancelled: "default" };
 
 /** The isolated agents this work item called: each call's state, attempts and
  *  result, and the documents they handed to each other. */
-function StationsCard({ base, id, active }: { base: string; id: string; active: boolean }) {
+function StationsCard({ base, id, active, stopped, busy, act }: {
+  base: string; id: string; active: boolean; stopped: boolean; busy: boolean;
+  act: (path: string, body: unknown, done: string) => Promise<void>;
+}) {
   const data = useData<{ calls: StationCall[]; handoffs: Handoff[] }>(
     `${base}/work-items/${encodeURIComponent(id)}/stations`, { keepStale: true });
   const [open, setOpen] = useState<string | null>(null);
@@ -247,6 +265,13 @@ function StationsCard({ base, id, active }: { base: string; id: string; active: 
             {c.error && <Alert style={{ marginTop: 8 }} type={c.error_code === "station_output_error" ? "warning" : "error"}
               showIcon title={c.error_code ?? "failed"} description={<pre className="output">{c.error}</pre>} />}
             {c.output !== undefined && c.output !== null && <pre className="output">{JSON.stringify(c.output, null, 2)}</pre>}
+            {stopped && c.status === "failed" && !c.retry_used && c.message !== undefined && (
+              <StationRetry busy={busy} onRetry={async (clarification) => {
+                await act(`${base}/work-items/${encodeURIComponent(id)}/stations/${encodeURIComponent(c.id)}/retry`,
+                  { clarification, expected_revision: c.revision }, "Retrying. The work continues from this call.");
+                data.reload();
+              }} />
+            )}
           </Card>
         ))}
         {data.data.handoffs.length > 0 && (

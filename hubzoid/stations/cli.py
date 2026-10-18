@@ -103,6 +103,28 @@ def calls_show(hub: Path = typer.Argument(Path(".")), work_item: str = typer.Opt
     _out(match, as_json)
 
 
+@calls_app.command("retry")
+def calls_retry(hub: Path = typer.Argument(Path(".")), work_item: str = typer.Option(..., "--work-item"),
+                call: str = typer.Option(..., "--call"),
+                clarification_file: Path = typer.Option(..., "--clarification-file",
+                                                        help="What the agent should do differently."),
+                expected_revision: Optional[int] = typer.Option(None, "--expected-revision"),
+                as_json: bool = typer.Option(False, "--json")) -> None:
+    """Direct a failed call's one retry after its workflow stopped without
+    using it. The work continues from that call."""
+    from . import service
+
+    hub = _hub(hub)
+    try:
+        clarification = clarification_file.read_text()
+    except OSError as exc:
+        from ..work_items.errors import WorkItemError
+        _fail(WorkItemError("invalid_request", f"Cannot read {clarification_file}: {exc.strerror}"), as_json)
+    out = _run(service.operator_retry, as_json, hub, work_item, call, _operator(), clarification=clarification,
+               expected_revision=expected_revision, surface="cli")
+    _out(out, as_json, lambda v: console.print(f"Retrying {v['id']} with your clarification; the work continues."))
+
+
 @handoffs_app.command("list")
 def handoffs_list(hub: Path = typer.Argument(Path(".")), work_item: str = typer.Option(..., "--work-item"),
                   as_json: bool = typer.Option(False, "--json")) -> None:

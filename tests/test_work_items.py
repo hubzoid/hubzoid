@@ -88,6 +88,9 @@ def test_config_defaults_and_validation(hub_dir):
     with pytest.raises(WorkItemError) as err:
         config.load(hub_dir)
     assert err.value.code == "invalid_definition" and err.value.fields["line"] == 5
+    write_config(hub_dir, "version: 1\nwork_items:\n  stations:\n    max_transcript_bytes: 65536\n")
+    with pytest.raises(WorkItemError, match="not supported"):    # accepted only once it has an effect
+        config.load(hub_dir)
     write_config(hub_dir, "version: 1\nwrite_modes:\n  email.send: automatic\n")
     with pytest.raises(WorkItemError, match="off, draft or approve"):
         config.load(hub_dir)

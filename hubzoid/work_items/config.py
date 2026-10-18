@@ -170,7 +170,10 @@ def parse(text: str, source: str = FILE) -> Config:
     raw = items.get("stations") or {}
     if not isinstance(raw, dict):
         _fail(source, root, ("work_items", "stations"), "stations must be a mapping")
-    for key in sorted(set(raw) - set(STATION_DEFAULTS) - {"allow_generic_subagents", "max_transcript_bytes"}):
+    for key in sorted(set(raw) - set(STATION_DEFAULTS)):
+        if key in ("allow_generic_subagents", "max_transcript_bytes"):
+            _fail(source, root, ("work_items", "stations", key),
+                  f"{key} is not supported in this version yet. Remove it")
         _fail(source, root, ("work_items", "stations", key), f"unknown key {key!r}")
     for key in ("orchestrator_retries", "recovery_attempts"):
         value = raw.get(key, stations[key])

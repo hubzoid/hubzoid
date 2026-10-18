@@ -114,6 +114,9 @@ def _owned(ctx: RunCtx) -> None:
         owner.assert_owned()
 
 
+_UNSET = object()
+
+
 def _recheck(ctx: RunCtx, what: str) -> None:
     """Before a protected operation: the run's account must still be usable."""
     from .identity import recheck
@@ -435,7 +438,7 @@ class Hub:
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
 
-    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600,
+    def call_agent(self, task: str, *, response_model=None, timeout: float | str | None = _UNSET,
                    agent: str | None = None, stage: str | None = None, revision: int = 1):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
@@ -453,7 +456,10 @@ class Hub:
             if stage is None:
                 raise ValueError("A station call needs stage=, the work item stage it runs in.")
             return station_service.call(agent, task, stage=stage, revision=revision,
-                                        response_model=response_model)
+                                        response_model=response_model,
+                                        timeout=None if timeout is _UNSET else timeout)
+        if timeout is _UNSET:
+            timeout = 600
         if _AGENT is None:
             raise RuntimeError(
                 "hub.call_agent is not configured; call workflows.configure(agent=...) "

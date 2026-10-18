@@ -1,7 +1,7 @@
 """Calling a station from a work-item workflow, its one retry, and handoffs.
 
 A station call is identified by its work item, generation, stage and revision.
-Its attempt runs as one workflow-engine step (`hz_station:<stage>`), so a
+Its attempt runs as one workflow-engine step (`hz_station:<stage>:r<revision>`), so a
 finished call is never run again on recovery, redrive or continuation. The call
 pins the station definition it ran. Retries follow one rule: the orchestrator
 may direct exactly one retry of a failed or malformed call, with a
@@ -115,11 +115,18 @@ def _settings(hub_dir) -> dict:
     return cfg.stations
 
 
-def call(agent: str, message: str, *, stage: str, revision: int = 1, response_model=None):
+def step_name(stage: str, revision: int, *, retry: bool = False) -> str:
+    """The engine step that holds one attempt of the call for `stage`."""
+    return f"hz_station{'_retry' if retry else ''}:{stage}:r{revision}"
+
+
+def call(agent: str, message: str, *, stage: str, revision: int = 1, response_model=None, timeout=None):
     """Run station `agent` once for this work item's `stage`. Returns its
     validated output (a dict, or a `response_model` instance). Raises
-    `StationOutputError` or `StationError` with the call id for the one retry."""
+    `StationOutputError` or `StationError` with the call id for the one retry.
+    `timeout` (seconds) may lower the station's time limit, never raise it."""
     from ..work_items.facade import _step, _work
+    from ..workflows import context
 
     ctx, work = _work()
     item = work["item"]
@@ -131,7 +138,34 @@ def call(agent: str, message: str, *, stage: str, revision: int = 1, response_mo
                             status=403)
     if not isinstance(message, str) or not message.strip():
         raise WorkItemError("invalid_request", "A station call needs a message.")
-    station = definitions.load(ctx.hub_dir, agent)
+    digest = "sha256:" + hashlib.sha256(message.encode()).hexdigest()
+    # A saved call keeps the definition it pinned, even if the files changed
+    # or were removed since: only a new call reads the current files.
+    row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
+    if row is None:
+        _create(ctx.hub_dir, item, agent, message, digest, stage, revision, response_model, timeout)
+        row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
+    if row["message_digest"] != digest or row["agent"] != agent:
+        raise StationError("call_conflict", f"Stage {stage!r} already called {row['agent']} with a different "
+                           "message. Use a new stage or revision for new work.", row["id"], retryable=False)
+    call_id = row["id"]
+    if row["status"] != "completed":
+        context._recheck(ctx, "A station call")
+    output = _step(step_name(stage, revision), lambda: _attempt(ctx, work, call_id, "initial"))
+    return response_model.model_validate(output) if response_model is not None else output
+
+
+def _create(hub_dir, item, agent, message, digest, stage, revision, response_model, timeout) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from . import tools as station_tools
+
+    station = definitions.load(hub_dir, agent)
+    if station.sandbox:
+        raise WorkItemError("sandbox_unavailable",
+                            f"{agent} names sandbox {station.sandbox!r}, and sandboxes are not available in "
+                            "this version. Remove the sandbox line or install a version with sandboxes. "
+                            "Hubzoid never falls back to the host shell.", status=503, retryable=False)
     schema = station.schema
     if response_model is not None:
         model_schema = response_model.model_json_schema()
@@ -140,42 +174,36 @@ def call(agent: str, message: str, *, stage: str, revision: int = 1, response_mo
                                 f"{agent} has a response_schema file and this call passes a different "
                                 "response_model. Use one.", status=422)
         schema = model_schema
-    pinned = dict(station.to_json(), schema=schema)
-    digest = "sha256:" + hashlib.sha256(message.encode()).hexdigest()
-    row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
-    if row is None:
-        from sqlalchemy.exc import IntegrityError
-
-        t = time.time()
-        try:
-            with _engine(ctx.hub_dir).begin() as c:
-                c.execute(text(
-                    "INSERT INTO hz_station_calls (id, hub, item_id, generation, stage, revision_no, agent, "
-                    "definition_digest, definition_json, message_digest, message, status, attempts_json, "
-                    "revision, created, updated) VALUES (:id, :h, :i, :g, :s, :r, :a, :dd, :dj, :md, :m, "
-                    "'started', '[]', 1, :t, :t)"),
-                    {"id": str(uuid.uuid4()), "h": item["hub"], "i": item["id"], "g": item["generation"],
-                     "s": stage, "r": revision, "a": agent, "dd": station.digest,
-                     "dj": wi_store.dumps(pinned), "md": digest, "m": message, "t": t})
-        except IntegrityError:
-            pass
-        row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
-    if row["message_digest"] != digest or row["agent"] != agent:
-        raise StationError("call_conflict", f"Stage {stage!r} already called {row['agent']} with a different "
-                           "message. Use a new stage or revision for new work.", row["id"], retryable=False)
-    call_id = row["id"]
-    output = _step(f"hz_station:{stage}", lambda: _attempt(ctx, work, call_id, "initial"))
-    return response_model.model_validate(output) if response_model is not None else output
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                or not 0 < timeout <= 86400):
+        raise WorkItemError("invalid_request", "timeout is a number of seconds from 1 to 86400.")
+    pinned = dict(station.to_json(), schema=schema, call_timeout=timeout,
+                  tools_digest=station_tools.digest(station_tools.for_station(hub_dir, station.tools)))
+    t = time.time()
+    try:
+        with _engine(hub_dir).begin() as c:
+            c.execute(text(
+                "INSERT INTO hz_station_calls (id, hub, item_id, generation, stage, revision_no, agent, "
+                "definition_digest, definition_json, message_digest, message, status, attempts_json, "
+                "revision, created, updated) VALUES (:id, :h, :i, :g, :s, :r, :a, :dd, :dj, :md, :m, "
+                "'started', '[]', 1, :t, :t)"),
+                {"id": str(uuid.uuid4()), "h": item["hub"], "i": item["id"], "g": item["generation"],
+                 "s": stage, "r": revision, "a": agent, "dd": station.digest,
+                 "dj": wi_store.dumps(pinned), "md": digest, "m": message, "t": t})
+    except IntegrityError:
+        pass   # created concurrently: the caller reads the existing row
 
 
 def retry(call_id: str, clarification: str, *, response_model=None):
     """The orchestrator's one retry of a failed or malformed station call,
     with a clarification. A second retry is refused (`retry_exhausted`)."""
     from ..work_items.facade import _step, _work
+    from ..workflows import context
 
     ctx, work = _work()
     if not isinstance(clarification, str) or not clarification.strip():
         raise WorkItemError("invalid_request", "A retry needs a clarification for the agent.")
+    clarification = clarification[:20000]
 
     def claim():
         row = get_call(ctx.hub_dir, call_id)
@@ -183,22 +211,77 @@ def retry(call_id: str, clarification: str, *, response_model=None):
             raise not_found("station call")
         if row["status"] == "completed":
             return row["output_json"]
-        if row["retry_used"] or _settings(ctx.hub_dir)["orchestrator_retries"] < 1:
-            raise StationError("retry_exhausted", "This station call already used its one retry. A person "
-                               "must correct the definition or the task.", call_id, retryable=False)
-        if row["status"] not in ("failed",):
-            raise StationError("call_conflict", f"The call is {row['status']}; only a failed call can be "
-                               "retried.", call_id, retryable=False)
-        _update_call(ctx.hub_dir, call_id, expected_revision=row["revision"], retry_used=1,
-                     clarification=clarification[:20000], status="started")
-        return None
+        if row["retry_used"] and row["status"] == "started" and row.get("clarification") == clarification:
+            # This same claim committed before the engine saved its step.
+            return None
+        return _claim_retry(ctx.hub_dir, row, clarification, expected_revision=row["revision"])
 
     done = _step(f"hz_station_retry_claim:{call_id}", claim)
     if done is not None:
         return response_model.model_validate(done) if response_model is not None else done
     row = get_call(ctx.hub_dir, call_id)
-    output = _step(f"hz_station_retry:{row['stage']}", lambda: _attempt(ctx, work, call_id, "retry"))
+    context._recheck(ctx, "A station retry")
+    output = _step(step_name(row["stage"], row["revision_no"], retry=True),
+                   lambda: _attempt(ctx, work, call_id, "retry"))
     return response_model.model_validate(output) if response_model is not None else output
+
+
+def _claim_retry(hub_dir, row: dict, clarification: str, *, expected_revision: int, by: str | None = None):
+    """Spend the call's one retry, by compare-and-set on its revision. The
+    orchestrator and an operator share this allowance."""
+    if row["retry_used"] or _settings(hub_dir)["orchestrator_retries"] < 1:
+        raise StationError("retry_exhausted", "This station call already used its one retry. A person "
+                           "must correct the definition or the task.", row["id"], retryable=False)
+    if row["status"] != "failed":
+        raise StationError("call_conflict", f"The call is {row['status']}; only a failed call can be "
+                           "retried.", row["id"], retryable=False)
+    if expected_revision != row["revision"]:
+        from ..work_items.errors import revision_conflict
+        raise revision_conflict(row["revision"])
+    _update_call(hub_dir, row["id"], expected_revision=expected_revision, retry_used=1,
+                 clarification=clarification, status="started", error_code=None, error=None)
+    return None
+
+
+def operator_retry(hub_dir, item_id: str, call_id: str, actor: str, *, clarification: str,
+                   expected_revision: int | None = None, surface: str | None = None) -> dict:
+    """An operator directs the call's one retry after its workflow stopped on
+    the failure without using it. The work continues from that station call."""
+    from ..work_items import engine as engine_lib
+    from ..work_items import service as wi_service
+
+    item = wi_store.require_item(hub_dir, item_id, Path(hub_dir).name.lower())
+    if not (wi_service._is_requester(item, actor) or wi_service._can(hub_dir, actor, "workflows_manage")):
+        raise WorkItemError("permission_denied", "Only the person who asked for this work, or a manager, can "
+                            "retry its station call.", status=403)
+    row = get_call(hub_dir, call_id)
+    if row is None or row["item_id"] != item_id:
+        raise not_found("station call")
+    if item["state"] not in ("needs_input", "failed", "stopped"):
+        raise StationError("call_conflict", "The work is still running, so its workflow decides about the "
+                           "retry. Wait until it stops.", call_id, retryable=False)
+    if not isinstance(clarification, str) or not clarification.strip():
+        raise WorkItemError("validation_failed", "Say what the agent should do differently.", status=422)
+    unresolved = [o for o in wi_store.list_ops(hub_dir, item["hub"], item_id=item_id)
+                  if o["state"] in wi_store.OP_UNRESOLVED]
+    if unresolved:
+        raise WorkItemError("operation_unresolved", "An operation's outcome is still unknown. Resolve it "
+                            "before retrying.", status=409, operation_id=unresolved[0]["id"])
+    name = step_name(row["stage"], row["revision_no"])
+    with engine_lib.live(hub_dir) as eng:
+        steps = [s if isinstance(s, dict) else vars(s) for s in (eng.steps(item["workflow_id"]) or [])]
+    step = next((s.get("function_id") for s in steps if s.get("function_name") == name), None)
+    if step is None:
+        raise WorkItemError("stage_missing", "This execution has no saved step for that station call, so it "
+                            "cannot continue from it. Restart the work instead.", status=409)
+    _claim_retry(hub_dir, row, clarification.strip()[:20000],
+                 expected_revision=row["revision"] if expected_revision is None else expected_revision)
+    if item["state"] in ("failed", "stopped"):
+        item = wi_store.update_item(hub_dir, item_id, expected_revision=item["revision"],
+                                    state="needs_input", reason="station_retry")
+    wi_service._continue(hub_dir, item, step, new_version=True)
+    wi_service._audit(hub_dir, actor, "station_retry", item_id, surface=surface)
+    return call_view(get_call(hub_dir, call_id), full=True)
 
 
 def _attempt(ctx, work, call_id: str, kind: str):
@@ -206,11 +289,16 @@ def _attempt(ctx, work, call_id: str, kind: str):
     raises; either way the call row records what happened."""
     from .. import runtime as runtime_lib
     from ..workflows import context
+    from . import tools as station_tools
 
     hub_dir = ctx.hub_dir
     row = get_call(hub_dir, call_id)
     if row["status"] == "completed":
         return row["output_json"]
+    if row["status"] in ("failed", "cancelled"):
+        # Already decided, and the engine lost the step's result: the same
+        # outcome again. Only a claimed retry starts another attempt.
+        raise _stored_error(row)
     settings = _settings(hub_dir)
     attempts = list(row.get("attempts_json") or [])
     recovery = row["recovery_count"]
@@ -225,24 +313,48 @@ def _attempt(ctx, work, call_id: str, kind: str):
             raise StationError("station_interrupted", "The station was interrupted and has no recovery left. "
                                "Inspect it, then retry or restart the work.", call_id)
         kind = "recovery"
+    elif row["retry_used"] and not any(a.get("kind") == "retry" for a in attempts):
+        kind = "retry"      # an operator's retry, continuing from this step
+    definition = row["definition_json"]
+    limit = _time_limit(definition, settings)
+    spent = sum(max(0.0, (a.get("ended") or a["started"]) - a["started"]) for a in attempts)
+    if limit is not None and spent >= limit:
+        _finish(hub_dir, call_id, "failed", error_code="station_timeout",
+                error=f"The station used its {limit:g} seconds of active time.")
+        raise StationError("station_timeout", "The station used all of its active time.", call_id)
+    registry = station_tools.for_station(hub_dir, definition.get("tools") or ())
+    if station_tools.digest(registry) != definition.get("tools_digest"):
+        _finish(hub_dir, call_id, "failed", error_code="definition_changed",
+                error="A tool this station lists changed after the call started.")
+        raise StationError("definition_changed", "A tool this station lists changed since the call started, "
+                           "so the call cannot run again as pinned. Restore the tool, or start a new stage "
+                           "revision.", call_id, retryable=False)
     attempts.append({"n": len(attempts) + 1, "kind": kind, "status": "running", "started": time.time()})
     row = _update_call(hub_dir, call_id, expected_revision=row["revision"], attempts_json=attempts,
                        recovery_count=recovery, status="started")
-    definition = row["definition_json"]
     message = row["message"]
-    if row.get("clarification") and kind in ("retry", "recovery") and row["retry_used"]:
+    if row.get("clarification") and row["retry_used"] and kind in ("retry", "recovery"):
         message += ("\n\nYour previous answer could not be used. " + row["clarification"])
     identity = context._identity(ctx)
     previous = work.get("station_call")
     work["station_call"] = call_id
     try:
         result = runtime_lib.run_station(hub_dir, definition, message, subject=identity.subject,
-                                         timeout=definition.get("timeout_seconds") or settings.get("timeout_seconds"))
+                                         timeout=None if limit is None else limit - spent,
+                                         registry=station_tools.guarded(registry, ctx, work))
+    except runtime_lib.StationTimeout as exc:
+        _finish(hub_dir, call_id, "failed", error_code="station_timeout", error=redaction.scrub_error(exc))
+        raise StationError("station_timeout", "The station ran out of time.", call_id) from None
     except runtime_lib.AgentRunError as exc:
         _finish(hub_dir, call_id, "failed", error_code="station_failed", error=redaction.scrub_error(exc))
         raise StationError("station_failed", redaction.scrub_text(str(exc)), call_id) from None
     finally:
         work["station_call"] = previous
+    context._owned(ctx)      # a process that lost the hub commits nothing
+    if _cancelled(hub_dir, work["item"]["id"]):
+        _finish(hub_dir, call_id, "cancelled", error_code="cancelled", error="The work was cancelled.")
+        raise StationError("cancelled", "The work was cancelled while the station ran.", call_id,
+                           retryable=False)
     output = result.get("output")
     schema = definition.get("schema")
     problems = _schema_problems(schema, output) if schema is not None else []
@@ -258,6 +370,26 @@ def _attempt(ctx, work, call_id: str, kind: str):
     _finish(hub_dir, call_id, "completed", output=output, usage=dict(result.get("usage") or {},
                                                                        model=result.get("model")))
     return output
+
+
+def _time_limit(definition: dict, settings: dict):
+    """Active seconds across all attempts: the strictest of the hub setting,
+    the station and the call. None means no limit (the default)."""
+    limits = [v for v in (settings.get("timeout_seconds"), definition.get("timeout_seconds"),
+                          definition.get("call_timeout")) if v is not None]
+    return min(limits) if limits else None
+
+
+def _cancelled(hub_dir, item_id: str) -> bool:
+    item = wi_store.get_item(hub_dir, item_id)
+    return bool(item and (item.get("cancel_requested") or item["state"] == "cancelled"))
+
+
+def _stored_error(row: dict) -> StationError:
+    code = row.get("error_code") or "station_failed"
+    message = (row.get("error") or "The station call failed.").split("\nAnswer:")[0][:1000]
+    cls = StationOutputError if code == "station_output_error" else StationError
+    return cls(code, message, row["id"], retryable=code not in ("cancelled", "definition_changed"))
 
 
 def _finish(hub_dir, call_id, status, *, output=None, error_code=None, error=None, usage=None, text=None):

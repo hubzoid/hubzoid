@@ -769,17 +769,23 @@ def jev_once(hub_dir, spec: dict, *, subject: str | None = None) -> dict:
     return jev.call(hub_dir, spec, subject=subject)
 
 
+class StationTimeout(AgentRunError):
+    """A station ran past its active time limit."""
+
+
 def run_station(hub_dir, station: dict, message: str, *, subject: str | None = None,
-                timeout: float | None = None) -> dict:
+                timeout: float | None = None, registry: dict | None = None) -> dict:
     """One run of an isolated agent (a station), on its own engine.
 
     Fresh context: the station's instructions, exactly its listed tools, and
     `message`. Nothing from a parent conversation. The engine's own structured
     output constrains the result to the station's schema (Claude Agent SDK
     `output_format`, Codex app-server `outputSchema`), then it is validated
-    here. Returns {"text", "output", "model", "usage"}. Raises AgentRunError
-    when the run fails; the caller decides on the one retry. Runs its own
-    event loop, so it is safe inside a workflow step."""
+    here. Returns {"text", "output", "model", "usage"}; `output` is None when
+    the answer held no JSON. Raises AgentRunError when the run fails
+    (StationTimeout past `timeout`, which None leaves off); the caller decides
+    on the one retry. Runs its own event loop, so it is safe inside a
+    workflow step."""
     import asyncio
     import time
 
@@ -791,7 +797,8 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
     engine = station["engine"]
     model_setting = f"{engine}/{station['model']}" if station.get("model") else engine
     schema = station.get("schema")
-    registry = station_tools.for_station(hub_dir, station.get("tools") or ())
+    if registry is None:
+        registry = station_tools.for_station(hub_dir, station.get("tools") or ())
     started = time.monotonic()
     usage: dict = {}
     status = "error"
@@ -809,7 +816,7 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
 
             rt = CodexRuntime(name=station["name"], instructions=station["instructions"],
                               registry=dict(registry), model_setting=model_setting, tool_mode="off",
-                              output_schema=schema, max_turns=40)
+                              output_schema=schema, max_turns=40, turn_timeout=None)
             try:
                 await rt.aopen()
                 with _request_ctx.chat_scope(None):
@@ -824,8 +831,7 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
 
     async def bounded():
         from .workflows.deadlines import remaining
-        limit = remaining(timeout or 1800)
-        async with asyncio.timeout(limit):
+        async with asyncio.timeout(remaining(timeout)):
             return await go()
 
     try:
@@ -837,12 +843,15 @@ def run_station(hub_dir, station: dict, message: str, *, subject: str | None = N
             text, structured_out, usage = asyncio.run(bounded())
         output = structured_out
         if output is None and schema is not None:
-            output = structured.extract_json(text)
+            try:
+                output = structured.extract_json(text)
+            except structured.ModelOutputError:
+                output = None      # the caller reports it as a malformed answer
         status = "ok"
         return {"text": text, "output": output, "model": (usage or {}).get("model") or model_setting,
                 "usage": {k: v for k, v in (usage or {}).items() if k != "model"}}
     except TimeoutError as exc:
-        raise AgentRunError(f"station {station['name']} ran past its time limit") from exc
+        raise StationTimeout(f"station {station['name']} ran past its time limit") from exc
     except AgentRunError:
         raise
     except Exception as exc:  # noqa: BLE001 - one failure type for the caller

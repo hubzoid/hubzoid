@@ -47,11 +47,14 @@ Save your analysis with save_handoff (kind analysis). Return a summary and the h
 | `tools` | The exact tools: the hub's own and pre-shipped tools by name, plus `save_handoff` and `read_handoff`. Empty or missing means none. |
 | `response_schema` | A JSON Schema file in the agent's folder, describing an object. |
 | `input` | `forward` (default) or `never`. |
-| `sandbox` | A sandbox profile for the agent's workspace (see the sandbox docs). |
-| `timeout_seconds` | Optional limit on active time. Off by default. |
+| `sandbox` | A sandbox profile for the agent's workspace. Sandboxes are not in this version yet: a station that names one is refused (`sandbox_unavailable`), never run on the host. |
+| `timeout_seconds` | Optional limit on active time, across all attempts of a call. Off by default. |
 
-Changing a station's files gives it a new definition digest. Work already
-running keeps the definition it started with.
+Changing a station's files gives it a new definition digest. A call keeps the
+definition it started with, even if the files change or are removed later. It
+also pins the tools it lists: if one of them changes before a retry or a
+recovery, that call stops with `definition_changed` rather than run different
+code. Restore the tool or use a new stage revision.
 
 ## Call it from a work item
 
@@ -83,6 +86,16 @@ def review_policy():
 - `hub.retry_station(call_id, clarification)` is the one retry the workflow may
   direct, with a clarification added to the original task. A second retry is
   refused (`retry_exhausted`). `orchestrator_retries: 0` turns retries off.
+  An answer with no JSON at all is also a `StationOutputError`.
+- `hub.call_agent(..., timeout=seconds)` may lower the station's time limit,
+  never raise it. The limit counts active time over every attempt of the call.
+- If the work stopped on a failed call without using its retry, a person can
+  direct that one retry (see below). It is the same allowance: the workflow
+  cannot retry again afterwards.
+- Before a station starts, and before each of its tool calls, Hubzoid checks
+  that the requester's account can still act and that the work was not
+  cancelled. After a cancel, its tools refuse to run and its result is not
+  used.
 - If Hubzoid stops while a station runs, the call is resumed once
   (`recovery_attempts`), separately from the retry. Writes it made through
   `hub.operation.run` are recorded, so they are not repeated.
@@ -106,7 +119,7 @@ work_items:
   stations:
     orchestrator_retries: 1   # 0 or 1
     recovery_attempts: 1      # 0 or 1
-    timeout_seconds: null     # off, or 1 to 86400
+    timeout_seconds: null     # off, or 1 to 86400 of active time per call
   handoffs:
     kinds: [analysis, plan, review]   # any lowercase slug when left out
     max_characters: 200000
@@ -119,6 +132,7 @@ hubzoid stations validate ./hub
 hubzoid stations doctor ./hub
 hubzoid stations calls list ./hub --work-item ITEM
 hubzoid stations calls show ./hub --work-item ITEM --call CALL
+hubzoid stations calls retry ./hub --work-item ITEM --call CALL --clarification-file fix.txt --expected-revision N
 hubzoid handoffs list ./hub --work-item ITEM
 hubzoid handoffs read ./hub --work-item ITEM --id ID
 ```
@@ -127,11 +141,16 @@ hubzoid handoffs read ./hub --work-item ITEM --id ID
 output is structured, and whether its engine's login is available. It never
 prints a credential. The Console's Work items page shows each work item's
 station calls, their attempts, results or errors, and its handoffs. The API is
-`GET /portal/api/hubs/{hub}/work-items/{id}/stations` and
-`.../handoffs/{handoff_id}`.
+`GET /portal/api/hubs/{hub}/work-items/{id}/stations`,
+`.../handoffs/{handoff_id}` and `POST .../stations/{call_id}/retry` with
+`{clarification, expected_revision}`. A retry is for the person who asked for
+the work or a manager, only once the work has stopped. The work continues from
+that call.
 
 ## Limits
 
+- `allow_generic_subagents` and `max_transcript_bytes` are refused in
+  `work-items.yaml` until they have an effect.
 - Questions or approvals from inside a station turn are not forwarded to a
   person yet. Write steps that need approval as `hub.operation.run` calls in the
   workflow, which wait for the requester.
