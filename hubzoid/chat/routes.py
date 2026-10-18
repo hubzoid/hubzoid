@@ -158,6 +158,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             return frozenset()
 
     ctx.engine = ChatEngine(hub_dir, ctx.store, ctx.hub, part_validator=validate_parts, groups_for=groups_for)
+    from . import feedback_routes
+
+    feedback_routes.mount(app, ctx)
     try:
         ctx.engine.sweep()
     except Exception:  # noqa: BLE001 - never block the bridge start

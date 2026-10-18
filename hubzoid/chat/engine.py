@@ -178,6 +178,8 @@ class ChatEngine:
         self.groups_for = groups_for or (lambda email: frozenset())
         #: called (from any thread) after an event commits: notify(conversation_id)
         self.notify = lambda conversation_id: None
+        #: called after a run reached a terminal state (notices, HUB-76)
+        self.on_terminal = None
 
     # -- settings ---------------------------------------------------------------------
     def limits(self) -> dict:
@@ -975,6 +977,10 @@ class ChatEngine:
                 if status != "complete":
                     self._block_dependents(conn, r.conversation_id, item.id, f"the earlier message {status}", t)
         self.notify(r.conversation_id)
+        if self.on_terminal is not None:
+            self.on_terminal(run_id=run_id, conversation_id=r.conversation_id, branch_id=r.branch_id,
+                             message_id=r.message_id, actor_id=r.actor_id, status=status,
+                             stopped_by_self=bool(r.cancel_requested))
         if status not in ("complete", "stopped"):
             return None
         # After a stop the queue was parked unless the person chose "send next
@@ -1248,11 +1254,16 @@ class ChatEngine:
                 g.emit(conn, r.conversation_id, "run.changed", r.id, {"status": "interrupted",
                                                                      "message_id": r.message_id,
                                                                      "branch_id": r.branch_id})
+            interrupted = [(r.id, r.conversation_id, r.branch_id, r.message_id, r.actor_id) for r in stale]
             # Native sessions are not restored across a restart until pending calls
             # can be reconciled first: the next turn rebuilds from the graph.
             conn.execute(g.bindings.delete().where(g.bindings.c.conversation_id.in_(own)))
             conn.execute(g.queue.update().where(g.queue.c.conversation_id.in_(own), g.queue.c.state == "dispatching")
                          .values(state="needs_review", reason="interrupted while sending", updated_at=t))
+        if self.on_terminal is not None:
+            for run_id, cid, bid, mid, aid in interrupted:
+                self.on_terminal(run_id=run_id, conversation_id=cid, branch_id=bid, message_id=mid, actor_id=aid,
+                                 status="interrupted", stopped_by_self=False)
         return len(stale)
 
     def expire_temporary(self) -> int:

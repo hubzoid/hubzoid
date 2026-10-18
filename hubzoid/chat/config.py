@@ -169,6 +169,17 @@ def register_namespace(name: str, model: type[BaseModel], *, owner: str,
         _REGISTRY[name] = Namespace(name, owner, model, True, personal_keys, applies)
 
 
+#: namespace -> check(key inside the namespace, value, active document) -> clean value.
+#: Raises ConfigError (``policy_locked`` when the administrator manages it).
+_PERSONAL: dict[str, Any] = {}
+
+
+def register_personal(namespace: str, check) -> None:
+    """Let people keep their own value for some keys of a namespace, in the
+    same account preference document as appearance."""
+    _PERSONAL[namespace] = check
+
+
 def _bootstrap_registry() -> None:
     with _REGISTRY_LOCK:
         if "presentation" not in _REGISTRY:
@@ -536,7 +547,21 @@ class ChatConfigService:
             raise ConfigError(422, "validation_failed", "values must be an object.")
         pres = Presentation.model_validate(self.active().document["presentation"])
         clean: dict = {}
+        document = None
         for key, value in values.items():
+            if "." in key:
+                # A feature's own personal setting ("notifications.desktop"),
+                # checked by the namespace that registered it.
+                ns, rest = key.split(".", 1)
+                check = _PERSONAL.get(ns)
+                if check is None:
+                    raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",
+                                      pointer=f"/values/{_escape(key)}")
+                if value is None:
+                    continue
+                document = document or self.active().document
+                clean[key] = check(rest, value, document)
+                continue
             if key not in ("mode", "density", "text_scale", "timezone"):
                 raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",
                                   pointer=f"/values/{_escape(key)}",
