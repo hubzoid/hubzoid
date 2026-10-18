@@ -83,6 +83,10 @@ def test_removed_source_leaves_results_at_once_and_partial_sync_keeps_the_rest(c
         return url, "text/html", b"<html><title>Supplier page</title><body><p>Lead time is nine days.</p></body></html>"
 
     monkeypatch.setattr(svc, "fetch", fake_fetch)
+    blocked = put(client, "mixed", {"sources": [{"id": "s", "kind": "url", "url": "https://supplier.example/terms"}]},
+                  "absent")
+    assert blocked.status_code == 403  # web fetching is off for the deployment by default
+    _web_on(client.app.state.chat.hub_dir)
     put(client, "mixed", {"sources": [{"id": "rules", "kind": "text", "text": POLICY},
                                       {"id": "supplier", "kind": "url", "url": "https://supplier.example/terms"}]},
         "absent")
@@ -98,6 +102,40 @@ def test_removed_source_leaves_results_at_once_and_partial_sync_keeps_the_rest(c
                1).status_code == 200
     assert not any(r["title"] == "rules" for r in q("escalated operations")), "removed before any re-sync"
     assert client.get(f"/api/chat/retrieval/citations/{cited}").status_code == 404
+
+
+def _web_on(hub):
+    from hubzoid.chat import config as cfg
+
+    svc = cfg.service_for(hub)
+    doc = svc.active().document
+    doc["retrieval"]["web"]["enabled"] = True
+    svc.apply(doc, expected_revision=svc.active().revision or None, actor="t")
+
+
+def test_changed_and_directory_sources_and_file_use(client, hub):
+    (hub / "manuals").mkdir()
+    (hub / "manuals" / "returns.md").write_text("Returns are accepted within 30 days.")
+    put(client, "docs", {"sources": [{"id": "rules", "kind": "text", "text": POLICY},
+                                     {"id": "manuals", "kind": "directory", "path": "manuals"}]}, "absent")
+    sync(client, "docs")
+    q = lambda text: client.post("/api/chat/retrieval/queries", headers=ORIGIN, json={"query": text}).json()["results"]
+    assert q("returns accepted days") and q("escalated operations lead")
+    # Adding a reader keeps the folder's files; changing a source's definition hides it until the next sync.
+    put(client, "docs", {"readers": ["*"], "sources": [{"id": "rules", "kind": "text", "text": "Something else entirely."},
+                                                       {"id": "manuals", "kind": "directory", "path": "manuals"}]}, 1)
+    assert q("returns accepted days"), "a directory's files survive a manifest edit"
+    assert not q("escalated operations lead"), "a changed source leaves results at once"
+    # An uploaded file used by a collection can't be deleted from under it.
+    cid, _ = new_conv(client)
+    fid = client.post(f"/api/conversations/{cid}/files", headers=ORIGIN,
+                      files={"file": ("h.md", b"Pallets are wrapped twice.", "text/markdown")}).json()["id"]
+    put(client, "docs", {"readers": ["*"], "sources": [{"id": "h", "kind": "upload", "file_id": fid}]}, 2)
+    refs = client.get(f"/api/chat/files/{fid}/references").json()["items"]
+    for r in refs:
+        if r["conversation_id"]:
+            client.delete(f"/api/chat/files/{fid}/references/{r['reference_id']}", headers=ORIGIN)
+    assert client.request("DELETE", f"/api/chat/files/{fid}", headers=ORIGIN, json={}).status_code == 409
 
 
 def test_readers_and_upload_sources(client, monkeypatch):

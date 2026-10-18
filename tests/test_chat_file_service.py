@@ -240,3 +240,21 @@ def test_storage_settings_and_s3_adapter(monkeypatch, tmp_path):
     assert local.read("x/y") == b"z"
     with pytest.raises(st.StorageError):
         local.put("../escape", b"no")
+
+
+def test_restart_recovers_files_left_validating_and_syncs_left_running(client):
+    from hubzoid.chat.file_service import files
+    from hubzoid.chat.retrieval import jobs
+
+    svc = client.app.state.chat.files
+    d = upload(client, b"sku,qty\nA1,4\n")
+    with svc.engine.begin() as conn:  # as if the process stopped mid-check
+        conn.execute(files.update().where(files.c.file_id == d["file_id"]).values(state="validating", created_at=0))
+        conn.execute(jobs.insert().values(id="j-stuck", hub_id=client.app.state.chat.retrieval.hub,
+                                          collection_id="c", operation="sync", principal_id="p", state="indexing",
+                                          counters_json="{}", created_at=0, updated_at=0))
+    assert svc.recover() == 1
+    assert client.get(f"/api/chat/files/{d['file_id']}", headers=ORIGIN).json()["state"] == "ready"
+    assert client.app.state.chat.retrieval.recover() == 1
+    with svc.engine.connect() as conn:
+        assert conn.execute(jobs.select().where(jobs.c.id == "j-stuck")).first().error_code == "interrupted"

@@ -54,6 +54,31 @@ def test_stale_base_is_refused_not_rebased(client, hub):
     assert "Edited in Claude Code meanwhile." in (hub / "AGENTS.md").read_text()
 
 
+def test_publish_is_one_at_a_time_and_recovers_after_a_crash(client, hub):
+    from hubzoid.chat.authoring import drafts
+
+    svc = client.app.state.chat.authoring
+    base = (hub / "AGENTS.md").read_text()
+
+    def approved(text):
+        d = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "AGENTS.md", "content": text}).json()
+        d = client.post(f"{A}/drafts/{d['id']}/submit", headers=ORIGIN, json={"expected_revision": 1}).json()
+        return client.post(f"{A}/drafts/{d['id']}/review", headers=ORIGIN,
+                           json={"decision": "approve", "digest": d["digest"]}).json()
+
+    a, b = approved(base + "\nA\n"), approved(base + "\nB\n")
+    # A crash after the file was written but before the version was recorded:
+    with svc.engine.begin() as conn:
+        conn.execute(drafts.update().where(drafts.c.id == a["id"]).values(state="publishing"))
+    (hub / "AGENTS.md").write_text(base + "\nA\n")
+    busy = client.post(f"{A}/drafts/{b['id']}/publish", headers=ORIGIN, json={"digest": b["digest"]})
+    assert busy.status_code == 409 and busy.json()["detail"]["code"] == "publish_in_progress"
+    done = client.post(f"{A}/drafts/{a['id']}/publish", headers=ORIGIN, json={"digest": a["digest"]})
+    assert done.status_code == 200 and (hub / "AGENTS.md").read_text().endswith("\nA\n")
+    late = client.post(f"{A}/drafts/{b['id']}/publish", headers=ORIGIN, json={"digest": b["digest"]})
+    assert late.status_code == 409 and late.json()["detail"]["code"] == "stale_base"  # B began from the old file
+
+
 def test_validation_paths_and_permissions(client, monkeypatch):
     bad_skill = client.post(f"{A}/drafts", headers=ORIGIN, json={"path": "skills/stock/SKILL.md",
                                                                   "content": "---\ndescription: no name\n---\nBody\n"}).json()

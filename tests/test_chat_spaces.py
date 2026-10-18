@@ -138,6 +138,52 @@ def test_calendar_reminders_deliver_once_and_follow_access(client):
     assert svc.deliver_reminders(now=start + 9000) == 0
 
 
+def test_reminders_stay_in_their_hub_survive_a_failed_notice_and_follow_edits(client):
+    from hubzoid.chat.spaces import SpacesService, reminders
+
+    svc = client.app.state.chat.spaces
+    start = time.time() + 600
+    ev = client.post("/api/chat/calendar", headers=H("ana"), json={
+        "title": "Count", "starts_at": start, "ends_at": start + 600, "timezone": "UTC", "reminder_minutes": 5}).json()
+    other = SpacesService(svc.hub_dir, svc.engine, "another-hub")
+    assert other.deliver_reminders(now=start - 250) == 0  # another hub never touches these
+    calls = []
+
+    def flaky(*a):
+        calls.append(a)
+        if len(calls) == 1:
+            raise RuntimeError("inbox down")
+
+    real = svc.notify
+    svc.notify = flaky
+    with pytest.raises(RuntimeError):
+        svc.deliver_reminders(now=start - 250)
+    svc.notify = real
+    assert svc.deliver_reminders(now=start - 240) == 0  # claimed a moment ago: not yet retried
+    assert svc.deliver_reminders(now=start - 150) == 1  # retried once the claim is stale
+    assert len(inbox(client, "ana")) == 1
+    # Editing an event brings back reminders that were cancelled by the edit.
+    ev2 = client.post("/api/chat/calendar", headers=H("ana"), json={
+        "title": "Later", "starts_at": start + 3600, "ends_at": start + 4000, "timezone": "UTC",
+        "reminder_minutes": 5}).json()
+    client.put(f"/api/chat/calendar/{ev2['id']}", headers=H("ana"), json={
+        "title": "Later (renamed)", "starts_at": start + 3600, "ends_at": start + 4000, "timezone": "UTC",
+        "reminder_minutes": 5, "expected_revision": 1})
+    with svc.engine.connect() as conn:
+        states = [r.state for r in conn.execute(reminders.select().where(reminders.c.event_id == ev2["id"]))]
+    assert states == ["pending"]
+
+
+def test_spaces_need_hub_use(client, hub):
+    from hubzoid.access import store_for
+
+    ch = client.post("/api/chat/spaces", headers=H("ana"), json={"name": "everyone", "open": True}).json()
+    assert client.get(f"/api/chat/spaces/{ch['id']}/posts", headers=who("ben")).status_code == 200
+    store_for(hub).suspend("ben@example.org", actor="t")
+    assert client.get("/api/chat/spaces", headers=who("ben")).status_code == 403
+    assert client.get(f"/api/chat/spaces/{ch['id']}/posts", headers=who("ben")).status_code == 403
+
+
 def test_weekly_repeat_keeps_local_time_across_a_clock_change():
     from types import SimpleNamespace
 

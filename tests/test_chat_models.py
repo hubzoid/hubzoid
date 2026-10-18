@@ -31,6 +31,12 @@ def catalog(hub):
 
 
 @pytest.fixture
+def claude(client, monkeypatch):
+    """Comparison needs the runtime with a pre-tool hook (Claude); the scripted test runtime stands in."""
+    monkeypatch.setattr(client.app.state.chat.models, "runtime_kind", lambda: "claude")
+
+
+@pytest.fixture
 def spy(client, monkeypatch):
     from hubzoid import _request_ctx
 
@@ -47,8 +53,9 @@ def spy(client, monkeypatch):
     return seen
 
 
-def test_catalog_and_per_turn_model(client, hub, spy):
-    assert [c["ref"] for c in client.get("/api/chat/models").json()["catalog"]] == ["default"]
+def test_catalog_and_per_turn_model(client, hub, spy, claude):
+    # With no catalog configured, the Claude runtime offers its own aliases.
+    assert [c["ref"] for c in client.get("/api/chat/models").json()["catalog"]] == ["default", "sonnet", "opus", "haiku"]
     catalog(hub)
     m = client.get("/api/chat/models").json()
     assert [c["ref"] for c in m["catalog"]] == ["default", "fast", "deep"] and m["can_choose"] and m["can_compare"]
@@ -67,7 +74,31 @@ def test_catalog_and_per_turn_model(client, hub, spy):
     assert spy[-1]["model"] is None  # a model outside the catalog never reaches the runtime
 
 
-def test_compare_answers_on_separate_read_only_branches(client, hub, spy, monkeypatch):
+def test_compare_refused_without_the_tool_hook(client, hub):
+    catalog(hub)
+    assert client.get("/api/chat/models").json()["can_compare"] is False  # scripted runtime: no hook
+    cid, b = new_conv(client)
+    first = op(client, cid, {"kind": "send", "branch_id": b["id"], "expected_revision": b["revision"], "content": "x"}).json()
+    wait_run(client, first["run_id"])
+    r = op(client, cid, {"kind": "compare", "target_message_id": first["user_message_id"], "model_refs": ["fast", "deep"]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "compare_unsupported"
+
+
+def test_claude_candidate_hook_matches_full_tool_identity():
+    import asyncio
+
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    from hubzoid.factory_claude import _only_tools
+
+    hook = _only_tools(ClaudeAgentOptions(), ["read_knowledge"]).hooks["PreToolUse"][0].hooks[0]
+    ask = lambda name: asyncio.run(hook({"tool_name": name}, "t", None))
+    assert ask("mcp__hubzoid__read_knowledge") == {}
+    for name in ("mcp__untrusted__read_knowledge", "mcp__hubzoid__write_artifact", "WebSearch", "read_knowledge"):
+        assert ask(name)["hookSpecificOutput"]["permissionDecision"] == "deny", name
+
+
+def test_compare_answers_on_separate_read_only_branches(client, hub, spy, claude, monkeypatch):
     catalog(hub)
     cid, b = new_conv(client)
     first = op(client, cid, {"kind": "send", "branch_id": b["id"], "expected_revision": b["revision"],
