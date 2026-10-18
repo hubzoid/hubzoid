@@ -111,9 +111,10 @@ def test_first_message_streams_and_stores_the_reply(client, agent):
     got = client.get("/api/conversations/c_first0001", headers=ORIGIN).json()
     assert got["head_id"] == "m_asst00001"
     user, reply = got["messages"]
-    assert user == {"id": "m_user00001", "parent_id": None, "role": "user",
-                    "content": [{"type": "text", "text": "Hello there"}], "status": "complete",
-                    "error": None, "created_at": user["created_at"]}
+    assert {k: user[k] for k in ("id", "parent_id", "role", "content", "status", "error")} == {
+        "id": "m_user00001", "parent_id": None, "role": "user",
+        "content": [{"type": "text", "text": "Hello there"}], "status": "complete", "error": None}
+    assert user["branch_id"] == reply["branch_id"] and user["author_id"]
     assert reply["parent_id"] == "m_user00001" and reply["role"] == "assistant"
     assert reply["status"] == "complete" and reply["content"] == [{"type": "text", "text": answer}]
     wait_titles()
@@ -277,11 +278,23 @@ def test_message_validation(client, agent):
 
 def test_one_reply_at_a_time_per_conversation(app, client, agent):
     _send(client, "c_busy00001", "hello", agent, "m_user00001", "m_asst00001")
-    assert app.state.chat.runs.claim("c_busy00001")   # a reply in progress
+    # A reply in progress holds the branch's writer lease.
+    import time as _time
+
+    from hubzoid.chat import graph
+
+    eng = app.state.chat.engine.engine
+    with eng.begin() as conn:
+        branch = conn.execute(graph.branches.select().where(
+            graph.branches.c.conversation_id == "c_busy00001")).first()
+        conn.execute(graph.leases.insert().values(branch_id=branch.id, conversation_id="c_busy00001",
+                                                  actor_id="x", run_id="r-busy", owner="test", fence=1,
+                                                  expires_at=_time.time() + 60))
     r = _send(client, "c_busy00001", "again", agent, "m_user00002", "m_asst00002",
               parent="m_asst00001")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "run_in_progress"
-    app.state.chat.runs.release("c_busy00001")
+    with eng.begin() as conn:
+        conn.execute(graph.leases.delete().where(graph.leases.c.run_id == "r-busy"))
     assert _send(client, "c_busy00001", "again", agent, "m_user00002", "m_asst00002",
                  parent="m_asst00001").status_code == 200
 
@@ -342,7 +355,8 @@ def test_delete_removes_messages_shares_and_files(hub, client, agent):
     assert not folder.exists()
     assert client.get("/api/conversations/c_delete001").status_code == 404
     store = client.app.state.chat.store
-    assert store.get_message("m_user00001") is None and store.share_for("c_delete001") is None
+    gone = store.get_message("m_user00001")  # a tombstone: no content, no access
+    assert gone["deleted_at"] and gone["content"] == [] and store.share_for("c_delete001") is None
 
 
 # ---------------------------------------------------------------------------
