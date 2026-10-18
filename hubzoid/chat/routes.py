@@ -137,7 +137,6 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
                       model_label=model_label or getattr(runtime, "name", "agent"),
                       store=store_mod.for_hub(hub_dir))
     ctx.runs = RunManager(ctx)
-    ctx.runs.sweep()
     from . import engine_routes
     from .engine import ChatEngine
 
@@ -170,6 +169,8 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
         ctx.engine.sweep()
     except Exception:  # noqa: BLE001 - never block the bridge start
         log.warning("chat: could not check for interrupted runs", exc_info=True)
+    # After the run sweep: a reply whose run kept a live lease (another worker) stays.
+    ctx.runs.sweep()
     app.state.chat = ctx
     store = ctx.store
     engine = ctx.engine
@@ -360,9 +361,14 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
         body = await engine_routes.read_json(request)
         actor = await db(engine.actor, user)
         run_id = await db(engine.run_for_message, run_ref) if valid_message_id(run_ref) else None
+        legacy = run_id is not None  # addressed by the reply's message id (the 1.x contract)
         run_id = run_id or run_ref
         out = await call(engine.request_cancel, run_id, actor, park_queue=body.get("park_queue", True) is not False)
         if out.get("already_terminal"):
+            if legacy:
+                status = {"stopped": "cancelled", "failed": "error", "interrupted": "error"}.get(out["status"],
+                                                                                              out["status"])
+                return JSONResponse(status_code=202, content={"status": status, "run_id": run_id})
             return JSONResponse(status_code=200, content={"status": out["status"], "run_id": run_id})
         stopping = await ctx.runs.cancel(out["message_id"])
         return JSONResponse(status_code=202, content={
@@ -389,6 +395,18 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     shares_mod.register(app, ctx)
     _stop_replies_on_shutdown(app, ctx.runs)
     log.info("chat: mounted for hub %s (agent %s)", ctx.hub, ctx.model_label)
+
+
+def terms_required(hub_dir: Path, user_id: str) -> bool:
+    """Whether this person must accept the current terms before starting work.
+    Raises 503 when that can't be confirmed (fail closed)."""
+    from ..ui import branding_store
+
+    try:
+        return bool(branding_store.service_for(hub_dir).me(user_id).get("terms_required"))
+    except Exception:  # noqa: BLE001 - fail closed: required terms can't be confirmed
+        log.warning("chat: terms state unavailable", exc_info=True)
+        raise error(503, "unavailable", "Couldn't check the terms of use just now. Try again shortly.")
 
 
 async def _require_terms(hub_dir: Path, user) -> None:
@@ -474,6 +492,11 @@ def _stop_replies_on_shutdown(app: FastAPI, runs: RunManager) -> None:
     @asynccontextmanager
     async def lifespan(app_):
         async with original(app_) as state:
+            orch = getattr(runs.ctx, "orchestrator", None)
+            if orch is not None:
+                # Recover replies left by a worker that is gone once their
+                # leases expire (the start-up sweep left unexpired ones alone).
+                orch._ensure_heartbeat()
             try:
                 yield state
             finally:

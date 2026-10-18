@@ -432,13 +432,21 @@ class ConversationStore:
 
     def sweep_running(self, hub: str, *, error: str) -> int:
         """Mark this hub's replies still 'running' as failed (their run ended with
-        the process that owned it). Returns how many."""
+        the process that owned it). A reply whose run still holds a live branch
+        lease belongs to another worker and is left alone. Returns how many."""
+        from . import graph as g
+
+        t = time.time()
         owned = sa.select(conversations.c.id).where(conversations.c.hub == hub)
+        live = (sa.select(g.runs.c.message_id).join(g.leases, sa.and_(g.leases.c.run_id == g.runs.c.id,
+                                                                      g.leases.c.branch_id == g.runs.c.branch_id))
+                .where(g.leases.c.expires_at > t))
         with self.engine.begin() as conn:
             return conn.execute(
                 messages.update()
-                .where(messages.c.status == "running", messages.c.conversation_id.in_(owned))
-                .values(status="error", error=error, updated_at=time.time())).rowcount
+                .where(messages.c.status == "running", messages.c.conversation_id.in_(owned),
+                       messages.c.id.not_in(live))
+                .values(status="error", error=error, updated_at=t)).rowcount
 
     # -- shares ----------------------------------------------------------------
     def share_for(self, conv_id: str) -> dict | None:

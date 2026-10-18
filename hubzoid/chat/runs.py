@@ -65,6 +65,8 @@ class Run:
     on_update: Any = None     # (run) -> None after each published chunk
     on_finish: Any = None     # async (run, status, error) after the reply is saved
     session_slot: Any = None  # _request_ctx.SessionSlot: the runtime's own session
+    guard: Any = None         # () -> "ok" | "cancel" | "lost" (engine.run_state), checked at checkpoints
+    fenced_out: bool = False  # the branch lease is gone: nothing more is written for this run
 
     @property
     def finished(self) -> bool:
@@ -116,7 +118,7 @@ class RunManager:
     def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
               title: str | None = None, run_id: str | None = None, branch_id: str | None = None,
               fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None,
-              session_slot=None) -> Run:
+              session_slot=None, guard=None) -> Run:
         """Begin writing ``message_id`` (already stored as 'running'). Must be
         called on the event loop, with the conversation claimed. ``chat_key``
         is the conversation's ``store.chat_key``, the run's chat scope."""
@@ -128,7 +130,7 @@ class RunManager:
                   owner_id=user.id, email=user.email, builder=builder,
                   loop=asyncio.get_running_loop(), started=time.monotonic(), run_id=run_id,
                   branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish,
-                  session_slot=session_slot)
+                  session_slot=session_slot, guard=guard)
         self._runs[message_id] = run
         self._publish(run, builder.start())
         if title:
@@ -263,6 +265,18 @@ class RunManager:
         if not force and now - run.last_persist < PERSIST_INTERVAL:
             return
         run.last_persist = now
+        if run.guard is not None:
+            try:
+                state = await asyncio.to_thread(run.guard)
+            except Exception:  # noqa: BLE001 - an unknown state is checked again next time
+                log.warning("chat: could not check the lease of %s", run.message_id, exc_info=True)
+                state = "ok"
+            if state == "lost":
+                # Another worker owns the branch now: write nothing more, stop.
+                run.fenced_out = True
+                raise asyncio.CancelledError
+            if state == "cancel":
+                raise asyncio.CancelledError
         try:
             await asyncio.to_thread(self.ctx.store.update_message, run.message_id,
                                     content=run.builder.snapshot(), text=run.builder.plain_text())
@@ -288,6 +302,13 @@ class RunManager:
             except Exception:  # noqa: BLE001
                 log.exception("chat: could not save the end of %s", run.message_id)
             await self._record_usage(run, status, usage, identity)
+            # The engine records the end and frees the branch before 'finish'
+            # goes out, so a client that sends again at once finds it free.
+            if run.on_finish is not None:
+                try:
+                    await run.on_finish(run, status, error)
+                except Exception:  # noqa: BLE001 - the reply is saved; its end is recovered later
+                    log.exception("chat: could not finish run %s", run.run_id or run.message_id)
         finally:
             self._publish(run, chunks)
             run.closed = True
@@ -297,11 +318,14 @@ class RunManager:
             self._runs.pop(run.message_id, None)
             self._claimed.discard(run.conversation_id)
             run.done.set()
-            if run.on_finish is not None:
-                asyncio.ensure_future(run.on_finish(run, status, error))
 
     def _save_final(self, run: Run, status: str, error: str | None, model: str | None,
                     summary: dict) -> None:
+        if not run.fenced_out and run.guard is not None and run.guard() == "lost":
+            run.fenced_out = True
+        if run.fenced_out:
+            log.warning("chat: %s lost its branch lease; its end is not saved", run.message_id)
+            return
         store = self.ctx.store
         store.update_message(run.message_id, content=run.builder.snapshot(),
                              text=run.builder.plain_text(), status=status, error=error,

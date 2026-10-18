@@ -240,6 +240,7 @@ def i_apply(hub: Path = HUB, preview: str = typer.Option(..., "--preview"), dige
         _fmt, records, blobs, _p = port.parse(data)
         result = port.apply(loc.engine.engine, loc.hub, loc.ctx.hub, actor_id=loc.actor_obj.id,
                             actor_email=loc.actor_obj.email, agent=loc.agent(), records=records, blobs=blobs,
-                            dispositions={**proposed, **dispositions}, operation_id=str(uuid.uuid4()))
+                            dispositions={**proposed, **dispositions}, operation_id=str(uuid.uuid4()),
+                            key=f"import:{meta['id']}", request={"digest": digest, "dispositions": dispositions})
         store.done(meta["id"], result)
     cc.emit(result, as_json)

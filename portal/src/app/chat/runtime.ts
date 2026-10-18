@@ -371,6 +371,7 @@ export type DeletionPreview = {
   removed: string[];
   reparented: Record<string, string>;
   shares: string[];
+  snapshot_links?: string[];
   graph_revision: number;
   preview_hash: string;
 };

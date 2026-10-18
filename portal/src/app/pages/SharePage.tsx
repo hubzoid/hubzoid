@@ -36,7 +36,8 @@ export default function SharePage({ shareId }: { shareId: string }) {
     setCopying(true);
     try {
       const pv = await post<{ digest: string }>(`/api/shares/${enc(shareId)}/copies/previews`, {});
-      const made = await post<{ new_conversation_id: string }>(`/api/shares/${enc(shareId)}/copies`, { digest: pv.digest });
+      const made = await post<{ new_conversation_id: string }>(`/api/shares/${enc(shareId)}/copies`, { digest: pv.digest },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } });
       navigate(`/c/${encodeURIComponent(made.new_conversation_id)}`);
     } catch (e) {
       setError(e);

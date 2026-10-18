@@ -131,10 +131,28 @@ def _read_zip(data: bytes) -> tuple[list[dict], dict[str, bytes], list[dict]]:
             raise Err(422, "validation_failed", "The package expands beyond the allowed size.", path=name)
         if not (name in ("manifest.json", "records.jsonl") or (name.startswith("blobs/") and len(name) == 70)):
             raise Err(422, "validation_failed", f"Unexpected file {name!r} in the package.", path=name)
-    manifest = json.loads(zf.read("manifest.json"))
+    budget = [MAX_EXPANDED]
+
+    def read(name: str, limit: int) -> bytes:
+        """Decompress at most ``limit`` bytes (and the package's remaining
+        budget), whatever the entry's header claims."""
+        cap = min(limit, budget[0])
+        with zf.open(name) as fh:
+            out = fh.read(cap + 1)
+        if len(out) > cap:
+            raise Err(422, "validation_failed", "The package expands beyond the allowed size.", path=name)
+        budget[0] -= len(out)
+        return out
+
+    if "manifest.json" not in names or "records.jsonl" not in names:
+        raise Err(422, "validation_failed", "The package has no manifest.json or records.jsonl.")
+    try:
+        manifest = json.loads(read("manifest.json", 16 * 1024 * 1024))
+    except ValueError:
+        raise Err(422, "validation_failed", "manifest.json is not valid JSON.", path="manifest.json")
     if manifest.get("format") != FORMAT or manifest.get("version") != 1:
         raise Err(422, "validation_failed", "This is not a hubzoid-exchange version 1 package.")
-    body = zf.read("records.jsonl")
+    body = read("records.jsonl", MAX_EXPANDED)
     if _sha(body) != manifest.get("records_sha256"):
         raise Err(422, "validation_failed", "records.jsonl does not match its hash.", path="records.jsonl")
     records = []
@@ -147,12 +165,23 @@ def _read_zip(data: bytes) -> tuple[list[dict], dict[str, bytes], list[dict]]:
         except ValueError:
             problems.append({"path": f"records.jsonl:{n}", "code": "corrupt_record"})
     blobs = {}
-    for b in manifest.get("blobs") or []:
-        name = f"blobs/{b['sha256']}"
+    declared = manifest.get("blobs") or []
+    if not isinstance(declared, list) or len(declared) > MAX_BLOBS:
+        raise Err(422, "validation_failed", "The package has too many records or files.")
+    for b in declared:
+        name = f"blobs/{b.get('sha256')}"
         if name not in names:
             problems.append({"path": name, "code": "missing_blob"})
             continue
-        data = zf.read(name)
+        size = b.get("size")
+        if not isinstance(size, int) or not 0 <= size <= MAX_BLOB:
+            problems.append({"path": name, "code": "too_large"})
+            continue
+        try:
+            data = read(name, size)
+        except Err:
+            problems.append({"path": name, "code": "size_mismatch"})
+            continue
         if _sha(data) != b["sha256"]:
             problems.append({"path": name, "code": "hash_mismatch"})
             continue
@@ -256,9 +285,16 @@ def preview(records: list[dict], problems: list[dict], blobs: dict[str, bytes]) 
 
 
 def apply(engine, hub_dir: Path, hub: str, *, actor_id: str, actor_email: str, agent: str, records: list[dict],
-          blobs: dict[str, bytes], dispositions: dict[str, str], operation_id: str) -> dict:
-    """Create the approved objects in one transaction (files after commit)."""
+          blobs: dict[str, bytes], dispositions: dict[str, str], operation_id: str, key: str | None = None,
+          request: dict | None = None) -> dict:
+    """Create the approved objects. Attachments are written and checked first;
+    then the conversations and messages commit in one transaction together with
+    the import's receipt (keyed by ``key``), so a retry after a crash returns
+    the first result and never imports twice. A failure removes staged files."""
+    import shutil
+
     from .. import memory as memlib
+    from ..control import deploy, idempotency
     from .store import chat_key
 
     convs = {r["source_id"]: r for r in records if r.get("type") == "conversation"
@@ -266,65 +302,96 @@ def apply(engine, hub_dir: Path, hub: str, *, actor_id: str, actor_email: str, a
     msgs = [r for r in records if r.get("type") == "message"
             and dispositions.get(f"message:{r['source_id']}", "import") == "import"
             and r["data"].get("conversation") in convs]
-    mapping: dict[str, str] = {}
-    files: list[tuple[str, str, bytes]] = []
-    t = time.time()
-    with engine.begin() as conn:
-        conv_map = {}
-        for sid, r in convs.items():
-            cid = new_id("c_")
-            conv_map[sid] = cid
-            conn.execute(conversations.insert().values(
-                id=cid, owner_id=actor_id, owner_email=actor_email, hub=hub, agent=agent,
-                title=(r["data"].get("title") or "Imported conversation")[:200], title_source="user", archived=0,
-                head_id=None, source="web", created_at=t, updated_at=t, graph_revision=0, temporary=0,
-                expires_at=None, deleted_at=None))
-        # parents before children
-        by_id = {r["source_id"]: r for r in msgs}
-        ordered, seen = [], set()
+    conv_map = {sid: new_id("c_") for sid in convs}
+    staged: list[Path] = []
 
-        def visit(sid, depth=0):
-            if sid in seen or sid not in by_id or depth > 100000:
-                return
-            parent = by_id[sid]["data"].get("parent")
-            if parent:
-                visit(parent, depth + 1)
-            seen.add(sid)
-            ordered.append(by_id[sid])
+    def unstage() -> None:
+        for d in staged:
+            shutil.rmtree(d, ignore_errors=True)
 
-        for sid in list(by_id):
-            visit(sid)
-        for r in ordered:
-            d = r["data"]
-            nid = new_id("m_")
-            mapping[r["source_id"]] = nid
-            content = []
-            for i, p in enumerate(d.get("content") or []):
+    files = 0
+    try:
+        for r in msgs:
+            for i, p in enumerate(r["data"].get("content") or []):
                 ref = (r.get("refs") or {}).get(f"/content/{i}")
-                if ref and ref.get("blob") in blobs and p.get("type") in ("file", "image"):
-                    files.append((conv_map[d["conversation"]], str(p.get("file_id")), blobs[ref["blob"]]))
-                content.append(p)
-            text = "\n\n".join(str(p.get("text") or "") for p in content if p.get("type") == "text")
-            conn.execute(messages.insert().values(
-                id=nid, conversation_id=conv_map[d["conversation"]], parent_id=mapping.get(d.get("parent")),
-                role=d["role"], content=_dumps(content), text=text,
-                status=d.get("status") if d.get("status") in ("complete", "cancelled", "error") else "complete",
-                error=None, model=d.get("model"), usage=None, created_at=float(d.get("created_at") or t) if
-                isinstance(d.get("created_at"), (int, float)) else t, updated_at=t, branch_id=None, revises_id=None,
-                author_id=actor_id, editor_id=None, run_id=None, requested_model=None, historical_only=1,
-                context_changed=0, deleted_at=None))
-        for sid, cid in conv_map.items():
-            g.ensure_initial_branch(conn, {"id": cid, "owner_id": actor_id}, actor_id)
-            head = mapping.get(convs[sid]["data"].get("head_id") or "")
-            g.set_view(conn, cid, actor_id, None, head)
-    for cid, file_id, data in files:
-        target = memlib.chat_upload_dir(Path(hub_dir), chat_key({"id": cid, "source": "web"}))
-        target.mkdir(parents=True, exist_ok=True)
-        name = Path(file_id).name
-        if name and not name.startswith("."):
-            (target / name).write_bytes(data)
-    return {"operation_id": operation_id, "conversations": conv_map, "messages": len(mapping),
-            "files": len(files)}
+                if not (ref and ref.get("blob") in blobs and p.get("type") in ("file", "image")):
+                    continue
+                name = Path(str(p.get("file_id"))).name
+                if not name or name.startswith("."):
+                    continue
+                target = memlib.chat_upload_dir(Path(hub_dir), chat_key({"id": conv_map[r["data"]["conversation"]],
+                                                                         "source": "web"}))
+                if target not in staged:
+                    target.mkdir(parents=True, exist_ok=True)
+                    staged.append(target)
+                (target / name).write_bytes(blobs[ref["blob"]])
+                if _sha((target / name).read_bytes()) != ref["blob"]:
+                    raise OSError(f"{name} was not stored intact")
+                files += 1
+    except OSError as exc:
+        unstage()
+        raise Err(507, "storage_failed", f"The files of this import could not be stored ({type(exc).__name__}). "
+                                         "Nothing was imported.")
+
+    def change(conn):
+        return 201, _apply_graph(conn, hub, actor_id=actor_id, actor_email=actor_email, agent=agent, convs=convs,
+                                 msgs=msgs, conv_map=conv_map, operation_id=operation_id, files=files)
+
+    try:
+        out = idempotency.run(engine, deployment_id=deploy.deployment_id(Path(hub_dir)), actor_id=actor_id,
+                              route="POST /api/chat/imports", key=key, body=request or {}, change=change,
+                              hub_id=hub, kind="chat.import", operation_id=operation_id)
+    except BaseException:
+        unstage()
+        raise
+    if out.replayed:
+        unstage()  # the first attempt's conversations and files are the import
+    return out.body
+
+
+def _apply_graph(conn, hub: str, *, actor_id: str, actor_email: str, agent: str, convs: dict, msgs: list,
+                 conv_map: dict, operation_id: str, files: int) -> dict:
+    mapping: dict[str, str] = {}
+    t = time.time()
+    for sid, r in convs.items():
+        cid = conv_map[sid]
+        conn.execute(conversations.insert().values(
+            id=cid, owner_id=actor_id, owner_email=actor_email, hub=hub, agent=agent,
+            title=(r["data"].get("title") or "Imported conversation")[:200], title_source="user", archived=0,
+            head_id=None, source="web", created_at=t, updated_at=t, graph_revision=0, temporary=0,
+            expires_at=None, deleted_at=None))
+    # parents before children
+    by_id = {r["source_id"]: r for r in msgs}
+    ordered, seen = [], set()
+
+    for sid in list(by_id):
+        chain, on_chain, node = [], set(), sid
+        while node and node in by_id and node not in seen and node not in on_chain:
+            chain.append(node)
+            on_chain.add(node)
+            node = by_id[node]["data"].get("parent")
+        for n in reversed(chain):
+            seen.add(n)
+            ordered.append(by_id[n])
+    for r in ordered:
+        d = r["data"]
+        nid = new_id("m_")
+        mapping[r["source_id"]] = nid
+        content = list(d.get("content") or [])
+        text = "\n\n".join(str(p.get("text") or "") for p in content if p.get("type") == "text")
+        conn.execute(messages.insert().values(
+            id=nid, conversation_id=conv_map[d["conversation"]], parent_id=mapping.get(d.get("parent")),
+            role=d["role"], content=_dumps(content), text=text,
+            status=d.get("status") if d.get("status") in ("complete", "cancelled", "error") else "complete",
+            error=None, model=d.get("model"), usage=None, created_at=float(d.get("created_at") or t) if
+            isinstance(d.get("created_at"), (int, float)) else t, updated_at=t, branch_id=None, revises_id=None,
+            author_id=actor_id, editor_id=None, run_id=None, requested_model=None, historical_only=1,
+            context_changed=0, deleted_at=None))
+    for sid, cid in conv_map.items():
+        g.ensure_initial_branch(conn, {"id": cid, "owner_id": actor_id}, actor_id)
+        head = mapping.get(convs[sid]["data"].get("head_id") or "")
+        g.set_view(conn, cid, actor_id, None, head)
+    return {"operation_id": operation_id, "conversations": conv_map, "messages": len(mapping), "files": files}
 
 
 class ImportStore:

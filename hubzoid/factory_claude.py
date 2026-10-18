@@ -679,6 +679,29 @@ class _StderrTail:
         return "\n".join(self._lines)
 
 
+def _guarded(options, guard):
+    """A PreToolUse hook that refuses a tool step once the chat run was stopped
+    or lost its branch lease (``SessionSlot.guard``)."""
+    import asyncio
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    async def admit(_input, _tool_use_id, _context):
+        try:
+            ok = await asyncio.to_thread(guard)
+        except Exception:  # noqa: BLE001 - fail closed: no step without a known owner
+            ok = False
+        if ok:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "This reply was stopped."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 async def _query_with_failover(*, prompt, options, hub_dir=None):
     """Rotate explicit credentials only on confirmed model-account failure.
 
@@ -997,6 +1020,8 @@ class ClaudeRuntime:
                 import dataclasses as _dc
 
                 turn_options = _dc.replace(turn_options, resume=slot.resume_id)
+            if slot is not None and slot.guard is not None:
+                turn_options = _guarded(turn_options, slot.guard)
             messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
                                             hub_dir=self._hub_dir)
             async for message in messages:

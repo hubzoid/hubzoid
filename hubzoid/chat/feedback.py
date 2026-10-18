@@ -387,13 +387,20 @@ class FeedbackService:
                                  revision=row.revision + 1, source_metadata=None))
 
     def list_feedback(self, *, agent_id: str | None = None, rating: str | None = None, reason: str | None = None,
-                      limit: int = 50, cursor: str | None = None) -> dict:
+                      limit: int = 50, cursor: str | None = None, reader=None) -> dict:
+        """Ratings of this hub. With ``reader`` (a manager in the web app), a
+        comment or tags on a conversation the reader may not open are left out:
+        managing feedback is not access to the conversation it quotes."""
         limit = max(1, min(int(limit or 50), 100))
         q = sa.select(feedback).where(feedback.c.hub_id == self.hub, feedback.c.deleted_at.is_(None))
         if agent_id:
             q = q.where(feedback.c.agent_id == agent_id)
         if rating:
             q = q.where(feedback.c.rating == rating)
+        if reason:
+            if not re.fullmatch(r"[a-z0-9_\-]{1,64}", reason):
+                raise Err(400, "invalid_request", "reason is a reason id.")
+            q = q.where(feedback.c.reason_ids.like(f'%"{reason}"%'))
         if cursor:
             try:
                 ts, fid = cursor.split("|", 1)
@@ -403,11 +410,30 @@ class FeedbackService:
                 raise Err(400, "invalid_request", "That page link is not valid.")
         with self.engine.connect() as conn:
             rows = conn.execute(q.order_by(feedback.c.updated_at.desc(), feedback.c.id.desc()).limit(limit + 1)).all()
+            readable = None
+            if reader is not None:
+                readable = self._readable_ids(conn, reader, {r.conversation_id for r in rows[:limit]})
         items = [self._feedback_json(r) for r in rows[:limit]]
-        if reason:
-            items = [i for i in items if reason in i["reason_ids"]]
+        if readable is not None:
+            for i in items:
+                if i["conversation_id"] not in readable and (i["comment"] or i["tags"]):
+                    i.update(comment=None, tags=[], comment_hidden=True)
         nxt = f"{rows[limit - 1].updated_at}|{rows[limit - 1].id}" if len(rows) > limit else None
         return {"items": items, "next_cursor": nxt}
+
+    @staticmethod
+    def _readable_ids(conn, reader, ids: set[str]) -> set[str]:
+        if not ids:
+            return set()
+        owned = {r.id for r in conn.execute(sa.select(conversations.c.id).where(
+            conversations.c.id.in_(ids), conversations.c.owner_id == reader.id,
+            conversations.c.deleted_at.is_(None)))}
+        shared = {r.conversation_id for r in conn.execute(sa.select(g.members.c.conversation_id).where(
+            g.members.c.conversation_id.in_(ids), sa.or_(
+                sa.and_(g.members.c.principal_type == "user", g.members.c.principal_id.in_([reader.id, reader.email])),
+                sa.and_(g.members.c.principal_type == "group",
+                        g.members.c.principal_id.in_(list(reader.groups) or [""])))))}
+        return owned | shared
 
     def export_feedback(self, fmt: str, **filters) -> tuple[bytes, str]:
         items: list[dict] = []
@@ -732,8 +758,18 @@ class FeedbackService:
         if not ok:
             raise Err(422, "target_unverified", f"The endpoint did not accept the verification call ({receipt}).")
         with self.engine.begin() as conn:
+            fresh = conn.execute(sa.select(targets.c.revision, targets.c.recipient_ref, targets.c.connection_ref)
+                                 .where(targets.c.scope == scope_key, targets.c.id == target_id)).first()
+            if (fresh.recipient_ref, fresh.connection_ref) != (row.recipient_ref, row.connection_ref):
+                raise Err(409, "revision_conflict", "The target changed while it was being verified. Verify again.")
             conn.execute(targets.update().where(targets.c.scope == scope_key, targets.c.id == target_id)
-                         .values(verified_at=_now(), revision=targets.c.revision + 1))
+                         .values(verified_at=_now(), revision=fresh.revision + 1))
+            # Same destination, newly verified: its pending deliveries stay approved.
+            conn.execute(deliveries.update().where(deliveries.c.target_scope == scope_key,
+                                                   deliveries.c.target_id == target_id,
+                                                   deliveries.c.state == "pending",
+                                                   deliveries.c.target_revision == fresh.revision)
+                         .values(target_revision=fresh.revision + 1))
             self._bump(conn, scope_key)
             out = conn.execute(sa.select(targets).where(targets.c.scope == scope_key, targets.c.id == target_id)).first()
         return self._target_json(out)
@@ -753,6 +789,15 @@ class FeedbackService:
                 continue
             with self.engine.begin() as conn:
                 ev = conn.execute(sa.select(notification_events).where(notification_events.c.id == d.event_id)).first()
+                # The target exactly as approved when the delivery was queued: still
+                # enabled, verified and unchanged. Anything else is suppressed.
+                current = conn.execute(sa.select(targets).where(
+                    targets.c.scope == d.target_scope, targets.c.id == d.target_id).with_for_update()).first()
+                if (current is None or current.deleted_at is not None or not current.enabled
+                        or current.verified_at is None or current.revision != d.target_revision):
+                    conn.execute(deliveries.update().where(deliveries.c.id == d[0], deliveries.c.state == "pending")
+                                 .values(state="suppressed", error_code="target_changed", updated_at=now))
+                    continue
                 claimed = conn.execute(deliveries.update().where(deliveries.c.id == d[0], deliveries.c.state == "pending")
                                        .values(state="sending", attempt=d.attempt + 1, updated_at=now)).rowcount
             if not claimed:
@@ -801,7 +846,9 @@ class FeedbackService:
 
 
 # -- webhooks ----------------------------------------------------------------------------------
-def check_webhook_url(url: str) -> None:
+def check_webhook_url(url: str) -> str:
+    """Validate a webhook URL and return the one public address to connect to
+    (every address the name resolves to must be public)."""
     from urllib.parse import urlparse
 
     u = urlparse(url)
@@ -813,8 +860,23 @@ def check_webhook_url(url: str) -> None:
         raise Err(422, "validation_failed", "That webhook host does not resolve.")
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+                or ip.is_unspecified or not ip.is_global):
             raise Err(422, "validation_failed", "Webhooks can't point at private or local addresses.")
+    return infos[0][4][0]
+
+
+def pinned_request(url: str, address: str) -> tuple[str, dict, dict]:
+    """The URL rewritten to the checked address, with the Host header and TLS
+    server name of the original name, so a second DNS answer can't redirect
+    the connection while the certificate is still verified for the name."""
+    from urllib.parse import urlparse, urlunparse
+
+    u = urlparse(url)
+    host = f"[{address}]" if ":" in address else address
+    netloc = host + (f":{u.port}" if u.port else "")
+    return (urlunparse(u._replace(netloc=netloc)),
+            {"host": u.hostname + (f":{u.port}" if u.port else "")}, {"sni_hostname": u.hostname})
 
 
 def sign(secret: bytes, timestamp: str, body: bytes) -> str:
@@ -825,17 +887,19 @@ def send_webhook(target, payload: dict) -> tuple[bool, str]:
     """POST a signed payload (no redirects; the address is checked again)."""
     import httpx
 
-    check_webhook_url(target.recipient_ref)
+    address = check_webhook_url(target.recipient_ref)
     ref = str(target.connection_ref or "")
     secret = os.environ.get(ref[4:], "") if ref.startswith("env:") else ""
     if not secret:
         return False, "signing_secret_missing"
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     ts = str(int(time.time()))
+    url, host, extensions = pinned_request(target.recipient_ref, address)
     try:
-        r = httpx.post(target.recipient_ref, content=body, timeout=10, follow_redirects=False, headers={
-            "content-type": "application/json", "x-hubzoid-timestamp": ts,
-            "x-hubzoid-signature": sign(secret.encode(), ts, body)})
+        with httpx.Client(timeout=10, follow_redirects=False) as client:
+            r = client.post(url, content=body, extensions=extensions, headers={
+                **host, "content-type": "application/json", "x-hubzoid-timestamp": ts,
+                "x-hubzoid-signature": sign(secret.encode(), ts, body)})
     except httpx.TimeoutException as exc:
         raise TimeoutError from exc
     except httpx.HTTPError as exc:

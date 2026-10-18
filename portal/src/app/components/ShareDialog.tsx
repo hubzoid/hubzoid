@@ -112,7 +112,8 @@ export function ShareDialog({
   const publish = () =>
     run(async () => {
       if (!preview) return;
-      const share = await post<Share>("/api/shares", { preview_id: preview.preview_id, digest: preview.digest });
+      const share = await post<Share>("/api/shares", { preview_id: preview.preview_id, digest: preview.digest },
+        { headers: { "Idempotency-Key": crypto.randomUUID() } });
       setPreview(null);
       if (share.url && (await copyText(share.url))) toast(t.share.copied);
       reload();

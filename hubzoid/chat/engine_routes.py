@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import graph as g
@@ -43,6 +43,8 @@ MESSAGE_BODY_LIMIT = 8 * 1024 * 1024
 SMALL_BODY_LIMIT = 256 * 1024
 LIVE_INTERVAL = 0.1
 HEARTBEAT_SECONDS = 10.0
+#: How often a worker looks for stops recorded elsewhere (another worker, the CLI).
+CANCEL_POLL_SECONDS = 1.0
 KEEPALIVE_SECONDS = 15.0
 _WAKE = object()
 
@@ -161,12 +163,15 @@ class Orchestrator:
             slot = _request_ctx.SessionSlot(
                 resume_id=resume, delta_prompt=user_text(self.ctx.hub_dir, key, path[-1].get("content"))
                 if resume and path else None)
+            # Tool admission: no new step once the run was stopped or lost its lease.
+            slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
                                       run_id=plan.run_id, branch_id=plan.branch_id, fence=plan.fence,
                                       prefix=plan.prefix, on_update=self._update, on_finish=self._finished,
-                                      session_slot=slot)
+                                      session_slot=slot,
+                                      guard=lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence))
         except Exception as exc:  # noqa: BLE001 - the admission is released, never left running
             log.exception("chat: could not start run %s", plan.run_id)
             await db(self.ctx.store.update_message, plan.message_id, status="error",
@@ -221,6 +226,8 @@ class Orchestrator:
             return
         slot = run.session_slot
         try:
+            if run.fenced_out:
+                raise RuntimeError("the run lost its branch lease")
             await db(self.engine.record_binding, branch_id=run.branch_id, conversation_id=run.conversation_id,
                      runtime=getattr(slot, "runtime", None), session_id=getattr(slot, "session_id", None),
                      head_message_id=run.message_id, config_digest=self.config_digest(run.owner_id),
@@ -239,20 +246,36 @@ class Orchestrator:
             self._beat = asyncio.ensure_future(self._heartbeat())
 
     async def _heartbeat(self) -> None:
-        """Renew this bridge's branch leases; a run whose lease was lost stops."""
+        """While this bridge writes replies: every second, stop the ones whose
+        stop was recorded elsewhere; every ten, renew their branch leases (a run
+        whose lease was lost stops and writes nothing more), end expired
+        temporary conversations and recover runs of workers that are gone."""
+        ticks = 0
         while True:
-            await asyncio.sleep(HEARTBEAT_SECONDS)
+            await asyncio.sleep(CANCEL_POLL_SECONDS)
+            ticks += 1
             runs = [r for r in self.ctx.runs.active_runs() if r.run_id]
+            try:
+                for rid in await db(self.engine.cancel_requested, [r.run_id for r in runs]):
+                    run = next(r for r in runs if r.run_id == rid)
+                    await self.ctx.runs.cancel(run.message_id)
+            except Exception:  # noqa: BLE001
+                log.warning("chat: stop check failed", exc_info=True)
+            if ticks % int(HEARTBEAT_SECONDS / CANCEL_POLL_SECONDS):
+                continue
             for r in runs:
                 ok = await db(g.renew_lease, self.engine.engine, r.branch_id, r.run_id, r.fence)
                 if not ok:
                     log.warning("chat: run %s lost its branch lease; stopping it", r.run_id)
+                    r.fenced_out = True
                     await self.ctx.runs.cancel(r.message_id)
             try:
                 await db(self.engine.expire_temporary)
+                if await db(self.engine.sweep):
+                    await db(self.ctx.runs.sweep)
             except Exception:  # noqa: BLE001
-                log.warning("chat: temporary-conversation sweep failed", exc_info=True)
-            if not runs:
+                log.warning("chat: maintenance sweep failed", exc_info=True)
+            if not runs and not await db(self.engine.has_active_runs):
                 return
 
 
@@ -270,6 +293,26 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
 
     def key_of(request: Request) -> str | None:
         return request.headers.get("idempotency-key")
+
+    def admission(actor: Actor) -> None:
+        """May this person start a reply now: hub use and the current terms.
+        Used before direct operations, queued messages, and again when queued
+        work leaves the queue."""
+        from fastapi import HTTPException
+
+        from .common import check_use_hub
+        from .routes import terms_required
+
+        try:
+            check_use_hub(ctx.hub_dir, actor.email)
+            needs_terms = terms_required(ctx.hub_dir, actor.id)
+        except HTTPException as exc:
+            raise g.GraphError(exc.status_code, exc.detail["code"], exc.detail["message"])
+        if needs_terms:
+            raise g.GraphError(403, "terms_required", "Accept the current terms of use first. Reload the page "
+                                                      "to see them.")
+
+    engine.admission = admission
 
     def live_content(message_id: str):
         run = ctx.runs.active(message_id)
@@ -302,11 +345,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         if not key:
             raise error(400, "invalid_request", "Send an Idempotency-Key header with every operation.")
         if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize"):
-            from .routes import _require_terms
-
-            user = SimpleNamespace(id=actor.id, email=actor.email)
-            await ctx.may_use_hub(user)
-            await _require_terms(ctx.hub_dir, user)
+            await call(admission, actor)
         out, plan = await call(engine.submit, cid, actor, body, key=key)
         await orch.launch(plan)
         if body.get("kind") == "fork" and not out.replayed and out.status == 201:
@@ -325,6 +364,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         key = key_of(request)
         if not key:
             raise error(400, "invalid_request", "Send an Idempotency-Key header to queue a message.")
+        await call(admission, actor)
         out, plan = await call(engine.enqueue, cid, actor, body, key=key)
         await orch.launch(plan)
         return JSONResponse(out.body, status_code=out.status)
@@ -402,12 +442,18 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
                         item = _WAKE
                     if await request.is_disconnected():
                         return
+                    # Every delivery, persisted or live, goes only to someone who
+                    # may read now: their session still valid and their current
+                    # grants and groups (re-resolved, never the ones at connect).
+                    try:
+                        now_actor = await actor_of(request)
+                        if now_actor.id != actor.id:
+                            raise g.GraphError(403, "permission_denied", "The signed-in person changed.")
+                        await asyncio.to_thread(engine.readable, cid, now_actor)
+                    except (g.GraphError, HTTPException):
+                        yield _sse({"type": "access.revoked"}, None)
+                        return
                     if item is _WAKE:
-                        try:
-                            await asyncio.to_thread(engine.readable, cid, actor)
-                        except g.GraphError:
-                            yield _sse({"type": "access.revoked"}, None)
-                            return
                         batch = await asyncio.to_thread(g.events_after, engine.engine, cid, cursor)
                     else:
                         yield _sse(item, None)

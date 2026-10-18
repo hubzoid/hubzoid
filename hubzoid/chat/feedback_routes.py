@@ -83,23 +83,24 @@ def mount(app: FastAPI, ctx) -> FeedbackService:
 
     @app.get("/api/chat/feedback")
     async def list_feedback(request: Request):
-        user, _ = await actor_of(request)
+        user, actor = await actor_of(request)
         if not await manager(user, "chat.feedback.read"):
             raise authz.denied("chat.feedback.read")
         q = request.query_params
         return await call(svc.list_feedback, agent_id=q.get("agent_id"), rating=q.get("rating"),
-                          reason=q.get("reason"), limit=int(q.get("limit") or 50), cursor=q.get("cursor"))
+                          reason=q.get("reason"), limit=int(q.get("limit") or 50), cursor=q.get("cursor"),
+                          reader=actor)
 
     @app.get("/api/chat/feedback/export")
     async def export_feedback(request: Request):
-        user, _ = await actor_of(request)
+        user, actor = await actor_of(request)
         if not await manager(user, "chat.feedback.read"):
             raise authz.denied("chat.feedback.read")
         fmt = request.query_params.get("format") or "json"
         if fmt not in ("json", "csv"):
             raise error(422, "validation_failed", "format is json or csv.")
         data, media = await call(svc.export_feedback, fmt, agent_id=request.query_params.get("agent_id"),
-                                 rating=request.query_params.get("rating"))
+                                 rating=request.query_params.get("rating"), reader=actor)
         return Response(data, media_type=media, headers={
             "Content-Disposition": f'attachment; filename="feedback.{fmt}"', "Cache-Control": "no-store"})
 

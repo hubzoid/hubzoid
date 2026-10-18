@@ -322,6 +322,9 @@ class SessionSlot:
         self.session_id: str | None = None
         self.resumed = False
         self.runtime: str | None = None
+        #: () -> bool: may the run start another tool step (not stopped, still
+        #: owning its branch). A runtime with a pre-tool hook refuses the step.
+        self.guard = None
 
 
 _current_session_slot: ContextVar = ContextVar("hubzoid_session_slot", default=None)

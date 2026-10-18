@@ -206,9 +206,10 @@ def conv_delete(conversation_id: str, hub: Path = HUB,
 @operations_app.command("submit")
 def op_submit(hub: Path = HUB, conversation: str = typer.Option(..., "--conversation"),
               file: Path = typer.Option(..., "--file", help="The operation as JSON (kind, branch_id, ...)."),
-              user: str = USER, key: str = KEY, no_wait: bool = typer.Option(False, "--no-wait"),
-              as_json: bool = JSON) -> None:
-    """Run send, respond, revise, regenerate, continue, delete, fork or synthesize."""
+              user: str = USER, key: str = KEY, as_json: bool = JSON) -> None:
+    """Run send, respond, revise, regenerate, continue, delete, fork or synthesize.
+    A reply is written before the command returns (the CLI has no background
+    worker; queue a message through a running hub to have it sent later)."""
     loc = _local(hub, as_json, user)
     body = _read_file(file, as_json)
     with loc.guard():
@@ -216,7 +217,7 @@ def op_submit(hub: Path = HUB, conversation: str = typer.Option(..., "--conversa
     result = dict(out.body)
     if out.replayed:
         result["replayed"] = True
-    if plan is not None and not no_wait:
+    if plan is not None:
         with loc.guard():
             result["run"] = loc.run_plan(plan)
         cc.emit(result, as_json)

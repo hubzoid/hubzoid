@@ -206,11 +206,19 @@ def mount(app: FastAPI, ctx) -> None:
     @app.post("/api/chat/imports/preview")
     async def import_preview(request: Request):
         actor = await actor_of(request, True)
-        form = await request.form()
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > port.MAX_UPLOAD + 1024 * 1024:
+            raise error(413, "request_too_large", "That file is too large to import.")
+        # The form parser spools file parts to disk; only a checked size is read in.
+        form = await request.form(max_files=1, max_fields=4)
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
             raise error(422, "validation_failed", "Upload the export as the multipart field 'file'.")
-        data = await upload.read()
+        if upload.size is not None and upload.size > port.MAX_UPLOAD:
+            raise error(413, "request_too_large", "That file is too large to import.")
+        data = await upload.read(port.MAX_UPLOAD + 1)
+        if len(data) > port.MAX_UPLOAD:
+            raise error(413, "request_too_large", "That file is too large to import.")
         fmt, records, blobs, problems = await call(port.parse, data)
         objects = port.preview(records, problems, blobs)
         meta = await asyncio.to_thread(imports.save, actor.id, data, fmt, objects)
@@ -240,7 +248,8 @@ def mount(app: FastAPI, ctx) -> None:
         await ctx.may_use_hub(SimpleNamespace(email=actor.email))
         result = await call(port.apply, engine.engine, ctx.hub_dir, ctx.hub, actor_id=actor.id,
                             actor_email=actor.email, agent=ctx.model_label, records=records, blobs=blobs,
-                            dispositions=effective, operation_id=str(uuid.uuid4()))
+                            dispositions=effective, operation_id=str(uuid.uuid4()), key=f"import:{meta['id']}",
+                            request={"digest": body.get("digest"), "dispositions": dispositions})
         await asyncio.to_thread(imports.done, meta["id"], result)
         for cid in result["conversations"].values():
             search.schedule(cid)

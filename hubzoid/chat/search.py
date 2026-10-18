@@ -208,6 +208,9 @@ class SearchService:
             sa.and_(g.members.c.principal_type == "group", g.members.c.principal_id.in_(list(actor.groups) or [""]))))
         visible = sa.select(conversations.c.id).where(
             conversations.c.hub == self.hub, conversations.c.deleted_at.is_(None),
+            # A temporary conversation past its expiry is gone, cleaned up or not.
+            sa.or_(conversations.c.temporary == 0, conversations.c.expires_at.is_(None),
+                   conversations.c.expires_at > time.time()),
             sa.or_(conversations.c.owner_id == actor.id, conversations.c.id.in_(member)))
         place = sa.select(placements.c.conversation_id).where(placements.c.user_id == actor.id)
         if archived == "exclude":

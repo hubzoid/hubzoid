@@ -313,46 +313,56 @@ class SharingService:
         return {"preview_id": pid, "digest": digest, "expires_in_seconds": PREVIEW_SECONDS, "projection": payload,
                 "omissions": omitted, "source_revision": rev}
 
-    def publish(self, actor_id: str, body: dict) -> dict:
-        with self.engine.begin() as conn:
-            pv = conn.execute(sa.select(previews).where(previews.c.id == body.get("preview_id"),
-                                                        previews.c.actor_id == actor_id)).first()
-            if pv is None:
-                raise Err(404, "not_found", "That preview was not found.")
-            if pv.expires_at < _now():
-                raise Err(409, "preview_expired", "The preview expired. Preview again.")
-            if pv.payload_hash != body.get("digest"):
-                raise Err(409, "snapshot_changed", "Publish exactly the preview you reviewed.")
-            rev = conn.execute(sa.select(conversations.c.graph_revision).where(
-                conversations.c.id == pv.conversation_id)).scalar() or 0
-            if rev != pv.source_revision:
-                raise Err(409, "snapshot_changed", "The conversation changed since the preview. Preview again.")
-            payload = json.loads(pv.payload_json)
-            cfg = self.settings()
-            if payload["audience"]["type"] == "public" and not cfg["public_enabled"]:
-                raise Err(403, "public_disabled", "Public links are off for this deployment.")
-            active = conn.execute(sa.select(sa.func.count()).select_from(manifests).where(
-                manifests.c.conversation_id == pv.conversation_id, manifests.c.status == "active")).scalar() or 0
-            if active >= cfg["max_active_shares_per_conversation"]:
-                raise Err(429, "limit_reached", "This conversation has the most links allowed. Revoke one first.")
-            existing = conn.execute(sa.select(manifests).where(manifests.c.snapshot_hash == pv.payload_hash,
-                                                               manifests.c.owner_id == actor_id,
-                                                               manifests.c.status == "active")).first()
-            if existing is not None:  # a retry of the same publication
-                return self._manifest_json(existing, with_token=True)
-            from .. import secretbox
+    def _idempotent(self, actor_id: str, route: str, key: str | None, body, change, kind: str):
+        from ..control import deploy, idempotency
 
-            token = secrets.token_urlsafe(32)
-            sid = str(uuid.uuid4())
-            conn.execute(manifests.insert().values(
-                id=sid, hub_id=self.hub, conversation_id=pv.conversation_id, owner_id=actor_id, revision=1,
-                status="active", audience_type=payload["audience"]["type"], audience_json=json.dumps(payload["audience"]),
-                snapshot_hash=pv.payload_hash, projection_json=pv.payload_json, source_graph_revision=rev,
-                allow_copy=1 if payload["allow_copy"] else 0, expires_at=payload["expires_at"],
-                token_hash=token_hash(token), token_box=secretbox.encrypt(self.hub_dir, token), created_at=_now(),
-                revoked_at=None))
-            row = conn.execute(sa.select(manifests).where(manifests.c.id == sid)).first()
+        return idempotency.run(self.engine, deployment_id=deploy.deployment_id(self.hub_dir), actor_id=actor_id,
+                               route=route, key=key, body=body, change=change, hub_id=self.hub, kind=kind)
+
+    def publish(self, actor_id: str, body: dict, *, key: str | None = None) -> dict:
+        """Publish a reviewed preview (used once). With an Idempotency-Key a
+        retry returns the same link; the token itself is never kept in the
+        idempotency record, only the share id."""
+        out = self._idempotent(actor_id, "POST /api/shares", key, body,
+                               lambda conn: (201, {"id": self._publish(conn, actor_id, body)}), "chat.share.publish")
+        with self.engine.connect() as conn:
+            row = self._by_id(conn, out.body["id"])
         return self._manifest_json(row, with_token=True)
+
+    def _publish(self, conn, actor_id: str, body: dict) -> str:
+        pv = conn.execute(sa.select(previews).where(previews.c.id == body.get("preview_id"),
+                                                    previews.c.actor_id == actor_id)).first()
+        if pv is None:
+            raise Err(404, "not_found", "That preview was not found, or it was already published.")
+        if pv.expires_at < _now():
+            raise Err(409, "preview_expired", "The preview expired. Preview again.")
+        if pv.payload_hash != body.get("digest"):
+            raise Err(409, "snapshot_changed", "Publish exactly the preview you reviewed.")
+        rev = conn.execute(sa.select(conversations.c.graph_revision).where(
+            conversations.c.id == pv.conversation_id)).scalar() or 0
+        if rev != pv.source_revision:
+            raise Err(409, "snapshot_changed", "The conversation changed since the preview. Preview again.")
+        payload = json.loads(pv.payload_json)
+        cfg = self.settings()
+        if payload["audience"]["type"] == "public" and not cfg["public_enabled"]:
+            raise Err(403, "public_disabled", "Public links are off for this deployment.")
+        active = conn.execute(sa.select(sa.func.count()).select_from(manifests).where(
+            manifests.c.conversation_id == pv.conversation_id, manifests.c.status == "active")).scalar() or 0
+        if active >= cfg["max_active_shares_per_conversation"]:
+            raise Err(429, "limit_reached", "This conversation has the most links allowed. Revoke one first.")
+        from .. import secretbox
+
+        token = secrets.token_urlsafe(32)
+        sid = str(uuid.uuid4())
+        conn.execute(manifests.insert().values(
+            id=sid, hub_id=self.hub, conversation_id=pv.conversation_id, owner_id=actor_id, revision=1,
+            status="active", audience_type=payload["audience"]["type"], audience_json=json.dumps(payload["audience"]),
+            snapshot_hash=pv.payload_hash, projection_json=pv.payload_json, source_graph_revision=rev,
+            allow_copy=1 if payload["allow_copy"] else 0, expires_at=payload["expires_at"],
+            token_hash=token_hash(token), token_box=secretbox.encrypt(self.hub_dir, token), created_at=_now(),
+            revoked_at=None))
+        conn.execute(previews.delete().where(previews.c.id == pv.id))  # a preview publishes once
+        return sid
 
     def _manifest_json(self, r, *, with_token: bool = False) -> dict:
         out = {"id": r.id, "conversation_id": r.conversation_id, "revision": r.revision, "status": r.status,
@@ -376,14 +386,16 @@ class SharingService:
             rows = conn.execute(q.order_by(manifests.c.created_at.desc()).limit(200)).all()
         return [self._manifest_json(r, with_token=owner_id is not None and r.status == "active") for r in rows]
 
-    def _by_id(self, conn, share_id: str):
-        return conn.execute(sa.select(manifests).where(manifests.c.id == share_id)).first()
+    def _by_id(self, conn, share_id: str, *, lock: bool = False):
+        """A link of this hub only: managing another hub's links needs that hub."""
+        q = sa.select(manifests).where(manifests.c.id == share_id, manifests.c.hub_id == self.hub)
+        return conn.execute(q.with_for_update() if lock else q).first()
 
     def change(self, share_id: str, actor_id: str, body: dict, *, manager: bool) -> dict:
         """Narrow only: audience public -> deployment -> named, copy off, earlier expiry."""
         order = {"public": 3, "deployment": 2, "named": 1}
         with self.engine.begin() as conn:
-            r = self._by_id(conn, share_id)
+            r = self._by_id(conn, share_id, lock=True)
             if r is None or (r.owner_id != actor_id and not manager):
                 raise Err(404, "not_found", "That link was not found.")
             if r.revision != body.get("expected_revision"):
@@ -411,7 +423,7 @@ class SharingService:
 
     def revoke(self, share_id: str, actor_id: str, expected_revision: int | None, *, manager: bool) -> None:
         with self.engine.begin() as conn:
-            r = self._by_id(conn, share_id)
+            r = self._by_id(conn, share_id, lock=True)
             if r is None or (r.owner_id != actor_id and not manager):
                 raise Err(404, "not_found", "That link was not found.")
             if r.status == "revoked":
@@ -427,9 +439,13 @@ class SharingService:
         """The share behind a link, if this reader may open it now. Revoked,
         expired, unknown and not-for-you all look the same."""
         with self.engine.connect() as conn:
-            r = conn.execute(sa.select(manifests).where(manifests.c.token_hash == token_hash(token))).first()
-            conv = conn.execute(sa.select(conversations.c.deleted_at, conversations.c.owner_id).where(
-                conversations.c.id == r.conversation_id)).first() if r else None
+            return self._readable(conn, token, reader_id)
+
+    def _readable(self, conn, token: str, reader_id: str | None, *, lock: bool = False) -> dict:
+        q = sa.select(manifests).where(manifests.c.token_hash == token_hash(token))
+        r = conn.execute(q.with_for_update() if lock else q).first()
+        conv = conn.execute(sa.select(conversations.c.deleted_at, conversations.c.owner_id).where(
+            conversations.c.id == r.conversation_id)).first() if r else None
         gone = Err(404, "not_found", "This shared conversation is unavailable.")
         if r is None or r.status != "active" or conv is None or conv.deleted_at is not None:
             raise gone
@@ -463,44 +479,58 @@ class SharingService:
         return {"digest": canonical.digest(payload), **payload,
                 "note": "The copy is your own conversation. It stays yours even if this link is revoked."}
 
-    def copy(self, token: str, reader_id: str, reader_email: str, agent: str, digest: str) -> dict:
-        preview = self.copy_preview(token, reader_id)
-        if preview["digest"] != digest:
-            raise Err(409, "snapshot_changed", "The link changed. Review the copy again.")
-        got = self.readable(token, reader_id)
+    def copy(self, token: str, reader_id: str, reader_email: str, agent: str, digest: str, *,
+             key: str | None = None) -> dict:
+        """An independent copy for the reader. Access, the link's revision and
+        copy permission are checked again inside the copy's own transaction
+        (the link row locked), so a revoke that lands first always wins. Each
+        request makes its own copy; an Idempotency-Key makes a retry return it."""
+        out = self._idempotent(reader_id, f"POST /api/shares/{token_hash(token)[:16]}/copies", key,
+                               {"digest": digest},
+                               lambda conn: (201, self._copy(conn, token, reader_id, reader_email, agent, digest)),
+                               "chat.share.copy")
+        return out.body
+
+    def _copy(self, conn, token: str, reader_id: str, reader_email: str, agent: str, digest: str) -> dict:
+        # Take the link's write lock first (a no-op update: SQLite's write lock,
+        # PostgreSQL's row lock), so the access read below is the one that counts.
+        conn.execute(manifests.update().where(manifests.c.token_hash == token_hash(token))
+                     .values(revision=manifests.c.revision))
+        got = self._readable(conn, token, reader_id, lock=True)
         r, p = got["row"], got["projection"]
-        with self.engine.begin() as conn:
-            done = conn.execute(sa.select(copies).where(copies.c.share_id == r.id, copies.c.actor_id == reader_id,
-                                                        copies.c.digest == digest, copies.c.status == "complete")).first()
-            if done is not None:
-                return {"operation_id": done.id, "status": "complete", "new_conversation_id": done.new_conversation_id}
-            op_id = str(uuid.uuid4())
-            cid = new_id("c_")
-            t = _now()
-            conn.execute(conversations.insert().values(
-                id=cid, owner_id=reader_id, owner_email=reader_email, hub=self.hub, agent=agent,
-                title=(p.get("title") or "Shared conversation") + " (copy)", title_source="user", archived=0,
-                head_id=None, source="web", created_at=t, updated_at=t, graph_revision=0, temporary=0,
-                expires_at=None, deleted_at=None))
-            parent = None
-            for m in p["messages"]:
-                mid = new_id("m_")
-                content = [x for x in m["content"] if x.get("type") == "text"]
-                conn.execute(messages.insert().values(
-                    id=mid, conversation_id=cid, parent_id=parent, role=m["role"], content=_dumps(content),
-                    text="\n\n".join(x["text"] for x in content), status="complete", error=None, model=None,
-                    usage=None, created_at=m.get("created_at") or t, updated_at=t, branch_id=None, revises_id=None,
-                    author_id=reader_id, editor_id=None, run_id=None, requested_model=None, historical_only=1,
-                    context_changed=0, deleted_at=None))
-                conn.execute(g.lineage.insert().values(new_message_id=mid, source_conversation_id=r.conversation_id,
-                                                       source_message_id=m["id"], copy_operation_id=op_id, created_at=t))
-                parent = mid
-            g.ensure_initial_branch(conn, {"id": cid, "owner_id": reader_id}, reader_id)
-            g.set_view(conn, cid, reader_id, None, parent)
-            conn.execute(copies.insert().values(id=op_id, actor_id=reader_id, share_id=r.id, digest=digest,
-                                                status="complete", new_conversation_id=cid,
-                                                omissions_json=json.dumps(p.get("omissions") or []), error_code=None,
-                                                created_at=t))
+        if not r.allow_copy or not self.settings()["copy_enabled"]:
+            raise Err(403, "copy_disabled", "Copying this conversation is not allowed.")
+        payload = {"share": r.id, "share_revision": r.revision, "reader": reader_id,
+                   "messages": len(p["messages"]), "omissions": p.get("omissions") or []}
+        if canonical.digest(payload) != digest:
+            raise Err(409, "snapshot_changed", "The link changed. Review the copy again.")
+        op_id = str(uuid.uuid4())
+        cid = new_id("c_")
+        t = _now()
+        conn.execute(conversations.insert().values(
+            id=cid, owner_id=reader_id, owner_email=reader_email, hub=self.hub, agent=agent,
+            title=(p.get("title") or "Shared conversation") + " (copy)", title_source="user", archived=0,
+            head_id=None, source="web", created_at=t, updated_at=t, graph_revision=0, temporary=0,
+            expires_at=None, deleted_at=None))
+        parent = None
+        for m in p["messages"]:
+            mid = new_id("m_")
+            content = [x for x in m["content"] if x.get("type") == "text"]
+            conn.execute(messages.insert().values(
+                id=mid, conversation_id=cid, parent_id=parent, role=m["role"], content=_dumps(content),
+                text="\n\n".join(x["text"] for x in content), status="complete", error=None, model=None,
+                usage=None, created_at=m.get("created_at") or t, updated_at=t, branch_id=None, revises_id=None,
+                author_id=reader_id, editor_id=None, run_id=None, requested_model=None, historical_only=1,
+                context_changed=0, deleted_at=None))
+            conn.execute(g.lineage.insert().values(new_message_id=mid, source_conversation_id=r.conversation_id,
+                                                   source_message_id=m["id"], copy_operation_id=op_id, created_at=t))
+            parent = mid
+        g.ensure_initial_branch(conn, {"id": cid, "owner_id": reader_id}, reader_id)
+        g.set_view(conn, cid, reader_id, None, parent)
+        conn.execute(copies.insert().values(id=op_id, actor_id=reader_id, share_id=r.id, digest=digest,
+                                            status="complete", new_conversation_id=cid,
+                                            omissions_json=json.dumps(p.get("omissions") or []), error_code=None,
+                                            created_at=t))
         return {"operation_id": op_id, "status": "complete", "new_conversation_id": cid}
 
     def operation(self, op_id: str, actor_id: str) -> dict:

@@ -129,6 +129,22 @@ class RunPlan:
 Err = g.GraphError
 
 
+def _owner_gone(owner: str) -> bool:
+    """A lease holder that demonstrably no longer exists: a process of this
+    host (not this one) that is not running. Other hosts wait for expiry."""
+    host, _, rest = (owner or "").partition(":")
+    pid = rest.partition(":")[0]
+    if owner == WORKER_ID or host != socket.gethostname() or not pid.isdigit() or int(pid) == os.getpid():
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _now() -> float:
     return time.time()
 
@@ -180,6 +196,9 @@ class ChatEngine:
         self.notify = lambda conversation_id: None
         #: called after a run reached a terminal state (notices, HUB-76)
         self.on_terminal = None
+        #: (actor) -> None, raising GraphError when this person may not start a
+        #: reply now (hub use, current terms). Checked again when queued work leaves.
+        self.admission = None
 
     # -- settings ---------------------------------------------------------------------
     def limits(self) -> dict:
@@ -242,6 +261,11 @@ class ChatEngine:
                             conversation_id: str | None = None, key: str | None = None) -> dict:
         def change(conn):
             cid = conversation_id or new_id("c_")
+            # Web conversation ids are unique ignoring case (their folders are
+            # web-<id>): a case variant of someone's id is refused, never shared.
+            if conn.execute(sa.select(conversations.c.id).where(
+                    sa.func.lower(conversations.c.id) == cid.lower())).first() is not None:
+                raise Err(409, "id_conflict", "That conversation id is already in use.")
             t = _now()
             conn.execute(conversations.insert().values(
                 id=cid, owner_id=actor.id, owner_email=actor.email, hub=self.hub, agent=agent, title=None,
@@ -763,11 +787,17 @@ class ChatEngine:
         reparent = {m: links[message_id] for m, p in sorted(links.items()) if p in children}
         share_ids = sorted(r.id for r in conn.execute(sa.select(shares.c.id).where(
             shares.c.conversation_id == conv["id"])))
+        from .sharing import manifests
+
+        gone = set(removed)
+        snapshot_links = sorted(r.id for r in conn.execute(sa.select(manifests.c.id, manifests.c.projection_json).where(
+            manifests.c.conversation_id == conv["id"], manifests.c.status == "active"))
+            if gone & {m.get("id") for m in json.loads(r.projection_json).get("messages", [])})
         affected_branches = sorted(r.id for r in conn.execute(sa.select(g.branches.c.id).where(
             g.branches.c.conversation_id == conv["id"], g.branches.c.head_id.in_(removed))))
         rev = conv.get("graph_revision") or 0
         body = {"message_id": message_id, "removed": removed, "reparented": reparent, "shares": share_ids,
-                "branches_moved": affected_branches, "graph_revision": rev}
+                "snapshot_links": snapshot_links, "branches_moved": affected_branches, "graph_revision": rev}
         body["preview_hash"] = canonical.digest(body)
         return body
 
@@ -799,7 +829,9 @@ class ChatEngine:
         for mid in preview["reparented"]:
             conn.execute(messages.update().where(messages.c.id == mid)
                          .values(parent_id=target_parent, context_changed=1))
-        conn.execute(g.bindings.delete().where(g.bindings.c.branch_id.in_(preview["branches_moved"])))
+        # Any branch whose history ran through the removed messages may still hold
+        # them in its native session: every binding of the conversation ends.
+        conn.execute(g.bindings.delete().where(g.bindings.c.conversation_id == conv["id"]))
         for bid in preview["branches_moved"]:
             conn.execute(g.branches.update().where(g.branches.c.id == bid)
                          .values(head_id=target_parent, revision=g.branches.c.revision + 1, updated_at=t))
@@ -810,11 +842,17 @@ class ChatEngine:
                      .values(view_head_id=target_parent, revision=g.views.c.revision + 1, updated_at=t))
         if preview["shares"]:
             conn.execute(shares.delete().where(shares.c.id.in_(preview["shares"])))
+        if preview["snapshot_links"]:
+            from .sharing import manifests
+
+            conn.execute(manifests.update().where(manifests.c.id.in_(preview["snapshot_links"]),
+                                                  manifests.c.status == "active")
+                         .values(status="revoked", revoked_at=t, revision=manifests.c.revision + 1))
         self._purge_events(conn, conv["id"], set(preview["removed"]))
         g.emit(conn, conv["id"], "graph.deleted", preview["message_id"],
                {"removed": preview["removed"], "reparented": preview["reparented"]})
         return 200, {"removed": preview["removed"], "reparented": preview["reparented"],
-                     "shares_removed": preview["shares"]}, None
+                     "shares_removed": preview["shares"], "snapshot_links_revoked": preview["snapshot_links"]}, None
 
     @staticmethod
     def _purge_events(conn, conversation_id: str, removed: set[str]) -> None:
@@ -934,6 +972,32 @@ class ChatEngine:
                    "conversation_id": r.conversation_id}
         self.notify(out["conversation_id"])
         return out
+
+    def run_state(self, run_id: str, branch_id: str, fence: int) -> str:
+        """Whether a run may go on writing: ``ok``, ``cancel`` (a stop was
+        recorded, possibly by another worker) or ``lost`` (its branch lease is
+        gone or now belongs to someone else: write nothing more)."""
+        with self.engine.connect() as conn:
+            lease = conn.execute(sa.select(g.leases.c.run_id, g.leases.c.fence).where(
+                g.leases.c.branch_id == branch_id)).first()
+            r = conn.execute(sa.select(g.runs.c.status, g.runs.c.cancel_requested).where(g.runs.c.id == run_id)).first()
+        if lease is None or lease.run_id != run_id or lease.fence != fence or r is None or r.status in g.TERMINAL_RUN:
+            return "lost"
+        return "cancel" if r.cancel_requested else "ok"
+
+    def has_active_runs(self) -> bool:
+        with self.engine.connect() as conn:
+            own = sa.select(conversations.c.id).where(conversations.c.hub == self.hub)
+            return conn.execute(sa.select(g.runs.c.id).where(g.runs.c.conversation_id.in_(own),
+                                                             g.runs.c.status.in_(g.ACTIVE_RUN)).limit(1)).first() \
+                is not None
+
+    def cancel_requested(self, run_ids: list[str]) -> list[str]:
+        if not run_ids:
+            return []
+        with self.engine.connect() as conn:
+            return [r.id for r in conn.execute(sa.select(g.runs.c.id).where(
+                g.runs.c.id.in_(run_ids), g.runs.c.cancel_requested == 1))]
 
     def _park(self, conn, conversation_id: str, branch_id: str, reason: str, t: float) -> None:
         conn.execute(g.branches.update().where(g.branches.c.id == branch_id)
@@ -1183,8 +1247,16 @@ class ChatEngine:
                     if claimed != 1:
                         continue
                     head = g.branch_row(conn, branch_id).head_id
-                email = conv["owner_email"] if conv["owner_id"] == it.author_id else ""
-                actor = Actor(id=it.author_id, email=email, groups=frozenset(self.groups_for(email)))
+                    # Only the replies this queue was waiting for may come between
+                    # the message's acknowledged parent and the head; anything
+                    # else (a moved head, an edit, a deletion) needs review.
+                    if frozen.get("parent_id") and not self._descends(conn, b.conversation_id, head,
+                                                                      frozen["parent_id"]):
+                        raise Err(409, "context_changed", "The conversation changed while this message waited. "
+                                                          "Review it, then send it again.")
+                actor = self._author(conv, it.author_id)
+                if self.admission is not None:
+                    self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,
                       "model_selection": frozen.get("model_selection")}
                 out, plan = self.submit(it.conversation_id, actor, {"kind": "send", "content": frozen["content"],
@@ -1205,6 +1277,27 @@ class ChatEngine:
                 self.notify(it.conversation_id)
                 return None
         return None
+
+    @staticmethod
+    def _descends(conn, conversation_id: str, head: str | None, ancestor: str) -> bool:
+        rows = dict(conn.execute(sa.select(messages.c.id, messages.c.parent_id).where(
+            messages.c.conversation_id == conversation_id, messages.c.deleted_at.is_(None))).all())
+        node, seen = head, set()
+        while node is not None and node not in seen:
+            if node == ancestor:
+                return True
+            seen.add(node)
+            node = rows.get(node)
+        return False
+
+    def _author(self, conv: dict, author_id: str) -> Actor:
+        if conv["owner_id"] == author_id:
+            email = conv.get("owner_email") or ""
+        else:
+            from ..auth import users
+
+            email = ((users.get(self.hub_dir, author_id) or {}).get("email") or "").lower()
+        return Actor(id=author_id, email=email, groups=frozenset(self.groups_for(email)))
 
     # -- native runtime sessions ----------------------------------------------------------
     def binding_for(self, plan: RunPlan, config_digest: str) -> str | None:
@@ -1237,28 +1330,36 @@ class ChatEngine:
 
     # -- recovery ---------------------------------------------------------------------------
     def sweep(self) -> int:
-        """At bridge start: replies of this hub that were mid-run belong to a
-        process that is gone. They become ``interrupted`` (never run again),
-        their branches' leases end and their queues are parked."""
+        """Replies of this hub whose worker is gone: a reply still marked active
+        whose branch lease has expired (or was never taken over) becomes
+        ``interrupted`` (never run again), its lease ends and its queue is
+        parked. A reply another live worker is writing keeps its lease and is
+        left alone, so starting a second worker interrupts nothing."""
         t = _now()
         with self.engine.begin() as conn:
             own = sa.select(conversations.c.id).where(conversations.c.hub == self.hub)
-            stale = conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
-                                                         g.runs.c.status.in_(g.ACTIVE_RUN))).all()
+            live = {(r.branch_id, r.run_id) for r in conn.execute(
+                sa.select(g.leases.c.branch_id, g.leases.c.run_id, g.leases.c.owner).where(g.leases.c.expires_at > t))
+                if not _owner_gone(r.owner)}
+            stale = [r for r in conn.execute(sa.select(g.runs).where(g.runs.c.conversation_id.in_(own),
+                                                                     g.runs.c.status.in_(g.ACTIVE_RUN))).all()
+                     if (r.branch_id, r.id) not in live]
             for r in stale:
                 conn.execute(g.runs.update().where(g.runs.c.id == r.id)
                              .values(status="interrupted", error="The server restarted during this reply.",
                                      updated_at=t))
-                conn.execute(g.leases.delete().where(g.leases.c.branch_id == r.branch_id))
+                conn.execute(g.leases.delete().where(g.leases.c.branch_id == r.branch_id, g.leases.c.run_id == r.id))
                 self._park(conn, r.conversation_id, r.branch_id, "interrupted", t)
                 g.emit(conn, r.conversation_id, "run.changed", r.id, {"status": "interrupted",
                                                                      "message_id": r.message_id,
                                                                      "branch_id": r.branch_id})
             interrupted = [(r.id, r.conversation_id, r.branch_id, r.message_id, r.actor_id) for r in stale]
-            # Native sessions are not restored across a restart until pending calls
-            # can be reconciled first: the next turn rebuilds from the graph.
-            conn.execute(g.bindings.delete().where(g.bindings.c.conversation_id.in_(own)))
-            conn.execute(g.queue.update().where(g.queue.c.conversation_id.in_(own), g.queue.c.state == "dispatching")
+            # A native session whose run was cut off is not resumed until pending
+            # calls can be reconciled: the next turn there rebuilds from the graph.
+            if stale:
+                conn.execute(g.bindings.delete().where(g.bindings.c.branch_id.in_({r.branch_id for r in stale})))
+            conn.execute(g.queue.update().where(g.queue.c.conversation_id.in_(own), g.queue.c.state == "dispatching",
+                                                g.queue.c.updated_at < t - g.LEASE_SECONDS)
                          .values(state="needs_review", reason="interrupted while sending", updated_at=t))
         if self.on_terminal is not None:
             for run_id, cid, bid, mid, aid in interrupted:

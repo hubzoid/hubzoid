@@ -716,7 +716,7 @@ function DeleteAction() {
         title={t.chat.deletePreviewTitle}
         body={
           preview
-            ? t.chat.deletePreviewBody(preview.removed.length - 1, Object.keys(preview.reparented).length, preview.shares.length)
+            ? t.chat.deletePreviewBody(preview.removed.length - 1, Object.keys(preview.reparented).length, preview.shares.length + (preview.snapshot_links?.length ?? 0))
             : ""
         }
         confirmLabel={t.chat.deleteConfirm}

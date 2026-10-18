@@ -82,7 +82,8 @@ def mount(app: FastAPI, ctx) -> SharingService:
     async def publish(request: Request):
         _, actor = await actor_of(request, True)
         body = await er.read_json(request)
-        return JSONResponse(await call(svc.publish, actor.id, body), status_code=201)
+        return JSONResponse(await call(svc.publish, actor.id, body, key=request.headers.get("idempotency-key")),
+                            status_code=201)
 
     @app.get("/api/shares")
     async def list_shares(request: Request):
@@ -117,6 +118,9 @@ def mount(app: FastAPI, ctx) -> SharingService:
                 legacy = await _legacy(ctx, token, actor)
                 if legacy is not None:
                     return legacy
+                if actor is None:
+                    # Signed out: sign in first (the same answer whether or not the link exists).
+                    raise error(401, "unauthenticated", "Sign in to open this shared conversation.")
             raise er.http(exc)
         return JSONResponse(out, headers=PUBLIC_HEADERS)
 
@@ -140,7 +144,8 @@ def mount(app: FastAPI, ctx) -> SharingService:
         user, actor = await actor_of(request, True)
         await ctx.may_use_hub(user)
         body = await er.read_json(request)
-        out = await call(svc.copy, token, actor.id, actor.email, ctx.model_label, str(body.get("digest") or ""))
+        out = await call(svc.copy, token, actor.id, actor.email, ctx.model_label, str(body.get("digest") or ""),
+                         key=request.headers.get("idempotency-key"))
         return JSONResponse(out, status_code=201)
 
     @app.get("/api/chat/share-operations/{op_id}")
