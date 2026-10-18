@@ -224,7 +224,7 @@ def _bring_up(hub_dir, sandbox_id: str, profile, binding: dict, checkout: dict |
                 _update(hub_dir, sandbox_id, setup_json=setup)
                 raise WorkItemError("setup_failed", f"The setup command exited with {setup['exit_code']}"
                                     + (" (timed out)" if setup.get("timed_out") else "")
-                                    + ". Last output:\n" + setup["output"][-1500:], status=409,
+                                    + ".\nLast output:\n" + setup["output"][-1500:], status=409,
                                     sandbox_id=sandbox_id)
         offline = prov.go_offline(state)
         if not offline["verified"]:
