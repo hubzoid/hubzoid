@@ -257,8 +257,8 @@ def _discard_interrupted(hub_dir, row: dict) -> None:
 def attach(hub_dir, sandbox_id: str) -> dict:
     """The sandbox, running and offline, ready for a tool call."""
     row = require(hub_dir, sandbox_id)
-    if row["state"] == "lost":
-        raise _lost(row)
+    if row["state"] in ("lost", "deleted"):
+        raise _lost(row)            # gone for its owner, whoever removed it
     if row["state"] not in ("ready", "stopped"):
         raise WorkItemError("sandbox_unavailable", f"The sandbox is {row['state']}.", status=409,
                             sandbox_id=sandbox_id)
@@ -287,8 +287,11 @@ def attach(hub_dir, sandbox_id: str) -> dict:
 
 
 def _lost(row) -> WorkItemError:
-    return WorkItemError("sandbox_lost", "The sandbox disappeared. It is not recreated empty: the work restarts "
-                         "from its last saved point or stops for a person.", status=503, sandbox_id=row["id"])
+    cause = ("An administrator removed the sandbox." if row.get("end_reason") == "operator" else
+             "The sandbox was removed when its time ran out." if row.get("end_reason") == "expired" else
+             "The sandbox disappeared.")
+    return WorkItemError("sandbox_lost", f"{cause} It is not recreated empty: the work restarts from its last "
+                         "saved point or stops for a person.", status=503, sandbox_id=row["id"])
 
 
 def stop(hub_dir, sandbox_id: str, *, reason: str = "idle") -> dict:

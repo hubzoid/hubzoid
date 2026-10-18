@@ -249,6 +249,12 @@ def test_restart_keeps_files_and_a_deleted_sandbox_is_lost(hub_dir, monkeypatch)
         asyncio.run(call(again, "read_file", {"path": "notes.txt"}))
         assert sandbox_service.operator_stop(hub_dir, row["id"], "cli:admin", reason="check",
                                              expected_revision=seen)["state"] == "stopped"
+        # Removed by an administrator: its owner sees it lost, with the reason.
+        removed = sandbox_service.allocate(hub_dir, owner_kind="probe", owner_id="p3", profile_id="work")
+        sandbox_service.operator_delete(hub_dir, removed["id"], "cli:admin", reason="demo")
+        with pytest.raises(WorkItemError) as gone:
+            sandbox_service.attach(hub_dir, removed["id"])
+        assert gone.value.code == "sandbox_lost" and "administrator" in gone.value.message
         # Deleted out of band: reported lost, never recreated.
         prov = sandbox_service._provider_for(hub_dir, row)
         prov.container(row["provider_json"]).remove(force=True)
