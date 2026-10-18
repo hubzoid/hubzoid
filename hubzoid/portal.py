@@ -1471,6 +1471,8 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
     from .work_items import routes as work_item_routes
     work_item_routes.register(router, require_person,
                               lambda actor, hub: deployment.hub_path(hub_dir, hub))
+    work_item_routes.register_stations(router, require_person,
+                                       lambda actor, hub: deployment.hub_path(hub_dir, hub))
     return router
 
 

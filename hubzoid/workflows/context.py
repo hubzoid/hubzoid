@@ -435,11 +435,25 @@ class Hub:
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
 
-    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600):
+    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600,
+                   agent: str | None = None, stage: str | None = None, revision: int = 1):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
         `response_model`, the agent ends with JSON and a validated instance is
-        returned; otherwise its reply text."""
+        returned; otherwise its reply text.
+
+        With `agent=`, calls that isolated agent (a station) for this work
+        item's `stage` instead: its own instructions and tools only, a result
+        checked against its schema, saved so it never runs twice. A failed or
+        malformed result raises `hubzoid.stations.StationOutputError` (or
+        `StationError`) carrying the `call_id` for `hub.retry_station`."""
+        if agent is not None:
+            from ..stations import service as station_service
+
+            if stage is None:
+                raise ValueError("A station call needs stage=, the work item stage it runs in.")
+            return station_service.call(agent, task, stage=stage, revision=revision,
+                                        response_model=response_model)
         if _AGENT is None:
             raise RuntimeError(
                 "hub.call_agent is not configured; call workflows.configure(agent=...) "
@@ -463,6 +477,25 @@ class Hub:
         from ..structured import extract_json
 
         return _validated(extract_json(text), response_model, text)
+
+    def retry_station(self, call_id: str, clarification: str, *, response_model=None):
+        """The one retry of a failed or malformed station call, with a
+        clarification for the agent. A second retry is refused."""
+        from ..stations import service as station_service
+
+        return station_service.retry(call_id, clarification, response_model=response_model)
+
+    def save_handoff(self, kind: str, title: str, markdown: str) -> dict:
+        """Save a document for the stations of this work item. Returns its id."""
+        from ..stations import service as station_service
+
+        return station_service.save_handoff_here(kind, title, markdown)
+
+    def read_handoff(self, handoff_id: str) -> dict:
+        """A document of this work item, by id."""
+        from ..stations import service as station_service
+
+        return station_service.read_handoff_here(handoff_id)
 
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
         """Typed decisions from TypeSafe's Jev through OpenRouter.

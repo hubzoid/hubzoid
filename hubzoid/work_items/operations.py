@@ -92,6 +92,9 @@ class OperationFailed(Exception):
         super().__init__(message)
         self.code, self.message, self.operation_id = code, message, operation_id
 
+    def __reduce__(self):
+        return (OperationFailed, (self.code, self.message, self.operation_id))
+
 
 def _resume_step() -> int | None:
     """The step a continuation must start from: this step when called inside

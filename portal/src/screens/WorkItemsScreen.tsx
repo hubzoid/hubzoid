@@ -12,9 +12,9 @@ const { Text, Title, Paragraph } = Typography;
 type Stage = { stage: string; step: number; status: "done" | "failed"; finished: number | null };
 type Operation = {
   id: string; item_id: string | null; name: string; action: string | null; mode: string; recovery: string;
-  state: string; args_digest: string; revision: number; target: Record<string, unknown>;
+  state: string; args_digest: string; revision: number; target?: Record<string, unknown>;
   attempts: { n: number; state: string; started: number; ended?: number }[];
-  approval: { approver: string; at: number } | null; error: string | null;
+  approval: { approver: string; at: number } | null; error?: string | null;
   result?: unknown; evidence?: unknown; resolution?: Record<string, unknown> | null;
 };
 type WorkItem = {
@@ -180,6 +180,8 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
             )}
           </Card>
 
+          <StationsCard base={base} id={w.id} active={!!active} />
+
           <Card size="small" title="Actions outside the hub">
             {(w.operations?.length ?? 0) === 0 ? <Text type="secondary">None recorded.</Text> : (
               <Space direction="vertical" style={{ width: "100%" }}>
@@ -204,6 +206,72 @@ function WorkItemDrawer({ hub, id, onClose }: { hub: string; id: string; onClose
   );
 }
 
+type StationCall = {
+  id: string; agent: string; stage: string; status: string; engine: string | null; error_code: string | null;
+  retry_used: number; recovery_count: number; definition_digest: string;
+  attempts: { n: number; kind: string; status: string; started: number; ended?: number }[];
+  output?: unknown; error?: string | null; message?: string; tools?: string[];
+};
+type Handoff = { id: string; kind: string; title?: string; character_count?: number; characters?: number; created: number };
+
+const CALL_COLORS: Record<string, string> = { started: "processing", completed: "green", failed: "red", cancelled: "default" };
+
+/** The isolated agents this work item called: each call's state, attempts and
+ *  result, and the documents they handed to each other. */
+function StationsCard({ base, id, active }: { base: string; id: string; active: boolean }) {
+  const data = useData<{ calls: StationCall[]; handoffs: Handoff[] }>(
+    `${base}/work-items/${encodeURIComponent(id)}/stations`, { keepStale: true });
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(data.reload, 2000);
+    return () => window.clearInterval(t);
+  }, [active, data.reload]);
+  const doc = useData<{ id: string; kind: string; title: string; markdown: string; sha256: string }>(
+    open ? `${base}/work-items/${encodeURIComponent(id)}/handoffs/${encodeURIComponent(open)}` : null);
+  if (!data.data || (data.data.calls.length === 0 && data.data.handoffs.length === 0)) return null;
+  return (
+    <Card size="small" title="Isolated agents">
+      <Space direction="vertical" style={{ width: "100%" }}>
+        {data.data.calls.map((c) => (
+          <Card key={c.id} size="small" type="inner" title={<Space>
+            <Text strong>{c.agent}</Text><Text type="secondary">stage {c.stage}</Text>
+            <Tag color={CALL_COLORS[c.status] ?? "default"}>{c.status === "started" ? "Running" : c.status}</Tag>
+            {c.engine && <Tag>{c.engine}</Tag>}
+          </Space>}>
+            <Text type="secondary">
+              {c.attempts.map((a) => `${a.kind} ${a.status}`).join(" · ") || "Not started"}
+              {c.retry_used ? " · retry used" : ""}{c.recovery_count ? ` · recovered ${c.recovery_count}×` : ""}
+            </Text>
+            {c.tools && <div><Text type="secondary">Tools </Text><Text code>{c.tools.length ? c.tools.join(", ") : "none"}</Text></div>}
+            {c.error && <Alert style={{ marginTop: 8 }} type={c.error_code === "station_output_error" ? "warning" : "error"}
+              showIcon title={c.error_code ?? "failed"} description={<pre className="output">{c.error}</pre>} />}
+            {c.output !== undefined && c.output !== null && <pre className="output">{JSON.stringify(c.output, null, 2)}</pre>}
+          </Card>
+        ))}
+        {data.data.handoffs.length > 0 && (
+          <div>
+            <Text strong>Handoffs</Text>
+            {data.data.handoffs.map((h) => (
+              <div key={h.id}>
+                <Button type="link" onClick={() => setOpen(h.id)} disabled={!h.title}>
+                  {h.title ?? h.kind}
+                </Button>
+                <Tag>{h.kind}</Tag>
+              </div>
+            ))}
+          </div>
+        )}
+        {open && (doc.data ? (
+          <Card size="small" type="inner" title={doc.data.title} extra={<Button size="small" onClick={() => setOpen(null)}>Close</Button>}>
+            <pre className="output" style={{ whiteSpace: "pre-wrap" }}>{doc.data.markdown}</pre>
+          </Card>
+        ) : doc.error ? <Alert type="error" showIcon title={doc.error} /> : <Spin size="small" />)}
+      </Space>
+    </Card>
+  );
+}
+
 function OperationCard({ base, op, busy, act }: {
   base: string; op: Operation; busy: boolean;
   act: (path: string, body: unknown, done: string) => Promise<void>;
@@ -220,7 +288,7 @@ function OperationCard({ base, op, busy, act }: {
       <Tag color={op.state === "ambiguous" ? "orange" : op.state === "awaiting_approval" ? "gold" :
         ["succeeded", "resolved_done"].includes(op.state) ? "green" : "default"}>{OP_LABELS[op.state] ?? op.state}</Tag>
     </Space>}>
-      <Text type="secondary">Target </Text><Text code>{JSON.stringify(op.target)}</Text><br />
+      {op.target && <><Text type="secondary">Target </Text><Text code>{JSON.stringify(op.target)}</Text><br /></>}
       <Text type="secondary">Content digest </Text><Text code copyable>{op.args_digest}</Text>
       {op.error && <Alert style={{ marginTop: 8 }} type="warning" showIcon title={op.error} />}
       {op.approval && <div><Text type="secondary">Approved by {op.approval.approver}</Text></div>}

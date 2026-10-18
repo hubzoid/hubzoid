@@ -21,6 +21,21 @@ class WorkItemError(Exception):
     def detail(self) -> dict:
         return {"code": self.code, "message": self.message, **self.fields}
 
+    def __reduce__(self):
+        # The workflow engine stores a failed step's exception and raises it
+        # again on replay, so it must survive pickling with its code.
+        return (_rebuild, (type(self), self.code, self.message, self.status, self.fields))
+
+
+def _rebuild(cls, code, message, status, fields):
+    obj = cls.__new__(cls)
+    Exception.__init__(obj, message)
+    obj.code, obj.message, obj.status, obj.fields = code, message, status, dict(fields)
+    for key, value in fields.items():
+        if not hasattr(obj, key):
+            setattr(obj, key, value)
+    return obj
+
 
 def not_found(what: str = "work item") -> WorkItemError:
     return WorkItemError("not_found", f"No such {what} here, or you can't see it.", status=404)

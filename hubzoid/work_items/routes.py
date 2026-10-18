@@ -181,3 +181,27 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
                            decision=body.decision, evidence=body.evidence,
                            acknowledge_duplicate_risk=body.acknowledge_duplicate_risk,
                            expected_revision=body.expected_revision, surface=actor.surface)
+
+
+def register_stations(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:
+    """Station calls and handoffs of a work item, read-only. Calls are made by
+    the work item's workflow; their single retry is directed by it too."""
+    from ..stations import service as station_service
+
+    def hub_for(actor, hub: str) -> Path:
+        try:
+            return hub_path(actor, hub)
+        except KeyError:
+            raise HTTPException(404, detail={"code": "hub_not_found", "message": "There is no such hub here."})
+
+    @router.get("/hubs/{hub}/work-items/{item_id}/stations")
+    async def stations(hub: str, item_id: str, actor=Depends(require_person)):
+        return await _call(station_service.view_for, hub_for(actor, hub), item_id, actor.subject)
+
+    @router.get("/hubs/{hub}/work-items/{item_id}/handoffs/{doc_id}")
+    async def handoff(hub: str, item_id: str, doc_id: str, actor=Depends(require_person)):
+        hub_dir = hub_for(actor, hub)
+        view = await _call(station_service.view_for, hub_dir, item_id, actor.subject)
+        if not any(h["id"] == doc_id and "title" in h for h in view["handoffs"]):
+            raise HTTPException(404, detail={"code": "not_found", "message": "No such handoff here, or you can't see it."})
+        return await _call(station_service.read_handoff, hub_dir, item_id, doc_id)

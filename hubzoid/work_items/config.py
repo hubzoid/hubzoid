@@ -57,6 +57,11 @@ _ACTIONS: dict[str, bool] = dict(BUILTIN_ACTIONS)   # id -> has a real draft som
 #: Filled by channel adapters as they register.
 NO_DRAFT_CHANNELS: set[str] = set()
 
+#: Isolated agents (stations): `work_items.stations` in the file.
+STATION_DEFAULTS = {"orchestrator_retries": 1, "recovery_attempts": 1, "timeout_seconds": None}
+#: Handoff documents: `work_items.handoffs`. `kinds: null` accepts any slug.
+HANDOFF_DEFAULTS = {"kinds": None, "max_characters": 200000}
+
 _LIMITS = {
     "max_pending": (10000, 100000),
     "max_input_bytes": (262144, 1048576),
@@ -86,6 +91,8 @@ class Config:
     max_result_bytes: int = _LIMITS["max_result_bytes"][0]
     write_modes: dict = field(default_factory=dict)
     overrides: dict = field(default_factory=dict)
+    stations: dict = field(default_factory=lambda: dict(STATION_DEFAULTS))
+    handoffs: dict = field(default_factory=lambda: dict(HANDOFF_DEFAULTS))
     digest: str = ""
 
     def to_dict(self) -> dict:
@@ -94,6 +101,7 @@ class Config:
                                "max_pending": self.max_pending,
                                "max_input_bytes": self.max_input_bytes,
                                "max_result_bytes": self.max_result_bytes},
+                "stations": dict(self.stations), "handoffs": dict(self.handoffs),
                 "write_modes": dict(self.write_modes),
                 "write_mode_overrides": {k: dict(v) for k, v in self.overrides.items()}}
 
@@ -149,7 +157,7 @@ def parse(text: str, source: str = FILE) -> Config:
     items = data.get("work_items") or {}
     if not isinstance(items, dict):
         _fail(source, root, ("work_items",), "work_items must be a mapping")
-    known = {"admission_paused", "enabled", *_LIMITS}
+    known = {"admission_paused", "enabled", "stations", "handoffs", *_LIMITS}
     for key in sorted(set(items) - known):
         _fail(source, root, ("work_items", key), f"unknown key {key!r}")
     limits = {}
@@ -158,6 +166,40 @@ def parse(text: str, source: str = FILE) -> Config:
         if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= ceiling:
             _fail(source, root, ("work_items", key), f"{key} must be a whole number from 1 to {ceiling}")
         limits[key] = value
+    stations = dict(STATION_DEFAULTS)
+    raw = items.get("stations") or {}
+    if not isinstance(raw, dict):
+        _fail(source, root, ("work_items", "stations"), "stations must be a mapping")
+    for key in sorted(set(raw) - set(STATION_DEFAULTS) - {"allow_generic_subagents", "max_transcript_bytes"}):
+        _fail(source, root, ("work_items", "stations", key), f"unknown key {key!r}")
+    for key in ("orchestrator_retries", "recovery_attempts"):
+        value = raw.get(key, stations[key])
+        if value not in (0, 1) or isinstance(value, bool):
+            _fail(source, root, ("work_items", "stations", key), f"{key} must be 0 or 1")
+        stations[key] = value
+    timeout = raw.get("timeout_seconds")
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int)
+                                or not 1 <= timeout <= 86400):
+        _fail(source, root, ("work_items", "stations", "timeout_seconds"),
+              "timeout_seconds is off (null) or 1 to 86400")
+    stations["timeout_seconds"] = timeout
+    handoffs = dict(HANDOFF_DEFAULTS)
+    raw = items.get("handoffs") or {}
+    if not isinstance(raw, dict):
+        _fail(source, root, ("work_items", "handoffs"), "handoffs must be a mapping")
+    for key in sorted(set(raw) - set(HANDOFF_DEFAULTS)):
+        _fail(source, root, ("work_items", "handoffs", key), f"unknown key {key!r}")
+    kinds = raw.get("kinds")
+    if kinds is not None:
+        if (not isinstance(kinds, list) or not kinds or len(kinds) > 32 or len(set(kinds)) != len(kinds)
+                or not all(isinstance(k, str) and re.match(r"^[a-z][a-z0-9-]{0,63}$", k) for k in kinds)):
+            _fail(source, root, ("work_items", "handoffs", "kinds"),
+                  "kinds is a list of up to 32 distinct lowercase slugs")
+        handoffs["kinds"] = list(kinds)
+    chars = raw.get("max_characters", handoffs["max_characters"])
+    if isinstance(chars, bool) or not isinstance(chars, int) or not 1 <= chars <= 200000:
+        _fail(source, root, ("work_items", "handoffs", "max_characters"), "max_characters is 1 to 200000")
+    handoffs["max_characters"] = chars
     paused = items.get("admission_paused", False)
     if not isinstance(paused, bool):
         _fail(source, root, ("work_items", "admission_paused"), "admission_paused must be true or false")
@@ -181,7 +223,8 @@ def parse(text: str, source: str = FILE) -> Config:
                       f"channel {channel!r} has no real drafts. Use off or approve.")
     digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
     return Config(present=True, admission_paused=paused, write_modes=dict(modes),
-                  overrides={c: dict(v) for c, v in overrides.items()}, digest=digest, **limits)
+                  overrides={c: dict(v) for c, v in overrides.items()}, stations=stations,
+                  handoffs=handoffs, digest=digest, **limits)
 
 
 def _check_mode(source, root, keys, action, mode):
