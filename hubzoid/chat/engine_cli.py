@@ -74,6 +74,9 @@ class _Local:
         from .file_service import service_for
 
         self.ctx.files = service_for(hub, self.engine.engine, self.ctx.hub, self.engine)
+        from .models import service_for as models_for
+
+        self.ctx.models = self.engine.models = models_for(hub, self.engine.engine, self.ctx.hub)
 
     def actor(self, email: str | None):
         from .. import auth
@@ -93,6 +96,8 @@ class _Local:
 
         rt = runtime_lib.build(self.hub)
         self.ctx.runtime = rt
+        if getattr(self.ctx, "models", None) is not None:
+            self.ctx.models.runtime = rt
         from ..server import _slugify
 
         self.ctx.model_label = self.settings.model_label or _slugify(rt.name)

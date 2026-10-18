@@ -47,8 +47,8 @@ from .store import (_dumps, _loads, _message, chat_key, conversations, messages,
 log = logging.getLogger("hubzoid.chat.engine")
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
-KINDS = ("send", "respond", "revise", "regenerate", "continue", "delete", "fork", "synthesize")
-RUN_KINDS = ("send", "respond", "revise", "regenerate", "continue", "synthesize")
+KINDS = ("send", "respond", "revise", "regenerate", "continue", "delete", "fork", "synthesize", "compare")
+RUN_KINDS = ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare")
 TEMPORARY_SECONDS = 24 * 3600
 MAX_SYNTH_SOURCES = 8
 MAX_COPY_MESSAGES = 10_000
@@ -201,6 +201,8 @@ class ChatEngine:
         #: (actor) -> None, raising GraphError when this person may not start a
         #: reply now (hub use, current terms). Checked again when queued work leaves.
         self.admission = None
+        #: models.ModelService: the catalog and comparison policy (set by the routes)
+        self.models = None
 
     # -- settings ---------------------------------------------------------------------
     def limits(self) -> dict:
@@ -407,7 +409,8 @@ class ChatEngine:
                "created_at": m.get("created_at"), "updated_at": m.get("updated_at"),
                "branch_id": m.get("branch_id"), "revises_id": m.get("revises_id"),
                "author_id": m.get("author_id"), "editor_id": m.get("editor_id"), "run_id": m.get("run_id"),
-               "model": m.get("model"), "context_changed": bool(m.get("context_changed"))}
+               "model": m.get("model"), "requested_model": m.get("requested_model"),
+               "context_changed": bool(m.get("context_changed"))}
         usage = m.get("usage")
         if isinstance(usage, dict):
             out["usage"] = {k: usage[k] for k in ("input_tokens", "output_tokens", "cost_usd", "duration_ms")
@@ -502,7 +505,9 @@ class ChatEngine:
             body = {"operation_id": operation_id, "kind": kind, "conversation_id": conversation_id, **body,
                     "graph_revision": conn.execute(sa.select(conversations.c.graph_revision).where(
                         conversations.c.id == conversation_id)).scalar() or 0}
-            if plan is not None:
+            if isinstance(plan, list):
+                plan_box.extend(plan)
+            elif plan is not None:
                 plan_box.append(plan)
             return status, body
 
@@ -511,7 +516,9 @@ class ChatEngine:
                               body=op, change=change, hub_id=self.hub, kind=f"chat.{kind}",
                               operation_id=operation_id)
         self.notify(conversation_id)
-        return out, (plan_box[0] if plan_box and not out.replayed else None)
+        if out.replayed or not plan_box:
+            return out, None
+        return out, (plan_box[0] if len(plan_box) == 1 else plan_box)
 
     def operation(self, operation_id: str, actor: Actor) -> dict:
         got = idempotency.receipt(self.engine, deployment_id=self.deployment_id, actor_id=actor.id,
@@ -724,6 +731,34 @@ class ChatEngine:
                      "run_id": run_id}, \
             self._plan(run_id=run_id, conv=conv, branch_id=branch["id"], aid=aid, actor=actor, kind="regenerate",
                        prompt_mid=target["id"], fence=fence, extra=extra)
+
+    def _op_compare(self, conn, conv, actor, op, _parts, operation_id):
+        """Answer one user message with 2 or 3 models at once, each on a branch of
+        its own; the candidates may only read (``comparison.candidate_tools``)."""
+        if self.models is None:
+            raise Err(503, "unavailable", "Comparing models isn't available here.")
+        target = self._message_in(conn, conv["id"], op.get("target_message_id"))
+        if target["role"] != "user":
+            raise Err(400, "invalid_operation", "compare targets the user message to answer.")
+        candidates = self.models.compare_plan(actor.email, op.get("model_refs"))
+        tools = self.models.candidate_tools()
+        out, plans = [], []
+        for c in candidates:
+            branch = g.create_branch(conn, conv["id"], actor.id, target["id"])
+            sel = {"mode": "model", "model": c["model"]} if c["model"] else {"mode": "agent_default"}
+            run_id, aid, fence = self._admit(conn, conv=conv, actor=actor, branch_id=branch["id"],
+                                             parent_id=target["id"], kind="compare", operation_id=operation_id,
+                                             snapshot={"kind": "compare", "target": target["id"],
+                                                       "model_selection": sel, "ref": c["ref"]})
+            rev = g.move_head(conn, branch["id"], branch["revision"], aid)
+            out.append({"model_ref": c["ref"], "label": c["label"], "branch_id": branch["id"],
+                        "branch_revision": rev, "assistant_message_id": aid, "run_id": run_id})
+            plans.append(self._plan(run_id=run_id, conv=conv, branch_id=branch["id"], aid=aid, actor=actor,
+                                    kind="compare", prompt_mid=target["id"], fence=fence,
+                                    options={"model": c["model"], "tool_allowlist": tools}))
+        g.set_view(conn, conv["id"], actor.id, out[0]["branch_id"], out[0]["assistant_message_id"])
+        self._touch(conn, conv["id"], out[0]["assistant_message_id"])
+        return 202, {"candidates": out}, plans
 
     def _op_continue(self, conn, conv, actor, op, _parts, operation_id):
         target = self._message_in(conn, conv["id"], op.get("target_message_id"))

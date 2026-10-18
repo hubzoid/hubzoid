@@ -140,9 +140,12 @@ class Orchestrator:
         self._seq: dict[str, int] = {}
         self._beat: asyncio.Task | None = None
 
-    async def launch(self, plan: RunPlan | None):
+    async def launch(self, plan: RunPlan | list | None):
         if plan is None:
             return None
+        if isinstance(plan, list):  # a comparison: one reply per model, at once
+            runs = [await self.launch(p) for p in plan]
+            return runs[0] if runs else None
         from . import titles
         from .history import build_prompt
 
@@ -172,6 +175,8 @@ class Orchestrator:
                 models = getattr(self.ctx, "models", None)
                 if models is not None and await db(models.allowed, opts["model"], plan.actor_email):
                     slot.model = opts["model"]
+            if opts.get("tool_allowlist") is not None:
+                slot.tool_allowlist = list(opts["tool_allowlist"])
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
@@ -372,7 +377,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         key = key_of(request)
         if not key:
             raise error(400, "invalid_request", "Send an Idempotency-Key header with every operation.")
-        if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize"):
+        if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare"):
             await call(admission, actor)
         out, plan = await call(engine.submit, cid, actor, body, key=key)
         await orch.launch(plan)

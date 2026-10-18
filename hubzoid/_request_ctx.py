@@ -330,6 +330,8 @@ class SessionSlot:
         self.web_search = False
         #: a model the person chose for this turn (from the runtime's own list), or None.
         self.model: str | None = None
+        #: when set, the only hub tools this run may call (a comparison candidate reads, never acts).
+        self.tool_allowlist: list[str] | None = None
 
 
 _current_session_slot: ContextVar = ContextVar("hubzoid_session_slot", default=None)

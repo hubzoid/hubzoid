@@ -3070,6 +3070,9 @@ app.add_typer(_files_app, name="files", help="Chat files: upload, reuse, downloa
 app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversations and their versions.",
               rich_help_panel="Commands")
 from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
+from .chat.models_cli import models_app as _models_app  # noqa: E402
+
+app.add_typer(_models_app, name="models", help="Models people may pick, and presets.", rich_help_panel="Commands")
 
 app.add_typer(_knowledge_app, name="knowledge", help="Your sources: collections, sync, query, citations, safe fetch.",
               rich_help_panel="Commands")

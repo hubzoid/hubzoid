@@ -702,6 +702,28 @@ def _guarded(options, guard):
     return dataclasses.replace(options, hooks=hooks)
 
 
+def _only_tools(options, allowed: list[str]):
+    """A PreToolUse hook that refuses every tool outside ``allowed`` (hub tool
+    names; the SDK prefixes them with their MCP namespace)."""
+    import dataclasses
+
+    from claude_agent_sdk import HookMatcher
+
+    names = set(allowed)
+
+    async def admit(tool_input, _tool_use_id, _context):
+        raw = str((tool_input or {}).get("tool_name") or "")
+        name = raw.rsplit("__", 1)[-1]
+        if name in names:
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "A comparison answer may only read."}}
+
+    hooks = dict(getattr(options, "hooks", None) or {})
+    hooks["PreToolUse"] = [HookMatcher(hooks=[admit]), *hooks.get("PreToolUse", [])]
+    return dataclasses.replace(options, hooks=hooks)
+
+
 async def _query_with_failover(*, prompt, options, hub_dir=None):
     """Rotate explicit credentials only on confirmed model-account failure.
 
@@ -1022,6 +1044,8 @@ class ClaudeRuntime:
                 turn_options = _dc.replace(turn_options, resume=slot.resume_id)
             if slot is not None and slot.guard is not None:
                 turn_options = _guarded(turn_options, slot.guard)
+            if slot is not None and slot.tool_allowlist is not None:
+                turn_options = _only_tools(turn_options, slot.tool_allowlist)
             if slot is not None and (slot.web_search or slot.model):
                 import dataclasses as _dc
 
