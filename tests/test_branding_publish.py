@@ -174,6 +174,13 @@ def test_changed_candidate_invalidates_review(client):
     assert a.status_code == 409 and a.json()["detail"]["code"] == "revision_conflict"
 
 
+def test_install_manifest_follows_active_brand(client):
+    assert client.get("/manifest.webmanifest").json()["name"] == "Hubzoid"
+    publish(client)
+    m = client.get("/manifest.webmanifest").json()
+    assert m["name"] == "Example Operations" and m["display"] == "standalone" and m["theme_color"].startswith("#")
+
+
 def test_rejection_supersedes_earlier_approval(client):
     d = client.post("/api/branding/drafts", headers=ORIGIN,
                     json={"configuration": CONF, "files": b64(FILES)}).json()

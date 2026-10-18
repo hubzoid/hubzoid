@@ -30,6 +30,7 @@ export function applyBrandHead(manifest: BrandManifest | null | undefined, favic
   };
   setLink("icon", manifest?.assets.favicon ?? faviconUrl ?? null);
   setLink("apple-touch-icon", manifest?.assets.touch_icon ?? null);
+  setLink("manifest", "/manifest.webmanifest");
   const cssUrl = manifest?.decorative_css_url ?? null;
   const current = document.querySelector<HTMLLinkElement>("link[data-hz-decorative]");
   if (current?.getAttribute("href") === cssUrl) return;

@@ -21,6 +21,7 @@
   POST  /api/branding/me/legal-acceptances           accept the current terms
   POST  /api/branding/me/announcement-dismissals     dismiss an announcement
   GET   /branding/assets/{deployment}/{hex}/{name}   activated assets (public, immutable)
+  GET   /manifest.webmanifest                        install metadata of the active brand (public)
 
 ``GET /api/branding`` (public manifest) stays in ``webapp_gateway``.
 Reading drafts needs ``branding.read``, changing them ``branding.manage``,
@@ -232,6 +233,27 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
         p = await authz.principal(request, hub_dir)
         body = await hz.body(request)
         return await call(svc().dismiss, p.id, str(body.get("announcement_id") or "")[:80])
+
+    @app.get("/manifest.webmanifest")
+    async def web_manifest():
+        """Install metadata from the active brand (public, like the sign-in page)."""
+        def build() -> dict:
+            from ..chat import theme as theme_mod
+
+            manifest = svc().active_manifest()
+            got = svc().active_theme()
+            light = (got[1] if got else theme_mod.resolve())["palettes"]["light"]
+            identity = (manifest or {}).get("identity") or {}
+            assets = (manifest or {}).get("assets") or {}
+            icons = [{"src": assets[k], "sizes": size, "type": "image/png"}
+                     for k, size in (("icon_192", "192x192"), ("icon_512", "512x512")) if assets.get(k)]
+            return {"name": identity.get("name") or "Hubzoid", "short_name": identity.get("short_name") or "Hubzoid",
+                    "description": identity.get("description") or "", "start_url": "/", "scope": "/",
+                    "display": "standalone", "theme_color": light["canvas"], "background_color": light["canvas"],
+                    "icons": icons}
+
+        return Response(content=json.dumps(await asyncio.to_thread(build)),
+                        media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
     @app.get("/branding/assets/{deployment}/{hexdigest}/{name}")
     async def public_asset(deployment: str, hexdigest: str, name: str):
