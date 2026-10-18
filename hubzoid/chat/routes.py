@@ -161,6 +161,9 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     from . import feedback_routes
 
     feedback_routes.mount(app, ctx)
+    from . import sharing_routes
+
+    sharing_routes.mount(app, ctx)
     try:
         ctx.engine.sweep()
     except Exception:  # noqa: BLE001 - never block the bridge start
