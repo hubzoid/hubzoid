@@ -335,3 +335,76 @@ def test_the_cli_reads_values_from_stdin_and_never_prints_them(hub):
     r = runner.invoke(app, ["secrets", "delete", str(hub), "--name", "OPENAI_API_KEY", "--check", "--json"])
     assert r.exit_code == 0 and json.loads(r.output)["would"] == "delete"
     assert store.get_meta(hub, scope="hub", target="deskhub", name="OPENAI_API_KEY") is not None
+
+
+# ---------------------------------------------------------------------------
+# Review regressions
+# ---------------------------------------------------------------------------
+def test_a_file_line_echoing_a_restricted_secret_does_not_declassify_it(hub):
+    from hubzoid import settings as settingslib
+
+    (hub / ".env").write_text("ERP_TOKEN=${ERP_TOKEN}\n")
+    put(hub, "ERP_TOKEN", restricted=True)
+    start_bridge(hub)
+    settingslib.load(hub)  # bridges reload settings while serving
+    settingslib.load(hub)
+    assert os.environ["ERP_TOKEN"] == VALUE
+    assert cs.child_env_overrides(os.environ)["ERP_TOKEN"] == ""
+
+
+def test_rotating_a_restricted_secret_keeps_it_restricted(hub):
+    put(hub, "ERP_TOKEN", restricted=True)
+    assert put(hub, "ERP_TOKEN", "rotated").restricted is True
+    r = client(hub).put("/api/hubs/deskhub/secrets/ERP_TOKEN", json={"value": "again"}, headers=SAME)
+    assert r.status_code == 200 and r.json()["secret"]["restricted"] is True
+    from hubzoid.cli import app
+
+    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "ERP_TOKEN", "--stdin"], input="cli\n")
+    assert r.exit_code == 0, r.output
+    assert store.get_meta(hub, scope="hub", target="deskhub", name="ERP_TOKEN").restricted is True
+
+
+def test_a_removed_and_recreated_secret_never_reuses_a_revision(hub):
+    put(hub, "OPENAI_API_KEY")
+    store.delete(hub, scope="hub", target="deskhub", name="OPENAI_API_KEY", actor="t", expected_revision=1)
+    assert store.list_meta(hub, scope="hub", target="deskhub") == []
+    with pytest.raises(SecretError) as exc:
+        put(hub, "OPENAI_API_KEY", expected_revision=1)  # a stale editor's revision
+    assert exc.value.code == "revision_conflict"
+    assert put(hub, "OPENAI_API_KEY", expected_revision="absent").revision == 3
+    with pytest.raises(SecretError):
+        store.delete(hub, scope="hub", target="deskhub", name="OPENAI_API_KEY", actor="t", expected_revision=1)
+
+
+def test_a_shared_key_the_model_needs_is_reported_where_it_is_stored(hub):
+    (hub / ".env").write_text("MODEL=openai/gpt-5\n")
+    put(hub, "OPENAI_API_KEY", scope="deployment")
+    row = next(r for r in report.rows(hub) if r["name"] == "OPENAI_API_KEY")
+    assert row["level"] == "deployment" and row["stored"]["scope"] == "deployment"
+
+
+def test_a_blank_aws_value_does_not_lock_a_stored_secret(hub, monkeypatch):
+    (hub / ".env").write_text("HUBZOID_HUB_SECRET_NAME=desk/hub\n")
+    monkeypatch.setattr(cs, "fetch", lambda name, region, layer: {"ERP_TOKEN": "", "ZOHO_TOKEN": "aws-value"})
+    put(hub, "ERP_TOKEN")
+    rows = {r["name"]: r for r in report.rows(hub)}
+    assert not rows["ERP_TOKEN"]["locked"] and rows["ERP_TOKEN"]["source"] == "Console"
+    assert rows["ZOHO_TOKEN"]["locked"] and rows["ZOHO_TOKEN"]["source"] == "Hub secret"
+    assert "desk/hub" not in json.dumps(report.rows(hub))  # never an AWS secret name
+
+
+def test_the_cli_refuses_a_name_an_aws_secret_owns_or_cannot_check(hub, monkeypatch):
+    from hubzoid.cli import app
+
+    (hub / ".env").write_text("HUBZOID_HUB_SECRET_NAME=desk/hub\n")
+    monkeypatch.setattr(cs, "fetch", lambda name, region, layer: {"ZOHO_TOKEN": "aws-value"})
+    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "ZOHO_TOKEN", "--stdin"], input="x\n")
+    assert r.exit_code == 4, r.output
+
+    def unreadable(name, region, layer):
+        raise cs.SecretFetchError(name, layer, "AccessDeniedException")
+
+    cs.clear_cache()
+    monkeypatch.setattr(cs, "fetch", unreadable)
+    r = CliRunner().invoke(app, ["secrets", "set", str(hub), "--name", "OTHER_TOKEN", "--stdin"], input="x\n")
+    assert r.exit_code == 5, r.output

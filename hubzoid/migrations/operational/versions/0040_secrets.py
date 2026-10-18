@@ -6,7 +6,8 @@
   and ``<hub>/<channel>`` for a channel. ``restricted`` marks a hub secret that
   joins the restricted layer. ``destination`` is the digest of where the value
   may be sent (an Azure endpoint and API version), or null. Values are never
-  read back through any API.
+  read back through any API. A removed secret keeps its row with a null
+  ``value_enc``, so its ``revision`` keeps counting and never repeats.
 
 Numbered 0040 so it does not collide with other 2.0 work in progress. Whichever
 branch merges second points its ``down_revision`` at the other.
@@ -29,7 +30,7 @@ def upgrade() -> None:
         sa.Column("target", sa.String(320), nullable=False, server_default=""),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("restricted", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("value_enc", sa.Text, nullable=False),
+        sa.Column("value_enc", sa.Text),
         sa.Column("destination", sa.String(80)),
         sa.Column("revision", sa.Integer, nullable=False, server_default="1"),
         sa.Column("created_by", sa.String(320), nullable=False),

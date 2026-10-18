@@ -45,17 +45,16 @@ export function AgentSecrets({ hub }: { hub: Hub }) {
     return () => controller.abort();
   }, [url, revision]);
 
-  const target = (row: { name: string; level: SecretLevel }) =>
-    row.level === "deployment"
+  // A stored secret is changed where it is stored; a new one where it will be used.
+  const target = (row: { name: string; level: SecretLevel; stored?: SecretRow["stored"] }) =>
+    (row.stored ? row.stored.scope === "deployment" : row.level === "deployment")
       ? `/api/secrets/${encodeURIComponent(row.name)}`
       : `${url}/${encodeURIComponent(row.name)}`;
 
   const remove = async (row: SecretRow) => {
     if (!row.stored) return;
-    const scopeUrl = row.stored.scope === "deployment"
-      ? `/api/secrets/${encodeURIComponent(row.name)}` : `${url}/${encodeURIComponent(row.name)}`;
     try {
-      await secretsRequest(`${scopeUrl}?expected_revision=${row.stored.revision}`, "DELETE");
+      await secretsRequest(`${target(row)}?expected_revision=${row.stored.revision}`, "DELETE");
       setNotice({ type: "success", text: `${row.name} removed. The agent stops using it after it restarts.` });
     } catch (e) {
       setNotice({ type: "error", text: errorText(e) });
@@ -222,7 +221,7 @@ function SecretEditor({
 }: {
   hub: Hub;
   editing: Exclude<Editing, null>;
-  urlFor: (row: { name: string; level: SecretLevel }) => string;
+  urlFor: (row: { name: string; level: SecretLevel; stored?: SecretRow["stored"] }) => string;
   onClose: (saved?: string) => void;
 }) {
   const row = editing.mode === "set" ? editing.row : null;
@@ -237,11 +236,14 @@ function SecretEditor({
     setSaving(true);
     setError(null);
     try {
-      await secretsRequest(urlFor({ name, level }), "PUT", {
+      const stored = row?.stored;
+      const body: Record<string, unknown> = {
         value: values.value,
-        restricted: level === "restricted",
-        expected_revision: row?.stored?.revision ?? "absent",
-      });
+        expected_revision: stored?.revision ?? "absent",
+      };
+      // A shared secret is never restricted; a replaced one keeps its setting.
+      if (!stored && level !== "deployment") body.restricted = level === "restricted";
+      await secretsRequest(urlFor({ name, level, stored }), "PUT", body);
       onClose(name);
     } catch (e) {
       setError(e instanceof ApiError && e.code === "revision_conflict"

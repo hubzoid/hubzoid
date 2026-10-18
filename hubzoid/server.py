@@ -432,8 +432,10 @@ def build_app() -> FastAPI:
         # Connectors are managed in the Console in both modes: its API, people's
         # connections and the OAuth return (the edge routes /oauth/connectors/ here).
         from .connectors import routes as connector_routes
+        from .secretstore import routes as secret_routes
 
         connector_routes.mount(app, hub_dir)
+        secret_routes.mount(app, hub_dir)
 
     # Admin portal: JSON API under /portal/api + the static SPA at /portal.
     # Registered before the root MCP mount so /portal is not swallowed.

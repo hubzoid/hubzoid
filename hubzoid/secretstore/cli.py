@@ -172,8 +172,9 @@ def set_cmd(
     name: str = typer.Option(None, "--name", help="The secret's name, for example OPENAI_API_KEY."),
     ref: str = typer.Option(None, "--ref", help="Or a reference: secret:hub/<hub>/<name> or "
                                                 "secret:deployment/<name>."),
-    restricted: bool = typer.Option(False, "--restricted",
-                                    help="Only restricted tools see it, as with restricted/.env."),
+    restricted: bool = typer.Option(None, "--restricted/--not-restricted",
+                                    help="Only restricted tools see it, as with restricted/.env. "
+                                         "Omitted: a stored secret keeps its setting."),
     deployment: bool = typer.Option(False, "--deployment", help="Shared by every hub of the deployment."),
     from_stdin: bool = typer.Option(False, "--stdin", help="Read the value from standard input."),
     expected_revision: str = typer.Option(None, "--expected-revision",
@@ -189,7 +190,13 @@ def set_cmd(
     why = names.problem(secret_name)
     if why:
         _fail("validation_failed", why, 422, as_json, fields={"name": "invalid"})
-    row = next((r for r in report.rows(hub_dir, fetch_secrets=False) if r["name"] == secret_name), None)
+    from .. import config_secrets as cs
+
+    try:
+        all_rows = report.rows(hub_dir, strict=True)
+    except cs.SecretFetchError as exc:
+        _fail("unavailable", f"Cannot check who sets {secret_name}: {exc}", 503, as_json)
+    row = next((r for r in all_rows if r["name"] == secret_name), None)
     if row and row["locked"]:
         _fail("secret_locked", row["lock_reason"] or "An operator source sets this secret.", 409, as_json)
     existing = store.get_meta(hub_dir, scope=scope, target=target, name=secret_name)

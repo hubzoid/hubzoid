@@ -80,24 +80,26 @@ def expected(hub_dir: Path, env: Mapping[str, str]) -> dict[str, tuple[str, str]
 
 
 def rows(hub_dir: Path, *, env: Mapping[str, str] | None = None, fetch_secrets: bool = True,
-         running: bool = False) -> list[dict]:
+         running: bool = False, strict: bool = False) -> list[dict]:
     """Every row for this hub, restricted ones included (``visible`` filters).
 
     ``env`` is the process environment before any hub layer (default: as this
     process started). ``running`` compares with what this bridge loaded at
-    start, so a change since then reads as ``restart_needed``."""
+    start, so a change since then reads as ``restart_needed``. ``strict``
+    raises ``config_secrets.SecretFetchError`` when a named AWS secret cannot
+    be read, instead of leaving its keys out (a write must know every owner)."""
     hub_dir = Path(hub_dir)
     base = cs._start_env() if env is None else dict(env)
     key = hub_key(hub_dir)
-    files = {cs.L_HUB: cs._read_file(hub_dir / ".env"),
-             cs.L_RESTRICTED: cs._read_file(hub_dir / "restricted" / ".env")}
 
-    # Operator sources: the layer that sets each name last, and whether blank.
+    # Operator sources, files and AWS secrets alike: the layer that sets each
+    # name last, and whether its value is blank (a blank value sets nothing).
     operator: dict[str, tuple[str, bool]] = {}
-    for row in cs.layer_report(hub_dir, env=base, fetch_secrets=fetch_secrets):
-        value = files.get(row["layer"], {}).get(row["key"])
-        operator[row["key"]] = (row["layer"], value is not None and not value.strip())
-    effective = {**base, **files[cs.L_HUB], **files[cs.L_RESTRICTED]}
+    effective = dict(base)
+    for layer_name, _source, values in cs._layers(hub_dir, base, fetch_secrets=fetch_secrets, strict=strict):
+        for name, value in values.items():
+            operator[name] = (layer_name, not (value or "").strip())
+        effective.update(values)
     wanted = expected(hub_dir, effective)
 
     eng = store.existing_engine(hub_dir)
@@ -134,10 +136,12 @@ def rows(hub_dir: Path, *, env: Mapping[str, str] | None = None, fetch_secrets: 
             level = "restricted"
         elif op and op[0] in _DEPLOYMENT_LAYERS and not op[1]:
             level = "deployment"
+        elif meta:
+            level = "deployment" if scope == "deployment" else "hub"
         elif name in wanted:
             level = wanted[name][0]
         else:
-            level = "deployment" if scope == "deployment" else "hub"
+            level = "hub"
         row = {"name": name, "level": level, "status": "missing", "source": None, "locked": False,
                "lock_reason": None, "stored": None, "stored_status": None,
                "expected": wanted[name][1] if name in wanted else None, "restart_needed": False}

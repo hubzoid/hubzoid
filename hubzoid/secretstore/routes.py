@@ -144,8 +144,16 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
     def request_id(request: Request) -> str | None:
         return (request.headers.get("x-request-id") or "").strip()[:128] or None
 
-    def rows() -> list[dict]:
-        return report.rows(hub_dir, running=layer_lib.active(hub_dir))
+    def rows(*, strict: bool = False) -> list[dict]:
+        """The report. ``strict`` (before a write) refuses rather than guess when
+        an AWS secret that might own the name cannot be read."""
+        from .. import config_secrets as cs
+
+        try:
+            return report.rows(hub_dir, running=layer_lib.active(hub_dir), strict=strict)
+        except cs.SecretFetchError:
+            raise error(503, "unavailable", "An AWS secret of this hub cannot be read, so it is not "
+                                            "known who sets this name. Run hubzoid doctor.") from None
 
     # ---- one hub --------------------------------------------------------------
     @hub_router.get("/secrets")
@@ -157,8 +165,10 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
     @hub_router.put("/secrets/{name}")
     async def set_hub(name: str, request: Request, who: Viewer = Depends(writer)):
         body = await _body(request)
-        restricted = bool(body.get("restricted"))
-        row = next((r for r in rows() if r["name"] == name), None)
+        restricted = body.get("restricted")  # omitted keeps a stored secret's restriction
+        if restricted is not None and not isinstance(restricted, bool):
+            raise error(422, "validation_failed", "restricted is true or false.", fields={"restricted": "invalid"})
+        row = next((r for r in rows(strict=True) if r["name"] == name), None)
         if row and row["locked"]:
             raise error(409, "secret_locked", row["lock_reason"] or "An operator source sets this secret.")
         try:
@@ -200,7 +210,7 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
         body = await _body(request)
         if body.get("restricted"):
             raise error(422, "invalid_request", "Only a hub secret can be restricted.")
-        row = next((r for r in rows() if r["name"] == name and r["level"] == "deployment"), None)
+        row = next((r for r in rows(strict=True) if r["name"] == name and r["level"] == "deployment"), None)
         if row and row["locked"]:
             raise error(409, "secret_locked", row["lock_reason"] or "An operator source sets this secret.")
         try:

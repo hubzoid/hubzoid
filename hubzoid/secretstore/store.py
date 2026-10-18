@@ -2,7 +2,9 @@
 deployment key.
 
 Values go in through ``put`` and come out only through ``values`` and
-``value``, for the bridge's start-up layer and ``secret:`` references. No
+``value``, for the bridge's start-up layer and ``secret:`` references. A removed
+secret keeps its row with no value, so a revision never repeats: a stale
+editor or a running bridge cannot mistake a re-created secret for the old one. No
 function here returns a value with its metadata, and nothing logs one. Every
 change writes one row to the access audit log in the same transaction, with
 the name, scope and actor, never the value.
@@ -32,6 +34,7 @@ ORG = "*"  # the access audit's organization-wide scope (access.store.ORG)
 
 _COLUMNS = ("scope", "target", "name", "restricted", "destination", "revision",
             "created_by", "created_at", "updated_by", "updated_at")
+_LIVE = " AND value_enc IS NOT NULL"
 
 
 class SecretError(Exception):
@@ -137,9 +140,11 @@ def _audit(conn, hub_dir, actor: str, action: str, meta_scope: str, target: str,
                                          request_id=request_id)
 
 
-def _select(conn, scope: str, target: str, name: str):
-    return conn.execute(text("SELECT " + ", ".join(_COLUMNS) + " FROM hz_secrets "
-                             "WHERE scope = :s AND target = :t AND name = :n"),
+def _select(conn, scope: str, target: str, name: str, *, live: bool = True):
+    """The row with its ``value_enc`` last (null for a removed secret). With
+    ``live`` a removed secret reads as absent."""
+    return conn.execute(text("SELECT " + ", ".join(_COLUMNS) + ", value_enc FROM hz_secrets "
+                             "WHERE scope = :s AND target = :t AND name = :n" + (_LIVE if live else "")),
                         {"s": scope, "t": target, "n": name}).first()
 
 
@@ -152,12 +157,14 @@ def _conflict(current: int | None) -> SecretError:
 
 
 def put(hub_dir, *, scope: str, target: str = "", name: str, value: str, actor: str,
-        restricted: bool = False, destination: str | None = None,
+        restricted: bool | None = None, destination: str | None = None,
         expected_revision: int | str | None = None, surface: str = "console",
         request_id: str | None = None) -> Meta:
     """Set or replace one secret. ``expected_revision`` ``"absent"`` means
     create only, an integer means replace only that revision, None means
-    either. Returns the new metadata."""
+    either. ``restricted`` None keeps a stored secret's restriction (a new one
+    is not restricted), so rotating a value never declassifies it. Returns the
+    new metadata."""
     _check_scope(scope, target)
     why = names.problem(name)
     if why:
@@ -171,12 +178,15 @@ def put(hub_dir, *, scope: str, target: str = "", name: str, value: str, actor: 
     eng = engine(hub_dir)
     try:
         with eng.begin() as conn:
-            row = _select(conn, scope, target, name)
-            current = int(row[5]) if row else None
-            if expected_revision == "absent" and row is not None:
+            row = _select(conn, scope, target, name, live=False)
+            live = row is not None and row[-1] is not None
+            current = int(row[5]) if live else None
+            if expected_revision == "absent" and live:
                 raise _conflict(current)
             if isinstance(expected_revision, int) and current != expected_revision:
                 raise _conflict(current)
+            keep = bool(row[3]) if live else False
+            restricted = keep if restricted is None else bool(restricted)
             if row is None:
                 conn.execute(text(
                     "INSERT INTO hz_secrets (scope, target, name, restricted, value_enc, destination, revision, "
@@ -190,11 +200,11 @@ def put(hub_dir, *, scope: str, target: str = "", name: str, value: str, actor: 
                     "revision = revision + 1, updated_by = :w, updated_at = :at "
                     "WHERE scope = :s AND target = :t AND name = :n AND revision = :rev"),
                     {"s": scope, "t": target, "n": name, "r": int(restricted), "v": token,
-                     "d": destination, "w": who, "at": now, "rev": current})
+                     "d": destination, "w": who, "at": now, "rev": int(row[5])})
                 if done.rowcount != 1:
                     raise _conflict(None)
             _audit(conn, hub_dir, who, "secret_set", scope, target, name, surface, request_id)
-            return _meta(_select(conn, scope, target, name))
+            return _meta(_select(conn, scope, target, name)[:-1])
     except IntegrityError:
         # Two writers created the same secret at once: this one lost.
         raise _conflict(None) from None
@@ -210,11 +220,17 @@ def delete(hub_dir, *, scope: str, target: str = "", name: str, actor: str,
         row = _select(conn, scope, target, name)
         if row is None:
             raise SecretError("not_found", f"No stored secret named {name}.", 404)
-        meta = _meta(row)
+        meta = _meta(row[:-1])
         if expected_revision is not None and meta.revision != expected_revision:
             raise _conflict(meta.revision)
-        conn.execute(text("DELETE FROM hz_secrets WHERE scope = :s AND target = :t AND name = :n"),
-                     {"s": scope, "t": target, "n": name})
+        # Keep the row without its value, so the next revision is never reused.
+        done = conn.execute(text(
+            "UPDATE hz_secrets SET value_enc = NULL, destination = NULL, revision = revision + 1, "
+            "updated_by = :w, updated_at = :at "
+            "WHERE scope = :s AND target = :t AND name = :n AND revision = :rev AND value_enc IS NOT NULL"),
+            {"s": scope, "t": target, "n": name, "w": who, "at": time.time(), "rev": meta.revision})
+        if done.rowcount != 1:
+            raise _conflict(None)
         _audit(conn, hub_dir, who, "secret_delete", scope, target, name, surface, request_id)
         return meta
 
@@ -226,7 +242,7 @@ def list_meta(hub_dir, *, scope: str, target: str = "", eng=None) -> list[Meta]:
         return []
     with eng.connect() as conn:
         rows = conn.execute(text("SELECT " + ", ".join(_COLUMNS) + " FROM hz_secrets "
-                                 "WHERE scope = :s AND target = :t ORDER BY name"),
+                                 "WHERE scope = :s AND target = :t" + _LIVE + " ORDER BY name"),
                             {"s": scope, "t": target}).all()
     return [_meta(r) for r in rows]
 
@@ -237,7 +253,7 @@ def get_meta(hub_dir, *, scope: str, target: str = "", name: str) -> Meta | None
         return None
     with eng.connect() as conn:
         row = _select(conn, scope, target, name)
-    return _meta(row) if row else None
+    return _meta(row[:-1]) if row else None
 
 
 @dataclass(frozen=True)
@@ -259,7 +275,7 @@ def values(hub_dir, *, scope: str, target: str = "", eng=None) -> list[Stored]:
         return []
     with eng.connect() as conn:
         rows = conn.execute(text("SELECT " + ", ".join(_COLUMNS) + ", value_enc FROM hz_secrets "
-                                 "WHERE scope = :s AND target = :t ORDER BY name"),
+                                 "WHERE scope = :s AND target = :t" + _LIVE + " ORDER BY name"),
                             {"s": scope, "t": target}).all()
     out: list[Stored] = []
     for row in rows:
@@ -280,7 +296,7 @@ def value(hub_dir, *, scope: str, target: str = "", name: str) -> str | None:
         return None
     with eng.connect() as conn:
         row = conn.execute(text("SELECT value_enc FROM hz_secrets WHERE scope = :s AND target = :t "
-                                "AND name = :n"), {"s": scope, "t": target, "n": name}).first()
+                                "AND name = :n" + _LIVE), {"s": scope, "t": target, "n": name}).first()
     if row is None:
         return None
     try:

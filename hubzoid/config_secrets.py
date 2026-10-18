@@ -503,7 +503,18 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
 
     hub_path = hub_dir / ".env"
     restricted_path = hub_dir / "restricted" / ".env"
-    hub_file = _read_file(hub_path)
+    # A reload sees the stored values an earlier load put in the environment. A
+    # file line that only echoes one back (`KEY=${KEY}`) is not an operator value:
+    # dropping it keeps the stored value, and a restricted one stays restricted.
+    previous = _loads.get(str(hub_dir.resolve()))
+    stored_before = {**(previous.values.get(L_CONSOLE, {}) if previous else {}),
+                     **(previous.values.get(L_CONSOLE_RESTRICTED, {}) if previous else {})}
+
+    def read(path: Path) -> dict[str, str]:
+        values = _read_file(path)
+        return {k: v for k, v in values.items() if not (k in stored_before and v == stored_before[k])}
+
+    hub_file = read(hub_path)
     is_registered = registered(hub_dir, start, hub_file)
     deployed: dict[str, str] = {}
 
@@ -529,7 +540,7 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
             apply(L_DEPLOYMENT_SECRET, kept, f"aws:{pointer.name}", start, "the process environment")
             deployed.update({k: v for k, v in kept.items() if k == "WEBUI_SECRET_KEY" or _encryption_key(k)})
             if kept:
-                hub_file = _read_file(hub_path)  # ${VAR} may now refer to deployment values
+                hub_file = read(hub_path)  # ${VAR} may now refer to deployment values
 
     # The hub file, exactly as before.
     apply(L_HUB, hub_file, str(hub_path))
@@ -550,7 +561,7 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
 
     # The restricted file, exactly as before. Read now, so ${VAR} references
     # resolve against the same environment they always did.
-    restricted_file = _read_file(restricted_path)
+    restricted_file = read(restricted_path)
     apply(L_RESTRICTED, restricted_file, str(restricted_path))
 
     # Restricted secret, named only in the restricted file.
