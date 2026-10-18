@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from urllib.parse import quote
 
@@ -52,7 +53,7 @@ FRAME_PAGE = """<!doctype html>
 <script>
 (function () {
   var frame = document.getElementById("f"), url = null;
-  var meta = '<meta http-equiv="Content-Security-Policy" content="__CSP__">';
+  var meta = '<meta http-equiv="Content-Security-Policy" content="' + __CSP__ + '">';
   function wrap(kind, source) {
     if (kind === "svg") return "<!doctype html><html><head>" + meta + "</head><body style=\\"margin:0\\">" + source + "</body></html>";
     var m = /^\\s*<!doctype[^>]*>/i.exec(source);
@@ -68,7 +69,7 @@ FRAME_PAGE = """<!doctype html>
   });
   window.parent.postMessage({ type: "hz-frame-ready" }, "*");
 })();
-</script></body></html>""".replace("__CSP__", CHILD_CSP)
+</script></body></html>""".replace("__CSP__", json.dumps(CHILD_CSP))
 
 
 def _range(header: str | None, size: int) -> tuple[int, int | None] | None:

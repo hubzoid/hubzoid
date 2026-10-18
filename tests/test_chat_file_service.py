@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 
 import pytest
@@ -172,7 +173,10 @@ def test_artifacts_capture_versions_and_conflicting_edit(client):
 def test_artifact_frame_is_locked_down(client):
     r = client.get("/api/chat/artifact-frame")
     csp = r.headers["content-security-policy"]
-    assert "frame-src blob:" in csp and "default-src 'none'" in csp and "connect-src 'none'" in r.text and 'sandbox="allow-scripts"' in r.text
+    assert "frame-src blob:" in csp and "default-src 'none'" in csp
+    from hubzoid.chat.file_routes import CHILD_CSP
+
+    assert json.dumps(CHILD_CSP) in r.text  # the child's policy is a JSON string inside the script and "connect-src 'none'" in r.text and 'sandbox="allow-scripts"' in r.text
 
 
 def test_storage_settings_and_s3_adapter(monkeypatch, tmp_path):
