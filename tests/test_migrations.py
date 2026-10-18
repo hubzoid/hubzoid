@@ -34,6 +34,7 @@ LATER_TABLES = ("hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_br
                 "hz_chat_member_sets", "hz_chat_runtime_bindings", "hz_feedback", "hz_helper_jobs",
                 "hz_notification_events", "hz_notification_inbox", "hz_notification_target_sets",
                 "hz_notification_targets", "hz_notification_deliveries", "hz_notification_presence",
+                "hz_share_manifests", "hz_share_previews", "hz_share_copy_operations",
                 "hz_chat_operations", "hz_chat_config_revisions", "hz_chat_config_heads",
                 "hz_chat_preferences", "hz_branding_drafts", "hz_branding_assets",
                 "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",

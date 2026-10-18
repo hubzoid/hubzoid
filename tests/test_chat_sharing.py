@@ -1,0 +1,143 @@
+"""Collaborators and snapshot links (hubzoid.chat.sharing) through the API."""
+from __future__ import annotations
+
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from tests.chat_helpers import ORIGIN, PEOPLE, as_people, build_app, make_hub, who
+from tests.test_chat_operations import h, new_conv, op, send, snap, wait_run
+
+
+@pytest.fixture
+def hub(tmp_path, monkeypatch):
+    """A hub where Ana and Ben have real accounts (so they can be named)."""
+    import dataclasses
+
+    from hubzoid.auth import users
+
+    hub = make_hub(tmp_path, monkeypatch)
+    for key, p in list(PEOPLE.items()):
+        u = users.create(hub, email=p.email, name=p.name)
+        monkeypatch.setitem(PEOPLE, key, dataclasses.replace(p, id=u["id"]))
+    return hub
+
+
+@pytest.fixture
+def client(hub):
+    with TestClient(build_app()) as c:
+        yield c
+
+
+def as_owner_conversation(client):
+    cid, b = new_conv(client)
+    out = send(client, cid, "the plan", b)
+    wait_run(client, out["run_id"])
+    return cid, out
+
+
+def test_snapshot_publish_bound_to_preview_and_revoke(client, monkeypatch):
+    cid, out = as_owner_conversation(client)
+    pv = client.post("/api/shares/previews", headers=ORIGIN,
+                     json={"conversation_id": cid, "head_message_id": out["assistant_message_id"],
+                           "audience": {"type": "deployment"}, "allow_copy": True}).json()
+    assert pv["projection"]["messages"][0]["content"][0]["text"] == "the plan"
+    bad = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": "sha256:00"})
+    assert bad.status_code == 409 and bad.json()["detail"]["code"] == "snapshot_changed"
+    made = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    assert made.status_code == 201, made.text
+    share = made.json()
+    token = share["url"].rsplit("/", 1)[1]
+    again = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]})
+    assert again.json()["id"] == share["id"]  # a retry gives the same link
+    r = client.get(f"/api/shares/{token}")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    assert r.json()["messages"][1]["role"] == "assistant"
+    # public links are off by default: an anonymous reader can't open a deployment link
+    as_people(monkeypatch)
+    assert client.get(f"/api/shares/{token}").status_code == 401
+    monkeypatch.undo()
+    assert client.request("DELETE", f"/api/shares/{share['id']}", headers=ORIGIN,
+                          json={"expected_revision": 1}).status_code == 204
+    assert client.get(f"/api/shares/{token}").status_code == 404
+    assert client.get("/api/shares/not-a-real-token-at-all").status_code == 404
+
+
+def test_public_needs_policy_and_widening_needs_new_link(client, hub):
+    cid, out = as_owner_conversation(client)
+    denied = client.post("/api/shares/previews", headers=ORIGIN,
+                         json={"conversation_id": cid, "audience": {"type": "public"}})
+    assert denied.status_code == 403 and denied.json()["detail"]["code"] == "public_disabled"
+    from hubzoid.chat import config as cfg
+
+    svc = cfg.service_for(hub)
+    doc = svc.active().document
+    doc["sharing"]["public_enabled"] = True
+    svc.apply(doc, expected_revision=None, actor="t")
+    pv = client.post("/api/shares/previews", headers=ORIGIN,
+                     json={"conversation_id": cid, "audience": {"type": "deployment"}}).json()
+    share = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]}).json()
+    wider = client.patch(f"/api/shares/{share['id']}", headers=ORIGIN,
+                         json={"expected_revision": 1, "audience": {"type": "public"}})
+    assert wider.status_code == 422
+    narrower = client.patch(f"/api/shares/{share['id']}", headers=ORIGIN,
+                            json={"expected_revision": 1, "allow_copy": False})
+    assert narrower.status_code == 200 and narrower.json()["allow_copy"] is False
+
+
+def test_projection_strips_reasoning_and_tool_details(client):
+    cid, b = new_conv(client)
+    out = send(client, cid, "use a tool and think", b)
+    wait_run(client, out["run_id"])
+    pv = client.post("/api/shares/previews", headers=ORIGIN, json={"conversation_id": cid,
+                                                                   "audience": {"type": "deployment"}}).json()
+    reply = pv["projection"]["messages"][-1]
+    kinds = {p["type"] for p in reply["content"]}
+    assert "reasoning" not in kinds
+    assert all(set(p) <= {"type", "toolCallId", "toolName", "result"} for p in reply["content"] if p["type"] == "tool-call")
+    assert "tool arguments and results" in pv["omissions"]
+
+
+def test_named_audience_and_copy_is_independent(client, hub, monkeypatch):
+    from hubzoid.auth import users
+
+    ana = users.find_by_email(hub, "ana@example.org")
+    cid, out = as_owner_conversation(client)
+    pv = client.post("/api/shares/previews", headers=ORIGIN, json={
+        "conversation_id": cid, "audience": {"type": "named", "principals": [ana["id"]]}}).json()
+    share = client.post("/api/shares", headers=ORIGIN, json={"preview_id": pv["preview_id"], "digest": pv["digest"]}).json()
+    token = share["url"].rsplit("/", 1)[1]
+    as_people(monkeypatch)
+    assert client.get(f"/api/shares/{token}", headers=who("ben")).status_code == 404
+    assert client.get(f"/api/shares/{token}", headers=who("ana")).status_code == 200
+    cp = client.post(f"/api/shares/{token}/copies/previews", headers=who("ana")).json()
+    made = client.post(f"/api/shares/{token}/copies", headers=who("ana"), json={"digest": cp["digest"]})
+    assert made.status_code == 201
+    new_cid = made.json()["new_conversation_id"]
+    s = client.get(f"/api/conversations/{new_cid}", headers=who("ana")).json()
+    assert s["runs"] == [] and s["queue"] == [] and len(s["messages"]) == 2
+    client.app.state.chat.sharing.revoke(share["id"], "owner", None, manager=True)
+    assert client.get(f"/api/shares/{token}", headers=who("ana")).status_code == 404
+    assert client.get(f"/api/conversations/{new_cid}", headers=who("ana")).status_code == 200  # the copy stays
+
+
+def test_collaborators_write_on_own_branch_and_lose_access(client, hub, monkeypatch):
+    cid, out = as_owner_conversation(client)
+    put = client.put(f"/api/conversations/{cid}/collaborators", headers=ORIGIN,
+                     json={"expected_revision": 0, "members": [{"principal_id": "ana@example.org", "role": "editor"}]})
+    assert put.status_code == 200 and put.json()["revision"] == 1
+    stale = client.put(f"/api/conversations/{cid}/collaborators", headers=ORIGIN, json={"expected_revision": 0, "members": []})
+    assert stale.status_code == 409
+    as_people(monkeypatch)
+    s = client.get(f"/api/conversations/{cid}", headers=who("ana")).json()
+    assert s["role"] == "editor"
+    # Ana writes on her own branch from the owner's answer.
+    own = client.post(f"/api/conversations/{cid}/branches", headers=h(who("ana")),
+                      json={"from_message_id": out["assistant_message_id"]}).json()["branch"]
+    mine = send(client, cid, "my take", own, who("ana"), parent=out["assistant_message_id"])
+    wait_run(client, mine["run_id"], who("ana"))
+    sharing = client.app.state.chat.sharing
+    conv = {"id": cid, "owner_id": snap(client, cid, who("ana"))["conversation"]["owner_id"]}
+    sharing.set_collaborators(conv, conv["owner_id"], [], 1)
+    assert client.get(f"/api/conversations/{cid}", headers=who("ana")).status_code == 404
