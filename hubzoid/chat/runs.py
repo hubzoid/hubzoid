@@ -26,7 +26,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from .. import _request_ctx, access, run_events
 from ..run_events import Notice, ToolCall, ToolResult
@@ -58,6 +58,12 @@ class Run:
     # True once the stream has ended for subscribers ('finish' sent).
     closed: bool = False
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    # The engine's run record (``hubzoid.chat.engine``): its id, branch and lease fence.
+    run_id: str | None = None
+    branch_id: str | None = None
+    fence: int = 0
+    on_update: Any = None     # (run) -> None after each published chunk
+    on_finish: Any = None     # async (run, status, error) after the reply is saved
 
     @property
     def finished(self) -> bool:
@@ -103,16 +109,23 @@ class RunManager:
         self._claimed.discard(conversation_id)
 
     # -- start -------------------------------------------------------------------
+    def active_runs(self) -> list[Run]:
+        return [r for r in list(self._runs.values()) if not r.finished]
+
     def start(self, *, conversation_id: str, chat_key: str, message_id: str, prompt: str, user,
-              title: str | None = None) -> Run:
+              title: str | None = None, run_id: str | None = None, branch_id: str | None = None,
+              fence: int = 0, prefix: list | None = None, on_update=None, on_finish=None) -> Run:
         """Begin writing ``message_id`` (already stored as 'running'). Must be
         called on the event loop, with the conversation claimed. ``chat_key``
         is the conversation's ``store.chat_key``, the run's chat scope."""
         builder = MessageBuilder(message_id, conversation_id,
                                  show_tools=getattr(self.ctx.settings, "show_tools", "compact") != "off")
+        if prefix:
+            builder.seed(prefix)
         run = Run(message_id=message_id, conversation_id=conversation_id, chat_key=chat_key,
                   owner_id=user.id, email=user.email, builder=builder,
-                  loop=asyncio.get_running_loop(), started=time.monotonic())
+                  loop=asyncio.get_running_loop(), started=time.monotonic(), run_id=run_id,
+                  branch_id=branch_id, fence=fence, on_update=on_update, on_finish=on_finish)
         self._runs[message_id] = run
         self._publish(run, builder.start())
         if title:
@@ -158,6 +171,11 @@ class RunManager:
             run.history.append(chunk)
             for queue in list(run.subscribers):
                 queue.put_nowait(chunk)
+        if chunks and run.on_update is not None:
+            try:
+                run.on_update(run)
+            except Exception:  # noqa: BLE001 - observers never break the reply
+                log.warning("chat: live update for %s failed", run.message_id, exc_info=True)
 
     def title_ready(self, conversation_id: str, title: str) -> None:
         """A generated title (called from any thread): tell the live reply's
@@ -275,6 +293,8 @@ class RunManager:
             self._runs.pop(run.message_id, None)
             self._claimed.discard(run.conversation_id)
             run.done.set()
+            if run.on_finish is not None:
+                asyncio.ensure_future(run.on_finish(run, status, error))
 
     def _save_final(self, run: Run, status: str, error: str | None, model: str | None,
                     summary: dict) -> None:

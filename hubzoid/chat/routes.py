@@ -24,7 +24,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .. import memory as memlib
@@ -138,8 +138,35 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
                       store=store_mod.for_hub(hub_dir))
     ctx.runs = RunManager(ctx)
     ctx.runs.sweep()
+    from . import engine_routes
+    from .engine import ChatEngine
+
+    def validate_parts(conv: dict, content) -> list[dict]:
+        try:
+            return _message_parts(ctx, chat_key(conv), {"content": content})
+        except HTTPException as exc:
+            from .graph import GraphError
+
+            raise GraphError(exc.status_code, exc.detail["code"], exc.detail["message"])
+
+    def groups_for(email: str) -> frozenset[str]:
+        from .. import access
+
+        try:
+            return frozenset(access.effective_groups(hub_dir, email=email, surface="web", header_groups=None))
+        except Exception:  # noqa: BLE001 - no groups is the fail-closed default
+            return frozenset()
+
+    ctx.engine = ChatEngine(hub_dir, ctx.store, ctx.hub, part_validator=validate_parts, groups_for=groups_for)
+    try:
+        ctx.engine.sweep()
+    except Exception:  # noqa: BLE001 - never block the bridge start
+        log.warning("chat: could not check for interrupted runs", exc_info=True)
+    engine_routes.mount(app, ctx)
     app.state.chat = ctx
     store = ctx.store
+    engine = ctx.engine
+    call = engine_routes.call
 
     # -- conversations -----------------------------------------------------------
     @app.get("/api/conversations")
@@ -165,8 +192,8 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     @app.post("/api/conversations", status_code=201)
     async def create_conversation(request: Request):
         user = await ctx.mutation(request)
-        body = await _body(request)
-        agent = body.get("agent")
+        body = await engine_routes.read_json(request)
+        agent = body.get("agent") or body.get("agent_id")
         if not agent:
             raise error(400, "agent_required", "Choose an agent to start a conversation.")
         if agent != ctx.model_label:
@@ -175,38 +202,44 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
         if not valid_conversation_id(conv_id):
             raise error(400, "invalid_id", "Conversation ids are 8 to 64 letters, digits, '-' "
                                            "or '_', starting and ending with a letter or digit.")
+        temporary = body.get("temporary", False)
+        if not isinstance(temporary, bool):
+            raise error(400, "invalid_request", "temporary is true or false.")
         await ctx.may_use_hub(user)
         existing = await db(store.get_conversation, conv_id)
         if existing is not None:
-            if existing["owner_id"] == user.id and existing["hub"] == ctx.hub:
+            if existing["owner_id"] == user.id and existing["hub"] == ctx.hub and not existing.get("deleted_at"):
                 return JSONResponse({"conversation": ctx.conversation_json(existing)})
             raise error(409, "id_conflict", "That conversation id is already in use.")
-        try:
-            conv = await db(store.create_conversation, conv_id=conv_id, owner_id=user.id,
-                            owner_email=user.email, hub=ctx.hub, agent=agent)
-        except StoreError as exc:
-            raise _store_error(exc)
-        return JSONResponse(status_code=201, content={"conversation": ctx.conversation_json(conv)})
+        actor = await db(engine.actor, user)
+        made = await call(engine.create_conversation, actor, agent=agent, temporary=temporary,
+                          conversation_id=conv_id, key=request.headers.get("idempotency-key"))
+        conv = await db(store.get_conversation, made["conversation_id"])
+        return JSONResponse(status_code=201, content={"conversation": {**ctx.conversation_json(conv),
+                                                                       "temporary": temporary,
+                                                                       "expires_at": made["expires_at"]},
+                                                      "branch": made["branch"]})
 
     @app.get("/api/conversations/{conv_id}")
     async def get_conversation(conv_id: str, request: Request):
         user = await ctx.user(request)
-        conv = await ctx.owned(user, conv_id)
-        messages = [message_json(m) for m in await db(store.list_messages, conv_id)]
-        for message in messages:
-            live = ctx.runs.active(message["id"])
-            if live is not None:
-                message["content"] = live.builder.snapshot()
-        head = conv.get("head_id")
-        if not head and messages:
-            head = await db(store.latest_leaf, conv_id)
-        return {"conversation": ctx.conversation_json(conv), "messages": messages, "head_id": head}
+        actor = await db(engine.actor, user)
+
+        def live(message_id: str):
+            run = ctx.runs.active(message_id)
+            return run.builder.snapshot() if run is not None else None
+
+        snap = await call(engine.snapshot, conv_id, actor, live=live)
+        snap["conversation"] = {**ctx.conversation_json(await db(store.get_conversation, conv_id)),
+                                **snap["conversation"]}
+        snap["head_id"] = (snap.get("view") or {}).get("view_head_id")
+        return snap
 
     @app.patch("/api/conversations/{conv_id}")
     async def update_conversation(conv_id: str, request: Request):
         user = await ctx.mutation(request)
         conv = await ctx.owned(user, conv_id)
-        body = await _body(request)
+        body = await engine_routes.read_json(request)
         updates: dict = {}
         if "title" in body:
             title = body["title"]
@@ -227,23 +260,22 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
                 if target is None or target["conversation_id"] != conv_id:
                     raise error(400, "invalid_head", "head_id must be a message of this conversation.")
             updates["head_id"] = head
+            actor = await db(engine.actor, user)
+            await call(engine.set_view, conv_id, actor, branch_id=None, head_id=head, expected_revision=None)
         if updates:
             conv = await db(store.update_conversation, conv_id, **updates)
         return {"conversation": ctx.conversation_json(conv)}
 
     @app.delete("/api/conversations/{conv_id}", status_code=204)
     async def delete_conversation(conv_id: str, request: Request):
+        """Tombstone the conversation (its runs must be stopped first)."""
         user = await ctx.mutation(request)
         conv = await ctx.owned(user, conv_id)
         ctx.this_hub(conv)
-        live = ctx.runs.active_in(conv_id)
-        if live is not None:
-            await ctx.runs.cancel(live.message_id)
-            try:
-                await asyncio.wait_for(live.done.wait(), timeout=15)
-            except asyncio.TimeoutError:
-                log.warning("chat: reply %s did not stop before delete", live.message_id)
-        await db(store.delete_conversation, conv_id)
+        body = await engine_routes.read_json(request)
+        actor = await db(engine.actor, user)
+        await call(engine.delete_conversation, conv_id, actor, expected_revision=body.get("expected_revision"),
+                   key=request.headers.get("idempotency-key"))
         await db(_remove_chat_dir, hub_dir, chat_key(conv))
         return Response(status_code=204)
 
@@ -251,7 +283,7 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     @app.post("/api/chat")
     async def chat(request: Request):
         user = await ctx.mutation(request)
-        body = await _body(request)
+        body = await engine_routes.read_json(request, engine_routes.MESSAGE_BODY_LIMIT)
         conv_id = body.get("conversation_id")
         if not valid_conversation_id(conv_id):
             raise error(400, "invalid_id", "conversation_id is missing or not a valid id.")
@@ -296,20 +328,8 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
         else:
             ctx.this_hub(conv)
 
-        if not ctx.runs.claim(conv_id):
-            raise error(409, "run_in_progress",
-                        "A reply is still being written. Stop it or wait for it to finish.")
-        try:
-            prepared = await _prepare_turn(ctx, conv, body, parent_id, message, assistant_id)
-            run = ctx.runs.start(conversation_id=conv_id, chat_key=chat_key(conv),
-                                 message_id=assistant_id, prompt=prepared["prompt"], user=user,
-                                 title=prepared["title"])
-        except BaseException:
-            ctx.runs.release(conv_id)
-            raise
-        if prepared["title_from"] is not None:
-            titles.start(store, hub_dir, conv_id, prepared["title_from"], user.email,
-                         on_title=lambda title: ctx.runs.title_ready(conv_id, title))
+        actor = await db(engine.actor, user)
+        run = await _legacy_turn(ctx, conv, actor, body, parent_id, message, assistant_id)
         queue = ctx.runs.subscribe(run)
         return StreamingResponse(ctx.runs.sse(run, queue), media_type="text/event-stream",
                                  headers=HEADERS)
@@ -325,24 +345,38 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
         ctx.this_hub(conv)
         return message
 
-    @app.post("/api/runs/{message_id}/cancel", status_code=202)
-    async def cancel_run(message_id: str, request: Request):
+    @app.post("/api/runs/{run_ref}/cancel", status_code=202)
+    async def cancel_run(run_ref: str, request: Request):
+        """Stop a reply: the branch's queue is parked first, partial text is kept.
+        ``run_ref`` is a run id or (older clients) the reply's message id."""
         user = await ctx.mutation(request)
-        message = await owned_message(user, message_id)
-        stopping = await ctx.runs.cancel(message_id)
+        body = await engine_routes.read_json(request)
+        actor = await db(engine.actor, user)
+        run_id = await db(engine.run_for_message, run_ref) if valid_message_id(run_ref) else None
+        run_id = run_id or run_ref
+        out = await call(engine.request_cancel, run_id, actor, park_queue=body.get("park_queue", True) is not False)
+        if out.get("already_terminal"):
+            return JSONResponse(status_code=200, content={"status": out["status"], "run_id": run_id})
+        stopping = await ctx.runs.cancel(out["message_id"])
         return JSONResponse(status_code=202, content={
-            "status": "cancelling" if stopping else message.get("status")})
+            "status": "cancelling" if stopping else out["status"], "run_id": run_id})
 
     @app.get("/api/runs/{message_id}")
     async def run_status(message_id: str, request: Request):
         user = await ctx.user(request)
-        message = await owned_message(user, message_id)
-        out = message_json(message)
-        live = ctx.runs.active(message_id)
+        actor = await db(engine.actor, user)
+        run_id = await db(engine.run_for_message, message_id) if valid_message_id(message_id) else message_id
+        if run_id is None:
+            message = await owned_message(user, message_id)
+            out = message_json(message)
+            return {"status": out["status"], "message": out}
+        info = await call(engine.run, run_id, actor)
+        out = info["message"] or {}
+        live = ctx.runs.active(info["message_id"])
         if live is not None:
             out["content"] = live.builder.snapshot()
             out["status"] = "running"
-        return {"status": out["status"], "message": out}
+        return {"status": out.get("status"), "message": out, "run": {k: v for k, v in info.items() if k != "message"}}
 
     files_mod.register(app, ctx)
     shares_mod.register(app, ctx)
@@ -365,60 +399,58 @@ async def _require_terms(hub_dir: Path, user) -> None:
                     "Accept the current terms of use first. Reload the page to see them.")
 
 
-async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str | None,
-                        message: dict | None, assistant_id: str) -> dict:
-    """Store the user message (idempotent by id) and the 'running' reply, and
-    build the prompt from the branch. Returns the prompt, the provisional title
-    when this message set it, and the text to title from when a title is due."""
-    store = ctx.store
-    conv_id = conv["id"]
-    key = chat_key(conv)
-    if await db(store.get_message, assistant_id) is not None:
-        raise error(409, "id_conflict", "That reply id is already in use.")
-    if parent_id is not None:
-        parent = await db(store.get_message, parent_id)
-        if parent is None or parent["conversation_id"] != conv_id:
-            raise error(400, "invalid_parent", "parent_id is not a message of this conversation.")
-        wanted = "assistant" if message is not None else "user"
-        if parent["role"] != wanted:
-            raise error(400, "invalid_parent",
-                        "A new message follows a reply; a regenerated reply follows a user message.")
+async def _legacy_turn(ctx: ChatContext, conv: dict, actor, body: dict, parent_id: str | None,
+                       message: dict | None, assistant_id: str):
+    """``POST /api/chat`` (the 1.x streaming contract) as an engine operation:
+    a new message extends the writer's branch whose head is ``parent_id`` (one
+    is opened from there when needed); a regeneration is ``regenerate``."""
+    from . import engine_routes
+    from . import graph as g
+    from .engine import Err
 
-    title = None
-    title_from = None
-    if message is not None:
-        existing = await db(store.get_message, message["id"])
-        if existing is not None:
-            if (existing["conversation_id"] != conv_id or existing["role"] != "user"
-                    or existing.get("parent_id") != parent_id):
-                raise error(409, "id_conflict", "That message id is already in use.")
-            user_id = existing["id"]
-        else:
-            parts = await db(_message_parts, ctx, key, message)
-            text = _search_text(parts)
-            try:
-                await db(store.insert_message, message_id=message["id"], conversation_id=conv_id,
-                         parent_id=parent_id, role="user", content=parts, text=text)
-            except StoreError as exc:
-                raise _store_error(exc)
-            user_id = message["id"]
-            if conv.get("title_source") == "pending" and not conv.get("title"):
-                subject = _first_words(parts)
-                title = titles.provisional(subject)
-                await db(store.set_title, conv_id, title, "pending", only_if_source=("pending",))
-                title_from = subject
+    engine = ctx.engine
+
+    def plan_turn():
+        import sqlalchemy as sa
+
+        with engine.engine.begin() as conn:
+            g.ensure_initial_branch(conn, conv, actor.id)
+            rows = conn.execute(sa.select(g.branches).where(g.branches.c.conversation_id == conv["id"],
+                                                            g.branches.c.writer_actor_id == actor.id)).all()
+            match = next((b for b in rows if b.head_id == parent_id), None)
+            if match is None:
+                b = g.create_branch(conn, conv["id"], actor.id, parent_id)
+                return b["id"], b["revision"]
+            return match.id, match.revision
+
+    existing = await db(ctx.store.get_message, message["id"]) if message is not None else None
+    if existing is not None:
+        # A retried send (same user message id): answer that saved message again.
+        if (existing["conversation_id"] != conv["id"] or existing["role"] != "user"
+                or existing.get("parent_id") != parent_id):
+            raise error(409, "id_conflict", "That message id is already in use.")
+        op = {"kind": "regenerate", "target_message_id": existing["id"], "assistant_message_id": assistant_id}
+    elif message is not None:
+        branch_id, revision = await engine_routes.call(plan_turn)
+        op = {"kind": "send", "branch_id": branch_id, "expected_revision": revision, "parent_id": parent_id,
+              "content": message.get("content"), "message_id": message["id"], "assistant_message_id": assistant_id}
     else:
-        user_id = parent_id
-
+        op = {"kind": "regenerate", "target_message_id": parent_id, "assistant_message_id": assistant_id}
     try:
-        await db(store.insert_message, message_id=assistant_id, conversation_id=conv_id,
-                 parent_id=user_id, role="assistant", content=[], text="", status="running")
-    except StoreError as exc:
-        raise _store_error(exc)
-    await db(store.touch, conv_id, head_id=assistant_id)
-    branch = await db(store.branch, conv_id, user_id)
-    prompt = await db(build_prompt, ctx.hub_dir, key, branch)
-    return {"prompt": prompt, "title": title, "title_from": title_from}
+        out, plan = await asyncio.to_thread(engine.submit, conv["id"], actor, op, key=None,
+                                            route="POST /api/chat")
+    except Err as exc:
+        if exc.code in ("branch_busy", "concurrency_limit"):
+            raise error(409, "run_in_progress", "A reply is still being written. Stop it or wait for it to finish.")
+        if exc.code in ("branch_conflict", "invalid_operation"):
+            raise error(400, "invalid_parent", exc.message)
+        if exc.code == "not_found":
+            raise error(400, "invalid_parent", "parent_id is not a message of this conversation.")
+        raise engine_routes.http(exc)
+    run = await ctx.orchestrator.launch(plan)
+    if run is None:
+        raise error(503, "unavailable", "The reply could not start. Try again.")
+    return run
 
 
 def _stop_replies_on_shutdown(app: FastAPI, runs: RunManager) -> None:

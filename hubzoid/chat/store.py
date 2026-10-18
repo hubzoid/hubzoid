@@ -62,6 +62,11 @@ conversations = sa.Table(
     sa.Column("source", sa.String(16), nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # op_0024: the conversation graph (``hubzoid.chat.graph``).
+    sa.Column("graph_revision", sa.Integer),
+    sa.Column("temporary", sa.Integer),
+    sa.Column("expires_at", sa.Float),
+    sa.Column("deleted_at", sa.Float),
 )
 
 messages = sa.Table(
@@ -78,6 +83,16 @@ messages = sa.Table(
     sa.Column("usage", sa.Text),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # op_0024: who wrote it, on which branch, and what it revises.
+    sa.Column("branch_id", sa.String(64)),
+    sa.Column("revises_id", sa.String(64)),
+    sa.Column("author_id", sa.String(64)),
+    sa.Column("editor_id", sa.String(64)),
+    sa.Column("run_id", sa.String(64)),
+    sa.Column("requested_model", sa.String(255)),
+    sa.Column("historical_only", sa.Integer),
+    sa.Column("context_changed", sa.Integer),
+    sa.Column("deleted_at", sa.Float),
 )
 
 shares = sa.Table(
@@ -265,7 +280,9 @@ class ConversationStore:
         """The conversation when ``owner_id`` owns it, else None (never tells
         whether someone else's exists)."""
         conv = self.get_conversation(conv_id)
-        return conv if conv is not None and conv["owner_id"] == owner_id else None
+        if conv is None or conv.get("deleted_at") is not None:
+            return None
+        return conv if conv["owner_id"] == owner_id else None
 
     def list_conversations(self, owner_id: str, *, archived: bool = False, q: str | None = None,
                            limit: int = DEFAULT_PAGE, cursor: str | None = None,
@@ -274,7 +291,7 @@ class ConversationStore:
         the cursor of the next page (None on the last page)."""
         limit = max(1, min(int(limit or DEFAULT_PAGE), MAX_PAGE))
         c = conversations.c
-        stmt = sa.select(conversations).where(c.owner_id == owner_id,
+        stmt = sa.select(conversations).where(c.owner_id == owner_id, c.deleted_at.is_(None),
                                               c.archived == (1 if archived else 0))
         q = (q or "").strip()
         if q:
@@ -376,7 +393,7 @@ class ConversationStore:
             conn.execute(messages.update().where(messages.c.id == message_id).values(**values))
 
     def list_messages(self, conv_id: str) -> list[dict]:
-        stmt = (messages.select().where(messages.c.conversation_id == conv_id)
+        stmt = (messages.select().where(messages.c.conversation_id == conv_id, messages.c.deleted_at.is_(None))
                 .order_by(messages.c.created_at, messages.c.id))
         with self.engine.connect() as conn:
             return [_message(r) for r in conn.execute(stmt)]
@@ -388,7 +405,8 @@ class ConversationStore:
             return []
         with self.engine.connect() as conn:
             links = dict(conn.execute(sa.select(messages.c.id, messages.c.parent_id)
-                                      .where(messages.c.conversation_id == conv_id)).all())
+                                      .where(messages.c.conversation_id == conv_id,
+                                             messages.c.deleted_at.is_(None))).all())
             if message_id not in links:
                 return []
             path: list[str] = []

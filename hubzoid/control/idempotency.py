@@ -84,7 +84,7 @@ def check_key(key: str | None) -> str | None:
 
 def run(engine, *, deployment_id: str, actor_id: str, route: str, key: str | None, body: Any,
         change: Callable[[Any], tuple[int, Any]], hub_id: str | None = None,
-        kind: str = "", now: float | None = None) -> Outcome:
+        kind: str = "", now: float | None = None, operation_id: str | None = None) -> Outcome:
     """Run ``change(conn) -> (status, body)`` once per key. Without a key the
     change simply runs in its own transaction."""
     key = check_key(key)
@@ -116,7 +116,7 @@ def run(engine, *, deployment_id: str, actor_id: str, route: str, key: str | Non
                     actor_id=actor_id, route=route, idempotency_key=key, request_hash=rhash,
                     kind=kind or route, state="completed", resource_refs_json=None,
                     result_json=json.dumps({"status": status, "body": result}, default=str),
-                    error_json=None, operation_id=None, created_at=now,
+                    error_json=None, operation_id=operation_id, created_at=now,
                     expires_at=now + RETAIN_SECONDS))
                 return Outcome(status, result)
         except IntegrityError:
@@ -130,3 +130,18 @@ def purge(engine, now: float | None = None) -> int:
     now = time.time() if now is None else now
     with engine.begin() as conn:
         return conn.execute(operations.delete().where(operations.c.expires_at < now)).rowcount
+
+
+def receipt(engine, *, deployment_id: str, actor_id: str, operation_id: str) -> dict | None:
+    """The stored outcome of an operation by its durable ``operation_id``,
+    for the actor who made it (anyone else gets None)."""
+    c = operations.c
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(operations).where(
+            c.deployment_id == deployment_id, c.actor_id == actor_id, c.operation_id == operation_id)).first()
+    if row is None:
+        return None
+    stored = json.loads(row.result_json or "{}")
+    return {"operation_id": operation_id, "state": "committed", "kind": row.kind,
+            "status": int(stored.get("status", 200)), "result": stored.get("body"),
+            "created_at": row.created_at}
