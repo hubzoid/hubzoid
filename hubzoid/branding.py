@@ -196,18 +196,12 @@ def has_assets(branding_dir: Path) -> bool:
     return bool(_build_source_index(branding_dir))
 
 
-def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None,
-          replace_marks: bool = True) -> dict[str, Path | str]:
+def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None) -> dict[str, Path | str]:
     """Copy hub branding into one OWUI static root. Idempotent.
 
     Returns a dict of {canonical_filename: source_path | "<baseline>"}
     for assets that were written. Missing files are silently skipped
     (OWUI defaults render).
-
-    ``replace_marks=False`` keeps Open WebUI's own logo, favicon and splash
-    (restoring them if an earlier run replaced them) and applies only
-    ``custom.css``. Callers pass ``webui.debrand_requested``, which follows
-    Open WebUI's license terms for its branding.
 
     Files are written to BOTH ``static_dir/<name>`` and
     ``static_dir/static/<name>`` because OWUI's asset routing has both
@@ -220,8 +214,6 @@ def apply(hub_dir: Path, static_dir: Path, *, baseline_css: str | None = None,
     """
     branding_dir = hub_dir / "branding"
     index = _build_source_index(branding_dir)
-    if not replace_marks:
-        index = {name: src for name, src in index.items() if name == "custom.css"}
     # Put back Open WebUI's own file for every slot this hub doesn't brand, so
     # an unbranded hub (or a brand with fewer files) never shows a previous
     # hub's images from the shared install.

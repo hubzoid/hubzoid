@@ -5,35 +5,17 @@ are permanently and equally supported, with the same release-testing
 requirements and no planned removal. Upgrading does not require switching
 interfaces; retain `hubzoid[openwebui]` and `HUBZOID_UI=openwebui` when using it.
 
-- [After 1.3.2: Open WebUI memory and branding (unreleased)](#after-132-open-webui-memory-and-branding-unreleased)
+- [After 1.3.2: Open WebUI memory (unreleased)](#after-132-open-webui-memory-unreleased)
 - [Upgrading to 1.3.2](#upgrading-to-132)
 - [Upgrading to 1.3: workflows from chat](#upgrading-to-13-workflows-from-chat)
 - [Upgrading to 1.2: MCP connectors in the Console](#upgrading-to-12-mcp-connectors-in-the-console)
 - [Upgrading to 1.1 from 1.0.x](#upgrading-to-11-from-10x)
 - [Upgrading to 1.0.1 from 0.9.x](#upgrading-to-101-from-09x)
 
-## After 1.3.2: Open WebUI memory and branding (unreleased)
+## After 1.3.2: Open WebUI memory (unreleased)
 
 These changes apply only with `HUBZOID_UI=openwebui`. Native chat is unchanged.
 There are no new Hub files or database schema changes.
-
-**Open WebUI's branding now stays by default.** Up to 1.3.2, any logo, favicon
-or splash in `<hub>/branding/` (or in the gateway's branding source) replaced
-Open WebUI's and removed its `(Open WebUI)` name suffix. Open WebUI's license
-allows that only with 50 or fewer end users in any rolling 30 days, or with its
-written permission or an enterprise license. After upgrading, a branded hub
-starts and runs as before but shows Open WebUI's logo and name, and the startup
-log says why. If one of those exceptions applies to your deployment, add this
-line to the hub's `.env` (in gateway mode, the gateway's environment) and
-restart to keep your branding:
-
-```dotenv
-HUBZOID_OWUI_REMOVE_BRANDING=50-users-or-fewer   # or: licensed
-```
-
-`HUBZOID_KEEP_OWUI_SUFFIX=true` still works. It now also keeps Open WebUI's
-logo, favicon and splash, where up to 1.3.2 it kept only the name and page
-titles. See [Open WebUI branding](branding.md#open-webui-branding).
 
 **Open WebUI's own memory is now off.** Hubzoid set `ENABLE_MEMORY=False`, but
 Open WebUI reads `ENABLE_MEMORIES`, so its per-user memory stayed on. Hubzoid

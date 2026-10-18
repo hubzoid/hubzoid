@@ -229,68 +229,30 @@ _MCP_API_KEY_ENV: dict[str, str] = {
 
 
 _OWUI_SUFFIX_NEEDLE = "    WEBUI_NAME += ' (Open WebUI)'"
-# Installs patched by earlier releases carry this exact text, and restoring the
-# suffix looks for it, so it never changes.
 _OWUI_SUFFIX_PATCH = "    pass  # hubzoid: suffix stripped (set HUBZOID_KEEP_OWUI_SUFFIX=True to restore)"
-
-# Open WebUI's license (clause 4) forbids replacing or removing its branding
-# (name, logo or other identifiers) unless the deployment has 50 or fewer end
-# users in any rolling 30 days, or holds Open WebUI's written permission or an
-# enterprise license. Hubzoid keeps the branding until the operator names which
-# applies: "50-users-or-fewer" or "licensed".
-REMOVE_BRANDING_ENV = "HUBZOID_OWUI_REMOVE_BRANDING"
-_REMOVE_BRANDING_BASES = ("50-users-or-fewer", "licensed")
-
-
-def _keep_owui_branding() -> bool:
-    """The setting up to 1.3.2. Still honoured: it always keeps the branding."""
-    return os.environ.get("HUBZOID_KEEP_OWUI_SUFFIX", "").strip().lower() in _TRUTHY
 
 
 def debrand_requested(brand_dir: Path | None) -> bool:
-    """Replace Open WebUI's branding only when the hub brings its own AND the
-    operator has confirmed Open WebUI's license allows it.
+    """Replace Open WebUI's branding only when the hub supplies its own.
 
-    Needs at least one asset in ``<brand_dir>/branding/`` (logo, favicon,
-    splash...) and ``HUBZOID_OWUI_REMOVE_BRANDING`` set to ``50-users-or-fewer``
-    or ``licensed``. Then the hub's files replace Open WebUI's, and the
-    "(Open WebUI)" name suffix and static titles are rebranded too. Otherwise
-    Open WebUI's branding stays. ``HUBZOID_KEEP_OWUI_SUFFIX=true`` keeps it
-    regardless.
+    Any asset in ``<brand_dir>/branding/`` (logo, favicon, splash...) means the
+    hub is branded: its files replace OWUI's and the "(Open WebUI)" name suffix
+    and static titles are rebranded too. No assets: stock Open WebUI branding.
+    ``HUBZOID_KEEP_OWUI_SUFFIX=true`` keeps Open WebUI's branding regardless
+    (required above 50 users without an Open WebUI enterprise license).
     """
-    if brand_dir is None or not branding.has_assets(Path(brand_dir) / "branding"):
+    if os.environ.get("HUBZOID_KEEP_OWUI_SUFFIX", "").strip().lower() in _TRUTHY:
         return False
-    if _keep_owui_branding():
-        return False
-    return os.environ.get(REMOVE_BRANDING_ENV, "").strip().lower() in _REMOVE_BRANDING_BASES
-
-
-def _debrand_or_explain(brand_dir: Path | None) -> bool:
-    """`debrand_requested`, logging why a hub's own branding is not shown."""
-    if debrand_requested(brand_dir):
-        return True
-    basis = os.environ.get(REMOVE_BRANDING_ENV, "").strip()
-    if basis and basis.lower() not in _REMOVE_BRANDING_BASES:
-        log.warning("webui: %s=%s is not recognised; Open WebUI branding kept. Use "
-                    "50-users-or-fewer or licensed. See docs/branding.md.",
-                    REMOVE_BRANDING_ENV, basis)
-    elif (not basis and not _keep_owui_branding() and brand_dir is not None
-          and branding.has_assets(Path(brand_dir) / "branding")):
-        log.warning("webui: Open WebUI branding kept although %s has your branding files. "
-                    "Open WebUI's license allows replacing it only with 50 or fewer end users "
-                    "in any rolling 30 days, written permission or an enterprise license. If "
-                    "one applies, set %s=50-users-or-fewer or %s=licensed. See docs/branding.md.",
-                    Path(brand_dir) / "branding", REMOVE_BRANDING_ENV, REMOVE_BRANDING_ENV)
-    return False
+    return brand_dir is not None and branding.has_assets(Path(brand_dir) / "branding")
 
 
 def _patch_owui_suffix(strip: bool) -> None:
     """Patch open_webui/env.py to remove the ' (Open WebUI)' suffix.
 
     Open WebUI's license permits removing built-in branding for deployments
-    with 50 or fewer end users in any rolling 30-day window, or with written
-    permission or an enterprise license. So Open WebUI branding is kept unless
-    the hub brings its own and the operator confirms (see `debrand_requested`).
+    under 50 unique end users in any rolling 30-day window, or with an
+    enterprise license. So Open WebUI branding is kept unless the hub brings
+    its own (see `debrand_requested`).
 
     Idempotent: detects whether the file is already patched and no-ops.
     ``pip install --upgrade open-webui`` reverts the patch; hubzoid
@@ -543,7 +505,7 @@ def start(
         # scope at the model level in a single hub, so bypass by default.
         bypass_model_access_control=True,
         enable_api_keys=enable_api_keys,
-        debrand=_debrand_or_explain(hub_dir),
+        debrand=debrand_requested(hub_dir),
         base_env=base_env,
     )
 
@@ -584,7 +546,7 @@ def start_gateway(
         # HUBZOID_GATEWAY_ALLOW_BYPASS=1.
         bypass_model_access_control=False,
         enable_api_keys=enable_api_keys,
-        debrand=_debrand_or_explain(brand_dir),
+        debrand=debrand_requested(brand_dir),
         base_env=base_env,
     )
 
@@ -609,11 +571,10 @@ def _spawn_owui(
     bridge wiring); everything else is `setdefault` so the operator's `.env`
     wins.
     """
-    # Open WebUI branding stays unless the hub brings its own and the operator
-    # confirms the license allows it (debrand, see debrand_requested): then the
-    # "(Open WebUI)" suffix goes, and so do the static surfaces WEBUI_NAME
-    # can't reach (tab title before hydration, link-preview meta, PWA
-    # manifest). Otherwise both are restored.
+    # Open WebUI branding stays unless the hub brings its own (debrand, see
+    # debrand_requested): then the "(Open WebUI)" suffix goes, and so do the
+    # static surfaces WEBUI_NAME can't reach (tab title before hydration,
+    # link-preview meta, PWA manifest). Otherwise both are restored.
     _patch_owui_suffix(strip=debrand)
     _patch_owui_branding(webui_name or "Hubzoid", strip=debrand)
 

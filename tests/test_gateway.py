@@ -580,29 +580,6 @@ def test_gateway_branding_failure_never_kills_boot(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
 
 
-@pytest.mark.parametrize("basis, replaced", [(None, False), ("licensed", True)])
-def test_gateway_keeps_open_webui_marks_until_confirmed(tmp_path, monkeypatch, basis, replaced):
-    from hubzoid import branding, webui
-
-    sales = _gateway_harness(tmp_path, monkeypatch)
-    (sales / "branding").mkdir()
-    (sales / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    monkeypatch.delenv("HUBZOID_KEEP_OWUI_SUFFIX", raising=False)
-    if basis:
-        monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, basis)
-    else:
-        monkeypatch.delenv(webui.REMOVE_BRANDING_ENV, raising=False)
-    applied = []
-    monkeypatch.setattr(branding, "static_dirs", lambda: [tmp_path / "static"])
-    monkeypatch.setattr(branding, "apply", lambda src, sd, **kw: applied.append(kw["replace_marks"]))
-
-    result = CliRunner().invoke(
-        cli.app, ["gateway", str(sales), "--data-dir", str(tmp_path / "gw"), "--port", "3080"],
-    )
-    assert result.exit_code == 0, result.output
-    assert applied == [replaced]
-
-
 def test_gateway_skips_provisioning_without_creds(tmp_path, monkeypatch):
     """No admin creds -> provisioning is skipped entirely (today's behavior),
     and the boot proceeds normally."""
@@ -680,9 +657,6 @@ def test_gateway_applies_its_own_branding(tmp_path, monkeypatch):
     gwdata = tmp_path / "gwdata"
     (gwdata / "branding").mkdir(parents=True)
     (gwdata / "branding" / "logo.png").write_bytes(b"GWLOGO")
-    # Open WebUI's license allows replacing its logo only once confirmed.
-    monkeypatch.delenv("HUBZOID_KEEP_OWUI_SUFFIX", raising=False)
-    monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, "50-users-or-fewer")
 
     result = CliRunner().invoke(
         cli.app, ["gateway", str(sales), "--data-dir", str(gwdata), "--port", "3080"],

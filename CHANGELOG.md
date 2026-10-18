@@ -5,14 +5,6 @@ All notable changes to Hubzoid. Versions follow the package version in
 
 ## [Unreleased]
 
-### Changed
-- Open WebUI mode keeps Open WebUI's branding by default, as its license
-  requires above 50 end users. Hub branding files replace its logo, favicon,
-  splash and name only when `HUBZOID_OWUI_REMOVE_BRANDING` is
-  `50-users-or-fewer` or `licensed`. `HUBZOID_KEEP_OWUI_SUFFIX=true` still
-  keeps the branding, and now also keeps the logo, favicon and splash. See
-  [the upgrade note](docs/UPGRADING.md#after-132-open-webui-memory-and-branding-unreleased).
-
 ### Fixed
 - Open WebUI's per-user memory is now off in Open WebUI mode. Hubzoid set
   `ENABLE_MEMORY`, which Open WebUI does not read. It now sets

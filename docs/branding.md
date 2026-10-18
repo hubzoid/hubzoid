@@ -30,43 +30,22 @@ changes and refresh the browser to check the result.
 ## Open WebUI branding
 
 The remaining Open WebUI-specific settings apply with `HUBZOID_UI=openwebui`.
-Open WebUI's own branding stays by default. Agent prompt suggestions apply to
-both interfaces. Native chat is Hubzoid's own interface and is not affected
-by this section.
+Open WebUI's own branding stays by default. Custom branding is subject to the
+conditions below. Agent prompt suggestions apply to both interfaces.
 
-Open WebUI's license (clause 4) forbids altering, removing or replacing its
-branding, including its name and logo, except in deployments with 50 or fewer
-end users in any rolling 30 days, or with Open WebUI's prior written
-permission or an enterprise license that allows it. End users are the
-individual people with direct access to the application. Hubzoid can't count
-them for you, so it keeps Open WebUI's branding until you say which exception
-applies:
+With no assets in `<hub>/branding/`, the chat app shows Open WebUI's stock
+logo and the name reads `<your name> (Open WebUI)`. As soon as the folder
+holds at least one asset (a logo, favicon or splash; a README doesn't
+count), the hub is branded: each file replaces its Open WebUI counterpart,
+the `(Open WebUI)` suffix is removed, and the static surfaces below use your
+name. Remove the assets to go back to Open WebUI's branding.
 
-| `HUBZOID_OWUI_REMOVE_BRANDING` | Set it when |
-|---|---|
-| `50-users-or-fewer` | No more than 50 people have access to this deployment in any rolling 30 days. |
-| `licensed` | You hold Open WebUI's written permission or an enterprise license that allows removing its branding. |
-| not set (default) | Neither applies. Open WebUI's logo, favicon, splash and name stay. |
-
-Set it in the hub's `.env` (in gateway mode, the gateway's environment) and
-restart. Any other value keeps Open WebUI's branding and logs a warning.
-Check the count again as your team grows.
-
-With the setting and at least one asset in `<hub>/branding/` (a logo, favicon
-or splash, not a README), the hub is branded: each file replaces its Open
-WebUI counterpart, the `(Open WebUI)` suffix is removed, and the static
-surfaces below use your name. Without the setting, the chat app shows Open
-WebUI's stock logo, the name reads `<your name> (Open WebUI)`, and Hubzoid
-restores any Open WebUI file an earlier run replaced. If your branding files
-are present but the setting is not, Hubzoid logs a warning at startup saying
-so. Your own `custom.css` applies either way. Don't use it to hide Open
-WebUI's branding.
-
-`HUBZOID_KEEP_OWUI_SUFFIX=true`, the setting up to 1.3.2, still keeps Open
-WebUI's branding even when `HUBZOID_OWUI_REMOVE_BRANDING` is set. It is no
-longer needed for that. In gateway mode the decision follows the branding
-source the gateway uses (its own `branding/` folder,
-`HUBZOID_GATEWAY_BRANDING`, or the first hub's).
+Open WebUI's license allows removing its branding only for deployments with
+50 or fewer end users in any rolling 30 days, or with an Open WebUI
+enterprise license. Above that, set `HUBZOID_KEEP_OWUI_SUFFIX=true`, which
+keeps Open WebUI's branding even when your files are present. In gateway
+mode the decision follows the branding source the gateway uses (its own
+`branding/` folder, `HUBZOID_GATEWAY_BRANDING`, or the first hub's).
 
 ## Per-hub identity
 
@@ -77,13 +56,12 @@ one lives in a folder.
 |---|---|---|
 | Top-bar name + tab title | `WEBUI_NAME` in `.env` | Cascades: `WEBUI_NAME` → `MODEL_LABEL` → main agent's `name:` from `AGENTS.md` → `"Hubzoid"` |
 | Watermark on copied messages | `RESPONSE_WATERMARK` in `.env` | Hub folder name |
-| Logo, favicon, splash | `<hub>/branding/` folder (see below), used only with `HUBZOID_OWUI_REMOVE_BRANDING` | Open WebUI defaults |
+| Logo, favicon, splash | `<hub>/branding/` folder (see below) | Open WebUI defaults |
 
 ### Branding folder
 
-Drop files into `<hub>/branding/`. Filenames are case-insensitive. They
-replace Open WebUI's only when `HUBZOID_OWUI_REMOVE_BRANDING` is set (see
-above). Open WebUI's defaults render for any slot you leave empty.
+Drop files into `<hub>/branding/`. Filenames are case-insensitive. Open
+WebUI's defaults render for any slot you leave empty.
 
 | Slot | Accepted filenames |
 |---|---|
@@ -94,9 +72,9 @@ above). Open WebUI's defaults render for any slot you leave empty.
 If both `logo.*` and `favicon.*` exist, favicon wins. Open WebUI uses one
 mark in both top-bar and tab positions.
 
-The demo-hub template ships sample Hubzoid SVGs. In Open WebUI mode they are
-used only once `HUBZOID_OWUI_REMOVE_BRANDING` is set. Replace them with your
-own, or delete them.
+The demo-hub template ships sample Hubzoid SVGs, so it starts branded.
+Replace them with your own, or delete them to fall back to Open WebUI's
+branding.
 
 ### Static surfaces (tab title, link previews, PWA name)
 
@@ -109,10 +87,10 @@ runtime. Three surfaces are served as **static files** that ship as
   someone pastes the hub URL into Slack/iMessage/etc.,
 - the PWA `site.webmanifest` name.
 
-For a branded hub (branding files plus `HUBZOID_OWUI_REMOVE_BRANDING`),
-Hubzoid rewrites all three on every `hubzoid run`, using the same resolved
-name as the cascade above. Otherwise Hubzoid keeps Open WebUI's originals,
-restoring them if an earlier run had rewritten them. The patch is idempotent and
+For a branded hub, Hubzoid rewrites all three on every `hubzoid run`, using
+the same resolved name as the cascade above. An unbranded hub (or
+`HUBZOID_KEEP_OWUI_SUFFIX=true`) keeps Open WebUI's originals, restoring
+them if an earlier run had rewritten them. The patch is idempotent and
 reverts cleanly on a `pip install --upgrade open-webui`.
 
 ## Admins and other people's chats

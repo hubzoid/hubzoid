@@ -142,7 +142,6 @@ def start_strip(tmp_path, monkeypatch):
     """Run webui.start for a hub; return the strip decision it made."""
     monkeypatch.setattr(webui, "_find_binary", lambda: "/fake/open-webui")
     monkeypatch.delenv("HUBZOID_KEEP_OWUI_SUFFIX", raising=False)
-    monkeypatch.delenv(webui.REMOVE_BRANDING_ENV, raising=False)
     decisions: list[bool] = []
     monkeypatch.setattr(webui, "_patch_owui_suffix", lambda strip: decisions.append(strip))
     monkeypatch.setattr(webui, "_patch_owui_branding", lambda brand, *, strip: None)
@@ -175,64 +174,16 @@ def test_open_webui_branding_kept_without_hub_branding(start_strip):
     assert run() is False
 
 
-def test_hub_branding_files_alone_keep_open_webui_branding(start_strip, caplog):
-    """Open WebUI's license: its branding stays until the operator confirms an
-    exception, and the startup log says how."""
+def test_hub_branding_files_replace_open_webui_branding(start_strip):
     hub, run = start_strip
     (hub / "branding").mkdir()
     (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    with caplog.at_level("WARNING", logger="hubzoid.webui"):
-        assert run() is False
-    assert "HUBZOID_OWUI_REMOVE_BRANDING=50-users-or-fewer" in caplog.text
-
-
-@pytest.mark.parametrize("basis", ["50-users-or-fewer", "licensed", " Licensed "])
-def test_confirmed_hub_branding_replaces_open_webui_branding(start_strip, monkeypatch, basis):
-    hub, run = start_strip
-    (hub / "branding").mkdir()
-    (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, basis)
     assert run() is True
 
 
-def test_an_unrecognised_confirmation_keeps_open_webui_branding(start_strip, monkeypatch, caplog):
+def test_keep_suffix_overrides_hub_branding(start_strip, monkeypatch):
     hub, run = start_strip
     (hub / "branding").mkdir()
     (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, "true")
-    with caplog.at_level("WARNING", logger="hubzoid.webui"):
-        assert run() is False
-    assert "is not recognised" in caplog.text
-
-
-def test_confirmation_without_hub_branding_keeps_open_webui_branding(start_strip, monkeypatch):
-    _hub, run = start_strip
-    monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, "licensed")
-    assert run() is False
-
-
-def test_keep_suffix_overrides_confirmed_hub_branding(start_strip, monkeypatch):
-    hub, run = start_strip
-    (hub / "branding").mkdir()
-    (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    monkeypatch.setenv(webui.REMOVE_BRANDING_ENV, "licensed")
     monkeypatch.setenv("HUBZOID_KEEP_OWUI_SUFFIX", "true")
     assert run() is False
-
-
-def test_suffix_patched_by_an_earlier_release_is_restored(tmp_path, monkeypatch):
-    """Installs debranded by 1.3.2 get Open WebUI's suffix back on the next
-    start, because the patch text never changes."""
-    import sys
-    import types
-
-    pkg = tmp_path / "open_webui"
-    pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
-    patched = ("if WEBUI_NAME != 'Open WebUI':\n"
-               "    pass  # hubzoid: suffix stripped (set HUBZOID_KEEP_OWUI_SUFFIX=True to restore)\n")
-    (pkg / "env.py").write_text(patched)
-    monkeypatch.setitem(sys.modules, "open_webui",
-                        types.SimpleNamespace(__file__=str(pkg / "__init__.py")))
-    webui._patch_owui_suffix(strip=False)
-    assert "    WEBUI_NAME += ' (Open WebUI)'" in (pkg / "env.py").read_text()

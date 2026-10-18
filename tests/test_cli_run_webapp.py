@@ -400,23 +400,6 @@ def test_legacy_mode_keeps_open_webui_behind_the_edge(tmp_path, launched):
     assert "Hubzoid is ready" not in result.output
 
 
-@pytest.mark.parametrize("env, replaced", [
-    ("", False),
-    ("HUBZOID_OWUI_REMOVE_BRANDING=50-users-or-fewer\n", True),
-])
-def test_legacy_mode_keeps_open_webui_marks_until_confirmed(tmp_path, launched, monkeypatch,
-                                                            env, replaced):
-    applied = []
-    monkeypatch.setattr(branding, "static_dirs", lambda: [tmp_path / "static"])
-    monkeypatch.setattr(branding, "apply", lambda hub, sd, **kw: applied.append(kw))
-    hub = _hub(tmp_path, "HUBZOID_UI=openwebui\n" + env)
-    (hub / "branding").mkdir()
-    (hub / "branding" / "logo.png").write_bytes(b"\x89PNG")
-    result = _run(hub)
-    assert result.exit_code == 0, result.output
-    assert applied == [{"replace_marks": replaced}]
-
-
 def test_legacy_mode_may_bind_the_network_without_hubzoid_sign_in(tmp_path, launched):
     """1.0.x behaviour: Open WebUI has its own sign-in settings."""
     result = _run(_hub(tmp_path, "HUBZOID_UI=openwebui\n"), "--host", "0.0.0.0")
