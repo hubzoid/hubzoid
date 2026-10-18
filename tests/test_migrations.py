@@ -29,7 +29,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                # work items and safe external writes (op_0030)
                "hz_work_items", "hz_operations", "hz_idempotency",
                # isolated agents and handoffs (op_0031)
-               "hz_station_calls", "hz_handoffs"}
+               "hz_station_calls", "hz_handoffs",
+               # sandboxes (op_0032)
+               "hz_sandboxes", "hz_sandbox_read_stamps"}
 
 
 @pytest.fixture(autouse=True)
@@ -311,10 +313,10 @@ def _previous_phone_schema(engine):
         for table, column in (("hz_connect_states", "account"), ("hz_connectors", "shared_header"),
                               ("hz_connectors", "shared_secret_enc")):
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        # And op_0019, op_0030 and op_0031.
+        # And op_0019 and op_0030 to op_0032.
         for table in ("hz_report_series", "hz_personal_schedules", "hz_workflow_proposals",
                       "hz_work_items", "hz_operations", "hz_idempotency",
-                      "hz_station_calls", "hz_handoffs"):
+                      "hz_station_calls", "hz_handoffs", "hz_sandboxes", "hz_sandbox_read_stamps"):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
         conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))
