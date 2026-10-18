@@ -279,6 +279,8 @@ class FileService:
         self._adapters: dict[str, object] = {}
         #: called (from any thread) after an event commits: notify(conversation_id)
         self.notify = lambda conversation_id: None
+        #: (conn, "<hub>:<collection id>", actor) -> bool, set by the sources service
+        self.collection_readable = None
 
     # -- settings and storage --------------------------------------------------------------
     def settings(self) -> dict:
@@ -359,10 +361,14 @@ class FileService:
             return False
         if row.owner_principal_id == actor.id:
             return True
-        convs = {r.conversation_id for r in conn.execute(sa.select(references.c.conversation_id).where(
-            references.c.file_id == row.file_id, references.c.deleted_at.is_(None),
-            references.c.conversation_id.is_not(None)))}
-        return any(self._readable_conversation(conn, c, actor) for c in convs)
+        refs = conn.execute(sa.select(references.c.conversation_id, references.c.resource_type,
+                                      references.c.resource_id).where(
+            references.c.file_id == row.file_id, references.c.deleted_at.is_(None))).all()
+        if any(r.conversation_id and self._readable_conversation(conn, r.conversation_id, actor) for r in refs):
+            return True
+        # A file in a collection of sources is readable by that collection's readers.
+        return self.collection_readable is not None and any(
+            r.resource_type == "collection" and self.collection_readable(conn, r.resource_id, actor) for r in refs)
 
     def _readable(self, conn, file_id: str, actor):
         row = self._row(conn, file_id)
@@ -542,6 +548,24 @@ class FileService:
                 g.emit(conn, c, "file.changed", file_id, {"state": state})
         for c in convs:
             self.notify(c)
+
+    def recover(self) -> int:
+        """At start: files a stopped process left ``validating`` are checked again."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(sa.select(files).where(files.c.hub_id == self.hub, files.c.state == "validating",
+                                                       files.c.created_at < _now() - 5)).all()
+        n = 0
+        for r in rows:
+            try:
+                data = self._store(r.storage_config_id)[1].read(r.object_key)
+            except st.StorageError:
+                with self.engine.begin() as conn:
+                    conn.execute(files.update().where(files.c.file_id == r.file_id).values(
+                        state="quarantined", processing_error="The stored bytes are missing."))
+                continue
+            self._validate(r.file_id, data)
+            n += 1
+        return n
 
     def abort(self, actor, upload_id: str) -> None:
         with self.engine.begin() as conn:

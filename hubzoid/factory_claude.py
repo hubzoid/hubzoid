@@ -709,12 +709,12 @@ def _only_tools(options, allowed: list[str]):
 
     from claude_agent_sdk import HookMatcher
 
-    names = set(allowed)
+    # Only Hubzoid's own tools, by their full identity: an outside MCP server's
+    # tool that merely shares a name is not on the list.
+    names = {f"mcp__{_MCP_NAMESPACE}__{n}" for n in allowed}
 
     async def admit(tool_input, _tool_use_id, _context):
-        raw = str((tool_input or {}).get("tool_name") or "")
-        name = raw.rsplit("__", 1)[-1]
-        if name in names:
+        if str((tool_input or {}).get("tool_name") or "") in names:
             return {}
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "A comparison answer may only read."}}

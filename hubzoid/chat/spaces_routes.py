@@ -52,6 +52,7 @@ def mount(app: FastAPI, ctx) -> SpacesService:
 
     async def actor_of(request: Request, mutation: bool = False):
         user = await (ctx.mutation(request) if mutation else ctx.user(request))
+        await ctx.may_use_hub(user)  # spaces belong to this hub: hub use first, on every request
         return user, await asyncio.to_thread(engine.actor, user)
 
     @app.get("/api/chat/spaces")

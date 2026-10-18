@@ -403,6 +403,14 @@ class RetrievalService:
         self.fetch = safe_fetch
         with self.engine.begin() as conn:
             ensure_fts(conn)
+        if files is not None:
+            files.collection_readable = self._collection_ref_readable
+
+    def _collection_ref_readable(self, conn, ref: str, actor) -> bool:
+        hub, _, cid = ref.partition(":")
+        if hub != self.hub:
+            return False
+        return self._may(self._get(conn, cid), actor)
 
     def settings(self) -> dict:
         from .config import service_for
@@ -478,6 +486,8 @@ class RetrievalService:
                 raise Err(422, "invalid_config", f"Source {s.id} needs an https:// url.")
             if s.kind == "upload" and self.files is not None:
                 self.files.get(actor, s.file_id)  # the person must be able to read the file (404 otherwise)
+            if s.kind == "url":
+                self.check_fetch(actor)
         body = m.model_dump()
         t = _now()
         with self.engine.begin() as conn:
@@ -498,13 +508,58 @@ class RetrievalService:
                              .values(title=m.title, manifest_json=json.dumps(body), revision=(current or 0) + 1,
                                      updated_at=t, deleted_at=None,
                                      owner_principal_id=row.owner_principal_id if row.deleted_at is None else actor.id))
-            keep = {s.id for s in m.sources}
-            # A source taken out of the manifest leaves results at once.
-            conn.execute(sources.update().where(sources.c.hub_id == self.hub, sources.c.collection_id == m.id,
-                                                sources.c.key.not_in(keep) if keep else sa.true(),
-                                                sources.c.deleted_at.is_(None))
-                         .values(deleted_at=t, state="deleted"))
+            before = {x["id"]: x for x in (json.loads(row.manifest_json).get("sources") or [])} \
+                if row is not None and row.deleted_at is None else {}
+            now_specs = {x["id"]: x for x in body["sources"]}
+            # A source taken out of the manifest, or whose definition changed, leaves
+            # results at once (a changed one comes back with the next sync).
+            # Directory children are keyed "<source id>/<path>" and follow their parent.
+            gone = {k for k in before if k not in now_specs or before[k] != now_specs[k]}
+            for r in conn.execute(sa.select(sources.c.source_id, sources.c.key).where(
+                    sources.c.hub_id == self.hub, sources.c.collection_id == m.id, sources.c.deleted_at.is_(None))).all():
+                root = r.key.split("/", 1)[0]
+                if root not in now_specs or root in gone:
+                    conn.execute(sources.update().where(sources.c.source_id == r.source_id)
+                                 .values(deleted_at=t, state="deleted"))
+            # Uploaded files used here stay alive while a collection uses them.
+            if self.files is not None:
+                from .file_service import references as file_refs
+
+                ref = f"{self.hub}:{m.id}"
+                used = {x["file_id"] for x in body["sources"] if x["kind"] == "upload"}
+                for fid in used:
+                    self.files._add_ref(conn, fid, "collection", ref, None, actor.id, None)
+                conn.execute(file_refs.update().where(file_refs.c.resource_type == "collection",
+                                                      file_refs.c.resource_id == ref,
+                                                      file_refs.c.file_id.not_in(used) if used else sa.true(),
+                                                      file_refs.c.deleted_at.is_(None)).values(deleted_at=t))
             return self._collection_json(conn, self._get(conn, m.id), actor)
+
+    def check_fetch(self, actor) -> None:
+        """Public pages are fetched only when the deployment allows web access and
+        the person holds the chat_web_search grant."""
+        from . import features
+
+        if not self.settings()["web"]["enabled"]:
+            raise Err(403, "feature_disabled", "Fetching web pages is turned off for this deployment.")
+        if not features.for_person(self.hub_dir, actor.email).get("chat_web_search"):
+            raise Err(403, "permission_denied", "Fetching web pages needs the chat_web_search grant.")
+
+    def _blocked_sources(self, conn, actor, collection_ids) -> set[str]:
+        """Uploaded sources whose file this person can no longer read (or that was
+        deleted): their passages are never returned to them."""
+        if self.files is None:
+            return set()
+        rows = conn.execute(sa.select(sources.c.source_id, sources.c.file_id).where(
+            sources.c.hub_id == self.hub, sources.c.collection_id.in_(list(collection_ids)),
+            sources.c.file_id.is_not(None), sources.c.deleted_at.is_(None))).all()
+        out = set()
+        for r in rows:
+            try:
+                self.files.get(actor, r.file_id)
+            except Err:
+                out.add(r.source_id)
+        return out
 
     def delete(self, actor, cid: str) -> None:
         with self.engine.begin() as conn:
@@ -538,6 +593,17 @@ class RetrievalService:
             self._sync(jid, actor, cid)
         return self.job(actor, jid)
 
+    def recover(self) -> int:
+        """At start: syncs left running by a process that is gone are failed, so
+        the next sync can start (their earlier generation stays published)."""
+        with self.engine.begin() as conn:
+            return conn.execute(jobs.update().where(jobs.c.hub_id == self.hub,
+                                                    jobs.c.state.in_(("queued", "extracting", "indexing")),
+                                                    jobs.c.updated_at < _now() - 5)
+                                .values(state="failed", error_code="interrupted",
+                                        error="The server restarted during this sync. Sync again.",
+                                        updated_at=_now())).rowcount
+
     def _set_job(self, jid: str, **values) -> None:
         with self.engine.begin() as conn:
             conn.execute(jobs.update().where(jobs.c.id == jid).values(updated_at=_now(), **values))
@@ -554,6 +620,7 @@ class RetrievalService:
             desc, data = self.files.content(actor, s.file_id)
             return [(s.id, s.title or desc["name"], f"file:{s.file_id}", desc["mime_type"], data)]
         if s.kind == "url":
+            self.check_fetch(actor)
             lim = self.settings()["web"]
             final, mime, data = self.fetch(s.url, lim["limits"], allowed=lim["allowed_domains"],
                                            blocked=lim["blocked_domains"])
@@ -724,7 +791,9 @@ class RetrievalService:
             gens = self.readable_generations(conn, actor, collection_ids, agent)
             if not gens or not (words or phrases):
                 return {"query": text, "results": [], "no_matches": True, "collections": sorted(gens)}
-            live = sa.select(sources.c.source_id).where(sources.c.hub_id == self.hub, sources.c.deleted_at.is_(None))
+            blocked = self._blocked_sources(conn, actor, gens.keys())
+            live = sa.select(sources.c.source_id).where(sources.c.hub_id == self.hub, sources.c.deleted_at.is_(None),
+                                                         sources.c.source_id.not_in(blocked) if blocked else sa.true())
             base = sa.select(chunks, sources.c.title, sources.c.locator, sources.c.collection_id, sources.c.kind).join(
                 sources, sources.c.source_id == chunks.c.source_id).where(
                 chunks.c.generation_id.in_(list(gens.values())), chunks.c.source_id.in_(live))
@@ -769,6 +838,11 @@ class RetrievalService:
             raise Err(404, "citation_unavailable", "This source is no longer available.")
         if src.deleted_at is not None:
             raise Err(404, "citation_unavailable", "This source is no longer available.")
+        if src.file_id and self.files is not None:
+            try:
+                self.files.get(actor, src.file_id)
+            except Err:
+                raise Err(404, "citation_unavailable", "This source is no longer available.")
         return {"citation_id": c.citation_id, "title": src.title, "kind": src.kind,
                 "url": src.locator if src.kind == "url" else None, "collection_id": c.collection_id,
                 "source_version": c.source_version, "current_version": src.source_version,
@@ -787,4 +861,5 @@ def service_for(hub_dir: Path, engine, hub: str, files=None) -> RetrievalService
         _services[key] = svc
     elif files is not None:
         svc.files = files
+        files.collection_readable = svc._collection_ref_readable
     return svc

@@ -158,7 +158,7 @@ class ModelService:
         return {"catalog": self.catalog(), "default_ref": doc["models"]["default_ref"] or "default",
                 "can_choose": bool(doc["models"]["allow_choice"]) and len(self.catalog()) > 1,
                 "can_compare": bool(doc["comparison"]["enabled"] and feats.get("chat_model_compare")
-                                    and len(self.catalog()) > 2),
+                                    and len(self.catalog()) > 2 and self.runtime_kind() == "claude"),
                 "max_candidates": doc["comparison"]["max_candidates"], "runtime": self.runtime_kind()}
 
     def compare_plan(self, email: str, refs: list) -> list[dict]:
@@ -168,6 +168,10 @@ class ModelService:
         doc = self._doc()
         if not doc["comparison"]["enabled"]:
             raise Err(403, "feature_disabled", "Comparing models is turned off for this deployment.")
+        if self.runtime_kind() != "claude":
+            # Only the Claude runtime enforces read-only candidates (a pre-tool hook);
+            # elsewhere a candidate could act, so comparing is refused before admission.
+            raise Err(422, "compare_unsupported", "Comparing models needs the Claude runtime in this release.")
         if not features.for_person(self.hub_dir, email).get("chat_model_compare"):
             raise Err(403, "permission_denied", "Comparing models needs the chat_model_compare grant.")
         if not isinstance(refs, list) or not 2 <= len(refs) <= doc["comparison"]["max_candidates"] \
@@ -247,10 +251,10 @@ class ModelService:
             if row is None:
                 conn.execute(presets.insert().values(hub_id=self.hub, owner_id=actor.id, id=preset_id,
                                                      body_json=body_json, revision=1, updated_at=t))
-            else:
-                conn.execute(presets.update().where(presets.c.hub_id == self.hub, presets.c.owner_id == actor.id,
-                                                    presets.c.id == preset_id)
-                             .values(body_json=body_json, revision=row.revision + 1, updated_at=t))
+            elif conn.execute(presets.update().where(presets.c.hub_id == self.hub, presets.c.owner_id == actor.id,
+                                                     presets.c.id == preset_id, presets.c.revision == row.revision)
+                              .values(body_json=body_json, revision=row.revision + 1, updated_at=t)).rowcount != 1:
+                raise Err(409, "revision_conflict", "The preset changed. Reload it.")
         return {**p.model_dump(), "scope": "personal", "revision": (current or 0) + 1}
 
     def delete_preset(self, actor, preset_id: str) -> None:

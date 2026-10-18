@@ -27,6 +27,10 @@ def mount(app: FastAPI, ctx) -> RetrievalService:
     svc = service_for(ctx.hub_dir, engine.engine, ctx.hub, getattr(ctx, "files", None))
     ctx.retrieval = svc
     call = er.call
+    try:
+        svc.recover()
+    except Exception:  # noqa: BLE001 - never block the bridge start
+        pass
     P = "/api/chat/retrieval"
 
     async def actor_of(request: Request, mutation: bool = False):
@@ -88,8 +92,9 @@ def mount(app: FastAPI, ctx) -> RetrievalService:
 
     @app.post(f"{P}/web/fetch")
     async def web_fetch(request: Request):
-        user, _ = await actor_of(request, True)
+        user, actor = await actor_of(request, True)
         await ctx.may_use_hub(user)
+        await call(svc.check_fetch, actor)
         body = await er.read_json(request)
         web = svc.settings()["web"]
 

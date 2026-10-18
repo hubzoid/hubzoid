@@ -213,7 +213,7 @@ function Editor({ path, draft: initial, onChanged }: { path: string; draft: Draf
             </Button>
           </>
         )}
-        {draft.state === "approved" && (
+        {(draft.state === "approved" || draft.state === "publishing") && (
           <Button size="sm" variant="primary" disabled={busy} onClick={() =>
             act(async () => {
               await post(`${A}/drafts/${draft.id}/publish`, { digest: draft.digest });

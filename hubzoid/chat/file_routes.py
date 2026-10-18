@@ -109,6 +109,10 @@ def mount(app: FastAPI, ctx) -> FileService:
     svc = service_for(ctx.hub_dir, engine.engine, ctx.hub, engine)
     ctx.files = svc
     svc.notify = lambda cid: engine.notify(cid)  # the current chain (search indexing joins it later)
+    try:
+        svc.recover()
+    except Exception:  # noqa: BLE001 - never block the bridge start
+        pass
     call = er.call
 
     async def actor_of(request: Request, mutation: bool = False):

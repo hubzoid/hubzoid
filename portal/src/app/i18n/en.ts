@@ -576,7 +576,7 @@ export const en = {
     name: "Name",
     createDraft: "Create draft",
     startDraft: "Draft a change",
-    states: { draft: "Draft", in_review: "In review", approved: "Approved", rejected: "Changes requested", published: "Published" } as Record<string, string>,
+    states: { draft: "Draft", in_review: "In review", approved: "Approved", publishing: "Publishing (finish it)", rejected: "Changes requested", published: "Published" } as Record<string, string>,
     stale: "File changed since",
     editorLabel: (path: string) => `Content of ${path}`,
     save: "Save draft",

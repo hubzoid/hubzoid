@@ -175,7 +175,22 @@ class SpacesService:
             raise Err(404, "not_found", "That space was not found.")
         return s
 
+    def may_use(self, user_id: str) -> bool:
+        """This person may use this hub now (not suspended, holds hub use)."""
+        from .common import check_use_hub
+
+        u = self._user(user_id) if user_id else None
+        if u is None:
+            return False
+        try:
+            check_use_hub(self.hub_dir, u.get("email") or "")
+        except Exception:  # noqa: BLE001 - denied or unknown: no access
+            return False
+        return True
+
     def _role(self, conn, s, actor) -> str | None:
+        if not self.may_use(actor.id):
+            return None
         m = conn.execute(sa.select(members.c.role).where(members.c.space_id == s.id,
                                                          members.c.user_id == actor.id)).scalar()
         if m:
@@ -279,7 +294,9 @@ class SpacesService:
                 ev = sa.select(events.c.id).where(events.c.space_id == sid)
                 conn.execute(reminders.update().where(reminders.c.event_id.in_(ev), reminders.c.user_id.in_(gone),
                                                       reminders.c.state == "pending").values(state="cancelled"))
-            conn.execute(spaces.update().where(spaces.c.id == sid).values(revision=s.revision + 1))
+            if conn.execute(spaces.update().where(spaces.c.id == sid, spaces.c.revision == s.revision)
+                            .values(revision=s.revision + 1)).rowcount != 1:
+                raise Err(409, "revision_conflict", "Members changed. Reload.")
             out = self._space_json(conn, self._space(conn, sid), actor)
         self.changed(sid)
         return out
@@ -407,8 +424,10 @@ class SpacesService:
                 raise Err(403, "permission_denied", "You can only edit your own posts.")
             if p.revision != expected_revision:
                 raise Err(409, "revision_conflict", "The post changed. Reload it.", current_revision=p.revision)
-            conn.execute(posts.update().where(posts.c.id == pid).values(body=body, revision=p.revision + 1,
-                                                                        editor_id=actor.id, updated_at=_now()))
+            if conn.execute(posts.update().where(posts.c.id == pid, posts.c.revision == p.revision)
+                            .values(body=body, revision=p.revision + 1, editor_id=actor.id,
+                                    updated_at=_now())).rowcount != 1:
+                raise Err(409, "revision_conflict", "The post changed. Reload it.")
             out = self._post_json(conn, conn.execute(sa.select(posts).where(posts.c.id == pid)).first(), actor)
         self.changed(p.space_id)
         return out
@@ -503,9 +522,11 @@ class SpacesService:
                 raise Err(409, "revision_conflict", "Someone saved this note while you were editing. Keep both, or "
                                                     "reload theirs.", current=self._note_json(n))
             title = (title or "").strip()[:200] or n.title
-            conn.execute(notes.update().where(notes.c.id == nid).values(title=title, body=body or "",
-                                                                        revision=n.revision + 1, updated_by=actor.id,
-                                                                        updated_at=t))
+            if conn.execute(notes.update().where(notes.c.id == nid, notes.c.revision == n.revision)
+                            .values(title=title, body=body or "", revision=n.revision + 1, updated_by=actor.id,
+                                    updated_at=t)).rowcount != 1:
+                raise Err(409, "revision_conflict", "Someone saved this note while you were editing. Keep both, or "
+                                                    "reload theirs.", current=self._note_json(self._note(conn, nid, actor)))
             conn.execute(note_revisions.insert().values(note_id=nid, revision=n.revision + 1, title=title,
                                                         body=body or "", author_id=actor.id, created_at=t))
             return self._note_json(self._note(conn, nid, actor))
@@ -541,6 +562,8 @@ class SpacesService:
         return e
 
     def _may_see(self, conn, e, user_id: str) -> bool:
+        if e.hub_id != self.hub or not self.may_use(user_id):
+            return False
         if e.owner_id == user_id or user_id in json.loads(e.attendees_json):
             return True
         if e.space_id:
@@ -622,7 +645,9 @@ class SpacesService:
                     raise Err(403, "permission_denied", "Only the event's organiser changes it.")
                 if e.revision != body.get("expected_revision"):
                     raise Err(409, "revision_conflict", "The event changed. Reload it.", current_revision=e.revision)
-                conn.execute(events.update().where(events.c.id == event_id).values(revision=e.revision + 1, **values))
+                if conn.execute(events.update().where(events.c.id == event_id, events.c.revision == e.revision)
+                                .values(revision=e.revision + 1, **values)).rowcount != 1:
+                    raise Err(409, "revision_conflict", "The event changed. Reload it.")
                 conn.execute(reminders.update().where(reminders.c.event_id == event_id, reminders.c.state == "pending")
                              .values(state="cancelled"))
             e = self._event(conn, event_id, actor)
@@ -642,13 +667,17 @@ class SpacesService:
             if due < now - 60:
                 continue
             for uid in people:
-                exists = conn.execute(sa.select(reminders.c.id).where(
+                row = conn.execute(sa.select(reminders.c.id, reminders.c.state).where(
                     reminders.c.event_id == e.id, reminders.c.user_id == uid,
                     reminders.c.occurrence_at == occ)).first()
-                if exists is None:
+                if row is None:
                     conn.execute(reminders.insert().values(id=str(uuid.uuid4()), event_id=e.id, user_id=uid,
                                                            occurrence_at=occ, due_at=due, state="pending",
                                                            sent_at=None))
+                elif row.state in ("cancelled", "pending"):
+                    # An edited event: its reminders come back with the new due time.
+                    conn.execute(reminders.update().where(reminders.c.id == row.id)
+                                 .values(state="pending", due_at=due))
 
     def list_events(self, actor, start: float, end: float) -> list[dict]:
         with self.engine.connect() as conn:
@@ -677,20 +706,28 @@ class SpacesService:
         reminder for someone who can no longer see the event is cancelled."""
         now = _now() if now is None else now
         sent = 0
+        mine = sa.select(events.c.id).where(events.c.hub_id == self.hub)
         with self.engine.connect() as conn:
-            due = conn.execute(sa.select(reminders).where(reminders.c.state == "pending",
-                                                          reminders.c.due_at <= now)).all()
+            # Due reminders of this hub's events, and claims a crash left half done.
+            due = conn.execute(sa.select(reminders).where(reminders.c.event_id.in_(mine), sa.or_(
+                sa.and_(reminders.c.state == "pending", reminders.c.due_at <= now),
+                sa.and_(reminders.c.state == "sending", reminders.c.sent_at < now - 60)))).all()
         for r in due:
             with self.engine.begin() as conn:
                 e = conn.execute(sa.select(events).where(events.c.id == r.event_id)).first()
                 if e is None or e.deleted_at is not None or not self._may_see(conn, e, r.user_id):
                     conn.execute(reminders.update().where(reminders.c.id == r.id).values(state="cancelled"))
                     continue
-                claimed = conn.execute(reminders.update().where(reminders.c.id == r.id, reminders.c.state == "pending")
-                                       .values(state="sent", sent_at=now)).rowcount
-            if claimed:
-                self.notify(r.user_id, "calendar.reminder", f"calendar.reminder:{r.id}", f"event:{r.event_id}:{int(r.occurrence_at)}")
-                sent += 1
+                claimed = conn.execute(reminders.update().where(reminders.c.id == r.id, reminders.c.state == r.state)
+                                       .values(state="sending", sent_at=now)).rowcount
+            if not claimed:
+                continue
+            # The inbox item is idempotent by its source, so a retry after a crash never doubles it.
+            self.notify(r.user_id, "calendar.reminder", f"calendar.reminder:{r.id}", f"event:{r.event_id}:{int(r.occurrence_at)}")
+            with self.engine.begin() as conn:
+                conn.execute(reminders.update().where(reminders.c.id == r.id, reminders.c.state == "sending")
+                             .values(state="sent"))
+            sent += 1
         # Top up the next occurrences of repeating events.
         with self.engine.begin() as conn:
             for e in conn.execute(sa.select(events).where(events.c.hub_id == self.hub, events.c.deleted_at.is_(None),
@@ -703,6 +740,8 @@ class SpacesService:
     def resolve_ref(self, ref: str, user_id: str) -> dict | None:
         """Title and link of a space or calendar notice, if this person may still open it."""
         kind, _, rest = ref.partition(":")
+        if not self.may_use(user_id):
+            return None
         with self.engine.connect() as conn:
             if kind == "space":
                 sid, _, pid = rest.partition(":")
@@ -715,7 +754,7 @@ class SpacesService:
                 return {"title": f"#{s.name}" if s.kind == "channel" else s.name, "link": f"/spaces/{sid}"}
             if kind == "event":
                 eid, _, occ = rest.partition(":")
-                e = conn.execute(sa.select(events).where(events.c.id == eid)).first()
+                e = conn.execute(sa.select(events).where(events.c.id == eid, events.c.hub_id == self.hub)).first()
                 if e is None or e.deleted_at is not None or not self._may_see(conn, e, user_id):
                     return None
                 when = datetime.fromtimestamp(int(occ or e.starts_at), ZoneInfo(e.timezone)).strftime("%a %d %b, %H:%M")

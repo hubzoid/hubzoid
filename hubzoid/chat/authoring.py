@@ -85,6 +85,8 @@ personal_prompts = sa.Table(
 )
 
 TABLES = (drafts, published, personal_prompts)
+#: one publication at a time per (hub, file) in this process
+_PATH_LOCKS: dict = {}
 
 
 def _now() -> float:
@@ -274,7 +276,7 @@ class AuthoringService:
     def list_drafts(self) -> list[dict]:
         with self.engine.connect() as conn:
             rows = conn.execute(sa.select(drafts).where(drafts.c.hub_id == self.hub,
-                                                        drafts.c.state.in_(("draft", "in_review", "approved", "rejected")))
+                                                        drafts.c.state.in_(("draft", "in_review", "approved", "publishing", "rejected")))
                                 .order_by(drafts.c.updated_at.desc()).limit(100)).all()
         return [self._draft_json(r) for r in rows]
 
@@ -305,35 +307,71 @@ class AuthoringService:
             return self._draft_json(self._draft(conn, did))
 
     def publish(self, actor, did: str, digest: str) -> dict:
-        """Write the approved bytes in one step, if the file is still what the
-        draft started from. A stale base is refused, never rebased."""
-        with self.engine.begin() as conn:
-            d = self._draft(conn, did)
-            if d.state != "approved" or d.digest != digest:
-                raise Err(409, "not_approved", "Publish exactly the approved draft.")
+        """Write the approved bytes, if the file is still what the draft started
+        from. A stale base is refused, never rebased.
+
+        Publishing is one at a time per file (a process lock, and the draft's
+        ``publishing`` state as the journal across processes and crashes):
+        1. the draft becomes ``publishing`` (refused if another draft of the same
+           file is publishing), 2. the file is replaced atomically, 3. the version
+        is recorded and the draft becomes ``published``. A retry after a crash
+        between 2 and 3 finds the file already holding the draft's bytes and
+        finishes step 3; one between 1 and 2 writes the file then."""
+        import threading
+
+        with self.engine.connect() as conn:
+            path = self._draft(conn, did).path
+        lock = _PATH_LOCKS.setdefault((self.hub, path), threading.Lock())
+        with lock:
+            with self.engine.begin() as conn:
+                d = self._draft(conn, did)
+                if d.digest != digest or d.state not in ("approved", "publishing"):
+                    raise Err(409, "not_approved", "Publish exactly the approved draft.")
+                if d.state == "approved":
+                    busy = conn.execute(sa.select(drafts.c.id).where(
+                        drafts.c.hub_id == self.hub, drafts.c.path == d.path, drafts.c.state == "publishing",
+                        drafts.c.id != did)).first()
+                    if busy is not None:
+                        raise Err(409, "publish_in_progress", "Another change to this file is being published. "
+                                                              "Try again in a moment.")
+                    current, cur_sha = self.read(d.path)
+                    if (cur_sha or None) != (d.base_sha256 or None):
+                        raise Err(409, "stale_base", "The file changed since this draft began. Start a new draft "
+                                                     "from the current file.", current_sha256=cur_sha)
+                    if conn.execute(drafts.update().where(drafts.c.id == did, drafts.c.state == "approved")
+                                    .values(state="publishing", updated_at=_now())).rowcount != 1:
+                        raise Err(409, "not_approved", "Publish exactly the approved draft.")
             current, cur_sha = self.read(d.path)
-            if (cur_sha or None) != (d.base_sha256 or None):
-                raise Err(409, "stale_base", "The file changed since this draft began. Start a new draft from the "
-                                             "current file.", current_sha256=cur_sha)
-            target = self._path(d.path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
-            tmp.write_text(d.content, encoding="utf-8")
-            os.replace(tmp, target)
             new_sha = sha(d.content)
+            if cur_sha != new_sha:
+                if (cur_sha or None) != (d.base_sha256 or None):
+                    with self.engine.begin() as conn:  # changed underneath us: give the draft back
+                        conn.execute(drafts.update().where(drafts.c.id == did).values(state="approved"))
+                    raise Err(409, "stale_base", "The file changed since this draft began. Start a new draft from "
+                                                 "the current file.", current_sha256=cur_sha)
+                target = self._path(d.path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+                tmp.write_text(d.content, encoding="utf-8")
+                os.replace(tmp, target)
+                previous, prev_sha = current, cur_sha
+            else:  # finishing a publication a crash interrupted
+                previous, prev_sha = None, d.base_sha256
             vid = str(uuid.uuid4())
-            if current is not None and conn.execute(sa.select(published.c.id).where(
-                    published.c.hub_id == self.hub, published.c.path == d.path,
-                    published.c.sha256 == cur_sha)).first() is None:
-                # Keep the version this replaces (it was written outside the Workspace).
-                conn.execute(published.insert().values(id=str(uuid.uuid4()), hub_id=self.hub, path=d.path,
-                                                       sha256=cur_sha, content=current, previous_sha256=None,
-                                                       draft_id=None, published_by="file", published_at=_now() - 0.001))
-            conn.execute(published.insert().values(id=vid, hub_id=self.hub, path=d.path, sha256=new_sha,
-                                                   content=d.content, previous_sha256=cur_sha, draft_id=did,
-                                                   published_by=actor.id, published_at=_now()))
-            conn.execute(drafts.update().where(drafts.c.id == did).values(state="published", updated_at=_now()))
-            return {"path": d.path, "sha256": new_sha, "version_id": vid, "previous_sha256": cur_sha}
+            with self.engine.begin() as conn:
+                if previous is not None and conn.execute(sa.select(published.c.id).where(
+                        published.c.hub_id == self.hub, published.c.path == d.path,
+                        published.c.sha256 == prev_sha)).first() is None:
+                    # Keep the version this replaces (it was written outside the Workspace).
+                    conn.execute(published.insert().values(id=str(uuid.uuid4()), hub_id=self.hub, path=d.path,
+                                                           sha256=prev_sha, content=previous, previous_sha256=None,
+                                                           draft_id=None, published_by="file",
+                                                           published_at=_now() - 0.001))
+                conn.execute(published.insert().values(id=vid, hub_id=self.hub, path=d.path, sha256=new_sha,
+                                                       content=d.content, previous_sha256=prev_sha, draft_id=did,
+                                                       published_by=actor.id, published_at=_now()))
+                conn.execute(drafts.update().where(drafts.c.id == did).values(state="published", updated_at=_now()))
+            return {"path": d.path, "sha256": new_sha, "version_id": vid, "previous_sha256": prev_sha}
 
     def versions(self, rel: str) -> list[dict]:
         self._path(rel)
