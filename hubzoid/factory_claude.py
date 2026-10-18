@@ -1022,6 +1022,18 @@ class ClaudeRuntime:
                 turn_options = _dc.replace(turn_options, resume=slot.resume_id)
             if slot is not None and slot.guard is not None:
                 turn_options = _guarded(turn_options, slot.guard)
+            if slot is not None and (slot.web_search or slot.model):
+                import dataclasses as _dc
+
+                changes = {}
+                if slot.web_search:
+                    # Claude's own server-side search only. WebFetch is not
+                    # enabled: it would fetch from this machine's network.
+                    changes["tools"] = [*(turn_options.tools or []), "WebSearch"]
+                    changes["allowed_tools"] = [*(turn_options.allowed_tools or []), "WebSearch"]
+                if slot.model:
+                    changes["model"] = slot.model
+                turn_options = _dc.replace(turn_options, **changes)
             messages = _query_with_failover(prompt=qprompt, options=stderr.attach(turn_options),
                                             hub_dir=self._hub_dir)
             async for message in messages:

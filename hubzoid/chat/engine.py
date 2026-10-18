@@ -124,6 +124,8 @@ class RunPlan:
     prefix: list[dict] = field(default_factory=list)
     title_from: str | None = None
     fence: int = 0
+    #: per-turn choices the runtime honours: {"web_search": bool, "model": str | None}
+    options: dict = field(default_factory=dict)
 
 
 Err = g.GraphError
@@ -586,10 +588,17 @@ class ChatEngine:
         return run_id, aid, fence
 
     def _plan(self, *, run_id, conv, branch_id, aid, actor, kind, prompt_mid, fence, extra=None, prefix=None,
-              title_from=None) -> RunPlan:
+              title_from=None, options=None) -> RunPlan:
         return RunPlan(run_id=run_id, conversation_id=conv["id"], branch_id=branch_id, message_id=aid,
                        actor_id=actor.id, actor_email=actor.email, kind=kind, prompt_message_id=prompt_mid,
-                       extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence)
+                       extra_turns=extra or [], prefix=prefix or [], title_from=title_from, fence=fence,
+                       options=options or {})
+
+    @staticmethod
+    def _options(op: dict) -> dict:
+        sel = op.get("model_selection") or {}
+        return {"web_search": op.get("web_search") is True,
+                "model": sel.get("model") if isinstance(sel, dict) and sel.get("mode") == "model" else None}
 
     def _title_due(self, conn, conv: dict, parts: list) -> str | None:
         if conv.get("title_source") != "pending" or conv.get("title"):
@@ -614,7 +623,7 @@ class ChatEngine:
             if p["status"] == "running":
                 raise Err(409, "branch_conflict", "Wait for the reply to finish, or queue your message.")
         snapshot = {"kind": "send", "model_selection": op.get("model_selection") or {"mode": "agent_default"},
-                    "attachment_ids": op.get("attachment_ids") or []}
+                    "attachment_ids": op.get("attachment_ids") or [], "web_search": op.get("web_search") is True}
         uid = self._insert(conn, conv_id=conv["id"], mid=op.get("message_id"), parent_id=parent, role="user",
                            content=parts, branch_id=b.id, actor=actor)
         title_from = self._title_due(conn, conv, parts)
@@ -627,7 +636,7 @@ class ChatEngine:
         return 202, {"branch_id": b.id, "branch_revision": rev, "user_message_id": uid,
                      "assistant_message_id": aid, "run_id": run_id}, \
             self._plan(run_id=run_id, conv=conv, branch_id=b.id, aid=aid, actor=actor, kind="send", prompt_mid=uid,
-                       fence=fence, title_from=title_from)
+                       fence=fence, title_from=title_from, options=self._options(op))
 
     def _op_respond(self, conn, conv, actor, op, _parts, operation_id):
         b = self._branch_for_extend(conn, conv, actor, op)
@@ -1075,7 +1084,8 @@ class ChatEngine:
             if not busy and not live and not b.queue_paused and lane == "queue":
                 status, out, plan = self._op_send(conn, conv_, actor, {
                     "branch_id": b.id, "parent_id": b.head_id, "expected_revision": b.revision,
-                    "model_selection": body.get("model_selection")}, parts, operation_id)
+                    "model_selection": body.get("model_selection"), "web_search": body.get("web_search") is True},
+                    parts, operation_id)
                 plan_box.append(plan)
                 return 202, {"dispatched": True, "operation_id": operation_id, **out}
             if live >= self.limits()["queue"]["max_items_per_branch"]:
@@ -1095,6 +1105,7 @@ class ChatEngine:
                 id=iid, conversation_id=conversation_id, branch_id=b.id, author_id=actor.id, lane=lane,
                 rank=top + 1, revision=1, state="paused" if b.queue_paused else "queued",
                 content_json=json.dumps({"content": parts, "model_selection": body.get("model_selection"),
+                                         "web_search": body.get("web_search") is True,
                                          "branch_revision": b.revision, "parent_id": b.head_id}),
                 predecessor_id=pred, reason="queue paused" if b.queue_paused else None, dispatched_run_id=None,
                 created_at=t, updated_at=t))
@@ -1258,7 +1269,7 @@ class ChatEngine:
                 if self.admission is not None:
                     self.admission(actor)
                 op = {"branch_id": branch_id, "parent_id": head, "expected_revision": None,
-                      "model_selection": frozen.get("model_selection")}
+                      "model_selection": frozen.get("model_selection"), "web_search": frozen.get("web_search") is True}
                 out, plan = self.submit(it.conversation_id, actor, {"kind": "send", "content": frozen["content"],
                                                                     **op}, key=f"queue:{it.id}")
                 with self.engine.begin() as conn:
@@ -1306,7 +1317,7 @@ class ChatEngine:
         ended, under the same runtime configuration. Anything else (an edit,
         a regeneration, a continuation, a deleted or moved head, a changed
         agent or model) starts from the full history."""
-        if plan.kind not in ("send", "respond") or plan.extra_turns:
+        if plan.kind not in ("send", "respond") or plan.extra_turns or (plan.options or {}).get("model"):
             return None
         with self.engine.connect() as conn:
             b = conn.execute(sa.select(g.bindings).where(g.bindings.c.branch_id == plan.branch_id)).first()

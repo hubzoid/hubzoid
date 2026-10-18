@@ -165,6 +165,13 @@ class Orchestrator:
                 if resume and path else None)
             # Tool admission: no new step once the run was stopped or lost its lease.
             slot.guard = lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence) == "ok"
+            opts = plan.options or {}
+            if opts.get("web_search"):
+                slot.web_search = await db(self._web_allowed, plan.actor_email)
+            if opts.get("model"):
+                models = getattr(self.ctx, "models", None)
+                if models is not None and await db(models.allowed, opts["model"], plan.actor_email):
+                    slot.model = opts["model"]
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
@@ -187,6 +194,19 @@ class Orchestrator:
                                                                {"type": "conversation.titled", "title": title})))
         self._ensure_heartbeat()
         return run
+
+    def _web_allowed(self, email: str) -> bool:
+        """The runtime's own web search, this turn: the deployment allows it and
+        the person holds the chat_web_search grant."""
+        from . import features
+        from .config import service_for
+
+        try:
+            web = service_for(self.ctx.hub_dir).active().document["retrieval"]["web"]
+            return bool(web["enabled"] and web["search"] == "native"
+                        and features.for_person(self.ctx.hub_dir, email).get("chat_web_search"))
+        except Exception:  # noqa: BLE001 - unknown policy: no search
+            return False
 
     def config_digest(self, actor_id: str = "") -> str:
         """What a native session depends on: the acting person, the agent, its

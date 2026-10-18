@@ -325,6 +325,11 @@ class SessionSlot:
         #: () -> bool: may the run start another tool step (not stopped, still
         #: owning its branch). A runtime with a pre-tool hook refuses the step.
         self.guard = None
+        #: this turn may use the runtime's own web search (policy, grant and the
+        #: person's choice all agreed); a runtime without one ignores it.
+        self.web_search = False
+        #: a model the person chose for this turn (from the runtime's own list), or None.
+        self.model: str | None = None
 
 
 _current_session_slot: ContextVar = ContextVar("hubzoid_session_slot", default=None)
