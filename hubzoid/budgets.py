@@ -61,7 +61,8 @@ _KEYS = ("max_input_tokens", "max_output_tokens", "max_cost_usd")
 _RUN_KEYS = _KEYS + ("max_turns",)
 _ITEM_RUN = re.compile(r"^wi-([0-9a-f-]{36})-e\d+$")
 #: A run stopped by the runtime's own turn or cost cap.
-_STOPPED = re.compile(r"error_max_turns|error_max_budget_usd|MaxTurnsExceeded|reached the configured tool-call limit")
+_STOPPED = re.compile(r"error_max_turns|error_max_budget_usd|Reached maximum number of turns|MaxTurnsExceeded"
+                      r"|reached the configured tool-call limit")
 RUN_LIMIT = ("This reply stopped at its limit for one run. Reply \"continue\" to keep going, "
              "or leave it here.")
 #: The admission of the model call running now, for the runtime adapters.

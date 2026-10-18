@@ -150,8 +150,9 @@ def test_a_stop_at_the_run_limit_says_how_to_continue(hub_dir):
 
     async def inner():
         yield "partial"
-        yield Notice(kind="error", text="claude run ended with error_max_turns",
-                     legacy="\n\n[agent error: claude run ended with error_max_turns]")
+        # The words the Claude CLI really uses when a run hits its turn cap.
+        yield Notice(kind="error", text="ResultError: Claude Code returned an error result: Reached maximum "
+                     "number of turns (2) (exit code: 1)", legacy="\n\n[agent error: ...]")
 
     async def collect():
         return [item async for item in budgets.guarded(hub_dir, "claude-local", inner, lambda e: None)]
