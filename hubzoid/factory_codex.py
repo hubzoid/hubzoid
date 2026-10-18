@@ -167,10 +167,20 @@ class CodexRuntime:
         return run_events.as_text(self.stream_events(prompt), tool_mode=self.tool_mode)
 
     async def stream_events(self, prompt):
-        """Run one turn as a typed stream (see `hubzoid.run_events`). When the
-        caller connected personal MCP servers in Open WebUI (see `owui_mcp`),
-        their tools join a per-turn copy of the registry for this turn only.
-        The shared registry never changes."""
+        """Run one turn as a typed stream (see `hubzoid.run_events`), after the
+        hub's usage limits admit it (`hubzoid.budgets`)."""
+        from . import budgets
+
+        def refuse(exc):
+            self._error.set(exc)
+
+        async for part in budgets.guarded(self.hub_dir, "codex-local", lambda: self._turn_events(prompt), refuse):
+            yield part
+
+    async def _turn_events(self, prompt):
+        """When the caller connected personal MCP servers in Open WebUI (see
+        `owui_mcp`), their tools join a per-turn copy of the registry for this
+        turn only. The shared registry never changes."""
         personal = self._personal_servers()
         if not personal:
             async for part in self._stream(prompt, self.registry):
@@ -374,7 +384,8 @@ class CodexRuntime:
                 raise RuntimeError("Codex returned an unexpected thread identity.")
             if method == "item/tool/call":
                 calls += 1
-                if calls > self.max_turns:
+                from . import budgets
+                if calls > budgets.cap_turns(self.max_turns):
                     raise RuntimeError("Codex reached the configured tool-call limit.")
                 name, arguments = p.get("tool"), p.get("arguments", {})
                 tool = shown.get(name) if not p.get("namespace") else None

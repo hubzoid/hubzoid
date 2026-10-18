@@ -382,6 +382,10 @@ def _attempt(ctx, work, call_id: str, kind: str):
         result = runtime_lib.run_station(hub_dir, definition, message, subject=identity.subject,
                                          timeout=None if limit is None else limit - spent,
                                          registry=station_tools.guarded(registry, ctx, work))
+    except WorkItemError as exc:       # refused before it ran, such as a usage limit
+        _finish(hub_dir, call_id, "failed", error_code=exc.code, error=exc.message[:4000])
+        _keep_or_release(hub_dir, sandbox_id, call_id)
+        raise StationError(exc.code, exc.message, call_id, retryable=False) from None
     except runtime_lib.StationTimeout as exc:
         _finish(hub_dir, call_id, "failed", error_code="station_timeout", error=redaction.scrub_error(exc))
         _keep_or_release(hub_dir, sandbox_id, call_id)

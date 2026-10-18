@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { Box, CalendarClock, History, ListChecks, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { Box, CalendarClock, Gauge, History, ListChecks, Menu as MenuIcon, Monitor, Moon, Plug, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "people" | "activity" | "schedules" | "connections";
+export type Area = "home" | "agents" | "runs" | "work" | "sandboxes" | "budgets" | "people" | "activity" | "schedules" | "connections";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -67,6 +67,7 @@ const items = [
   { key: "agents", icon: <Sparkle size={18} />, label: <a href={href("/agents")}>Agents</a> },
   { key: "work", icon: <ListChecks size={18} />, label: <a href={href("/work")}>Work items</a> },
   { key: "sandboxes", icon: <Box size={18} />, label: <a href={href("/sandboxes")}>Sandboxes</a> },
+  { key: "budgets", icon: <Gauge size={18} />, label: <a href={href("/budgets")}>Usage limits</a> },
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];

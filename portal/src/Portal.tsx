@@ -20,6 +20,7 @@ const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => (
 const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
 const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
 const MyAgents = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.MyAgents })));
+const BudgetsScreen = lazy(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
 const SandboxesScreen = lazy(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
 const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
 
@@ -203,6 +204,9 @@ function Router({
   } else if (area === "sandboxes") {
     active = "sandboxes";
     screen = <SandboxesScreen hubs={list} />;
+  } else if (area === "budgets") {
+    active = "budgets";
+    screen = <BudgetsScreen hubs={list} />;
   } else if (area === "people") {
     active = "people";
     screen = <PeopleScreen me={me.data} hubs={list} selected={rest[0]} />;
