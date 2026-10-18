@@ -22,6 +22,17 @@ HUB = typer.Argument(Path("."), help="Hub folder. Default: current folder.")
 JSON = typer.Option(False, "--json", help="Print the API's JSON object.")
 
 
+def _hub_env(hub: Path) -> None:
+    """Load the hub's own configuration layers (its .env), as the running hub
+    has them, so checks describe that hub rather than this shell."""
+    from .. import settings as settingslib
+
+    try:
+        settingslib.load(Path(hub).resolve(), secrets=False)
+    except Exception:  # noqa: BLE001 - the checks then report what they can see
+        pass
+
+
 class _guard:
     def __init__(self, as_json: bool):
         self.as_json = as_json
@@ -159,6 +170,7 @@ def diag_run(hub: Path = HUB, profile: str = typer.Option("passive", "--profile"
              wait: bool = typer.Option(False, "--wait"),
              idempotency_key: str = typer.Option(None, "--idempotency-key"), as_json: bool = JSON) -> None:
     """Start a report; --wait prints it when done."""
+    _hub_env(hub)
     svc = diag.service_for(hub)
     with _guard(as_json):
         started = svc.start(actor=cc.actor(), profile=profile, check_ids=list(check) if check else None,
