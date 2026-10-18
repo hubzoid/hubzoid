@@ -56,6 +56,7 @@ import type { DeletionPreview } from "./runtime";
 import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
 import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models";
+import { PromptPicker } from "./prompts";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
 
 export type ThreadProps = {
@@ -647,6 +648,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
             </IconButton>
           </ComposerPrimitive.AddAttachment>
           {!disabled && <ReuseFile />}
+          {!disabled && <PromptPicker />}
           {!disabled && <WebSearchToggle />}
           {!disabled && <ModelPicker />}
           {!disabled && <Dictation />}

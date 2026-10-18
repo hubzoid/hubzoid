@@ -30,6 +30,7 @@ const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
 const SourcesPage = lazy(() => import("./pages/SourcesPage"));
+const WorkspacePage = lazy(() => import("./pages/WorkspacePage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const BrandPreviewPage = lazy(() => import("./pages/BrandPreviewPage"));
 
@@ -319,6 +320,7 @@ export default function App() {
     );
   else if (route.name === "account") page = <AccountPage />;
   else if (route.name === "sources") page = <SourcesPage />;
+  else if (route.name === "workspace") page = <WorkspacePage />;
   else if (route.name === "connections")
     page = <ConnectionsPage connected={route.connected} connector={route.connector} error={route.error} />;
   else page = <NotFoundPage />;

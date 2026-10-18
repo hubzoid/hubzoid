@@ -1010,3 +1010,14 @@
   .hz-model-label { margin-left: 6px; padding: 0 6px; height: 18px; display: inline-flex; align-items: center;
     border-radius: 9px; background: var(--hz-sunken); color: var(--hz-mute); font-size: 11px; }
 }
+
+@layer components {
+  .hz-file-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 0 8px;
+    border-radius: 6px; font-size: 12.5px; color: var(--hz-body); }
+  .hz-file-row:hover { background: var(--hz-hover); color: var(--hz-ink); }
+  .hz-file-row-on { background: var(--hz-active); color: var(--hz-ink); }
+  .hz-diff { margin: 0; max-height: 360px; overflow: auto; padding: 10px 12px; border: 1px solid var(--hz-line);
+    border-radius: 8px; background: var(--hz-code-bg); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; }
+  .hz-diff-add { color: var(--hz-success); }
+  .hz-diff-del { color: var(--hz-danger); }
+}

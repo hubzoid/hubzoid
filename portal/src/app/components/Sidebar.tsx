@@ -32,6 +32,7 @@ import {
   UserRound,
   X,
   BookOpen,
+  PencilRuler,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { clearDeviceCache } from "../lib/devices";
@@ -463,6 +464,17 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
           >
             <BookOpen size={15} aria-hidden />
             {t.sources.nav}
+          </a>
+        )}
+        {!list.archived && app.isAdmin && (
+          <a
+            href="/workspace"
+            onClick={(e) => linkClick(e, "/workspace")}
+            aria-current={route === "workspace" ? "page" : undefined}
+            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute no-underline hover:bg-hover hover:text-ink aria-[current=page]:bg-active aria-[current=page]:text-ink"
+          >
+            <PencilRuler size={15} aria-hidden />
+            {t.workspace.nav}
           </a>
         )}
         {!list.archived && (
