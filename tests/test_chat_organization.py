@@ -112,6 +112,16 @@ def test_search_matches_and_respects_access(client, monkeypatch):
     monkeypatch.undo()
 
 
+def test_search_indexes_new_messages_by_itself(client):
+    cid, _ = chat(client, "ledger reconciliation steps")
+    end = time.time() + 10
+    while time.time() < end:
+        if client.get("/api/chat/search", params={"q": "reconciliation"}).json()["items"]:
+            break
+        time.sleep(0.2)
+    assert client.get("/api/chat/search", params={"q": "reconciliation"}).json()["items"]
+
+
 def test_deleted_conversation_vanishes_from_search_at_once(client):
     cid, _ = chat(client, "secret merger notes")
     reindexed(client, cid)

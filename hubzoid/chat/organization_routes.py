@@ -46,6 +46,19 @@ def mount(app: FastAPI, ctx) -> None:
 
     engine.notify = notify
 
+    def initial_index() -> None:
+        try:
+            if search.status()["documents"] == 0:
+                search.rebuild()
+        except Exception:  # noqa: BLE001 - search reports itself as lagging; chat goes on
+            import logging
+
+            logging.getLogger("hubzoid.chat.search").warning("search: first index failed", exc_info=True)
+
+    import threading
+
+    threading.Thread(target=initial_index, name="hz-search-index", daemon=True).start()
+
     async def actor_of(request: Request, mutation: bool = False):
         user = await (ctx.mutation(request) if mutation else ctx.user(request))
         return await asyncio.to_thread(engine.actor, user)

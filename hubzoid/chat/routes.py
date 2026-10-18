@@ -158,20 +158,18 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             return frozenset()
 
     ctx.engine = ChatEngine(hub_dir, ctx.store, ctx.hub, part_validator=validate_parts, groups_for=groups_for)
-    from . import feedback_routes
+    # The engine's event bus first: the feature routes below chain onto its
+    # notify hook (search reindexing) and its run-end hook (notices).
+    engine_routes.mount(app, ctx)
+    from . import feedback_routes, organization_routes, sharing_routes
 
     feedback_routes.mount(app, ctx)
-    from . import sharing_routes
-
     sharing_routes.mount(app, ctx)
-    from . import organization_routes
-
     organization_routes.mount(app, ctx)
     try:
         ctx.engine.sweep()
     except Exception:  # noqa: BLE001 - never block the bridge start
         log.warning("chat: could not check for interrupted runs", exc_info=True)
-    engine_routes.mount(app, ctx)
     app.state.chat = ctx
     store = ctx.store
     engine = ctx.engine
@@ -440,6 +438,12 @@ async def _legacy_turn(ctx: ChatContext, conv: dict, actor, body: dict, parent_i
             raise error(409, "id_conflict", "That message id is already in use.")
         op = {"kind": "regenerate", "target_message_id": existing["id"], "assistant_message_id": assistant_id}
     elif message is not None:
+        if parent_id is not None:
+            parent = await db(ctx.store.get_message, parent_id)
+            if parent is None or parent["conversation_id"] != conv["id"] or parent["role"] != "assistant":
+                # The 1.x contract: a new message follows a reply.
+                raise error(400, "invalid_parent", "A new message follows a reply; a regenerated reply "
+                                                   "follows a user message.")
         branch_id, revision = await engine_routes.call(plan_turn)
         op = {"kind": "send", "branch_id": branch_id, "expected_revision": revision, "parent_id": parent_id,
               "content": message.get("content"), "message_id": message["id"], "assistant_message_id": assistant_id}

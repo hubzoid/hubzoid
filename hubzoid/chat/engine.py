@@ -587,8 +587,8 @@ class ChatEngine:
         self._check_head(b, parent)
         if parent is not None:
             p = self._message_in(conn, conv["id"], parent)
-            if p["role"] != "assistant" or p["status"] == "running":
-                raise Err(409, "branch_conflict", "A new message follows a finished reply.")
+            if p["status"] == "running":
+                raise Err(409, "branch_conflict", "Wait for the reply to finish, or queue your message.")
         snapshot = {"kind": "send", "model_selection": op.get("model_selection") or {"mode": "agent_default"},
                     "attachment_ids": op.get("attachment_ids") or []}
         uid = self._insert(conn, conv_id=conv["id"], mid=op.get("message_id"), parent_id=parent, role="user",
