@@ -13,6 +13,7 @@ export type FeedValue = {
   /** The conversation's id, creating it first when this is a new chat. */
   ensureConversation?: () => Promise<string>;
   apiBase?: string;
+  models?: import("./models").ModelsInfo;
 };
 
 export const FeedContext = createContext<FeedValue | null>(null);

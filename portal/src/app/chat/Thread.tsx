@@ -55,6 +55,7 @@ import { useSubmitMode } from "../lib/devices";
 import type { DeletionPreview } from "./runtime";
 import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
+import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
 
 export type ThreadProps = {
@@ -446,8 +447,11 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
             )}
             {!readOnly && <ReadAloud />}
             {!readOnly && <FeedbackActions />}
+            {!readOnly && <CompareAction />}
+            {!readOnly && <CombineAction />}
             {!readOnly && <DeleteAction />}
           </ActionBarPrimitive.Root>
+          <ModelLabel />
           {watermark && !running && (
             <span className="ml-auto truncate pl-2 text-[11.5px] text-mute" data-testid="response-watermark">
               {watermark}
@@ -644,6 +648,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
           </ComposerPrimitive.AddAttachment>
           {!disabled && <ReuseFile />}
           {!disabled && <WebSearchToggle />}
+          {!disabled && <ModelPicker />}
           {!disabled && <Dictation />}
         </div>
         <div className="flex items-center gap-1.5">

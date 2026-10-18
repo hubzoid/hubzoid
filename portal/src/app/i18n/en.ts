@@ -489,6 +489,15 @@ export const en = {
     noMatches: "Nothing in your sources matches that.",
     page: (n: number) => `page ${n}`,
   },
+  models: {
+    choose: "Model for your next messages",
+    answeredBy: (label: string) => `Answered with ${label}`,
+    compare: "Compare with other models",
+    compareTitle: "Compare answers",
+    compareBody: (n: number) => `Answer this message again with up to ${n} models, side by side. Each answer is a branch you can switch between with the arrows. Compared answers can read your sources but can't take actions.`,
+    compareRun: (n: number) => (n < 2 ? "Choose at least 2 models" : `Compare ${n} models`),
+    combine: (n: number) => `Combine these ${n} answers into one`,
+  },
   citations: {
     open: (n: number) => `Source ${n}`,
     unavailable: "This source is no longer available.",

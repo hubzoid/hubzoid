@@ -7,7 +7,7 @@ import { AssistantRuntimeProvider, WebSpeechDictationAdapter, WebSpeechSynthesis
 import { Archive, Files, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
-import { ApiError, enc, get, post } from "../lib/api";
+import { ApiError, enc, get, hubUrl, post } from "../lib/api";
 import { agentById, useApp } from "../lib/app-context";
 import {
   deleteConversation,
@@ -32,6 +32,7 @@ import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapsho
 import { FeedContext, type Features } from "./feed-context";
 import { Thread } from "./Thread";
 import { ArtifactPanel, loadArtifacts, type Artifact } from "./ArtifactPanel";
+import type { ModelsInfo } from "./models";
 import { AgentSwitcher } from "./AgentPicker";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
 
@@ -321,6 +322,11 @@ function ChatView({
   }, [agent.id, session]);
 
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
+  // The models this person may pick or compare (HUB-78).
+  const [models, setModels] = useState<ModelsInfo | undefined>(undefined);
+  useEffect(() => {
+    get<ModelsInfo>(hubUrl(session.apiBase, "/api/chat/models"), { quiet401: true }).then(setModels).catch(() => {});
+  }, [session]);
   // Member features (B037): voice and the rest only with a grant.
   const [features, setFeatures] = useState<Features>({});
   useEffect(() => {
@@ -436,7 +442,7 @@ function ChatView({
           documents={artifacts.length ? { count: artifacts.length, open: panel.open,
             onToggle: () => setPanel((p) => ({ open: !p.open, id: p.id })) } : null}
         />
-        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features, apiBase: session.apiBase,
+        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features, apiBase: session.apiBase, models,
           ensureConversation: () => session.ensureConversation() }}>
           <Thread
             agent={agent}

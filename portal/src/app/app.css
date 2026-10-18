@@ -1002,3 +1002,11 @@
   .hz-cite:hover { background: var(--hz-hover); }
   .hz-cite-pop { width: min(420px, 90vw); padding: 12px 14px; }
 }
+
+@layer components {
+  .hz-model-select { height: 28px; max-width: 150px; margin-left: 2px; padding: 0 6px; border: 1px solid var(--hz-line);
+    border-radius: 7px; background: transparent; color: var(--hz-mute); font-size: 12px; }
+  .hz-model-select:hover { color: var(--hz-ink); background: var(--hz-hover); }
+  .hz-model-label { margin-left: 6px; padding: 0 6px; height: 18px; display: inline-flex; align-items: center;
+    border-radius: 9px; background: var(--hz-sunken); color: var(--hz-mute); font-size: 11px; }
+}
