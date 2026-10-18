@@ -1,7 +1,7 @@
 // The conversation itself, built from assistant-ui primitives: messages with
 // their parts, branch picker, copy, edit and regenerate, the composer with
 // attachments, and the empty state with the agent's greeting and suggestions.
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -24,15 +24,21 @@ import {
   Copy,
   Paperclip,
   Pencil,
+  ListOrdered,
+  Play,
   RefreshCw,
   Square,
+  Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { displayName } from "../lib/format";
 import type { Agent } from "../lib/types";
 import { announce, toast } from "../components/toast";
-import { AgentAvatar, Button, IconButton, Notice, cx } from "../components/ui";
+import { AgentAvatar, Button, ConfirmDialog, IconButton, Notice, cx } from "../components/ui";
+import { useFeed } from "./feed-context";
+import type { DeletionPreview } from "./runtime";
 import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
 import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
@@ -125,6 +131,7 @@ export function Thread(props: ThreadProps) {
             </ThreadPrimitive.ScrollToBottom>
             )}
             {props.notice}
+            <QueueList />
             <Composer {...props} />
           </div>
         </ThreadPrimitive.ViewportFooter>
@@ -311,8 +318,10 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
             </ActionBarPrimitive.Edit>
           )}
           <CopyAction />
+          {!readOnly && <DeleteAction />}
         </ActionBarPrimitive.Root>
       </div>
+      <ContextNote />
     </MessagePrimitive.Root>
   );
 }
@@ -336,9 +345,12 @@ function MessageStatusNote({ readOnly }: { readOnly?: boolean }) {
   if (!status || status.type !== "incomplete") return null;
   if (status.reason === "cancelled")
     return (
-      <p className="m-0 mt-1 text-[13px] italic text-mute" data-testid="stopped">
-        {t.chat.stopped}
-      </p>
+      <div className="mt-1 flex items-center gap-2">
+        <p className="m-0 text-[13px] italic text-mute" data-testid="stopped">
+          {t.chat.stopped}
+        </p>
+        {!readOnly && <ContinueAction />}
+      </div>
     );
   const raw = (status as { error?: unknown }).error;
   const detail = typeof raw === "string" ? raw : raw && typeof raw === "object" && "message" in raw ? String((raw as { message: unknown }).message) : "";
@@ -395,6 +407,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
           </span>
         )}
         <MessageStatusNote readOnly={readOnly} />
+        <ContextNote />
         <div className="-ml-1.5 mt-1 flex min-h-7 items-center gap-0.5">
           <BranchPicker />
           <ActionBarPrimitive.Root hideWhenRunning className="hz-actions flex items-center gap-0.5">
@@ -406,6 +419,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
                 </IconButton>
               </ActionBarPrimitive.Reload>
             )}
+            {!readOnly && <DeleteAction />}
           </ActionBarPrimitive.Root>
           {watermark && !running && (
             <span className="ml-auto truncate pl-2 text-[11.5px] text-mute" data-testid="response-watermark">
@@ -500,27 +514,169 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
             <Paperclip size={18} aria-hidden />
           </IconButton>
         </ComposerPrimitive.AddAttachment>
-        {running ? (
-          <IconButton
-            label={t.chat.stop}
-            onClick={stop}
-            className="!h-9 !w-9 !rounded-full !bg-ink !text-bg hover:!bg-ink/85"
-            data-testid="stop"
-          >
-            <Square size={13} fill="currentColor" aria-hidden />
-          </IconButton>
-        ) : (
+        <div className="flex items-center gap-1.5">
+          {running && (
+            <IconButton
+              label={t.chat.stop}
+              onClick={stop}
+              className="!h-8 !w-8 !rounded-full !bg-ink !text-bg hover:!bg-ink/85"
+              data-testid="stop"
+            >
+              <Square size={12} fill="currentColor" aria-hidden />
+            </IconButton>
+          )}
           <ComposerPrimitive.Send asChild>
             <IconButton
-              label={t.chat.send}
-              className="!h-9 !w-9 !rounded-full !bg-accent !text-accent-ink hover:!bg-accent-hover disabled:!bg-sunken disabled:!text-mute disabled:!opacity-100"
+              label={running ? t.chat.queueSend : t.chat.send}
+              className="!h-8 !w-8 !rounded-full !bg-accent !text-accent-ink hover:!bg-accent-hover disabled:!bg-sunken disabled:!text-mute disabled:!opacity-100"
               data-testid="send"
             >
-              <ArrowUp size={18} aria-hidden />
+              <ArrowUp size={16} aria-hidden />
             </IconButton>
           </ComposerPrimitive.Send>
-        )}
+        </div>
       </div>
     </ComposerPrimitive.Root>
   );
+}
+
+// ---- server queue, continue, delete --------------------------------------------
+
+/** Follow-ups queued on this branch, in the order the server will send them. */
+function QueueList() {
+  const value = useFeed();
+  if (!value) return null;
+  const { feed, onError } = value;
+  const items = [...feed.myQueue].sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "steer" ? -1 : 1));
+  const paused = !!feed.viewedBranch?.queue_paused && items.length > 0;
+  if (!items.length) return null;
+  const text = (parts?: { type: string; text?: string }[]) =>
+    (parts ?? []).filter((p) => p.type === "text").map((p) => p.text ?? "").join(" ");
+  return (
+    <section className="hz-queue mb-2 rounded-xl border border-line bg-raised px-3 py-2" aria-label={t.chat.queueTitle(items.length)} data-testid="queue">
+      <div className="mb-1 flex items-center gap-2 text-[12px] text-mute">
+        <ListOrdered size={13} aria-hidden />
+        <span className="flex-1">{paused ? t.chat.queuePaused : t.chat.queueTitle(items.length)}</span>
+        {paused && (
+          <Button size="sm" variant="ghost" icon={<Play size={12} aria-hidden />} onClick={() => void feed.queueControl("resume").catch(onError)}>
+            {t.chat.queueResume}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={() => void feed.queueControl("clear").catch(onError)}>
+          {t.chat.queueClear}
+        </Button>
+      </div>
+      <ol className="m-0 list-none space-y-1 p-0">
+        {items.map((item) => (
+          <li key={item.id} className="flex items-center gap-2 text-[13px]" data-testid="queue-item" data-state={item.state}>
+            <span className="min-w-0 flex-1 truncate text-ink">{text(item.content as { type: string; text?: string }[])}</span>
+            {item.state !== "queued" && item.state !== "paused" && (
+              <span className="text-[12px] text-mute">{t.chat.queueBlocked(item.reason || item.state)}</span>
+            )}
+            {feed.activeRun && item.lane !== "steer" && (
+              <IconButton
+                label={t.chat.queueSendNext}
+                className="!h-6 !w-6"
+                onClick={() =>
+                  void feed
+                    .patchQueue(item, { action: "move", lane: "steer" })
+                    .then(() => feed.cancel(false))
+                    .catch(onError)
+                }
+              >
+                <ArrowUp size={12} aria-hidden />
+              </IconButton>
+            )}
+            <IconButton label={t.chat.queueRemove} className="!h-6 !w-6" onClick={() => void feed.patchQueue(item, { action: "remove" }).catch(onError)}>
+              <X size={12} aria-hidden />
+            </IconButton>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function ContinueAction() {
+  const value = useFeed();
+  const id = useAuiState((s) => s.message.id);
+  const [busy, setBusy] = useState(false);
+  if (!value || id.startsWith("pending")) return null;
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      loading={busy}
+      icon={<Play size={12} aria-hidden />}
+      data-testid="continue"
+      onClick={() => {
+        setBusy(true);
+        void value.feed
+          .operation({ kind: "continue", target_message_id: id })
+          .then(() => value.feed.load())
+          .catch(value.onError)
+          .finally(() => setBusy(false));
+      }}
+    >
+      {t.chat.continueReply}
+    </Button>
+  );
+}
+
+/** Delete goes through a server preview the person confirms first. */
+function DeleteAction() {
+  const value = useFeed();
+  const aui = useAui();
+  const id = useAuiState((s) => s.message.id);
+  const [preview, setPreview] = useState<DeletionPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!value || id.startsWith("pending") || !value.feed.snapshot?.permissions.write) return null;
+  const open = () => {
+    setError(null);
+    void value.feed.deletionPreview(id).then(setPreview).catch(value.onError);
+  };
+  const confirm = async () => {
+    if (!preview) return;
+    setBusy(true);
+    value.confirmedDeletes.set(id, preview);
+    try {
+      await aui.message().delete();
+      setPreview(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <IconButton label={t.chat.deleteMessage} className="!h-7 !w-7" onClick={open} data-testid="delete-message">
+        <Trash2 size={14} aria-hidden />
+      </IconButton>
+      <ConfirmDialog
+        open={!!preview}
+        onOpenChange={(o) => !busy && !o && setPreview(null)}
+        title={t.chat.deletePreviewTitle}
+        body={
+          preview
+            ? t.chat.deletePreviewBody(preview.removed.length - 1, Object.keys(preview.reparented).length, preview.shares.length)
+            : ""
+        }
+        confirmLabel={t.chat.deleteConfirm}
+        onConfirm={() => void confirm()}
+        busy={busy}
+        error={error}
+      />
+    </>
+  );
+}
+
+/** A message whose earlier context was deleted says so. */
+function ContextNote() {
+  const value = useFeed();
+  const id = useAuiState((s) => s.message.id);
+  const changed = value?.feed.snapshot?.messages.find((m) => m.id === id)?.context_changed;
+  if (!changed) return null;
+  return <p className="m-0 mt-0.5 text-[12px] text-mute" data-testid="context-changed">{t.chat.contextChanged}</p>;
 }

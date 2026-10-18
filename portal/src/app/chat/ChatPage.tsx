@@ -1,8 +1,9 @@
 // A chat page: a new chat (/, with the agent picker) or a stored conversation
 // (/c/:id). Loads the conversation first so every failure has a plain state,
-// then mounts assistant-ui's local runtime with Hubzoid's adapters.
+// then mounts assistant-ui's external store over the server's conversation
+// graph (runtime.ts): the server owns messages, branches, runs and the queue.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AssistantRuntimeProvider, useAui, useLocalRuntime } from "@assistant-ui/react";
+import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Archive, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
@@ -25,9 +26,10 @@ import type { Agent, Conversation, ConversationDetail } from "../lib/types";
 import { ShareDialog } from "../components/ShareDialog";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
-import { toRepository, toThreadMessage } from "./convert";
 import { FilesContext } from "./parts";
-import { cancelRun, ChatSession, pollRun } from "./session";
+import { ChatSession } from "./session";
+import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
+import { FeedContext } from "./feed-context";
 import { Thread } from "./Thread";
 import { AgentSwitcher } from "./AgentPicker";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
@@ -237,16 +239,10 @@ function ChatView({
   }, []);
 
   const [session] = useState(() => {
-    const repo = detail
-      ? toRepository(detail.messages ?? [], detail.head_id, {
-          conversationId: detail.conversation.id,
-          apiBase: detail.conversation.api_base ?? initialAgent.api_base,
-        })
-      : null;
     const s = new ChatSession({
       conversationId: detail?.conversation.id ?? null,
       agent: detail ? { ...initialAgent, api_base: detail.conversation.api_base ?? initialAgent.api_base } : initialAgent,
-      repository: repo,
+      repository: null,
       events: {
         onConversationCreated: (c) => {
           setConversation(c);
@@ -280,10 +276,32 @@ function ChatView({
     });
     return s;
   });
-  const runningIds = useMemo(() => {
-    if (!detail) return [];
-    return toRepository(detail.messages ?? [], detail.head_id, session.convertContext).runningIds;
-  }, [detail, session]);
+  const me = app.user?.id ?? null;
+  const [feed] = useState(
+    () =>
+      new ConversationFeed(
+        detail?.conversation.id ?? null,
+        session.apiBase,
+        me ?? ((detail as unknown as Snapshot | null)?.conversation.owner_id ?? null),
+        (detail as unknown as Snapshot | null) ?? null,
+      ),
+  );
+  useEffect(() => () => feed.close(), [feed]);
+  const ensureFeed = useCallback(async () => {
+    if (feed.conversationId) return feed;
+    const id = await session.ensureConversation();
+    feed.conversationId = id;
+    feed.apiBase = session.apiBase;
+    await feed.load();
+    if (!feed.me) feed.me = feed.snapshot?.conversation.owner_id ?? null;
+    feed.connect();
+    return feed;
+  }, [feed, session]);
+  const [confirmedDeletes] = useState(() => new Map<string, DeletionPreview>());
+  const onError = useCallback((error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) session.events.onUnauthorized();
+    else toast(describeError(error, t.chat.runError), "error");
+  }, [session]);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const canPick = !conversation && app.agents.list.length > 1;
@@ -301,12 +319,26 @@ function ChatView({
     if (!session.conversationId && agent.id) rememberLast(agent.id);
   }, [agent.id, session]);
 
-  const chatModel = useMemo(() => session.chatModelAdapter(), [session]);
-  // A new chat has nothing to load; without a history adapter it starts empty
-  // (not "loading"), so the empty state renders at once, scrolled to the top.
-  const history = useMemo(() => (detail ? session.historyAdapter() : undefined), [session, detail]);
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
-  const runtime = useLocalRuntime(chatModel, { adapters: { history, attachments } });
+  const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError });
+
+  // The server's title and run endings flow back to the page and the list.
+  const wasRunning = useRef(false);
+  useEffect(
+    () =>
+      feed.subscribe(() => {
+        const serverTitle = feed.snapshot?.conversation.title;
+        if (serverTitle && serverTitle !== title && feed.conversationId) session.events.onTitle(feed.conversationId, serverTitle);
+        const running = !!feed.activeRun;
+        if (wasRunning.current && !running && feed.conversationId) {
+          session.events.onRunSettled(feed.conversationId);
+          announce(t.chat.responseDone);
+        }
+        wasRunning.current = running;
+      }),
+    [feed, session, title],
+  );
   useEffect(() => {
     session.countAttachments = () => runtime.thread.composer.getState().attachments.length;
   }, [runtime, session]);
@@ -327,110 +359,24 @@ function ChatView({
           onRenamed={(next) => setTitle(next)}
           picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
         />
-        <FollowRuns session={session} runningIds={runningIds} detail={detail}>
-          {(following, stopFollowed) => (
-            <Thread
-              agent={agent}
-              canPickAgent={canPick}
-              onChangeAgent={() => setPickerOpen(true)}
-              requestedMissing={requestedMissing}
-              isFollowing={following}
-              onStopFollowed={stopFollowed}
-              onHeadChanged={(id) => session.saveHead(id)}
-              notice={
-                !agentKnown && app.agents.status === "ready" ? (
-                  <Notice tone="warning" className="mb-2">
-                    {t.agents.unavailable}
-                  </Notice>
-                ) : null
-              }
-            />
-          )}
-        </FollowRuns>
+        <FeedContext.Provider value={{ feed, confirmedDeletes, onError }}>
+          <Thread
+            agent={agent}
+            canPickAgent={canPick}
+            onChangeAgent={() => setPickerOpen(true)}
+            requestedMissing={requestedMissing}
+            notice={
+              !agentKnown && app.agents.status === "ready" ? (
+                <Notice tone="warning" className="mb-2">
+                  {t.agents.unavailable}
+                </Notice>
+              ) : null
+            }
+          />
+        </FeedContext.Provider>
       </FilesContext.Provider>
     </AssistantRuntimeProvider>
   );
-}
-
-/**
- * A reply that was still being written when this page loaded: poll the run
- * until it ends, showing its progress, then load the finished conversation.
- */
-function FollowRuns({
-  session,
-  runningIds,
-  detail,
-  children,
-}: {
-  session: ChatSession;
-  runningIds: string[];
-  detail: ConversationDetail | null;
-  children: (following: boolean, stop: () => void) => React.ReactNode;
-}) {
-  const aui = useAui();
-  const [following, setFollowing] = useState<string | null>(runningIds.at(-1) ?? null);
-
-  useEffect(() => {
-    if (!runningIds.length || !detail) return;
-    const controller = new AbortController();
-    const messages = [...(detail.messages ?? [])];
-    const ctx = session.convertContext;
-    const importTree = () => {
-      const state = aui.thread().getState();
-      const head = state.messages.at(-1)?.id ?? detail.head_id;
-      const repo = toRepository(messages, head, ctx);
-      aui.thread().import({ headId: repo.headId, messages: repo.messages });
-    };
-    const ended = new Map<string, string>();
-    (async () => {
-      for (const id of runningIds) {
-        setFollowing(id);
-        for await (const status of pollRun(session.apiBase, id, controller.signal)) {
-          if (status.status !== "running") ended.set(id, String(status.status || "complete"));
-          const index = messages.findIndex((m) => m.id === id);
-          if (index === -1) break;
-          const current = messages[index];
-          const next = status.message
-            ? { ...current, ...status.message, id, parent_id: current.parent_id }
-            : { ...current };
-          next.status = status.status === "running" ? "running" : (status.status as typeof next.status) || "complete";
-          if (status.status === "error" && !status.message) next.error = next.error || "";
-          messages[index] = next;
-          if (toThreadMessage(next, ctx)) importTree();
-        }
-      }
-      if (controller.signal.aborted || !session.conversationId) return;
-      // Load the finished conversation (titles, final text) once everything settled.
-      try {
-        const fresh = await get<ConversationDetail>(`/api/conversations/${enc(session.conversationId)}`, {
-          signal: controller.signal,
-        });
-        // A run that ended (or vanished) never shows as running again.
-        const settled = (fresh.messages ?? []).map((m) =>
-          m.status === "running" && ended.has(m.id) ? { ...m, status: ended.get(m.id) as typeof m.status } : m,
-        );
-        messages.splice(0, messages.length, ...settled);
-        for (const m of fresh.messages ?? []) session.ids.markPersisted(m.id);
-        importTree();
-        announce(t.chat.responseDone);
-        if (fresh.conversation?.title) patchLocal(fresh.conversation.id, { title: fresh.conversation.title });
-      } catch {
-        /* the polled state is already on screen */
-      }
-      setFollowing(null);
-    })().finally(() => {
-      if (!controller.signal.aborted) setFollowing(null);
-    });
-    return () => controller.abort();
-    // Runs once for the conversation this page opened.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const stop = useCallback(() => {
-    if (following) void cancelRun(session.apiBase, following);
-  }, [following, session]);
-
-  return <>{children(!!following, stop)}</>;
 }
 
 function ChatHeader({
