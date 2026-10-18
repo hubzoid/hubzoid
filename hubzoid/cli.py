@@ -3044,6 +3044,9 @@ from .parity.cli import parity_app  # noqa: E402
 
 _register_admin_cli(admin_app)
 from .migrate_openwebui import migrate_app  # noqa: E402
+from .migration_readiness import register as _register_readiness  # noqa: E402
+
+_register_readiness(migrate_app)
 
 app.add_typer(
     parity_app,
