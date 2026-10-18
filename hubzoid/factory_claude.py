@@ -1155,19 +1155,28 @@ class ClaudeRuntime:
 
 
 async def claude_complete(prompt: str, *, system: str | None = None,
-                          model_setting: str | None = None, hub_dir: Path | None = None) -> tuple[str, dict]:
+                          model_setting: str | None = None, hub_dir: Path | None = None,
+                          output_schema: dict | None = None) -> tuple[str, dict]:
     """One tool-free, single-turn Claude call for `hub.call_llm` on claude-local.
 
     No tools, no MCP servers (strictly: not even the host account's), no
     skills and no hub instructions: a plain model call through the Claude Agent
     SDK (claude-local has no API key, so this is the direct route). Returns the
-    text and a usage dict. Raises when the SDK reports the run failed."""
+    text and a usage dict. With ``output_schema`` the SDK's native structured
+    output (``output_format``) is requested; the structured object is returned
+    as JSON text and usage carries ``structured: "native"``. Raises when the SDK
+    reports the run failed."""
     from claude_agent_sdk import AssistantMessage, ResultMessage
     from claude_agent_sdk.types import TextBlock
 
     pin = _validate_model_pin(_parse_model_pin(model_setting), hub="call_llm")
     options = tool_free_options(
         system or "You are a precise assistant. Answer the request directly.", pin)
+    if output_schema is not None:
+        import dataclasses
+
+        options = dataclasses.replace(options, output_format={"type": "json_schema", "schema": output_schema})
+    structured_out = None
     parts: list[str] = []
     final: str | None = None
     usage: dict = {}
@@ -1181,6 +1190,7 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                 parts += [b.text for b in message.content if isinstance(b, TextBlock)]
             elif isinstance(message, ResultMessage):
                 final = getattr(message, "result", None)
+                structured_out = getattr(message, "structured_output", None)
                 raw = getattr(message, "usage", None) or {}
                 get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
                 usage = {
@@ -1195,4 +1205,9 @@ async def claude_complete(prompt: str, *, system: str | None = None,
                     raise RuntimeError(
                         f"claude run ended with {getattr(message, 'subtype', 'error')}"
                     )
+    if output_schema is not None and structured_out is not None:
+        import json as _json
+
+        usage["structured"] = "native"
+        return _json.dumps(structured_out), usage
     return ("".join(parts) or final or ""), usage
