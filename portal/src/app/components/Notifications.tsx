@@ -14,6 +14,8 @@ const POLL_MS = 20000;
 const shown = new Set<string>();
 
 function label(kind: string) {
+  if (kind === "space.mention") return t.notices.mention;
+  if (kind === "calendar.reminder") return t.notices.reminder;
   return kind === "run.failed" ? t.notices.failed : kind === "run.interrupted" ? t.notices.interrupted : t.notices.completed;
 }
 
