@@ -221,6 +221,18 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
 
         # Whether the chat should ask for follow-up suggestions (deployment and person both on).
         out["features"]["helper_followups"] = await asyncio.to_thread(helpers_on)
+
+        def web_on() -> bool:
+            from .config import service_for
+
+            try:
+                web = service_for(hub_dir).active().document["retrieval"]["web"]
+                return bool(web["enabled"] and web["search"] == "native")
+            except Exception:  # noqa: BLE001
+                return False
+
+        # The web search switch shows only when the deployment allows it and the person holds the grant.
+        out["features"]["web_search"] = bool(out["features"].get("chat_web_search")) and await asyncio.to_thread(web_on)
         return out
 
     @app.get("/api/chat/preferences")

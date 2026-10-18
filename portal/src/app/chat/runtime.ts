@@ -300,6 +300,10 @@ export class ConversationFeed {
   }
 
   /** Send now on an idle branch, or queue behind the running reply. */
+  /** This person's choices for their next messages: the runtime's own web search, a model. */
+  webSearch = false;
+  model: string | null = null;
+
   async submit(parts: ServerPart[], text: string, lane: "queue" | "steer" = "queue") {
     const branch = await this.writableBranch();
     const busy = !!this.activeRun || this.myQueue.length > 0 || branch.queue_paused;
@@ -308,7 +312,11 @@ export class ConversationFeed {
       this.emit();
     }
     try {
-      await post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), { branch_id: branch.id, content: parts, lane }, {
+      await post(this.url(`/api/conversations/${enc(this.conversationId!)}/queue`), {
+        branch_id: branch.id, content: parts, lane,
+        ...(this.webSearch ? { web_search: true } : {}),
+        ...(this.model ? { model_selection: { mode: "model", model: this.model } } : {}),
+      }, {
         headers: { "Idempotency-Key": newKey() },
       });
     } catch (error) {

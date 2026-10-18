@@ -42,6 +42,7 @@ import {
   X,
   FileText,
   FolderOpen,
+  Globe,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { displayName, formatBytes } from "../lib/format";
@@ -506,6 +507,28 @@ function EditComposer() {
 
 // ---- composer -----------------------------------------------------------------
 
+/** Let this turn use the runtime's own web search (shown only when the
+ * deployment allows it and the person holds the grant). */
+function WebSearchToggle() {
+  const value = useFeed();
+  const [on, setOn] = useState(false);
+  if (!value?.features?.web_search) return null;
+  return (
+    <IconButton
+      label={on ? t.chat.webSearchOn : t.chat.webSearchOff}
+      size="lg"
+      aria-pressed={on}
+      className={cx("!h-9 !w-9", on && "!bg-accent/15 !text-accent")}
+      onClick={() => {
+        setOn(!on);
+        value.feed.webSearch = !on;
+      }}
+    >
+      <Globe size={18} aria-hidden />
+    </IconButton>
+  );
+}
+
 type MyFile = { file_id: string; name: string; mime_type: string; size_bytes: number; state: string; created_at: number };
 
 /** Attach a file you uploaded before (here or in another conversation): a new
@@ -620,6 +643,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
             </IconButton>
           </ComposerPrimitive.AddAttachment>
           {!disabled && <ReuseFile />}
+          {!disabled && <WebSearchToggle />}
           {!disabled && <Dictation />}
         </div>
         <div className="flex items-center gap-1.5">

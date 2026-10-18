@@ -21,6 +21,7 @@ import { fileNameFromUrl } from "../lib/format";
 import { isAppPath } from "../lib/router";
 import { copyText } from "../components/ShareDialog";
 import { highlight, resolveLanguage } from "./highlight";
+import { CitationLink, remarkCitations } from "./citations";
 import { imageSource } from "./images";
 
 const ARTIFACT = /^(?:\/b\/[^/]+)?\/artifacts\/[^?#]+/;
@@ -156,6 +157,7 @@ function Highlighted({ code, language }: SyntaxHighlighterProps) {
 
 function Link({ href, children, ...rest }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   delete (rest as { node?: unknown }).node;
+  if (href?.startsWith("#cite-")) return <CitationLink id={href.slice(6)} label={String(children)} />;
   if (isArtifactHref(href)) {
     const name = fileNameFromUrl(href!);
     // The agent's download footer reads "Download <file>"; the chip already says
@@ -257,7 +259,7 @@ const components = memoizeComponents({
   SyntaxHighlighter,
 });
 
-const remarkPlugins = [remarkGfm, remarkMath];
+const remarkPlugins = [remarkGfm, remarkMath, remarkCitations];
 // KaTeX never runs commands that fetch or link (trust off), and shows a bad
 // formula as its source instead of failing the message.
 const rehypePlugins: NonNullable<ComponentPropsWithoutRef<typeof MarkdownTextPrimitive>["rehypePlugins"]> = [

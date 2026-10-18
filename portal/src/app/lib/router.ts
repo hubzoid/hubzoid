@@ -57,7 +57,7 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$))/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$))/.test(path);
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
@@ -97,6 +97,8 @@ export type Route =
   | { name: "signin"; redirect: string; error: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
+  | { name: "sources" }
+  | { name: "spaces"; id: string | null; tab: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
 
@@ -119,6 +121,9 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
     if (parts[1] === "set-password" || parts[1] === "reset-password")
       return { name: "set-password", token: search.get("token") };
   }
+  if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
+  if (parts[0] === "spaces" && parts.length <= 2)
+    return { name: "spaces", id: parts[1] ?? null, tab: search.get("tab") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
     if (parts[1] === "connections" && parts.length === 2)

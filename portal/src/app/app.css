@@ -980,3 +980,25 @@
     background: var(--hz-raised); color: var(--hz-ink); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; resize: none; }
   .hz-artifact-foot { padding: 6px 12px; border-top: 1px solid var(--hz-line-soft); font-size: 11.5px; color: var(--hz-mute); }
 }
+
+/* Sources page and citations. */
+@layer components {
+  .hz-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; background: var(--hz-sunken); color: var(--hz-mute); }
+  .hz-pill-ready { background: color-mix(in srgb, var(--hz-success) 18%, transparent); color: var(--hz-success); }
+  .hz-pill-failed { background: var(--hz-danger-soft); color: var(--hz-danger); }
+  .hz-pill-syncing { background: color-mix(in srgb, var(--hz-accent) 18%, transparent); color: var(--hz-accent); }
+  .hz-source-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 4px 0 8px;
+    border-radius: 6px; background: var(--hz-canvas); }
+  .hz-select-sm { height: 26px; padding: 0 6px; border: 1px solid var(--hz-line); border-radius: 6px;
+    background: var(--hz-raised); color: var(--hz-ink); font-size: 12px; }
+  .hz-textarea { display: block; width: 100%; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--hz-line);
+    border-radius: 8px; background: var(--hz-raised); color: var(--hz-ink); font-size: 13px; line-height: 1.5; resize: vertical; }
+  .hz-passage { padding: 8px 10px; border: 1px solid var(--hz-line-soft); border-radius: 8px; background: var(--hz-canvas); }
+  .hz-cite { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 17px;
+    margin: 0 1px; padding: 0 4px; border-radius: 5px; vertical-align: 2px; font-size: 10.5px; font-weight: 600;
+    line-height: 1; text-decoration: none !important; background: var(--hz-sunken); color: var(--hz-accent) !important;
+    border: 1px solid var(--hz-line); cursor: pointer; }
+  .hz-cite:hover { background: var(--hz-hover); }
+  .hz-cite-pop { width: min(420px, 90vw); padding: 12px 14px; }
+}

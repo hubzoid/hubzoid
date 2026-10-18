@@ -31,6 +31,7 @@ import {
   Trash2,
   UserRound,
   X,
+  BookOpen,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { clearDeviceCache } from "../lib/devices";
@@ -453,6 +454,17 @@ function SidebarBody({ activeId, route, inDrawer }: { activeId: string | null; r
       </div>
 
       <div className="border-t border-line px-2 py-2">
+        {!list.archived && (
+          <a
+            href="/sources"
+            onClick={(e) => linkClick(e, "/sources")}
+            aria-current={route === "sources" ? "page" : undefined}
+            className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-mute no-underline hover:bg-hover hover:text-ink aria-[current=page]:bg-active aria-[current=page]:text-ink"
+          >
+            <BookOpen size={15} aria-hidden />
+            {t.sources.nav}
+          </a>
+        )}
         {!list.archived && (
           <button
             type="button"
