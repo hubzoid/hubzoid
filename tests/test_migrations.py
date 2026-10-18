@@ -32,7 +32,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
 LATER_TABLES = ("hz_chat_operations", "hz_chat_config_revisions", "hz_chat_config_heads",
                 "hz_chat_preferences", "hz_branding_drafts", "hz_branding_assets",
                 "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",
-                "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals")
+                "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals",
+                "hz_admin_config_revisions", "hz_admin_config_heads", "hz_admin_config_plans",
+                "hz_admin_diagnostic_reports", "hz_admin_diagnostic_checks", "hz_admin_support_bundles")
 
 
 @pytest.fixture(autouse=True)

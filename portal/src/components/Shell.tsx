@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Alert, App, Button, Drawer, Grid, Layout, Menu, Segmented, Typography } from "antd";
-import { CalendarClock, History, Menu as MenuIcon, Monitor, Moon, MoonStar, Plug, Sparkle, Sun, Users } from "lucide-react";
+import { Activity, CalendarClock, History, Menu as MenuIcon, Monitor, Moon, MoonStar, Plug, Settings, Sparkle, Sun, Users } from "lucide-react";
 import { usesSignInLinks, type Me, type MyData } from "../api";
 import { href } from "../hooks/useRoute";
 import type { Mode } from "../lib/theme";
@@ -9,7 +9,7 @@ import wordmarkDark from "../assets/brand/wordmark-dark.png";
 
 const { Text } = Typography;
 
-export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules" | "connections";
+export type Area = "home" | "agents" | "runs" | "people" | "activity" | "schedules" | "connections" | "settings" | "diagnostics";
 
 // The portal has no login of its own — it trusts the chat app's session cookie
 // (verified server-side). Signing in and out is the chat app's. The session
@@ -68,6 +68,12 @@ const items = [
   { key: "people", icon: <Users size={18} />, label: <a href={href("/people")}>People</a> },
   { key: "activity", icon: <History size={18} />, label: <a href={href("/activity")}>Activity</a> },
 ];
+// Deployment-wide pages: settings for organization administrators, diagnostics
+// for anyone who manages an agent (the server checks each call).
+const orgItems = [
+  { key: "settings", icon: <Settings size={18} />, label: <a href={href("/settings")}>Settings</a> },
+];
+const diagnosticsItem = { key: "diagnostics", icon: <Activity size={18} />, label: <a href={href("/diagnostics")}>Diagnostics</a> };
 // Connectors live in each agent (its Connectors tab), not in the menu. An
 // admin's own schedules and connections are under "You", as on everyone's My
 // workspace; connections are the web app's Settings page there.
@@ -78,8 +84,8 @@ function youItems(me: Me) {
     { key: "connections", icon: <Plug size={18} />, label: <a href={connections}>Connections</a> },
   ];
 }
-function navItems(_me: Me) {
-  return items;
+function navItems(me: Me) {
+  return me.org_admin ? [...items, diagnosticsItem, ...orgItems] : [...items, diagnosticsItem];
 }
 
 function Wordmark({ isDark, compact, to = "/home" }: { isDark: boolean; compact?: boolean; to?: string }) {
