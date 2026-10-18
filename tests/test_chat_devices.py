@@ -34,12 +34,13 @@ def test_voice_is_off_for_members_until_granted(client, hub, monkeypatch):
     as_people(monkeypatch)
     feats = client.get("/api/chat/capabilities", headers=who("ana")).json()["features"]
     assert feats == {"chat_dictation": False, "chat_read_aloud": False, "chat_web_search": False,
-                     "chat_model_compare": False}
+                     "chat_model_compare": False, "helper_followups": False, "web_search": False}
     store_for(hub).grant("ana@example.org", hub.name, "chat_dictation", actor="t")
     feats = client.get("/api/chat/capabilities", headers=who("ana")).json()["features"]
     assert feats["chat_dictation"] is True and feats["chat_read_aloud"] is False
     store_for(hub).grant("ben@example.org", hub.name, "manage_access", actor="t")
-    assert all(client.get("/api/chat/capabilities", headers=who("ben")).json()["features"].values())
+    ben = client.get("/api/chat/capabilities", headers=who("ben")).json()["features"]
+    assert all(ben[k] for k in ("chat_dictation", "chat_read_aloud", "chat_web_search", "chat_model_compare"))
 
 
 def test_input_preferences_follow_allow_personal(client, hub, monkeypatch):
