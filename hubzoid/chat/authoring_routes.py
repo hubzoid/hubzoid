@@ -99,7 +99,10 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         user, actor = await actor_of(request, True)
         await need(user, "authoring.publish")
         body = await er.read_json(request)
-        return await call(svc.publish, actor, did, str(body.get("digest") or ""))
+        out = await call(svc.publish, actor, did, str(body.get("digest") or ""))
+        if out["path"].endswith(("AGENTS.md", "SKILL.md")) or out["path"].startswith("skills/"):
+            out["runtime_reloaded"] = await _reload_runtime(ctx)
+        return out
 
     @app.post(f"{A}/rollbacks", status_code=201)
     async def rollback(request: Request):
@@ -134,3 +137,26 @@ def mount(app: FastAPI, ctx) -> AuthoringService:
         return await call(svc.render, actor, pid, str(body.get("scope") or "hub"), body.get("values") or {})
 
     return svc
+
+
+async def _reload_runtime(ctx) -> bool:
+    """New chat replies use the published instructions and skills at once: the
+    chat's runtime is rebuilt from the hub's files. Replies already running keep
+    the runtime they started with. (Other surfaces of this bridge, such as Open
+    WebUI, Slack and MCP, pick the change up when the hub restarts.)"""
+    import logging
+
+    from .. import runtime as runtime_lib
+
+    try:
+        new = await asyncio.to_thread(runtime_lib.build, ctx.hub_dir)
+        opener = getattr(new, "aopen", None)
+        if opener is not None:
+            await opener()
+    except Exception:  # noqa: BLE001 - the file is published; the next restart applies it
+        logging.getLogger("hubzoid.chat.authoring").warning("authoring: runtime rebuild failed", exc_info=True)
+        return False
+    ctx.runtime = new
+    if getattr(ctx, "models", None) is not None:
+        ctx.models.runtime = new
+    return True
