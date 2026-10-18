@@ -219,7 +219,7 @@ def test_rows_show_sources_locks_and_expected_names_without_values(hub):
     (hub / "restricted" / ".env").write_text("ODOO_PASSWORD=p\n")
     put(hub, "OPENAI_API_KEY")
     rows = {r["name"]: r for r in report.rows(hub)}
-    assert rows["OPENAI_API_KEY"]["source"] == "Console" and rows["OPENAI_API_KEY"]["expected"] == "model"
+    assert rows["OPENAI_API_KEY"]["source"] == "Stored" and rows["OPENAI_API_KEY"]["expected"] == "model"
     assert rows["ZOHO_CLIENT_SECRET"]["locked"] and rows["ZOHO_CLIENT_SECRET"]["source"] == "Hub .env"
     assert rows["ZOHO_REFRESH_TOKEN"]["status"] == "missing"
     assert "ZOHO_API_BASE" not in rows and "BRIDGE_API_KEYS" not in rows and "MODEL" not in rows
@@ -266,7 +266,7 @@ def test_the_local_owner_manages_secrets_and_never_reads_them_back(hub):
     listing = tc.get("/api/hubs/deskhub/secrets")
     assert listing.status_code == 200 and VALUE not in listing.text
     row = next(s for s in listing.json()["secrets"] if s["name"] == "OPENAI_API_KEY")
-    assert row["source"] == "Console" and row["stored"]["revision"] == 1
+    assert row["source"] == "Stored" and row["stored"]["revision"] == 1
     r = tc.put("/api/hubs/deskhub/secrets/OPENAI_API_KEY", json={"value": "x", "expected_revision": 5},
                headers=SAME)
     assert r.status_code == 409 and r.json()["detail"]["current_revision"] == 1
@@ -287,7 +287,7 @@ def test_a_locked_name_and_a_cross_origin_write_are_refused(hub):
     assert "hub .env" in r.json()["detail"]["message"]
     r = tc.put("/api/hubs/deskhub/secrets/ERP_TOKEN", json={"value": VALUE},
                headers={"origin": "https://evil.example"})
-    assert r.status_code == 403
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "cross_origin"
 
 
 def test_only_organization_administrators_write_and_see_restricted_names(hub, monkeypatch):
@@ -388,7 +388,7 @@ def test_a_blank_aws_value_does_not_lock_a_stored_secret(hub, monkeypatch):
     monkeypatch.setattr(cs, "fetch", lambda name, region, layer: {"ERP_TOKEN": "", "ZOHO_TOKEN": "aws-value"})
     put(hub, "ERP_TOKEN")
     rows = {r["name"]: r for r in report.rows(hub)}
-    assert not rows["ERP_TOKEN"]["locked"] and rows["ERP_TOKEN"]["source"] == "Console"
+    assert not rows["ERP_TOKEN"]["locked"] and rows["ERP_TOKEN"]["source"] == "Stored"
     assert rows["ZOHO_TOKEN"]["locked"] and rows["ZOHO_TOKEN"]["source"] == "Hub secret"
     assert "desk/hub" not in json.dumps(report.rows(hub))  # never an AWS secret name
 

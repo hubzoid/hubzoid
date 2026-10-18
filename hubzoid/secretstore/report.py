@@ -35,7 +35,7 @@ SOURCE_LABELS = {
     cs.L_RESTRICTED: "Restricted file",
     cs.L_RESTRICTED_SECRET: "Restricted secret",
 }
-STORE_LABEL = "Console"
+STORE_LABEL = "Stored"
 _LOCK_REASONS = {
     cs.L_ENV: "Set in the deployment environment. Remove it there to manage it here.",
     cs.L_DEPLOYMENT_SECRET: "Set in the deployment's AWS secret. Remove it there to manage it here.",

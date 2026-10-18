@@ -600,7 +600,7 @@ export type SecretRow = {
   name: string;
   level: SecretLevel;
   status: "set" | "missing" | "blank" | "unreadable" | "rebind";
-  /** Where the value comes from: "Console", "Hub .env", "Deployment environment"... */
+  /** Where the value comes from: "Stored", "Hub .env", "Deployment environment"... */
   source: string | null;
   /** An operator source sets it: the Console cannot change it. */
   locked: boolean;

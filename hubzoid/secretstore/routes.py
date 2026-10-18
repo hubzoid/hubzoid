@@ -133,12 +133,17 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
         return who
 
     def writer(request: Request) -> Viewer:
+        from fastapi import HTTPException
+
         from ..access.session import require_same_origin
 
         who = viewer(request)
         if not who.org_admin:
             raise error(403, "permission_denied", "Only organization administrators set or remove secrets.")
-        require_same_origin(request)
+        try:
+            require_same_origin(request)
+        except HTTPException:
+            raise error(403, "cross_origin", "This request must come from this site's own pages.") from None
         return who
 
     def request_id(request: Request) -> str | None:
