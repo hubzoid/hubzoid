@@ -315,6 +315,7 @@ class BrandingService:
                 reviews.c.draft_id == draft.id, reviews.c.digest == draft.digest,
                 reviews.c.draft_revision == draft.revision).order_by(reviews.c.created_at.desc())).first()
         out = draft.public()
+        out["needs_revalidation"] = draft.validation.get("validator_version") != models.VALIDATOR_VERSION
         out["review"] = None if rv is None else {"review_id": rv.id, "decision": rv.decision,
                                                  "actor": rv.actor, "created_at": rv.created_at}
         return out
@@ -343,17 +344,21 @@ class BrandingService:
 
     # -- drafts -------------------------------------------------------------------
     def _evaluate(self, configuration: dict, theme: dict | None, assets: list[dict],
-                  missing: list[str], base: str) -> tuple[str, dict, str]:
+                  missing: list[str], base: str, css_text: str | None = None) -> tuple[str, dict, str]:
         """(state, validation, digest) for a candidate."""
         problems: list[dict] = []
         if missing:
             problems.append({"code": "missing_asset", "message": "Upload these files: " + ", ".join(missing),
                              "paths": missing})
+        resolved = None
         try:
-            theme_mod.resolve(theme) if theme else theme_mod.resolve()
+            resolved = theme_mod.resolve(theme) if theme else theme_mod.resolve()
         except theme_mod.ThemeError as exc:
             problems.append({"code": exc.code, "message": exc.message, "pointer": exc.pointer,
                              **({"failures": exc.extra["failures"]} if "failures" in exc.extra else {})})
+        css = next((a for a in assets if a["key"] == "decorative_css"), None)
+        if css is not None and css_text is not None and resolved is not None:
+            problems.extend(self._css_contrast(css["path"], css_text, resolved))
         state = "valid" if not problems else "draft"
         dig = canonical.digest({
             "configuration": configuration, "theme": theme,
@@ -362,6 +367,30 @@ class BrandingService:
             "base_revision": base, "validator_version": models.VALIDATOR_VERSION})
         return state, {"valid": not problems, "problems": problems,
                        "validator_version": models.VALIDATOR_VERSION}, dig
+
+    def _css_contrast(self, path: str, css_text: str, resolved: dict) -> list[dict]:
+        """A decorative background must keep the slot's text readable in every
+        mode (one fixed colour behind light and dark text usually can't)."""
+        rules = branding_css.parse(css_text, path)
+        css_asset = {"path": path}
+        out = []
+        for slot, decls in rules.items():
+            bg = decls.get("background-color")
+            if not bg:
+                continue
+            for mode in theme_mod.MODES:
+                pal = resolved["palettes"][mode]
+                for token in ("text", "mutedText"):
+                    ratio = theme_mod.contrast(pal[token], bg.upper())
+                    if ratio < 4.5:
+                        out.append({"code": "contrast_failure", "pointer": css_asset["path"],
+                                    "message": (f"{css_asset['path']}: {slot} background {bg} makes {token} "
+                                                f"unreadable in {mode} mode ({ratio:.2f}:1, needs 4.5:1). Remove "
+                                                "background-color or choose a colour that works in every mode."),
+                                    "failures": [{"mode": mode, "foreground": token, "background": slot,
+                                                  "ratio": round(ratio, 2), "minimum": 4.5}]})
+                        break
+        return out
 
     def create_draft(self, configuration: Any, theme: Any, files: dict[str, bytes] | None, *,
                      actor: str, idempotency_key: str | None = None, source: str = "api") -> Draft:
@@ -376,8 +405,8 @@ class BrandingService:
         def change(conn):
             head, rev = self._active_row(conn)
             base = rev.id if rev is not None else NO_BASE
-            listed, missing, _css = self._ingest(conn, configuration, files)
-            state, validation, dig = self._evaluate(configuration, theme, listed, missing, base)
+            listed, missing, css_text = self._ingest(conn, configuration, files)
+            state, validation, dig = self._evaluate(configuration, theme, listed, missing, base, css_text)
             now = time.time()
             draft_id = str(uuid.uuid4())
             conn.execute(drafts.insert().values(
@@ -421,13 +450,13 @@ class BrandingService:
                                  current_revision=row.revision)
             head, rev = self._active_row(conn)
             base = rev.id if rev is not None else NO_BASE
-            listed, missing, _css = self._ingest(conn, configuration, files)
-            state, validation, dig = self._evaluate(configuration, theme, listed, missing, base)
+            listed, missing, css_text = self._ingest(conn, configuration, files)
+            state, validation, dig = self._evaluate(configuration, theme, listed, missing, base, css_text)
             conn.execute(drafts.update().where(drafts.c.id == draft_id, drafts.c.revision == expected_revision)
                          .values(configuration_json=json.dumps(configuration), theme_json=json.dumps(theme),
                                  assets_json=json.dumps(listed), digest=dig, revision=expected_revision + 1,
                                  state=state, validation_json=json.dumps(validation), base_revision=base,
-                                 updated_at=time.time()))
+                                 validator_version=models.VALIDATOR_VERSION, updated_at=time.time()))
             _audit(conn, actor, "branding.draft_updated", subject=draft_id, detail={"digest": dig})
         return self.get_draft(draft_id)
 
@@ -789,14 +818,24 @@ class BrandingService:
             return configuration, files, report
         logo = _find(folder, _LOGO_CANDIDATES, custom=True)
         favicon = _find(folder, _FAVICON_CANDIDATES)
+        mapped: dict[str, list[str]] = {}
         for name, slot in ((logo, "logo_light"), (favicon, "favicon")):
             if name:
                 rel = f"branding/{name}"
                 configuration["assets"][slot] = rel
                 files[rel] = (folder / name).read_bytes()
-                report.append({"file": name, "disposition": "mapped", "to": f"assets.{slot}"})
+                mapped.setdefault(name, []).append(f"assets.{slot}")
+        for name, slots in mapped.items():
+            report.append({"file": name, "disposition": "mapped", "to": " and ".join(slots)})
+        # Files the current branding.yaml already uses, and the theme, are not legacy.
+        in_use = {"theme.json"}
+        try:
+            current, _theme, _files = self.read_source()
+            in_use |= {Path(p).name for p in models.referenced_paths(current).values()}
+        except BrandError:
+            pass
         for p in sorted(folder.iterdir()):
-            if not p.is_file() or p.name in (logo, favicon):
+            if not p.is_file() or p.name in mapped or p.name in in_use:
                 continue
             if p.name.lower() == "custom.css":
                 report.append({"file": p.name, "disposition": "dropped",

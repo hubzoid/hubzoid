@@ -225,6 +225,12 @@ def test_terms_bind_person_and_policy(client):
     wrong = client.post("/api/branding/me/legal-acceptances", headers=ORIGIN,
                         json={"version": "2026-10", "policy_hash": "sha256:00"})
     assert wrong.status_code == 409
+    from tests.chat_helpers import chat_body
+
+    agent = client.get("/api/agents").json()["default_agent"]
+    blocked = client.post("/api/chat", headers=ORIGIN,
+                          json=chat_body("c_terms_check_1", "hi", agent=agent, message_id="m_terms_00001"))
+    assert blocked.status_code == 403 and blocked.json()["detail"]["code"] == "terms_required"
     ok = client.post("/api/branding/me/legal-acceptances", headers=ORIGIN,
                      json={"version": "2026-10", "policy_hash": me["policy_hash"]})
     assert ok.status_code == 200 and client.get("/api/branding/me").json()["terms_required"] is False
@@ -260,3 +266,34 @@ def test_cli_journey_matches_api(hub, client):
     stale = run(cli_app, ["branding", "activate", draft["id"], str(hub), "--review", review["review_id"],
                           "--expected-revision", "0", "--json"])
     assert stale.exit_code == 4
+
+
+def test_decorative_background_must_work_in_every_mode(client):
+    css = b'[data-brand-slot="brand.welcome"] { background-color: #EAF2F8; padding: 8px; }'
+    conf = dict(CONF, presentation={"decorative_css": "branding/deco.css"})
+    d = client.post("/api/branding/drafts", headers=ORIGIN,
+                    json={"configuration": conf, "files": b64({**FILES, "branding/deco.css": css})}).json()
+    assert d["state"] == "draft"
+    p = d["validation"]["problems"][0]
+    assert p["code"] == "contrast_failure" and p["failures"][0]["mode"] == "dark"
+    ok_css = b'[data-brand-slot="brand.welcome"] { border-color: #1F5F8B; padding: 8px; }'
+    d2 = client.post("/api/branding/drafts", headers=ORIGIN,
+                     json={"configuration": conf, "files": b64({**FILES, "branding/deco.css": ok_css})}).json()
+    assert d2["state"] == "valid"
+
+
+def test_changed_validator_needs_revalidation_then_review(client, hub):
+    from hubzoid.ui import branding_store
+
+    d = client.post("/api/branding/drafts", headers=ORIGIN, json={"configuration": CONF, "files": b64(FILES)}).json()
+    svc = branding_store.service_for(hub)
+    with svc.engine.begin() as conn:  # as if made by an earlier release's checks
+        conn.execute(branding_store.drafts.update().values(validator_version="branding-v0"))
+    r = client.post(f"/api/branding/drafts/{d['id']}/reviews", headers=ORIGIN,
+                    json={"digest": d["digest"], "expected_revision": 1, "decision": "approve"})
+    assert r.status_code == 409 and "Revalidate" in r.json()["detail"]["message"]
+    again = client.post(f"/api/branding/drafts/{d['id']}/validate", headers=ORIGIN).json()
+    assert again["revision"] == 2
+    ok = client.post(f"/api/branding/drafts/{d['id']}/reviews", headers=ORIGIN,
+                     json={"digest": again["digest"], "expected_revision": 2, "decision": "approve"})
+    assert ok.status_code == 201

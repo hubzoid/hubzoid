@@ -271,6 +271,7 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
             raise error(400, "invalid_id", "The reply needs its own id.")
 
         await ctx.may_use_hub(user)
+        await _require_terms(hub_dir, user)
         conv = await db(store.get_conversation, conv_id)
         if conv is None:
             agent = body.get("agent")
@@ -347,6 +348,21 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     shares_mod.register(app, ctx)
     _stop_replies_on_shutdown(app, ctx.runs)
     log.info("chat: mounted for hub %s (agent %s)", ctx.hub, ctx.model_label)
+
+
+async def _require_terms(hub_dir: Path, user) -> None:
+    """The deployment's terms, when its brand requires acceptance, are accepted
+    by this person for the current version before they start work."""
+    from ..ui import branding_store
+
+    try:
+        me = await asyncio.to_thread(branding_store.service_for(hub_dir).me, user.id)
+    except Exception:  # noqa: BLE001 - branding unavailable: no terms to enforce
+        log.warning("chat: terms state unavailable", exc_info=True)
+        return
+    if me.get("terms_required"):
+        raise error(403, "terms_required",
+                    "Accept the current terms of use first. Reload the page to see them.")
 
 
 async def _prepare_turn(ctx: ChatContext, conv: dict, body: dict, parent_id: str | None,

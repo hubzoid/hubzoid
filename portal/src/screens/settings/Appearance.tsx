@@ -25,6 +25,7 @@ type Draft = {
   assets: Asset[];
   preview_url: string;
   review: { review_id: string; decision: string; actor: string } | null;
+  needs_revalidation?: boolean;
 };
 type HistoryItem = {
   activation_id: string;
@@ -142,6 +143,7 @@ export function Appearance() {
               body: { review_id: draft.review?.review_id, expected_revision: active?.generation ?? 0 },
             });
             await refreshTheme();
+            window.dispatchEvent(new Event("hz:brand-changed"));
           },
           "Brand activated.",
         ),
@@ -203,7 +205,15 @@ export function Appearance() {
           locale={{ emptyText: "No drafts. Edit the brand or create a draft from branding.yaml." }}
           columns={[
             { title: "Brand", render: (_, d) => d.configuration.identity?.name },
-            { title: "State", render: (_, d) => stateTag(d.state) },
+            {
+              title: "State",
+              render: (_, d) => (
+                <>
+                  {stateTag(d.state)}
+                  {d.needs_revalidation && d.state !== "activated" && <Tag color="orange">checks changed: revalidate</Tag>}
+                </>
+              ),
+            },
             { title: "Revision", dataIndex: "revision" },
             { title: "Digest", render: (_, d) => <Text code>{d.digest.slice(7, 19)}</Text> },
             { title: "From", dataIndex: "source" },
@@ -218,6 +228,16 @@ export function Appearance() {
                   <Button size="small" onClick={() => void showDiff(d)}>
                     Changes
                   </Button>
+                  {d.needs_revalidation && d.state !== "activated" && (
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        void act(`revalidate:${d.id}`, () => control(`/api/branding/drafts/${d.id}/validate`, { method: "POST", idempotencyKey: newKey() }), "Draft checked again.")
+                      }
+                    >
+                      Revalidate
+                    </Button>
+                  )}
                   {d.state === "valid" && (
                     <Button size="small" onClick={() => void approve(d)} loading={busy === `review:${d.id}`}>
                       Approve this digest

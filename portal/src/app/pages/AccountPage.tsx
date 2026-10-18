@@ -150,13 +150,13 @@ function AppearanceForm() {
     locked: boolean,
   ) => (
     <div>
-      <div className="hz-label" id={`pref-${label}`}>{label}</div>
+      <div className="hz-label" id={`pref-${label.replace(/\W+/g, "-")}`}>{label}</div>
       {locked ? (
         <p className="m-0 text-[15px] text-body">
           {render(value)} <span className="text-mute">· {t.theme.managed}</span>
         </p>
       ) : (
-        <div role="radiogroup" aria-labelledby={`pref-${label}`} className="inline-flex flex-wrap gap-1 rounded-lg border border-line bg-raised p-0.5">
+        <div role="radiogroup" aria-labelledby={`pref-${label.replace(/\W+/g, "-")}`} className="inline-flex flex-wrap gap-1 rounded-lg border border-line bg-raised p-0.5">
           {options.map((o) => (
             <button
               key={String(o)}

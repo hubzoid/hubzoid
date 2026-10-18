@@ -125,6 +125,20 @@ export function useThemeMode(): {
   }, []);
   const base = view.dark ? darkTheme : lightTheme;
   const tokens = antdTokens(view);
-  const config: ThemeConfig = tokens ? { ...base, token: { ...base.token, ...tokens } } : base;
+  const palette = view.theme?.palettes?.[view.resolved];
+  // The Studio base theme pins some component colours to the Hubzoid accent:
+  // replace them with the active revision's tokens so the Console matches chat.
+  const components: ThemeConfig["components"] = palette
+    ? {
+        ...base.components,
+        Menu: { ...(base.components?.Menu ?? {}), itemSelectedBg: palette.actionSoft, itemSelectedColor: palette.link },
+        Button: { ...(base.components?.Button ?? {}), colorPrimary: palette.action, colorPrimaryHover: palette.actionHover,
+                  colorPrimaryActive: palette.actionActive, primaryColor: palette.actionText },
+        Table: { ...(base.components?.Table ?? {}), headerBg: palette.surface },
+        Layout: { ...(base.components?.Layout ?? {}), bodyBg: palette.canvas, siderBg: palette.elevated, headerBg: palette.elevated },
+        Card: { ...(base.components?.Card ?? {}), colorBgContainer: palette.elevated },
+      }
+    : base.components;
+  const config: ThemeConfig = tokens ? { ...base, token: { ...base.token, ...tokens }, components } : base;
   return { mode: view.mode, setMode, isDark: view.dark, config };
 }

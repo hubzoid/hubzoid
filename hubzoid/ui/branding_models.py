@@ -22,7 +22,7 @@ VERSION = 1
 FILE = "branding.yaml"
 THEME_FILE = "branding/theme.json"
 #: Bumped when validation rules change: a review binds to it.
-VALIDATOR_VERSION = "branding-v1"
+VALIDATOR_VERSION = "branding-v2"  # v2: decorative backgrounds checked for contrast in every mode
 
 ASSET_KEYS = ("logo_light", "logo_dark", "wordmark", "favicon", "icon_192", "icon_512",
               "touch_icon", "splash_light", "splash_dark", "signin_background")

@@ -148,6 +148,12 @@
     background: var(--hz-selection, color-mix(in srgb, var(--hz-brand) 24%, transparent));
     color: var(--hz-selection-ink, inherit);
   }
+  /* Brand slots: a brand's decorative CSS may set this border's colour. */
+  [data-brand-slot="brand.welcome"],
+  [data-brand-slot="brand.footer"] {
+    border: 1px solid transparent;
+    border-radius: 12px;
+  }
   /* Compact spacing: tighter message rhythm, same touch targets. */
   :root[data-density="compact"] .hz-message {
     padding-top: 0.25rem;
