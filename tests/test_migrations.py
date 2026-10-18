@@ -28,6 +28,11 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
                "hz_report_series", "hz_personal_schedules", "hz_workflow_proposals"}
 
 
+# Tables added after op_0019, dropped when a test rewinds to op_0016.
+LATER_TABLES = ("hz_chat_operations", "hz_chat_config_revisions", "hz_chat_config_heads",
+                "hz_chat_preferences")
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     migrations._done.clear()
@@ -312,6 +317,9 @@ def _previous_phone_schema(engine):
             conn.execute(text(f"DROP TABLE {table}"))
         conn.execute(text("DROP INDEX hz_artifacts_series"))
         conn.execute(text("ALTER TABLE hz_artifacts DROP COLUMN series_id"))
+        # And the 2.0 chat foundations (op_0020 onward).
+        for table in LATER_TABLES:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
         conn.execute(text("UPDATE hz_alembic_operational SET version_num='op_0016'"))
     migrations._done.clear()
 

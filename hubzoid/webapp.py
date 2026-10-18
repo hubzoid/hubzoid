@@ -34,6 +34,7 @@ SHELL_PATHS = ("/", "/c/{rest:path}", "/s/{rest:path}", "/auth", "/auth/{rest:pa
 _MOUNTS = (
     "hubzoid.auth.routes",
     "hubzoid.chat.routes",
+    "hubzoid.chat.config_routes",
     "hubzoid.connectors.routes",
     "hubzoid.webapp_gateway",
 )

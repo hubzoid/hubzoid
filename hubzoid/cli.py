@@ -2946,8 +2946,15 @@ app.add_typer(
 # Accounts for the Hubzoid web app (hubzoid/auth/cli.py) and the move from an
 # Open WebUI install (hubzoid/migrate_openwebui.py). Each lives in its own module.
 from .auth.cli import admin_app  # noqa: E402
+from .chat.config_cli import chat_app  # noqa: E402
 from .migrate_openwebui import migrate_app  # noqa: E402
 
+app.add_typer(
+    chat_app,
+    name="chat",
+    help="Chat settings, theme and personal preferences.",
+    rich_help_panel="Commands",
+)
 app.add_typer(
     admin_app,
     name="admin",
