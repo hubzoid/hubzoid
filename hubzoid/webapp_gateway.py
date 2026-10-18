@@ -282,6 +282,26 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
                              "default_agent": agents[0]["id"] if agents else None})
 
     def branding_payload(request: Request) -> dict:
+        prefix = (request.headers.get(_PREFIX_HEADER) or "").rstrip("/")
+        if not prefix:
+            # The deployment's activated brand, when one was published.
+            try:
+                from .ui import branding_store
+
+                manifest = branding_store.service_for(hub_dir).active_manifest()
+            except Exception:  # noqa: BLE001 - fall back to the legacy folder
+                log.exception("webapp: active branding unavailable")
+                manifest = None
+            if manifest is not None:
+                assets = manifest["assets"]
+                return {
+                    "name": manifest["identity"]["name"],
+                    "logo_url": assets.get("logo_light"),
+                    "logo_dark_url": assets.get("logo_dark"),
+                    "favicon_url": assets.get("favicon"),
+                    "custom_css_url": None,
+                    "manifest": manifest,
+                }
         try:
             scope = branding_scope(hub_dir, request, model_label=model_label)
         except Exception:  # noqa: BLE001 — chrome falls back to the product name
@@ -291,13 +311,15 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         folder = scope.folder
         logo = _find(folder, _LOGO_CANDIDATES, custom=True) if folder else None
         favicon = _find(folder, _FAVICON_CANDIDATES) if folder else None
-        css = _find(folder, ("custom.css",)) if folder else None
         base = scope.url_base
         return {
             "name": scope.name,
             "logo_url": f"{base}/branding/{logo}" if logo else None,
             "favicon_url": f"{base}/branding/{favicon}" if favicon else None,
-            "custom_css_url": f"{base}/branding/{css}" if css else None,
+            # Unrestricted custom.css is not served from 2.0: decoration
+            # goes through branding.yaml's restricted brand slots.
+            "custom_css_url": None,
+            "manifest": None,
         }
 
     @app.get("/api/branding")
@@ -310,7 +332,7 @@ def mount(app: FastAPI, hub_dir: Path, **ctx) -> None:
         except Exception:  # noqa: BLE001
             log.exception("webapp: branding unavailable")
             return None
-        if scope.folder is None:
+        if scope.folder is None or filename.lower() == "custom.css":
             return None
         base = scope.folder.resolve()
         real = _find(base, (filename.lower(),))

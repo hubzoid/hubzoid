@@ -2947,8 +2947,15 @@ app.add_typer(
 # Open WebUI install (hubzoid/migrate_openwebui.py). Each lives in its own module.
 from .auth.cli import admin_app  # noqa: E402
 from .chat.config_cli import chat_app  # noqa: E402
+from .ui.branding_cli import branding_app  # noqa: E402
 from .migrate_openwebui import migrate_app  # noqa: E402
 
+app.add_typer(
+    branding_app,
+    name="branding",
+    help="Deployment branding: draft, preview, review, activate, roll back.",
+    rich_help_panel="Commands",
+)
 app.add_typer(
     chat_app,
     name="chat",

@@ -30,7 +30,9 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
 
 # Tables added after op_0019, dropped when a test rewinds to op_0016.
 LATER_TABLES = ("hz_chat_operations", "hz_chat_config_revisions", "hz_chat_config_heads",
-                "hz_chat_preferences")
+                "hz_chat_preferences", "hz_branding_drafts", "hz_branding_assets",
+                "hz_branding_reviews", "hz_branding_revisions", "hz_branding_active",
+                "hz_branding_activations", "hz_branding_legal", "hz_branding_dismissals")
 
 
 @pytest.fixture(autouse=True)
