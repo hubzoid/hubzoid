@@ -44,6 +44,8 @@ CAPABILITIES: dict[str, str] = {
     "chat.feedback.read": "hub",
     "chat.notifications.manage": "hub",
     "chat.share.manage": "hub",
+    "authoring.draft": "hub",
+    "authoring.publish": "hub",
 }
 
 

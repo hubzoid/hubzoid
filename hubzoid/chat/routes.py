@@ -164,13 +164,14 @@ def mount(app: FastAPI, hub_dir: Path, *, runtime=None, inflight=None, settings=
     # The engine's event bus first: the feature routes below chain onto its
     # notify hook (search reindexing) and its run-end hook (notices).
     engine_routes.mount(app, ctx)
-    from . import (feedback_routes, file_routes, models_routes, organization_routes, retrieval_routes,
-                   sharing_routes)
+    from . import (authoring_routes, feedback_routes, file_routes, models_routes, organization_routes,
+                   retrieval_routes, sharing_routes)
 
     feedback_routes.mount(app, ctx)
     file_routes.mount(app, ctx)
     retrieval_routes.mount(app, ctx)
     models_routes.mount(app, ctx)
+    authoring_routes.mount(app, ctx)
     sharing_routes.mount(app, ctx)
     organization_routes.mount(app, ctx)
     try:

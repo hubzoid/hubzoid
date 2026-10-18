@@ -3071,6 +3071,10 @@ app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversa
               rich_help_panel="Commands")
 from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
 from .chat.models_cli import models_app as _models_app  # noqa: E402
+from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
+
+app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
+              rich_help_panel="Commands")
 
 app.add_typer(_models_app, name="models", help="Models people may pick, and presets.", rich_help_panel="Commands")
 

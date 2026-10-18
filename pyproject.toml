@@ -83,6 +83,7 @@ dependencies = [
   "rich>=13.9,<14",         # httpx[cli] (via open-webui) caps rich below 14
   "pypdf>=6.7.5,<6.8",
   "Pillow>=12.2,<12.3",     # vision_inject.py resizes uploaded images before sending them to the model
+  "openapi-spec-validator>=0.7.2,<0.8",  # chat/authoring.py: validate imported OpenAPI documents (Apache-2.0)
   "defusedxml>=0.7.1,<0.8",  # ui/branding_assets.py: parse uploaded SVG logos without entity expansion (PSF licence)
   "SQLAlchemy>=2.0.50,<2.1",  # db.py: hub-owned tables. SQLite default; Postgres via DATABASE_URL
   "alembic>=1.18.4,<1.19",  # migrations/: versioned schema for Hubzoid's own tables
