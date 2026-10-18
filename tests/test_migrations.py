@@ -29,7 +29,8 @@ OPERATIONAL = {"hz_mcp_oauth", "hz_grants", "hz_policy_revision", "hz_identities
 
 
 # Tables added after op_0019, dropped when a test rewinds to op_0016.
-LATER_TABLES = ("hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_branch_leases",
+LATER_TABLES = ("hz_chat_storage_configs", "hz_chat_files", "hz_chat_file_uploads", "hz_chat_file_references",
+                "hz_chat_artifacts", "hz_chat_artifact_versions", "hz_chat_branches", "hz_chat_views", "hz_chat_runs", "hz_chat_branch_leases",
                 "hz_chat_queue", "hz_chat_events", "hz_chat_copy_lineage", "hz_chat_members",
                 "hz_chat_member_sets", "hz_chat_runtime_bindings", "hz_feedback", "hz_helper_jobs",
                 "hz_notification_events", "hz_notification_inbox", "hz_notification_target_sets",
