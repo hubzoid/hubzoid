@@ -3072,6 +3072,11 @@ app.add_typer(_artifacts_app, name="artifacts", help="Documents made in conversa
 from .chat.knowledge_cli import knowledge_app as _knowledge_app  # noqa: E402
 from .chat.models_cli import models_app as _models_app  # noqa: E402
 from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
+from .chat.spaces_cli import calendar_app as _calendar_app, notes_app as _notes_app, spaces_app as _spaces_app  # noqa: E402
+
+app.add_typer(_spaces_app, name="spaces", help="Channels and direct messages.", rich_help_panel="Commands")
+app.add_typer(_notes_app, name="notes", help="Personal and channel notes.", rich_help_panel="Commands")
+app.add_typer(_calendar_app, name="calendar", help="Events and reminders.", rich_help_panel="Commands")
 
 app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
               rich_help_panel="Commands")
