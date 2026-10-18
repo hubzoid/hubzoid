@@ -3035,6 +3035,9 @@ _chat_sharing_cli.register(chat_app)
 from .chat import organization_cli as _chat_organization_cli  # noqa: E402
 
 _chat_organization_cli.register(chat_app)
+from .chat import devices_cli as _chat_devices_cli  # noqa: E402
+
+_chat_devices_cli.register(chat_app)
 from .ui.branding_cli import branding_app  # noqa: E402
 from .admin.cli import register as _register_admin_cli  # noqa: E402
 from .parity.cli import parity_app  # noqa: E402

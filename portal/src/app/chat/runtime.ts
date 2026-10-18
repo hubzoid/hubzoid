@@ -384,6 +384,8 @@ export function useHubzoidRuntime({
   attachments,
   confirmedDeletes,
   onError,
+  speech,
+  dictation,
 }: {
   feed: ConversationFeed;
   ctx: ConvertContext;
@@ -393,6 +395,9 @@ export function useHubzoidRuntime({
   /** Previews the person confirmed in the deletion dialog, by message id. */
   confirmedDeletes: Map<string, DeletionPreview>;
   onError: (error: unknown) => void;
+  /** Browser speech, only when the person has the grant (HUB-77). */
+  speech?: NonNullable<ExternalStoreAdapter["adapters"]>["speech"];
+  dictation?: NonNullable<ExternalStoreAdapter["adapters"]>["dictation"];
 }) {
   const version = useSyncExternalStore(feed.subscribe, feed.getVersion);
   useEffect(() => {
@@ -515,7 +520,7 @@ export function useHubzoidRuntime({
     // Branch switching needs it; the graph itself is never written from here.
     setMessages: (_messages: readonly ThreadMessage[]) => {},
     onRefetchThread: () => latest.current.load(),
-    adapters: attachments ? { attachments } : undefined,
+    adapters: { attachments, speech, dictation },
   };
   return useExternalStoreRuntime(adapter);
 }

@@ -3,7 +3,7 @@
 // then mounts assistant-ui's external store over the server's conversation
 // graph (runtime.ts): the server owns messages, branches, runs and the queue.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, WebSpeechDictationAdapter, WebSpeechSynthesisAdapter } from "@assistant-ui/react";
 import { Archive, Lock, Menu as MenuIcon, MoreHorizontal, Pencil, SearchX, Share2, Trash2, WifiOff } from "lucide-react";
 import { DropdownMenu as Menu } from "radix-ui";
 import { t } from "../i18n/en";
@@ -29,7 +29,7 @@ import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, S
 import { FilesContext } from "./parts";
 import { ChatSession } from "./session";
 import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
-import { FeedContext } from "./feed-context";
+import { FeedContext, type Features } from "./feed-context";
 import { Thread } from "./Thread";
 import { AgentSwitcher } from "./AgentPicker";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
@@ -320,8 +320,29 @@ function ChatView({
   }, [agent.id, session]);
 
   const attachments = useMemo(() => session.attachmentAdapter(), [session]);
+  // Member features (B037): voice and the rest only with a grant.
+  const [features, setFeatures] = useState<Features>({});
+  useEffect(() => {
+    get<{ features?: Features }>("/api/chat/capabilities", { quiet401: true })
+      .then((c) => setFeatures(c.features ?? {}))
+      .catch(() => setFeatures({}));
+    // Leaving the page stops anything being read aloud.
+    return () => {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* no speech synthesis here */
+      }
+    };
+  }, []);
+  const speechAdapters = useMemo(() => {
+    const out: { speech?: WebSpeechSynthesisAdapter; dictation?: WebSpeechDictationAdapter } = {};
+    if (features.chat_read_aloud && typeof window !== "undefined" && "speechSynthesis" in window) out.speech = new WebSpeechSynthesisAdapter();
+    if (features.chat_dictation && WebSpeechDictationAdapter.isSupported()) out.dictation = new WebSpeechDictationAdapter();
+    return out;
+  }, [features]);
   const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError });
+  const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError, ...speechAdapters });
 
   // Tell the server this person is looking at this chat (no notice for it then).
   useEffect(() => {
@@ -384,7 +405,7 @@ function ChatView({
           onRenamed={(next) => setTitle(next)}
           picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
         />
-        <FeedContext.Provider value={{ feed, confirmedDeletes, onError }}>
+        <FeedContext.Provider value={{ feed, confirmedDeletes, onError, features }}>
           <Thread
             agent={agent}
             canPickAgent={canPick}

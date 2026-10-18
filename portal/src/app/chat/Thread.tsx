@@ -27,6 +27,10 @@ import {
   Paperclip,
   Pencil,
   ListOrdered,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
@@ -43,6 +47,7 @@ import type { Agent } from "../lib/types";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, IconButton, Notice, cx } from "../components/ui";
 import { useFeed } from "./feed-context";
+import { useSubmitMode } from "../lib/devices";
 import type { DeletionPreview } from "./runtime";
 import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
@@ -435,6 +440,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
                 </IconButton>
               </ActionBarPrimitive.Edit>
             )}
+            {!readOnly && <ReadAloud />}
             {!readOnly && <FeedbackActions />}
             {!readOnly && <DeleteAction />}
           </ActionBarPrimitive.Root>
@@ -499,6 +505,16 @@ function EditComposer() {
 
 function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }: ThreadProps) {
   const aui = useAui();
+  const submitMode = useSubmitMode();
+  // Shared text (the install share target) lands in the draft, never sent.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const shared = ["share_title", "share_text", "share_url"].map((k) => params.get(k)).filter(Boolean).join("\n");
+    if (!shared) return;
+    aui.composer().setText(shared);
+    history.replaceState(null, "", location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const running = useIsLocalRunActive();
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
   const name = displayName(agent.name);
@@ -524,7 +540,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
       )}
       <ComposerPrimitive.Input
         autoFocus={!coarsePointer}
-        submitMode="enter"
+        submitMode={submitMode}
         cancelOnEscape={false}
         disabled={disabled}
         placeholder={disabled ? composerDisabledReason! : t.chat.placeholder(name)}
@@ -533,11 +549,14 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
         className="block max-h-[40dvh] min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-mute"
       />
       <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <ComposerPrimitive.AddAttachment asChild disabled={disabled}>
-          <IconButton label={t.chat.attach} size="lg" className="!h-9 !w-9">
-            <Paperclip size={18} aria-hidden />
-          </IconButton>
-        </ComposerPrimitive.AddAttachment>
+        <div className="flex items-center gap-0.5">
+          <ComposerPrimitive.AddAttachment asChild disabled={disabled}>
+            <IconButton label={t.chat.attach} size="lg" className="!h-9 !w-9">
+              <Paperclip size={18} aria-hidden />
+            </IconButton>
+          </ComposerPrimitive.AddAttachment>
+          {!disabled && <Dictation />}
+        </div>
         <div className="flex items-center gap-1.5">
           {running && (
             <IconButton
@@ -881,5 +900,47 @@ function FollowUps() {
         </button>
       ))}
     </div>
+  );
+}
+
+// ---- voice (browser speech, HUB-77) -------------------------------------------------
+
+/** Speak into the draft. The browser transcribes; nothing is sent. */
+function Dictation() {
+  const value = useFeed();
+  const listening = useAuiState((s) => s.composer.dictation != null);
+  if (!value?.features?.chat_dictation) return null;
+  return listening ? (
+    <ComposerPrimitive.StopDictation asChild>
+      <IconButton label={t.chat.dictateStop} size="lg" className="!h-9 !w-9 !text-accent" data-testid="dictate-stop">
+        <MicOff size={17} aria-hidden />
+      </IconButton>
+    </ComposerPrimitive.StopDictation>
+  ) : (
+    <ComposerPrimitive.Dictate asChild>
+      <IconButton label={t.chat.dictate} size="lg" className="!h-9 !w-9" data-testid="dictate">
+        <Mic size={17} aria-hidden />
+      </IconButton>
+    </ComposerPrimitive.Dictate>
+  );
+}
+
+/** Read this answer aloud with the browser's own voice. */
+function ReadAloud() {
+  const value = useFeed();
+  const speaking = useAuiState((s) => s.message.speech != null);
+  if (!value?.features?.chat_read_aloud) return null;
+  return speaking ? (
+    <ActionBarPrimitive.StopSpeaking asChild>
+      <IconButton label={t.chat.readAloudStop} className="!h-7 !w-7" data-testid="read-aloud-stop">
+        <VolumeX size={14} aria-hidden />
+      </IconButton>
+    </ActionBarPrimitive.StopSpeaking>
+  ) : (
+    <ActionBarPrimitive.Speak asChild>
+      <IconButton label={t.chat.readAloud} className="!h-7 !w-7" data-testid="read-aloud">
+        <Volume2 size={14} aria-hidden />
+      </IconButton>
+    </ActionBarPrimitive.Speak>
   );
 }

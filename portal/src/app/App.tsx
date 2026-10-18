@@ -17,7 +17,9 @@ import type { AgentsResponse, Branding, Conversation, Session, SessionUser } fro
 import { Sidebar } from "./components/Sidebar";
 import { announce, LiveRegion, Toaster } from "./components/toast";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
-import { Button, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
+import { Button, Notice, PageSpinner, StateMessage, TooltipProvider } from "./components/ui";
+import { loadDevices, useConnection, useContrast } from "./lib/devices";
+import { ShortcutsDialog, useShortcuts } from "./components/Shortcuts";
 
 applyTheme();
 
@@ -80,6 +82,7 @@ export default function App() {
 
   useEffect(() => {
     void loadPublic();
+    void loadDevices();
     void loadSession();
     get<Branding>("/api/branding", { quiet401: true })
       .then((b) => setBranding(b ?? {}))
@@ -328,9 +331,11 @@ export default function App() {
       >
         {t.skipToContent}
       </a>
+      <DeviceChrome onNewChat={() => value.newChat()} onToggleSidebar={() => setDrawerOpen((o) => !o)} />
       <div className="flex h-dvh w-full overflow-hidden bg-bg text-ink">
         <Sidebar activeId={activeId} route={route.name} drawerOpen={drawerOpen} onDrawerChange={setDrawerOpen} />
         <main id="main" tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col outline-none">
+          <OfflineBanner />
           <AnnouncementBanner
             manifest={branding.manifest}
             dismissed={brandMe.me?.dismissed_announcements ?? []}
@@ -342,5 +347,36 @@ export default function App() {
         </main>
       </div>
     </>,
+  );
+}
+
+/** Shortcuts, contrast: device-level behaviour that needs no layout of its own. */
+function DeviceChrome({ onNewChat, onToggleSidebar }: { onNewChat: () => void; onToggleSidebar: () => void }) {
+  useContrast();
+  const handlers = useMemo(
+    () => ({
+      "chat.new": onNewChat,
+      "chat.toggle_sidebar": onToggleSidebar,
+      "chat.search": () => document.querySelector<HTMLInputElement>('input[type="search"]')?.focus(),
+      "chat.focus_composer": () => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus(),
+      "chat.stop": () => document.querySelector<HTMLButtonElement>('[data-testid="stop"]')?.click(),
+      "chat.copy_last": () => {
+        const last = [...document.querySelectorAll('[data-role="assistant"]')].pop();
+        if (last) void navigator.clipboard?.writeText((last as HTMLElement).innerText).then(() => announce(t.copied));
+      },
+    }),
+    [onNewChat, onToggleSidebar],
+  );
+  const { effective, open, setOpen, reload } = useShortcuts(handlers);
+  return <ShortcutsDialog open={open} onOpenChange={setOpen} effective={effective} reload={() => void reload()} />;
+}
+
+function OfflineBanner() {
+  const state = useConnection();
+  if (state === "online") return null;
+  return (
+    <div className="px-3 pt-2" role="status" data-testid="offline-banner">
+      <Notice tone="warning">{t.connection.offline}</Notice>
+    </div>
   );
 }

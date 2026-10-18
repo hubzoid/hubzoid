@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { t } from "../i18n/en";
+import { clearDeviceCache } from "../lib/devices";
 import { get, post } from "../lib/api";
 import { createFolder, loadOrganization, organize, useOrganization } from "../lib/organization";
 import { NotificationsButton } from "./Notifications";
@@ -745,6 +746,7 @@ function AccountMenu() {
     setSigningOut(true);
     try {
       await post("/api/auth/logout", undefined, { quiet401: true });
+      clearDeviceCache();
       location.assign("/auth");
     } catch (error) {
       setSigningOut(false);

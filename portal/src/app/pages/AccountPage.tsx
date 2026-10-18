@@ -2,6 +2,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Download, LogOut, Upload } from "lucide-react";
 import { t } from "../i18n/en";
+import { clearDeviceCache } from "../lib/devices";
 import { ApiError, get, patch, post } from "../lib/api";
 import { useApp } from "../lib/app-context";
 import { loadConversations } from "../lib/conversations";
@@ -332,6 +333,7 @@ export default function AccountPage() {
     setSigningOut(true);
     try {
       await post("/api/auth/logout", undefined, { quiet401: true });
+      clearDeviceCache();
       location.assign("/auth");
     } catch (err) {
       setSigningOut(false);

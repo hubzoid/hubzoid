@@ -296,6 +296,19 @@ export const en = {
     requestedUnavailable: (name: string) => `The agent in that link isn't available to you, so this chat uses ${name}.`,
   },
 
+  shortcuts: {
+    title: "Keyboard shortcuts",
+    off: "Off",
+    change: "Change",
+    disable: "Turn off",
+    reset: "Reset",
+    press: "Press keys…",
+    invalid: "That shortcut can't be used.",
+    disabled: "Custom shortcuts are turned off for this deployment.",
+  },
+  connection: {
+    offline: "You're offline. Nothing is sent until the connection is back; your draft stays here.",
+  },
   notices: {
     title: "Notifications",
     unread: (n: number) => `Notifications, ${n} unread`,
@@ -351,6 +364,10 @@ export const en = {
     queueSendNext: "Send next and stop the current reply",
     queueBlocked: (reason: string) => `Waiting: ${reason}`,
     continueReply: "Continue",
+    dictate: "Dictate",
+    dictateStop: "Stop dictation",
+    readAloud: "Read aloud",
+    readAloudStop: "Stop reading",
     respond: "Answer this",
     deleteMessage: "Delete message",
     deletePreviewTitle: "Delete this message?",

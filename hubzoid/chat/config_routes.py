@@ -147,10 +147,70 @@ def mount(app: FastAPI, hub_dir: Path, **_ctx) -> None:
         out["theme_revision"] = theme_revision
         return out
 
+    # -- devices (HUB-83) ------------------------------------------------------------
+    from . import devices
+
+    @app.get("/api/chat/shortcuts")
+    async def shortcuts(request: Request):
+        p = await authz.principal(request, hub_dir)
+        personal = (await call(svc().get_preferences, p.id))["values"]
+        return devices.effective_shortcuts(svc().active().document, personal)
+
+    @app.post("/api/chat/shortcuts/validate")
+    async def shortcuts_validate(request: Request):
+        await authz.principal(request, hub_dir)
+        body = await hz.body(request)
+        dev = svc().active().document["devices"]["shortcuts"]
+        try:
+            clean = devices.check_shortcuts(body.get("shortcuts") or {}, single_key=dev["single_key"])
+        except devices.Err as exc:
+            return JSONResponse({"valid": False, "error": {"code": exc.code, "message": exc.message, **exc.extra}})
+        return {"valid": True, "shortcuts": clean}
+
+    @app.get("/api/chat/devices/doctor")
+    async def devices_doctor(request: Request):
+        await authz.principal(request, hub_dir)
+        from .. import appmode
+
+        return {"checks": devices.doctor(svc().active().document, public_url=appmode.public_url() or "")}
+
+    @app.get("/api/chat/devices/support")
+    async def devices_support():
+        return devices.SUPPORT
+
+    @app.get("/api/chat/connection")
+    async def connection():
+        import time as _t
+
+        return JSONResponse({"ok": True, "server_time": _t.time()}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/chat/devices/settings")
+    async def devices_settings():
+        """Public, pre-sign-in: what the page needs before it can sign in."""
+        dev = svc().active().document["devices"]
+        return {k: dev[k] for k in ("install", "offline", "connection", "defaults", "allow_personal")}
+
+    @app.get("/sw.js")
+    async def service_worker():
+        from fastapi.responses import Response
+
+        return Response(devices.service_worker(svc().active().document), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+    @app.get("/offline-shell")
+    async def offline_shell():
+        from fastapi.responses import HTMLResponse
+
+        return HTMLResponse(devices.OFFLINE_SHELL, headers={"Cache-Control": "no-cache"})
+
     @app.get("/api/chat/capabilities")
     async def capabilities(request: Request):
+        from . import features
+
         p = await authz.principal(request, hub_dir)
-        return await call(svc().capabilities, p)
+        out = await call(svc().capabilities, p)
+        out["features"] = await asyncio.to_thread(features.for_person, hub_dir, p.email)
+        return out
 
     @app.get("/api/chat/preferences")
     async def preferences_get(request: Request):

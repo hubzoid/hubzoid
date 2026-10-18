@@ -174,6 +174,15 @@ def register_namespace(name: str, model: type[BaseModel], *, owner: str,
 _PERSONAL: dict[str, Any] = {}
 
 
+#: top-level personal key -> check(value, active document) -> clean value.
+_PERSONAL_KEYS: dict[str, Any] = {}
+
+
+def register_personal_key(key: str, check) -> None:
+    """A feature's own top-level personal setting (``send_key``)."""
+    _PERSONAL_KEYS[key] = check
+
+
 def register_personal(namespace: str, check) -> None:
     """Let people keep their own value for some keys of a namespace, in the
     same account preference document as appearance."""
@@ -561,6 +570,13 @@ class ChatConfigService:
                     continue
                 document = document or self.active().document
                 clean[key] = check(rest, value, document)
+                continue
+            if key in _PERSONAL_KEYS:
+                # A top-level personal key another feature registered ("send_key").
+                if value is None:
+                    continue
+                document = document or self.active().document
+                clean[key] = _PERSONAL_KEYS[key](value, document)
                 continue
             if key not in ("mode", "density", "text_scale", "timezone"):
                 raise ConfigError(422, "unknown_key", f"{key!r} is not a personal setting.",
