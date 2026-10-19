@@ -375,7 +375,9 @@ def _edge(monkeypatch, *, routes=(), default="http://bridge1", fallbacks=(), ans
 def test_web_app_edge_keeps_the_bridge_api_on_loopback(monkeypatch, path):
     app, seen = _edge(monkeypatch)
     with StarletteClient(app) as c:
-        assert c.post(path, content=b"{}").status_code == 404
+        # The chat API answers 401 (send a personal key); the rest 404.
+        expected = 401 if path in ("/v1/chat/completions", "/v1/models") else 404
+        assert c.post(path, content=b"{}").status_code == expected
     assert seen == []
     # Repeated slashes don't sneak past (a client can send them as they are).
     assert edge._is_bridge_internal("//v1//chat/completions")
