@@ -116,6 +116,8 @@ def test_scheduled_backups_are_weekly_verified_kept_and_pruned(tmp_path, monkeyp
     hub = _standalone(tmp_path)
     monkeypatch.setenv(sched.SETTING, "weekly")
     monkeypatch.setenv(sched.KEEP_SETTING, "2")
+    monkeypatch.setenv(sched.DIR_SETTING, str(tmp_path / "backups"))
+    monkeypatch.delenv("HUBZOID_DATA_DIR", raising=False)
     assert sched.due(hub)                                       # never backed up
     names = iter(f"hubzoid-backup-2026101{n}-030000.tar.gz" for n in range(1, 4))
     real_backup = bk.backup
