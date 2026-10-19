@@ -120,6 +120,21 @@ def test_session_says_whether_the_console_opens(hub, monkeypatch):
     assert r.status_code == 200 and r.json()["user"]["console"] is False
 
 
+def test_a_curator_is_told_settings_shows_hub_changes(hub):
+    # Curators may propose and read hub changes without managing access.
+    from hubzoid.access import store_for
+
+    for email in ("ana@example.com", "dee@example.com"):
+        person(hub, email=email)
+    store_for(hub).grant("dee@example.com", hub.name, "curator")
+    seen = {}
+    for email in ("ana@example.com", "dee@example.com"):
+        c = client(hub)
+        sign_in(c, email=email)
+        seen[email] = (me(c)["console"], me(c)["hub_changes"])
+    assert seen == {"ana@example.com": (False, False), "dee@example.com": (False, True)}
+
+
 def test_the_local_owner_can_open_the_console(hub, monkeypatch):
     monkeypatch.delenv("HUBZOID_AUTH")
     users.provision_owner(hub, "admin@localhost")  # as the bridge does when it starts
