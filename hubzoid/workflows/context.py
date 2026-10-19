@@ -93,6 +93,7 @@ class RunCtx:
     inputs: Any = None                # the validated `hub.input`, or None
     run: dict = field(default_factory=dict)        # how this run started (its envelope)
     published: list = field(default_factory=list)  # report links this run touched
+    work: dict = field(default_factory=dict)       # the work item this run executes, and its stage
 
 
 # Checkpointed publish/email steps (set by runtime.launch()), so a recovered run
@@ -119,6 +120,9 @@ def _owned(ctx: RunCtx) -> None:
     owner = ctx.owner or runtime._OWNER
     if owner is not None:
         owner.assert_owned()
+
+
+_UNSET = object()
 
 
 def _recheck(ctx: RunCtx, what: str) -> None:
@@ -287,6 +291,22 @@ class Hub:
         return WorkflowState(ctx.engine, ctx.hub, ctx.workflow, owner=SHARED)
 
     @property
+    def work_item(self):
+        """The durable work item this run executes (`hubzoid.work_items`):
+        `checkpoint`, `allows`, `narrow`, `messages` and `reserve`."""
+        from ..work_items.facade import WorkItem
+
+        return WorkItem()
+
+    @property
+    def operation(self):
+        """`hub.operation.run(...)`: one recorded, recoverable external write
+        with its write mode and exact approval (`hubzoid.work_items`)."""
+        from ..work_items.facade import Operation
+
+        return Operation()
+
+    @property
     def user(self) -> HubUser:
         return HubUser(_ctx())
 
@@ -426,11 +446,28 @@ class Hub:
             return result["text"]
         return _validated(result["json"], response_model, result["text"])
 
-    def call_agent(self, task: str, *, response_model=None, timeout: float | str = 600):
+    def call_agent(self, task: str, *, response_model=None, timeout: float | str | None = _UNSET,
+                   agent: str | None = None, stage: str | None = None, revision: int = 1):
         """The hub's full agent, with its tools. Not retried unless the hub sets
         `agent_max_attempts` (a retry could repeat a write). With a Pydantic
         `response_model`, the agent ends with JSON and a validated instance is
-        returned; otherwise its reply text."""
+        returned; otherwise its reply text.
+
+        With `agent=`, calls that isolated agent (a station) for this work
+        item's `stage` instead: its own instructions and tools only, a result
+        checked against its schema, saved so it never runs twice. A failed or
+        malformed result raises `hubzoid.stations.StationOutputError` (or
+        `StationError`) carrying the `call_id` for `hub.retry_station`."""
+        if agent is not None:
+            from ..stations import service as station_service
+
+            if stage is None:
+                raise ValueError("A station call needs stage=, the work item stage it runs in.")
+            return station_service.call(agent, task, stage=stage, revision=revision,
+                                        response_model=response_model,
+                                        timeout=None if timeout is _UNSET else timeout)
+        if timeout is _UNSET:
+            timeout = 600
         if _AGENT is None:
             raise RuntimeError(
                 "hub.call_agent is not configured; call workflows.configure(agent=...) "
@@ -454,6 +491,25 @@ class Hub:
         from ..structured import extract_json
 
         return _validated(extract_json(text), response_model, text)
+
+    def retry_station(self, call_id: str, clarification: str, *, response_model=None):
+        """The one retry of a failed or malformed station call, with a
+        clarification for the agent. A second retry is refused."""
+        from ..stations import service as station_service
+
+        return station_service.retry(call_id, clarification, response_model=response_model)
+
+    def save_handoff(self, kind: str, title: str, markdown: str) -> dict:
+        """Save a document for the stations of this work item. Returns its id."""
+        from ..stations import service as station_service
+
+        return station_service.save_handoff_here(kind, title, markdown)
+
+    def read_handoff(self, handoff_id: str) -> dict:
+        """A document of this work item, by id."""
+        from ..stations import service as station_service
+
+        return station_service.read_handoff_here(handoff_id)
 
     # -- a person in the loop -------------------------------------------------------
     def approve(self, action: str, *, details=None, approvers=None) -> dict:
@@ -682,7 +738,8 @@ def current_user(hub_dir=None):
 def run_scope(*, hub: str, workflow: str, hub_dir, engine,
               settings: dict | None = None, subject: str = "",
               identity: dict | None = None, run_id: str = "", event: dict | None = None, owner=None,
-              inputs=None, run: dict | None = None, published: list | None = None) -> Iterator[None]:
+              inputs=None, run: dict | None = None, published: list | None = None,
+              work: dict | None = None) -> Iterator[None]:
     """Bind the run context for the duration of a workflow run, then restore.
 
     With `identity` (a RunIdentity dict) the run acts as that account: it is
@@ -695,6 +752,7 @@ def run_scope(*, hub: str, workflow: str, hub_dir, engine,
         settings=settings or {}, subject=subject or f"workflow:{workflow}",
         identity=identity, run_id=run_id or "", event=event, owner=owner,
         inputs=inputs, run=dict(run or {}), published=published if published is not None else [],
+        work=work if work is not None else {},
     )
     token = _run.set(ctx)
     from ..usage import run_tag

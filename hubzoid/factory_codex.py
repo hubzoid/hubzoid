@@ -105,8 +105,13 @@ def codex_available() -> bool:
 class CodexRuntime:
     def __init__(self, *, name, instructions, registry, model_setting="codex-local",
                  hub_dir=None, max_turns=20, tool_mode="compact", mcp_servers=None,
-                 vision=(True, 1568, 4), effort=None, personal_mcp=False):
+                 vision=(True, 1568, 4), effort=None, personal_mcp=False, output_schema=None,
+                 turn_timeout=600):
         self.name = name
+        # A station's result schema: Codex constrains the turn's final message
+        # to it (the app-server's TurnStartParams.outputSchema).
+        self.output_schema = output_schema
+        self.turn_timeout = turn_timeout      # None: only the caller's deadline applies
         self.instructions = instructions
         self.registry = registry
         self.model = model_setting.partition("/")[2] or None
@@ -275,7 +280,7 @@ class CodexRuntime:
                 self._processes.add(proc)
                 try:
                     from .workflows.deadlines import remaining
-                    async with asyncio.timeout(remaining(600)):
+                    async with asyncio.timeout(remaining(self.turn_timeout)):
                         async for part in self._exchange(proc, prompt, tmp, usage, **turn_tools):
                             shown.append(run_events.text_of(part))
                             yield part
@@ -362,6 +367,8 @@ class CodexRuntime:
             if isinstance(data, list):
                 inputs.extend({"type": "image", "url": b["image_url"]} for b in data[0]["content"] if b["type"] == "input_image")
         turn_params = {"threadId": thread, "input": inputs}
+        if self.output_schema is not None:
+            turn_params["outputSchema"] = self.output_schema
         if self.effort:
             turn_params["effort"] = self.effort
         # Events can precede the turn/start response, so consume both in one loop.

@@ -3,17 +3,17 @@
 // the Console's own navigation (Settings has its own).
 import { Suspense, useCallback, useEffect } from "react";
 import { Alert, App, Button, ConfigProvider, Spin, theme } from "antd";
-import type { Hub, Me } from "./api";
+import type { Hub, Me, MyData } from "./api";
 import { useData } from "./hooks/useData";
 import { hasPendingChanges, useRoute } from "./hooks/useRoute";
 import { setLeaveGuard } from "./app/lib/router";
 import { useThemeMode } from "./lib/theme";
 import { usePresentation } from "./lib/presentation";
 import { displayName } from "./app/lib/format";
-import { consoleScreen, SchedulesScreen } from "./consoleScreens";
+import { consoleScreen, SchedulesScreen, WorkItemsScreen } from "./consoleScreens";
 import "./portal.css";
 
-export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
+export default function ConsoleEmbed({ personal }: { personal?: "schedules" | "work" }) {
   const { config: base, isDark } = useThemeMode();
   const view = usePresentation();
   // Inside Settings the screens use the chat app's quieter scale: 13px text,
@@ -46,7 +46,9 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
     <ConfigProvider theme={config} drawer={{ classNames: { root: "hz-native-overlay" } }} modal={{ classNames: { root: "hz-native-overlay" } }}>
       <App>
         <div className="console-embed">
-          {personal ? (
+          {personal === "work" ? (
+            <MyWork />
+          ) : personal ? (
             <Suspense fallback={<Spin />}>
               <SchedulesScreen admin={false} embedded />
             </Suspense>
@@ -57,6 +59,14 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
       </App>
     </ConfigProvider>
   );
+}
+
+/** The work this person asked for, in the agents they use. */
+function MyWork() {
+  const my = useData<MyData>("/my");
+  if (my.error) return <Alert type="error" showIcon title="Couldn’t load your work" description={my.error} />;
+  if (!my.data) return <Spin />;
+  return <Suspense fallback={<Spin />}><WorkItemsScreen hubs={my.data.agents} mine /></Suspense>;
 }
 
 function Embedded() {

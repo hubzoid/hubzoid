@@ -21,33 +21,13 @@ import json
 import re
 from typing import Any
 
-REDACTED = "[redacted]"
+from ..redaction import REDACTED, is_secret_key, redact, scrub_text  # noqa: F401 (re-exported)
 
 ARGS_MAX_JSON = 2048          # about 2 KB of JSON per call
 _ARG_STRING_MAX = 500
 _ARG_STRING_TIGHT = 100
 PREVIEW_MAX = 500
 ERROR_MAX = 300
-
-_SECRET_WORDS = ("token", "password", "passwd", "secret", "api_key", "apikey",
-                 "authorization")
-
-# `key: value`, `key=value` and `"key": "value"` in free text (a result preview).
-_SECRET_TEXT_RE = re.compile(
-    r"""(?ix)
-    (["']?[\w-]*(?:token|password|passwd|secret|api[_-]?key|authorization)[\w-]*["']?\s*[:=]\s*)
-    ("[^"]*"|'[^']*'|[^\s,;}&]+)
-    """)
-_BEARER_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-
-
-def is_secret_key(key: object) -> bool:
-    """True for a key whose value should never be stored (`max_tokens`, a
-    count, is not a secret)."""
-    k = str(key).strip().lower().replace("-", "_").replace(" ", "_")
-    if k.endswith("tokens"):
-        return False
-    return any(word in k for word in _SECRET_WORDS)
 
 
 def normalize_args(args: Any) -> Any:
@@ -62,18 +42,6 @@ def normalize_args(args: Any) -> Any:
         except ValueError:
             return args
     return args
-
-
-def redact(value: Any) -> Any:
-    """`value` with the values of secret-looking keys replaced, recursively."""
-    if isinstance(value, dict):
-        return {str(k): (REDACTED if is_secret_key(k) else redact(v)) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(v) for v in value]
-    if isinstance(value, str):
-        value = _SECRET_TEXT_RE.sub(lambda m: m.group(1) + REDACTED, value)
-        return _BEARER_RE.sub(lambda m: m.group(1) + " " + REDACTED, value)
-    return value
 
 
 def _shorten(value: Any, limit: int) -> Any:
@@ -105,19 +73,6 @@ def safe_args(args: Any) -> dict | None:
         if len(encoded) <= ARGS_MAX_JSON:
             return shortened
     return {"preview": encoded[:ARGS_MAX_JSON - 48] + "…"}
-
-
-def scrub_text(text: str) -> str:
-    """Free text with secret-looking `key: value` pairs and bearer credentials
-    redacted. A JSON payload is parsed and redacted by key instead."""
-    stripped = text.strip()
-    if stripped[:1] in ("{", "["):
-        try:
-            return json.dumps(redact(json.loads(stripped)), ensure_ascii=False)
-        except ValueError:
-            pass
-    text = _SECRET_TEXT_RE.sub(lambda m: m.group(1) + REDACTED, text)
-    return _BEARER_RE.sub(lambda m: m.group(1) + " " + REDACTED, text)
 
 
 def _clip(text: str, limit: int) -> str:

@@ -3209,5 +3209,24 @@ app.add_typer(
 )
 
 
+from .work_items.cli import operations_app, work_items_app  # noqa: E402
+
+app.add_typer(work_items_app, name="work-items",
+              help="Durable work items: start, watch, cancel and restart.",
+              rich_help_panel="Commands")
+app.add_typer(operations_app, name="operations",
+              help="Recorded external writes: approve, deny and resolve.",
+              rich_help_panel="Commands")
+
+from .stations.cli import handoffs_app, stations_app  # noqa: E402
+
+app.add_typer(stations_app, name="stations",
+              help="Isolated agents (stations): validate them and inspect their calls.",
+              rich_help_panel="Commands")
+app.add_typer(handoffs_app, name="handoffs",
+              help="Handoff documents between stations of a work item.",
+              rich_help_panel="Commands")
+
+
 if __name__ == "__main__":
     app()

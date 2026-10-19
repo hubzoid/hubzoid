@@ -1321,3 +1321,62 @@ async def claude_complete(prompt: str, *, system: str | None = None,
         usage["structured"] = "native"
         return _json.dumps(structured_out), usage
     return ("".join(parts) or final or ""), usage
+
+
+async def claude_station(message: str, *, instructions: str, registry: dict, schema: dict | None,
+                         model_setting: str | None = None, hub_dir: Path | None = None,
+                         max_turns: int = 40) -> tuple[str, Any, dict]:
+    """One run of an isolated agent (a station) on claude-local.
+
+    Only the station's own instructions and exactly the tools in `registry`:
+    no Claude Code built-ins, no settings or skills discovery, no host MCP
+    servers (strict isolation), no parent conversation. With `schema`, the
+    Claude Agent SDK's structured output (`output_format`) constrains the final
+    result, returned as the second value. Returns (text, structured, usage)
+    and raises when the SDK reports the run failed."""
+    from claude_agent_sdk import AssistantMessage, ResultMessage
+    from claude_agent_sdk.types import TextBlock
+
+    pin = _validate_model_pin(_parse_model_pin(model_setting), hub="station")
+    opts: dict[str, Any] = dict(
+        system_prompt=instructions, tools=[], setting_sources=[], max_turns=max_turns,
+        allowed_tools=[f"mcp__{_MCP_NAMESPACE}__{n}" for n in registry],
+        mcp_servers={_MCP_NAMESPACE: _build_mcp_server(registry)} if registry else {},
+    )
+    if schema is not None:
+        opts["output_format"] = {"type": "json_schema", "schema": schema}
+    if pin is not None:
+        opts["model"] = pin
+    child_env = _child_env()
+    if child_env:
+        opts["env"] = child_env
+    options = claude_options(**opts)
+    parts: list[str] = []
+    structured: Any = None
+    final: str | None = None
+    usage: dict = {}
+    answered_by: str | None = None
+    messages = _query_with_failover(prompt=message, options=options, hub_dir=hub_dir)
+    from contextlib import aclosing
+    async with aclosing(messages):
+        async for item in messages:
+            if isinstance(item, AssistantMessage):
+                answered_by = getattr(item, "model", None) or answered_by
+                parts += [b.text for b in item.content if isinstance(b, TextBlock)]
+            elif isinstance(item, ResultMessage):
+                final = getattr(item, "result", None)
+                structured = getattr(item, "structured_output", None)
+                raw = getattr(item, "usage", None) or {}
+                get = raw.get if isinstance(raw, dict) else (lambda k, d=0: getattr(raw, k, d))
+                usage = {
+                    "input_tokens": int(get("input_tokens", 0) or 0)
+                    + int(get("cache_read_input_tokens", 0) or 0)
+                    + int(get("cache_creation_input_tokens", 0) or 0),
+                    "output_tokens": int(get("output_tokens", 0) or 0),
+                    "cost_usd": getattr(item, "total_cost_usd", None),
+                    "model": _answering_model(item, answered_by),
+                    "turns": getattr(item, "num_turns", None),
+                }
+                if getattr(item, "is_error", False):
+                    raise RuntimeError(f"claude station run ended with {getattr(item, 'subtype', 'error')}")
+    return (final or "".join(parts) or ""), structured, usage
