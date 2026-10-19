@@ -371,11 +371,37 @@ def active_all(hub_dir) -> list[Connection]:
     return out
 
 
+def _foreign_refs(hub: str, cid: str, new: dict, old: dict | None) -> list[str]:
+    """Paths of the references this change adds or changes that name
+    something other than this connection's own secrets
+    (``secret:channel/<hub>/<id>/...``): an ``env:`` variable, a deployment
+    secret or a hub secret."""
+    from ..secretstore import RefError, parse
+
+    before = dict(_walk_refs((old or {}).get("provider_config") or {}, "/provider_config"))
+    out = []
+    for path, value in _walk_refs(new.get("provider_config") or {}, "/provider_config"):
+        if before.get(path) == value:
+            continue
+        try:
+            ref = parse(value)
+        except (RefError, TypeError):
+            continue  # validate() already refused it
+        if not (ref.provider == "secret" and ref.scope == "channel" and ref.hub == hub and ref.channel == cid):
+            out.append(path)
+    return out
+
+
 def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | None = None,
-          lines: dict | None = None, expected_id: str | None = None) -> dict:
+          lines: dict | None = None, expected_id: str | None = None, any_secret: bool = True) -> dict:
     """Validate, write `channels/<id>.yaml` and record the new active revision,
     as one step. `expected_revision` is an int or "absent". Returns
-    `{id, revision, status, created, file}`."""
+    `{id, revision, status, created, file}`.
+
+    Without ``any_secret`` (a hub administrator, not an organization
+    administrator or the operator), a reference may be added or changed only
+    to this connection's own secrets: a reference decides which value the
+    connection sends, and to which host."""
     hub_dir = Path(hub_dir)
     result = validate(hub_dir, data, lines=lines, expected_id=expected_id)
     if not result.valid:
@@ -389,6 +415,14 @@ def apply(hub_dir, data: dict, *, expected_revision, actor: str, text: str | Non
                            "with another id.", status=422, fields=[_err("invalid_config", "/provider",
                                                                          "provider is fixed")])
     norm = normalized(cfg, settings)
+    if not any_secret:
+        foreign = _foreign_refs(hub, cfg.id, norm, current["config_json"] if current else None)
+        if foreign:
+            own = f"secret:channel/{hub}/{cfg.id}/<name>"
+            raise ChannelError("permission_denied", f"Only organization administrators choose a secret other than "
+                               f"this connection's own ({own}).", status=403,
+                               fields=[_err("permission_denied", f, f"Use {own}, or ask an organization "
+                                                                    "administrator.", lines) for f in foreign])
     digest = canonical.digest(norm)
     path = file_for(hub_dir, cfg.id)
     body = text if text is not None else render(data)
