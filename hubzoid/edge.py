@@ -398,18 +398,20 @@ def build_edge_app(
         client: httpx.AsyncClient = request.app.state.client
         # With fallbacks, hold a small body so a refused connection can be
         # retried on the next bridge. A larger body goes to the first only.
+        # A read that breaks before the answer starts (a busy bridge dropping
+        # the connection) is retried once for GET and HEAD, which change
+        # nothing; anything else answers 502 instead of an unhandled error.
+        # Either way the body is read once, here, and kept for a resend.
+        idempotent = request.method in ("GET", "HEAD")
         if len(bases) > 1:
             content, retryable = await _retry_body(request)
             if not retryable:
                 bases = bases[:1]
+                idempotent = False  # a large body streams once, never twice
+        elif idempotent:
+            content = await request.body()
         else:
             content = request.stream()
-        # A read that breaks before the answer starts (a busy bridge dropping
-        # the connection) is retried once for GET and HEAD, which change
-        # nothing; anything else answers 502 instead of an unhandled error.
-        idempotent = request.method in ("GET", "HEAD")
-        if idempotent:
-            content = await request.body()
         resp = None
         for i, base in enumerate(bases):
             for attempt in (0, 1):
