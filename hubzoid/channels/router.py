@@ -235,6 +235,9 @@ def _route_one(hub_dir: Path, row: dict, app) -> tuple[str, object]:
             return "ignored", None
         if event.data.get("signal") == "stop":
             return _stop(hub_dir, conn, row, thread, event, app)
+        taken = conn.adapter.route(hub_dir, conn, row, thread, event)
+        if taken is not NotImplemented:
+            return taken
         refusal = conn.adapter.authorize(conn, event)
         if refusal:
             _finish(hub_dir, row["id"], "denied", refusal)    # silently: nothing private is disclosed
@@ -301,7 +304,7 @@ def _hub_access(hub_dir: Path, email: str) -> str | None:
 
 def _notice(conn, thread: dict, event: InboundEvent, reason: str) -> None:
     template = NOTICES.get(reason)
-    if not template or thread is None:
+    if not template or thread is None or conn.adapter.customer_facing:
         return
     who = event.actor.external_id if event.actor else "unknown"
     try:
@@ -504,6 +507,8 @@ def _ingest_file(conn, event: InboundEvent, ref: dict, person, chat, conversatio
 
 
 def _acknowledge(conn, thread: dict, event: InboundEvent, row: dict) -> None:
+    if conn.adapter.customer_facing:
+        return
     ack = getattr(conn.adapter, "acknowledge", None)
     try:
         if ack is not None:
@@ -718,6 +723,9 @@ def _work_item_reply(hub_dir: Path, conn, thread: dict, row: dict) -> bool:
         return _settle_reply(hub_dir, row, "no_item", thread, route.get("account"))
     if item["state"] not in wstore.TERMINAL:
         return False
+    if conn.adapter.customer_facing:
+        # A customer gets only what a workflow sent under the write mode.
+        return _settle_reply(hub_dir, row, "workflow_only", thread, route.get("account"))
     result = (item.get("result_json") or {}).get("result") if isinstance(item.get("result_json"), dict) else None
     body = _final_text(item["state"], result, item.get("error"), item["id"])
     if body is None:

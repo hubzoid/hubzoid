@@ -75,6 +75,17 @@ class Adapter:
     secret_keys: ClassVar[tuple[str, ...]] = ()
     #: True when the provider delivers by webhook (needs HUBZOID_PUBLIC_URL)
     webhook: ClassVar[bool] = True
+    #: True when the people on the other side are outside the organization (an
+    #: email sender, a WhatsApp contact). Nothing is posted to them on its own:
+    #: no acknowledgement, no notice and no automatic final reply. Every reply
+    #: is a workflow's `hub.thread.post` under the hub's write mode.
+    customer_facing: ClassVar[bool] = False
+
+    def route(self, hub_dir, conn: "Connection", row: dict, thread: dict, event: InboundEvent):
+        """Take over routing for this provider (intake adapters hand events to
+        the intake service). Return (outcome, plan) like the core router, or
+        NotImplemented to use the core's routing."""
+        return NotImplemented
 
     # -- required -----------------------------------------------------------
     def verify(self, conn: "Connection", raw: bytes, headers: dict, query: dict) -> Verified | Challenge:
