@@ -31,6 +31,7 @@ type Delivery = {
 };
 type Reply = {
   id: string; kind: string; state: string; thread_id: string | null; error: string | null; attempts: number;
+  delivery?: { status: string; at: number; error?: string | null } | null;
   created: number;
 };
 type Thread = {
@@ -488,6 +489,7 @@ function Replies({ url }: { url: string }) {
             { title: "Kind", dataIndex: "kind" },
             { title: "State", dataIndex: "state", render: (s: string) => tag(REPLY, s) },
             { title: "Attempts", dataIndex: "attempts" },
+            { title: "Delivery", render: (_: unknown, r: Reply) => (r.delivery ? <Tag>{r.delivery.status}</Tag> : "") },
             { title: "Error", dataIndex: "error", render: (e: string | null) => (e ? <Text type="secondary">{e}</Text> : null) },
             {
               title: "", render: (_: unknown, r) => r.state === "ambiguous" ? (
