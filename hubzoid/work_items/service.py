@@ -597,7 +597,7 @@ def _resume_after_decision(hub_dir, row: dict) -> dict | None:
 
 def _blocking(hub_dir, item: dict) -> list[dict]:
     return [o for o in store.list_ops(hub_dir, item["hub"], item_id=item["id"])
-            if o["state"] in store.OP_UNRESOLVED
+            if store.unresolved(o)
             or (o["state"] == "awaiting_approval"
                 and (o.get("approval_json") or {}).get("digest") != o["args_digest"])]
 
@@ -640,8 +640,7 @@ def restart(hub_dir, item_id: str, actor: str, *, stage: str | None = None, reas
                             status=409)
     if not reason or not reason.strip():
         raise WorkItemError("validation_failed", "Say why you are restarting it.", status=422)
-    unresolved = [o for o in store.list_ops(hub_dir, item["hub"], item_id=item_id)
-                  if o["state"] in store.OP_UNRESOLVED]
+    unresolved = [o for o in store.list_ops(hub_dir, item["hub"], item_id=item_id) if store.unresolved(o)]
     if unresolved:
         raise WorkItemError("operation_unresolved",
                             "An operation's outcome is still unknown. Resolve it before restarting.",
