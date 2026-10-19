@@ -145,6 +145,9 @@ def test_fakes_answer_matching_calls_and_block_everything_else(tmp_path, monkeyp
     check = next(c for c in case.checks if c.kind == "fake_tools")
     assert not check.passed and "blocked 2 call(s)" in check.detail and "create_refund" in check.detail
     assert not case.passed
+    assert [(t.name, t.ok) for t in case.tools] == [("lookup_order", None), ("send_email", None),
+                                                    ("read_knowledge", None), ("lookup_order", False),
+                                                    ("create_refund", False)]
 
 
 def test_a_fully_faked_case_passes_and_outside_a_case_tools_run_for_real(tmp_path, monkeypatch):

@@ -322,6 +322,8 @@ async def _run_one(rt, case: EvalCase, *, judge_fn=None,
         result.error = f"agent error ({failure['kind']}): {result.response.strip()}"[:200]
         return result
 
+    if fakes is not None:
+        _mark_blocked(result.tools, fakes.blocked)
     result.checks = assertions.run_free_checks(
         case, response=result.response, tool_calls=result.tool_calls, tools=result.tools)
     if fakes is not None:
@@ -358,6 +360,20 @@ def _mcp_servers(hub_dir: Path) -> list[str]:
         return sorted(mcp_loader.load_all_raw(hub_dir))
     except Exception:  # noqa: BLE001 - an unreadable .mcp.json fails the runtime build anyway
         return []
+
+
+def _mark_blocked(tools: list[ToolCallRecord], blocked: list) -> None:
+    """Show each blocked call as failed, not OK: its tool answered with text,
+    but nothing ran."""
+    from ..tool_fakes import BLOCKED
+
+    left = list(blocked)
+    for rec in tools:
+        for i, (name, args) in enumerate(left):
+            if rec.name == name and rec.raw_args == args:
+                rec.ok, rec.preview, rec.error = False, None, BLOCKED.format(name=name)
+                del left[i]
+                break
 
 
 def _fakes_check(session) -> Check:
