@@ -425,7 +425,9 @@ def build_edge_app(
                 bases = bases[:1]
                 idempotent = False  # a large body streams once, never twice
         elif idempotent:
-            content = await request.body()
+            # Held only up to the retry limit: a larger GET body (nothing
+            # needs one) streams once instead of filling the edge's memory.
+            content, idempotent = await _retry_body(request)
         else:
             content = request.stream()
         resp = None
