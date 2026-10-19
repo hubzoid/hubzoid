@@ -1282,13 +1282,14 @@ class AccessService:
         return admins - {normalize(subject), ""}
 
     def delete_account(self, actor: Actor, subject: str) -> None:
-        """Delete a user: every grant (`revoke_all`), then their chat account
-        through the chat app's own delete, which also removes their chats,
-        shared chat links. Kept: the identity row (marked
-        removed, so the email inherits nothing and only an organization
-        administrator can re-create it), Activity history, usage records and
-        artifacts they saved (their public links stop working with the owner's
-        access). The last administrator on either side can't be deleted."""
+        """Delete a user: every grant (`revoke_all`), then their account. The
+        account becomes a tombstone that keeps their chats; its sessions, keys,
+        sign-ins and personal connections end, and their share links stop.
+        Kept: the identity row (marked removed, so the email inherits nothing
+        and only an organization administrator can re-create it), Activity
+        history, usage records and artifacts they saved (their public links
+        stop working with the owner's access). The last administrator on either
+        side can't be deleted."""
         identity = self._account_target(actor, subject)
         directory = self.accounts()
         account = self._live_account(directory, identity)

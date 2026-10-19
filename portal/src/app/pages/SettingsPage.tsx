@@ -145,7 +145,9 @@ export default function SettingsPage({ section }: { section: string | null }) {
   const app = useApp();
   const hash = useHash();
   const team = app.isAdmin || !!app.user?.console;
-  const items = ITEMS.filter((i) => (i.admin ? app.isAdmin : i.team ? team : true)).filter((i) => !(team && i.key === "my-schedules"));
+  // Hub changes also opens for curators who may propose or review changes.
+  const visible = (i: Item) => (i.admin ? app.isAdmin : i.key === "hub-changes" ? team || !!app.user?.hub_changes : i.team ? team : true);
+  const items = ITEMS.filter(visible).filter((i) => !(team && i.key === "my-schedules"));
   const [query, setQuery] = useState("");
   // ?section= (from links elsewhere in the app) becomes the hash.
   useEffect(() => {

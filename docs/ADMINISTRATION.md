@@ -139,9 +139,10 @@ chat accounts rely on it alone. See
 [access management](access-management.md#everyone-signed-in-no-longer-granted).
 
 To offboard someone, an organization administrator opens them under People
-and uses **…** → **Delete user**. That removes every grant, then the chat
-account and its chats; Activity history, usage records and published artifacts
-are kept. Their connections to connectors are removed too.
+and uses **…** → **Delete user**. That removes every grant and ends every
+sign-in, API key and connection. Their chats, Activity history, usage records
+and published artifacts are kept under their name; their share links stop
+working.
 The last administrator cannot be made a User or deleted. Settings doesn't
 offer Block. An organization administrator can **Reactivate** someone who is
 blocked from the same "…" menu (see [blocked users](access-management.md#blocked-users)).

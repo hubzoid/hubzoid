@@ -64,8 +64,7 @@ export function Parity() {
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ margin: 0 }}>
-        What Hubzoid's chat must preserve, each item with one owner and an acceptance check. Reads the deployment's{" "}
-        <Text code>parity.yaml</Text>. Inventories are owner-prepared and redacted; nothing here reads credentials or chats.
+        Review the deployment’s compatibility checklist. Credentials and chats aren’t read.
       </Paragraph>
       {error && <Alert type="error" showIcon title="That didn't work" description={error.message} />}
       <Space>
@@ -75,16 +74,15 @@ export function Parity() {
           }
           loading={busy === "validate"}
         >
-          Validate parity.yaml
+          Check compatibility
         </Button>
         <Button
-          type="primary"
           onClick={() =>
             void step("candidate", () => control("/api/parity/candidates", { idempotencyKey: newKey(), body: { from_source: true } }), "Candidate recorded.")
           }
           loading={busy === "candidate"}
         >
-          Record a candidate
+          Save for review
         </Button>
       </Space>
       {report && (

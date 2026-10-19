@@ -823,7 +823,7 @@ export function AccessDrawer({
                   title="This person is blocked"
                   description="They can’t be given new access. Existing access can still be removed."
                   // Administrators reactivate them there. Others may not see them under People.
-                  action={me?.org_admin && <a href={personHref(draft.row.subject)}>Open their details</a>}
+                  action={me?.org_admin && <a href={personHref(draft.row.subject)}>View user</a>}
                 />
               )}
               {draft.row.account_unavailable && !draft.row.suspended && (
@@ -1160,7 +1160,7 @@ function NewAccountOutcome({
         <Alert
           type="success"
           showIcon
-          title={`${outcome.created.name || name} can now sign in as ${outcome.created.subject}`}
+          title={`${outcome.created.name || name} · ${outcome.created.subject}`}
           description={
             perms.length
               ? `Access to ${hubName}: ${perms.map((p) => capabilityLabel(p, catalog)).join(", ")}.`
@@ -1169,7 +1169,7 @@ function NewAccountOutcome({
         />
         <SignInDetails email={outcome.created.subject} password={password} signIn={outcome.created.sign_in ?? signIn} />
         <a href={personHref(outcome.created.subject)} onClick={onDone}>
-          Open their details
+          View user
         </a>
       </>
     );
