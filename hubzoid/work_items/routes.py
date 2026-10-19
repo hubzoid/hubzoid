@@ -109,9 +109,10 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
 
     @router.get("/hubs/{hub}/work-items")
     async def list_items(hub: str, state: str | None = None, workflow: str | None = None,
-                         cursor: float | None = None, limit: int = 50, actor=Depends(require_person)):
+                         cursor: float | None = None, limit: int = 50, mine: bool = False,
+                         actor=Depends(require_person)):
         return await _call(service.list_items, hub_for(actor, hub), actor.subject, state=state,
-                           workflow=workflow, before=cursor, limit=limit)
+                           workflow=workflow, before=cursor, limit=limit, mine=mine)
 
     @router.post("/hubs/{hub}/work-items")
     async def start(hub: str, request: Request, response: Response, body: StartBody,
