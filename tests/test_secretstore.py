@@ -191,11 +191,17 @@ def test_an_azure_key_is_not_sent_to_a_changed_endpoint(hub, monkeypatch):
 
     monkeypatch.setenv("AZURE_API_BASE", "https://ours.openai.azure.com")
     put(hub, "AZURE_API_KEY", destination=names.destination("AZURE_API_KEY", os.environ))
+    assert resolve("secret:hub/deskhub/AZURE_API_KEY", hub) == VALUE
     monkeypatch.setenv("AZURE_API_BASE", "https://elsewhere.example")
     cs.clear_cache()
     start_bridge(hub)
     assert "AZURE_API_KEY" not in os.environ
     assert layer.started(hub)[("hub", "AZURE_API_KEY")][0] == layer.REBIND
+    # A direct reference is refused too, so a tool cannot send the old key there.
+    with pytest.raises(SecretError) as exc:
+        resolve("secret:hub/deskhub/AZURE_API_KEY", hub)
+    assert exc.value.code == "secret_rebind" and "AZURE_API_BASE" in exc.value.message
+    assert VALUE not in exc.value.message
 
 
 def test_references_resolve_only_this_hubs_secrets(hub):
