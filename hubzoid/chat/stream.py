@@ -288,6 +288,8 @@ class MessageBuilder:
             if note.get("shown") or not (tool == name or tool.endswith("__" + name) or name.endswith("__" + tool)):
                 continue
             note["shown"] = True
+            if note.get("card"):  # a card the tool asked the chat to show (a hub change)
+                return dict(note["card"])
             return {"status": "waiting", "request_id": note["request_id"], "kind": note.get("kind") or "approval"}
         return None
 

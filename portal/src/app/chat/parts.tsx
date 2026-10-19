@@ -14,6 +14,7 @@ import { cx } from "../components/ui";
 import { fileRefOf, fileUrl } from "./convert";
 import { safeStringify } from "./stream";
 import { RequestCard } from "./RequestCard";
+import { HubChangeCard } from "./HubChangeCard";
 
 /** Where this thread's files live, for previews and downloads. */
 export const FilesContext = createContext<{ conversationId: string | null; apiBase: string }>({
@@ -91,9 +92,25 @@ function waitingRequest(result: unknown): string | null {
   return r.status === "waiting" && typeof r.request_id === "string" ? r.request_id : null;
 }
 
+/** A hub change tool returns {hub_change: {id, ...}, message} as JSON text. */
+function hubChange(result: unknown): number | null {
+  let r = result;
+  if (typeof r === "string" && r.startsWith('{"hub_change"')) {
+    try {
+      r = JSON.parse(r);
+    } catch {
+      return null;
+    }
+  }
+  const id = (r as { hub_change?: { id?: unknown } } | null)?.hub_change?.id;
+  return typeof id === "number" ? id : null;
+}
+
 export const ToolEntry: ToolCallMessagePartComponent = (props) => {
   const requestId = waitingRequest(props.result);
   if (requestId) return <RequestCard requestId={requestId} toolName={props.toolName} args={props.args} />;
+  const changeId = hubChange(props.result);
+  if (changeId !== null) return <HubChangeCard id={changeId} />;
   return <ToolActivity {...props} />;
 };
 
@@ -154,7 +171,9 @@ export function ToolGroup({ startIndex, endIndex, children }: { startIndex: numb
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   // A card waiting for the person is never folded away.
   const asking = useAuiState((s) =>
-    s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && !!waitingRequest((p as { result?: unknown }).result)),
+    s.message.content
+      .slice(startIndex, endIndex + 1)
+      .some((p) => p.type === "tool-call" && (!!waitingRequest((p as { result?: unknown }).result) || hubChange((p as { result?: unknown }).result) !== null)),
   );
   const failed = useAuiState((s) =>
     s.message.content.slice(startIndex, endIndex + 1).some((p) => p.type === "tool-call" && (p as { isError?: boolean }).isError),

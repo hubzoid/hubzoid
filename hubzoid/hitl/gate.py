@@ -81,7 +81,8 @@ def note_waiting(tool: str, request: dict) -> None:
 
 def suspended() -> bool:
     slot = _request_ctx.native_session()
-    return bool(slot is not None and getattr(slot, "hitl_waiting", None))
+    notes = getattr(slot, "hitl_waiting", None) if slot is not None else None
+    return any(not n.get("card") for n in notes or ())  # a card is not a wait
 
 
 def evaluate(hub_dir: Path, tool: str, arguments, *, connector: str | None = None,

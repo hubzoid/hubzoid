@@ -1826,6 +1826,31 @@
   .hz-request-option:hover:not(:disabled) {
     background: var(--hz-hover);
   }
+  .hz-diff {
+    margin: 0;
+    max-height: 360px;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid var(--hz-line);
+    border-radius: 8px;
+    font: 12px/1.5 var(--hz-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--hz-secondary);
+  }
+  .hz-diff .is-add {
+    color: var(--hz-ink);
+    background: color-mix(in srgb, #2f9e5b 16%, transparent);
+  }
+  .hz-diff .is-del {
+    color: var(--hz-mute);
+    background: color-mix(in srgb, #d14343 14%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .hz-diff .is-hunk {
+    color: var(--hz-mute);
+  }
   .hz-request-outcome {
     display: flex;
     align-items: center;

@@ -221,11 +221,14 @@ def commit_paths(hub_dir: Path, rel_paths: list[str], message: str,
     ]
     if not specs:
         return None
-    if not _git(top, "status", "--porcelain", "--", *specs).strip():
-        return None
-    _git(top, "add", "--", *specs)
-    _git(top, "commit", "-m", message, "--", *specs)
-    sha = _git(top, "rev-parse", "HEAD")
+    from .hub_changes.service import write_lock
+
+    with write_lock(hub_dir):  # one writer at a time: reviewed hub changes use the same lock
+        if not _git(top, "status", "--porcelain", "--", *specs).strip():
+            return None
+        _git(top, "add", "--", *specs)
+        _git(top, "commit", "-m", message, "--", *specs)
+        sha = _git(top, "rev-parse", "HEAD")
     if push:
         push_head(hub_dir)
     return sha
@@ -299,6 +302,18 @@ def push_head(hub_dir: Path) -> None:
     if top is None:
         raise RuntimeError(f"{hub_dir} is not inside a git repository; cannot push.")
     head = _git_run(top, "rev-parse", "HEAD").stdout.strip()
+    reviewed = _git_run(top, "log", "--format=%H", "--fixed-strings", "--grep=Hubzoid-Change: ",
+                        "@{upstream}..HEAD").stdout.strip()
+    if reviewed:
+        # A reviewed hub change is published exactly as it was approved: never
+        # rebased. Push as is; a refused push is for a person to reconcile.
+        ps = _git_run(top, *_push_args(top))
+        if ps.returncode != 0:
+            raise RuntimeError(
+                "git push failed and the branch holds a reviewed hub change, which Hubzoid never "
+                "rebases. The commits exist locally but were NOT pushed; reconcile by hand.\n"
+                + ps.stderr.strip())
+        return
     stash_before = _stash_top(top)[0]
     pr = _git_run(top, "pull", "--rebase", "--autostash")
     if pr.returncode != 0:

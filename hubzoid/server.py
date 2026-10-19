@@ -154,6 +154,13 @@ def build_app() -> FastAPI:
         chat_ctx = getattr(app.state, "chat", None)
         from .hitl import routes as hitl_routes
         hitl_task = asyncio.create_task(hitl_routes.recovery_loop(chat_ctx)) if chat_ctx is not None else None
+        if chat_ctx is not None:
+            from .hub_changes import service as hub_changes
+
+            try:  # a hub change a crash left half applied: finish it, one commit
+                await asyncio.to_thread(hub_changes.recover, hub_dir)
+            except Exception:  # noqa: BLE001
+                log.exception("hub changes: recovery failed")
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and

@@ -165,6 +165,11 @@ class Orchestrator:
             path = await db(self.engine.path, plan.conversation_id, plan.prompt_message_id)
             key = chat_key(conv)
             turns_prompt = await db(build_prompt, self.ctx.hub_dir, key, path)
+            from .. import personal_memory
+
+            notes = await db(personal_memory.prompt_block, self.ctx.hub_dir, plan.actor_id)
+            if notes:  # the person's own notes, read at the start of the native session
+                turns_prompt = f"{notes}\n\n{turns_prompt}"
             if plan.extra_turns:
                 from .. import server
 
@@ -245,9 +250,12 @@ class Orchestrator:
             policy = service_for(self.ctx.hub_dir).active().digest
         except Exception:  # noqa: BLE001 - unknown policy: never reuse a session
             policy = str(time.time())
+        from .. import personal_memory
+
         return canonical.digest({"actor": actor_id, "agent": self.ctx.model_label, "runtime": type(rt).__name__,
                                  "model": str(getattr(rt, "name", "")),
-                                 "instructions": canonical.digest_bytes(instructions), "policy": policy})
+                                 "instructions": canonical.digest_bytes(instructions), "policy": policy,
+                                 "notes": personal_memory.revision(self.ctx.hub_dir, actor_id) if actor_id else 0})
 
     def _update(self, run) -> None:
         now = time.monotonic()

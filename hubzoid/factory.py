@@ -235,7 +235,8 @@ def _with_core_skills(skills: list) -> list:
 
 
 def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
-    """Add the core-shipped, `curator`-gated `remember` tool to the registry.
+    """Add the core-shipped hub memory and hub change tools (`curator`-gated)
+    and the personal memory tools to the registry.
 
     Present on every hub but hidden/denied unless the caller is in the hub's
     `curator` Open WebUI group on a verified-login surface (same wall as
@@ -249,7 +250,13 @@ def _add_curator_tool(ctx: HubContext, registry: dict, access) -> None:
             log.info("hub tool %r overrides the core curator tool", ft.name)
             continue
         registry[ft.name] = access.guard_tool(ft, curator_tool.CURATOR_PERMISSION,
-                                               ctx.hub_dir)
+                                               ctx.hub_dir, also=("manage_access",))
+    # Personal memory: each person's own notes. No grant needed; a call with
+    # nobody signed in is refused by the tool itself.
+    from . import personal_memory
+
+    for ft in personal_memory.make(ctx.hub_dir):
+        registry.setdefault(ft.name, ft)
 
 
 def _add_jev_tool(ctx: HubContext, registry: dict, access) -> None:
