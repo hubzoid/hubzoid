@@ -110,6 +110,12 @@ def _fields(body: Any, **limits: int) -> dict[str, str]:
     return {k: body[k] for k in limits}
 
 
+def _public_url() -> str | None:
+    from .. import appmode
+
+    return appmode.public_url() or None
+
+
 def _branding_name(hub_dir: Path) -> str:
     """The name the sign-in page shows: the same name as ``/api/branding`` (the
     gateway's name from its manifest, or a single hub's main agent), falling back
@@ -322,7 +328,7 @@ def build_router(hub_dir: Path) -> APIRouter:
             owner = current_user(request, hub_dir)
             body = {"authenticated": owner is not None, "mode": "local", "providers": [],
                     "password": False, "signup": False, "branding_name": name,
-                    "unsafe_network": _unsafe_network(request)}
+                    "unsafe_network": _unsafe_network(request), "public_url": _public_url()}
             if owner is not None:
                 body["user"] = _user_view(hub_dir, owner)
             return JSONResponse(body, headers=_NO_STORE)
@@ -336,7 +342,9 @@ def build_router(hub_dir: Path) -> APIRouter:
         body = {"authenticated": user is not None, "mode": "accounts",
                 "providers": oidc.public_list() + public_providers(hub_dir),
                 "password": password_login_enabled(),
-                "signup": signup_enabled(), "branding_name": name}
+                "signup": signup_enabled(), "branding_name": name,
+                # The address callbacks use: `hubzoid deploy verify` compares it.
+                "public_url": _public_url()}
         if view is not None:
             body["user"] = view
         return JSONResponse(body, headers=_NO_STORE)

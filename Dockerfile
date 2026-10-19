@@ -70,6 +70,9 @@ RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src
 
 WORKDIR /hub
 EXPOSE 3080
+# The public health check, on the port the provider gives (PORT).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','3080'),timeout=4)"
 
 ENTRYPOINT ["hubzoid"]
 CMD ["run", "/hub"]

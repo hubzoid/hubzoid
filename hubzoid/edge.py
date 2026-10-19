@@ -307,6 +307,15 @@ def build_edge_app(
 
     async def http_handler(request: Request) -> Response:
         path, query = _path_and_query(request)
+        if path == '/healthz' and request.method in ('GET', 'HEAD'):
+            # The public health check: whether the bridge answers, and nothing
+            # about the hub or its model. Start-up checks ask the bridge itself.
+            from starlette.responses import JSONResponse
+            try:
+                ok = (await request.app.state.client.get(default_base + '/healthz', timeout=5)).status_code == 200
+            except httpx.HTTPError:
+                ok = False
+            return JSONResponse({'status': 'ok' if ok else 'unavailable'}, status_code=200 if ok else 503)
         if path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
             from starlette.responses import JSONResponse
             states = getattr(request.app.state, 'workflow_health', {})

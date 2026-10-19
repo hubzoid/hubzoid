@@ -1382,6 +1382,10 @@ backup_app = typer.Typer(
          "run weekly by default (HUBZOID_BACKUPS=weekly|daily|off).")
 app.add_typer(backup_app, name="backup", rich_help_panel="Commands")
 
+from .deploy.cli import deploy_app  # noqa: E402
+
+app.add_typer(deploy_app, name="deploy", rich_help_panel="Commands")
+
 
 @backup_app.command("create")
 def backup_cmd(

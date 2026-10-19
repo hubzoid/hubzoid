@@ -1,0 +1,14 @@
+# Never in the image: state, secrets and local runs. Set secrets as the
+# provider's variables instead.
+.hubzoid/
+.env
+.env.*
+!.env.example
+restricted/.env
+output/
+logs/
+.inbound/
+.git/
+deploy/
+**/__pycache__/
+*.pyc
