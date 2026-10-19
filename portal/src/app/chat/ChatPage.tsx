@@ -34,7 +34,9 @@ import { Thread } from "./Thread";
 import { ArtifactPanel, loadArtifacts, type Artifact } from "./ArtifactPanel";
 import type { ModelsInfo } from "./models";
 import { AgentSwitcher } from "./AgentPicker";
+import { SidebarToggle } from "../components/Sidebar";
 import { lastAgent, rememberAgent, rememberLast } from "../lib/recentAgents";
+import { readConversation, useNotices } from "../lib/notices";
 
 type Load = { status: "loading" } | { status: "ready"; detail: ConversationDetail | null } | { status: "error"; error: unknown };
 
@@ -163,7 +165,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
   }, [title, app.brandName]);
   return (
     <>
-      <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-3 lg:hidden">
+      <header className="flex h-12 flex-none items-center gap-2 px-3 lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
           <MenuIcon size={20} aria-hidden />
         </IconButton>
@@ -176,7 +178,7 @@ function PageFrame({ title, children }: { title: string; children: React.ReactNo
 function ChatSkeleton() {
   return (
     <div className="flex h-full flex-col" aria-busy="true">
-      <div className="flex h-12 flex-none items-center gap-3 border-b border-line px-4">
+      <div className="flex h-12 flex-none items-center gap-3 px-4">
         <div className="hz-skeleton h-7 w-7 rounded-lg" />
         <div className="hz-skeleton h-4 w-40" />
       </div>
@@ -307,6 +309,8 @@ function ChatView({
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const canPick = !conversation && app.agents.list.length > 1;
+  // Inside a conversation, choosing another agent starts a new chat with it.
+  const canSwitch = app.agents.list.length > 1;
   const pickAgent = useCallback(
     (next: Agent) => {
       if (session.conversationId) return;
@@ -350,6 +354,11 @@ function ChatView({
   }, [features]);
   const convertCtx = useMemo(() => session.convertContext, [session, conversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const runtime = useHubzoidRuntime({ feed, ctx: convertCtx, ensureFeed, attachments, confirmedDeletes, onError, ...speechAdapters });
+
+  const noticeCount = useNotices().length;
+  useEffect(() => {
+    if (conversation?.id) readConversation(conversation.id);
+  }, [conversation?.id, noticeCount]);
 
   // Tell the server this person is looking at this chat (no notice for it then).
   useEffect(() => {
@@ -438,7 +447,11 @@ function ChatView({
           title={shownTitle}
           conversation={conversation}
           onRenamed={(next) => setTitle(next)}
-          picker={canPick ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: pickAgent } : null}
+          picker={
+            canSwitch
+              ? { open: pickerOpen, onOpenChange: setPickerOpen, onPick: (a: Agent) => (conversation ? app.newChat(a.id) : pickAgent(a)) }
+              : null
+          }
           documents={artifacts.length ? { count: artifacts.length, open: panel.open,
             onToggle: () => setPanel((p) => ({ open: !p.open, id: p.id })) } : null}
         />
@@ -501,24 +514,14 @@ function ChatHeader({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState(title);
   const agentName = displayName(agent.name);
-  const titleBlock = (
+  const agentBlock = (
     <>
-      <AgentAvatar name={agent.name} src={agent.avatar_url} size={24} />
-      <span className="min-w-0">
-        <span
-          className="block truncate text-[14px] font-semibold leading-tight text-ink"
-          data-testid="chat-title"
-          {...(picker ? {} : { role: "heading", "aria-level": 1 })}
-        >
-          {conversation ? title : agentName}
-        </span>
-        <span className="block truncate text-xs leading-tight text-mute" data-testid="chat-agent">
-          {conversation ? agentName : t.sidebar.newChat}
-        </span>
+      <AgentAvatar name={agent.name} src={agent.avatar_url} size={18} />
+      <span className="truncate" data-testid="chat-agent">
+        {agentName}
       </span>
     </>
   );
-
   const doRename = async () => {
     if (!conversation) return;
     const next = draft.trim();
@@ -566,54 +569,68 @@ function ChatHeader({
   };
 
   return (
-    <header className="flex h-12 flex-none items-center gap-2 border-b border-line bg-bg px-2 sm:px-4">
+    <header className="hz-chat-header">
       <div className="lg:hidden">
         <IconButton label={t.sidebar.openMenu} onClick={app.openSidebar} size="lg">
-          <MenuIcon size={20} aria-hidden />
+          <MenuIcon size={19} aria-hidden />
         </IconButton>
       </div>
-      <div className="flex min-w-0 flex-1 items-center">
+      <SidebarToggle />
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         {picker ? (
           <AgentSwitcher agent={agent} agents={app.agents.list} {...picker}>
-            {titleBlock}
+            {agentBlock}
           </AgentSwitcher>
         ) : (
-          <div className="flex min-w-0 items-center gap-2.5">{titleBlock}</div>
+          <span className="hz-hubpick is-static">{agentBlock}</span>
         )}
+        {conversation && (
+          <>
+            <span className="hz-crumb-sep" aria-hidden>
+              /
+            </span>
+            <h1 className="hz-chat-title" data-testid="chat-title">
+              {title}
+            </h1>
+          </>
+        )}
+        {!conversation && <h1 className="sr-only" data-testid="chat-title">{t.sidebar.newChat}</h1>}
       </div>
       {conversation && (
-        <div className="flex flex-none items-center gap-1">
+        <div className="flex flex-none items-center gap-0.5">
           {documents && (
             <Button
               size="sm"
-              variant={documents.open ? "primary" : "secondary"}
+              variant="ghost"
               icon={<Files size={14} aria-hidden />}
               onClick={documents.onToggle}
               aria-pressed={documents.open}
+              className={documents.open ? "!bg-active" : undefined}
             >
               {t.artifacts.openCount(documents.count)}
             </Button>
           )}
           <Button
             size="sm"
-            variant="secondary"
+            variant="ghost"
             icon={<Share2 size={14} aria-hidden />}
             onClick={() => setSharing(true)}
             className="hidden sm:inline-flex"
           >
             {t.chat.share}
           </Button>
-          <IconButton label={t.chat.share} onClick={() => setSharing(true)} className="sm:!hidden" size="lg">
-            <Share2 size={18} aria-hidden />
-          </IconButton>
           <Menu.Root>
             <Menu.Trigger asChild>
-              <IconButton label={t.chat.moreActions} size="lg" tooltip={false}>
-                <MoreHorizontal size={18} aria-hidden />
+              <IconButton label={t.chat.moreActions} tooltip={false}>
+                <MoreHorizontal size={17} aria-hidden />
               </IconButton>
             </Menu.Trigger>
             <Menu.Portal>
-              <Menu.Content className="hz-menu" align="end" sideOffset={4}>
+              <Menu.Content className="hz-menu w-[200px]" align="end" sideOffset={4}>
+                <Menu.Item className="hz-menu-item sm:!hidden" onSelect={() => setSharing(true)}>
+                  <Share2 size={15} aria-hidden />
+                  {t.chat.share}
+                </Menu.Item>
                 <Menu.Item
                   className="hz-menu-item"
                   onSelect={() => {

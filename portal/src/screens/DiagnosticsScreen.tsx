@@ -132,10 +132,10 @@ export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
   return (
     <div className="screen">
       <Title level={2} style={{ marginTop: 0 }}>
-        Diagnostics
+        Health &amp; support
       </Title>
       <Paragraph type="secondary">
-        Read-only checks of this deployment. They never call a model, change anything or show secret values.
+        Checks that everything is running. They change nothing and never show secrets.
       </Paragraph>
       {error && (
         <Alert
@@ -169,7 +169,7 @@ export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
         </Col>
       </Row>
 
-      <Card title="Run diagnostics" size="small" style={{ marginBottom: 16 }}>
+      <Card title="Run checks" size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select
             aria-label="Scope"
@@ -179,7 +179,7 @@ export function DiagnosticsScreen({ hubs }: { hubs: Hub[] }) {
             options={[{ value: "__deployment", label: "Whole deployment" }, ...hubs.map((h) => ({ value: h.key, label: h.name }))]}
           />
           <Checkbox checked={network} onChange={(e) => setNetwork(e.target.checked)}>
-            Include network probes (contacts connector hosts; needs admin.yaml to allow them)
+            Check connected services too (contacts them; an administrator must allow it)
           </Checkbox>
           <Button type="primary" onClick={() => void run()} loading={busy === "run"}>
             Run checks

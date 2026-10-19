@@ -1,14 +1,18 @@
-// The conversation itself, built from assistant-ui primitives: messages with
-// their parts, branch picker, copy, edit and regenerate, the composer with
-// attachments, and the empty state with the agent's greeting and suggestions.
-import { useEffect, useState, type ReactNode } from "react";
-import { Popover } from "radix-ui";
+// The conversation itself, built from assistant-ui primitives: prose answers
+// with a hover action bar (copy, retry, feedback and a menu for the rest),
+// user bubbles, quoting a selection into the reply, the branch picker, the
+// composer (+ menu, model, dictation, send that becomes Stop, and Queue or
+// Interrupt while a reply streams), the flat queue above it, and the quiet
+// empty state with the composer in the middle.
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+import { DropdownMenu as Menu, Popover } from "radix-ui";
 import { enc, get, hubUrl, post, put } from "../lib/api";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
+  SelectionToolbarPrimitive,
   ThreadPrimitive,
   useAui,
   useAuiEvent,
@@ -19,30 +23,36 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  Braces,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Paperclip,
-  Pencil,
-  ListOrdered,
-  Mic,
-  MicOff,
-  Volume2,
-  VolumeX,
-  Sparkles,
-  ThumbsDown,
-  ThumbsUp,
-  Play,
-  RefreshCw,
-  Square,
-  Trash2,
-  Upload,
-  X,
+  CornerDownRight,
+  Download,
   FileText,
   FolderOpen,
   Globe,
+  ListOrdered,
+  Mic,
+  MicOff,
+  MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Quote,
+  RefreshCw,
+  Sparkles,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  Upload,
+  Volume2,
+  VolumeX,
+  X,
 } from "lucide-react";
 import { t } from "../i18n/en";
 import { displayName, formatBytes } from "../lib/format";
@@ -57,7 +67,7 @@ import { useApp } from "../lib/app-context";
 import { MarkdownText } from "./Markdown";
 import { CombineAction, CompareAction, ModelLabel, ModelPicker } from "./models";
 import { PromptPicker } from "./prompts";
-import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry } from "./parts";
+import { ComposerAttachment, MessageAttachment, Reasoning, ToolEntry, ToolGroup } from "./parts";
 
 export type ThreadProps = {
   agent: Agent;
@@ -78,10 +88,6 @@ export type ThreadProps = {
 
 // On touch screens focusing the composer on load would pop up the keyboard.
 const coarsePointer = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
-
-function useIsLocalRunActive() {
-  return useAuiState((s) => s.thread.isRunning);
-}
 
 export function Thread(props: ThreadProps) {
   const { agent, readOnly } = props;
@@ -107,16 +113,17 @@ export function Thread(props: ThreadProps) {
     toast(event.message || t.errors.generic, "error");
   });
 
+  const empty = isEmpty && !readOnly;
   const body = (
     <ThreadPrimitive.Viewport
       autoScroll={!isEmpty}
       className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
       data-testid="thread-viewport"
     >
-      {isEmpty && !readOnly ? (
+      {empty ? (
         <EmptyThread {...props} />
       ) : (
-        <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pb-6 pt-5 sm:px-6">
+        <div className="hz-convo">
           <ThreadPrimitive.Messages>
             {({ message }) =>
               message.role === "user" ? (
@@ -134,25 +141,29 @@ export function Thread(props: ThreadProps) {
           </ThreadPrimitive.Messages>
         </div>
       )}
-      {!readOnly && (
-        <ThreadPrimitive.ViewportFooter className="sticky bottom-0 z-10 mt-auto bg-gradient-to-t from-bg from-70% to-transparent px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
-          <div className="relative mx-auto w-full max-w-[780px]">
-            {!isEmpty && (
+      {!readOnly && !empty && (
+        <ThreadPrimitive.ViewportFooter className="hz-dock">
+          <div className="relative mx-auto w-full max-w-[768px]">
             <ThreadPrimitive.ScrollToBottom asChild>
-              <button
-                type="button"
-                aria-label={t.chat.scrollDown}
-                className="absolute -top-12 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-raised text-mute hover:text-ink disabled:invisible"
-              >
-                <ArrowDown size={16} aria-hidden />
+              <button type="button" aria-label={t.chat.scrollDown} className="hz-latest">
+                <ArrowDown size={14} aria-hidden />
+                {t.chat.latest}
               </button>
             </ThreadPrimitive.ScrollToBottom>
-            )}
             {props.notice}
             <QueueList />
             <Composer {...props} />
+            <p className="hz-disclaimer">{t.chat.disclaimer(displayName(agent.name))}</p>
           </div>
         </ThreadPrimitive.ViewportFooter>
+      )}
+      {!readOnly && (
+        <SelectionToolbarPrimitive.Root className="hz-selection-bar">
+          <SelectionToolbarPrimitive.Quote className="hz-selection-quote">
+            <Quote size={13} aria-hidden />
+            {t.chat.quoteReply}
+          </SelectionToolbarPrimitive.Quote>
+        </SelectionToolbarPrimitive.Root>
       )}
     </ThreadPrimitive.Viewport>
   );
@@ -166,11 +177,11 @@ export function Thread(props: ThreadProps) {
           {body}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-3 z-20 hidden items-center justify-center rounded-2xl border-2 border-dashed border-accent/60 bg-bg/85 group-data-[dragging=true]/drop:flex"
+            className="pointer-events-none absolute inset-3 z-20 hidden items-center justify-center rounded-2xl border-2 border-dashed border-line bg-bg/85 group-data-[dragging=true]/drop:flex"
           >
-            <div className="flex flex-col items-center gap-2 text-accent-text">
-              <Upload size={26} aria-hidden />
-              <span className="text-[14px] font-medium">{t.chat.dropHere}</span>
+            <div className="flex flex-col items-center gap-2 text-secondary">
+              <Upload size={24} aria-hidden />
+              <span className="text-[13px] font-medium">{t.chat.dropHere}</span>
             </div>
           </div>
         </ComposerPrimitive.AttachmentDropzone>
@@ -188,7 +199,8 @@ function suggestionText(s: NonNullable<Agent["suggestions"]>[number]): { label: 
   return { label: (s.title || prompt).trim(), prompt };
 }
 
-function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: ThreadProps) {
+function EmptyThread(props: ThreadProps) {
+  const { agent, requestedMissing } = props;
   const name = displayName(agent.name);
   // The deployment's welcome copy and workspace suggestions (its brand),
   // kept apart from the agent's own suggestions.
@@ -198,65 +210,29 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
     label: string;
     prompt: string;
   }[];
+  const pills = [...suggestions, ...workspaceSuggestions.map((s) => ({ label: s, prompt: s }))].slice(0, 6);
   return (
-    <div className="mx-auto flex w-full max-w-[780px] flex-1 flex-col justify-center px-4 py-10 sm:px-6">
+    <div className="hz-empty">
       {requestedMissing && (
-        <Notice tone="warning" className="mb-6">
+        <Notice tone="warning" className="mb-6 w-full max-w-[768px]">
           {t.agents.requestedUnavailable(name)}
         </Notice>
       )}
-      <div className="flex flex-col items-center text-center">
-        <AgentAvatar name={agent.name} src={agent.avatar_url} size={52} />
-        <h1 className="m-0 mt-4 text-[19px] font-semibold leading-tight tracking-tight text-ink sm:text-[22px]">
-          {t.agents.greeting(name)}
-        </h1>
-        {agent.description && (
-          <p className="m-0 mt-2 max-w-xl text-[14px] leading-relaxed text-mute">{agent.description}</p>
-        )}
-        {canPickAgent && (
-          <button
-            type="button"
-            onClick={onChangeAgent}
-            className="mt-3 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium text-accent-text hover:bg-hover"
-          >
-            {t.agents.change}
-            <ChevronDown size={14} aria-hidden />
-          </button>
-        )}
+      <h1 className="hz-empty-title">{brandCopy?.welcome_title || t.agents.greeting(name)}</h1>
+      {(brandCopy?.welcome_body || agent.description) && (
+        <p className="hz-empty-sub" data-brand-slot="brand.welcome">
+          {brandCopy?.welcome_body || agent.description}
+        </p>
+      )}
+      <div className="w-full max-w-[768px]">
+        {props.notice}
+        <Composer {...props} />
       </div>
-      {(brandCopy?.welcome_title || brandCopy?.welcome_body) && (
-        <div data-brand-slot="brand.welcome" className="mt-6 rounded-xl text-center">
-          {brandCopy.welcome_title && <p className="m-0 text-[14px] font-medium text-ink">{brandCopy.welcome_title}</p>}
-          {brandCopy.welcome_body && (
-            <p className="m-0 mt-1 whitespace-pre-line text-[14px] text-mute">{brandCopy.welcome_body}</p>
-          )}
-        </div>
-      )}
-      {workspaceSuggestions.length > 0 && (
-        <section aria-label={t.brand.workspaceSuggestions} className="mt-5">
-          <h2 className="m-0 mb-2 text-xs font-medium uppercase tracking-wide text-mute">{t.brand.workspaceSuggestions}</h2>
-          <div className="flex flex-wrap gap-2">
-            {workspaceSuggestions.map((s) => (
-              <ThreadPrimitive.Suggestion key={s} prompt={s} send={false} asChild>
-                <button
-                  type="button"
-                  className="rounded-full border border-line bg-raised px-3 py-1.5 text-left text-[13px] text-body hover:bg-hover"
-                >
-                  {s}
-                </button>
-              </ThreadPrimitive.Suggestion>
-            ))}
-          </div>
-        </section>
-      )}
-      {suggestions.length > 0 && (
-        <section aria-label={t.agents.suggestions} className="mt-6 grid gap-2 sm:mt-8 sm:grid-cols-2 sm:gap-2.5">
-          {suggestions.map((s) => (
-            <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send asChild>
-              <button
-                type="button"
-                className="rounded-xl border border-line bg-raised px-4 py-3 text-left text-[14px] leading-snug text-body transition-colors hover:border-accent/40 hover:bg-hover"
-              >
+      {pills.length > 0 && (
+        <section aria-label={t.agents.suggestions} className="hz-pills">
+          {pills.map((s) => (
+            <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
+              <button type="button" className="hz-pill">
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -269,24 +245,36 @@ function EmptyThread({ agent, canPickAgent, onChangeAgent, requestedMissing }: T
 
 // ---- messages -----------------------------------------------------------------
 
-const UserText: TextMessagePartComponent = ({ text }) => <>{text}</>;
+/** User text, with a leading "> quote" shown as the passage it replies to. */
+const UserText: TextMessagePartComponent = ({ text }) => {
+  const lines = text.split("\n");
+  let n = 0;
+  while (n < lines.length && lines[n].startsWith("> ")) n++;
+  if (!n) return <>{text}</>;
+  return (
+    <>
+      <span className="hz-bubble-quote">{lines.slice(0, n).map((l) => l.slice(2)).join("\n")}</span>
+      {lines.slice(n).join("\n").replace(/^\n+/, "")}
+    </>
+  );
+};
 
 function BranchPicker() {
   return (
-    <BranchPickerPrimitive.Root hideWhenSingleBranch className="inline-flex items-center gap-0.5 text-xs text-mute">
+    <BranchPickerPrimitive.Root hideWhenSingleBranch className="hz-branch">
       <BranchPickerPrimitive.Previous asChild>
-        <IconButton label={t.chat.previous} className="!h-7 !w-7">
-          <ChevronLeft size={15} aria-hidden />
+        <IconButton label={t.chat.previous} className="!h-7 !w-6">
+          <ChevronLeft size={14} aria-hidden />
         </IconButton>
       </BranchPickerPrimitive.Previous>
-      <span className="min-w-[2.6rem] text-center tabular-nums" data-testid="branch-count">
+      <span className="tabular-nums" data-testid="branch-count">
         <BranchPickerPrimitive.Number />
         {t.chat.branchSeparator}
         <BranchPickerPrimitive.Count />
       </span>
       <BranchPickerPrimitive.Next asChild>
-        <IconButton label={t.chat.next} className="!h-7 !w-7">
-          <ChevronRight size={15} aria-hidden />
+        <IconButton label={t.chat.next} className="!h-7 !w-6">
+          <ChevronRight size={14} aria-hidden />
         </IconButton>
       </BranchPickerPrimitive.Next>
     </BranchPickerPrimitive.Root>
@@ -297,8 +285,8 @@ function CopyAction() {
   const copied = useAuiState((s) => s.message.isCopied);
   return (
     <ActionBarPrimitive.Copy asChild copiedDuration={1600}>
-      <IconButton label={copied ? t.copied : t.chat.copyMessage} className="!h-7 !w-7">
-        {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+      <IconButton label={copied ? t.copied : t.chat.copyMessage}>
+        {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
       </IconButton>
     </ActionBarPrimitive.Copy>
   );
@@ -309,9 +297,10 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
     s.message.content.some((p) => p.type === "text" && (p as { text: string }).text.trim() !== ""),
   );
   const isLast = useAuiState((s) => s.message.isLast);
+  const del = useDelete();
   return (
     <MessagePrimitive.Root
-      className="hz-message flex flex-col items-end gap-1 pb-1 pt-4"
+      className="hz-message hz-user"
       data-last={isLast}
       data-role="user"
       aria-label={t.chat.userLabel}
@@ -321,24 +310,29 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
         <MessagePrimitive.Attachments>{({ attachment }) => <MessageAttachment attachment={attachment} />}</MessagePrimitive.Attachments>
       </div>
       {hasText && (
-        <div className="hz-user-bubble max-w-[min(85%,640px)]" data-testid="user-text">
+        <div className="hz-user-bubble" data-testid="user-text">
           <MessagePrimitive.Parts components={{ Text: UserText }} />
         </div>
       )}
-      <div className="flex min-h-7 items-center gap-0.5">
+      <div className="hz-bar is-user">
         <BranchPicker />
-        <ActionBarPrimitive.Root hideWhenRunning className="hz-actions flex items-center gap-0.5">
+        <ActionBarPrimitive.Root hideWhenRunning className="hz-actions">
+          <CopyAction />
           {!readOnly && (
             <ActionBarPrimitive.Edit asChild>
-              <IconButton label={t.chat.edit} className="!h-7 !w-7">
-                <Pencil size={14} aria-hidden />
+              <IconButton label={t.chat.edit}>
+                <Pencil size={15} aria-hidden />
               </IconButton>
             </ActionBarPrimitive.Edit>
           )}
-          <CopyAction />
-          {!readOnly && <DeleteAction />}
+          {!readOnly && del.available && (
+            <IconButton label={t.chat.deleteMessage} onClick={del.open} data-testid="delete-message">
+              <Trash2 size={15} aria-hidden />
+            </IconButton>
+          )}
         </ActionBarPrimitive.Root>
       </div>
+      {del.dialog}
       {!readOnly && isLast && <RespondAction />}
       <ContextNote />
     </MessagePrimitive.Root>
@@ -348,12 +342,8 @@ function UserMessage({ readOnly }: { readOnly?: boolean }) {
 const Working: EmptyMessagePartComponent = ({ status }) => {
   if (status.type !== "running") return null;
   return (
-    <div className="hz-working py-1" data-testid="working">
-      <span className="hz-dots" aria-hidden>
-        <span />
-        <span />
-        <span />
-      </span>
+    <div className="hz-working" data-testid="working">
+      <span className="hz-spin-dot" aria-hidden />
       <span>{t.chat.working}</span>
     </div>
   );
@@ -364,8 +354,8 @@ function MessageStatusNote({ readOnly }: { readOnly?: boolean }) {
   if (!status || status.type !== "incomplete") return null;
   if (status.reason === "cancelled")
     return (
-      <div className="mt-1 flex items-center gap-2">
-        <p className="m-0 text-[13px] italic text-mute" data-testid="stopped">
+      <div className="mt-1.5 flex items-center gap-2">
+        <p className="m-0 text-[12px] text-mute" data-testid="stopped">
           {t.chat.stopped}
         </p>
         {!readOnly && <ContinueAction />}
@@ -380,7 +370,7 @@ function MessageStatusNote({ readOnly }: { readOnly?: boolean }) {
       action={
         readOnly ? undefined : (
           <ActionBarPrimitive.Reload asChild>
-            <Button size="sm" icon={<RefreshCw size={14} aria-hidden />}>
+            <Button size="sm" icon={<RefreshCw size={13} aria-hidden />}>
               {t.retry}
             </Button>
           </ActionBarPrimitive.Reload>
@@ -396,61 +386,100 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
   const isLast = useAuiState((s) => s.message.isLast);
   const running = useAuiState((s) => s.message.role === "assistant" && s.message.status.type === "running");
   const hasContent = useAuiState((s) => s.message.content.length > 0);
+  const speaking = useAuiState((s) => s.message.speech != null);
+  const value = useFeed();
+  const del = useDelete();
   const watermark = useApp().branding.manifest?.presentation.response_watermark;
+  const canRead = !!value?.features?.chat_read_aloud;
   return (
     <MessagePrimitive.Root
-      className="hz-message flex gap-3 pb-3 pt-2"
+      className="hz-message hz-assistant"
       data-last={isLast}
       data-role="assistant"
       aria-label={t.chat.assistantLabel(displayName(agent.name))}
       aria-busy={running || undefined}
       role="article"
     >
-      <div className="hidden pt-0.5 sm:block">
-        <AgentAvatar name={agent.name} src={agent.avatar_url} size={24} />
+      <div className="hz-assistant-avatar">
+        <AgentAvatar name={agent.name} src={agent.avatar_url} size={22} />
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <MessagePrimitive.Parts
           components={{
             Text: MarkdownText,
             Reasoning,
             tools: { Fallback: ToolEntry },
+            ToolGroup,
             Empty: Working,
           }}
         />
-        {running && hasContent && (
-          <span className="hz-dots mt-1 inline-flex" aria-hidden data-testid="streaming">
-            <span />
-            <span />
-            <span />
-          </span>
-        )}
+        {running && hasContent && <span className="hz-caret" aria-hidden data-testid="streaming" />}
         <MessageStatusNote readOnly={readOnly} />
         <ContextNote />
         {!readOnly && isLast && !running && <FollowUps />}
-        <div className="-ml-1.5 mt-1 flex min-h-7 items-center gap-0.5">
+        <div className="hz-bar">
           <BranchPicker />
-          <ActionBarPrimitive.Root hideWhenRunning className="hz-actions flex items-center gap-0.5">
+          <ActionBarPrimitive.Root hideWhenRunning className="hz-actions">
             <CopyAction />
             {!readOnly && (
               <ActionBarPrimitive.Reload asChild>
-                <IconButton label={t.chat.regenerate} className="!h-7 !w-7">
-                  <RefreshCw size={14} aria-hidden />
+                <IconButton label={t.chat.regenerate}>
+                  <RefreshCw size={15} aria-hidden />
                 </IconButton>
               </ActionBarPrimitive.Reload>
             )}
-            {!readOnly && (
-              <ActionBarPrimitive.Edit asChild>
-                <IconButton label={t.chat.editAnswer} className="!h-7 !w-7">
-                  <Pencil size={14} aria-hidden />
-                </IconButton>
-              </ActionBarPrimitive.Edit>
-            )}
-            {!readOnly && <ReadAloud />}
             {!readOnly && <FeedbackActions />}
             {!readOnly && <CompareAction />}
             {!readOnly && <CombineAction />}
-            {!readOnly && <DeleteAction />}
+            {speaking && (
+              <ActionBarPrimitive.StopSpeaking asChild>
+                <IconButton label={t.chat.readAloudStop} data-testid="read-aloud-stop">
+                  <VolumeX size={15} aria-hidden />
+                </IconButton>
+              </ActionBarPrimitive.StopSpeaking>
+            )}
+            <Menu.Root modal={false}>
+              <Menu.Trigger asChild>
+                <IconButton label={t.chat.messageActions} tooltip={false} data-testid="message-more">
+                  <MoreHorizontal size={15} aria-hidden />
+                </IconButton>
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Content className="hz-menu w-[210px]" side="top" align="start" sideOffset={4}>
+                  {!readOnly && (
+                    <ActionBarPrimitive.Edit asChild>
+                      <Menu.Item className="hz-menu-item">
+                        <Pencil size={15} aria-hidden />
+                        {t.chat.editAnswer}
+                      </Menu.Item>
+                    </ActionBarPrimitive.Edit>
+                  )}
+                  {!readOnly && canRead && !speaking && (
+                    <ActionBarPrimitive.Speak asChild>
+                      <Menu.Item className="hz-menu-item" data-testid="read-aloud">
+                        <Volume2 size={15} aria-hidden />
+                        {t.chat.readAloud}
+                      </Menu.Item>
+                    </ActionBarPrimitive.Speak>
+                  )}
+                  <ActionBarPrimitive.ExportMarkdown asChild>
+                    <Menu.Item className="hz-menu-item">
+                      <Download size={15} aria-hidden />
+                      {t.chat.exportMarkdown}
+                    </Menu.Item>
+                  </ActionBarPrimitive.ExportMarkdown>
+                  {!readOnly && del.available && (
+                    <>
+                      <Menu.Separator className="hz-menu-sep" />
+                      <Menu.Item className="hz-menu-item danger" onSelect={del.open} data-testid="delete-message">
+                        <Trash2 size={15} aria-hidden />
+                        {t.chat.deleteMessage}
+                      </Menu.Item>
+                    </>
+                  )}
+                </Menu.Content>
+              </Menu.Portal>
+            </Menu.Root>
           </ActionBarPrimitive.Root>
           <ModelLabel />
           {watermark && !running && (
@@ -460,6 +489,7 @@ function AssistantMessage({ agent, readOnly }: { agent: Agent; readOnly?: boolea
           )}
         </div>
       </div>
+      {del.dialog}
     </MessagePrimitive.Root>
   );
 }
@@ -480,15 +510,15 @@ function EditComposer() {
   const role = useAuiState((s) => s.message.role);
   return (
     <MessagePrimitive.Root className={cx("flex py-3", role === "user" ? "justify-end" : "justify-start")} data-role={`${role}-editing`}>
-      <ComposerPrimitive.Root className="w-full max-w-[min(90%,640px)] rounded-2xl border border-accent/60 bg-raised p-2">
+      <ComposerPrimitive.Root className="hz-composer is-edit">
         <EditAttachments />
         <ComposerPrimitive.Input
           autoFocus
           submitMode="enter"
           aria-label={t.chat.edit}
-          className="block max-h-72 min-h-[44px] w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none"
+          className="hz-composer-input"
         />
-        <div className="flex justify-end gap-2 px-1 pb-0.5 pt-1">
+        <div className="flex justify-end gap-1.5 pt-1">
           <ComposerPrimitive.Cancel asChild>
             <Button size="sm" variant="ghost">
               {t.chat.editCancel}
@@ -512,36 +542,13 @@ function EditComposer() {
 
 // ---- composer -----------------------------------------------------------------
 
-/** Let this turn use the runtime's own web search (shown only when the
- * deployment allows it and the person holds the grant). */
-function WebSearchToggle() {
-  const value = useFeed();
-  const [on, setOn] = useState(false);
-  if (!value?.features?.web_search) return null;
-  return (
-    <IconButton
-      label={on ? t.chat.webSearchOn : t.chat.webSearchOff}
-      size="lg"
-      aria-pressed={on}
-      className={cx("!h-9 !w-9", on && "!bg-accent/15 !text-accent")}
-      onClick={() => {
-        setOn(!on);
-        value.feed.webSearch = !on;
-      }}
-    >
-      <Globe size={18} aria-hidden />
-    </IconButton>
-  );
-}
-
 type MyFile = { file_id: string; name: string; mime_type: string; size_bytes: number; state: string; created_at: number };
 
 /** Attach a file you uploaded before (here or in another conversation): a new
  * reference to the same bytes, no upload. Lists only files you can read. */
-function ReuseFile() {
+function ReuseFile({ open, onOpenChange: setOpen, children }: { open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   const aui = useAui();
   const value = useFeed();
-  const [open, setOpen] = useState(false);
   const [items, setItems] = useState<MyFile[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
@@ -551,7 +558,7 @@ function ReuseFile() {
       .then((out) => setItems(out.items.filter((f) => f.state === "ready")))
       .catch(() => setItems([]));
   }, [open, value?.apiBase]);
-  if (!value?.ensureConversation) return null;
+  if (!value?.ensureConversation) return <>{children}</>;
   const pick = async (f: MyFile) => {
     setBusy(f.file_id);
     try {
@@ -570,16 +577,12 @@ function ReuseFile() {
   };
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <IconButton label={t.chat.reuseFile} size="lg" className="!h-9 !w-9">
-          <FolderOpen size={18} aria-hidden />
-        </IconButton>
-      </Popover.Trigger>
+      <Popover.Anchor asChild>{children}</Popover.Anchor>
       <Popover.Portal>
-        <Popover.Content className="hz-menu w-72" side="top" align="start" sideOffset={6}>
-          <div className="px-2 pb-1 pt-1.5 text-[12px] font-semibold text-mute">{t.chat.reuseTitle}</div>
-          {items === null && <div className="px-2 py-2 text-[13px] text-mute">{t.loading}</div>}
-          {items?.length === 0 && <div className="px-2 py-2 text-[13px] text-mute">{t.chat.reuseEmpty}</div>}
+        <Popover.Content className="hz-menu w-72" side="top" align="start" sideOffset={8} aria-label={t.chat.reuseTitle}>
+          <div className="hz-menu-label">{t.chat.reuseTitle}</div>
+          {items === null && <div className="px-2 py-2 text-[12.5px] text-mute">{t.loading}</div>}
+          {items?.length === 0 && <div className="px-2 py-2 text-[12.5px] text-mute">{t.chat.reuseEmpty}</div>}
           <div className="max-h-64 overflow-auto">
             {items?.map((f) => (
               <button key={f.file_id} type="button" className="hz-menu-item w-full" disabled={!!busy} onClick={() => void pick(f)}>
@@ -595,8 +598,61 @@ function ReuseFile() {
   );
 }
 
+/** The + menu: upload, reuse a file, a saved prompt, and web search for this chat. */
+function PlusMenu({ disabled, web, onWeb }: { disabled: boolean; web: boolean | null; onWeb: (on: boolean) => void }) {
+  const value = useFeed();
+  const [panel, setPanel] = useState<null | "reuse" | "prompt">(null);
+  const trigger = (
+    <Menu.Trigger asChild disabled={disabled}>
+      <IconButton label={t.chat.addMenu} size="lg" tooltip={false} data-testid="composer-add">
+        <Plus size={19} aria-hidden />
+      </IconButton>
+    </Menu.Trigger>
+  );
+  return (
+    <Menu.Root modal={false}>
+      <PromptPicker open={panel === "prompt"} onOpenChange={(o) => setPanel(o ? "prompt" : null)}>
+        <ReuseFile open={panel === "reuse"} onOpenChange={(o) => setPanel(o ? "reuse" : null)}>
+          {trigger}
+        </ReuseFile>
+      </PromptPicker>
+      <Menu.Portal>
+        <Menu.Content className="hz-menu w-[250px]" side="top" align="start" sideOffset={8}>
+          <ComposerPrimitive.AddAttachment asChild>
+            <Menu.Item className="hz-menu-item" aria-label={t.chat.attach}>
+              <Upload size={15} aria-hidden />
+              {t.chat.upload}
+            </Menu.Item>
+          </ComposerPrimitive.AddAttachment>
+          {value?.ensureConversation && (
+            <Menu.Item className="hz-menu-item" onSelect={() => setPanel("reuse")}>
+              <FolderOpen size={15} aria-hidden />
+              {t.chat.reuseShort}
+            </Menu.Item>
+          )}
+          <Menu.Item className="hz-menu-item" onSelect={() => setPanel("prompt")}>
+            <Braces size={15} aria-hidden />
+            {t.chat.promptShort}
+          </Menu.Item>
+          {web !== null && (
+            <>
+              <Menu.Separator className="hz-menu-sep" />
+              <Menu.CheckboxItem className="hz-menu-item" checked={web} onCheckedChange={(c) => onWeb(c === true)} onSelect={(e) => e.preventDefault()}>
+                <Globe size={15} aria-hidden />
+                <span className="flex-1">{t.chat.webSearch}</span>
+                <span className={cx("hz-switch", web && "is-on")} aria-hidden />
+              </Menu.CheckboxItem>
+            </>
+          )}
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }: ThreadProps) {
   const aui = useAui();
+  const value = useFeed();
   const submitMode = useSubmitMode();
   // Shared text (the install share target) lands in the draft, never sent.
   useEffect(() => {
@@ -607,27 +663,61 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
     history.replaceState(null, "", location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const running = useIsLocalRunActive();
+  const running = useAuiState((s) => s.thread.isRunning);
+  const hasDraft = useAuiState((s) => !s.composer.isEmpty);
   const hasAttachments = useAuiState((s) => s.composer.attachments.length > 0);
   const name = displayName(agent.name);
   const disabled = !!composerDisabledReason;
+  const [web, setWeb] = useState(false);
+  const webAllowed = !!value?.features?.web_search;
+  const setWebSearch = (on: boolean) => {
+    setWeb(on);
+    if (value) value.feed.webSearch = on;
+  };
 
   const stop = () => {
     if (isFollowing && onStopFollowed) onStopFollowed();
     else aui.thread().cancelRun();
   };
+  const queue = () => aui.composer().send({ steer: false });
+  const interrupt = () => {
+    aui.composer().send({ steer: true });
+    // The steered message goes next; stopping the reply lets it go now.
+    setTimeout(() => void value?.feed.cancel(false).catch(value.onError), 0);
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // While a reply streams, Enter does what the visible button says: queue.
+    if (running && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && submitMode === "enter") {
+      e.preventDefault();
+      if (hasDraft) queue();
+    }
+  };
 
   return (
-    <ComposerPrimitive.Root
-      className={cx(
-        "rounded-2xl border border-line bg-raised transition-colors focus-within:border-[color-mix(in_srgb,var(--hz-accent)_55%,var(--hz-line))]",
-        disabled && "opacity-70",
-      )}
-      data-testid="composer"
-    >
+    <ComposerPrimitive.Root className={cx("hz-composer", disabled && "is-disabled")} data-testid="composer">
+      <ComposerPrimitive.Quote className="hz-composer-quote">
+        <Quote size={13} aria-hidden className="flex-none text-mute" />
+        <ComposerPrimitive.QuoteText className="min-w-0 flex-1 truncate" />
+        <ComposerPrimitive.QuoteDismiss asChild>
+          <IconButton label={t.chat.removeQuote} className="!h-6 !w-6" tooltip={false}>
+            <X size={13} aria-hidden />
+          </IconButton>
+        </ComposerPrimitive.QuoteDismiss>
+      </ComposerPrimitive.Quote>
       {hasAttachments && (
-        <div className="flex gap-2 overflow-x-auto px-3 pt-3" aria-label={t.chat.attach}>
+        <div className="flex gap-2 overflow-x-auto px-1 pb-1 pt-0.5" aria-label={t.chat.attach}>
           <ComposerPrimitive.Attachments>{({ attachment }) => <ComposerAttachment attachment={attachment} />}</ComposerPrimitive.Attachments>
+        </div>
+      )}
+      {web && (
+        <div className="flex flex-wrap gap-1.5 px-1">
+          <span className="hz-status-chip">
+            <Globe size={12} aria-hidden />
+            {t.chat.webOnChip}
+            <button type="button" aria-label={t.chat.webSearchOn} onClick={() => setWebSearch(false)}>
+              <X size={12} aria-hidden />
+            </button>
+          </span>
         </div>
       )}
       <ComposerPrimitive.Input
@@ -638,42 +728,63 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
         placeholder={disabled ? composerDisabledReason! : t.chat.placeholder(name)}
         aria-label={t.chat.placeholder(name)}
         maxRows={12}
-        className="block max-h-[40dvh] min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-[14px] leading-relaxed text-ink outline-none placeholder:text-mute"
+        onKeyDown={onKeyDown}
+        className="hz-composer-input"
       />
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="hz-composer-tools flex min-w-0 flex-1 items-center gap-0.5">
-          <ComposerPrimitive.AddAttachment asChild disabled={disabled}>
-            <IconButton label={t.chat.attach} size="lg" className="!h-9 !w-9">
-              <Paperclip size={18} aria-hidden />
-            </IconButton>
-          </ComposerPrimitive.AddAttachment>
-          {!disabled && <ReuseFile />}
-          {!disabled && <PromptPicker />}
-          {!disabled && <WebSearchToggle />}
-          {!disabled && <ModelPicker />}
-          {!disabled && <Dictation />}
-        </div>
-        <div className="flex flex-none items-center gap-1.5">
-          {running && (
-            <IconButton
-              label={t.chat.stop}
-              onClick={stop}
-              className="!h-8 !w-8 !rounded-full !bg-ink !text-bg hover:!bg-ink/85"
-              data-testid="stop"
-            >
-              <Square size={12} fill="currentColor" aria-hidden />
-            </IconButton>
-          )}
+      <div className="hz-composer-bar">
+        <PlusMenu disabled={disabled} web={webAllowed ? web : null} onWeb={setWebSearch} />
+        {!disabled && <ModelPicker />}
+        <span className="flex-1" />
+        {!disabled && <Dictation />}
+        {running && hasDraft ? (
+          <>
+            <button type="button" className="hz-stop-ghost" onClick={stop} aria-label={t.chat.stop} data-testid="stop">
+              <Square size={10} fill="currentColor" aria-hidden />
+              {t.chat.stopShort}
+            </button>
+            <div className="hz-split">
+              <button type="button" onClick={queue} data-testid="send" aria-label={t.chat.queueSend}>
+                <ListOrdered size={14} aria-hidden />
+                {t.chat.queue}
+              </button>
+              <Menu.Root modal={false}>
+                <Menu.Trigger asChild>
+                  <button type="button" className="hz-split-more" aria-label={t.chat.queueOptions} data-testid="send-options">
+                    <ChevronDown size={14} aria-hidden />
+                  </button>
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Content className="hz-menu w-[280px]" side="top" align="end" sideOffset={8}>
+                    <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={queue}>
+                      <ListOrdered size={15} aria-hidden className="mt-0.5" />
+                      <span>
+                        {t.chat.queueAfter}
+                        <small>{t.chat.queueAfterHelp}</small>
+                      </span>
+                    </Menu.Item>
+                    <Menu.Item className="hz-menu-item !items-start !py-2" onSelect={interrupt} data-testid="interrupt">
+                      <CornerDownRight size={15} aria-hidden className="mt-0.5" />
+                      <span>
+                        {t.chat.interrupt}
+                        <small>{t.chat.interruptHelp}</small>
+                      </span>
+                    </Menu.Item>
+                  </Menu.Content>
+                </Menu.Portal>
+              </Menu.Root>
+            </div>
+          </>
+        ) : running ? (
+          <button type="button" className="hz-send" onClick={stop} aria-label={t.chat.stop} data-testid="stop">
+            <Square size={11} fill="currentColor" aria-hidden />
+          </button>
+        ) : (
           <ComposerPrimitive.Send asChild>
-            <IconButton
-              label={running ? t.chat.queueSend : t.chat.send}
-              className="!h-8 !w-8 !rounded-full !bg-accent !text-accent-ink hover:!bg-accent-hover disabled:!bg-sunken disabled:!text-mute disabled:!opacity-100"
-              data-testid="send"
-            >
-              <ArrowUp size={16} aria-hidden />
-            </IconButton>
+            <button type="button" className="hz-send" aria-label={t.chat.send} data-testid="send">
+              <ArrowUp size={17} aria-hidden />
+            </button>
           </ComposerPrimitive.Send>
-        </div>
+        )}
       </div>
     </ComposerPrimitive.Root>
   );
@@ -684,6 +795,7 @@ function Composer({ agent, onStopFollowed, isFollowing, composerDisabledReason }
 /** Follow-ups queued on this branch, in the order the server will send them. */
 function QueueList() {
   const value = useFeed();
+  const aui = useAui();
   if (!value) return null;
   const { feed, onError } = value;
   const items = [...feed.myQueue].sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "steer" ? -1 : 1));
@@ -692,45 +804,91 @@ function QueueList() {
   const text = (parts?: { type: string; text?: string }[]) =>
     (parts ?? []).filter((p) => p.type === "text").map((p) => p.text ?? "").join(" ");
   return (
-    <section className="hz-queue mb-2 rounded-xl border border-line bg-raised px-3 py-2" aria-label={t.chat.queueTitle(items.length)} data-testid="queue">
-      <div className="mb-1 flex items-center gap-2 text-[12px] text-mute">
+    <section className="hz-queue" aria-label={t.chat.queueTitle(items.length)} data-testid="queue">
+      <div className="hz-queue-head">
         <ListOrdered size={13} aria-hidden />
-        <span className="flex-1">{paused ? t.chat.queuePaused : t.chat.queueTitle(items.length)}</span>
+        <span>{t.chat.queueCount(items.length)}</span>
         {paused && (
-          <Button size="sm" variant="ghost" icon={<Play size={12} aria-hidden />} onClick={() => void feed.queueControl("resume").catch(onError)}>
-            {t.chat.queueResume}
-          </Button>
+          <>
+            <span className="text-warning">· {t.chat.queuePausedShort}</span>
+            <button type="button" className="hz-link-btn" onClick={() => void feed.queueControl("resume").catch(onError)}>
+              {t.chat.queueResume}
+            </button>
+          </>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void feed.queueControl("clear").catch(onError)}>
-          {t.chat.queueClear}
-        </Button>
-      </div>
-      <ol className="m-0 list-none space-y-1 p-0">
-        {items.map((item) => (
-          <li key={item.id} className="flex items-center gap-2 text-[13px]" data-testid="queue-item" data-state={item.state}>
-            <span className="min-w-0 flex-1 truncate text-ink">{text(item.content as { type: string; text?: string }[])}</span>
-            {item.state !== "queued" && item.state !== "paused" && (
-              <span className="text-[12px] text-mute">{t.chat.queueBlocked(item.reason || item.state)}</span>
-            )}
-            {feed.activeRun && item.lane !== "steer" && (
-              <IconButton
-                label={t.chat.queueSendNext}
-                className="!h-6 !w-6"
-                onClick={() =>
-                  void feed
-                    .patchQueue(item, { action: "move", lane: "steer" })
-                    .then(() => feed.cancel(false))
-                    .catch(onError)
-                }
-              >
-                <ArrowUp size={12} aria-hidden />
-              </IconButton>
-            )}
-            <IconButton label={t.chat.queueRemove} className="!h-6 !w-6" onClick={() => void feed.patchQueue(item, { action: "remove" }).catch(onError)}>
-              <X size={12} aria-hidden />
+        <span className="flex-1" />
+        <Menu.Root modal={false}>
+          <Menu.Trigger asChild>
+            <IconButton label={t.chat.queueMenu} className="!h-6 !w-6" tooltip={false}>
+              <MoreHorizontal size={14} aria-hidden />
             </IconButton>
-          </li>
-        ))}
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Content className="hz-menu w-[190px]" side="top" align="end" sideOffset={4}>
+              {paused ? (
+                <Menu.Item className="hz-menu-item" onSelect={() => void feed.queueControl("resume").catch(onError)}>
+                  <Play size={14} aria-hidden />
+                  {t.chat.queueResume}
+                </Menu.Item>
+              ) : (
+                <Menu.Item className="hz-menu-item" onSelect={() => void feed.queueControl("pause").catch(onError)}>
+                  <Pause size={14} aria-hidden />
+                  {t.chat.queuePause}
+                </Menu.Item>
+              )}
+              <Menu.Item className="hz-menu-item danger" onSelect={() => void feed.queueControl("clear").catch(onError)}>
+                <Trash2 size={14} aria-hidden />
+                {t.chat.queueClear}
+              </Menu.Item>
+            </Menu.Content>
+          </Menu.Portal>
+        </Menu.Root>
+      </div>
+      <ol className="m-0 list-none p-0">
+        {items.map((item, i) => {
+          const body = text(item.content as { type: string; text?: string }[]);
+          return (
+            <li key={item.id} className="hz-queue-row" data-testid="queue-item" data-state={item.state}>
+              <span className="w-4 flex-none text-[11.5px] tabular-nums text-mute">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{body}</span>
+              {item.lane === "steer" && <span className="hz-tag">{t.chat.queueNext}</span>}
+              {item.state !== "queued" && item.state !== "paused" && (
+                <span className="text-[11.5px] text-mute">{t.chat.queueBlocked(item.reason || item.state)}</span>
+              )}
+              <span className="hz-queue-acts">
+                <IconButton
+                  label={t.chat.queueEdit}
+                  className="!h-6 !w-6"
+                  onClick={() =>
+                    void feed
+                      .patchQueue(item, { action: "remove" })
+                      .then(() => aui.composer().setText(body))
+                      .catch(onError)
+                  }
+                >
+                  <Pencil size={12} aria-hidden />
+                </IconButton>
+                {feed.activeRun && item.lane !== "steer" && (
+                  <IconButton
+                    label={t.chat.queueSendNext}
+                    className="!h-6 !w-6"
+                    onClick={() =>
+                      void feed
+                        .patchQueue(item, { action: "move", lane: "steer" })
+                        .then(() => feed.cancel(false))
+                        .catch(onError)
+                    }
+                  >
+                    <CornerDownRight size={12} aria-hidden />
+                  </IconButton>
+                )}
+                <IconButton label={t.chat.queueRemove} className="!h-6 !w-6" onClick={() => void feed.patchQueue(item, { action: "remove" }).catch(onError)}>
+                  <X size={12} aria-hidden />
+                </IconButton>
+              </span>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -794,21 +952,23 @@ function ContinueAction() {
   );
 }
 
-/** Delete goes through a server preview the person confirms first. */
-function DeleteAction() {
+/** Delete goes through a server preview the person confirms first. The dialog
+ * lives beside the message, so it outlives the menu that opened it. */
+function useDelete(): { available: boolean; open: () => void; dialog: ReactNode } {
   const value = useFeed();
   const aui = useAui();
   const id = useAuiState((s) => s.message.id);
   const [preview, setPreview] = useState<DeletionPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!value || id.startsWith("pending") || !value.feed.snapshot?.permissions.write) return null;
+  const available = !!value && !id.startsWith("pending") && !!value.feed.snapshot?.permissions.write;
   const open = () => {
+    if (!value) return;
     setError(null);
     void value.feed.deletionPreview(id).then(setPreview).catch(value.onError);
   };
   const confirm = async () => {
-    if (!preview) return;
+    if (!preview || !value) return;
     setBusy(true);
     value.confirmedDeletes.set(id, preview);
     try {
@@ -820,27 +980,23 @@ function DeleteAction() {
       setBusy(false);
     }
   };
-  return (
-    <>
-      <IconButton label={t.chat.deleteMessage} className="!h-7 !w-7" onClick={open} data-testid="delete-message">
-        <Trash2 size={14} aria-hidden />
-      </IconButton>
-      <ConfirmDialog
-        open={!!preview}
-        onOpenChange={(o) => !busy && !o && setPreview(null)}
-        title={t.chat.deletePreviewTitle}
-        body={
-          preview
-            ? t.chat.deletePreviewBody(preview.removed.length - 1, Object.keys(preview.reparented).length, preview.shares.length + (preview.snapshot_links?.length ?? 0))
-            : ""
-        }
-        confirmLabel={t.chat.deleteConfirm}
-        onConfirm={() => void confirm()}
-        busy={busy}
-        error={error}
-      />
-    </>
-  );
+  const dialog = available ? (
+    <ConfirmDialog
+      open={!!preview}
+      onOpenChange={(o) => !busy && !o && setPreview(null)}
+      title={t.chat.deletePreviewTitle}
+      body={
+        preview
+          ? t.chat.deletePreviewBody(preview.removed.length - 1, Object.keys(preview.reparented).length, preview.shares.length + (preview.snapshot_links?.length ?? 0))
+          : ""
+      }
+      confirmLabel={t.chat.deleteConfirm}
+      onConfirm={() => void confirm()}
+      busy={busy}
+      error={error}
+    />
+  ) : null;
+  return { available, open, dialog };
 }
 
 /** A message whose earlier context was deleted says so. */
@@ -887,20 +1043,20 @@ function FeedbackActions() {
     <>
       <IconButton
         label={t.chat.feedbackGood}
-        className={cx("!h-7 !w-7", mine?.rating === "positive" && "!text-accent")}
+        aria-pressed={mine?.rating === "positive"}
         onClick={() => void save("positive")}
         data-testid="feedback-positive"
       >
-        <ThumbsUp size={14} aria-hidden />
+        <ThumbsUp size={15} aria-hidden />
       </IconButton>
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger asChild>
-          <IconButton label={t.chat.feedbackBad} className={cx("!h-7 !w-7", mine?.rating === "negative" && "!text-accent")} data-testid="feedback-negative">
-            <ThumbsDown size={14} aria-hidden />
+          <IconButton label={t.chat.feedbackBad} aria-pressed={mine?.rating === "negative"} data-testid="feedback-negative">
+            <ThumbsDown size={15} aria-hidden />
           </IconButton>
         </Popover.Trigger>
         <Popover.Portal>
-          <Popover.Content className="hz-menu w-72 space-y-2 !p-3" sideOffset={6} align="start">
+          <Popover.Content className="hz-menu w-72 space-y-2 !p-3" sideOffset={6} align="start" aria-label={t.chat.feedbackWhat}>
             <p className="m-0 text-[13px] font-medium text-ink">{t.chat.feedbackWhat}</p>
             <div className="flex flex-wrap gap-1.5">
               {REASONS.map((r) => (
@@ -981,7 +1137,7 @@ function FollowUps() {
   }, [key, conv, enabled]);
   if (!items.length) return null;
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5" aria-label={t.chat.followUps} data-testid="followups">
+    <div className="mt-3 flex flex-wrap gap-1.5" aria-label={t.chat.followUps} data-testid="followups">
       {items.map((item) => (
         <button
           key={item.prompt}
@@ -1000,7 +1156,7 @@ function FollowUps() {
   );
 }
 
-// ---- voice (browser speech, HUB-77) -------------------------------------------------
+// ---- voice (browser speech) ---------------------------------------------------------
 
 /** Speak into the draft. The browser transcribes; nothing is sent. */
 function Dictation() {
@@ -1009,35 +1165,15 @@ function Dictation() {
   if (!value?.features?.chat_dictation) return null;
   return listening ? (
     <ComposerPrimitive.StopDictation asChild>
-      <IconButton label={t.chat.dictateStop} size="lg" className="!h-9 !w-9 !text-accent" data-testid="dictate-stop">
+      <IconButton label={t.chat.dictateStop} size="lg" className="!text-accent" data-testid="dictate-stop">
         <MicOff size={17} aria-hidden />
       </IconButton>
     </ComposerPrimitive.StopDictation>
   ) : (
     <ComposerPrimitive.Dictate asChild>
-      <IconButton label={t.chat.dictate} size="lg" className="!h-9 !w-9" data-testid="dictate">
+      <IconButton label={t.chat.dictate} size="lg" data-testid="dictate">
         <Mic size={17} aria-hidden />
       </IconButton>
     </ComposerPrimitive.Dictate>
-  );
-}
-
-/** Read this answer aloud with the browser's own voice. */
-function ReadAloud() {
-  const value = useFeed();
-  const speaking = useAuiState((s) => s.message.speech != null);
-  if (!value?.features?.chat_read_aloud) return null;
-  return speaking ? (
-    <ActionBarPrimitive.StopSpeaking asChild>
-      <IconButton label={t.chat.readAloudStop} className="!h-7 !w-7" data-testid="read-aloud-stop">
-        <VolumeX size={14} aria-hidden />
-      </IconButton>
-    </ActionBarPrimitive.StopSpeaking>
-  ) : (
-    <ActionBarPrimitive.Speak asChild>
-      <IconButton label={t.chat.readAloud} className="!h-7 !w-7" data-testid="read-aloud">
-        <Volume2 size={14} aria-hidden />
-      </IconButton>
-    </ActionBarPrimitive.Speak>
   );
 }

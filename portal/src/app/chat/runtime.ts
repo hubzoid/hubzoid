@@ -75,12 +75,16 @@ function newKey() {
 }
 
 /** A message's typed text and attachment parts as server content. */
-export function contentOf(message: Pick<AppendMessage, "content" | "attachments">): ServerPart[] {
+export function contentOf(message: Pick<AppendMessage, "content" | "attachments"> & { metadata?: unknown }): ServerPart[] {
   const parts: ServerPart[] = [];
-  const text = message.content
+  const body = message.content
     .filter((p) => p.type === "text")
     .map((p) => (p as { text: string }).text)
     .join("\n\n");
+  // A passage quoted from an answer (assistant-ui's selection toolbar) leads
+  // the message as a Markdown quote, so the agent sees what it refers to.
+  const quote = (message.metadata as { custom?: { quote?: { text?: string } } } | undefined)?.custom?.quote?.text?.trim();
+  const text = quote ? `${quote.split("\n").map((l) => `> ${l}`).join("\n")}\n\n${body}` : body;
   if (text) parts.push({ type: "text", text });
   for (const attachment of message.attachments ?? []) {
     const ref = fileRefOf(attachment);

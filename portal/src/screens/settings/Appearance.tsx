@@ -4,7 +4,7 @@
 // that goes through the same review. The CLI (`hubzoid branding ...`) and
 // the API do the same things with the same checks.
 import { useCallback, useEffect, useState } from "react";
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Space, Table, Tag, Typography, Upload } from "antd";
+import { Alert, App, Button, Card, Form, Input, Modal, Space, Table, Tag, Typography, Upload } from "antd";
 import { control, ControlError, newKey } from "../../lib/controlApi";
 import { refreshTheme } from "../../lib/presentation";
 
@@ -53,7 +53,9 @@ const when = (ts: number) => new Date(ts * 1000).toLocaleString();
 function stateTag(state: string) {
   const color =
     state === "valid" ? "blue" : state === "reviewed" ? "green" : state === "activated" ? "default" : state === "rejected" ? "red" : "orange";
-  const label = state === "draft" ? "needs fixes" : state;
+  const label =
+    state === "draft" ? "Needs changes" : state === "valid" ? "Ready for review" : state === "reviewed" ? "Approved"
+      : state === "activated" ? "Published" : state === "rejected" ? "Rejected" : state;
   return <Tag color={color}>{label}</Tag>;
 }
 
@@ -160,19 +162,16 @@ export function Appearance() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Descriptions size="small" bordered column={{ xs: 1, md: 3 }}>
-        <Descriptions.Item label="Active brand">
-          {active ? <Text strong>{active.configuration.identity?.name}</Text> : <Text type="secondary">Hubzoid default (nothing activated)</Text>}
-        </Descriptions.Item>
-        <Descriptions.Item label="Generation">{active?.generation ?? 0}</Descriptions.Item>
-        <Descriptions.Item label="Digest">
-          {active ? <Text code>{active.digest.slice(0, 19)}…</Text> : "—"}
-        </Descriptions.Item>
-        <Descriptions.Item label="Authored in" span={3}>
-          <Text code>branding.yaml</Text> and <Text code>branding/</Text> in the deployment folder. Agents keep their own
-          avatars; choosing an agent never changes this brand.
-        </Descriptions.Item>
-      </Descriptions>
+      <Text type="secondary">
+        {active ? (
+          <>
+            Published brand: <Text strong>{active.configuration.identity?.name}</Text>. Changes are drafts until someone
+            approves and publishes them.
+          </>
+        ) : (
+          "Using Hubzoid branding. Edit the brand to set your name, logo and colours."
+        )}
+      </Text>
 
       {error && (
         <Alert
@@ -189,7 +188,7 @@ export function Appearance() {
           Edit brand
         </Button>
         <Button onClick={() => void fromSource()} loading={busy === "source"}>
-          New draft from branding.yaml
+          Import brand settings
         </Button>
         {active && (
           <Button href={`/api/branding/revisions/${active.revision}/export`}>Export active files</Button>
@@ -202,9 +201,9 @@ export function Appearance() {
           rowKey="id"
           dataSource={drafts}
           pagination={false}
-          locale={{ emptyText: "No drafts. Edit the brand or create a draft from branding.yaml." }}
+          locale={{ emptyText: "No drafts yet." }}
           columns={[
-            { title: "Brand", render: (_, d) => d.configuration.identity?.name },
+            { title: "Draft", render: (_, d) => d.configuration.identity?.name },
             {
               title: "State",
               render: (_, d) => (
@@ -214,9 +213,6 @@ export function Appearance() {
                 </>
               ),
             },
-            { title: "Revision", dataIndex: "revision" },
-            { title: "Digest", render: (_, d) => <Text code>{d.digest.slice(7, 19)}</Text> },
-            { title: "From", dataIndex: "source" },
             { title: "Updated", render: (_, d) => when(d.updated_at) },
             {
               title: "",
@@ -240,7 +236,7 @@ export function Appearance() {
                   )}
                   {d.state === "valid" && (
                     <Button size="small" onClick={() => void approve(d)} loading={busy === `review:${d.id}`}>
-                      Approve this digest
+                      Approve draft
                     </Button>
                   )}
                   {d.state === "reviewed" && d.review?.decision === "approve" && (
@@ -248,8 +244,12 @@ export function Appearance() {
                       Activate
                     </Button>
                   )}
-                  {d.state === "draft" && (
-                    <Text type="warning">{d.validation.problems.map((p) => p.message).join(" ")}</Text>
+                  {d.state === "draft" && d.validation.problems.length > 0 && (
+                    <Button size="small" type="text" onClick={() => void showDiff(d)}>
+                      <Text type="warning">
+                        {d.validation.problems.length === 1 ? "1 issue" : `${d.validation.problems.length} issues`}
+                      </Text>
+                    </Button>
                   )}
                 </Space>
               ),
@@ -258,7 +258,7 @@ export function Appearance() {
         />
       </Card>
 
-      <Card title="Activation history" size="small">
+      <Card title="Published before" size="small">
         <Table<HistoryItem>
           size="small"
           rowKey="activation_id"
@@ -266,16 +266,14 @@ export function Appearance() {
           pagination={false}
           locale={{ emptyText: "Nothing activated yet." }}
           columns={[
-            { title: "Generation", dataIndex: "generation" },
             { title: "Brand", dataIndex: "name" },
-            { title: "Kind", dataIndex: "kind", render: (k: string) => <Tag>{k}</Tag> },
             { title: "By", dataIndex: "actor" },
             { title: "When", render: (_, h) => when(h.created_at) },
             {
               title: "",
               render: (_, h) =>
                 h.to_revision === active?.revision ? (
-                  <Tag color="green">active</Tag>
+                  <Tag color="green">Published</Tag>
                 ) : (
                   <Button size="small" onClick={() => void rollback(h)} loading={busy === `rollback:${h.activation_id}`}>
                     Roll back to this
@@ -290,7 +288,7 @@ export function Appearance() {
         {diff && (
           <Space direction="vertical" style={{ width: "100%" }}>
             <Paragraph type="secondary" style={{ margin: 0 }}>
-              Draft revision {diff.draft.revision}, digest <Text code>{diff.draft.digest}</Text>
+              Approving covers exactly these changes. Editing again needs a new approval.
             </Paragraph>
             <Table<Change>
               size="small"
