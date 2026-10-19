@@ -30,6 +30,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 
 from . import graph as g
 from .common import db, error
@@ -55,11 +56,16 @@ async def read_json(request: Request, limit: int = SMALL_BODY_LIMIT) -> dict:
     if declared and declared.isdigit() and int(declared) > limit:
         raise error(413, "request_too_large", "That request is too large.")
     chunks, size = [], 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > limit:
-            raise error(413, "request_too_large", "That request is too large.")
-        chunks.append(chunk)
+    try:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise error(413, "request_too_large", "That request is too large.")
+            chunks.append(chunk)
+    except ClientDisconnect:
+        # The browser left (a page change, a closed tab): nobody reads the
+        # answer, so end quietly rather than log a server error.
+        raise error(400, "client_disconnected", "The request ended before its body arrived.") from None
     raw = b"".join(chunks)
     if not raw:
         return {}
@@ -149,16 +155,35 @@ class Orchestrator:
         from . import titles
         from .history import build_prompt
 
+        if plan.kind == "send":
+            # Writing instead of answering (sent now or from the queue): the
+            # waiting requests on this branch are cancelled, so the new
+            # message steers the agent.
+            from ..hitl import service as hitl_service
+
+            try:
+                await db(hitl_service.cancel_waiting_in_branch, self.ctx.hub_dir, self.ctx.hub, plan.branch_id,
+                         reason="The person wrote a new message instead.")
+            except Exception:  # noqa: BLE001 - never blocks the reply
+                log.warning("chat: could not cancel waiting requests on %s", plan.branch_id, exc_info=True)
         try:
             conv = await db(self.ctx.store.get_conversation, plan.conversation_id)
             path = await db(self.engine.path, plan.conversation_id, plan.prompt_message_id)
             key = chat_key(conv)
             turns_prompt = await db(build_prompt, self.ctx.hub_dir, key, path)
+            from .. import personal_memory
+
+            notes = await db(personal_memory.prompt_block, self.ctx.hub_dir, plan.actor_id)
+            if notes:  # the person's own notes, read at the start of the native session
+                turns_prompt = f"{notes}\n\n{turns_prompt}"
             if plan.extra_turns:
                 from .. import server
 
                 turns_prompt = "\n\n".join(x for x in (turns_prompt, server._flatten_messages(plan.extra_turns)) if x)
-            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email)
+            # The credential that started the reply goes with it: B's per-call check
+            # stops the run when that session or key is revoked.
+            user = SimpleNamespace(id=plan.actor_id, email=plan.actor_email,
+                                   credential=plan.credential, credential_id=plan.credential_id)
             from .. import _request_ctx
             from .history import user_text
 
@@ -177,6 +202,10 @@ class Orchestrator:
                     slot.model = opts["model"]
             if opts.get("tool_allowlist") is not None:
                 slot.tool_allowlist = list(opts["tool_allowlist"])
+            # Who this reply acts for, for approvals and questions (hubzoid.hitl).
+            slot.hitl = {"account_id": plan.actor_id, "email": plan.actor_email, "present": True,
+                         "origin": "chat", "conversation_id": plan.conversation_id, "branch_id": plan.branch_id,
+                         "message_id": plan.message_id, "run_id": plan.run_id}
             run = self.ctx.runs.start(conversation_id=plan.conversation_id, chat_key=key,
                                       message_id=plan.message_id, prompt=turns_prompt, user=user,
                                       title=conv.get("title") if plan.title_from else None,
@@ -184,6 +213,7 @@ class Orchestrator:
                                       prefix=plan.prefix, on_update=self._update, on_finish=self._finished,
                                       session_slot=slot,
                                       guard=lambda: self.engine.run_state(plan.run_id, plan.branch_id, plan.fence))
+            run.builder.waiting_source = slot
         except Exception as exc:  # noqa: BLE001 - the admission is released, never left running
             log.exception("chat: could not start run %s", plan.run_id)
             await db(self.ctx.store.update_message, plan.message_id, status="error",
@@ -229,9 +259,12 @@ class Orchestrator:
             policy = service_for(self.ctx.hub_dir).active().digest
         except Exception:  # noqa: BLE001 - unknown policy: never reuse a session
             policy = str(time.time())
+        from .. import personal_memory
+
         return canonical.digest({"actor": actor_id, "agent": self.ctx.model_label, "runtime": type(rt).__name__,
                                  "model": str(getattr(rt, "name", "")),
-                                 "instructions": canonical.digest_bytes(instructions), "policy": policy})
+                                 "instructions": canonical.digest_bytes(instructions), "policy": policy,
+                                 "notes": personal_memory.revision(self.ctx.hub_dir, actor_id) if actor_id else 0})
 
     def _update(self, run) -> None:
         now = time.monotonic()
@@ -273,6 +306,42 @@ class Orchestrator:
             log.exception("chat: could not record the end of run %s", run.run_id)
             return
         await self.launch(nxt)
+        if status == "complete" and not run.fenced_out:
+            await self.continue_settled(run.message_id)
+
+    # -- approvals and questions ------------------------------------------------------
+    async def continue_request(self, request: dict) -> bool:
+        """A person answered a request this chat made: continue the branch with
+        their answer, once. Waits for the reply that asked to end first."""
+        from ..hitl import service
+
+        if request.get("origin") != "chat" or not request.get("conversation_id") \
+                or request.get("status") not in ("approved", "rejected", "answered"):
+            return False
+        if not await db(service.mark_continued, self.ctx.hub_dir, request["id"]):
+            return False
+        parts = [{"type": "text", "text": service.visible_outcome(request) or "OK"},
+                 {"type": "request_outcome", "request_id": request["id"],
+                  "for_model": service.outcome_text(request)}]
+        try:
+            plan = await db(self.engine.continue_after_request, request["conversation_id"],
+                            actor_id=request["requester_id"], branch_id=request["branch_id"],
+                            after_message_id=request["message_id"], parts=parts)
+        except self.engine.Busy:
+            await db(_unclaim, self.ctx.hub_dir, request["id"])  # retried when that reply ends
+            return False
+        except Exception:  # noqa: BLE001 - the decision stands; recovery tries again
+            log.exception("chat: could not continue after request %s", request["id"])
+            await db(_unclaim, self.ctx.hub_dir, request["id"])
+            return False
+        await self.launch(plan)
+        return plan is not None
+
+    async def continue_settled(self, message_id: str) -> None:
+        from ..hitl import service
+
+        for req in await db(_settled_waiting, self.ctx.hub_dir, self.ctx.hub, message_id):
+            await self.continue_request(req)
 
     def _ensure_heartbeat(self) -> None:
         if self._beat is None or self._beat.done():
@@ -380,6 +449,7 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
         if body.get("kind") in ("send", "respond", "revise", "regenerate", "continue", "synthesize", "compare"):
             await call(admission, actor)
         out, plan = await call(engine.submit, cid, actor, body, key=key)
+
         await orch.launch(plan)
         if body.get("kind") == "fork" and not out.replayed and out.status == 201:
             await db(_copy_files, ctx.hub_dir, out.body)
@@ -497,6 +567,29 @@ def mount(app: FastAPI, ctx) -> Orchestrator:
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     return orch
+
+
+def _unclaim(hub_dir: Path, request_id: str) -> None:
+    import sqlalchemy as sa
+
+    from ..hitl import service, store
+
+    with service.engine(hub_dir).begin() as conn:
+        conn.execute(store.requests.update().where(store.requests.c.id == request_id).values(continued=False))
+
+
+def _settled_waiting(hub_dir: Path, hub: str, message_id: str) -> list[dict]:
+    """Requests asked by this reply that were decided but not yet continued."""
+    import sqlalchemy as sa
+
+    from ..hitl import service, store
+
+    r = store.requests.c
+    with service.engine(hub_dir).connect() as conn:
+        rows = conn.execute(sa.select(store.requests).where(
+            r.hub_id == hub, r.message_id == message_id, r.continued.is_(False),
+            r.status.in_(("approved", "rejected", "answered")))).fetchall()
+    return [store.row_dict(x) for x in rows]
 
 
 def _sse(payload: dict, sequence: int | None) -> bytes:

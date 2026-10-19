@@ -1,9 +1,8 @@
-"""The management API over HTTP: accounts, change requests, `/me`, and callers
-holding an Open WebUI API key (`Authorization: Bearer sk-...`).
+"""The management API over HTTP: accounts, change requests and `/me`.
 
 Identity comes from the production resolver (its local-development override,
-which skips only the Open WebUI cookie check) or from a stubbed API-key lookup.
-The chat app is the fake Open WebUI from test_access_service.
+which skips only the session check). The account directory is the in-memory
+one from test_access_service.
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hubzoid.access import accounts as accountlib
-from hubzoid.access import owui_api_keys
 from hubzoid.access.service import Actor
 from hubzoid.portal import build_router
 
@@ -25,13 +23,11 @@ from tests.test_access_service import (  # noqa: F401 — shared fixture and hel
 )
 
 PASSWORD = "Correct-Horse-7-battery"
-KEYS = {"sk-root": ROOT, "sk-dele": DELEGATE, "sk-ann": "ann@x.org"}
 
 
 @pytest.fixture
 def api(dep, monkeypatch):
     monkeypatch.setattr(accountlib, "for_deployment", lambda *_a, **_k: dep.directory)
-    monkeypatch.setattr(owui_api_keys, "resolve_email", lambda _h, token: KEYS.get(token))
     monkeypatch.setenv("HUBZOID_PORTAL_DEV", "1")
     app = FastAPI()
     app.include_router(build_router(dep.hub_dir))
@@ -43,13 +39,7 @@ def api(dep, monkeypatch):
         client.headers.pop("authorization", None)
         return client
 
-    def key(token):
-        monkeypatch.setenv("HUBZOID_PORTAL_DEV_USER", "")
-        client.headers.pop("origin", None)
-        client.headers["authorization"] = f"Bearer {token}"
-        return client
-
-    dep.as_, dep.key, dep.client = as_, key, client
+    dep.as_, dep.client = as_, client
     return dep
 
 
@@ -122,30 +112,6 @@ def test_validation_errors_never_echo_the_password(api):
     r = client.post("/portal/api/accounts/ann@x.org/password", json={"password": PASSWORD, "x": 1})
     assert r.status_code == 422 and PASSWORD not in r.text
 
-
-def test_api_key_callers(api):
-    # A key holder acts as its owner, without an Origin header.
-    r = _create(api.key("sk-dele"), [("finance", "ledger")])
-    assert r.status_code == 200, r.text
-    assert api.key("sk-dele").get("/portal/api/me").json()["via"] == "api-key"
-    rows = api.gs.read_access_audit(10, subject="ann@x.org")
-    assert rows and all(r["surface"] == "api" and r["actor"] == DELEGATE for r in rows)
-    # The ceiling holds for key callers too.
-    r = api.key("sk-dele").post("/portal/api/access/grant", json=dict(
-        subject="ann@x.org", hub="finance", permission="payroll"))
-    assert r.status_code == 403
-    assert api.key("sk-unknown").get("/portal/api/me").status_code == 401
-    # Any other Authorization value (HTTP Basic from a proxy, a chat-app token)
-    # is ignored: the request is a cookie session as before, here with no user.
-    for value in ("Bearer not-an-sk-key", "Basic cm9vdDpwdw=="):
-        api.client.headers["authorization"] = value
-        assert api.client.get("/portal/api/me").status_code == 401
-    api.as_(DELEGATE).headers["authorization"] = "Basic cm9vdDpwdw=="
-    assert api.client.get("/portal/api/me").json()["via"] == "session"
-    # A valid key for someone who manages nothing opens nothing.
-    assert api.key("sk-ann").get("/portal/api/me").status_code == 403
-
-
 def test_org_admin_account_actions(api):
     uid = api.owui.add_user("bob@x.org", "Bob", role="pending")
     api.gs.upsert_identity(email="bob@x.org", owui_id=uid, pending=True)
@@ -178,10 +144,7 @@ def test_change_request_endpoints(api):
     assert api.as_(ROOT).get(f"/portal/api/change-requests/{rid}").status_code == 404
     view = api.as_(DELEGATE).get(f"/portal/api/change-requests/{rid}").json()
     assert view["status"] == "pending" and view["surface"] == "whatsapp"
-    # An API key cannot confirm; a cross-site page cannot either.
-    r = api.key("sk-dele").post(f"/portal/api/change-requests/{rid}/confirm",
-                                json={"plan_hash": view["plan_hash"]})
-    assert r.status_code == 403 and r.json()["code"] == "session_required"
+    # A cross-site page cannot confirm.
     r = api.as_(DELEGATE).post(f"/portal/api/change-requests/{rid}/confirm",
                                headers={"origin": "http://evil.example"},
                                json={"plan_hash": view["plan_hash"]})
@@ -215,22 +178,6 @@ def test_account_proposal_confirmed_with_password(api):
 
 
 # ---- Add user: existing accounts, Google sign-in only, partial results ----------------
-
-def _manifest_sign_in(api, **flags):
-    import json
-
-    pointer = json.loads((api.hub_dir / ".hubzoid" / "deployment.json").read_text())["manifest"]
-    data = json.loads(open(pointer).read())
-    data["sign_in"] = flags
-    open(pointer, "w").write(json.dumps(data))
-
-
-def test_me_reports_sign_in_modes(api):
-    assert api.as_(ROOT).get("/portal/api/me").json()["sign_in"] == {"password": True, "google": False}
-    _manifest_sign_in(api, google=True, merge_by_email=True, allowed_domains=["x.org"])
-    assert api.as_(DELEGATE).get("/portal/api/me").json()["sign_in"] == {
-        "password": True, "google": True, "google_domains": ["x.org"]}
-
 
 def test_account_search_is_gone(api):
     """Add user only creates new users; the existing-account picker and its
@@ -267,7 +214,7 @@ def test_duplicate_create_names_the_user_and_changes_nothing(api):
     assert body["subject"] == "ann@x.org" and "edit that user" in body["detail"]
     assert api.gs.revision() == before and not api.gs.can("ann@x.org", "finance", "ledger")
     assert api.gs.identity("ann@x.org") is None
-    assert not any(p.endswith("/update") for _, p, _ in api.owui.requests)
+    assert not any(op == "update" for op, _, _ in api.owui.requests)
 
 
 def test_partial_create_reports_the_account_and_retry_does_not_duplicate(api, monkeypatch):
@@ -290,33 +237,6 @@ def test_partial_create_reports_the_account_and_retry_does_not_duplicate(api, mo
         email="ann@x.org", grants=[dict(hub="finance", permission="ledger")]))
     assert r.status_code == 200 and api.gs.can("ann@x.org", "finance", "ledger")
     assert sum(u["email"] == "ann@x.org" for u in api.owui.users.values()) == 1
-
-
-def test_google_sign_in_only_over_http(api, caplog):
-    import logging
-
-    caplog.set_level(logging.DEBUG)
-    body = dict(email="ann@x.org", name="Ann", sign_in="google",
-                grants=[dict(hub="finance", permission="ledger")])
-    r = api.as_(DELEGATE).post("/portal/api/accounts", json=body)
-    assert r.status_code == 409 and r.json()["code"] == "google_unavailable"
-    assert api.owui.by_email("ann@x.org") is None
-    _manifest_sign_in(api, google=True, merge_by_email=True)
-    r = api.as_(DELEGATE).post("/portal/api/accounts", json={**body, "password": PASSWORD})
-    assert r.status_code == 422 and PASSWORD not in r.text
-    r = api.as_(DELEGATE).post("/portal/api/accounts", json=body)
-    assert r.status_code == 200, r.text
-    assert r.json()["sign_in"] == "google" and "password" not in r.json()
-    sent = next(b["password"] for m, p, b in api.owui.requests
-                if p == "/api/v1/auths/add" and b["email"] == "ann@x.org")
-    assert sent not in r.text and sent not in caplog.text
-    audit = json.dumps(api.gs.read_access_audit(50), default=str)
-    assert sent not in audit and "account_create" in audit
-    # A password-mode create still needs a password.
-    r = api.as_(ROOT).post("/portal/api/accounts", json=dict(
-        email="bob@x.org", name="Bob", grants=[]))
-    assert r.status_code == 422 and r.json()["code"] == "invalid_password"
-
 
 def test_phone_numbers_for_whatsapp_and_telegram(api):
     """Organization administrators record the number a person's WhatsApp and

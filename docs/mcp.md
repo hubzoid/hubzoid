@@ -26,7 +26,7 @@ The same shape Claude Desktop uses:
 ```
 
 **Timeouts.** One tool call may take 30 seconds on the OpenAI Agents SDK and
-Codex runtimes, for hub servers (stdio included) and Console connectors alike.
+Codex runtimes, for hub servers (stdio included) and connectors added in Settings alike.
 Change it for the hub with `HUBZOID_MCP_TIMEOUT=<seconds>`, or for one server
 with `"client_session_timeout_seconds": 120` in its entry, which wins. The
 Claude runtime times calls in the `claude` CLI (`MCP_TOOL_TIMEOUT`, in
@@ -75,7 +75,7 @@ credentials with the right scope before adding to `.mcp.json`.
 
 On `claude-local`, the agent sees only the MCP servers Hubzoid passes it: the
 hub's own tools, the servers in its `.mcp.json`, the shared browser, and the
-Console connectors the current person may use. It never loads the
+connectors (added in Settings) the current person may use. It never loads the
 connectors of the Claude account the box is signed in to (claude.ai Gmail,
 Drive, Slack and so on) or MCP servers from that account's user or project
 settings. `hub.call_llm` and the eval judge get no tools or servers at all.
@@ -97,13 +97,11 @@ credentials in the process list. Limits:
 - A secret written into a stdio server's `args` is still visible in that
   server's own process arguments. Pass secrets to stdio servers in `env`.
 
-## Connectors in the Console (both UI modes)
+## Connectors in Settings
 
-Remote MCP servers are added in the Console, in the web app mode and in Open
-WebUI mode alike, and Hubzoid holds each person's connection. Every chat turn
-and workflow run reaches the server as the person (or, for a Shared key, as the
-company account). Open WebUI's own MCP servers are not used: see
-[Open WebUI mode](#open-webui-mode).
+Remote MCP servers are added in Settings, and Hubzoid holds each person's
+connection. Every chat turn and workflow run reaches the server as the person
+(or, for a Shared key, as the company account).
 
 A connector is registered once for the deployment and offered in the agents
 that list it. Its capability `connector_<id>` exists only in those agents, and
@@ -125,9 +123,9 @@ URL. Those servers reach everyone who can use the agent. Local command servers
 stay in the file, because adding a command from a browser would let any
 administrator run it on the server.
 
-### Add a server (organization administrators, in the Console)
+### Add a server (organization administrators, in Settings)
 
-**Console → Agents → the agent → Connectors → Add connector** registers it and
+**Settings → Agents → the agent → Connectors → Add connector** registers it and
 offers it in that agent. It opens on a searchable list of popular remote MCP
 servers (Linear, Notion, Atlassian, Sentry, Stripe, GitHub, Gmail, Google
 Calendar, Drive, Docs, Sheets and others), each with its logo and how people
@@ -199,7 +197,7 @@ HUBZOID_CONNECTOR_PRIVATE_HOSTS=sso.corp.example.com,10.20.0.15
 
 Cloud metadata addresses (169.254.169.254 and the like) are never used, even
 when listed. Names are checked on the addresses they resolve to, and Hubzoid
-connects only to the addresses it checked. The Console test names a refused
+connects only to the addresses it checked. The **Test** button names a refused
 host. Each operation (discovery, a code exchange, a refresh) also has one
 overall time limit.
 
@@ -214,10 +212,8 @@ organization administrators see the tab but cannot change it.
 ### Connect (each person)
 
 From the link the agent sends (`connect_account`, the connection journey
-below), or from the connections page: **Settings, Connections** in the web
-app; in Open WebUI mode, **Connections** in the Hubzoid portal (the sidebar's
-"My workspace" link, or `/portal/connections`, which opens it).
-Before anything happens, the
+below), or from **Settings → My connections** (`/account/connections`; the
+older `/portal/connections` address opens it). Before anything happens, the
 link's page shows the account, the agent, the server's host and any scopes the
 connector requests (as Agno's consent page shows where credentials go). Both
 pages list each app with its status and the agents that use it for the
@@ -253,7 +249,7 @@ failure goes to the same place with `?error=<code>`.
   the provider refuses marks the connection **expired** and the person
   reconnects. A provider that cannot be reached marks it **error** and the next
   turn tries again.
-- **Per turn**, the same rules as Open WebUI mode: restricted surfaces only, an
+- **Per turn**: restricted surfaces only, an
   agent that offers the connector, `connector_<id>` in that agent, the allowed
   tools, never a server that would replace a hub MCP server. On every backend
   the tools are named `mcp__my_<id>__<tool>`.
@@ -280,38 +276,17 @@ failure goes to the same place with `?error=<code>`.
 - Provider-specific authorization parameters cannot be configured. Google is
   asked for offline access (`access_type=offline`, `prompt=consent`) on its own.
 
-## Open WebUI mode
+## Coming from Open WebUI (1.x)
 
-Since 1.2 Open WebUI mode (`HUBZOID_UI=openwebui`) uses the same Console
-connectors:
-
-- An administrator adds them in the Console. The Connectors tab is the same in
-  both modes. Open WebUI's admin role alone does not allow it: the Console's
-  organization administrators do.
-- A person connects from the agent's link or the portal's Connections tab. Both
-  check the Open WebUI session live and bind the connection to the person's
-  Open WebUI account id. A new account that reuses an email is a different
-  person and inherits nothing.
-- On each turn the bridge uses the account id from Open WebUI's forwarded
-  headers. Without it (`ENABLE_FORWARD_USER_INFO_HEADERS=false` on a gateway)
-  no connector reaches the turn, and the gateway warns at start.
-- The connector's OAuth return (`/oauth/connectors/<id>/callback`) goes to a
-  bridge through the edge, with the same fallbacks as `/portal`. Open WebUI's
-  own `/oauth/` routes are unchanged.
-- Open WebUI's External Tool Servers are not used. Their section of Open
-  WebUI's Settings > Integrations is hidden when Open WebUI is in English (in
-  other languages it still shows), and the edge refuses saves to them
-  (and to their OAuth client registration) with a message that points to the
-  Console. `OWUI_NATIVE_MCP` is ignored.
-- `hubzoid migrate openwebui` keeps each Open WebUI account id as the Hubzoid
-  account id, so connections carry over to the web app.
-
-Moving from Open WebUI's own MCP servers: see [UPGRADING.md](UPGRADING.md).
+`hubzoid migrate openwebui` keeps each Open WebUI account id as the Hubzoid
+account id, so connections made in 1.x carry over. Open WebUI's own External
+Tool Servers are not moved: add them as connectors in Settings. See
+[upgrading](UPGRADING.md#upgrading-to-20-open-webui-removed).
 
 ### Runtimes
 
 One per-turn source (`hubzoid/connectors/per_user.py`, reached through
-`hubzoid/owui_mcp.py`) feeds all three backends, with the same servers, rules
+`hubzoid/personal_mcp.py`) feeds all three backends, with the same servers, rules
 and allow-lists.
 
 | Backend | How the servers join a turn |
@@ -345,7 +320,7 @@ Rules that hold on all three:
 ### Connector capability (`connector_<id>`)
 
 A connector is used in a turn only when the caller holds `connector_<id>` in
-that agent. Grant it in the Console like any other capability, in the
+that agent. Grant it in Settings like any other capability, in the
 **Connectors** group of the Access drawer. If the access store cannot be read,
 no connector is used that turn.
 
@@ -359,9 +334,8 @@ WhatsApp gets a confirmation. Called with no app, `connect_account` lists what
 this person can connect in this agent, with each one's status.
 
 An app is connectable when a switched-on connector with that ID is offered in
-the agent (see [Connectors in the Console](#connectors-in-the-console-both-ui-modes)).
-The link page uses the chat app's sign-in (Hubzoid's, or Open WebUI's in Open
-WebUI mode), **Continue** starts Hubzoid's own authorization, and the provider
+the agent (see [Connectors in Settings](#connectors-in-settings)).
+The link page uses the web app's sign-in, **Continue** starts Hubzoid's own authorization, and the provider
 returns straight to the done page. A refused authorization ends the journey as
 not connected at once. A Shared key connector has nothing to connect, and the
 agent says so. The optional Composio integration (`CONNECTIONS`,
@@ -379,9 +353,9 @@ HUBZOID_CONNECT_JOURNEY=false
 The agent otherwise has a `connect_account(app, reconnect=false)` tool on every
 backend. A link also needs:
 
-- the `connector_<id>` capability for the person (a Console grant);
+- the `connector_<id>` capability for the person (a grant in Settings);
 - the surface in `HUBZOID_RESTRICTED_SURFACES` (add `whatsapp` for WhatsApp);
-- `WEBUI_URL` or `HUBZOID_PUBLIC_URL` set to the public address people open
+- `HUBZOID_PUBLIC_URL` set to the public address people open
   (the link is `<public>/portal/connect/<id>`).
 
 ### What happens
@@ -417,7 +391,7 @@ Other outcomes: **Cancel** on the page, an **expired** link (the TTL), and a
   their next message.
 - The person needs a chat-app account and signs in to it in the browser that
   opens the link, on a phone too.
-- There is no per-chat on/off switch for a connector in Open WebUI. A granted,
+- There is no per-chat on/off switch for a connector. A granted,
   connected connector is available in every chat with that agent.
 
 ### Check it with real accounts (manual)
@@ -425,15 +399,15 @@ Other outcomes: **Cancel** on the page, an **expired** link (the TTL), and a
 Unit tests use fakes. Before relying on a provider, run once on a test
 deployment:
 
-1. Add the provider's MCP server in the Console (for example ID `gmail`). If it
-   needs a client created in advance, register the redirect URI the Console's
+1. Add the provider's MCP server in Settings (for example ID `gmail`). If it
+   needs a client created in advance, register the redirect URI its
    **Test** shows: `<public>/oauth/connectors/gmail/callback`.
 2. Grant **Connect Gmail**. Add `whatsapp` to `HUBZOID_RESTRICTED_SURFACES` to
    try it there.
 3. Ask "connect my Gmail". Open the link while signed in as another account
    (expect 403), then as the right one. Approve at the provider.
-4. Expect the done page to say connected, and the portal's Connections tab (or
-   Settings, Connections) to list it as connected.
+4. Expect the done page to say connected, and Settings → My connections to
+   list it as connected.
 5. Ask something that needs Gmail on each backend (`claude-local`, an OpenAI
    model, `codex-local`). The tool must answer with that person's mailbox.
 

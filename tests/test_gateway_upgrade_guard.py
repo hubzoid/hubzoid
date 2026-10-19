@@ -71,8 +71,7 @@ def _legacy_gateway(tmp_path: Path, *, owui_database_url: str | None = None):
         con.close()
     deployment.save(gw / "deployment.json",
                     hubs=[dict(key="sales", name="sales", path=str(hub), model_id="sales", slug="sales")],
-                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}",
-                    owui_url="http://127.0.0.1:43080", owui_db=str(webui_db),
+                    operational_url=f"sqlite:///{gw / 'hubzoid-operational.db'}", owui_db=str(webui_db),
                     owui_database_url=owui_database_url or f"sqlite:///{webui_db}",
                     owui_database_schema="owui" if owui_database_url else None)
     return hub, gw
@@ -82,6 +81,24 @@ def _gateway(hub: Path, gw: Path, **env):
     with clean_process_env(**env):
         return CliRunner().invoke(cli.app, ["gateway", str(hub), "--port", "4167", "--data-dir", str(gw)],
                                   catch_exceptions=False)
+
+
+def _add_account(gw: Path) -> None:
+    con = sqlite3.connect(gw / "hubzoid-operational.db")
+    con.execute("INSERT INTO hz_users (id, email, role, status, source, created_at, updated_at) "
+                "VALUES ('p1', 'person@example.org', 'admin', 'active', 'migrated', 0, 0)")
+    con.commit()
+    con.close()
+
+
+def _mark_migrated(gw: Path) -> None:
+    """What `hubzoid migrate openwebui --apply` leaves in the operational database."""
+    from hubzoid.migrate_openwebui import MARKER_PREFIX
+
+    con = sqlite3.connect(gw / "hubzoid-operational.db")
+    con.execute("INSERT INTO hz_meta (k, v) VALUES (?, '{}')", (MARKER_PREFIX + "abc",))
+    con.commit()
+    con.close()
 
 
 def _open_the_app_in_local_mode(hub: Path) -> None:
@@ -99,11 +116,7 @@ def test_the_local_owner_does_not_count_as_a_migrated_account(tmp_path):
     result = _gateway(hub, gw, HUBZOID_AUTH="true")
     assert result.exit_code == 1 and "hubzoid migrate openwebui" in result.output
     # Once a person has a Hubzoid account, sign-in mode starts.
-    con = sqlite3.connect(gw / "hubzoid-operational.db")
-    con.execute("INSERT INTO hz_users (id, email, role, status, source, created_at, updated_at) "
-                "VALUES ('p1', 'person@example.org', 'admin', 'active', 'migrated', 0, 0)")
-    con.commit()
-    con.close()
+    _add_account(gw)
     assert _gateway(hub, gw, HUBZOID_AUTH="true").exit_code == 0
 
 
@@ -113,7 +126,7 @@ def test_a_local_start_keeps_where_open_webui_kept_its_data(tmp_path):
     hub, gw = _legacy_gateway(tmp_path)
     assert _gateway(hub, gw).exit_code == 0
     manifest = json.loads((gw / "deployment.json").read_text())
-    assert manifest["ui_mode"] == "hubzoid" and manifest["owui_url"] == ""   # no Open WebUI runs
+    assert manifest["ui_mode"] == "hubzoid" and "owui_url" not in manifest   # no Open WebUI runs
     assert manifest["owui_db"] == str(gw / "webui.db")
     assert manifest["owui_database_url"] == f"sqlite:///{gw / 'webui.db'}"
     # The documented next step finds the gateway's Open WebUI database.
@@ -141,4 +154,28 @@ def test_a_new_web_app_gateway_records_no_open_webui(tmp_path):
     assert _gateway(hub, gw, HUBZOID_AUTH="true").exit_code == 0
     assert _gateway(hub, gw, HUBZOID_AUTH="true").exit_code == 0
     manifest = json.loads((gw / "deployment.json").read_text())
-    assert manifest["owui_db"] == "" and manifest["owui_database_url"] is None
+    assert "owui_db" not in manifest and "owui_database_url" not in manifest
+
+
+def test_a_gateway_recorded_in_open_webui_mode_starts_only_after_the_move(tmp_path):
+    hub, gw = _legacy_gateway(tmp_path)
+    manifest = json.loads((gw / "deployment.json").read_text())
+    (gw / "deployment.json").write_text(json.dumps(dict(manifest, ui_mode="openwebui")))
+    result = _gateway(hub, gw)                          # even with sign-in off
+    assert result.exit_code == 1 and "migrate openwebui --apply" in result.output
+    assert json.loads((gw / "deployment.json").read_text())["ui_mode"] == "openwebui"  # not rewritten
+    _add_account(gw)                                    # an account made by hand is not a move
+    assert _gateway(hub, gw, HUBZOID_AUTH="true").exit_code == 1
+    _mark_migrated(gw)
+    assert _gateway(hub, gw).exit_code == 0
+    assert json.loads((gw / "deployment.json").read_text())["ui_mode"] == "hubzoid"
+
+
+def test_a_web_app_gateway_with_leftover_open_webui_data_keeps_starting(tmp_path):
+    # 1.1 to 1.3 ran the web app beside an old webui.db: its accounts are real.
+    hub, gw = _legacy_gateway(tmp_path)
+    manifest = json.loads((gw / "deployment.json").read_text())
+    (gw / "deployment.json").write_text(json.dumps(dict(manifest, ui_mode="hubzoid")))
+    assert _gateway(hub, gw).exit_code == 0             # creates the operational store
+    _add_account(gw)
+    assert _gateway(hub, gw, HUBZOID_AUTH="true").exit_code == 0

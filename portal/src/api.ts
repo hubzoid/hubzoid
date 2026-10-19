@@ -13,7 +13,7 @@ export type Me = {
    *  attaches a Google sign-in to an existing account by email. */
   sign_in?: SignInOptions;
   via?: "session" | "api-key";
-  /** True in the Hubzoid web app mode, false in Open WebUI mode. */
+  /** Always true since 2.0 (the web app owns sign-in and connections). */
   web_app?: boolean;
 };
 export type SignInOptions = {
@@ -22,7 +22,7 @@ export type SignInOptions = {
   /** Only these email domains may sign in with Google (absent: any). */
   google_domains?: string[];
 };
-export type SignIn = "password" | "google";
+export type SignIn = "password" | "google" | "directory";
 export type Hub = { key: string; name: string; path?: string; model_id?: string; can_chat?: boolean };
 export type Permission = {
   permission: string;
@@ -273,17 +273,10 @@ export type AuditRow = {
   reason?: string;
   surface?: string;
 };
-export type Sync = {
-  state: string;
-  models?: number;
-  updated?: number;
-  error?: string;
-};
 export type Overview = {
   hubs: number;
   people: number;
   grants: number;
-  visibility: Sync;
 };
 
 export type SummaryHub = {
@@ -673,8 +666,7 @@ export async function secretsRequest<T>(
 
 // ---- One-time sign-in links (Hubzoid accounts, the default mode) -------------
 // Add user and Reset password return a link for the person to set their own
-// password instead of a password typed here. Open WebUI mode
-// deployments keep passwords; there `sign_in.links` is absent.
+// password instead of a password typed here.
 
 export type LinkSignInOptions = SignInOptions & { links?: boolean };
 /** A one-time sign-in link: absolute, or a path on this site. Works once. */

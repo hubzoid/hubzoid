@@ -37,8 +37,10 @@ class ToolCall(RunEvent):
 class ToolResult(RunEvent):
     """A tool call finished. ``message`` is a short error text when ``ok`` is False.
 
-    Result payloads are deliberately not carried: the chat shows that a tool ran
-    and whether it failed, as 1.0.x did, not the raw data it returned.
+    Raw result payloads are deliberately not carried: the chat shows that a
+    tool ran and whether it failed, as 1.0.x did, not the raw data it returned.
+    The one exception is ``card``: a result the hub chose to show as a card,
+    already checked and bounded.
 
     ``legacy`` is what the runtime printed for this result in 1.0.x: nothing
     for a success on every runtime, the ``format_error`` line for a Claude tool
@@ -49,6 +51,10 @@ class ToolResult(RunEvent):
     name: str
     ok: bool = True
     message: str | None = None
+    #: The card this result shows (``hubzoid.apps.cards.envelope``): the checked
+    #: structured result, its text and the card's identity. None for any tool
+    #: without a card, which is every tool unless the hub configured one.
+    card: dict | None = None
 
 
 @dataclass(frozen=True)

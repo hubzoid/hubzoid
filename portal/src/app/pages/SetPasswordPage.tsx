@@ -55,7 +55,11 @@ export default function SetPasswordPage({ token: linkToken }: { token: string | 
     if (Object.keys(next).length) return;
     setBusy(true);
     try {
-      await post(`/api/auth/link/${enc(token)}`, { password }, { quiet401: true });
+      const res = await post<{ state?: string }>(`/api/auth/link/${enc(token)}`, { password }, { quiet401: true });
+      if (res?.state === "mfa_required" || res?.state === "mfa_setup") {
+        location.assign(`/auth?step=${res.state === "mfa_required" ? "code" : "setup"}`);
+        return;
+      }
       await app.refreshSession();
       navigate("/", { replace: true });
     } catch (err) {

@@ -109,9 +109,10 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
 
     @router.get("/hubs/{hub}/work-items")
     async def list_items(hub: str, state: str | None = None, workflow: str | None = None,
-                         cursor: float | None = None, limit: int = 50, actor=Depends(require_person)):
+                         cursor: float | None = None, limit: int = 50, mine: bool = False,
+                         actor=Depends(require_person)):
         return await _call(service.list_items, hub_for(actor, hub), actor.subject, state=state,
-                           workflow=workflow, before=cursor, limit=limit)
+                           workflow=workflow, before=cursor, limit=limit, mine=mine)
 
     @router.post("/hubs/{hub}/work-items")
     async def start(hub: str, request: Request, response: Response, body: StartBody,
@@ -235,3 +236,55 @@ def register_stations(router: APIRouter, require_person: Callable, hub_path: Cal
         if not any(h["id"] == doc_id and "title" in h for h in view["handoffs"]):
             raise HTTPException(404, detail={"code": "not_found", "message": "No such handoff here, or you can't see it."})
         return await _call(station_service.read_handoff, hub_dir, item_id, doc_id)
+
+
+class BudgetsBody(BaseModel):
+    yaml: str = Field(max_length=65536)
+    expected_revision: str | None = Field(default=None, max_length=32)
+
+
+class ReleaseBody(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+def register_budgets(router: APIRouter, require_person: Callable, hub_path: Callable[[Any, str], Path]) -> None:
+    """budgets.yaml and usage, per hub. Reading needs `workflows_view`;
+    changing limits or releasing a reservation needs `workflows_manage`."""
+    from .. import budgets
+
+    writer = _writer(require_person)
+
+    def hub_for(actor, hub: str, permission: str) -> Path:
+        try:
+            hub_dir = hub_path(actor, hub)
+        except KeyError:
+            raise HTTPException(404, detail={"code": "hub_not_found", "message": "There is no such hub here."})
+        if not (service._can(hub_dir, actor.subject, permission)
+                or service._can(hub_dir, actor.subject, "workflows_manage")):
+            raise HTTPException(403, detail={"code": "permission_denied",
+                                             "message": "Usage limits are for the hub's managers."})
+        return hub_dir
+
+    @router.get("/hubs/{hub}/budgets")
+    async def show(hub: str, actor=Depends(require_person)):
+        hub_dir = hub_for(actor, hub, "workflows_view")
+        out = await _call(budgets.status, hub_dir)
+        path = hub_dir / budgets.FILE
+        out["yaml"] = path.read_text(encoding="utf-8") if path.is_file() else ""
+        return out
+
+    @router.post("/hubs/{hub}/budgets/validate")
+    async def validate(hub: str, body: BudgetsBody, actor=Depends(require_person)):
+        hub_for(actor, hub, "workflows_view")
+        cfg = await _call(budgets.parse, body.yaml)
+        return {"valid": True, "revision": cfg.revision, "limits": cfg.to_dict()}
+
+    @router.put("/hubs/{hub}/budgets")
+    async def put(hub: str, body: BudgetsBody, actor=Depends(writer)):
+        return await _call(budgets.apply, hub_for(actor, hub, "workflows_manage"), body.yaml,
+                           expected_revision=body.expected_revision, actor=actor.subject)
+
+    @router.post("/hubs/{hub}/budgets/reservations/{reservation_id}/release")
+    async def release(hub: str, reservation_id: str, body: ReleaseBody, actor=Depends(writer)):
+        return await _call(budgets.release, hub_for(actor, hub, "workflows_manage"), reservation_id,
+                           actor.subject, reason=body.reason)

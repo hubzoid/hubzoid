@@ -144,7 +144,7 @@ def test_branding_through_the_edge(live):
         base = live["base"]
         assert httpx.get(base + "/api/branding", timeout=TIMEOUT).json() == {
             "name": "Acme", "logo_url": "/branding/logo.svg", "favicon_url": "/branding/logo.svg",
-            "custom_css_url": None}
+            "custom_css_url": None, "manifest": None}  # no published brand: the folder's files
         assert httpx.get(base + "/branding/logo.svg", timeout=TIMEOUT).content == b"<svg>acme</svg>"
         assert httpx.get(base + "/b/sales/branding/logo.png", timeout=TIMEOUT).content == b"sales-logo"
         hub = httpx.get(base + "/b/sales/api/branding", timeout=TIMEOUT).json()

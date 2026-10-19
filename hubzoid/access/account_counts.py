@@ -1,8 +1,7 @@
 # Hubzoid access management. Apache-2.0 licensed like the rest of the repository.
 """How many chat accounts a Console viewer is responsible for.
 
-The dashboard's account figure: distinct login accounts in Open WebUI's user
-directory, read through the existing read-only connection (`owui_db`). It is
+The dashboard's account figure: distinct Hubzoid login accounts. It is
 independent of any period, unlike the dashboard's active-users figure.
 
 Scope follows the People list:
@@ -25,9 +24,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, Protocol
 
-from sqlalchemy import text
 
-from . import owui_db
 from .identity import normalize
 from .store import EVERYONE
 
@@ -46,34 +43,20 @@ def _is_person(subject: str) -> bool:
 
 
 def _directory_accounts(hub_dir: Path) -> set[str] | None:
-    """Normalized emails of every login account, or None when unreadable.
-    Default mode reads Hubzoid's own accounts; Open WebUI mode, Open WebUI's."""
+    """Normalized emails of every Hubzoid login account, or None when unreadable."""
     from .. import appmode
 
-    if not appmode.is_openwebui(hub_dir):
-        try:
-            from ..auth import users
-
-            people = users.list_users(hub_dir)
-        except Exception:  # noqa: BLE001 — unknown, never 0
-            log.warning("account count: account store unreadable")
-            return None
-        # The local owner is not a person once sign-in is on.
-        local = not appmode.auth_enabled(hub_dir)
-        return {normalize(u["email"]) for u in people
-                if _is_person(normalize(u["email"])) and (local or u["source"] != "local")}
-    con = owui_db.connect_ro(hub_dir)
-    if con is None:
-        return None
     try:
-        try:
-            rows = con.execute(text('SELECT email FROM "user"')).fetchall()
-        finally:
-            con.close()
-    except Exception:  # noqa: BLE001 — driver text can hold a URL; never log it
-        log.warning("account count: Open WebUI user directory unreadable")
+        from ..auth import users
+
+        people = users.list_users(hub_dir)
+    except Exception:  # noqa: BLE001 — unknown, never 0
+        log.warning("account count: account store unreadable")
         return None
-    return {email for email in (normalize(r[0]) for r in rows) if _is_person(email)}
+    # The local owner is not a person once sign-in is on.
+    local = not appmode.auth_enabled(hub_dir)
+    return {normalize(u["email"]) for u in people
+            if _is_person(normalize(u["email"])) and (local or u["source"] != "local")}
 
 
 def _holders(hub_dir: Path, hubs: set[str]) -> set[str] | None:

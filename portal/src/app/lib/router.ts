@@ -57,7 +57,7 @@ export function safeRedirect(value: string | null | undefined, fallback = "/"): 
  * server's consent page at /mcp/..., the Console at /portal/...) gets them back.
  */
 export function isAppPath(path: string): boolean {
-  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$)/.test(path);
+  return /^\/(?:$|new(?:\/|$)|c\/|s\/|branding-preview\/|auth(?:\/|$)|account(?:\/|$)|sources(?:\/|$)|spaces(?:\/|$)|workspace$|settings$|requests$)/.test(path);
 }
 
 let leaveGuard: (() => boolean) | null = null;
@@ -101,11 +101,12 @@ export type Route =
   | { name: "conversation"; id: string }
   | { name: "share"; id: string }
   | { name: "brand-preview"; id: string }
-  | { name: "signin"; redirect: string; error: string | null }
+  | { name: "signin"; redirect: string; error: string | null; step: string | null }
   | { name: "set-password"; token: string | null }
   | { name: "account" }
   | { name: "sources" }
   | { name: "workspace" }
+  | { name: "requests" }
   | { name: "settings"; section: string | null }
   | { name: "connections"; connected: string | null; connector: string | null; error: string | null }
   | { name: "not-found" };
@@ -125,12 +126,14 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   if (parts[0] === "branding-preview" && parts[1] && parts.length === 2) return { name: "brand-preview", id: parts[1] };
   if (parts[0] === "auth") {
     if (parts.length === 1)
-      return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error") };
+      return { name: "signin", redirect: safeRedirect(search.get("redirect")), error: search.get("error"),
+               step: search.get("step") };
     if (parts[1] === "set-password" || parts[1] === "reset-password")
       return { name: "set-password", token: search.get("token") };
   }
   if (parts[0] === "sources" && parts.length === 1) return { name: "sources" };
   if (parts[0] === "workspace" && parts.length === 1) return { name: "workspace" };
+  if (parts[0] === "requests" && parts.length === 1) return { name: "requests" };
   if (parts[0] === "settings" && parts.length === 1) return { name: "settings", section: search.get("section") };
   if (parts[0] === "account") {
     if (parts.length === 1) return { name: "account" };
@@ -145,8 +148,9 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   return { name: "not-found" };
 }
 
-/** The sign-in URL that brings the person back here afterwards. */
-export function signInHref(current = location.pathname + location.search): string {
+/** The sign-in URL that brings the person back here afterwards, fragment
+ *  included: Settings sections (#/confirm/<id>, #/people) live there. */
+export function signInHref(current = location.pathname + location.search + location.hash): string {
   const redirect = safeRedirect(current);
   return redirect === "/" ? "/auth" : `/auth?redirect=${encodeURIComponent(redirect)}`;
 }

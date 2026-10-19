@@ -11,7 +11,7 @@
     "test": "node tests/journey.cjs && node tests/connectors.cjs && node tests/reports.cjs",
     "test:reports": "node tests/reports.cjs",
     "test:app:settings": "node tests/app-settings.cjs",
-    "test:app": "node --experimental-strip-types --no-warnings tests/app-stream.test.mts && node --experimental-strip-types --no-warnings tests/app-router.test.mts && node --experimental-strip-types --no-warnings tests/app-images.test.mts && node --experimental-strip-types --no-warnings tests/app-runtime.test.mts && node tests/app-journey.cjs",
+    "test:app": "node --experimental-strip-types --no-warnings tests/app-stream.test.mts && node --experimental-strip-types --no-warnings tests/app-router.test.mts && node --experimental-strip-types --no-warnings tests/app-images.test.mts && node --experimental-strip-types --no-warnings tests/app-runtime.test.mts && node tests/app-real-journey.cjs",
     "fixture:app": "node tests/app-fixture-server.cjs",
     "test:app:real": "node tests/app-real-journey.cjs"
   },

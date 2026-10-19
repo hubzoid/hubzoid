@@ -440,6 +440,17 @@ def test_view_hides_payloads_from_managers(hub_dir):
     assert service.list_items(hub_dir, "stranger@company.org")["items"] == []
 
 
+def test_my_work_lists_only_my_own_even_for_a_manager(hub_dir):
+    from hubzoid.access import store_for
+
+    lead = "lead@company.org"
+    store_for(hub_dir).grant(lead, "desk", "workflows_view")
+    service.admit(hub_dir, workflow="desk", key="theirs", requester=OWNER)
+    service.admit(hub_dir, workflow="desk", key="mine", requester=lead)
+    assert {i["logical_key"] for i in service.list_items(hub_dir, lead)["items"]} == {"theirs", "mine"}
+    assert [i["logical_key"] for i in service.list_items(hub_dir, lead, mine=True)["items"]] == ["mine"]
+
+
 def test_idempotency_keys(hub_dir):
     calls = []
 
@@ -498,6 +509,26 @@ def test_redaction_and_classes():
     assert tool_classes.classify("some_mcp_tool") == "external_write"
     with pytest.raises(ValueError):
         tool_classes.check("admin")
+
+
+def test_a_declared_class_survives_the_access_wrappers(hub_dir):
+    """Every runtime wraps every tool (access.apply); the copy must keep what the
+    tool declared, or a declared read becomes an external write."""
+    from agents import function_tool
+
+    from hubzoid import access, tool_classes
+
+    @function_tool
+    def lookup(q: str) -> str:
+        "Look something up."
+        return q
+
+    tool_classes.declare(lookup, "external_write", action="crm.update")
+    lookup._hz_source = "tools_local/lookup.py"
+    wrapped = access.apply(hub_dir, {"lookup": lookup})["lookup"]
+    assert wrapped is not lookup
+    assert tool_classes.classify(wrapped) == "external_write" and tool_classes.action_of(wrapped) == "crm.update"
+    assert wrapped._hz_source == "tools_local/lookup.py"
 
 
 
@@ -659,7 +690,7 @@ def test_cli_decisions_need_local_mode(hub_dir, monkeypatch):
     from hubzoid.work_items import cli as wi_cli
 
     assert wi_cli._decider(hub_dir, False) == OWNER
-    monkeypatch.setenv("WEBUI_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
     with pytest.raises(typer.Exit) as exited:
         wi_cli._decider(hub_dir, True)
     assert exited.value.exit_code == 3

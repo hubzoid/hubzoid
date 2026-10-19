@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 // One bundle for the Console (/portal/, hash routes) and the chat app (/, /c/*,
 // /s/*, /auth*, /account*). main.tsx lazy-loads whichever one the path asks
@@ -13,6 +14,12 @@ const bridge = 'http://localhost:8000'
 
 export default defineConfig({
   base: '/portal/',
+  // assistant-ui's card renderer loads cards through `safe-content-frame`,
+  // which would send them to a vendor host. Hubzoid's module keeps the same
+  // interface and uses the deployment's own sandbox origin (src/app/chat/cards).
+  resolve: {
+    alias: { 'safe-content-frame': fileURLToPath(new URL('./src/app/chat/cards/sandboxFrame.ts', import.meta.url)) },
+  },
   plugins: [react(), tailwindcss(), {
     name: 'bundled-font-licenses',
     generateBundle() {

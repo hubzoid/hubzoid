@@ -23,7 +23,6 @@ import {
   type BlockResult,
   type Hub,
   type Me,
-  type Overview,
   type Person,
   type SignInLink,
   usesSignInLinks,
@@ -84,7 +83,6 @@ export function PeopleScreen({
     "/people" +
       query({ q: search, status, role, agent, offset: (page - 1) * PAGE, limit: PAGE }),
   );
-  const overview = useData<Overview>("/overview");
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
   const agentName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
@@ -114,8 +112,8 @@ export function PeopleScreen({
             <Title level={1} style={{ fontSize: 28 }}>People</Title>
             <Paragraph type="secondary">
               {me.can_create_accounts
-                ? "Everyone with access to an agent you manage. Add user creates their sign-in and access in one step."
-                : "Everyone with access to an agent you manage. Accounts and sign-in live in the chat app; access is decided here."}
+                ? "Manage people and their agent access."
+                : "Manage access to your agents."}
             </Paragraph>
           </div>
           {(me.org_admin || me.can_create_accounts) && (
@@ -136,7 +134,6 @@ export function PeopleScreen({
           )}
         </div>
 
-        {overview.data && <SyncStatus overview={overview.data} me={me} onChanged={overview.reload} />}
 
         <div className="toolbar">
           <Input
@@ -316,80 +313,11 @@ export function PeopleScreen({
   );
 }
 
-/**
- * Chat-app visibility mirror. Enforcement never depends on it, but a failing
- * sync means people may not see (or still see) an agent in the chat list.
- */
-function SyncStatus({
-  overview,
-  me,
-  onChanged,
-}: {
-  overview: Overview;
-  me: Me;
-  onChanged: () => void;
-}) {
-  const { message } = App.useApp();
-  const [busy, setBusy] = useState(false);
-  const v = overview.visibility;
-  async function retry() {
-    setBusy(true);
-    try {
-      const r = await request<{ state: string; error?: string }>("/sync", {});
-      if (r.state === "error") message.warning(r.error || "Still not connected. Try again shortly.");
-      else message.success("Chat app visibility is in sync.");
-      onChanged();
-    } catch (e) {
-      message.error(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (v.state === "direct") return null;
-  if (v.state === "error")
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        title="Recent access changes haven’t reached the chat app yet"
-        description={
-          <>
-            Access is enforced regardless, but the agent list people see in the chat app may be out of date. Retry below after checking the chat connection.
-            {v.updated ? ` Last attempt ${relativeTime(v.updated)}.` : ""}
-          </>
-        }
-        action={
-          me.org_admin ? (
-            <Button size="small" loading={busy} onClick={() => void retry()}>
-              Try again now
-            </Button>
-          ) : undefined
-        }
-      />
-    );
-  if (v.state === "ok")
-    return (
-      <Text type="secondary" className="sync-note">
-        Chat app visibility in sync{v.updated ? ` (${relativeTime(v.updated)})` : ""}.
-      </Text>
-    );
-  return (
-    <Text type="secondary" className="sync-note">
-      Chat app visibility sync hasn’t run in this session{" "}
-      {me.org_admin && (
-        <Button type="link" size="small" loading={busy} onClick={() => void retry()}>
-          Run it now
-        </Button>
-      )}
-    </Text>
-  );
-}
-
 type AccountInfo = {
   subject: string;
   name: string | null;
   role: string | null;
-  sign_in?: "password" | "google" | null;
+  sign_in?: "password" | "google" | "directory" | null;
   /** "admin" | "user" when both halves agree; "console_only" | "chat_only" when not. */
   administrator?: string;
 };
@@ -460,6 +388,75 @@ function PersonDrawer({
     setShownLink(null);
     setTyped("");
     navigate("/people");
+  }
+
+  /** The account security actions live on the sign-in API (/api/people/...),
+   *  and resetting MFA asks the administrator to confirm it's them first. */
+  async function signInAction(action: "reset-mfa" | "revoke-credentials", question: string, done: string) {
+    if (!person?.owui_id) return;
+    const ok = await new Promise<boolean>((resolve) =>
+      modal.confirm({ title: "Are you sure?", content: question, okText: "Yes", onOk: () => resolve(true),
+                      onCancel: () => resolve(false) }));
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    const send = () => fetch(`/api/people/${encodeURIComponent(person.owui_id as string)}/${action}`, {
+      method: "POST", credentials: "same-origin", headers: { accept: "application/json" } });
+    try {
+      let r = await send();
+      if (r.status === 403) {
+        const body = await r.json().catch(() => ({}));
+        if (body?.detail?.code === "reauth_required") {
+          const proved = await confirmItsYou(body.detail.reauth ?? {});
+          if (!proved) return;
+          r = await send();
+        }
+      }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.detail?.message || `The server answered ${r.status}.`);
+      }
+      message.success(done);
+      data.reload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmItsYou(options: { password?: boolean; code?: boolean }): Promise<boolean> {
+    let password = "";
+    let code = "";
+    return await new Promise<boolean>((resolve) =>
+      modal.confirm({
+        title: "Confirm it's you",
+        okText: "Confirm",
+        content: (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Text type="secondary">For your security, confirm before changing someone's sign-in.</Text>
+            {options.password !== false && (
+              <Input.Password placeholder="Your password" autoFocus onChange={(e) => { password = e.target.value; }} />
+            )}
+            {options.code && (
+              <Input placeholder="Code from your authenticator app" inputMode="numeric" onChange={(e) => { code = e.target.value; }} />
+            )}
+          </Space>
+        ),
+        onOk: async () => {
+          const r = await fetch("/api/auth/reauth", {
+            method: "POST", credentials: "same-origin",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({ password, code }),
+          });
+          if (!r.ok) {
+            message.error("That didn't match. Try again.");
+            throw new Error("reauth failed");
+          }
+          resolve(true);
+        },
+        onCancel: () => resolve(false),
+      }));
   }
 
   async function call(sub: string, body: unknown, done: string, method?: "POST" | "DELETE") {
@@ -699,7 +696,9 @@ function PersonDrawer({
                       key: "password",
                       label: "Password",
                       children:
-                        info.data?.sign_in === "google" ? (
+                        info.data?.sign_in === "directory" ? (
+                          <Text type="secondary">Signs in through your company directory, which manages their sign-in.</Text>
+                        ) : info.data?.sign_in === "google" ? (
                           <Text type="secondary">Signs in with Google. Their password is managed through Google.</Text>
                         ) : (
                           <Button
@@ -714,6 +713,26 @@ function PersonDrawer({
                             Reset password
                           </Button>
                         ),
+                    },
+                    {
+                      key: "security",
+                      label: "Sign-in security",
+                      children: (
+                        <Space wrap>
+                          <Button size="small" disabled={busy || !person?.owui_id}
+                            onClick={() => void signInAction("reset-mfa",
+                              "Reset their two-step sign-in? They set it up again at their next sign-in, and are signed out everywhere now.",
+                              "Two-step sign-in reset. They're signed out everywhere.")}>
+                            Reset two-step sign-in
+                          </Button>
+                          <Button size="small" disabled={busy || !person?.owui_id}
+                            onClick={() => void signInAction("revoke-credentials",
+                              "Sign them out on every device and end their API keys and assistant connections?",
+                              "Signed out everywhere.")}>
+                            Sign out everywhere
+                          </Button>
+                        </Space>
+                      ),
                     },
                   ]
                 : []),
@@ -771,9 +790,9 @@ function PersonDrawer({
             <div className="agent-access">
               <Text strong>Delete {name}?</Text>
               <Paragraph style={{ margin: 0 }}>
-                Their sign-in account and their chats are deleted, and all their access is removed. Activity history,
-                usage records and artifacts they published are kept; their public links stop working. This can’t be
-                undone.
+                They can no longer sign in, their API keys end and all their access is removed. Their chats,
+                activity history, usage records and published artifacts are kept under their name; their share links
+                stop working. Their email can be used for a new account. This can’t be undone.
               </Paragraph>
               <div className="field">
                 <label className="field-label" htmlFor="delete-confirm">

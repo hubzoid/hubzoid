@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/*HZ_CARD_CSS*/</style>
+</head>
+<body>
+<main id="card" aria-live="polite"></main>
+<script>
+/*HZ_CARD_JS*/
+(function () {
+  "use strict";
+  var el = HZ.el;
+
+  // A small, safe reading of Markdown: paragraphs and "- " lists, as text.
+  function blocks(md) {
+    var out = [];
+    String(md || "").split(/\n\s*\n/).forEach(function (chunk) {
+      var lines = chunk.split("\n").filter(function (l) { return l.trim() !== ""; });
+      if (!lines.length) return;
+      if (lines.every(function (l) { return /^\s*[-*] /.test(l); })) {
+        out.push(el("ul", {}, lines.map(function (l) { return el("li", { text: l.replace(/^\s*[-*] /, "") }); })));
+      } else {
+        out.push(el("p", { text: lines.join(" ") }));
+      }
+    });
+    return out;
+  }
+
+  HZ.start({ name: "report", label: "report", onResult: function (data) {
+    var parts = [el("h2", { text: data.title })];
+    data.sections.forEach(function (s) {
+      parts.push(el("section", {}, [el("h3", { text: s.heading })].concat(blocks(s.markdown))));
+    });
+    if (!data.sections.length) parts.push(el("p", { "class": "muted", text: "This report has no sections." }));
+    parts.push(HZ.sources(data.sources));
+    HZ.mount(el("article", {}, parts));
+  } });
+})();
+</script>
+</body>
+</html>

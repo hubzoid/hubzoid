@@ -60,8 +60,7 @@ def gateway(tmp_path):
 
     deployment.save(tmp_path / "gw" / "deployment.json",
                     hubs=[dict(key=h.name, name=h.name, path=str(h), model_id=h.name) for h in (alpha, beta)],
-                    operational_url=f"sqlite:///{tmp_path / 'gw' / 'ops.db'}",
-                    owui_url="http://127.0.0.1:9", owui_db=str(tmp_path / "gw" / "webui.db"))
+                    operational_url=f"sqlite:///{tmp_path / 'gw' / 'ops.db'}", owui_db=str(tmp_path / "gw" / "webui.db"))
     return alpha, beta
 
 
@@ -76,6 +75,13 @@ def _call(tool, ident: Identity) -> str:
         return asyncio.run(tool.on_invoke_tool(ctx, args))
 
 
+def _signed(hub, email) -> Request:
+    from hubzoid.assertions import identity_headers
+
+    return Request({"type": "http", "headers": [
+        (k.lower().encode(), v.encode()) for k, v in identity_headers(hub, surface="web", email=email).items()]})
+
+
 def _request(**headers) -> Request:
     return Request({"type": "http", "headers": [
         (k.replace("_", "-").lower().encode(), v.encode()) for k, v in headers.items()]})
@@ -86,9 +92,7 @@ def _request(**headers) -> Request:
 
 @pytest.fixture
 def legacy_ui(monkeypatch):
-    """Open WebUI's forwarded email is trusted as sent only in Open WebUI mode;
-    the web app mode needs a signed assertion (tests/test_assertions*.py)."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    """Kept for the tests' signature: callers sign identity headers."""
 
 
 def test_a_grant_in_one_hub_never_opens_another(gateway, legacy_ui):
@@ -102,9 +106,9 @@ def test_a_grant_in_one_hub_never_opens_another(gateway, legacy_ui):
 
     from hubzoid.server import _enforce_use_hub
 
-    _enforce_use_hub(_request(x_openwebui_user_email="alice@example.org"), alpha)
+    _enforce_use_hub(_signed(alpha, "alice@example.org"), alpha)
     with pytest.raises(HTTPException) as err:
-        _enforce_use_hub(_request(x_openwebui_user_email="alice@example.org"), beta)
+        _enforce_use_hub(_signed(beta, "alice@example.org"), beta)
     assert err.value.status_code == 403
 
     # Each hub's log holds only its own decisions.
@@ -158,7 +162,7 @@ def test_a_blocked_person_is_refused_everywhere(gateway, legacy_ui):
     from hubzoid.server import _enforce_use_hub
 
     with pytest.raises(HTTPException) as err:
-        _enforce_use_hub(_request(x_openwebui_user_email="bob@example.org"), alpha)
+        _enforce_use_hub(_signed(alpha, "bob@example.org"), alpha)
     assert err.value.status_code == 403 and "blocked" in err.value.detail
     for surface in ("owui", "mcp", "workflow"):
         assert "access denied" in _call(_tool(alpha), Identity.make("bob@example.org", surface=surface))

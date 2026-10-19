@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Table</title>
+<style>/*HZ_CARD_CSS*/</style>
+</head>
+<body>
+<main id="card" aria-live="polite"></main>
+<script>
+/*HZ_CARD_JS*/
+(function () {
+  "use strict";
+  var el = HZ.el;
+  var pages = [];      // [{cursor, data}] fetched so far, oldest first
+  var at = 0;
+  var sort = null;     // {key, dir: 1 | -1}
+
+  function cmp(a, b, type) {
+    if (a === null || a === undefined) return 1;
+    if (b === null || b === undefined) return -1;
+    if (type === "number") return a - b;
+    if (type === "boolean") return (a === b) ? 0 : (a ? -1 : 1);
+    return String(a).localeCompare(String(b));
+  }
+
+  function cell(value, type) {
+    if (value === null || value === undefined) return "";
+    if (type === "boolean") return value ? "Yes" : "No";
+    if (type === "number") return Number(value).toLocaleString();
+    return String(value);
+  }
+
+  function render() {
+    var data = pages[at].data;
+    var rows = data.rows.slice();
+    if (sort) {
+      var col = data.columns.filter(function (c) { return c.key === sort.key; })[0];
+      rows.sort(function (a, b) { return sort.dir * cmp(a[sort.key], b[sort.key], col ? col.type : "string"); });
+    }
+    var head = el("tr", {}, data.columns.map(function (c) {
+      var dir = sort && sort.key === c.key ? (sort.dir === 1 ? "ascending" : "descending") : "none";
+      return el("th", { scope: "col", "aria-sort": dir, "class": c.type === "number" ? "num" : null }, [
+        el("button", { type: "button", text: c.label + (dir === "ascending" ? " ↑" : dir === "descending" ? " ↓" : ""),
+          "aria-label": "Sort by " + c.label,
+          onclick: function () {
+            sort = sort && sort.key === c.key ? { key: c.key, dir: -sort.dir } : { key: c.key, dir: 1 };
+            render();
+          } })
+      ]);
+    }));
+    var body = rows.length ? rows.map(function (r) {
+      return el("tr", {}, data.columns.map(function (c) {
+        return el("td", { "class": c.type === "number" ? "num" : null, text: cell(r[c.key], c.type) });
+      }));
+    }) : [el("tr", {}, [el("td", { colspan: String(data.columns.length), "class": "muted", text: "No matching rows" })])];
+    var table = el("table", {}, [el("caption", { text: data.title }), el("thead", {}, [head]), el("tbody", {}, body)]);
+    var total = data.page && data.page.total_rows;
+    var count = rows.length + (total !== undefined && total !== null ? " of " + total : "") + (rows.length === 1 ? " row" : " rows");
+    var canMore = data.page && data.page.next_cursor && HZ.state.meta && HZ.state.meta.tool &&
+      (HZ.state.meta.arguments || HZ.state.input);
+    var bar = el("div", { "class": "bar" }, [
+      el("span", { "class": "muted", text: count + (pages.length > 1 ? " · page " + (at + 1) : "") }),
+      el("span", {}, [
+        at > 0 ? el("button", { type: "button", "class": "btn", text: "Previous", onclick: function () { at -= 1; render(); } }) : null,
+        canMore || at < pages.length - 1 ? el("button", { type: "button", "class": "btn", text: "Next page",
+          onclick: next }) : null
+      ])
+    ]);
+    HZ.mount(el("div", {}, [el("div", { "class": "wrap" }, [table]), bar, HZ.sources(data.sources)]));
+  }
+
+  function next(event) {
+    if (at < pages.length - 1) { at += 1; render(); return; }
+    var data = pages[at].data;
+    var button = event && event.target;
+    if (button) { button.disabled = true; button.textContent = "Loading…"; }
+    // The call's own arguments as Hub kept them (a chat may show them shortened), with the next cursor.
+    var args = Object.assign({}, HZ.state.meta.arguments || HZ.state.input || {}, { cursor: data.page.next_cursor });
+    HZ.call(HZ.state.meta.tool, args).then(function (r) {
+      if (!r.structuredContent) throw new Error(HZ.textOf(r) || "No more rows.");
+      pages.push({ cursor: data.page.next_cursor, data: r.structuredContent });
+      at = pages.length - 1;
+      render();
+    }).catch(function (e) {
+      if (button) { button.disabled = false; button.textContent = "Next page"; }
+      var bar = document.querySelector(".bar");
+      if (bar) bar.appendChild(el("span", { "class": "note error", role: "alert", text: e.message }));
+      HZ.resize();
+    });
+  }
+
+  HZ.start({ name: "table", label: "table", onResult: function (data) {
+    pages = [{ cursor: null, data: data }];
+    at = 0;
+    render();
+  } });
+})();
+</script>
+</body>
+</html>

@@ -27,6 +27,8 @@ import { ShareDialog } from "../components/ShareDialog";
 import { announce, toast } from "../components/toast";
 import { AgentAvatar, Button, ConfirmDialog, Field, IconButton, Modal, Notice, StateMessage } from "../components/ui";
 import { FilesContext } from "./parts";
+import { CardsContext, cardsConfig } from "./cards/cards";
+import { useTheme } from "../lib/theme";
 import { ChatSession } from "./session";
 import { ConversationFeed, useHubzoidRuntime, type DeletionPreview, type Snapshot } from "./runtime";
 import { FeedContext, type Features } from "./feed-context";
@@ -451,8 +453,14 @@ function ChatView({
     document.title = pageTitle(conversation ? shownTitle : t.sidebar.newChat, app.brandName);
   }, [shownTitle, conversation, app.brandName]);
 
+  const theme = useTheme().resolved;
+  const cardsHub = agent.hub || agent.id;
+  const cards = useMemo(() => cardsConfig(session.apiBase, cardsHub, theme === "dark"),
+    [session.apiBase, cardsHub, theme]);
+
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider runtime={runtime} config={cards}>
+     <CardsContext.Provider value={{ hub: cardsHub, apiBase: session.apiBase, live: true }}>
       <FilesContext.Provider value={{ conversationId: conversation?.id ?? null, apiBase: session.apiBase }}>
        <div className="flex min-h-0 min-w-0 flex-1">
        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -499,6 +507,7 @@ function ChatView({
         )}
        </div>
       </FilesContext.Provider>
+     </CardsContext.Provider>
     </AssistantRuntimeProvider>
   );
 }

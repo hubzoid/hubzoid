@@ -830,3 +830,30 @@ def test_personal_history_limits_after_account_filter_and_merges_workflows(hub, 
     assert own[0].workflow_id.startswith(f"tool-program_report-{old_key}-")
     monkeypatch.setattr(runtime, "load_definitions", lambda _: [])
     assert observe.personal_runs(hub, MEERA, "id-" + MEERA, run_id=own[0].workflow_id)[0]["answer"] == "0"
+
+
+def test_repeat_a_request_is_a_personal_workflow_with_its_own_access(hub, engine):
+    """"Repeat this every Monday" saves the built-in repeated_request workflow,
+    which needs run and schedule on it (Workflow access) and is never offered
+    as a "run for me" tool of its own."""
+    from hubzoid.workflows import access as wf_access
+
+    tools = _tools(hub)
+    assert "repeat_request" in tools and "repeated_request" not in tools
+    ask = {"prompt": "Summarise low stock items", "cadence": "every monday at 09:00", "timezone": "Europe/London"}
+    assert "access denied" in _call(tools["repeat_request"], ask)
+    store_for(hub).grant("owner@co.org", "*", "manage_access", actor="t")
+    store_for(hub).grant("owner@co.org", "irs", "use_hub", actor="t")
+    wf_access.apply(hub, "version: 1\ndefault: deny\ngrants:\n  - subject: meera@co.org\n"
+                         "    workflow: repeated_request\n    actions: [run, schedule]\n",
+                    expected_revision=0, actor="owner@co.org")
+    proposal = _call(tools["repeat_request"], ask)
+    assert proposal.startswith("Not saved yet. Mondays at 09:00 (Europe/London)")
+    assert 'exactly: "Summarise low stock items"' in proposal and not engine.started
+    code = proposal.split('confirm: "')[1].split('"')[0]
+    saved = _call(tools["repeat_request"], {"confirm": code})
+    assert saved.startswith('Saved "') and "new private chat" in saved
+    wid, name, env = engine.started[-1]
+    assert name == "repeated_request" and env["acts_as"] == MEERA
+    assert env["inputs"] == {"prompt": "Summarise low stock items"}
+    assert "repeated_request" in {r["key"] for r in wf_access.resources(hub)}
