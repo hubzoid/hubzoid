@@ -2532,7 +2532,7 @@
     }
   }
   .hz-set-backlink {
-    display: none;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
     height: 28px;
@@ -2546,11 +2546,6 @@
   .hz-set-backlink:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
-  }
-  @media (min-width: 1024px) {
-    .hz-set-backlink {
-      display: inline-flex;
-    }
   }
   .hz-set-nav .hz-nav {
     display: flex;

@@ -19,8 +19,8 @@ describe those releases as they were.
 - **One interface.** `hubzoid run` and `hubzoid gateway` start the Hubzoid web
   app, or no UI with `--no-ui`. Open WebUI is never started or installed.
 - **The Console is in Settings.** The management screens (Agents, People &
-  access, Activity, Schedules, Workspace settings, Health, Advanced settings,
-  Compatibility) are sections of the web app's Settings page. The old address
+  access, Activity, Schedules, Workspace settings, Health, Advanced settings)
+  are sections of the web app's Settings page. The old address
   `/portal/` sends people to the same section there, so bookmarks keep working.
 - **Accounts are the web app's own.** Sign-in, Google sign-in and sign-up use
   the web app's settings ([accounts and sign-in](auth.md)). Open WebUI API keys

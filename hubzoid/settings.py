@@ -111,6 +111,9 @@ Environment variables explicitly supported:
                          sign-in help). Default: "your administrator".
   HUBZOID_SERVER / HUBZOID_API_KEY  The remote CLI's deployment URL and a personal
                          API key (hzp_...) for `hubzoid auth` and `hubzoid api`.
+  HUBZOID_PARITY_LEDGER  Show the Open WebUI parity ledger (Settings →
+                         Compatibility) to administrators. For Hubzoid
+                         maintainers; off by default.
   HUBZOID_TRUSTED_PROXIES  Proxies in front of the public port whose
                          X-Forwarded-For is believed: addresses or networks,
                          comma-separated, or * when the port is reachable only
