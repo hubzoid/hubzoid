@@ -1,25 +1,26 @@
 // The Console's screens by hash route, shared by the standalone Console and the
 // chat app's Settings page (which shows the same screens without the Console's
 // own navigation).
-import { lazy, type ReactNode } from "react";
+import { lazyChunk } from "./lib/lazyChunk";
+import { type ReactNode } from "react";
 import type { Hub, Me } from "./api";
 import { RecoveryScreen } from "./components/common";
 import type { AgentTab } from "./screens/AgentDetail";
 
 // Each screen is its own chunk so the first paint only needs the shell.
-const HomeScreen = lazy(() => import("./screens/HomeScreen").then((m) => ({ default: m.HomeScreen })));
-const AgentDetail = lazy(() => import("./screens/AgentDetail").then((m) => ({ default: m.AgentDetail })));
-const PeopleScreen = lazy(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
-const ActivityScreen = lazy(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
-const AllRunsScreen = lazy(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
-const ConfirmScreen = lazy(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
-export const SchedulesScreen = lazy(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
-export const ConnectionsScreen = lazy(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
-const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
-export const WorkItemsScreen = lazy(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
-const SandboxesScreen = lazy(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
-const BudgetsScreen = lazy(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
-const DiagnosticsScreen = lazy(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
+const HomeScreen = lazyChunk(() => import("./screens/HomeScreen").then((m) => ({ default: m.HomeScreen })));
+const AgentDetail = lazyChunk(() => import("./screens/AgentDetail").then((m) => ({ default: m.AgentDetail })));
+const PeopleScreen = lazyChunk(() => import("./screens/PeopleScreen").then((m) => ({ default: m.PeopleScreen })));
+const ActivityScreen = lazyChunk(() => import("./screens/ActivityScreen").then((m) => ({ default: m.ActivityScreen })));
+const AllRunsScreen = lazyChunk(() => import("./screens/AllRunsScreen").then((m) => ({ default: m.AllRunsScreen })));
+const ConfirmScreen = lazyChunk(() => import("./screens/ConfirmScreen").then((m) => ({ default: m.ConfirmScreen })));
+export const SchedulesScreen = lazyChunk(() => import("./screens/SchedulesScreen").then((m) => ({ default: m.SchedulesScreen })));
+export const ConnectionsScreen = lazyChunk(() => import("./screens/ConnectionsScreen").then((m) => ({ default: m.ConnectionsScreen })));
+const SettingsScreen = lazyChunk(() => import("./screens/SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
+export const WorkItemsScreen = lazyChunk(() => import("./screens/WorkItemsScreen").then((m) => ({ default: m.WorkItemsScreen })));
+const SandboxesScreen = lazyChunk(() => import("./screens/SandboxesScreen").then((m) => ({ default: m.SandboxesScreen })));
+const BudgetsScreen = lazyChunk(() => import("./screens/BudgetsScreen").then((m) => ({ default: m.BudgetsScreen })));
+const DiagnosticsScreen = lazyChunk(() => import("./screens/DiagnosticsScreen").then((m) => ({ default: m.DiagnosticsScreen })));
 
 const TABS: AgentTab[] = ["access", "connectors", "setup", "secrets", "channels", "intake", "runs", "evals", "activity"];
 

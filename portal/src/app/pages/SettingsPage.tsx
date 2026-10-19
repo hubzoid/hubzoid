@@ -5,7 +5,8 @@
 // (agents, people, activity, schedules, chat defaults, brand, health) without
 // their own navigation, and Agent instructions for administrators. The URL
 // hash names the section, so links and Back work.
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazyChunk } from "../../lib/lazyChunk";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -43,17 +44,18 @@ import { Button, Notice, PageSpinner, cx } from "../components/ui";
 import { toast } from "../components/toast";
 import { AppearanceForm, DataForm, NotificationsForm, PasswordForm, ProfileForm } from "./AccountPage";
 import { InSettings, Section } from "./SettingsFrame";
+import { PageErrorBoundary } from "../components/ErrorBoundary";
 import { MyAccess } from "../components/MyAccess";
 
-const ConnectionsPage = lazy(() => import("./ConnectionsPage"));
-const SourcesPage = lazy(() => import("./SourcesPage"));
-const WorkspacePage = lazy(() => import("./WorkspacePage"));
-const SecurityPage = lazy(() => import("./SecurityPage"));
-const SignInSettings = lazy(() => import("./SignInSettings"));
-const ConsoleEmbed = lazy(() => import("../../ConsoleEmbed"));
-const WorkflowAccessPage = lazy(() => import("./WorkflowAccessPage"));
-const HubChangesPage = lazy(() => import("./HubChangesPage"));
-const MemoryPage = lazy(() => import("./MemoryPage"));
+const ConnectionsPage = lazyChunk(() => import("./ConnectionsPage"));
+const SourcesPage = lazyChunk(() => import("./SourcesPage"));
+const WorkspacePage = lazyChunk(() => import("./WorkspacePage"));
+const SecurityPage = lazyChunk(() => import("./SecurityPage"));
+const SignInSettings = lazyChunk(() => import("./SignInSettings"));
+const ConsoleEmbed = lazyChunk(() => import("../../ConsoleEmbed"));
+const WorkflowAccessPage = lazyChunk(() => import("./WorkflowAccessPage"));
+const HubChangesPage = lazyChunk(() => import("./HubChangesPage"));
+const MemoryPage = lazyChunk(() => import("./MemoryPage"));
 
 type Key =
   | "profile"
@@ -262,7 +264,8 @@ export default function SettingsPage({ section }: { section: string | null }) {
                   ))}
                 </nav>
               )}
-              {current && <SectionBody item={current} />}
+              {/* A section that fails shows its own error; another section works again. */}
+              {current && <PageErrorBoundary resetKey={current.key}><SectionBody item={current} /></PageErrorBoundary>}
             </main>
           </div>
         </div>
