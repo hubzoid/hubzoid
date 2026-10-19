@@ -64,7 +64,7 @@ use_hub --hub <hub>` or the management API.
 - On an agent: **Access → Edit access** on their row.
 - From **People**: open the user. **Access by agent** lists each agent they can
   use, with **Edit access**. **Add an agent** opens the editor for an agent
-  they can't use yet, starting with Use this agent.
+  they can't use yet; choose what they can do, starting with Use this agent.
 
 Either way you review the change before it is saved. A blocked user is shown as
 blocked, and new access for them is refused before saving.

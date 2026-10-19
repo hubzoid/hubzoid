@@ -28,6 +28,12 @@ def hub(tmp_path, monkeypatch):
     from hubzoid.db import operational_engine
 
     migrations.upgrade(operational_engine(hub), "operational")
+    from hubzoid.auth import users
+
+    # The people the requests below come from: a channel decision is made as
+    # the account that holds the sender's email.
+    for name in ("ana", "ben"):
+        users.create(hub, email=f"{name}@example.org", name=name.title(), id=f"u_{name}")
     return hub
 
 
@@ -133,6 +139,18 @@ def test_only_the_requester_or_a_named_approver_decides(hub):
         service.decide(hub, hub.name, w.request["id"], account_id="u_ana", email="ana@example.org",
                        decision="approve")                         # the requester is not on the list
     assert service.decide(hub, hub.name, w.request["id"], account_id="u_ben", email="ben@example.org",
+                          decision="approve")["status"] == "approved"
+
+
+def test_a_new_account_reusing_an_email_never_sees_the_old_accounts_requests(hub):
+    # Deleting a person releases their email; whoever gets it next is someone else.
+    (hub / "hitl.yaml").write_text(RULES)
+    v = service.check(hub, hub.name, caller(), tool="reserve_stock", arguments={})
+    with pytest.raises(service.RequestError) as other:
+        service.decide(hub, hub.name, v.request["id"], account_id="u_new_ana", email="ana@example.org",
+                       decision="approve")
+    assert other.value.status == 404
+    assert service.decide(hub, hub.name, v.request["id"], account_id="u_ana", email="ana@example.org",
                           decision="approve")["status"] == "approved"
 
 

@@ -142,6 +142,17 @@ def configured(hub_dir: Path, *, hub: str | None = None,
     if default:
         return normalize(default), "setup"
     if local_quickstart(hub_dir):
+        # Sign-in off: the local owner owns the hub from the first start. A run
+        # started before any bridge did (`hubzoid schedule run` on a new hub)
+        # gives it that access first, as the bridge's start would; every tool
+        # call is checked against it.
+        from ..auth.users import ensure_local_owner, provision_owner
+
+        try:
+            ensure_local_owner(hub_dir)  # the account its answers are delivered to
+            provision_owner(hub_dir, LOCAL_OWNER)
+        except Exception:  # noqa: BLE001 — access checks still fail closed
+            log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
         return LOCAL_OWNER, "local"
     return None, "none"
 

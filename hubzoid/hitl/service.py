@@ -98,8 +98,15 @@ def _norm(value: str | None) -> str:
 
 
 def _same_person(account_id: str, email: str, request: dict) -> bool:
-    return bool((account_id and account_id == request.get("requester_id"))
-                or (email and _norm(email) == _norm(request.get("requester_email"))))
+    """Is this the person who asked? A request an account made belongs to that
+    account only: a new account that reuses a deleted one's email is someone
+    else. The email decides only for a requester without an account (a
+    channel sender known by email), whose ``requester_id`` is that email."""
+    requester_id = request.get("requester_id") or ""
+    requester_email = _norm(request.get("requester_email"))
+    if requester_id and requester_id != requester_email:
+        return bool(account_id) and account_id == requester_id
+    return bool(email) and _norm(email) == requester_email
 
 
 def eligible(request: dict, account_id: str, email: str) -> bool:

@@ -102,9 +102,15 @@ jobs:
   console:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Hubzoid for the real-server chat journeys
+        run: pip install -e .
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -116,9 +122,11 @@ jobs:
       - name: Console journeys
         working-directory: portal
         run: npx playwright install --with-deps chromium && npm test
-      - name: Native chat journeys and stream contracts
+      - name: Native chat journeys (real servers, scripted model), stream contracts and Settings
         working-directory: portal
-        run: npm run test:app
+        env:
+          HZ_PYTHON: python
+        run: npm run test:app && npm run test:app:settings
 
   package:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
