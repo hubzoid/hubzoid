@@ -440,6 +440,17 @@ def test_view_hides_payloads_from_managers(hub_dir):
     assert service.list_items(hub_dir, "stranger@company.org")["items"] == []
 
 
+def test_my_work_lists_only_my_own_even_for_a_manager(hub_dir):
+    from hubzoid.access import store_for
+
+    lead = "lead@company.org"
+    store_for(hub_dir).grant(lead, "desk", "workflows_view")
+    service.admit(hub_dir, workflow="desk", key="theirs", requester=OWNER)
+    service.admit(hub_dir, workflow="desk", key="mine", requester=lead)
+    assert {i["logical_key"] for i in service.list_items(hub_dir, lead)["items"]} == {"theirs", "mine"}
+    assert [i["logical_key"] for i in service.list_items(hub_dir, lead, mine=True)["items"]] == ["mine"]
+
+
 def test_idempotency_keys(hub_dir):
     calls = []
 
