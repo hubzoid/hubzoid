@@ -143,9 +143,15 @@ class CodexRuntime:
                 await self._stack.enter_async_context(server)
                 tools = await MCPUtil.get_function_tools(
                     server, False, RunContextWrapper(context=None), Agent(name=self.name))
+                read_only = await _read_only_tools(server)
                 for tool in tools:
                     if tool.name in self.registry:
                         raise RuntimeError(f"Duplicate MCP tool name: {tool.name}")
+                    if self.hub_dir is not None:
+                        from .hitl import gate as hitl_gate
+
+                        tool = hitl_gate.wrap(tool, self.hub_dir, connector=getattr(server, "name", None),
+                                              read_only=read_only.get(tool.name))
                     self.registry[tool.name] = tool
         except BaseException:
             await self.aclose()
@@ -528,6 +534,8 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
     from . import handover
     base_registry = dict(registry)
     for delegate in delegates:
@@ -550,3 +558,18 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
                         mcp_servers=load_mcp_servers(mcp.load_all_raw(hub_dir)),
                         vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
                         personal_mcp=True)
+
+
+async def _read_only_tools(server) -> dict:
+    """{tool name: readOnlyHint} as the MCP server declares it (a hint the
+    builder can choose to trust with ``ask: writes``)."""
+    try:
+        listed = await server.list_tools()
+    except Exception:  # noqa: BLE001 - no hints: every tool counts as a write
+        return {}
+    out: dict = {}
+    for tool in listed or []:
+        hints = getattr(tool, "annotations", None)
+        if hints is not None and getattr(hints, "readOnlyHint", None) is not None:
+            out[tool.name] = bool(hints.readOnlyHint)
+    return out

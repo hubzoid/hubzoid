@@ -26,6 +26,7 @@ import { ShortcutsDialog, useShortcuts } from "./components/Shortcuts";
 applyTheme();
 
 const ChatPage = lazy(() => import("./chat/ChatPage"));
+const RequestsPage = lazy(() => import("./pages/RequestsPage"));
 const SharePage = lazy(() => import("./pages/SharePage"));
 const SignInPage = lazy(() => import("./pages/SignInPage"));
 const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
@@ -320,6 +321,12 @@ export default function App() {
       />
     );
   else if (route.name === "settings") page = <SettingsPage section={route.section} />;
+  else if (route.name === "requests")
+    page = (
+      <Suspense fallback={<PageSpinner />}>
+        <RequestsPage />
+      </Suspense>
+    );
   else if (route.name === "account") page = <RedirectTo to="/settings#/me/profile" />;
   else if (route.name === "sources") page = <RedirectTo to="/settings#/me/sources" />;
   else if (route.name === "workspace") page = <RedirectTo to="/settings#/workspace" />;

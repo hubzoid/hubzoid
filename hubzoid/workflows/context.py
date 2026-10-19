@@ -57,6 +57,11 @@ _JEV: Callable[..., Any] | None = None     # (spec: dict, hub_dir, subject) -> d
 _LLM_STEP: Callable[..., Any] | None = None
 _AGENT_STEP: Callable[..., Any] | None = None
 _JEV_STEP: Callable[..., Any] | None = None
+# Approvals and questions (hubzoid.hitl): creating and reading a request are
+# checkpointed steps, and the wait between them is a durable DBOS receive.
+_HITL_CREATE_STEP: Callable[..., Any] | None = None
+_HITL_READ_STEP: Callable[..., Any] | None = None
+HITL_POLL_SECONDS = 600
 
 
 def configure(*, llm: Callable[..., Any] | None = None,
@@ -450,6 +455,79 @@ class Hub:
 
         return _validated(extract_json(text), response_model, text)
 
+    # -- a person in the loop -------------------------------------------------------
+    def approve(self, action: str, *, details=None, approvers=None) -> dict:
+        """Stop until a person approves ``action`` (shown with ``details``,
+        exactly). Waits durably: the run holds no process while it waits and
+        continues after a restart. The person who asks is the account this run
+        acts as, unless ``approvers`` names people (emails or account ids).
+        Returns ``{"approved": bool, "note": str | None, "by": email}``."""
+        req = self._wait_for(kind="approval", title=action, arguments=details, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def ask(self, question: str, *, options=None, approvers=None) -> str:
+        """Ask a person one question and wait durably for the answer. ``options``
+        is a list of 2 or 3 labels; the person may also type their own answer."""
+        opts = [o if isinstance(o, dict) else {"label": str(o)} for o in (options or [])] or None
+        req = self._wait_for(kind="question", title=question[:200], question=question, options=opts,
+                             approvers=approvers)
+        return req.get("answer") or ""
+
+    def review_plan(self, path, *, title: str | None = None, approvers=None) -> dict:
+        """Ask a person to approve one exact plan document (a file this run
+        wrote, published as an artifact version). Editing the plan makes a new
+        version, which needs its own approval. Returns ``{"approved": bool,
+        "note": str | None, "by": email}``; a request for changes is not approved."""
+        import hashlib
+
+        source = Path(path) if Path(path).is_absolute() else Path(_ctx().hub_dir) / path
+        data = source.read_bytes()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        # Publish a copy named by its digest, so the approved bytes are exactly
+        # the published ones even if the source changes meanwhile.
+        snap = self.data_dir / "plans" / f"{digest[7:23]}{source.suffix}"
+        snap.parent.mkdir(parents=True, exist_ok=True)
+        if not snap.exists():
+            snap.write_bytes(data)
+        people = [a for a in (approvers or []) if isinstance(a, str) and "@" in a]
+        art = self.publish_artifact(snap, title=title or source.name,
+                                    **({"audience": "people", "share_with": people} if people else {}))
+        # The version number is assigned when the request is created (a
+        # durable step): 1 + the earlier plans this run asked about.
+        subject = {"name": title or source.name, "url": art.get("share_url") or art.get("url"),
+                   "digest": digest, "plan": True}
+        req = self._wait_for(kind="approval", title=subject["name"], subject=subject, approvers=approvers)
+        return {"approved": req["status"] == "approved", "note": req.get("note"),
+                "by": req.get("decided_by_email")}
+
+    def _wait_for(self, **spec) -> dict:
+        ctx = _ctx()
+        _recheck(ctx, "Asking a person")
+        ident = _identity(ctx)
+        spec["approvers"] = list(spec.get("approvers") or ["requester"])
+        payload = {"hub_dir": str(ctx.hub_dir), "hub": ctx.hub, "workflow_id": ctx.run_id or "",
+                   "requester": ident.email or ident.subject, "account_id": ident.account_id or "", **spec}
+        create = _HITL_CREATE_STEP or _hitl_create
+        read = _HITL_READ_STEP or _hitl_read
+        req = create(payload)
+        if req["status"] == "pending" and spec["approvers"] == ["requester"]:
+            # Nobody watches a scheduled run: email the person a link to answer.
+            from ..appmode import public_url
+
+            base = (public_url() or "").rstrip("/")
+            what = spec.get("question") or spec["title"]
+            self.send_email(f"Waiting for you: {spec['title'][:150]}",
+                            f"{ctx.workflow} is waiting for your answer:\n\n{what}\n\n"
+                            f"Answer it in Hubzoid: {base}/requests\n", raise_on_failure=False)
+        while req["status"] == "pending":
+            if not _hitl_receive(req["id"]):
+                import time
+
+                time.sleep(1.0)
+            req = read(str(ctx.hub_dir), ctx.hub, req["id"])
+        return req
+
     def call_jev(self, state, questions: dict, *, model: str = "typesafe/jev-1.13", timeout: float | str = 90) -> dict:
         """Typed decisions from TypeSafe's Jev through OpenRouter.
         Each question is a "noul" (does it hold?), "choice" (which label?) or
@@ -470,6 +548,51 @@ class Hub:
         else:
             data = _JEV(spec, hub_dir=ctx.hub_dir, subject=ctx.subject)
         return data["answers"]
+
+
+def _hitl_create(payload: dict) -> dict:
+    from ..hitl import service
+
+    hub_dir, hub_id = Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower()
+    if payload.get("workflow_id"):
+        # A replay after a crash (the request was saved, the step was not)
+        # finds the same pending request instead of asking twice.
+        same = service.pending_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["kind"],
+                                            payload["title"], (payload.get("subject") or {}).get("digest"))
+        if same is not None:
+            return same
+    subject = payload.get("subject")
+    if subject and subject.get("plan") and payload.get("workflow_id"):
+        earlier = service.count_for_workflow(hub_dir, hub_id, payload["workflow_id"], payload["title"])
+        payload["subject"] = {**subject, "version": earlier + 1}
+
+    caller = service.Caller(account_id=payload.get("account_id") or payload["requester"],
+                            email=payload["requester"], present=True, origin="workflow")
+    return service.create(Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower(), caller, kind=payload["kind"],
+                          title=payload["title"], arguments=payload.get("arguments"),
+                          question=payload.get("question"), options=payload.get("options"),
+                          subject=payload.get("subject"), approvers=tuple(payload["approvers"]),
+                          workflow_id=payload.get("workflow_id") or None)
+
+
+def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
+    from ..hitl import service
+
+    return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
+
+
+def _hitl_receive(request_id: str) -> bool:
+    """Inside a DBOS workflow: wait for the decision's message (or a periodic
+    re-check). Elsewhere (a bare run in tests): False, and the caller polls."""
+    try:
+        from dbos import DBOS
+
+        if not DBOS.workflow_id:
+            return False
+        DBOS.recv(topic=f"hitl:{request_id}", timeout_seconds=HITL_POLL_SECONDS)
+        return True
+    except Exception:  # noqa: BLE001 - outside a workflow
+        return False
 
 
 def _validated(value, response_model, raw_text: str):

@@ -2582,6 +2582,20 @@ from .chat.authoring_cli import workspace_app as _workspace_app  # noqa: E402
 
 app.add_typer(_workspace_app, name="workspace", help="Draft, review and publish agent, skill and prompt files.",
               rich_help_panel="Commands")
+from .hitl.cli import hitl_app as _hitl_app, requests_app as _requests_app  # noqa: E402
+
+app.add_typer(_hitl_app, name="hitl", help="When the agent asks a person first (hitl.yaml).",
+              rich_help_panel="Commands")
+app.add_typer(_requests_app, name="requests", help="Approvals and questions waiting for a person.",
+              rich_help_panel="Commands")
+from .workflows.access_cli import app as _workflow_access_app  # noqa: E402
+
+app.add_typer(_workflow_access_app, name="workflow-access",
+              help="Who may run, schedule, edit, approve and see each workflow.", rich_help_panel="Commands")
+from .hub_changes.cli import app as _hub_changes_app  # noqa: E402
+
+app.add_typer(_hub_changes_app, name="hub-changes",
+              help="Proposed changes to a hub's own instructions and knowledge.", rich_help_panel="Commands")
 
 app.add_typer(_models_app, name="models", help="Models people may pick, and presets.", rich_help_panel="Commands")
 

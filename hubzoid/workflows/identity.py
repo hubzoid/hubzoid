@@ -243,7 +243,9 @@ def check_person_run(hub_dir: Path, hub: str, email: str, workflow: str, *,
 
     ident = check(hub_dir, hub, email, source, account_id=account_id, what=what)
     try:
-        allowed = store_for(hub_dir).can(ident.subject, hub, tool_permission(workflow))
+        from .access import authorize
+
+        allowed = authorize(hub_dir, ident.subject, workflow, "run").allowed
     except Exception as exc:  # noqa: BLE001 — fail closed
         raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
     if not allowed:

@@ -114,7 +114,7 @@ function Mine() {
         <Text type="secondary">Results appear here and in chat. Email is sent only when enabled by the hub.</Text></Space>
       <ReportCatalog catalog={data.data.catalog ?? []} agents={agents} />
       <RecentRuns agents={agents} />
-      <Section title="Schedules" help="Reports the agent runs for you, as you. Make new ones in chat.">
+      <Section title="Schedules" help="Reports and repeated requests the agent runs for you, as you. Make new ones in chat, for example: repeat this every Monday at 9.">
         <SchedulesTable
           rows={schedules}
           mine

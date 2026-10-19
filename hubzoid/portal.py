@@ -627,8 +627,15 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
         _check_mutation(request, admin)
         path = Path(require_hub(admin, payload.hub))
         gs = store_for(hub_dir)
-        if not (admin.is_org_admin or gs.can(admin.subject, payload.hub, "workflows_manage")):
-            raise HTTPException(403, "Running workflows needs \u201cRun and control workflows\u201d.")
+        from .workflows import access as wf_access
+
+        try:
+            key = wf_access.canonical(path, payload.workflow)
+        except wf_access.AccessError:
+            key = payload.workflow
+        if not wf_access.authorize(path, admin.subject, key, "run").allowed:
+            raise HTTPException(403, f"You can't run {payload.workflow}. Give yourself run access in "
+                                     "Settings, Workflow access.")
         if control._engine_here(path):
             try:
                 out = control.start_now(path, payload.workflow, actor=admin.subject, surface="console",
@@ -758,15 +765,17 @@ def build_router(hub_dir, admin_resolver=None) -> APIRouter:
                 from .capabilities import switched_off
                 from .tools.report_tools import SCHEDULE_REPORTS, RESERVED_NAMES
                 from .workflows.boot import schedules_enabled
+                from .workflows import access as wf_access
 
                 if schedules_enabled() and not switched_off(SCHEDULE_REPORTS):
                     for wf in definitions(path):
                         if (not wf.get("as_tool") or wf.get("error") or wf["name"].lower() in RESERVED_NAMES
                                 or (wf.get("surfaces") and "web" not in wf["surfaces"])
-                                or not gs.can(email, key, tool_permission(wf["name"]))):
+                                or not wf_access.authorize(path, email, wf["name"], "run").allowed):
                             continue
                         catalog.append(dict(hub=key, workflow=wf["name"], title=wf["title"],
-                            schedulable=bool(wf.get("schedulable") and gs.can(email, key, "schedule_reports")),
+                            schedulable=bool(wf.get("schedulable")
+                                             and wf_access.authorize(path, email, wf["name"], "schedule").allowed),
                             schema=schemas.get(wf["name"])))
             for s in mine:
                 links = [dict(title=x.title or x.key, url=series_lib.latest_path(x))

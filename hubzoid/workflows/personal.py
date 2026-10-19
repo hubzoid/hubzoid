@@ -215,6 +215,10 @@ def last_words(s: Schedule) -> str:
     if s.last_status == "updated":
         return f"Updated {_when(s.last_at, s.timezone)}"
     if s.last_status == "no_change":
+        from .builtin import NAMES
+
+        if s.workflow in NAMES:  # a repeated request answers in a new chat
+            return f"Answered in a new chat {_when(s.last_at, s.timezone)}"
         return f"No change {_when(s.last_at, s.timezone)}"
     if s.last_status == "failed":
         return f"Failed {_when(s.last_at, s.timezone)}: {CAUSES.get(s.last_cause or '', CAUSES['error'])}"
@@ -257,9 +261,11 @@ def _validated(hub_dir, hub: str, actor: str, workflow: str, values, cadence: st
         raise ScheduleError(f"There is no report named {workflow!r} here.")
     if not wf.schedulable:
         raise ScheduleError(f"{wf.title} can't be scheduled. You can still run it any time.")
-    if not _can(hub_dir, actor, hub, wf.permission):
+    from . import access as wf_access
+
+    if not wf_access.authorize(hub_dir, actor, workflow, "run").allowed:
         raise ScheduleError(f"You can't run {wf.title} yet. An admin can give it to you in the Console.")
-    if not _can(hub_dir, actor, hub, SCHEDULE_PERMISSION):
+    if not wf_access.authorize(hub_dir, actor, workflow, "schedule").allowed:
         raise ScheduleError("You can run this report but not schedule it. An admin can allow "
                             "scheduling in the Console.")
     try:
@@ -684,8 +690,9 @@ def problem(hub_dir, hub: str, s: Schedule) -> str | None:
         ident = check(Path(hub_dir), hub, s.owner, "schedule", account_id=s.owner_account)
     except IdentityError:
         return "access"
-    gs = store_for(Path(hub_dir))
-    if not gs.can(ident.subject, hub, wf.permission) or not gs.can(ident.subject, hub, SCHEDULE_PERMISSION):
+    from . import access as wf_access
+
+    if not wf_access.authorize(Path(hub_dir), ident.subject, s.workflow, "schedule").allowed:
         return "access"
     try:
         inputs_lib.validate(wf.inputs, s.values or None)

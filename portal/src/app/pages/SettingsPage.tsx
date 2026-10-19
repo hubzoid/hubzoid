@@ -12,8 +12,10 @@ import {
   Bell,
   BookOpen,
   Bot,
+  Brain,
   CalendarClock,
   Database,
+  FilePen,
   HeartPulse,
   LogOut,
   Menu as MenuIcon,
@@ -48,6 +50,9 @@ const WorkspacePage = lazy(() => import("./WorkspacePage"));
 const SecurityPage = lazy(() => import("./SecurityPage"));
 const SignInSettings = lazy(() => import("./SignInSettings"));
 const ConsoleEmbed = lazy(() => import("../../ConsoleEmbed"));
+const WorkflowAccessPage = lazy(() => import("./WorkflowAccessPage"));
+const HubChangesPage = lazy(() => import("./HubChangesPage"));
+const MemoryPage = lazy(() => import("./MemoryPage"));
 
 type Key =
   | "profile"
@@ -68,7 +73,10 @@ type Key =
   | "brand"
   | "health"
   | "advanced"
-  | "parity";
+  | "parity"
+  | "workflow-access"
+  | "hub-changes"
+  | "memory";
 
 /** `team`: for people who manage the deployment; `admin`: administrators only
  *  (the chat app's own section rather than a management screen). */
@@ -83,11 +91,14 @@ const ITEMS: Item[] = [
   { key: "connections", label: S.connections, icon: <Plug size={16} aria-hidden />, hash: "/me/connections", keywords: "accounts github google sign in" },
   { key: "sources", label: S.sources, icon: <BookOpen size={16} aria-hidden />, hash: "/me/sources", keywords: "collections documents knowledge files web pages citations" },
   { key: "data", label: S.data, icon: <Database size={16} aria-hidden />, hash: "/me/data", keywords: "import export archive delete" },
+  { key: "memory", label: t.memory.title, icon: <Brain size={16} aria-hidden />, hash: "/me/memory", keywords: "remember notes personal forget" },
   { key: "my-schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/me/schedules", keywords: "reports timetable" },
   { key: "agents", label: S.agents, icon: <Bot size={16} aria-hidden />, hash: "/agents", team: true, keywords: "usage cost tokens connectors evals runs" },
   { key: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, hash: "/people", team: true, keywords: "invite access roles members" },
   { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
+  { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
+  { key: "hub-changes", label: t.hubChanges.title, icon: <FilePen size={16} aria-hidden />, hash: "/hub-changes", team: true, keywords: "proposals review knowledge instructions agents.md remember diff commit undo" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
   { key: "signin", label: S.signIn, icon: <ShieldCheck size={16} aria-hidden />, hash: "/settings/sign-in", team: true, admin: true, keywords: "two-step mfa saml scim okta entra company directory single sign-on sso" },
   { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
@@ -106,6 +117,8 @@ function keyFor(hash: string): Key | null {
   if (a === "people" || a === "confirm") return "people";
   if (a === "activity" || a === "runs") return "activity";
   if (a === "schedules") return "schedules";
+  if (a === "workflow-access") return "workflow-access";
+  if (a === "hub-changes") return "hub-changes";
   if (a === "diagnostics") return "health";
   if (a === "workspace") return "instructions";
   if (a === "settings")
@@ -277,6 +290,18 @@ function SectionBody({ item }: { item: Item }) {
         </Suspense>
       </>
     );
+  if (item.key === "workflow-access")
+    return (
+      <Suspense fallback={<PageSpinner />}>
+        <WorkflowAccessPage />
+      </Suspense>
+    );
+  if (item.key === "hub-changes")
+    return (
+      <Suspense fallback={<PageSpinner />}>
+        <HubChangesPage />
+      </Suspense>
+    );
   if (item.team)
     return (
       <Suspense fallback={<PageSpinner />}>
@@ -353,6 +378,15 @@ function SectionBody({ item }: { item: Item }) {
         <>
           <Heading title={S.data} lede={t.data.help} />
           <DataForm />
+        </>
+      );
+    case "memory":
+      return (
+        <>
+          <Heading title={t.memory.title} lede={t.memory.lede} />
+          <Suspense fallback={<PageSpinner />}>
+            <MemoryPage />
+          </Suspense>
         </>
       );
     case "my-schedules":
