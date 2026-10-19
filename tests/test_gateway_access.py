@@ -27,7 +27,6 @@ from hubzoid.access import guard, identity_scope
 def _legacy_ui(monkeypatch):
     """These tests pin Open WebUI mode (HUBZOID_UI=openwebui); the
     web app mode is covered by tests/test_gateway_app*.py."""
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
 
 
 @function_tool
@@ -76,13 +75,6 @@ def _plan(hub: Path) -> gateway.GatewayPlan:
         ),
     ))
 
-
-def test_gateway_connection_env_forwards_user_info(tmp_path):
-    """The drop-in: gateway connection env forwards user info like start() does."""
-    env = _plan(tmp_path).connection_env()
-    assert env["ENABLE_FORWARD_USER_INFO_HEADERS"] == "true"
-
-
 def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
     """End-to-end: the audit line flips from deny/anonymous to allow/grant
     the moment OWUI forwards the email (which the drop-in enables)."""
@@ -92,17 +84,17 @@ def test_gateway_restricted_tool_audit_before_and_after(tmp_path, capsys):
     store_for(tmp_path).grant("priya@x.com", tmp_path.name, "erp", actor="test")
     guarded = guard.guard_tool(erp_sales, "erp", tmp_path)
 
-    # Case A — OWUI did NOT forward the email (pre-fix gateway): no header.
+    # Case A — no signed identity: anonymous.
     ident_a = server._derive_identity({}, _FakeRequest(headers={}), tmp_path)
     with identity_scope(ident_a):
         out_a = _invoke(guarded, store="BLR")
     line_a = auditlib.read(tmp_path)[-1]
 
-    # Case B — with ENABLE_FORWARD_USER_INFO_HEADERS=true OWUI forwards the
-    # email; the bridge decides from the person's grant.
-    ident_b = server._derive_identity(
-        {}, _FakeRequest(headers={"x-openwebui-user-email": "priya@x.com"}), tmp_path,
-    )
+    # Case B — a signed identity: the bridge decides from the person's grant.
+    from hubzoid.assertions import identity_headers
+
+    signed = {k.lower(): v for k, v in identity_headers(tmp_path, surface="web", email="priya@x.com").items()}
+    ident_b = server._derive_identity({}, _FakeRequest(headers=signed), tmp_path)
     with identity_scope(ident_b):
         out_b = _invoke(guarded, store="BLR")
     line_b = auditlib.read(tmp_path)[-1]

@@ -46,3 +46,13 @@ provide a clearly labeled Google sign-in design preview without credentials.
 Shared management components may accept an optional embedded presentation; their
 standalone defaults stay unchanged. Theme reduction and a guided inbound MCP
 connection panel are recommendations, not backend changes in this patch.
+
+## Merged-branch review
+
+The founder requested another review of daily team use on the merged branch.
+Observed gaps: crowded Access and workflow tables, nested interactive agent tabs,
+low-contrast breadcrumbs, keyboard-inaccessible scrolling in eval tables, and
+ambiguous hub context in Agent instructions. Recompose the embedded views with
+existing controls, preserve standalone defaults and all review/actions, and
+verify populated sources, member permissions and mobile layouts. Test fixtures
+remain fictional and outside the repository.

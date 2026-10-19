@@ -103,7 +103,7 @@ def test_native_windows_hub_run_becomes_ready_and_stops(tmp_path):
         port = sock.getsockname()[1]
     env = {k: v for k, v in os.environ.items() if not k.startswith(("HUBZOID_", "AWS_"))}
     env.update(MODEL="hubzoid-test/scripted", HUBZOID_TEST_RUNTIME="1", PYTHONUTF8="1",
-               BRIDGE_API_KEYS="windows-test", WEBUI_AUTH="false")
+               BRIDGE_API_KEYS="windows-test", HUBZOID_AUTH="false")
     with (tmp_path / "startup.log").open("w+") as output:
         proc = subprocess.Popen([sys.executable, "-m", "hubzoid", "run", str(hub),
                                  "--no-ui", "--bridge-port", str(port)],

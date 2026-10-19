@@ -9,6 +9,7 @@ import { describeError } from "../lib/errors";
 import { t } from "../i18n/en";
 import { toast } from "../components/toast";
 import { Button, Field, Modal, Notice, cx } from "../components/ui";
+import { agentById, useApp } from "../lib/app-context";
 import { PageFrame } from "./PageFrame";
 
 const A = "/api/chat/authoring";
@@ -22,7 +23,7 @@ export default function WorkspacePage({ agent = null }: { agent?: string | null 
   const [tab, setTab] = useState<"files" | "openapi">("files");
   return (
     <PageFrame title={t.settingsPage.instructions} description={t.settingsPage.instructionsLede} wide>
-      <nav className="mb-5 flex gap-1 border-b border-line" aria-label={t.settingsPage.instructions}>
+      <nav className="hz-agent-tabs" aria-label={t.settingsPage.instructions}>
         {(["files", "openapi"] as const).map((k) => (
           <button key={k} type="button" onClick={() => setTab(k)} aria-current={tab === k ? "page" : undefined}
             className={cx("-mb-px border-b-2 px-3 pb-2 pt-1 text-[13px] font-medium",
@@ -37,8 +38,10 @@ export default function WorkspacePage({ agent = null }: { agent?: string | null 
 }
 
 function Files({ agent }: { agent: string | null }) {
+  const app = useApp();
+  const [hub, setHub] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[] | null>(null);
-  const [elsewhere, setElsewhere] = useState(false);
+  const elsewhere = !!agent && !!hub && agent.toLowerCase() !== hub;
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,11 +50,12 @@ function Files({ agent }: { agent: string | null }) {
     try {
       const got = await get<{ items: FileItem[]; hub?: string }>(`${A}/files`);
       setFiles(got.items);
+      setHub(got.hub ?? null);
       setDrafts((await get<{ items: Draft[] }>(`${A}/drafts`)).items);
       // From an agent's page: its instructions, when this hub is that agent.
       if (agent && got.hub && agent.toLowerCase() === got.hub) {
         setSelected((s) => s ?? (got.items.some((f) => f.path === "AGENTS.md") ? "AGENTS.md" : null));
-      } else if (agent) setElsewhere(true);
+      }
     } catch (e) {
       setError(e instanceof ApiError && e.status === 403 ? t.workspace.denied : describeError(e));
       setFiles([]);
@@ -66,8 +70,9 @@ function Files({ agent }: { agent: string | null }) {
   if (error) return <Notice tone="error">{error}</Notice>;
   return (
     <>
+    {hub && <p className="hz-workspace-context">{t.workspace.hubContext(agentById(app.agents.list, hub)?.name ?? hub)}</p>}
     {elsewhere && <Notice tone="info" className="mb-4">{t.workspace.elsewhere}</Notice>}
-    <div className="grid gap-5 md:grid-cols-[240px_1fr]">
+    <div className="hz-workspace-files">
       <div className="space-y-4">
         {(["agent", "skill", "prompt"] as const).map((kind) => (
           <div key={kind}>

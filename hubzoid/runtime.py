@@ -248,8 +248,8 @@ class OpenAIAgentsRuntime:
             yield item
 
     async def _turn_events(self, prompt: str) -> AsyncIterator[StreamItem]:
-        """When the caller connected personal MCP servers in Open WebUI (see
-        `owui_mcp`), the turn runs on a per-turn clone of the agent that also
+        """When the caller connected personal MCP servers (see
+        `personal_mcp`), the turn runs on a per-turn clone of the agent that also
         carries those servers, each with the caller's own token. The shared
         agent is never modified."""
         personal = self._personal_servers()
@@ -267,10 +267,10 @@ class OpenAIAgentsRuntime:
     def _personal_servers(self) -> list:
         if self._hub_dir is None:
             return []
-        from . import owui_mcp
+        from . import personal_mcp
         from .access.identity import current_identity
         try:
-            return owui_mcp.per_user_servers(self._hub_dir, current_identity())
+            return personal_mcp.per_user_servers(self._hub_dir, current_identity())
         except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
             log.warning("owui-mcp per-user injection skipped", exc_info=True)
             return []
@@ -292,7 +292,8 @@ class OpenAIAgentsRuntime:
         from contextlib import AsyncExitStack
 
         async with AsyncExitStack() as stack:
-            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent))
+            live = await open_personal_mcp(stack, personal, await self._hub_tool_names(self._agent),
+                                           hub_dir=self._hub_dir)
             agent = self._agent
             if live:
                 # The connector tools join as function tools under their
@@ -403,11 +404,11 @@ class OpenAIAgentsRuntime:
 
 # ---------------------------------------------------------------------------
 # Personal (per-user) MCP servers for the OpenAI and Codex backends. The Claude
-# backend passes `owui_mcp.per_user_specs` to its SDK, which runs the client.
+# backend passes `personal_mcp.per_user_specs` to its SDK, which runs the client.
 # ---------------------------------------------------------------------------
 def personal_mcp_server(srv):
     """An unconnected Agents-SDK Streamable HTTP client for one
-    `owui_mcp.PerUserServer`, named by its key and limited to the admin's tool
+    `personal_mcp.PerUserServer`, named by its key and limited to the admin's tool
     allow-list. The caller's Bearer rides in the transport headers only."""
     from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 
@@ -450,7 +451,8 @@ def connector_tool_name(server_key: str, tool: str) -> str:
     return name
 
 
-async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None) -> list:
+async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=None,
+                            hub_dir=None) -> list:
     """Connect each personal server on `stack` and list its (allow-listed)
     tools, renamed ``mcp__<server key>__<tool>`` (:func:`connector_tool_name`).
     Returns ``[(server, tools)]`` for the servers kept.
@@ -470,6 +472,12 @@ async def open_personal_mcp(stack, personal: list, taken: set[str], *, factory=N
     kept: list = []
     for srv in personal:
         server = make(srv)
+        if hub_dir is not None:
+            from .access.guard import checked_server
+            from .hitl import gate as hitl_gate
+
+            # The access check (milestone B) first, then the approval gate.
+            server = checked_server(hitl_gate.guard_mcp_server(server, hub_dir), hub_dir)
         try:
             await stack.enter_async_context(server)
             tools = await MCPUtil.get_function_tools(

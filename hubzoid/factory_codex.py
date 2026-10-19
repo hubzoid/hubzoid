@@ -141,12 +141,22 @@ class CodexRuntime:
         self._stack = AsyncExitStack()
         try:
             for server in self._servers:
+                if self.hub_dir:
+                    from .access.guard import checked_server
+
+                    server = checked_server(server, self.hub_dir)
                 await self._stack.enter_async_context(server)
                 tools = await MCPUtil.get_function_tools(
                     server, False, RunContextWrapper(context=None), Agent(name=self.name))
+                read_only = await _read_only_tools(server)
                 for tool in tools:
                     if tool.name in self.registry:
                         raise RuntimeError(f"Duplicate MCP tool name: {tool.name}")
+                    if self.hub_dir is not None:
+                        from .hitl import gate as hitl_gate
+
+                        tool = hitl_gate.wrap(tool, self.hub_dir, connector=getattr(server, "name", None),
+                                              read_only=read_only.get(tool.name))
                     self.registry[tool.name] = tool
         except BaseException:
             await self.aclose()
@@ -178,8 +188,8 @@ class CodexRuntime:
             yield part
 
     async def _turn_events(self, prompt):
-        """When the caller connected personal MCP servers in Open WebUI (see
-        `owui_mcp`), their tools join a per-turn copy of the registry for this
+        """When the caller connected personal MCP servers (see
+        `personal_mcp`), their tools join a per-turn copy of the registry for this
         turn only. The shared registry never changes."""
         personal = self._personal_servers()
         if not personal:
@@ -204,10 +214,10 @@ class CodexRuntime:
     def _personal_servers(self):
         if not (self.personal_mcp and self.hub_dir):
             return []
-        from . import owui_mcp
+        from . import personal_mcp
         from .access.identity import current_identity
         try:
-            return owui_mcp.per_user_servers(self.hub_dir, current_identity())
+            return personal_mcp.per_user_servers(self.hub_dir, current_identity())
         except Exception:  # noqa: BLE001 — a DB/token hiccup must never break chat
             log.warning("owui-mcp per-user injection skipped", exc_info=True)
             return []
@@ -219,7 +229,8 @@ class CodexRuntime:
         from .runtime import open_personal_mcp
 
         registry = dict(self.registry)
-        for _server, tools in await open_personal_mcp(stack, personal, set(registry)):
+        for _server, tools in await open_personal_mcp(stack, personal, set(registry),
+                                                      hub_dir=self.hub_dir):
             for tool in tools:
                 registry[tool.name] = tool
         return registry
@@ -541,6 +552,8 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
     registry = access.apply(hub_dir, {**make_all(ctx), **tools_local.load_all(hub_dir), **(extra_tools or {})})
     _add_curator_tool(ctx, registry, access)
     _add_jev_tool(ctx, registry, access)
+    from . import hitl
+    registry = hitl.equip(hub_dir, registry)
     from . import handover
     base_registry = dict(registry)
     for delegate in delegates:
@@ -563,3 +576,18 @@ def build_codex_runtime(hub_dir, *, extra_tools=None, max_turns=None, model_over
                         mcp_servers=load_mcp_servers(mcp.load_all_raw(hub_dir)),
                         vision=(config.vision_enabled, config.vision_max_edge, config.vision_max_images), effort=config.reasoning_effort,
                         personal_mcp=True)
+
+
+async def _read_only_tools(server) -> dict:
+    """{tool name: readOnlyHint} as the MCP server declares it (a hint the
+    builder can choose to trust with ``ask: writes``)."""
+    try:
+        listed = await server.list_tools()
+    except Exception:  # noqa: BLE001 - no hints: every tool counts as a write
+        return {}
+    out: dict = {}
+    for tool in listed or []:
+        hints = getattr(tool, "annotations", None)
+        if hints is not None and getattr(hints, "readOnlyHint", None) is not None:
+            out[tool.name] = bool(hints.readOnlyHint)
+    return out

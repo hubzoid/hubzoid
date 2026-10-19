@@ -29,10 +29,26 @@ class AuthUser:
     name: str = ""
     role: str = "user"  # 'admin' | 'user'
     method: str = ""    # how this session signed in: password | google | oidc | link | local
+    # The credential behind this request: "session", "api_key" or "local".
+    credential: str = "session"
+    credential_id: str = ""
+    # A personal API key's limits (None: not a key). ``hubs`` None: every agent.
+    operations: tuple[str, ...] | None = None
+    hubs: tuple[str, ...] | None = None
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @property
+    def via_key(self) -> bool:
+        return self.credential == "api_key"
+
+    def may_use_hub(self, hub: str | None) -> bool:
+        """A key limited to some agents can't reach the others."""
+        if self.hubs is None or hub is None:
+            return True
+        return str(hub).strip().lower() in self.hubs
 
     def public(self) -> dict:
         return {"id": self.id, "email": self.email, "name": self.name or self.email,

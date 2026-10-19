@@ -690,6 +690,26 @@ def _wrap_seams_as_steps() -> None:
             return raw_agent(task, hub_dir=Path(hub_dir_str), subject=subject)
 
         context._AGENT_STEP = _last_error(_agent_step)
+    if context._HITL_CREATE_STEP is None:
+
+        @_DBOS.step(name="hz_hitl_create")
+        def _hitl_create_step(payload: dict) -> dict:
+            return context._hitl_create(payload)
+
+        @_DBOS.step(name="hz_hitl_read")
+        def _hitl_read_step(hub_dir_str: str, hub: str, request_id: str) -> dict:
+            return context._hitl_read(hub_dir_str, hub, request_id)
+
+        context._HITL_CREATE_STEP = _hitl_create_step
+        context._HITL_READ_STEP = _hitl_read_step
+
+        from ..hitl import service as hitl_service
+
+        def _wake(_hub_dir, request: dict) -> None:
+            if request.get("workflow_id"):
+                _DBOS.send(request["workflow_id"], {"status": request["status"]}, topic=f"hitl:{request['id']}")
+
+        hitl_service.register_continuer("workflow", _wake)
     if raw_jev is not None and context._JEV_STEP is None:
 
         @_DBOS.step()
@@ -984,6 +1004,8 @@ def shutdown(*, completion_timeout_sec: float = 5.0, only_for=None) -> None:
             context._LLM_STEP = None
             context._AGENT_STEP = None
             context._JEV_STEP = None
+            context._HITL_CREATE_STEP = None
+            context._HITL_READ_STEP = None
             log.info("workflows: DBOS shut down")
 
 
@@ -1040,11 +1062,14 @@ def load_definitions(hub_dir) -> list[WorkflowDef]:
     until a workflow file changes."""
     from .._fs import resolve_bucket
 
+    from .builtin import files as builtin_files
+
     root = resolve_bucket(Path(hub_dir), "workflows")
-    if root is None or not root.is_dir():
-        return []
     files = sorted(p for d in root.iterdir() if d.is_dir() for p in d.glob("*.py")
-                   if not p.name.startswith("_"))
+                   if not p.name.startswith("_")) if root is not None and root.is_dir() else []
+    files = builtin_files() + files
+    if not files:
+        return []
     import hashlib
 
     digest = hashlib.sha256()
@@ -1246,14 +1271,25 @@ def load_workflows(hub_dir) -> int:
     from .._fs import resolve_bucket
 
     root = resolve_bucket(Path(hub_dir), "workflows")
+    before = len(_REGISTRY)
+    from .builtin import files as builtin_files
+
+    for py in builtin_files():  # workflows that ship with Hubzoid
+        mod_name = f"_hubzoid_builtin_wf_{py.stem}"
+        if mod_name in sys.modules:
+            continue
+        spec = importlib.util.spec_from_file_location(mod_name, py)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
     if root is None or not root.is_dir():
-        return 0
+        return len(_REGISTRY) - before
     from .observe import definitions
 
     errors = [r for r in definitions(hub_dir) if r["error"]]
     if errors:
         raise ValueError(str(errors))
-    before = len(_REGISTRY)
     for wf_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for py in sorted(wf_dir.glob("*.py")):
             if py.name.startswith("_"):

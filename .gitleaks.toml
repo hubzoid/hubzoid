@@ -28,5 +28,5 @@ paths = ['''(^|/)\.env\.example$''']
 [[allowlists]]
 description = "SHA-256 digests in the parity source map"
 condition = "AND"
-paths = ['''^docs/parity/sources\.json$''']
+paths = ['''(^|/)docs/parity/sources\.json$''']
 regexes = ['''^[0-9a-f]{64}$''']

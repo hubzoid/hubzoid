@@ -63,9 +63,8 @@ SECRET_NAME_KEYS = frozenset({"AWS_SECRET_NAME", "HUBZOID_HUB_SECRET_NAME", "HUB
 INHERITED_MARKER = "HUBZOID_DEPLOYMENT_SECRET_INHERITED"
 
 # Deployment keys a bridge takes from the deployment secret. Everything else in
-# that secret is for the gateway and Open WebUI only (OAuth client secrets and
-# the like). `bridge_deployment_key` also accepts every HUBZOID_GATEWAY_ADMIN_*,
-# OAUTH_*_ENCRYPTION_KEY and OTEL_* key.
+# that secret is for the gateway only. `bridge_deployment_key` also accepts
+# every OAUTH_*_ENCRYPTION_KEY and OTEL_* key.
 BRIDGE_DEPLOYMENT_KEYS = frozenset({
     # Workflow identity, report links and email delivery (deployment-wide).
     "HUBZOID_WORKFLOW_USER",
@@ -80,17 +79,14 @@ BRIDGE_DEPLOYMENT_KEYS = frozenset({
     "HUBZOID_EMAIL_DELIVERY",
     "HUBZOID_ARTIFACT_LINK_DAYS",
     "HUBZOID_ARTIFACT_ALLOW_ORIGINS",
-    "HUBZOID_GATEWAY_ADMIN_EMAIL",
-    "HUBZOID_GATEWAY_ADMIN_PASSWORD",
-    "WEBUI_SECRET_KEY",
+    "HUBZOID_ADMIN_EMAIL",
+    "HUBZOID_ADMIN_PASSWORD",
     "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY",
     "OAUTH_CLIENT_INFO_ENCRYPTION_KEY",
     "DATABASE_URL",
     "DATABASE_SCHEMA",
     "HUBZOID_OPERATIONAL_DB",
     "HUBZOID_PUBLIC_URL",
-    "WEBUI_URL",
-    "OWUI_NATIVE_MCP",
     "HUBZOID_OTEL_ENDPOINT",
     # The deployment key (hubzoid.secretbox): every bridge of a deployment must
     # share it (encrypted connection tokens, signed identity assertions).
@@ -114,19 +110,23 @@ AWS_CREDENTIAL_KEYS = frozenset({
     "AWS_ROLE_ARN",
     "AWS_BEARER_TOKEN_BEDROCK",
 })
-# Hubzoid and Open WebUI service secrets no agent child needs. Every
-# OAUTH_*_ENCRYPTION_KEY is blanked too.
+# Hubzoid service secrets no agent child needs. Every OAUTH_*_ENCRYPTION_KEY is
+# blanked too.
 SERVICE_SECRET_KEYS = frozenset({
     "BRIDGE_API_KEYS",
     "HUBZOID_ARTIFACT_SECRET",
     "HUBZOID_SECRET_KEY",
-    "HUBZOID_GATEWAY_ADMIN_PASSWORD",
-    "WEBUI_SECRET_KEY",
+    "HUBZOID_ADMIN_PASSWORD",
     "DATABASE_URL",
     "HUBZOID_OPERATIONAL_DB",
     "HUBZOID_DBOS_DB",
     "HUBZOID_SMTP_USERNAME",
     "HUBZOID_SMTP_PASSWORD",
+    # Retired Open WebUI (1.x) credentials: unused since 2.0, but still secret
+    # in a deployment that keeps or restores them.
+    "WEBUI_SECRET_KEY",
+    "WEBUI_ADMIN_PASSWORD",
+    "HUBZOID_GATEWAY_ADMIN_PASSWORD",
 })
 # Restricted-layer keys a child keeps: the claude CLI's own auth and settings,
 # and the basics every process needs.
@@ -144,11 +144,6 @@ _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ARN_RE = re.compile(r"^arn:aws[\w-]*:secretsmanager:([a-z0-9-]+):")
 _TRUTHY = ("1", "true", "yes", "on")
 
-# Open WebUI and sign-in settings (the gateway's 0.9.x compatibility set). Such
-# a key set in a hub-only layer of a standalone hub still reaches Open WebUI.
-_OWUI_PREFIXES = ("WEBUI_", "OAUTH_", "OPENID_", "GOOGLE_CLIENT_", "MICROSOFT_CLIENT_", "GITHUB_CLIENT_")
-_OWUI_KEYS = frozenset({"DEFAULT_USER_ROLE", "ENABLE_SIGNUP", "ENABLE_LOGIN_FORM", "ENABLE_OAUTH_SIGNUP"})
-
 
 class SecretFetchError(RuntimeError):
     """A configured secret could not be loaded. Never carries a value."""
@@ -164,13 +159,7 @@ def _encryption_key(key: str) -> bool:
 
 def bridge_deployment_key(key: str) -> bool:
     """Whether a bridge takes this key from the deployment secret."""
-    return (key in BRIDGE_DEPLOYMENT_KEYS or key.startswith("OTEL_")
-            or key.startswith("HUBZOID_GATEWAY_ADMIN_") or _encryption_key(key))
-
-
-def owui_setting(key: str) -> bool:
-    """An Open WebUI or sign-in setting (WEBUI_*, OAUTH_*, ENABLE_SIGNUP and so on)."""
-    return key != "WEBUI_NAME" and (key in _OWUI_KEYS or key.startswith(_OWUI_PREFIXES))
+    return key in BRIDGE_DEPLOYMENT_KEYS or key.startswith("OTEL_") or _encryption_key(key)
 
 
 def _truthy(raw: str | None) -> bool:
@@ -487,7 +476,7 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
 
     # Deployment secret for a gateway hub: before the hub file, bridge keys only.
     if is_registered and secrets:
-        deployed = {k: v for k, v in start.items() if k == "WEBUI_SECRET_KEY" or _encryption_key(k)}
+        deployed = {k: v for k, v in start.items() if _encryption_key(k)}
         if hub_file.get("AWS_SECRET_NAME"):
             _log_once(logging.WARNING, "hub %s: AWS_SECRET_NAME in %s is ignored for a gateway hub. Name a "
                       "hub secret with HUBZOID_HUB_SECRET_NAME instead.", hub_dir.name, hub_path)
@@ -502,10 +491,10 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
                                                                  {**start, **hub_file})
             ignored = sorted(set(values) - set(kept))
             if ignored:
-                _log_once(logging.INFO, "hub %s: deployment secret keys left to the gateway and Open WebUI: %s",
+                _log_once(logging.INFO, "hub %s: deployment secret keys left to the gateway: %s",
                           hub_dir.name, ", ".join(ignored))
             apply(L_DEPLOYMENT_SECRET, kept, f"aws:{pointer.name}", start, "the process environment")
-            deployed.update({k: v for k, v in kept.items() if k == "WEBUI_SECRET_KEY" or _encryption_key(k)})
+            deployed.update({k: v for k, v in kept.items() if _encryption_key(k)})
             if kept:
                 hub_file = _read_file(hub_path)  # ${VAR} may now refer to deployment values
 
@@ -538,11 +527,11 @@ def apply_layers(hub_dir: Path, *, secrets: bool = True) -> None:
         apply(L_RESTRICTED_SECRET, values, f"aws:{name}", restricted_file, str(restricted_path))
 
     # Deployment-locked keys. A hub value that differs from the deployment's
-    # means Open WebUI and this bridge disagree. Warn, never fail.
+    # means this bridge and the rest of the deployment disagree. Warn, never fail.
     for key, value in sorted(deployed.items()):
         if value and env.get(key) != value:
             _log_once(logging.WARNING, "hub %s: %s from a hub layer differs from the deployment value. "
-                      "Open WebUI and this bridge disagree, so connected tools cannot decrypt their "
+                      "This bridge and the rest of the deployment disagree, so connected tools cannot decrypt their "
                       "tokens. Remove it from the hub layers.", hub_dir.name, key)
 
     _loads[str(hub_dir.resolve())] = record
@@ -593,26 +582,9 @@ def for_hub_children(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def deployment_view(env: Mapping[str, str]) -> dict[str, str]:
-    """The environment for Open WebUI and the edge under `hubzoid run`: the
-    deployment layer and the hub file, never the hub secret or restricted
-    layers. An Open WebUI or sign-in setting kept in one of those still passes
-    (0.9.x compatibility), with a warning."""
-    kept: list[str] = []
-    out = _without(env, _HUB_ONLY, keep=owui_setting, kept=kept)
-    if kept:
-        _log_once(logging.WARNING, "Open WebUI settings found in a hub secret or restricted/.env: %s. "
-                  "Move them to the hub .env or the deployment secret.", ", ".join(sorted(kept)))
-    return out
-
-
-def owui_env(env: Mapping[str, str]) -> dict[str, str]:
-    """Open WebUI's environment: `env` minus HUBZOID_* keys and secret names,
-    and minus AWS credentials when this process loaded an AWS secret (they are
-    there for Hubzoid's own fetch)."""
-    strip_aws = secrets_in_use()
-    return {k: v for k, v in env.items()
-            if not k.startswith("HUBZOID_") and k not in SECRET_NAME_KEYS
-            and not (strip_aws and k in AWS_CREDENTIAL_KEYS)}
+    """The environment for the edge under `hubzoid run`: the deployment layer
+    and the hub file, never the hub secret or restricted layers."""
+    return _without(env, _HUB_ONLY)
 
 
 def child_env_overrides(env: Mapping[str, str]) -> dict[str, str]:

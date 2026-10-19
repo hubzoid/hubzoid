@@ -171,7 +171,8 @@ def test_claude_shows_it_only_to_granted_callers(hub, user, surface, allowed):
         listed = asyncio.run(_claude_list(_claude_server(opts)))
     assert (TOOL in listed) is allowed
     assert (f"mcp__hubzoid__{TOOL}" in opts.allowed_tools) is allowed
-    assert "read_knowledge" in listed and "remember" not in listed   # remember needs curator
+    assert "read_knowledge" in listed
+    assert ("remember" in listed) is (user == MANAGER)   # remember needs curator, or managing the hub
 
 
 @pytest.mark.parametrize("user,surface,allowed", CALLERS, ids=CALLER_IDS)

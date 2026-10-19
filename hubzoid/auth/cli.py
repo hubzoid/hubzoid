@@ -47,8 +47,6 @@ def _fail(message: str, code: int = 1) -> None:
 
 def _prepare(hub: Path) -> Path:
     """The hub, with its configuration loaded as ``hubzoid run`` loads it."""
-    from .. import appmode
-
     hub = Path(hub).resolve()
     if not (hub / "AGENTS.md").is_file() and not (hub / ".hubzoid" / "deployment.json").is_file():
         _fail(f"{hub} is not a hub (no AGENTS.md). Run this in a hub directory or pass one.", 2)
@@ -60,9 +58,12 @@ def _prepare(hub: Path) -> Path:
         raise
     except Exception as exc:  # noqa: BLE001 — never print a configuration value
         _fail(f"The hub's configuration could not be loaded ({type(exc).__name__}).", 2)
-    if appmode.is_openwebui(hub):
-        _fail("This deployment uses Open WebUI accounts (HUBZOID_UI=openwebui). Manage people "
-              "in the Console (People) or in Open WebUI.", 2)
+    from .. import appmode
+
+    # An Open WebUI (1.x) deployment keeps its accounts there until it is moved.
+    problems = appmode.retired_problems(hub)
+    if problems:
+        _fail("\n".join(problems), 2)
     return hub
 
 

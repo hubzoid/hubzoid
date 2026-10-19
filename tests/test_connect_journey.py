@@ -36,7 +36,7 @@ def hub(tmp_path, monkeypatch):
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
-    monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     monkeypatch.delenv("HUBZOID_CONNECT_TTL", raising=False)
     h.grant(hub, ALICE, BOB)
@@ -339,12 +339,11 @@ def test_an_offer_expires_and_a_decline_clears_it(hub):
     assert j["continuation_status"] == "declined" and j["continuation"] is None
 
 
-def test_public_base_prefers_the_public_root(monkeypatch):
-    monkeypatch.delenv("WEBUI_URL", raising=False)
+def test_public_base_is_the_public_root(monkeypatch):
     monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org/b/mail-hub")
     assert connect_journey.public_base() == "https://hub.example.org"
-    monkeypatch.setenv("WEBUI_URL", "https://chat.example.org/")
-    assert connect_journey.public_base() == "https://chat.example.org"
+    monkeypatch.setenv("WEBUI_URL", "https://chat.example.org/")  # Open WebUI's name is not read
+    assert connect_journey.public_base() == "https://hub.example.org"
 
 
 def test_asking_again_after_connecting_finishes_the_journey_by_the_provider_check(hub):
@@ -384,7 +383,7 @@ async def test_tool_lists_what_this_person_can_connect_here(hub, monkeypatch):
     h.connect(hub.db, user_id="ua", server_id="gmail", secret=SECRET, access_token="AT-a")
     with _as(ALICE):
         out = await tool.on_invoke_tool(None, "{}")
-    assert "Gmail (gmail): connected" in out and "/portal/connections" in out
+    assert "Gmail (gmail): connected" in out and "/account/connections" in out
     assert "gmail-mcp.example.org" not in out and "AT-a" not in out
     from hubzoid.access import store_for
 

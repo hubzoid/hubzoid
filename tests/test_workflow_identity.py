@@ -14,8 +14,8 @@ from hubzoid.workflows import identity as idlib
 from hubzoid.workflows.identity import IdentityError, RunIdentity
 from hubzoid.workflows.state import SHARED, WorkflowState
 
-_ENV = ("WEBUI_AUTH", "HUBZOID_WORKFLOW_USER", "HUBZOID_GATEWAY_ADMIN_EMAIL",
-        "WEBUI_ADMIN_EMAIL", "HUBZOID_DEPLOYMENT", "DATABASE_URL")
+_ENV = ("HUBZOID_AUTH", "HUBZOID_WORKFLOW_USER", "HUBZOID_ADMIN_EMAIL",
+        "HUBZOID_DEPLOYMENT", "DATABASE_URL")
 
 
 @pytest.fixture
@@ -32,8 +32,8 @@ def hub(tmp_path, monkeypatch):
 @pytest.fixture
 def shared(hub, monkeypatch):
     """A shared (authenticated) deployment: not the local quickstart."""
-    monkeypatch.setenv("WEBUI_AUTH", "true")
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "owner@company.com")
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "owner@company.com")
     return hub
 
 
@@ -284,8 +284,7 @@ def test_the_gateway_records_its_workflow_user_for_cli_commands(shared, tmp_path
     _manage(shared, "deploy@company.com")
     deployment.save(tmp_path / "gw" / "deployment.json",
                     hubs=[dict(key="sales", name="sales", path=str(shared), model_id="sales")],
-                    operational_url=f"sqlite:///{tmp_path / 'ops.db'}",
-                    owui_url="http://127.0.0.1:9", owui_db=str(tmp_path / "gw" / "webui.db"),
+                    operational_url=f"sqlite:///{tmp_path / 'ops.db'}", owui_db=str(tmp_path / "gw" / "webui.db"),
                     workflow_user="Deploy@Company.com")
     ident = idlib.resolve(shared, legacy_subject="workflow:daily")
     assert (ident.subject, ident.source) == ("deploy@company.com", "deployment")
