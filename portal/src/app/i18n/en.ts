@@ -1051,6 +1051,8 @@ export const en = {
     liveBody: "Invite people to read or contribute to this chat.",
     who: "Who can open it",
     audience: { deployment: "Everyone signed in here", named: "Only people I name", public: "Anyone with the link" } as Record<string, string>,
+    publicOff: "An administrator has turned public links off for this deployment.",
+    publicOffShort: "off here",
     people: "People (emails)",
     allowCopy: "Let readers make their own copy",
     previewButton: "Preview",

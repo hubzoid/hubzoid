@@ -233,7 +233,7 @@ function EmptyThread(props: ThreadProps) {
         <section aria-label={t.agents.suggestions} className="hz-pills">
           {pills.map((s) => (
             <ThreadPrimitive.Suggestion key={s.prompt} prompt={s.prompt} send={false} asChild>
-              <button type="button" className="hz-pill">
+              <button type="button" className="hz-suggestion" title={s.label}>
                 {s.label}
               </button>
             </ThreadPrimitive.Suggestion>
@@ -1122,7 +1122,8 @@ function ContextNote() {
 
 // ---- feedback and follow-ups ----------------------------------------------------
 
-const REASONS = ["accurate", "useful", "missing_source", "incorrect", "other"] as const;
+// What can be wrong with an answer (the deployment also accepts "accurate" and "useful").
+const REASONS = ["incorrect", "missing_source", "other"] as const;
 
 /** Rate this answer. A rating belongs to you and to this exact answer. */
 function FeedbackActions() {

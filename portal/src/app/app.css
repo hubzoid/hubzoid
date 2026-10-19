@@ -2273,8 +2273,15 @@
     max-width: 768px;
     margin-top: 14px;
   }
-  .hz-pill {
+  .hz-search-mark {
+    background: transparent;
+    color: var(--hz-ink);
+    font-weight: 600;
+  }
+  .hz-suggestion {
+    display: inline-block;
     height: 30px;
+    line-height: 28px;
     max-width: 320px;
     padding: 0 12px;
     border-radius: 999px;
@@ -2286,7 +2293,7 @@
     text-overflow: ellipsis;
     transition: background-color 120ms var(--hz-ease), color 120ms var(--hz-ease);
   }
-  .hz-pill:hover {
+  .hz-suggestion:hover {
     background: var(--hz-hover);
     color: var(--hz-ink);
   }

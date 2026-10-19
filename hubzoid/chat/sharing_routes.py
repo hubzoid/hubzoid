@@ -94,7 +94,9 @@ def mount(app: FastAPI, ctx) -> SharingService:
                 raise authz.denied("chat.share.manage")
             return {"items": await call(svc.list_shares, owner_id=None)}
         return {"items": await call(svc.list_shares, owner_id=actor.id,
-                                    conversation_id=request.query_params.get("conversation_id"))}
+                                    conversation_id=request.query_params.get("conversation_id")),
+                # So the share dialog offers a public link only when it can work.
+                "public_enabled": bool(svc.settings().get("public_enabled"))}
 
     @app.patch("/api/shares/{share_id}")
     async def change(share_id: str, request: Request):
