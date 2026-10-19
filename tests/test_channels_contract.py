@@ -459,7 +459,29 @@ def test_stop_signal_cancels_the_persons_work_item(hub_dir, fake, monkeypatch):
     row0 = store.list_deliveries(hub_dir, "desk", conn.id)["items"][0]
     assert row0["status"] == "routed", (row0["reason"], row0["route_json"])
     item_id = row0["route_json"]["work_item_id"]
-    send(conn, ev(eid="e2", data={"signal": "stop"}), delivery_id="d2")
+    send(conn, ev(eid="e2", text="", data={"signal": "stop"}), delivery_id="d2")   # Linear sends Stop with no text
     router._route_one(hub_dir, store.open_deliveries(hub_dir, "desk")[0], None)
     assert wstore.get_item(hub_dir, item_id)["state"] in ("cancelled", "accepted")
     assert any("Stopped" in s["text"] or "Nothing was running" in s["text"] for s in fake.sent)
+
+
+def test_bot_events_admitted_only_when_the_adapter_allows_them(hub_dir, fake):
+    conn = applied(hub_dir)
+    send(conn, ev(eid="b1", bot=True, text="a bot comment"), ev(eid="b2", thread="t2", bot=True, text="CI failed",
+                                                                  data={"bot_allowed": True}))
+    rows = {r["semantic_key"]: r for r in store.list_deliveries(hub_dir, "desk", conn.id)["items"]}
+    assert rows["msg:b1"]["reason"] == "bot_author"
+    assert rows["msg:b2"]["status"] == "accepted"
+
+
+def test_swap_connection_state_consumes_once(hub_dir, fake):
+    conn = applied(hub_dir)
+    store.set_connection_state(hub_dir, "desk", conn.id, attempt={"used": False})
+
+    def take(state):
+        if (state.get("attempt") or {}).get("used"):
+            return None, False
+        return {"attempt": {"used": True}}, True
+
+    assert store.swap_connection_state(hub_dir, "desk", conn.id, take) is True
+    assert store.swap_connection_state(hub_dir, "desk", conn.id, take) is False
