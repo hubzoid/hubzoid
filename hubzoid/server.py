@@ -179,6 +179,13 @@ def build_app() -> FastAPI:
             # long-lived task (open and close in one task), not in a request.
             from .chat.authoring_routes import runtime_reloader
             reload_task = asyncio.create_task(runtime_reloader(chat_ctx, hub_dir, rt, inflight.busy))
+        # Channels: route provider deliveries saved before a restart, post
+        # replies that were due, and start Socket Mode or mailbox transports.
+        from .channels import router as channel_router
+        try:
+            await channel_router.start(app, hub_dir)
+        except Exception:  # noqa: BLE001 - channels never stop the bridge from serving
+            log.exception("channels: could not start routing")
         try:
             if mcp_app is not None:
                 # Without this the MCP session manager never starts and
@@ -203,6 +210,7 @@ def build_app() -> FastAPI:
                     pass
             if hitl_task is not None:
                 hitl_task.cancel()
+            await channel_router.stop()
             if wf_dispatcher is not None:
                 await wf_dispatcher.stop()
             await sched.stop()

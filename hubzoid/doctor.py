@@ -594,6 +594,22 @@ def _legacy_management_flag() -> Check | None:
                  "the Console to the managers who use them, then remove the setting.")
 
 
+def _eval_checks(hub: Path) -> list[Check]:
+    """The evals the hub requires in quality/manifest.yaml: one row each, ok,
+    fail or pending (never run, or the case or the hub changed since).
+    Nothing for a hub without the manifest."""
+    from .evals import quality
+
+    try:
+        rows = quality.evidence(hub)
+    except quality.QualityError as exc:
+        return [Check("evals.quality", "fail", str(exc))]
+    except Exception as exc:  # noqa: BLE001 - one unreadable report never hides the rest of doctor
+        # The hub requires evals; results that cannot be read do not show them passing.
+        return [Check("evals.quality", "fail", f"Eval results could not be read ({type(exc).__name__})")]
+    return [Check(f"eval.{r.case_id}", r.status, r.summary, {"fix": r.fix}) for r in rows]
+
+
 def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[str, str],
                    base_env: dict[str, str]) -> list[Check]:
     """Stored secrets and the secrets the hub expects: names and status only.
@@ -652,6 +668,43 @@ def _secret_checks(hub: Path, *, fetch_secrets: bool, deployment_values: dict[st
     return out
 
 
+def _hub_setup_checks(hub: Path) -> list[Check]:
+    """The hub's own declarations, only when it has them (hubzoid.hubs):
+
+    settings.files   settings.yaml, hub.settings.yaml and hub.manifest.yaml parse
+    settings.values  every declared setting has a valid value or reference
+    probe.<id>       each check the hub declares in hub.manifest.yaml
+    """
+    from .hubs import probes as probes_lib
+    from .hubs import settings as hub_settings
+    from .hubs.yamlfile import HubFileError
+
+    present = [n for n in (hub_settings.DECLARATIONS, hub_settings.VALUES, probes_lib.MANIFEST)
+               if (hub / n).is_file()]
+    if not present:
+        return []
+    out: list[Check] = []
+    try:
+        resolved, problems = hub_settings.validate(hub)
+        probes_lib.manifest(hub)
+    except HubFileError as exc:
+        return [Check("settings.files", "fail", str(exc))]
+    out.append(Check("settings.files", "ok", f"Read {', '.join(present)}"))
+    if resolved or problems:
+        if problems:
+            out.append(Check("settings.values", "fail",
+                             f"{len(problems)} setting problem(s): " + "; ".join(p.message for p in problems[:5]),
+                             [p.public() for p in problems]))
+        else:
+            out.append(Check("settings.values", "ok", f"{len(resolved)} declared setting(s) set",
+                             [{"name": r.decl.name, "source": r.source, "secret": r.decl.secret} for r in resolved]))
+    for result in probes_lib.run(hub):
+        detail = {"recovery": result.recovery, "details": result.details} if (result.recovery or result.details) \
+            else None
+        out.append(Check(f"probe.{result.id}", result.status, result.summary, detail))
+    return out
+
+
 def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
     """All checks. `fetch_secrets=False` never calls AWS: named secrets are
     listed, not read, and the hub loads from its files alone."""
@@ -675,6 +728,7 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         if sqlite_check:
             checks.append(sqlite_check)
         checks += _schema(hub)
+        checks += _eval_checks(hub)
         checks += _auth(hub)
         checks += _app_checks(hub)
         google = _google_merge(deployment_values)
@@ -693,6 +747,10 @@ def run(hub: Path, *, fetch_secrets: bool = True) -> list[Check]:
         except Exception as exc:  # noqa: BLE001
             checks.append(Check("db.read", "fail", f"Operational store unreadable: {type(exc).__name__}: {exc}"))
         try:
+            checks += _hub_setup_checks(hub)
+        except Exception as exc:  # noqa: BLE001 - one broken check never hides the rest
+            checks.append(Check("settings.files", "fail", f"Hub settings could not be checked ({type(exc).__name__})"))
+        try:
             checks += _secret_checks(hub, fetch_secrets=fetch_secrets and not unreadable,
                                      deployment_values=deployment_values, base_env=base_env)
         except Exception as exc:  # noqa: BLE001 - reported by class only, never a value
@@ -705,5 +763,6 @@ def report(hub: Path, checks: list[Check]) -> dict:
     from . import __version__
 
     return {"format": FORMAT, "hub": str(Path(hub).resolve()), "hubzoid": __version__,
-            "ok": not any(c.status == "fail" for c in checks),
+            # A pending required eval has not passed yet: the hub is not ready.
+            "ok": not any(c.status in ("fail", "pending") for c in checks),
             "checks": [asdict(c) for c in checks]}

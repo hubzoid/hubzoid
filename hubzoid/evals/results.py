@@ -120,6 +120,7 @@ class CaseResult:
     turns: list[TurnRecord] | None = None     # None for a single-prompt case
     run_as: str | None = None     # the account the case ran as
     prompt: str | None = None     # recorded input; never read from a later definition
+    case_digest: str | None = None  # sha256 of the case file that ran (freshness for doctor)
 
     @property
     def free_passed(self) -> bool:
@@ -163,6 +164,7 @@ class CaseResult:
             "turns": [t.to_dict() for t in self.turns] if self.turns is not None else None,
             "run_as": self.run_as,
             "prompt": self.prompt,
+            "case_digest": self.case_digest,
         }
 
     @classmethod
@@ -189,6 +191,7 @@ class CaseResult:
                    if isinstance(turns, list) else None),
             run_as=d.get("run_as"),
             prompt=d.get("prompt"),
+            case_digest=d.get("case_digest"),
         )
 
 
@@ -203,6 +206,7 @@ class SuiteResult:
     judged: bool = True           # was the judge tier enabled for this run
     trigger: str | None = "cli"   # cli | schedule | console | ci (None: schema 1 file)
     run_as: str | None = None     # the suite default account, if one was given
+    hub_digest: str | None = None  # what the hub's answers depended on (evals.quality)
 
     @property
     def passed(self) -> int:
@@ -227,6 +231,7 @@ class SuiteResult:
             "judged": self.judged,
             "trigger": self.trigger,
             "run_as": self.run_as,
+            "hub_digest": self.hub_digest,
             "passed": self.passed,
             "failed": self.failed,
             "cases": [c.to_dict() for c in self.cases],
@@ -246,6 +251,7 @@ class SuiteResult:
             judged=bool(d.get("judged", True)),
             trigger=d.get("trigger"),
             run_as=d.get("run_as"),
+            hub_digest=d.get("hub_digest"),
         )
 
 

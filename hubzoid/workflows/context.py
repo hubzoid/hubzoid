@@ -266,10 +266,31 @@ class Hub:
         return data_dir(_ctx().hub_dir)
 
     def setting(self, key: str, default=None):
-        return _ctx().settings.get(key, default)
+        """A workflow setting (workflows/settings.yaml), else a hub setting the
+        hub declares in settings.yaml (hubzoid.hubs.settings), else `default`.
+        A secret setting is never returned here: use `hub.secret`."""
+        ctx = _ctx()
+        if key in ctx.settings:
+            return ctx.settings[key]
+        from ..hubs import settings as hub_settings
+
+        return hub_settings.effective(ctx.hub_dir).get(key, default)
 
     def secret(self, key: str, default=None):
-        # From hub env at call time, resolved inside whatever step calls it.
+        """A secret, resolved at call time inside whatever step calls it. A
+        secret setting the hub declares follows its reference (secret:... or
+        env:...). Anything else comes from the hub's environment."""
+        ctx = _ctx()
+        from ..hubs import settings as hub_settings
+
+        ref = hub_settings.secret_ref(ctx.hub_dir, key.upper())
+        if ref is not None:
+            from ..secretstore import SecretError, resolve
+
+            try:
+                return resolve(ref, ctx.hub_dir)
+            except SecretError:
+                return default
         return os.environ.get(key.upper(), default)
 
     @property
@@ -297,6 +318,14 @@ class Hub:
         from ..work_items.facade import WorkItem
 
         return WorkItem()
+
+    @property
+    def thread(self):
+        """The channel thread this work came from (`hubzoid.channels`):
+        `post(text, key=...)` replies in that thread and nowhere else."""
+        from ..channels.thread import for_current_run
+
+        return for_current_run()
 
     @property
     def operation(self):

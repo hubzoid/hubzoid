@@ -103,7 +103,11 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     tool family with its own rule, e.g. the management tools'
     `service.TOOL_SURFACES`). Default: `allowed_surfaces()`.
     """
+    from .. import tool_fakes as fakes
+
     surfaces = _allowed_surfaces() if surfaces is None else frozenset(surfaces)
+    # An eval's fake answers only after this check allows the call.
+    ft = fakes.wrap(ft)
     original_invoke = ft.on_invoke_tool
     hub_dir = Path(hub_dir)
 
@@ -140,7 +144,7 @@ def guard_tool(ft: FunctionTool, permission: str, hub_dir: Path, *,
     # Tools sharing a permission and surface rule share one decision per turn
     # (`visible_map`).
     _is_enabled.hubzoid_key = (str(hub_dir), permission, surfaces)
-    return copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled)
+    return fakes.covered(copy_tool(ft, on_invoke_tool=_guarded_invoke, is_enabled=_is_enabled))
 
 
 def visible(ft) -> bool:

@@ -85,7 +85,11 @@ _KNOWN_KEYS = {
     "schedule", "tags", "expect_tools", "forbid_tools", "contains",
     "not_contains", "timeout", "threshold", "enabled",
     "run_as", "expect_tool_args",
+    "fake_tools", "real_tools", "allow_real_mcp",
 }
+
+# Folders under evals/ that hold data, not cases.
+_NOT_CASES = {"fixtures"}
 
 
 class EvalCaseError(ValueError):
@@ -94,7 +98,7 @@ class EvalCaseError(ValueError):
 
 @dataclass
 class EvalCase:
-    name: str                                  # filename stem = the case id
+    name: str                                  # path under evals/ without .md = the case id
     prompt: str                                # the first turn's text for multi-turn
     criteria: str | None = None                # present => judged
     tags: list[str] = field(default_factory=list)
@@ -111,6 +115,14 @@ class EvalCase:
     turns: list[str] = field(default_factory=list)       # empty: single prompt
     run_as: str | None = None                  # account email, validated syntax
     expect_tool_args: dict = field(default_factory=dict)  # tool -> {arg: expected}
+    fake_tools: list = field(default_factory=list)        # [tool_fakes.Fake]; non-empty => faked case
+    real_tools: list[str] = field(default_factory=list)   # may run for real in a faked case
+    allow_real_mcp: bool = False                          # a faked case on a hub with MCP servers
+    digest: str = ""                                      # sha256 of the case file, for freshness
+
+    @property
+    def is_faked(self) -> bool:
+        return bool(self.fake_tools)
 
     @property
     def is_multi_turn(self) -> bool:
@@ -158,11 +170,20 @@ def _as_int(value: Any, *, key: str, where: str, lo: int, hi: int, default: int)
         return default
     try:
         n = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:   # OverflowError: .inf
         raise EvalCaseError(f"{where}: {key} must be a whole number") from exc
     if not lo <= n <= hi:
         raise EvalCaseError(f"{where}: {key} must be between {lo} and {hi}, got {n}")
     return n
+
+
+def _as_bool(value: Any, *, key: str, where: str) -> bool:
+    """A YAML true or false. A quoted "false" is refused: it would read as true."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise EvalCaseError(f"{where}: {key} must be true or false")
+    return value
 
 
 def _split_body(body: str, *, where: str = "case") -> tuple[str, str | None, list[str]]:
@@ -253,13 +274,39 @@ def _expect_tool_args(value: Any, *, where: str) -> dict:
     return out
 
 
-def parse(path: Path) -> EvalCase:
+def _fake_tools(value: Any, *, where: str) -> list:
+    """`fake_tools:` is a list of {tool, args?, output | error}."""
+    if value is None:
+        return []
+    from ..tool_fakes import Fake
+
+    shape = ("fake_tools is a list of {tool: <name>, args: {...} (optional), output: <result>} "
+             "or {tool: <name>, error: <message>}")
+    if not isinstance(value, list):
+        raise EvalCaseError(f"{where}: {shape}")
+    out = []
+    for i, item in enumerate(value, start=1):
+        if not isinstance(item, dict) or not isinstance(item.get("tool"), str) or not item["tool"].strip():
+            raise EvalCaseError(f"{where}: fake_tools entry {i}: {shape}")
+        extra = set(item) - {"tool", "args", "output", "error"}
+        if extra:
+            raise EvalCaseError(f"{where}: fake_tools entry {i}: unknown key(s) {', '.join(sorted(extra))}")
+        if ("output" in item) == ("error" in item):
+            raise EvalCaseError(f"{where}: fake_tools entry {i}: give exactly one of output or error")
+        if item.get("args") is not None and not isinstance(item["args"], dict):
+            raise EvalCaseError(f"{where}: fake_tools entry {i}: args maps argument names to values")
+        out.append(Fake(tool=item["tool"].strip(), args=item.get("args") or None, output=item.get("output"),
+                        error=str(item["error"]) if "error" in item else None))
+    return out
+
+
+def parse(path: Path, *, case_id: str | None = None) -> EvalCase:
     """Parse one `<hub>/evals/<name>.md` into an EvalCase.
 
     Raises EvalCaseError (with the filename) on anything unusable. Callers
     decide whether one bad file fails the suite or is skipped with a warning.
     """
-    where = path.name
+    where = f"{case_id}.md" if case_id else path.name
     try:
         meta, body = frontmatter.read(path)
     except (OSError, ValueError) as exc:
@@ -284,8 +331,14 @@ def parse(path: Path) -> EvalCase:
         except ValueError as exc:
             raise EvalCaseError(f"{where}: bad schedule — {exc}") from exc
 
+    import hashlib
+
+    fakes = _fake_tools(meta.get("fake_tools"), where=where)
+    real = _as_list(meta.get("real_tools"), key="real_tools", where=where)
+    if real and not fakes:
+        raise EvalCaseError(f"{where}: real_tools only applies with fake_tools")
     return EvalCase(
-        name=path.stem,
+        name=case_id or path.stem,
         prompt=prompt,
         criteria=criteria,
         tags=_as_list(meta.get("tags"), key="tags", where=where),
@@ -304,31 +357,61 @@ def parse(path: Path) -> EvalCase:
         turns=turns,
         run_as=_run_as(meta.get("run_as"), where=where),
         expect_tool_args=_expect_tool_args(meta.get("expect_tool_args"), where=where),
+        fake_tools=fakes,
+        real_tools=real,
+        allow_real_mcp=_as_bool(meta.get("allow_real_mcp"), key="allow_real_mcp", where=where),
+        digest="sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
     )
 
 
-def discover(hub_dir: Path, *, strict: bool = True) -> list[EvalCase]:
-    """Load every case in `<hub>/evals/`, sorted by name.
+def discover(hub_dir: Path, *, strict: bool = True,
+             errors: list[tuple[str, str]] | None = None) -> list[EvalCase]:
+    """Load every case under `<hub>/evals/`, subfolders included, sorted by id.
+
+    A case's id is its path under evals/ without `.md`: `refund.md` is
+    `refund`, `approvals/reply-reject.md` is `approvals/reply-reject`. Files
+    and folders starting with `_` or `.`, and the `fixtures/` folder, are not
+    cases. Symbolic links are not followed, and two ids that differ only in
+    case are refused.
 
     `strict` (the default, used by the CLI) raises on the first unparseable
     file: a suite that silently drops a case reports a pass it never ran. The
     scheduler passes strict=False so one broken file cannot stop the other
-    cases from firing — it logs and moves on.
+    cases from firing — it logs and moves on. With strict=False, `errors`
+    (when given) collects (path under evals/, problem) for each skipped file,
+    so a caller can still show it.
     """
     root = resolve_bucket(hub_dir, "evals")
     if root is None:
         return []
 
     cases: list[EvalCase] = []
-    for path in sorted(root.glob("*.md"), key=lambda p: p.name.lower()):
-        if path.name.startswith(("_", ".")):
-            continue                    # notes / drafts, not cases
+    seen: dict[str, str] = {}
+    for path in sorted(root.rglob("*.md"), key=lambda p: p.relative_to(root).as_posix().lower()):
+        rel = path.relative_to(root)
+        parts = rel.parts
+        if any(part.startswith(("_", ".")) for part in parts) or (len(parts) > 1 and parts[0] in _NOT_CASES):
+            continue                    # notes, drafts and fixtures, not cases
+        if path.is_symlink() or any(p.is_symlink() for p in path.parents if root in p.parents):
+            continue
+        case_id = rel.with_suffix("").as_posix()
+        if case_id.lower() in seen:
+            message = f"{case_id}.md: has the same id as {seen[case_id.lower()]}.md apart from upper and lower case"
+            if strict:
+                raise EvalCaseError(message)
+            log.warning("skipping eval case: %s", message)
+            if errors is not None:
+                errors.append((rel.as_posix(), message))
+            continue
+        seen[case_id.lower()] = case_id
         try:
-            cases.append(parse(path))
-        except EvalCaseError:
+            cases.append(parse(path, case_id=case_id))
+        except EvalCaseError as exc:
             if strict:
                 raise
-            log.warning("skipping unparseable eval case %s", path.name, exc_info=True)
+            log.warning("skipping unparseable eval case %s", case_id, exc_info=True)
+            if errors is not None:
+                errors.append((rel.as_posix(), str(exc)))
     return cases
 
 

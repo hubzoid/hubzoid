@@ -613,10 +613,10 @@ export type SecretList = {
   can_manage: boolean;
 };
 
-/** /api/hubs/{hub}/secrets or /api/secrets. Errors are {"detail": {"code", "message"}}. */
+/** The hub-scoped APIs (/api/hubs/{hub}/...: settings, secrets, channels) and /api/secrets. Errors are {"detail": {"code", "message", ...}}. */
 export async function secretsRequest<T>(
   url: string,
-  method: "GET" | "PUT" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
@@ -650,8 +650,48 @@ export async function secretsRequest<T>(
     }
     throw new ApiError(message, response.status, code, data);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
+export const hubRequest = secretsRequest;
+
+// ---- Hub settings and checks (hubzoid.hubs): settings.yaml, hub.settings.yaml ----
+
+export type SettingProblem = { key?: string; code: string; message: string; file?: string; line?: number };
+export type HubSetting = {
+  name: string;
+  type: "string" | "integer" | "number" | "boolean" | "string_list";
+  required: boolean;
+  secret: boolean;
+  description: string;
+  example: unknown;
+  enum: (string | number)[] | null;
+  /** environment | hub.settings.yaml | default | null */
+  source: string | null;
+  status: "set" | "missing" | "invalid";
+  problems: SettingProblem[];
+  /** Non-secret settings only: the effective value, and what hub.settings.yaml holds. */
+  value?: unknown;
+  stored?: unknown;
+  default?: unknown;
+  env?: string | null;
+  /** Secret settings only: the reference in use and whether it resolves. */
+  ref?: string;
+  available?: boolean;
+};
+export type HubSettings = {
+  revision: number;
+  settings: HubSetting[];
+  problems: SettingProblem[];
+  can_manage: boolean;
+  can_manage_secrets: boolean;
+};
+export type HubCheck = {
+  id: string;
+  status: "ok" | "info" | "warn" | "fail" | "pending";
+  summary: string;
+  detail: unknown;
+};
 
 // ---- One-time sign-in links (Hubzoid accounts, the default mode) -------------
 // Add user and Reset password return a link for the person to set their own
