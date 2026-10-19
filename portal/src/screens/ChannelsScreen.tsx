@@ -360,6 +360,7 @@ function Overview({ url, c }: { url: string; c: Exported }) {
         <Descriptions.Item label="File">{c.file}</Descriptions.Item>
         <Descriptions.Item label="Applied by">{c.applied_by || "?"} · {when(c.updated)}</Descriptions.Item>
       </Descriptions>
+      <ProviderPanel url={url} provider={c.provider} />
       <Title level={4}>Checks</Title>
       <Paragraph type="secondary">Read-only. Nothing is posted and no provider setting changes.</Paragraph>
       <Space style={{ marginBottom: 12 }} wrap>
@@ -633,6 +634,47 @@ function ThreadView({ hub, cid, tid }: { hub: Hub; cid: string; tid: string }) {
           { title: "State", dataIndex: "state", render: (s: string) => tag(REPLY, s) },
         ]}
       />
+    </div>
+  );
+}
+
+// -- provider-specific setup ------------------------------------------------------------
+function ProviderPanel({ url, provider }: { url: string; provider: string }) {
+  if (provider === "slack") return <SlackPanel url={url} />;
+  return null;
+}
+
+function download(name: string, text: string) {
+  const blob = new Blob([text], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function SlackPanel({ url }: { url: string }) {
+  const [state, setState] = useState<{ busy?: boolean; error?: string; scopes?: string[] }>({});
+  const get = async () => {
+    setState({ busy: true });
+    try {
+      const out = await hubRequest<{ manifest: unknown; revision: number; required_scopes: string[] }>(`${url}/slack/manifest`);
+      download("slack-app-manifest.json", JSON.stringify(out.manifest, null, 2));
+      setState({ scopes: out.required_scopes });
+    } catch (e) {
+      setState({ error: errorText(e) });
+    }
+  };
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Title level={4}>Slack app</Title>
+      <Paragraph type="secondary">
+        Create the app in your own Slack workspace from this manifest (api.slack.com/apps, Create New App, From a manifest).
+        It holds no credentials. Store the tokens with hubzoid secrets set, never here.
+      </Paragraph>
+      <Button onClick={get} loading={state.busy}>Download app manifest</Button>
+      {state.error && <Alert style={{ marginTop: 8 }} type="error" showIcon title={state.error} />}
+      {state.scopes && <Paragraph style={{ marginTop: 8 }}>Permissions it asks for: {state.scopes.map((sc) => <Tag key={sc}>{sc}</Tag>)}</Paragraph>}
     </div>
   );
 }
