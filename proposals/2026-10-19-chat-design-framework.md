@@ -19,8 +19,8 @@ configuration keys to change a setting.
   motion tokens for dark (default), light and black. The built-in palettes
   change; branded palettes keep working because components use the same
   tokens.
-- **Sidebar.** Quiet rows for New chat, Search (a dialog, with a keyboard
-  shortcut), Sources, Spaces and Workspace. Chats are grouped by agent when more
+- **Sidebar.** Quiet rows for New chat and Search (a dialog, with a keyboard
+  shortcut), then chats. Chats are grouped by agent when more
   than one is available (with a Recent view across agents), then by date.
   Rows show pin and options on hover, and unread or replying state.
 - **Conversation.** The agent picker and title in the header. A quiet empty
@@ -35,13 +35,20 @@ configuration keys to change a setting.
 - **One Settings page.** Personal and team sections in one place in the chat
   shell. Default views use plain labels; technical values (keys, digests, file
   paths, revisions) move behind a details disclosure. Existing review and
-  approval steps are kept.
+  approval steps are kept. Sources is a personal section (also in the + menu);
+  Workspace becomes Agent instructions for administrators, opened from an
+  agent's page. People who manage the deployment see the Hubzoid version and a
+  Star on GitHub link each person can hide; `hidden_features: [github_star]`
+  hides it for a deployment.
+- **Spaces removed.** Channels, notes and calendar were never released and
+  leave 2.0; teams keep using the tools they already have.
 - **assistant-ui features.** Use more of what the library provides: quoting a
   selection into the reply, an overflow action menu with Markdown export, and
   error and reasoning primitives.
 
 ## Out of scope
-New capabilities, data model changes, or removing either chat interface.
+New capabilities, data model changes beyond dropping the unreleased Spaces
+tables, or removing either chat interface.
 Console URLs keep working and point at the matching Settings section.
 
 ## Done means
