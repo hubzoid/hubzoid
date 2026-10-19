@@ -1,1 +1,0 @@
-import{g as e}from"./src-C2x_Y98A.js";var t=class{constructor(e){this.init=e,this.records=this.init()}static{e(this,`ImperativeState`)}reset(){this.records=this.init()}};export{t};
