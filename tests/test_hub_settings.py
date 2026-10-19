@@ -54,7 +54,9 @@ def isolated(monkeypatch):
     cs.clear_cache()
     layer.disable()
     secretbox.reset_cache()
+    hs.forget()
     yield
+    hs.forget()
     os.environ.clear()
     os.environ.update(saved)
 
@@ -231,7 +233,7 @@ def test_declared_checks_run_isolated_and_never_stop_each_other(hub):
     got = {r.id: r for r in probes.run(hub)}
     assert got["repo"].status == "ok" and got["repo"].summary == "repo acme/widgets"
     assert got["repo"].details == {"token_available": False}
-    assert got["boom"].status == "fail" and "broken probe" in got["boom"].summary
+    assert got["boom"].status == "fail" and got["boom"].summary == "The check crashed with RuntimeError."
     assert got["slow"].status == "warn" and "1 seconds" in got["slow"].summary  # not required: warn
     assert got["token"].status == "info" and "GITHUB_TOKEN not set" in got["token"].summary
 
@@ -333,3 +335,85 @@ def test_the_doctor_route_runs_hub_checks_and_is_rate_limited(hub):
     assert r.status_code == 200 and {c["id"] for c in r.json()["checks"]} >= {"settings.files", "settings.values"}
     r = tc.post("/api/hubs/factory/doctor", json={}, headers=SAME)
     assert r.status_code == 429 and r.json()["detail"]["retry_after"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Review regressions
+# ---------------------------------------------------------------------------
+def test_an_invalid_reference_is_never_echoed(hub):
+    values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\nsecrets:\n"
+                "  GITHUB_TOKEN_ref: 'ghp:abcdef1234567890'\n")
+    resolved, problems = hs.validate(hub, env={})
+    blob = json.dumps([r.public() for r in resolved]) + json.dumps([p.public() for p in problems])
+    assert "abcdef1234567890" not in blob and "ghp" not in blob
+
+
+@pytest.mark.slow  # starts processes
+def test_a_crash_message_is_not_shown_and_a_hang_is_killed_with_its_children(hub, tmp_path):
+    values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\n")
+    marker = tmp_path / "child-alive"
+    probe_file(hub, "leak", "def check(ctx):\n    raise ValueError('token=sk-live-secret-123')\n")
+    probe_file(hub, "hang", f"""\
+        import subprocess, sys
+        def check(ctx):
+            subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3); open({str(marker)!r}, 'w').write('x')"])
+            import time; time.sleep(30)
+    """)
+    probe_file(hub, "noisy", "def check(ctx):\n    print('x' * 200000)\n    return {'status': 'ok', 'summary': 'ok'}\n")
+    (hub / "hub.manifest.yaml").write_text(textwrap.dedent("""\
+        version: 1
+        doctor:
+          - {id: leak, entrypoint: doctor/leak.py:check, required: true}
+          - {id: hang, entrypoint: doctor/hang.py:check, timeout_seconds: 1, required: true}
+          - {id: noisy, entrypoint: doctor/noisy.py:check, required: true}
+    """))
+    got = {r.id: r for r in probes.run(hub)}
+    assert got["leak"].summary == "The check crashed with ValueError." and "sk-live" not in json.dumps(got["leak"].__dict__)
+    assert got["hang"].status == "fail" and "1 seconds" in got["hang"].summary
+    assert got["noisy"].status == "fail" and "64 KiB" in got["noisy"].summary
+    import time
+
+    time.sleep(3.5)
+    assert not marker.exists()  # the hung check's child was killed with it
+
+
+def test_an_unknown_check_id_is_refused(hub):
+    from hubzoid.cli import app
+
+    (hub / "hub.manifest.yaml").write_text("version: 1\ndoctor: []\n")
+    r = CliRunner().invoke(app, ["hub", "doctor", str(hub), "--check", "typo", "--json"])
+    assert r.exit_code == 2 and "No check named typo" in r.output
+
+
+def test_writes_are_bounded_and_running_processes_keep_their_snapshot(hub):
+    big = {"version": 1, "values": {"FACTORY_REPO": "acme/widgets"}, "secrets": {}}
+    big["values"].update({f"X{i}": "y" * 16000 for i in range(70)})
+    with pytest.raises(HubFileError):
+        hs.write(hub, big, expected_revision="absent")
+    values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/widgets\n")
+    assert hs.effective(hub)["FACTORY_REPO"] == "acme/widgets"
+    values(hub, "version: 1\nvalues:\n  FACTORY_REPO: acme/changed\n")
+    assert hs.effective(hub)["FACTORY_REPO"] == "acme/widgets"  # until the process restarts
+    hs.forget()
+    assert hs.effective(hub)["FACTORY_REPO"] == "acme/changed"
+
+
+def test_concurrent_writers_cannot_both_win(hub):
+    import threading
+
+    hs.write(hub, {"version": 1, "values": {"FACTORY_REPO": "acme/a"}, "secrets": {}}, expected_revision="absent")
+    outcomes = []
+
+    def writer(repo):
+        try:
+            hs.write(hub, {"version": 1, "values": {"FACTORY_REPO": repo}, "secrets": {}}, expected_revision=1)
+            outcomes.append("ok")
+        except hs.Conflict:
+            outcomes.append("conflict")
+
+    threads = [threading.Thread(target=writer, args=(f"acme/{n}",)) for n in "bc"]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(outcomes) == ["conflict", "ok"]

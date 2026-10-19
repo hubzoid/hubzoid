@@ -145,6 +145,8 @@ def configure_cmd(
                 _fail("validation_failed", "--expected-revision is a number or absent.", 2, as_json)
         try:
             result["revision"] = hs.write(hub_dir, candidate.model_dump(), expected_revision=expected)
+        except HubFileError as exc:
+            _fail("validation_failed", str(exc), 2, as_json)
         except hs.Conflict as exc:
             _fail("revision_conflict", "The hub's settings changed since you read them. Check again.", 4, as_json,
                   current_revision=exc.current)
@@ -181,7 +183,7 @@ def doctor_cmd(
             checks = [doctor.Check(f"probe.{r.id}", r.status, r.summary,
                                    {"recovery": r.recovery, "details": r.details})
                       for r in probes.run(hub_dir, only=list(only))]
-        except ValueError as exc:
+        except ValueError as exc:  # an unknown check id, or a manifest that cannot be read
             _fail("validation_failed", str(exc), 2, as_json)
     else:
         checks = doctor._hub_setup_checks(hub_dir)

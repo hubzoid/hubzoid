@@ -676,8 +676,9 @@ export type HubSetting = {
   source: string | null;
   status: "set" | "missing" | "invalid";
   problems: SettingProblem[];
-  /** Non-secret settings only. */
+  /** Non-secret settings only: the effective value, and what hub.settings.yaml holds. */
   value?: unknown;
+  stored?: unknown;
   default?: unknown;
   env?: string | null;
   /** Secret settings only: the reference in use and whether it resolves. */

@@ -13,17 +13,23 @@
 non-secret ``settings`` and, for secret settings, only whether each is
 ``available``.
 
-Each check runs in its own process with a deadline, at most four at once and
-64 KiB of output each, so a crash or a hang becomes one failed row and never
-stops the others. Checks are trusted hub code, like the hub's tools: Hubzoid
+Each check runs in its own process group with a deadline, at most four at
+once and 64 KiB of output each. A check that overruns either is killed with
+everything it started, so a crash or a hang becomes one failed row and never
+stops the others. A crash is reported by its exception class only, because
+its message may carry a credential from the environment. Checks are trusted hub code, like the hub's tools: Hubzoid
 runs them only when doctor runs, never when a hub is loaded or installed.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,26 +125,76 @@ def _entry_file(hub_dir: Path, probe: Probe) -> Path:
     return resolved
 
 
+def _stop(proc: subprocess.Popen) -> None:
+    """Kill the check and everything it started."""
+    try:
+        if os.name != "nt":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _crash_class(stderr: str) -> str:
+    """The exception's class name from a traceback, never its message (which
+    may carry a credential from the environment)."""
+    for line in reversed(stderr.strip().splitlines()):
+        name = line.split(":", 1)[0].strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", name or ""):
+            return name.rsplit(".", 1)[-1]
+    return "an error"
+
+
 def _run(hub_dir: Path, probe: Probe, context: dict) -> Result:
     try:
         path = _entry_file(hub_dir, probe)
     except HubFileError as exc:
         return Result(probe.id, "fail", str(exc), "Fix the entrypoint in hub.manifest.yaml.")
     func = probe.entrypoint.split(":")[1]
-    try:
-        proc = subprocess.run([sys.executable, "-c", _RUNNER, str(path), func], input=json.dumps(context),
-                              capture_output=True, text=True, timeout=probe.timeout_seconds, cwd=str(hub_dir))
-    except subprocess.TimeoutExpired:
-        return Result(probe.id, "fail", f"Did not finish in {probe.timeout_seconds:g} seconds.",
-                      "Make the check faster or raise timeout_seconds (at most 30).")
-    out = (proc.stdout or "")[-MAX_OUTPUT:]
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen([sys.executable, "-c", _RUNNER, str(path), func], stdin=subprocess.PIPE,
+                                stdout=out, stderr=err, cwd=str(hub_dir), start_new_session=(os.name != "nt"))
+        try:
+            proc.stdin.write(json.dumps(context).encode())
+            proc.stdin.close()
+        except OSError:
+            pass
+        deadline = time.monotonic() + probe.timeout_seconds
+        verdict = None
+        while proc.poll() is None:
+            if time.monotonic() > deadline:
+                verdict = Result(probe.id, "fail", f"Did not finish in {probe.timeout_seconds:g} seconds.",
+                                 "Make the check faster or raise timeout_seconds (at most 30).")
+            elif os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size > MAX_OUTPUT:
+                verdict = Result(probe.id, "fail", "Wrote more than 64 KiB of output.",
+                                 "Return a short summary and put the rest in details.")
+            if verdict is not None:
+                _stop(proc)
+                return verdict
+            time.sleep(0.05)
+        if os.name != "nt":  # anything the check left running
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        if os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size > MAX_OUTPUT:
+            return Result(probe.id, "fail", "Wrote more than 64 KiB of output.",
+                          "Return a short summary and put the rest in details.")
+        out.seek(0)
+        err.seek(0)
+        stdout = out.read(MAX_OUTPUT).decode("utf-8", "replace")
+        stderr = err.read(MAX_OUTPUT).decode("utf-8", "replace")
     marker = "\x1ehubzoid-probe"
-    if proc.returncode != 0 or marker not in out:
-        last = (proc.stderr or "").strip().splitlines()[-1:] or ["no result"]
-        return Result(probe.id, "fail", f"The check crashed: {last[0][:300]}",
-                      f"Run {probe.entrypoint} by hand and fix the error.")
+    if proc.returncode != 0 or marker not in stdout:
+        return Result(probe.id, "fail", f"The check crashed with {_crash_class(stderr)}.",
+                      f"Run {probe.entrypoint} by hand to see the error.")
     try:
-        data = json.loads(out.rsplit(marker, 1)[1])
+        data = json.loads(stdout.rsplit(marker, 1)[1])
     except ValueError:
         return Result(probe.id, "fail", "The check returned something that is not JSON.")
     if not isinstance(data, dict) or data.get("status") not in STATUSES or not isinstance(data.get("summary"), str):
@@ -156,6 +212,11 @@ def run(hub_dir: Path, *, only: list[str] | None = None) -> list[Result]:
     parsed = manifest(hub_dir)
     if parsed is None:
         return []
+    if only is not None:
+        unknown = sorted(set(only) - {p.id for p in parsed.doctor})
+        if unknown:
+            raise HubFileError(f"No check named {', '.join(unknown)}. This hub's checks: "
+                               + (", ".join(p.id for p in parsed.doctor) or "none"))
     probes = [p for p in parsed.doctor if only is None or p.id in only]
     try:
         resolved = settingslib.resolve(hub_dir)

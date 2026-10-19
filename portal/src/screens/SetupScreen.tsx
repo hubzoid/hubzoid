@@ -52,12 +52,15 @@ export function AgentSetup({ hub }: { hub: Hub }) {
 
   const save = async () => {
     const entered = await form.validateFields();
-    const values: Record<string, unknown> = {};
+    // Start from what hub.settings.yaml holds (even where the environment wins
+    // for now) and change only the fields someone edited.
+    const values: Record<string, unknown> = Object.fromEntries(
+      plain.filter((s) => s.stored !== undefined && s.stored !== null).map((s) => [s.name, s.stored]));
     for (const s of plain) {
+      if (!form.isFieldTouched(s.name)) continue;
       const v = entered[s.name];
-      // Keep the default or the environment's value unless someone typed one.
-      if (v !== undefined && v !== null && v !== "" && !(s.source !== "hub.settings.yaml" && v === s.value))
-        values[s.name] = v;
+      if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) delete values[s.name];
+      else values[s.name] = v;
     }
     const refs = Object.fromEntries(
       secrets.filter((s) => s.ref && s.source === "hub.settings.yaml").map((s) => [`${s.name}_ref`, s.ref]));

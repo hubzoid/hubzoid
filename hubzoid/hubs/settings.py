@@ -30,6 +30,8 @@ import math
 import os
 import re
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping
@@ -112,12 +114,15 @@ class Problem:
 @dataclass
 class Resolved:
     """One declared setting with where its value comes from. ``value`` is None
-    for a secret (only ``ref`` and ``available`` are known)."""
+    for a secret (only ``ref`` and ``available`` are known). ``ref`` is None
+    when the reference given is not a valid one: it may be a pasted credential,
+    so it is never shown."""
     decl: Declaration
     value: Any = None
     source: str | None = None          # environment | hub.settings.yaml | default | None
-    ref: str | None = None             # secrets: the reference in use
+    ref: str | None = None             # secrets: the reference in use, when valid
     available: bool | None = None      # secrets: whether the reference resolves now
+    stored: Any = None                 # non-secret: the raw value in hub.settings.yaml, if any
     problems: list[Problem] = field(default_factory=list)
 
     def public(self) -> dict:
@@ -130,7 +135,7 @@ class Resolved:
         if d.secret:
             out.update(ref=self.ref, available=bool(self.available))
         else:
-            out.update(value=self.value, default=d.default, env=d.env)
+            out.update(value=self.value, default=d.default, env=d.env, stored=self.stored)
         return out
 
     @property
@@ -271,8 +276,10 @@ def _secret_available(hub_dir: Path, ref: str, env: Mapping[str, str]) -> tuple[
 
     try:
         parsed = parse(ref)
-    except RefError as exc:
-        return False, Problem(None, "invalid_ref", str(exc))
+    except RefError:
+        # The text may be a pasted credential: never repeat it.
+        return False, Problem(None, "invalid_ref", "is not a valid reference. Write secret:hub/<hub>/<name>, "
+                                                   "secret:deployment/<name> or env:<NAME>.")
     if parsed.provider == "env":
         return bool((env.get(parsed.name) or "").strip()), None
     if parsed.scope in ("hub", "channel"):
@@ -325,20 +332,25 @@ def resolve(hub_dir: Path, *, values: ValuesFile | None = None, env: Mapping[str
     for decl in decls:
         r = Resolved(decl)
         if decl.secret and not with_secrets:
-            r.ref = refs.get(f"{decl.name}_ref") or f"env:{decl.name}"
+            pass  # listed only: render and workflows never read a secret's reference here
         elif decl.secret:
-            r.ref = refs.get(f"{decl.name}_ref") or f"env:{decl.name}"
+            ref = refs.get(f"{decl.name}_ref") or f"env:{decl.name}"
             r.source = "hub.settings.yaml" if f"{decl.name}_ref" in refs else "default"
-            r.available, problem = _secret_available(hub_dir, r.ref, secret_env)
+            r.available, problem = _secret_available(hub_dir, ref, secret_env)
             if problem:
                 problem.key = decl.name
+                if problem.code == "invalid_ref":
+                    problem.message = f"{decl.name}_ref {problem.message}"
                 r.problems.append(problem)
-            elif decl.required and not r.available:
-                r.problems.append(Problem(decl.name, "secret_unavailable",
-                                          f"{decl.name} is required. Set it with hubzoid secrets set "
-                                          f"--name {decl.name}, or point {decl.name}_ref at a secret."))
+            else:
+                r.ref = ref
+                if decl.required and not r.available:
+                    r.problems.append(Problem(decl.name, "secret_unavailable",
+                                              f"{decl.name} is required. Set it with hubzoid secrets set "
+                                              f"--name {decl.name}, or point {decl.name}_ref at a secret."))
         else:
             raw, source = None, None
+            r.stored = vals.get(decl.name)
             if decl.env and (environment.get(decl.env) or "").strip():
                 raw, source = environment[decl.env], "environment"
             elif decl.name in vals:
@@ -376,7 +388,7 @@ def check_values_file(hub_dir: Path, values: ValuesFile, decls: list[Declaration
         if name is None or decl is None or not decl.secret:
             problems.append(Problem(key, "setting_unknown",
                                     f"{key} does not name a declared secret setting (write <NAME>_ref)."))
-        elif not ref.startswith(("secret:", "env:")):
+        elif not isinstance(ref, str) or not ref.startswith(("secret:", "env:")):
             problems.append(Problem(key, "secret_literal_forbidden",
                                     f"{key} holds a reference such as secret:hub/<hub>/<name> or env:<NAME>, "
                                     "never the value."))
@@ -396,25 +408,52 @@ def validate(hub_dir: Path, values: ValuesFile | None = None, *, env: Mapping[st
     return resolved, problems
 
 
+# What a running process uses: read once, kept until the process restarts, so
+# a saved change never alters work in progress ("applies after a restart").
+_snapshots: dict[str, tuple[dict[str, Resolved], dict[str, str]]] = {}
+_snapshot_lock = threading.Lock()
+
+
+def _snapshot(hub_dir: Path) -> tuple[dict[str, Resolved], dict[str, str]]:
+    """({NAME: Resolved} without secret lookups, {NAME: secret reference}).
+    Raises HubFileError the first time if a file cannot be read."""
+    key = str(Path(hub_dir).resolve())
+    with _snapshot_lock:
+        snap = _snapshots.get(key)
+        if snap is None:
+            decls = declarations(hub_dir)
+            values = values_file(hub_dir)
+            resolved = {r.decl.name: r for r in resolve(hub_dir, values=values, decls=decls, with_secrets=False)}
+            refs = {d.name: (values.secrets.get(f"{d.name}_ref") if values else None) or f"env:{d.name}"
+                    for d in decls if d.secret}
+            snap = _snapshots[key] = (resolved, refs)
+        return snap
+
+
+def forget() -> None:
+    """Drop the snapshots (tests, or a process that reloads on purpose)."""
+    with _snapshot_lock:
+        _snapshots.clear()
+
+
 def effective(hub_dir: Path) -> dict[str, Any]:
-    """{NAME: value} for every non-secret setting that has a value."""
+    """{NAME: value} for every non-secret setting that has a value, as this
+    process read them at first use."""
     try:
-        return {r.decl.name: r.value for r in resolve(hub_dir) if not r.decl.secret and r.value is not None}
+        resolved, _ = _snapshot(hub_dir)
     except HubFileError:
         return {}
+    return {n: r.value for n, r in resolved.items() if not r.decl.secret and r.value is not None}
 
 
 def secret_ref(hub_dir: Path, name: str) -> str | None:
-    """The reference a declared secret setting uses, or None if not declared."""
+    """The reference a declared secret setting uses (as read at first use),
+    or None if not declared."""
     try:
-        decls = {d.name: d for d in declarations(hub_dir)}
-        values = values_file(hub_dir)
+        _, refs = _snapshot(hub_dir)
     except HubFileError:
         return None
-    decl = decls.get(name)
-    if decl is None or not decl.secret:
-        return None
-    return (values.secrets.get(f"{name}_ref") if values else None) or f"env:{name}"
+    return refs.get(name)
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +464,8 @@ def render(hub_dir: Path, text: str, source: Path) -> str:
     file and line for an unknown, secret or unset key."""
     if "{{" not in text or not PLACEHOLDER_RE.search(text):
         return text
-    decls = {d.name: d for d in declarations(hub_dir)}
-    values = {r.decl.name: r for r in resolve(hub_dir, decls=list(decls.values()), with_secrets=False)}
+    values, _ = _snapshot(hub_dir)
+    decls = {name: r.decl for name, r in values.items()}
 
     try:
         whole = Path(source).read_text()  # the file, frontmatter included, for line numbers
@@ -471,6 +510,24 @@ def _meta_keys(hub_dir: Path) -> tuple[str, str]:
     return f"hub_settings:{key}:revision", f"hub_settings:{key}:digest"
 
 
+@contextmanager
+def _locked(hub_dir: Path):
+    """One writer at a time for this hub's values file, across processes."""
+    from .._file_lock import lock, unlock
+
+    path = Path(hub_dir) / ".hubzoid" / "hub.settings.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        lock(fd)
+        try:
+            yield
+        finally:
+            unlock(fd)
+    finally:
+        os.close(fd)
+
+
 def revision(hub_dir: Path, conn=None) -> int:
     """The values file's revision: it moves on with every change, including a
     hand edit, which is noticed the next time anyone looks. 0 when absent."""
@@ -498,7 +555,7 @@ def revision(hub_dir: Path, conn=None) -> int:
 
     if conn is not None:
         return run(conn)
-    with engine(hub_dir).begin() as c:
+    with _locked(hub_dir), engine(hub_dir).begin() as c:
         return run(c)
 
 
@@ -517,19 +574,24 @@ def write(hub_dir: Path, document: Mapping, *, expected_revision: int | str | No
 
     from ..secretstore.store import engine
 
+    from .yamlfile import MAX_BYTES
+
     path = Path(hub_dir) / VALUES
-    with engine(hub_dir).begin() as conn:
+    body = yaml.safe_dump(dict(document), sort_keys=False, allow_unicode=True)
+    header = "# Hub setting values. Secrets are references only (secret:... or env:...).\n"
+    raw = (header + body).encode()
+    if len(raw) > MAX_BYTES:
+        raise HubFileError(f"{VALUES} would be larger than 1 MiB. Shorten the longest values.")
+    with _locked(hub_dir), engine(hub_dir).begin() as conn:
         current = revision(hub_dir, conn)
         if expected_revision == "absent" and path.is_file():
             raise Conflict(current)
         if isinstance(expected_revision, int) and expected_revision != current:
             raise Conflict(current)
-        body = yaml.safe_dump(dict(document), sort_keys=False, allow_unicode=True)
-        header = "# Hub setting values. Secrets are references only (secret:... or env:...).\n"
         fd, tmp = tempfile.mkstemp(prefix=".hub.settings.", dir=str(Path(hub_dir)))
         try:
-            with os.fdopen(fd, "w") as handle:
-                handle.write(header + body)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw)
             os.replace(tmp, path)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
