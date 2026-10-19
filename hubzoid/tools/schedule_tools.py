@@ -205,7 +205,10 @@ def make(hub_dir: Path, task, emit: Callable[..., None]) -> list:
             return f"[write_hub_file refused: {exc}]"
         target.parent.mkdir(parents=True, exist_ok=True)
         data = content if isinstance(content, str) else str(content)
-        target.write_text(data, encoding="utf-8")
+        from ..hub_changes.service import write_lock
+
+        with write_lock(hub_dir):  # never between a reviewed hub change's check and its commit
+            target.write_text(data, encoding="utf-8")
         emit(event="tool", tool="write_hub_file", path=str(path), bytes=len(data))
         log.info("schedule[%s] wrote %s (%d bytes)", task.name, path, len(data))
         return f"wrote {path} ({len(data)} bytes)"

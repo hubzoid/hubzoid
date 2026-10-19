@@ -27,14 +27,13 @@ from starlette.requests import Request
 from hubzoid import deployment
 import hubzoid.access as access
 from hubzoid.access import Identity, identity_scope
-from hubzoid.access.accounts import OwuiAccounts
 from hubzoid.access.guard import visible
 from hubzoid.access.service import AccessService, Actor
 
 REVIEW = "review-hub"
 OPERATIONS = "operations-hub"
 OWNER = "owner@example.org"  # organization administrator with entry to both hubs
-SERVICE = "svc@x.org"  # the Console's Open WebUI service account (FakeOwui's)
+SERVICE = "svc@x.org"  # a chat-app administrator account (FakeOwui's)
 
 # permission -> (tool name, fictional payload). File name = permission.
 RESTRICTED = {
@@ -149,15 +148,13 @@ def make_review_deployment(tmp_path: Path, monkeypatch, *, owui=None) -> SimpleN
     from tests.test_access_service import FakeOwui
 
     reset_access_state(monkeypatch)
-    # An Open WebUI deployment: the legacy UI mode (HUBZOID_UI=openwebui).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
+    # A deployment that records where its Open WebUI (1.x) database was, for migration.
     hubs = {key: write_hub(tmp_path, key) for key in (REVIEW, OPERATIONS)}
     deployment.save(
         tmp_path / "gateway" / "deployment.json",
         hubs=[dict(key=k, name=k.replace("-", " ").title(), path=str(p), model_id=k)
               for k, p in hubs.items()],
         operational_url=f"sqlite:///{tmp_path / 'gateway' / 'ops.db'}",
-        owui_url="http://owui.internal",
         owui_db=str(tmp_path / "gateway" / "webui.db"),
     )
     gs = access.store_for(hubs[REVIEW])
@@ -165,10 +162,7 @@ def make_review_deployment(tmp_path: Path, monkeypatch, *, owui=None) -> SimpleN
     for key in hubs:
         gs.grant(OWNER, key, "use_hub", actor="owner-setup")
     owui = owui or FakeOwui()
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", SERVICE)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "svc-secret")
-    directory = OwuiAccounts("http://owui.internal", SERVICE, "svc-secret",
-                             transport=httpx.MockTransport(owui))
+    directory = owui
     return SimpleNamespace(hubs=hubs, gs=gs, owui=owui,
                            svc=AccessService(hubs[REVIEW], accounts=directory))
 
@@ -207,9 +201,11 @@ def call(hub_dir: Path, tool_name: str, ident: Identity, args: dict | None = Non
         return asyncio.run(tool.on_invoke_tool(ctx, raw))
 
 
-def chat_request(email: str, account_id: str | None = None) -> Request:
-    """The request Open WebUI forwards to the bridge for a signed-in person."""
-    headers = [(b"x-openwebui-user-email", email.encode())]
-    if account_id:
-        headers.append((b"x-openwebui-user-id", account_id.encode()))
-    return Request({"type": "http", "headers": headers})
+def chat_request(email: str, account_id: str | None = None, *, hub: Path) -> Request:  # noqa: ARG001
+    """The request the web app sends to ``hub``'s bridge for a signed-in person:
+    the identity headers and the assertion that vouches for them."""
+    from hubzoid.assertions import identity_headers
+
+    headers = identity_headers(hub, surface="web", email=email)
+    return Request({"type": "http", "headers": [
+        (k.lower().encode(), v.encode()) for k, v in headers.items()]})

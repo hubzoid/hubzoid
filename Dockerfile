@@ -7,10 +7,6 @@
 # Build:
 #   docker build -t hubzoid .
 #
-# The Open WebUI chat app (HUBZOID_UI=openwebui) adds
-# Open WebUI, PyTorch (CPU build) and ffmpeg, several GB more:
-#   docker build --build-arg WITH_OPENWEBUI=true -t hubzoid:openwebui .
-#
 # Run (single hub). The published port is reachable from other machines, so
 # sign-in is on: put HUBZOID_AUTH=true and the first administrator
 # (HUBZOID_ADMIN_EMAIL, HUBZOID_ADMIN_PASSWORD) in the hub's .env, then:
@@ -46,20 +42,8 @@
 # not start.
 FROM python:3.12-slim-trixie
 
-# true adds the openwebui extra for the optional supported chat interface.
-ARG WITH_OPENWEBUI=false
-
-# The default image needs no system packages: every dependency ships wheels for
-# amd64 and arm64. Open WebUI needs ffmpeg at runtime for audio, and PyAV's
-# build dependencies in case a prebuilt wheel is missing for the architecture.
-RUN if [ "$WITH_OPENWEBUI" = "true" ]; then \
-      apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        pkg-config build-essential \
-        libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
-        libswscale-dev libswresample-dev \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+# The image needs no system packages: every dependency ships wheels for amd64
+# and arm64.
 
 # Non-root user.
 RUN useradd -r -m -d /home/hubzoid -s /bin/bash hubzoid
@@ -72,15 +56,9 @@ ENV PATH=/home/hubzoid/.local/bin:$PATH \
     BRIDGE_PORT=8000 \
     HUBZOID_HOST=0.0.0.0
 
-# Reviewed dependencies first (cached layer), then the package itself. The
-# Open WebUI lock pins the CPU build of PyTorch, so no CUDA libraries are installed.
-COPY --chown=hubzoid requirements.lock requirements-openwebui.lock /tmp/hubzoid-src/
-RUN if [ "$WITH_OPENWEBUI" = "true" ]; then \
-      pip install --user --extra-index-url https://download.pytorch.org/whl/cpu \
-        -r /tmp/hubzoid-src/requirements-openwebui.lock; \
-    else \
-      pip install --user -r /tmp/hubzoid-src/requirements.lock; \
-    fi
+# Reviewed dependencies first (cached layer), then the package itself.
+COPY --chown=hubzoid requirements.lock /tmp/hubzoid-src/
+RUN pip install --user -r /tmp/hubzoid-src/requirements.lock
 COPY --chown=hubzoid pyproject.toml README.md LICENSE NOTICE /tmp/hubzoid-src/
 COPY --chown=hubzoid hubzoid /tmp/hubzoid-src/hubzoid
 RUN pip install --user --no-deps /tmp/hubzoid-src && rm -rf /tmp/hubzoid-src

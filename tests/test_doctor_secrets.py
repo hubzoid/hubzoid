@@ -87,7 +87,7 @@ def test_gateway_hub_naming_aws_secret_name_warns(hub, monkeypatch, tmp_path):
 
     deployment.save(tmp_path / "gw" / "deployment.json",
                     hubs=[dict(key="hub", name="hub", path=str(hub), model_id="hub")],
-                    operational_url=f"sqlite:///{tmp_path / 'op.db'}", owui_url="http://127.0.0.1:1",
+                    operational_url=f"sqlite:///{tmp_path / 'op.db'}",
                     owui_db=str(tmp_path / "webui.db"))
     with (hub / ".env").open("a") as f:
         f.write("AWS_SECRET_NAME=redirect\n")

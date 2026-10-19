@@ -46,6 +46,8 @@ CAPABILITIES: dict[str, str] = {
     "chat.share.manage": "hub",
     "authoring.draft": "hub",
     "authoring.publish": "hub",
+    "hitl.manage": "hub",
+    "hitl.inspect": "hub",
 }
 
 

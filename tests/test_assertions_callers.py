@@ -88,21 +88,6 @@ def test_slack_stream_reply_signs_the_identity(hub):
     vouched = assertions.vouched(hub, _lower(headers))
     assert (vouched.email, vouched.surface) == ("priya@example.org", "slack-dm")
 
-
-def test_slack_stream_reply_legacy_headers_are_unchanged(hub, monkeypatch):
-    from hubzoid.slack.adapter import stream_reply
-
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    fake = MagicMock()
-    fake.stream.return_value = _SSE()
-    stream_reply(bridge_url="http://x/v1", api_key="k", model="m", messages=[],
-                 on_delta=lambda _d: None, user_email="Priya@example.org", surface="slack-dm",
-                 http_client=fake, hub_dir=hub)
-    assert fake.stream.call_args.kwargs["headers"] == {
-        "Authorization": "Bearer k", "X-Hubzoid-Surface": "slack-dm",
-        "X-OpenWebUI-User-Email": "Priya@example.org"}
-
-
 def test_slack_senders_map_to_hubzoid_accounts(hub, monkeypatch):
     from hubzoid.channel_identity import account_email
 
@@ -118,9 +103,6 @@ def test_slack_senders_map_to_hubzoid_accounts(hub, monkeypatch):
     # Sign-in off: no accounts to map to, the verified email is used as it is.
     monkeypatch.setenv("HUBZOID_AUTH", "false")
     assert account_email(hub, "Stranger@example.org") == "stranger@example.org"
-    # Legacy: unchanged (Open WebUI groups are looked up by the bridge).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    assert account_email(hub, "Pending@example.org") == "Pending@example.org"
 
 
 def test_slack_account_lookup_fails_closed(hub, monkeypatch):

@@ -72,19 +72,14 @@ def live_sessions(hub, user_id) -> int:
 
 # ---- HubzoidAccounts against the protocol -----------------------------------------------
 
-def test_directory_is_hubzoid_accounts_in_default_mode(hub, monkeypatch):
+def test_directory_is_hubzoid_accounts(hub, monkeypatch):
     directory = accountlib.for_deployment(hub)
     assert isinstance(directory, accountlib.HubzoidAccounts) and directory.links
     for method in ("create", "update", "delete", "get", "find", "admins"):
         assert callable(getattr(directory, method))
-    assert accountlib.configured(hub) is True
+    # Open WebUI's service account is gone: the directory never needs one.
     monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", "service@example.com")
-    assert accountlib.service_account_email(hub) == ""  # no service account here
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    with pytest.raises(accountlib.AccountsUnavailable):
-        accountlib.for_deployment(hub)  # legacy: Open WebUI and its service account
-    assert accountlib.service_account_email(hub) == "service@example.com"
-    assert accountlib.configured(hub) is False
+    assert isinstance(accountlib.for_deployment(hub), accountlib.HubzoidAccounts)
 
 
 def test_protocol_shapes_and_errors(hub):
@@ -279,7 +274,8 @@ def test_approve_role_and_delete(hub, owner):
     assert users.get(hub, waiting["id"])["role"] == "user"
     sessions.create_session(hub, waiting, method="password")
     service.delete_account(actor(), "w@example.com")
-    assert users.get(hub, waiting["id"]) is None and live_sessions(hub, waiting["id"]) == 0
+    assert users.get(hub, waiting["id"])["status"] == "deleted"  # a tombstone keeps their chats
+    assert live_sessions(hub, waiting["id"]) == 0
     assert gs.is_suspended("w@example.com")  # unavailable until re-created
 
 

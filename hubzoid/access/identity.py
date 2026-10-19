@@ -40,6 +40,17 @@ class Identity:
     user: str | None = None
     groups: frozenset[str] = field(default_factory=frozenset)
     surface: str = "system"
+    # The Hubzoid account behind ``user`` and its credential counter when the
+    # run started (``hubzoid.access.run_identity``): every tool call checks
+    # the counter is unchanged, so revoking credentials stops work in flight.
+    account_id: str | None = None
+    auth_epoch: int | None = None
+    run_identity_id: str | None = None
+    # A personal API key limited to some agents (None: no such limit).
+    hubs: "tuple[str, ...] | None" = None
+    # The browser session or API key that started the run, as ``(kind, id)``:
+    # signing that device out or revoking that key stops the run's tools.
+    credential: "tuple[str, str] | None" = None
 
     @property
     def is_anonymous(self) -> bool:
@@ -47,7 +58,10 @@ class Identity:
 
     @staticmethod
     def make(user: str | None, groups: Iterable[str] | None = None,
-             surface: str = "system") -> "Identity":
+             surface: str = "system", *, account_id: str | None = None,
+             auth_epoch: int | None = None, run_identity_id: str | None = None,
+             hubs: "Iterable[str] | None" = None,
+             credential: "tuple[str, str] | None" = None) -> "Identity":
         norm = frozenset(
             g for g in (normalize(x) for x in (groups or [])) if g
         )
@@ -55,6 +69,11 @@ class Identity:
             user=(user or None),
             groups=norm,
             surface=(normalize(surface) or "system"),
+            account_id=account_id or None,
+            auth_epoch=auth_epoch,
+            run_identity_id=run_identity_id,
+            hubs=tuple(hubs) if hubs is not None else None,
+            credential=tuple(credential) if credential else None,
         )
 
 

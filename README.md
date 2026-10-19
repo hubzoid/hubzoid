@@ -155,7 +155,7 @@ hubzoid admin create you@example.com my-hub --owner
 ```
 
 Open the one-time sign-in link, set a password, and add teammates through
-**Admin Console → People**. Grant access to the agents and capabilities they
+**Settings → People & access**. Grant access to the agents and capabilities they
 need. Shared knowledge does not mean shared credentials or access to another
 person's private results.
 
@@ -170,21 +170,14 @@ is rejected. Switching keeps the same model and permissions and never replays
 work that has started. Existing single-credential setups are unchanged.
 [Configuration, token replacement and limits →](docs/DEPLOYING.md#claude-credential-failover)
 
-## Choose your interface
+## The web app
 
-| Interface | Install and select |
-|---|---|
-| **Hubzoid web app — default** | `pip install hubzoid` includes chat and Console. No separate UI package or Node installation is needed. |
-| **Open WebUI — optional supported interface** | `pip install 'hubzoid[openwebui]'`, then set `HUBZOID_UI=openwebui` in the Hub's `.env`. It adds a larger dependency set. |
-
-Both interfaces are permanently supported, with equal support and release-testing
-requirements. Native chat is the default; neither interface has a planned removal.
-See the [release validation policy](docs/RELEASING.md#chat-interface-validation)
-for required checks and current automation coverage.
-
-The default app is built with assistant-ui and bundled with Hubzoid. When
-upgrading an existing deployment, read the [upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
-first, especially if moving from Open WebUI.
+`pip install hubzoid` includes the chat and its Settings, built with
+assistant-ui and bundled with Hubzoid. No separate UI package or Node
+installation is needed. Hubzoid 2.0 no longer offers Open WebUI; deployments
+that still need it stay on 1.x. When upgrading an existing deployment, read the
+[upgrade guide](https://github.com/hubzoid/hubzoid/blob/main/docs/UPGRADING.md)
+first.
 
 ## Go further
 

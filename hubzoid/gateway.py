@@ -1,34 +1,17 @@
 """Gateway planning — many hub bridges behind one front door.
 
-Web app mode (the default): `hubzoid gateway` runs N bridges and one edge, no
-Open WebUI. Every bridge serves the Hubzoid web app and shares the operational
-store (sessions, accounts, conversations, groups, grants), so any bridge can
-answer a deployment-wide call. The edge sends `/b/<slug>/api/*`,
-`/b/<slug>/artifacts/*`, `/b/<slug>/mcp` and `/b/<slug>/branding/*` to that
-hub's bridge with the prefix stripped (`edge_routes(web_app=True)`),
-`/webhooks/<slug>/*` to that hub's inbound server, and everything else to the
-first bridge. The chat app calls hub-scoped routes at `${api_base}/api/...`
-with `api_base` = `/b/<slug>`.
-
-Open WebUI mode (`HUBZOID_UI=openwebui`, 1.0.x, unchanged below):
-`hubzoid run` is one bridge + one Open WebUI per hub. That is full isolation
-but N heavy OWUI processes. For a team-of-teams deployment (sales hub, support
-hub, …) where the weight matters and per-team *access* — not per-team URLs —
-is what's wanted, `hubzoid gateway` runs **one** Open WebUI over **N**
-bridges:
-
-  * Each hub runs as a headless bridge (`hubzoid run <hub> --no-ui`), each on
-    its own `BRIDGE_PORT`.
-  * One Open WebUI connects to all of them via OWUI's multi-connection env
-    (`OPENAI_API_BASE_URLS` / `OPENAI_API_KEYS`, semicolon-separated). Each
-    bridge surfaces as a selectable model; OWUI's Groups + per-model Private
-    ACL gate which team sees which agent. One login surface, shared branding.
-  * The edge router gives each hub its own artifact prefix
-    (`/b/<slug>/artifacts/*`) so download links route to the owning bridge.
+`hubzoid gateway` runs N bridges and one edge. Every bridge serves the Hubzoid
+web app and shares the operational store (sessions, accounts, conversations,
+grants), so any bridge can answer a deployment-wide call. The edge sends
+`/b/<slug>/api/*`, `/b/<slug>/artifacts/*`, `/b/<slug>/mcp` and
+`/b/<slug>/branding/*` to that hub's bridge with the prefix stripped
+(`edge_routes`), `/webhooks/<slug>/*` to that hub's inbound server, and
+everything else to the first bridge. The chat app calls hub-scoped routes at
+`${api_base}/api/...` with `api_base` = `/b/<slug>`.
 
 This module is pure planning — no processes are launched here. The CLI
-`gateway` command executes the plan. Keeping it pure makes the wiring
-(connection env, edge routes, key/url alignment) unit-testable.
+`gateway` command executes the plan. Keeping it pure makes the wiring (edge
+routes, key/url alignment) unit-testable.
 """
 from __future__ import annotations
 
@@ -50,57 +33,22 @@ class GatewayBackend:
     mcp: bool = False  # hub serves /mcp (MCP_SERVER=true in its .env)
     # WhatsApp/Telegram inbound: True when this hub's .env configures a webhook
     # surface. The gateway edge then forwards /webhooks/* to its loopback inbound
-    # server; without it the webhook falls through to Open WebUI's catch-all.
+    # server.
     inbound: bool = False
     inbound_port: int = 0  # the hub's loopback inbound server port (0 = unset)
-    # Per-hub display identity, read from AGENTS.md frontmatter + branding/.
-    # Consumed by gateway_provision to seed each hub's Open WebUI model entry
-    # (picker name, description, quick-start suggestions, avatar). All optional;
-    # empty defaults mean "provision skips that field", never an error.
-    display_name: str = ""       # AGENTS.md `name:`, falls back to folder name
-    description: str = ""        # AGENTS.md `description:`
-    suggestions: tuple[str, ...] = ()  # AGENTS.md `suggestions:` list
-    logo: Path | None = None     # <hub>/branding/ logo file, if any
+    # Per-hub display name (AGENTS.md `name:`, falls back to the folder name),
+    # recorded in the deployment manifest.
+    display_name: str = ""
 
 
 @dataclass(frozen=True)
 class GatewayPlan:
     backends: tuple[GatewayBackend, ...]
 
-    @property
-    def base_urls(self) -> list[str]:
-        return [f"http://127.0.0.1:{b.bridge_port}/v1" for b in self.backends]
-
-    @property
-    def api_keys(self) -> list[str]:
-        return [b.api_key for b in self.backends]
-
-    def connection_env(self) -> dict[str, str]:
-        """OWUI multi-connection env. Semicolons, positionally aligned."""
-        env = {
-            "ENABLE_OPENAI_API": "True",
-            "OPENAI_API_BASE_URLS": ";".join(self.base_urls),
-            "OPENAI_API_KEYS": ";".join(self.api_keys),
-            # Forward the logged-in user's identity to every bridge, as the
-            # single-hub path does (webui.start). Without it OWUI never sends
-            # X-OpenWebUI-User-Email, so the bridge derives an anonymous identity
-            # and every restricted tool is denied ("anonymous") — access control
-            # is dead in gateway mode. Defaults on, but an operator's explicit
-            # environment value wins (e.g. --no-bridges fronting external
-            # bridges that must not receive user PII).
-            "ENABLE_FORWARD_USER_INFO_HEADERS":
-                os.environ.get("ENABLE_FORWARD_USER_INFO_HEADERS", "true"),
-        }
-        labels = [b.model_label for b in self.backends if b.model_label]
-        if labels:
-            env["DEFAULT_MODELS"] = labels[0]
-        return env
-
-    def edge_routes(self, *, artifact_prefix: str = "/artifacts", web_app: bool = False) -> list[dict]:
-        """Per-hub routes for the edge: /b/<slug>/artifacts -> bridge, plus
+    def edge_routes(self, *, artifact_prefix: str = "/artifacts") -> list[dict]:
+        """Per-hub routes for the edge: /b/<slug>/artifacts, /b/<slug>/api and
+        /b/<slug>/branding (the hub-scoped web app calls) -> bridge, plus
         /b/<slug>/mcp for MCP-enabled hubs, plus /webhooks/<slug> for inbound hubs.
-        With `web_app` (the web app mode) also /b/<slug>/api and
-        /b/<slug>/branding, the hub-scoped web app calls.
 
         `strip_prefix` removes `/b/<slug>` so the bridge sees its native
         `/artifacts/...` (or `/mcp`, `/api/...`, `/branding/...`) path. Only
@@ -120,13 +68,12 @@ class GatewayPlan:
             routes.append({"prefix": base + "/portal/api",
                            "upstream": f"http://127.0.0.1:{b.bridge_port}",
                            "strip_prefix": base})
-            if web_app:
-                for part in ("/api", "/branding"):
-                    routes.append({
-                        "prefix": base + part,
-                        "upstream": f"http://127.0.0.1:{b.bridge_port}",
-                        "strip_prefix": base,
-                    })
+            for part in ("/api", "/branding"):
+                routes.append({
+                    "prefix": base + part,
+                    "upstream": f"http://127.0.0.1:{b.bridge_port}",
+                    "strip_prefix": base,
+                })
             if b.mcp:
                 routes.append({
                     "prefix": base + "/mcp",
@@ -139,8 +86,7 @@ class GatewayPlan:
             # Inbound surfaces (WhatsApp/Telegram/generic webhook): the hub's
             # inbound server owns /webhooks/<slug>/* (e.g. /webhooks/<slug>/whatsapp)
             # on a loopback port, each POST signature-, secret-, or HMAC-verified
-            # before anything runs. The edge must forward it or the provider's
-            # webhook falls through to Open WebUI. The route is namespaced by hub
+            # before anything runs. The edge must forward it. The route is namespaced by hub
             # slug so EVERY inbound hub is reachable at once (before 0.9.1 a single
             # global /webhooks meant only the first inbound hub could be reached).
             # No strip_prefix — the inbound app serves the full /webhooks/<slug>/...
@@ -163,9 +109,9 @@ class GatewayPlan:
 
     def branding_source(self, gw_data: Path, override: str | None = None) -> Path:
         """The directory whose ``branding/`` subdir provides the gateway's
-        shared OWUI chrome (favicon, splash, sidebar logo).
+        shared page chrome (favicon, splash, logo).
 
-        One shared OWUI fronts N hubs, so the chrome is org-level. Resolution,
+        One web app fronts N hubs, so the chrome is org-level. Resolution,
         in priority order:
 
         1. ``override`` (from ``HUBZOID_GATEWAY_BRANDING``) — a hub *slug* to
@@ -291,9 +237,6 @@ def plan(hub_dirs: list[Path], *, load=settingslib.load) -> GatewayPlan:
             inbound=inbound_on,
             inbound_port=inbound_port,
             display_name=meta["fm_name"] or hub_dir.name,
-            description=meta["description"],
-            suggestions=meta["suggestions"],
-            logo=_find_logo(hub_dir),
         ))
     return GatewayPlan(backends=tuple(backends))
 
@@ -340,19 +283,16 @@ def _own_env(hub_dir: Path) -> dict:
     return {k: (v or "") for k, v in (dotenv_values(env_path) or {}).items()}
 
 
-# Open WebUI and sign-in settings that belong to the whole deployment. Up to
-# 0.9.x the gateway picked them up from the hub .env files it read (the last
-# hub listed won), and existing deployments still keep them there. WEBUI_NAME is
-# left out: the gateway's --name sets it.
-_DEPLOYMENT_PREFIXES = ("WEBUI_", "OAUTH_", "OPENID_", "GOOGLE_CLIENT_", "MICROSOFT_CLIENT_", "GITHUB_CLIENT_")
-_DEPLOYMENT_KEYS = frozenset({"DEFAULT_USER_ROLE", "ENABLE_SIGNUP", "ENABLE_LOGIN_FORM",
+# Sign-in settings that belong to the whole deployment. Up to 0.9.x the gateway
+# picked them up from the hub .env files it read (the last hub listed won), and
+# existing deployments still keep them there. Open WebUI's own names are not
+# inherited: a hub that still sets one stops the gateway (`appmode.RETIRED`).
+_DEPLOYMENT_PREFIXES = ("OAUTH_", "OPENID_", "GOOGLE_CLIENT_", "MICROSOFT_CLIENT_", "GITHUB_CLIENT_")
+_DEPLOYMENT_KEYS = frozenset({"ENABLE_SIGNUP", "ENABLE_LOGIN_FORM", "ENABLE_PASSWORD_AUTH",
                               "ENABLE_OAUTH_SIGNUP", "HUBZOID_PUBLIC_URL"})
-_NOT_INHERITED = frozenset({"WEBUI_NAME"})
 
 
 def _deployment_key(key: str) -> bool:
-    if key in _NOT_INHERITED:
-        return False
     return key in _DEPLOYMENT_KEYS or key.startswith(_DEPLOYMENT_PREFIXES)
 
 
@@ -409,8 +349,7 @@ def _inbound_port_for(hub_dir: Path) -> int:
 def _bridge_model_label(fm_name: str | None, hub_dir: Path) -> str:
     """The model id THE BRIDGE will report at /v1/models, derived with the
     bridge's own functions (loaders.agents name fallback + server slugify) so
-    the provisioned OWUI entry and the live connection model can never drift
-    apart on fallback names."""
+    the manifest's model id and the live model can never drift apart."""
     from .loaders.agents import _safe_id
     from .server import _slugify as server_slugify
     return server_slugify(fm_name or _safe_id(hub_dir.name))
@@ -435,21 +374,3 @@ def _agent_meta(hub_dir: Path) -> dict:
     except Exception:  # noqa: BLE001
         pass
     return {"fm_name": fm_name, "description": description, "suggestions": suggestions}
-
-
-def _find_logo(hub_dir: Path) -> Path | None:
-    """The hub's raster logo for use as its Open WebUI model avatar.
-
-    Only raster formats OWUI's profile-image validator accepts (it rejects
-    SVG data-URIs as script-capable). Prefers logo.* over favicon.*.
-    """
-    branding_dir = hub_dir / "branding"
-    if not branding_dir.is_dir():
-        return None
-    files = {e.name.lower(): e for e in branding_dir.iterdir() if e.is_file()}
-    for stem in ("logo", "favicon"):
-        for ext in ("png", "webp", "jpg", "jpeg", "gif"):
-            match = files.get(f"{stem}.{ext}")
-            if match is not None:
-                return match
-    return None

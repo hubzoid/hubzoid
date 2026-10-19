@@ -7,6 +7,7 @@ import {
   Input,
   Space,
   Table,
+  Pagination,
   Tooltip,
   Typography,
 } from "antd";
@@ -36,7 +37,7 @@ import { LegacyServiceTag } from "./AccessParts";
 const { Text, Title, Paragraph } = Typography;
 const PAGE = 50;
 
-export function AccessEditor({ hub }: { hub: Hub }) {
+export function AccessEditor({ hub, embedded = false }: { hub: Hub; embedded?: boolean }) {
   const { modal, message } = App.useApp();
   const [input, setInput] = useState("");
   const [search, setSearch] = useState("");
@@ -124,94 +125,93 @@ export function AccessEditor({ hub }: { hub: Hub }) {
   // entry points until fresh data lands so nobody edits stale permissions.
   const locked = data.refreshing;
 
-  const columns = [
-    {
-      title: "Person",
-      key: "person",
-      render: (_: unknown, r: AccessRow) => (
-        <PersonCell
-          subject={r.subject}
-          display={r.display}
-          link={
-            r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup"
-              ? undefined
-              : personHref(r.subject)
-          }
-        />
-      ),
-    },
-    {
-      title: "Capabilities",
-      key: "capabilities",
-      render: (_: unknown, r: AccessRow) => (
-        <Space wrap size={[6, 6]}>
-          {orderCapabilities(r.effective, order).map((p) => (
-            <CapabilityTag
-              key={p}
-              permission={p}
-              catalog={catalog}
-              via={
-                r.inherited.includes(p)
-                  ? "inherited"
-                  : r.perms.includes(p) || r.subject === EVERYONE
-                    ? undefined
-                    : "public"
-              }
-            />
-          ))}
-          {r.effective.length === 0 && <Text type="secondary">No access</Text>}
+  const personColumn = {
+    title: "Person",
+    key: "person",
+    render: (_: unknown, r: AccessRow) => (
+      <PersonCell
+        subject={r.subject}
+        display={r.display}
+        link={
+          r.subject === EVERYONE || isService(r.subject) || r.status === "awaiting-signup"
+            ? undefined
+            : personHref(r.subject)
+        }
+      />
+    ),
+  };
+  const capabilitiesColumn = {
+    title: "Capabilities",
+    key: "capabilities",
+    render: (_: unknown, r: AccessRow) => (
+      <Space wrap size={[6, 6]}>
+        {orderCapabilities(r.effective, order).map((p) => (
+          <CapabilityTag
+            key={p}
+            permission={p}
+            catalog={catalog}
+            via={
+              r.inherited.includes(p)
+                ? "inherited"
+                : r.perms.includes(p) || r.subject === EVERYONE
+                  ? undefined
+                  : "public"
+            }
+          />
+        ))}
+        {r.effective.length === 0 && <Text type="secondary">No access</Text>}
+      </Space>
+    ),
+  };
+  const accountColumn = {
+    title: "Account",
+    dataIndex: "status",
+    key: "status",
+    width: 180,
+    // A legacy `workflow:` identity keeps its grants and controls, labelled as such.
+    render: (status: string, r: AccessRow) =>
+      isService(r.subject) ? (
+        <Space wrap size={[4, 4]}>
+          <LegacyServiceTag />
+          {status !== "service" && <AccountTag status={status} />}
         </Space>
+      ) : (
+        <AccountTag status={status} />
       ),
-    },
-    {
-      title: "Account",
-      dataIndex: "status",
-      key: "status",
-      width: 180,
-      // A legacy `workflow:` identity keeps its grants and controls, labelled as such.
-      render: (status: string, r: AccessRow) =>
-        isService(r.subject) ? (
-          <Space wrap size={[4, 4]}>
-            <LegacyServiceTag />
-            {status !== "service" && <AccountTag status={status} />}
-          </Space>
-        ) : (
-          <AccountTag status={status} />
-        ),
-    },
-    {
-      title: "",
-      key: "actions",
-      width: 140,
-      align: "right" as const,
-      render: (_: unknown, r: AccessRow) =>
-        r.subject === EVERYONE ? (
-          access.can_manage_admins ? (
-            <Button
-              danger
-              onClick={askRemoveEveryone}
-              loading={removingEveryone}
-              disabled={locked}
-              aria-label="Remove access for everyone signed in"
-            >
-              Remove
-            </Button>
-          ) : (
-            <Tooltip title="Only organization administrators can remove this.">
-              <Text type="secondary" tabIndex={0}>Read-only</Text>
-            </Tooltip>
-          )
-        ) : (
+  };
+  const actionsColumn = {
+    title: "",
+    key: "actions",
+    width: 140,
+    align: "right" as const,
+    render: (_: unknown, r: AccessRow) =>
+      r.subject === EVERYONE ? (
+        access.can_manage_admins ? (
           <Button
-            onClick={() => setDraft(draftFor(r))}
+            danger
+            onClick={askRemoveEveryone}
+            loading={removingEveryone}
             disabled={locked}
-            aria-label={`Edit access for ${personName(r.subject, r.display)}`}
+            aria-label="Remove access for everyone signed in"
           >
-            Edit access
+            Remove
           </Button>
-        ),
-    },
-  ];
+        ) : (
+          <Tooltip title="Only organization administrators can remove this.">
+            <Text type="secondary" tabIndex={0}>Read-only</Text>
+          </Tooltip>
+        )
+      ) : (
+        <Button
+          onClick={() => setDraft(draftFor(r))}
+          disabled={locked}
+          aria-label={`Edit access for ${personName(r.subject, r.display)}`}
+        >
+          Edit access
+        </Button>
+      ),
+  };
+  const columns = [personColumn, capabilitiesColumn, accountColumn, actionsColumn];
 
   return (
     <div className="panel">
@@ -269,7 +269,23 @@ export function AccessEditor({ hub }: { hub: Hub }) {
         </Text>
       </div>
 
-      <Table<AccessRow>
+      {embedded && access.rows.length > 0 ? (
+        <>
+          <ul className="hz-access-list" aria-label={`Access to ${hub.name}`}>
+            {access.rows.map((row) => (
+              <li key={row.subject}>
+                <div className="hz-access-person">
+                  {personColumn.render(row.status, row)}
+                  <div className="hz-access-status">{accountColumn.render(row.status, row)}</div>
+                </div>
+                <div className="hz-access-capabilities">{capabilitiesColumn.render(row.status, row)}</div>
+                <div className="hz-access-actions">{actionsColumn.render(row.status, row)}</div>
+              </li>
+            ))}
+          </ul>
+          {access.total > PAGE && <Pagination current={page} pageSize={PAGE} total={access.total} onChange={setPage} showSizeChanger={false} />}
+        </>
+      ) : <Table<AccessRow>
         rowKey="subject"
         size="middle"
         dataSource={access.rows}
@@ -300,7 +316,7 @@ export function AccessEditor({ hub }: { hub: Hub }) {
             </Empty>
           ),
         }}
-      />
+      />}
 
       <AccessDrawer
         hub={hub}

@@ -52,24 +52,18 @@ pip install -e '.[dev]'
 pytest
 ```
 
-The Open WebUI chat app is the optional `openwebui` extra. Its tests
-need it installed (it brings PyTorch, so use the CPU index):
-`pip install --extra-index-url https://download.pytorch.org/whl/cpu -e '.[dev,openwebui]'`.
-
 ## Running tests
 
-Native chat and Open WebUI are permanently and equally supported. They have
-the same release-testing requirements; native chat remains the default and
-Open WebUI is optional to install. Validate affected behavior in both modes
-and follow the [chat-interface release checks](docs/RELEASING.md#chat-interface-validation).
-Release CI runs a paired live sign-in, streamed-chat and restart check for both
-interfaces, plus native-chat and Console browser journeys. Record remaining
-deployment and real-provider acceptance separately.
+Hubzoid has one chat interface, its own web app (see the
+[chat-interface release checks](docs/RELEASING.md#chat-interface-validation)).
+Release CI runs a live sign-in, streamed-chat and restart check, plus chat and
+Settings browser journeys. Record remaining deployment and real-provider
+acceptance separately.
 
 Every pull request and every push to `main` runs
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) in a few minutes:
-the fast default tests (no `slow` or end-to-end tests) on SQLite, without Open
-WebUI, browsers, live models or Docker, spread over two machines, and the web
+the fast default tests (no `slow` or end-to-end tests) on SQLite, without
+browsers, live models or Docker, spread over two machines, and the web
 app's lint (`npm run lint` in `portal/`). Publishing a release adds the slow and
 end-to-end tests, except those marked `heavy`. A focused release step explicitly
 includes report handoff/recovery and PostgreSQL claim/upgrade checks regardless
@@ -91,17 +85,15 @@ pytest -q -m heavy            # the heavy tests CI leaves out
 ```
 
 Publishing a GitHub release runs the automated validation in `ci.yml`: the
-suite with the `openwebui` extra and the exclusions described above, the
-paired live interface checks, native-chat and Console browser journeys, a
-clean core wheel install and native-chat
-Docker images on both CPU architectures. Maintainers: see
+suite with the exclusions described above, the live interface check, chat and
+Settings browser journeys, a clean wheel install and Docker images on both CPU
+architectures. Maintainers: see
 [publishing a release](docs/RELEASING.md).
 
 ```bash
 pytest                       # fast default: no LLM calls, skips `slow` DBOS/Postgres tests
 pytest -m ""                 # everything, including checks excluded from CI
 pytest -m e2e_llm            # also run real-LLM end-to-end (uses MODEL=claude-local subscription credit)
-pytest -m e2e_ui             # Playwright UI tests against a fixture hub
 pytest -m e2e_browser        # shared-browser sidecar (HUBZOID_BROWSER); needs Node, pooled case needs Docker
 ```
 
@@ -118,8 +110,7 @@ provider. They are skipped automatically if no provider key is set.
 
 ## Code conventions
 
-- Python 3.11+. The `openwebui` extra caps it at whatever open-webui supports
-  today (3.12).
+- Python 3.11+, tested up to 3.12.
 - Keep the public API small. The blast radius of a breaking change in
   `factory.build_agent` or the CLI is large.
 - Loaders go in `hubzoid/loaders/`, tools in `hubzoid/tools/`.

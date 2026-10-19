@@ -76,9 +76,9 @@ user connects with their own credential, and the hub's access rules apply.
 - Servers in `connectors/.mcp.json` are hub-wide. Every user of the hub
   reaches them with the same credential.
 - For tools where each user must act as themselves, an administrator adds
-  the MCP server in the Console (Agents, the agent, Connectors) and each
+  the MCP server in Settings (Agents, the agent, Connectors) and each
   user connects their own account from the link the agent sends, or from
-  their connections page. This works the same in Open WebUI mode. See
+  Settings → My connections. See
   `docs/mcp.md` in the repository.
 - Hubzoid does not store `.mcp.json` OAuth tokens. They live wherever the
   MCP server holds them (Composio, an external service, a local file).

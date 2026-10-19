@@ -6,8 +6,7 @@ company link, and whether this deployment can offer it at all.
 are a separate boundary from who may sign in: company links stay off unless
 company sign-in (Google, Microsoft or a standard OIDC provider) is set up with
 signup on and each share domain listed explicitly in `OAUTH_ALLOWED_DOMAINS`,
-so a reader arriving through a link gets an active account. Open WebUI mode
-reads the same setting names, because Open WebUI owns sign-in there.
+so a reader arriving through a link gets an active account.
 """
 from __future__ import annotations
 
