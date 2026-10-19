@@ -24,6 +24,7 @@ const WHY: Record<string, string> = {
   model: "Needed by this agent's model",
   webhook: "Needed to verify a webhook",
   declared: "Listed in the agent's .env.example",
+  setting: "Declared in the agent's settings.yaml",
 };
 
 type Editing = { mode: "add" } | { mode: "set"; row: SecretRow } | null;

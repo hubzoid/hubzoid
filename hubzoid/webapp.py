@@ -36,6 +36,7 @@ _MOUNTS = (
     "hubzoid.chat.routes",
     "hubzoid.connectors.routes",
     "hubzoid.secretstore.routes",
+    "hubzoid.hubs.routes",
     "hubzoid.webapp_gateway",
 )
 

@@ -2948,6 +2948,7 @@ app.add_typer(
 from .auth.cli import admin_app  # noqa: E402
 from .migrate_openwebui import migrate_app  # noqa: E402
 from .secretstore.cli import secrets_app  # noqa: E402
+from .hubs.cli import hub_app  # noqa: E402
 
 app.add_typer(
     admin_app,
@@ -2959,6 +2960,12 @@ app.add_typer(
     migrate_app,
     name="migrate",
     help="Move an Open WebUI install to the Hubzoid web app.",
+    rich_help_panel="Commands",
+)
+app.add_typer(
+    hub_app,
+    name="hub",
+    help="A hub's settings (settings.yaml, hub.settings.yaml) and its own checks.",
     rich_help_panel="Commands",
 )
 app.add_typer(

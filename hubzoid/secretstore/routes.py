@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from .. import hub_routes
+from .. import hub_access, hub_routes
+from ..hub_access import Viewer
 from ..access.identity import normalize
 from ..assertions import hub_key
 from ..chat.common import error
@@ -42,13 +42,6 @@ from .store import SecretError
 log = logging.getLogger("hubzoid.secretstore")
 
 _NO_STORE = {"Cache-Control": "no-store"}
-
-
-@dataclass(frozen=True)
-class Viewer:
-    email: str
-    org_admin: bool
-    hub_admin: bool
 
 
 def _raise(err: SecretError):
@@ -90,64 +83,21 @@ def build_router(hub_dir: Path) -> list[APIRouter]:
     hub_router = hub_routes.router(hub_dir, tags=["secrets"])
     deployment_router = APIRouter(prefix="/api/secrets", tags=["secrets"])
 
-    # ---- who ----------------------------------------------------------------
-    def viewer(request: Request) -> Viewer:
-        from .. import appmode
-        from ..access.service import AccessService, Actor, Denied
-        from ..auth import LOCAL_OWNER_EMAIL
-        from ..connectors.routes import signed_in
-
-        if not appmode.is_openwebui(hub_dir) and not appmode.auth_enabled(hub_dir):
-            _trusted_host(request)
-        user = signed_in(request, hub_dir)
-        if user is None:
-            raise error(401, "unauthenticated", "Sign in to continue.")
-        email = normalize(user.email)
-        if not appmode.auth_enabled(hub_dir) and email == LOCAL_OWNER_EMAIL:
-            return Viewer(email, True, True)
-        try:
-            scope = AccessService(hub_dir).scope(Actor(email, "console", "session"))
-        except Denied as exc:
-            raise error(exc.status, exc.code, exc.message) from None
-        org = scope.org_admin and (appmode.is_openwebui(hub_dir) or getattr(user, "is_admin", False))
-        return Viewer(email, org, org or own in scope.hubs)
-
-    def _trusted_host(request: Request) -> None:
-        """Sign-in off means every request is the owner. Then answer only
-        requests addressed to this machine, as the connectors do."""
-        from .. import appmode
-        from ..connectors import http as net
-        from ..connectors import oauth_flow
-
-        if appmode.allowed_origins():
-            return
-        if not net.is_loopback_url(oauth_flow.request_origin(request)):
-            raise error(403, "untrusted_host", "Open Hubzoid at its local address, or set "
-                                               "HUBZOID_PUBLIC_URL to the address people use.")
-
+    # ---- who: organization administrators write, this hub's administrators read ----
     def reader(request: Request) -> Viewer:
-        who = viewer(request)
-        if not who.hub_admin:
-            # Hidden, as if the hub had no secrets screen for this person.
-            raise error(404, "not_found", "Not found.")
-        return who
+        return hub_access.hub_admin(request, hub_dir)
 
     def writer(request: Request) -> Viewer:
-        from fastapi import HTTPException
-
-        from ..access.session import require_same_origin
-
-        who = viewer(request)
+        who = hub_access.viewer(request, hub_dir)
         if not who.org_admin:
             raise error(403, "permission_denied", "Only organization administrators set or remove secrets.")
-        try:
-            require_same_origin(request)
-        except HTTPException:
-            raise error(403, "cross_origin", "This request must come from this site's own pages.") from None
+        hub_access.same_origin(request)
         return who
 
-    def request_id(request: Request) -> str | None:
-        return (request.headers.get("x-request-id") or "").strip()[:128] or None
+    def viewer(request: Request) -> Viewer:
+        return hub_access.viewer(request, hub_dir)
+
+    request_id = hub_access.request_id
 
     def rows(*, strict: bool = False) -> list[dict]:
         """The report. ``strict`` (before a write) refuses rather than guess when

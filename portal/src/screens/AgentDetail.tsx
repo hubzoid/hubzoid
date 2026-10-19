@@ -8,8 +8,9 @@ import { ActivityScreen } from "./ActivityScreen";
 import { EvalsScreen } from "./EvalsScreen";
 import { AgentConnectors } from "./ConnectorsScreen";
 import { AgentSecrets } from "./SecretsScreen";
+import { AgentSetup } from "./SetupScreen";
 
-export type AgentTab = "access" | "connectors" | "secrets" | "runs" | "evals" | "activity";
+export type AgentTab = "access" | "connectors" | "setup" | "secrets" | "runs" | "evals" | "activity";
 
 export function AgentDetail({
   hub,
@@ -50,6 +51,7 @@ export function AgentDetail({
         items={[
           { key: "access", label: <a href={agentHref(hub.key, "access")}>Access</a> },
           { key: "connectors", label: <a href={agentHref(hub.key, "connectors")}>Connectors</a> },
+          { key: "setup", label: <a href={agentHref(hub.key, "setup")}>Setup</a> },
           { key: "secrets", label: <a href={agentHref(hub.key, "secrets")}>Secrets</a> },
           { key: "runs", label: <a href={agentHref(hub.key, "runs")}>Runs &amp; schedules</a> },
           { key: "evals", label: <a href={agentHref(hub.key, "evals")}>Evals</a> },
@@ -59,6 +61,7 @@ export function AgentDetail({
       <div key={`${hub.key}:${tab}`}>
         {tab === "access" && <AccessEditor hub={hub} />}
         {tab === "connectors" && <AgentConnectors hub={hub} me={me} />}
+        {tab === "setup" && <AgentSetup hub={hub} />}
         {tab === "secrets" && <AgentSecrets hub={hub} />}
         {tab === "runs" && <RunsScreen hub={hub} workflow={rest[0]} run={rest[1]} />}
         {tab === "evals" && <EvalsScreen hub={hub} run={rest[0]} />}
