@@ -87,6 +87,7 @@ dependencies = [
   "authlib>=1.7.2,<1.8",    # hubzoid.auth, hubzoid.connectors: OAuth 2.0 and OpenID Connect clients (Google, Microsoft, OIDC, MCP servers)
   "itsdangerous>=2.2,<2.3", # signed, short-lived state for sign-in and connection flows
   "qrcode>=8.2,<9",          # auth/mfa.py: the authenticator set-up QR code, drawn as SVG (BSD)
+  "markdown>=3.7,<4",        # email_delivery.py: formatted report email (BSD); came via open-webui in 1.x
 ]
 
 [project.optional-dependencies]

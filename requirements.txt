@@ -44,3 +44,4 @@ boto3>=1.42.62,<1.43
 authlib>=1.7.2,<1.8
 itsdangerous>=2.2,<2.3
 qrcode>=8.2,<9
+markdown>=3.7,<4
