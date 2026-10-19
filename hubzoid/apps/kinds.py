@@ -16,6 +16,7 @@ digests (HUB-89), which are not built, so they are refused with that reason.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from datetime import date
@@ -209,7 +210,7 @@ def text(result: dict, *, status: dict | None = None, link: str | None = None) -
         if page.get("total_rows") is not None:
             lines.append(f"\n{len(result['rows'])} of {page['total_rows']} rows.")
         if page.get("next_cursor"):
-            lines.append("More rows are available.")
+            lines.append(f"More rows are available: call again with cursor {json.dumps(page['next_cursor'])}.")
         return "\n".join(lines).rstrip() + _sources_text(result["sources"])
     if kind == "report":
         parts = [f"# {result['title']}"]

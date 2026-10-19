@@ -18,7 +18,14 @@ import { ExternalLink, LayoutPanelTop } from "lucide-react";
 import { t } from "../../i18n/en";
 import { setCardApiBase } from "./sandboxFrame";
 
-export type CardMeta = { instance_id: string; card_id: string; kind: string; tool?: string; resource_uri: string };
+export type CardMeta = {
+  instance_id: string;
+  card_id: string;
+  kind: string;
+  tool?: string;
+  resource_uri: string;
+  allowed_tools?: string[];
+};
 
 /** The card a tool result shows, if any. */
 export function cardOf(result: unknown): CardMeta | null {
@@ -80,7 +87,8 @@ export function cardsConfig(apiBase: string, hub: string, isDark: boolean) {
           const card = cardOf(part.result);
           const text = cardText(part.result);
           return {
-            handlers: { allowedTools: card?.tool ? [card.tool, "hub_app_status"] : ["hub_app_status"] },
+            // A first check in the browser; the server checks again what this card may call now.
+            handlers: { allowedTools: [...(card?.allowed_tools ?? []), "hub_app_status"] },
             loadingFallback: <CardText text={text} note={t.cards.loading} />,
             errorFallback: (error: Error) => <CardText text={text} note={t.cards.failed(error.message)} />,
           };
@@ -152,6 +160,13 @@ export function CardEntry(props: ToolCallMessagePartProps & { header: ReactNode 
         <LayoutPanelTop size={13} aria-hidden className="flex-none text-mute" />
         <span className="text-[12px] text-mute">{t.cards.label(card.kind)}</span>
         {status && <span className="hz-tag is-quiet" data-testid="card-state">{status.label}</span>}
+        {card.kind === "approval" && status?.facts && (
+          // The operation's own facts, from Hub, outside the frame: a card's summary cannot stand in for them.
+          <span className="text-[12px] text-mute" data-testid="card-facts">
+            {String(status.facts.action ?? "")} · {t.cards.askedBy(String(status.facts.requester ?? ""))} ·{" "}
+            <span className="font-mono">{String(status.facts.digest ?? "").slice(0, 19)}…</span>
+          </span>
+        )}
         {status?.link && (card.kind === "approval" || card.kind === "progress") && (
           <a className="hz-card-review" href={status.link} data-testid="card-review">
             {card.kind === "approval" ? t.cards.review : t.cards.open}

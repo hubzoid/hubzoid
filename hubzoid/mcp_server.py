@@ -227,7 +227,7 @@ def _registry_tool_class():
                         is_error=True,
                     )
                 text = result if isinstance(result, str) else json.dumps(result, default=str)
-                card = _request_ctx.take_card(text)
+                card = _request_ctx.take_card(text, tool=fn.name)
             if card is not None:
                 # A card: the text for the model, the checked result for the
                 # host's card, and the instance its frame refreshes by.
@@ -287,7 +287,7 @@ async def call_registry_tool(hub_dir: Path, name: str, arguments: dict, identity
     with access.identity_scope(identity), _request_ctx.card_scope(), raw:
         result = await ft.on_invoke_tool(tool_ctx, args_json)
         text = result if isinstance(result, str) else json.dumps(result, default=str)
-        return {"text": text, "card": _request_ctx.take_card(text)}
+        return {"text": text, "card": _request_ctx.take_card(text, tool=name)}
 
 
 def _make_tool(ft, hub_dir: Path):
@@ -421,11 +421,15 @@ def _add_cards(mcp, hub_dir: Path, registry: dict, permissions: dict[str, str]) 
     def card_resource(hub: str, card_id: str, sha256: str):
         _row, res = cards.active(hub_dir)
         card = res.cards.get(card_id) if res and res.enabled else None
-        if hub != cards.hub_key(hub_dir) or card is None or card.sha256 != sha256:
+        if hub != cards.hub_key(hub_dir) or card is None:
             raise ValueError("No such card here.")
         if not _visible(hub_dir, _mcp_identity(hub_dir), card.tool, registry, permissions):
             raise ValueError("No such card here.")
-        return ResourceResult(contents=[ResourceContent(card.html, mime_type=cfg.MIME,
+        # An earlier version an old conversation shows is still served; its calls are refused.
+        html = card.html if card.sha256 == sha256 else cards.retained_html(hub_dir, card_id, sha256)
+        if html is None:
+            raise ValueError("No such card here.")
+        return ResourceResult(contents=[ResourceContent(html, mime_type=cfg.MIME,
                                                         meta={"ui": cards.resource_meta()})])
 
     @mcp.tool(name=cards.APP_STATUS_TOOL, meta={"ui": {"visibility": ["app"]}},
@@ -436,6 +440,7 @@ def _add_cards(mcp, hub_dir: Path, registry: dict, permissions: dict[str, str]) 
 
         try:
             inst = cards.instance(hub_dir, instance_id, ident.user or "")
+            cards.limit(hub_dir, ident.user or "", inst)
         except WorkItemError as exc:
             return _ToolResult(content=exc.message, is_error=True)
         out = cards._status_result(hub_dir, inst, ident.user or "")

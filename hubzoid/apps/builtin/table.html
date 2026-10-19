@@ -58,7 +58,8 @@
     var table = el("table", {}, [el("caption", { text: data.title }), el("thead", {}, [head]), el("tbody", {}, body)]);
     var total = data.page && data.page.total_rows;
     var count = rows.length + (total !== undefined && total !== null ? " of " + total : "") + (rows.length === 1 ? " row" : " rows");
-    var canMore = data.page && data.page.next_cursor && HZ.state.meta && HZ.state.meta.tool;
+    var canMore = data.page && data.page.next_cursor && HZ.state.meta && HZ.state.meta.tool &&
+      (HZ.state.meta.arguments || HZ.state.input);
     var bar = el("div", { "class": "bar" }, [
       el("span", { "class": "muted", text: count + (pages.length > 1 ? " · page " + (at + 1) : "") }),
       el("span", {}, [
@@ -75,7 +76,8 @@
     var data = pages[at].data;
     var button = event && event.target;
     if (button) { button.disabled = true; button.textContent = "Loading…"; }
-    var args = Object.assign({}, HZ.state.input || {}, { cursor: data.page.next_cursor });
+    // The call's own arguments as Hub kept them (a chat may show them shortened), with the next cursor.
+    var args = Object.assign({}, HZ.state.meta.arguments || HZ.state.input || {}, { cursor: data.page.next_cursor });
     HZ.call(HZ.state.meta.tool, args).then(function (r) {
       if (!r.structuredContent) throw new Error(HZ.textOf(r) || "No more rows.");
       pages.push({ cursor: data.page.next_cursor, data: r.structuredContent });

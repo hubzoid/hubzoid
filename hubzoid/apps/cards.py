@@ -107,7 +107,8 @@ def _wrapped(hub_dir: Path, ft):
         if not _presenting.get():
             return result
         try:
-            shown = await asyncio.to_thread(present, hub_dir, ft.name, args_json, result)
+            shown = await asyncio.to_thread(present, hub_dir, ft.name, args_json, result,
+                                            call_id=getattr(ctx, "tool_call_id", None))
         except Exception:  # noqa: BLE001 - presentation must never break the tool
             log.exception("cards: could not present %s", ft.name)
             return result
@@ -131,7 +132,12 @@ def check_result(hub_dir, card: config_lib.Card, result: Any, limits: config_lib
             raise kinds.Invalid("The tool did not return JSON.") from None
     else:
         value = result
-    size = len(json.dumps(value, default=str))
+    try:
+        size = len(json.dumps(value, allow_nan=False))
+    except ValueError:
+        raise kinds.Invalid("The result has a number that is not finite (NaN or infinity).") from None
+    except TypeError:
+        raise kinds.Invalid("The result is not plain JSON.") from None
     if size > limits.result_bytes:
         raise kinds.Invalid(f"The result is {size} bytes; the limit is {limits.result_bytes}.")
     if card.schema is not None:
@@ -192,7 +198,10 @@ def link(hub: str, item_id: str) -> str:
     return f"{base}/settings#/work/{hub}/{item_id}"
 
 
-def present(hub_dir: Path, tool: str, args_json: str, result: Any) -> str | None:
+_ARGS_MAX = 20_000
+
+
+def present(hub_dir: Path, tool: str, args_json: str, result: Any, *, call_id: str | None = None) -> str | None:
     """The text the model sees for ``tool``'s result when it shows a card, else
     None (keep the tool's own result)."""
     found = card_for_tool(hub_dir, tool)
@@ -222,13 +231,17 @@ def present(hub_dir: Path, tool: str, args_json: str, result: Any) -> str | None
         args = json.loads(args_json) if isinstance(args_json, str) and args_json else {}
     except ValueError:
         args = {}
+    args = args if isinstance(args, dict) else {}
+    args_text = json.dumps(args, default=str)
+    if len(args_text) > _ARGS_MAX:       # kept whole or not at all: a cut would not be JSON
+        args, args_text = None, "null"
     instance = store.create_instance(hub_dir, {
         "id": str(uuid.uuid4()), "hub": hub, "card_id": card.id, "kind": card.kind, "server_id": card.server_id,
         "tool": tool, "config_revision": row["revision"], "resource_sha256": card.sha256,
         "requester": requester, "surface": ident.surface, "conversation_id": _request_ctx.get_chat_id(),
-        "arguments_json": json.dumps(args if isinstance(args, dict) else {}, default=str)[:20_000],
-        "result_json": json.dumps(checked, default=str), "text": text})
-    _request_ctx.record_card(text, envelope(hub, card, instance["id"], checked, text))
+        "arguments_json": args_text, "result_json": json.dumps(checked), "text": text})
+    _request_ctx.record_card(text, envelope(hub, card, instance["id"], checked, text, arguments=args),
+                             call_id=call_id)
     return text
 
 
@@ -238,19 +251,23 @@ def _custom_text(checked: dict) -> str:
     return body or (title or json.dumps(checked, default=str)[:4000])
 
 
-def envelope(hub: str, card: config_lib.Card, instance_id: str, checked: dict, text: str) -> dict:
+def envelope(hub: str, card: config_lib.Card, instance_id: str, checked: dict, text: str, *,
+             arguments: dict | None = None) -> dict:
     """What the chat stores on the tool part: an MCP ``CallToolResult`` plus
-    the card's identity. Small and JSON-only."""
+    the card's identity, what it may call, and the call's own arguments (for
+    its next page; None when they were too long to keep). Small, JSON only."""
     return {"instance_id": instance_id, "card_id": card.id, "kind": card.kind, "title": card.title,
             "tool": card.tool, "server_id": card.server_id, "resource_uri": card.uri(hub), "text": text,
-            "structured": checked}
+            "structured": checked, "allowed_tools": list(card.allowed_tools), "arguments": arguments}
 
 
 def call_tool_result(env: dict) -> dict:
     """An envelope as the MCP Apps ``CallToolResult`` a card receives."""
+    meta = {k: env.get(k) for k in ("instance_id", "card_id", "kind", "tool", "resource_uri", "allowed_tools")}
+    if env.get("arguments") is not None:
+        meta["arguments"] = env["arguments"]
     return {"content": [{"type": "text", "text": env["text"]}], "structuredContent": env["structured"],
-            "_meta": {"hubzoid/card": {k: env.get(k) for k in ("instance_id", "card_id", "kind", "tool",
-                                                               "resource_uri")}}}
+            "_meta": {"hubzoid/card": meta}}
 
 
 # -- instances -------------------------------------------------------------------
@@ -268,11 +285,22 @@ def instance(hub_dir, instance_id: str, viewer: str) -> dict:
     return inst
 
 
+def granted(hub_dir, inst: dict, card) -> list[str]:
+    """The tools a card instance may call now: allowed when it was made AND
+    allowed today. An older instance never gains a tool added later."""
+    if card is None:
+        return []
+    then = store.revision_config(hub_dir, hub_key(hub_dir), inst["config_revision"]) or {}
+    before = next((c for c in then.get("cards") or [] if c.get("id") == inst["card_id"]), None)
+    allowed_then = set((before or {}).get("allowed_tools") or [])
+    return [t for t in card.allowed_tools if t in allowed_then]
+
+
 def view(hub_dir, instance_id: str, viewer: str) -> dict:
     """The safe projection: result, text, current state, binding and what the
     card may still do."""
     inst = instance(hub_dir, instance_id, viewer)
-    row, res = active(hub_dir)
+    row, res = active(hub_dir, fresh=True)
     card = (res.cards.get(inst["card_id"]) if res else None)
     live = card is not None and res.enabled and card.sha256 == inst["resource_sha256"] and not inst["revoked"]
     out = {"id": inst["id"], "card_id": inst["card_id"], "kind": inst["kind"], "tool": inst["tool"],
@@ -281,7 +309,7 @@ def view(hub_dir, instance_id: str, viewer: str) -> dict:
            "resource_uri": f"ui://{hub_key(hub_dir)}/{inst['card_id']}/{inst['resource_sha256']}/index.html",
            "result": inst["result"], "text": inst["text"], "revoked": inst["revoked"],
            "revoke_reason": inst["revoke_reason"],
-           "actions": (card.allowed_tools if live else []), "live": live,
+           "actions": (granted(hub_dir, inst, card) if live else []), "live": live,
            "inactive_reason": None if live else _inactive(inst, card, res)}
     if inst["kind"] in ("progress", "approval"):
         try:
@@ -339,6 +367,19 @@ def _limited(key: tuple[str, str], limits: config_lib.Limits) -> None:
     _rate[key] = calls
 
 
+def limit(hub_dir, viewer: str, inst: dict) -> None:
+    """The per-card, per-person limits, for a request that is not a dispatch
+    (the MCP status refresh)."""
+    _row, res = active(hub_dir)
+    _limited((viewer, inst["id"]), res.limits if res else config_lib.Limits())
+
+
+def retained_html(hub_dir, card_id: str, sha256: str) -> str | None:
+    """An earlier version of ``card_id``'s HTML that is still kept, or None."""
+    row = store.resource_row(hub_dir, hub_key(hub_dir), sha256)
+    return row["html"] if row and row["card_id"] == card_id else None
+
+
 def resource_for(hub_dir, inst: dict) -> dict:
     """``mcp-apps/read-resource``: the instance's own HTML, for assistant-ui."""
     hub = hub_key(hub_dir)
@@ -365,10 +406,13 @@ async def dispatch(hub_dir, instance_id: str, viewer: str, method: str, params: 
         if key in params:
             raise WorkItemError("invalid_request", f"{key} is not accepted from a card.")
     inst = await asyncio.to_thread(instance, hub_dir, instance_id, viewer)
-    row, res = await asyncio.to_thread(active, hub_dir)
-    card = res.cards.get(inst["card_id"]) if res else None
     if inst["revoked"]:
         raise WorkItemError("revoked", "This card was revoked. Ask the agent again for a current one.", status=410)
+    # Authorization reads the active revision now, never a cached one.
+    row, res = await asyncio.to_thread(active, hub_dir, fresh=True)
+    card = res.cards.get(inst["card_id"]) if res else None
+    key = (viewer, inst["id"])
+    _limited(key, res.limits if res else config_lib.Limits())
     uri = f"ui://{hub_key(hub_dir)}/{inst['card_id']}/{inst['resource_sha256']}/index.html"
     if method in ("mcp-apps/read-resource", "resources/read"):
         if params.get("uri") not in (None, uri):
@@ -392,12 +436,10 @@ async def dispatch(hub_dir, instance_id: str, viewer: str, method: str, params: 
     if card is None or not res.enabled or card.sha256 != inst["resource_sha256"]:
         raise WorkItemError("card_inactive", "This card is an older version. Ask the agent again for a current "
                             "one.", status=409)
-    if name not in card.allowed_tools:
+    if name not in await asyncio.to_thread(granted, hub_dir, inst, card):
         await asyncio.to_thread(_audit, hub_dir, viewer, "apps.denied", inst["id"],
                                 {"tool": str(name)[:100], "reason": "not_allowed"})
         raise WorkItemError("forbidden", "This card may not call that tool.", status=403)
-    key = (viewer, inst["id"])
-    _limited(key, res.limits)
     _inflight[key] = _inflight.get(key, 0) + 1
     try:
         outcome = await call_tool(name, args, identity, CALLABLE_CLASSES)
@@ -424,6 +466,8 @@ async def dispatch(hub_dir, instance_id: str, viewer: str, method: str, params: 
 
 
 def _status_result(hub_dir, inst: dict, viewer: str) -> dict:
+    if inst["revoked"]:
+        return {"content": [{"type": "text", "text": "This card was revoked."}], "isError": True}
     try:
         st = status(hub_dir, inst["result"], viewer)
     except WorkItemError as exc:
@@ -444,8 +488,9 @@ def tool_names(hub_dir) -> set[str]:
     return set(registry) | set(mcp_server.CHAT_SCOPED_TOOLS)
 
 
-def validate(hub_dir) -> config_lib.Resolved:
-    return config_lib.load(Path(hub_dir), tool_names=tool_names(hub_dir))
+def validate(hub_dir, apps_doc: dict | None = None) -> config_lib.Resolved:
+    """Check the files (or ``apps_doc`` in place of ``mcp-apps.yaml``)."""
+    return config_lib.load(Path(hub_dir), tool_names=tool_names(hub_dir), apps_doc=apps_doc)
 
 
 def summary(hub_dir, res: config_lib.Resolved) -> dict:
@@ -466,8 +511,12 @@ def get(hub_dir) -> dict:
             "history": store.history(hub_dir, hub)}
 
 
-def apply(hub_dir, *, expected: int | None, actor: str) -> dict:
-    res = validate(hub_dir)
+def apply(hub_dir, *, expected: int | None, actor: str, apps_doc: dict | None = None) -> dict:
+    """Make the checked configuration the next revision. With ``apps_doc``
+    (the API's body), that document is checked in memory and written to
+    ``mcp-apps.yaml`` only once its revision is set, so a stale or invalid
+    request never changes the file."""
+    res = validate(hub_dir, apps_doc)
     if not res.present:
         raise WorkItemError("config_invalid", "There is no mcp-apps.yaml to apply.", status=422)
     if not res.valid:
@@ -475,6 +524,10 @@ def apply(hub_dir, *, expected: int | None, actor: str) -> dict:
                             errors=[p.dict() for p in res.problems])
     out = store.apply(hub_dir, hub_key(hub_dir), expected=expected, digest=res.digest(), config=res.stored(),
                       resources={c.sha256: (c.id, c.html) for c in res.cards.values()}, actor=actor)
+    if apps_doc is not None:
+        from ..control import yamlfile
+
+        (Path(hub_dir) / config_lib.FILE).write_text(yamlfile.dumps(apps_doc), encoding="utf-8")
     _audit(hub_dir, actor, "apps.apply", f"revision:{out['revision']}", {"digest": out["digest"]})
     return out
 

@@ -415,7 +415,8 @@ class CodexRuntime:
                     # 1.0.x printed nothing for a Codex tool result, failed or not.
                     finished = run_events.ToolResult(id=call_id, name=name, ok=success,
                                                      message=None if success else run_events.TOOL_FAILED,
-                                                     card=_request_ctx.take_card(result) if success else None)
+                                                     card=_request_ctx.take_card(result, call_id=call_id, tool=name)
+                                                     if success else None)
                 if not isinstance(result, str):
                     result = json.dumps(result, default=str)
                 if tool is not None:

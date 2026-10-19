@@ -1157,7 +1157,7 @@ class ClaudeRuntime:
                             if not bool(getattr(block, "is_error", False)):
                                 yield run_events.ToolResult(
                                     id=tid, name=tool_name, ok=True,
-                                    card=_request_ctx.take_card(getattr(block, "content", None)))
+                                    card=_request_ctx.take_card(getattr(block, "content", None), tool=tool_name))
                                 continue
                             closing = tw.close()
                             if closing:

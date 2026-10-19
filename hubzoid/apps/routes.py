@@ -32,7 +32,6 @@ from ..work_items.errors import WorkItemError
 from ..work_items.routes import _call, _raise, _writer
 from . import cards
 
-_LOOPBACK = ("localhost", "127.0.0.1", "[::1]", "::1")
 
 
 class ApplyBody(BaseModel):
@@ -89,12 +88,8 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
     async def apply(hub: str, body: ApplyBody, actor=Depends(writer)):
         hub_dir = hub_for(actor, hub, manage=True)
 
-        def run():
-            if body.config is not None:
-                _write_config(hub_dir, body.config)
-            return cards.apply(hub_dir, expected=body.expected_revision, actor=actor.subject)
-
-        return await _call(run)
+        return await _call(cards.apply, hub_dir, expected=body.expected_revision, actor=actor.subject,
+                           apps_doc=body.config)
 
     @router.post("/hubs/{hub}/apps/invoke")
     async def invoke(hub: str, request: Request, response: Response, body: InvokeBody, actor=Depends(writer)):
@@ -172,7 +167,9 @@ def register(router: APIRouter, require_person: Callable, hub_path: Callable[[An
 
         parent = appmode.normalize_origin(origin)
         host = (request.headers.get("host") or "").lower()
-        if not parent or sandbox_origin(parent) is None or urlparse(parent).netloc.lower() == host:
+        expected = sandbox_origin(parent) if parent else None
+        # Served only on the sandbox origin the chat at `parent` uses.
+        if expected is None or urlparse(expected).netloc.lower() != host:
             raise HTTPException(403, detail={"code": "forbidden", "message": "Not a card sandbox request."})
         return HTMLResponse(_frame_html(parent), headers=_frame_headers(parent))
 
@@ -189,8 +186,8 @@ def sandbox_origin(parent: str) -> str | None:
     configured = appmode.normalize_origin(os.environ.get("HUBZOID_APPS_SANDBOX_ORIGIN", ""))
     p = urlparse(parent)
     if configured:
-        allowed = set(appmode.allowed_origins())
-        return configured if (parent in allowed or p.hostname in _LOOPBACK) and configured != parent else None
+        # Only for the deployment's own chat origins.
+        return configured if parent in set(appmode.allowed_origins()) and configured != parent else None
     if p.hostname not in ("localhost", "127.0.0.1"):
         return None
     other = "127.0.0.1" if p.hostname == "localhost" else "localhost"
@@ -208,18 +205,6 @@ def _frame_headers(parent: str) -> dict:
 def _frame_html(parent: str) -> str:
     page = (Path(__file__).parent / "sandbox_frame.html").read_text(encoding="utf-8")
     return page.replace('"__HZ_PARENT_ORIGIN__"', json.dumps(parent))
-
-
-def _write_config(hub_dir: Path, value: dict) -> None:
-    from ..control import yamlfile
-    from . import config as config_lib
-
-    try:
-        config_lib.AppsDoc.model_validate(value)
-    except Exception as exc:  # noqa: BLE001 - shown to the caller as a validation error
-        raise WorkItemError("config_invalid", f"The configuration is not valid: {str(exc).splitlines()[0]}",
-                            status=422) from None
-    (Path(hub_dir) / config_lib.FILE).write_text(yamlfile.dumps(value), encoding="utf-8")
 
 
 async def _invoke(hub_dir: Path, subject: str, body: InvokeBody) -> dict:

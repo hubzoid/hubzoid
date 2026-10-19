@@ -267,23 +267,30 @@ def _result_text(output: object, limit: int = RESULT_KEEP_CHARS) -> str:
         return str(output)[:limit]
 
 
-def record_card(text: str, card: dict) -> None:
-    """Note that a tool's result ``text`` shows ``card``. No-op outside a scope
-    (a CLI call shows no chat)."""
+def record_card(text: str, card: dict, *, call_id: str | None = None) -> None:
+    """Note that a tool's result ``text`` shows ``card``, for the call
+    ``call_id`` when the runtime gave the tool one. No-op outside a scope (a
+    CLI call shows no chat)."""
     items = _current_cards.get()
     if items is not None:
-        items.append((text, card))
+        items.append((call_id or "", text, card))
 
 
-def take_card(output: object) -> dict | None:
-    """The card for a tool result the runtime is about to emit, matched on the
-    exact text the tool returned (oldest first), or None."""
+def take_card(output: object, *, call_id: str | None = None, tool: str | None = None) -> dict | None:
+    """The card for a tool result the runtime is about to emit: the one
+    recorded for ``call_id``, else the oldest one of the same ``tool`` whose
+    text is exactly the result's. None when the result shows no card."""
     items = _current_cards.get()
     if not items:
         return None
+    if call_id:
+        for i, (cid, _text, card) in enumerate(items):
+            if cid and cid == call_id:
+                del items[i]
+                return card
     shown = _result_text(output, limit=10**7)
-    for i, (text, card) in enumerate(items):
-        if text == shown:
+    for i, (_cid, text, card) in enumerate(items):
+        if text == shown and (tool is None or card.get("tool") == tool):
             del items[i]
             return card
     return None

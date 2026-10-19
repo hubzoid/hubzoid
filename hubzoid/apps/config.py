@@ -207,19 +207,24 @@ def _pydantic(exc: ValidationError, loaded: yamlfile.Loaded, rel: str) -> list[P
     return out
 
 
-def load(hub_dir: Path, *, tool_names: set[str] | None = None) -> Resolved:
+def load(hub_dir: Path, *, tool_names: set[str] | None = None, apps_doc: dict | None = None) -> Resolved:
     """Read and check the files. ``tool_names``: the hub's tools, to check the
-    bindings against (None skips that check, for a quick syntax pass)."""
+    bindings against (None skips that check, for a quick syntax pass).
+    ``apps_doc``: a candidate for ``mcp-apps.yaml`` checked in its place
+    (the file is not read or written)."""
     hub = Path(hub_dir).resolve()
     path = hub / FILE
-    if not path.is_file():
+    if apps_doc is None and not path.is_file():
         return Resolved(present=False)
     res = Resolved(present=True, sources=[FILE])
-    try:
-        loaded = yamlfile.load(path)
-    except yamlfile.YamlError as exc:
-        res.problems.append(Problem("config_invalid", exc.message, FILE, None, exc.line))
-        return res
+    if apps_doc is not None:
+        loaded = yamlfile.Loaded(dict(apps_doc), {}, FILE)
+    else:
+        try:
+            loaded = yamlfile.load(path)
+        except yamlfile.YamlError as exc:
+            res.problems.append(Problem("config_invalid", exc.message, FILE, None, exc.line))
+            return res
     try:
         doc = AppsDoc.model_validate(loaded.data)
     except ValidationError as exc:

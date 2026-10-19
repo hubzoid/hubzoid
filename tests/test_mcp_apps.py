@@ -70,7 +70,7 @@ def hub(tmp_path, monkeypatch):
     (h / "tools_local").mkdir(parents=True)
     (h / "AGENTS.md").write_text("---\nname: Card Hub\nmodel: claude-local\n---\nA hub with cards.\n")
     (h / "tools_local" / "orders.py").write_text(TOOLS)
-    (h / config.FILE).write_text("version: 1\nlimits:\n  calls_per_minute: 3\n")
+    (h / config.FILE).write_text("version: 1\n")
     _card(h, "order-summary.yaml", """\
         version: 1
         id: order-summary
@@ -185,9 +185,11 @@ def test_a_bound_tool_returns_text_and_a_stored_card(hub):
     _apply(hub)
     out = asyncio.run(_call(hub, "order_summary"))
     assert out["text"].startswith("Orders | synthetic\n\n| Order | Quantity |")
-    assert "| SAMPLE-005 | 5 |" in out["text"] and "More rows are available." in out["text"]
+    assert "| SAMPLE-005 | 5 |" in out["text"]
+    assert 'More rows are available: call again with cursor "5".' in out["text"]     # the model can page too
     env = out["card"]
     assert env["kind"] == "table" and env["structured"]["page"]["next_cursor"] == "5"
+    assert env["arguments"] == {} and env["allowed_tools"] == ["order_summary", "send_note"]
     view = cards.view(hub, env["instance_id"], OWNER)
     assert view["requester"] == OWNER and view["live"] and view["actions"] == ["order_summary", "send_note"]
     assert view["resource_uri"] == env["resource_uri"] and env["resource_uri"].startswith("ui://cardhub/order-summary/")
@@ -201,14 +203,19 @@ def test_a_result_that_breaks_its_card_keeps_the_tools_own_text(hub):
     assert out["card"] is None and json.loads(out["text"])["rows"] == [{"a": "not a number"}]
 
 
-def test_the_runtime_takes_the_card_by_the_exact_text(hub):
+def test_the_runtime_takes_the_card_of_its_own_call(hub):
     with _request_ctx.chat_scope("c1"):
-        _request_ctx.record_card("hello", {"instance_id": "i1"})
-        _request_ctx.record_card("hello", {"instance_id": "i2"})
-        assert _request_ctx.take_card("other") is None
-        assert _request_ctx.take_card([{"type": "text", "text": "hello"}])["instance_id"] == "i1"   # Claude blocks
-        assert _request_ctx.take_card("hello")["instance_id"] == "i2"
-        assert _request_ctx.take_card("hello") is None
+        _request_ctx.record_card("same", {"instance_id": "i1", "tool": "a"}, call_id="call-1")
+        _request_ctx.record_card("same", {"instance_id": "i2", "tool": "a"}, call_id="call-2")
+        _request_ctx.record_card("hello", {"instance_id": "i3", "tool": "a"})
+        # By call id first, whatever order the results come back in.
+        assert _request_ctx.take_card("same", call_id="call-2", tool="a")["instance_id"] == "i2"
+        # Without one (Claude's in-process tools), by tool and exact text: another tool's
+        # identical text never takes it.
+        assert _request_ctx.take_card("hello", tool="b") is None
+        assert _request_ctx.take_card([{"type": "text", "text": "hello"}], tool="a")["instance_id"] == "i3"
+        assert _request_ctx.take_card("same", call_id="call-1")["instance_id"] == "i1"
+        assert _request_ctx.take_card("same") is None
 
 
 def test_the_chat_part_stores_the_card(hub):
@@ -263,15 +270,77 @@ def test_every_card_request_is_rechecked(hub):
     assert codes == {"someone else": "not_found", "another resource": "forbidden", "a tool it may not call": "forbidden",
                      "a write": "forbidden", "a hub id from the widget": "invalid_request",
                      "a method cards don't get": "method_not_allowed"}
-    # calls_per_minute: 3 (two calls so far, one refused before counting)
-    _dispatch(hub, inst, "tools/call", {"name": "order_summary"})
-    with pytest.raises(WorkItemError) as exc:
-        _dispatch(hub, inst, "tools/call", {"name": "order_summary"})
-    assert exc.value.code == "rate_limited" and exc.value.status == 429
     cards.revoke(hub, inst, OWNER, "test")
     with pytest.raises(WorkItemError) as exc:
         _dispatch(hub, inst, "mcp-apps/read-resource")
     assert exc.value.code == "revoked" and exc.value.status == 410
+
+
+def test_every_kind_of_card_request_counts_toward_its_limit(hub):
+    (hub / config.FILE).write_text("version: 1\nlimits:\n  calls_per_minute: 2\n")
+    _apply(hub)
+    inst = asyncio.run(_call(hub, "order_summary"))["card"]["instance_id"]
+    _dispatch(hub, inst, "mcp-apps/read-resource")
+    _dispatch(hub, inst, "tools/call", {"name": "hub_app_status"})
+    for request in (lambda: _dispatch(hub, inst, "resources/list"),
+                    lambda: cards.limit(hub, OWNER, cards.instance(hub, inst, OWNER))):   # the MCP status refresh
+        with pytest.raises(WorkItemError) as exc:
+            request()
+        assert exc.value.code == "rate_limited" and exc.value.status == 429
+
+
+def test_an_older_card_never_gains_a_tool_added_later(hub):
+    _card(hub, "order-summary.yaml", "version: 1\nid: order-summary\ntitle: Orders\nbinding: {tool: order_summary}\n"
+                                     "resource: {builtin: table}\nallowed_tools: [order_summary]\n")
+    (hub / "cards" / "broken.yaml").unlink()
+    _apply(hub)
+    old = asyncio.run(_call(hub, "order_summary"))["card"]["instance_id"]
+    _card(hub, "order-summary.yaml", "version: 1\nid: order-summary\ntitle: Orders\nbinding: {tool: order_summary}\n"
+                                     "resource: {builtin: table}\nallowed_tools: [order_summary, broken_table]\n")
+    _apply(hub, expected=1)
+    new = asyncio.run(_call(hub, "order_summary"))["card"]["instance_id"]
+    assert cards.view(hub, old, OWNER)["actions"] == ["order_summary"]
+    assert cards.view(hub, new, OWNER)["actions"] == ["order_summary", "broken_table"]
+    with pytest.raises(WorkItemError) as exc:
+        _dispatch(hub, old, "tools/call", {"name": "broken_table"})
+    assert exc.value.code == "forbidden"
+    assert "content" in _dispatch(hub, new, "tools/call", {"name": "broken_table"})
+
+
+def test_long_arguments_and_non_finite_numbers_never_break_a_card(hub):
+    _apply(hub)
+    out = asyncio.run(_call(hub, "order_summary", {"cursor": "x" * 30_000}))
+    assert out["card"]["arguments"] is None                       # not kept, rather than cut into bad JSON
+    assert cards.view(hub, out["card"]["instance_id"], OWNER)["result"]["kind"] == "table"
+    page = hub / "cards" / "dist" / "nan.html"
+    page.parent.mkdir(parents=True)
+    page.write_text("<!doctype html><p>n</p>")
+    sha = hashlib.sha256(page.read_bytes()).hexdigest()
+    (hub / "tools_local" / "nan.py").write_text(
+        "from agents import function_tool\nfrom hubzoid import tool_classes\n\n@function_tool\n"
+        "def nan_result() -> str:\n    \"Returns NaN.\"\n    return '{\"title\": \"x\", \"value\": NaN}'\n\n"
+        "tool_classes.declare(nan_result, 'read')\n")
+    _card(hub, "nan.yaml", f"version: 1\nid: nan\ntitle: N\nbinding: {{tool: nan_result}}\n"
+                           f"resource: {{file: cards/dist/nan.html, sha256: '{sha}'}}\n")
+    _apply(hub, expected=1)
+    from hubzoid import mcp_server
+
+    mcp_server._dispatch_registry.clear()           # the tool file is new
+    out = asyncio.run(_call(hub, "nan_result"))
+    assert out["card"] is None and "NaN" in out["text"]
+
+
+def test_the_api_candidate_is_checked_before_the_file_changes(hub):
+    _apply(hub)
+    before = (hub / config.FILE).read_text()
+    with pytest.raises(WorkItemError) as exc:
+        cards.apply(hub, expected=None, actor="cli:test", apps_doc={"version": 1, "enabled": False})
+    assert exc.value.code == "revision_conflict" and (hub / config.FILE).read_text() == before
+    with pytest.raises(WorkItemError):
+        cards.apply(hub, expected=1, actor="cli:test", apps_doc={"version": 1, "colour": "red"})
+    assert (hub / config.FILE).read_text() == before
+    out = cards.apply(hub, expected=1, actor="cli:test", apps_doc={"version": 1, "enabled": False})
+    assert out["revision"] == 2 and "enabled: false" in (hub / config.FILE).read_text()
 
 
 def test_an_older_version_still_shows_but_cannot_call(hub):
@@ -299,12 +368,37 @@ def test_an_older_version_still_shows_but_cannot_call(hub):
     assert exc.value.code == "card_inactive"
 
 
-def test_the_sandbox_is_another_origin():
+def test_the_sandbox_is_another_origin(hub):
+    from fastapi import APIRouter, FastAPI
+    from fastapi.testclient import TestClient
+
+    from hubzoid.apps import routes
+
+    assert routes.sandbox_origin("http://localhost:3180") == "http://127.0.0.1:3180"
+    assert routes.sandbox_origin("http://127.0.0.1:3180") == "http://localhost:3180"
+    assert routes.sandbox_origin("https://hub.example.com") is None
+    router = APIRouter(prefix="/portal/api")
+    routes.register(router, lambda: None, lambda actor, h: hub)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    url = "/portal/api/apps/sandbox/frame.html?origin=http%3A%2F%2F127.0.0.1%3A3180"
+    ok = client.get(url, headers={"host": "localhost:3180"})
+    assert ok.status_code == 200 and "frame-ancestors http://127.0.0.1:3180" in ok.headers["content-security-policy"]
+    assert "connect-src 'none'" in ok.headers["content-security-policy"] and "set-cookie" not in ok.headers
+    assert '"http://127.0.0.1:3180"' in ok.text
+    for host in ("127.0.0.1:3180", "evil.example", "localhost:9999"):   # the chat's own origin, or any other host
+        assert client.get(url, headers={"host": host}).status_code == 403
+
+
+def test_a_configured_sandbox_serves_only_the_deployments_chat(monkeypatch):
     from hubzoid.apps.routes import sandbox_origin
 
-    assert sandbox_origin("http://localhost:3180") == "http://127.0.0.1:3180"
-    assert sandbox_origin("http://127.0.0.1:3180") == "http://localhost:3180"
-    assert sandbox_origin("https://hub.example.com") is None
+    monkeypatch.setenv("HUBZOID_APPS_SANDBOX_ORIGIN", "https://cards.hub.example.com")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.com")
+    assert sandbox_origin("https://hub.example.com") == "https://cards.hub.example.com"
+    assert sandbox_origin("http://localhost:3180") is None
+    assert sandbox_origin("https://other.example.com") is None
 
 
 # -- the MCP server --------------------------------------------------------------------
@@ -334,8 +428,44 @@ def test_the_mcp_server_publishes_cards_to_callers_who_may_use_them(hub, monkeyp
             instance = result.meta["hubzoid/card"]["instance_id"]
             status = await client.call_tool("hub_app_status", {"instance_id": instance}, raise_on_error=False)
             assert status.is_error                     # a table has no live state
+            cards.revoke(hub, instance, OWNER, "test")
+            status = await client.call_tool("hub_app_status", {"instance_id": instance}, raise_on_error=False)
+            assert status.is_error and "revoked" in status.content[0].text
             who["ident"] = access.ANONYMOUS
             with pytest.raises(Exception):
                 await client.read_resource(meta["resourceUri"])
+
+    asyncio.run(run())
+
+
+def test_an_external_host_can_still_read_an_earlier_card_version(hub, monkeypatch):
+    from fastmcp import Client
+
+    from hubzoid import mcp_server
+
+    page = hub / "cards" / "dist" / "c.html"
+    page.parent.mkdir(parents=True)
+    (hub / "cards" / "order-summary.yaml").unlink()
+
+    def pin(html: str) -> str:
+        page.write_text(html)
+        sha = hashlib.sha256(html.encode()).hexdigest()
+        _card(hub, "custom.yaml", f"version: 1\nid: custom\ntitle: C\nbinding: {{tool: order_summary}}\n"
+                                  f"resource: {{file: cards/dist/c.html, sha256: '{sha}'}}\n")
+        return sha
+
+    old = pin("<!doctype html><p>v1</p>")
+    _apply(hub)
+    pin("<!doctype html><p>v2</p>")
+    _apply(hub, expected=1)
+    monkeypatch.setattr(mcp_server, "_mcp_identity", lambda hub_dir: _ident())
+    server, _ = mcp_server.build_server(hub)
+
+    async def run():
+        async with Client(server) as client:
+            read = await client.read_resource(f"ui://cardhub/custom/{old}/index.html")
+            assert read[0].text == "<!doctype html><p>v1</p>"
+            with pytest.raises(Exception):        # a version that was never this card's
+                await client.read_resource(f"ui://cardhub/custom/{'0' * 64}/index.html")
 
     asyncio.run(run())

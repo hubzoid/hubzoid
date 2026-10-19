@@ -671,6 +671,7 @@ export const en = {
         : why ? "This card is no longer live. The result as text:" : "The result as text:",
     passive: "A card in a shared or exported conversation is shown as text.",
     review: "Review in Hub",
+    askedBy: (who: string) => `asked by ${who}`,
     open: "Open in Hub",
     openExternal: (host: string) => `Open ${host} in a new tab?`,
   },

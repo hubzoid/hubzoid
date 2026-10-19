@@ -77,6 +77,21 @@ def history(hub_dir, hub: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def revision_config(hub_dir, hub: str, revision: int) -> dict | None:
+    """The configuration stored with ``revision`` (active or not)."""
+    with engine(hub_dir).connect() as c:
+        raw = c.execute(text("SELECT config_json FROM hz_app_config_revisions WHERE hub=:h AND revision=:r"),
+                        {"h": hub, "r": revision}).scalar()
+    return json.loads(raw) if raw else None
+
+
+def resource_row(hub_dir, hub: str, sha256: str) -> dict | None:
+    with engine(hub_dir).connect() as c:
+        row = c.execute(text("SELECT card_id, html FROM hz_app_resources WHERE hub=:h AND sha256=:s"),
+                        {"h": hub, "s": sha256}).mappings().first()
+    return dict(row) if row else None
+
+
 def resource(hub_dir, hub: str, sha256: str) -> str | None:
     with engine(hub_dir).connect() as c:
         return c.execute(text("SELECT html FROM hz_app_resources WHERE hub=:h AND sha256=:s"),

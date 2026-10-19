@@ -20,7 +20,7 @@ card can approve anything.
 | Claude (claude.ai, Claude Desktop) | **Not verified.** Needs the hub's MCP server on a public HTTPS URL with sign-in (see [mcp-oauth-claude.md](mcp-oauth-claude.md)) and a Claude account that renders MCP Apps. |
 | ChatGPT | **Not verified.** Needs a public HTTPS MCP URL and a ChatGPT account with developer mode connectors. |
 
-Hosts without cards get the text. `hubzoid apps probe` shows what a client
+Hosts without cards get the text, including the cursor for the next page of a table. `hubzoid apps probe` shows what a client
 with given capabilities would get; it is a protocol check, never a claim that a
 host works.
 
@@ -115,7 +115,8 @@ per card and person, `resource_timeout_seconds` 10 (1 to 30).
 A card shows inside the tool's entry in the reply. Around it, Hub's own chrome
 (which the card cannot change) shows the tool, the kind of card and, for
 progress and approval, the live state and **Open in Hub** or **Review in
-Hub**. While the card loads, and if it cannot load, the text is shown instead.
+Hub**; for an approval also the action, who asked and the digest, read from
+Hub rather than from the card. While the card loads, and if it cannot load, the text is shown instead.
 A card from an older revision still shows its saved version but cannot call
 tools; a revoked card shows its text. A shared or exported conversation shows
 no live card.
