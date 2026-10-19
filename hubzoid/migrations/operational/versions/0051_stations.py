@@ -1,4 +1,4 @@
-"""Isolated agents (stations) and handoff documents. Revision op_0031.
+"""Isolated agents (stations) and handoff documents. Revision op_0051.
 
 * ``hz_station_calls``: one row per station call, by its logical key (work item,
   generation, stage, revision). It pins the station definition the call runs
@@ -15,8 +15,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "op_0031"
-down_revision = "op_0030"
+revision = "op_0051"
+down_revision = "op_0050"
 branch_labels = None
 depends_on = None
 
