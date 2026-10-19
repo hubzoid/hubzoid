@@ -35,6 +35,7 @@ provider_config:
     label: factory         # this label added by someone with triage access or more
     pr_opened: true        # an orientation summary for each new pull request
     ci_failure: true       # failed checks on a pull request go to the workflow
+    routes: {}             # optional: the work-item route each trigger asks for
   hooks: []                # extra events for other workflows: {id, event, workflow}
   body_limit_bytes: 10485760
   excluded_diff_files: []
@@ -94,6 +95,19 @@ never printed. Intake fetches the issue and acts as the token's owner.
 
 Outsiders, bots and the App's own comments are recorded and ignored, with no
 reply. A repository not in the file is ignored.
+
+Each trigger asks for a work-item route, used when the workflow declares it
+(otherwise its first route applies). A route is a ceiling the run can only
+narrow. The defaults are `mention: answer`, `review_mention: revise`,
+`label: triage`, `pull_request: summarize` and `ci_failure: revise`. A hub
+sets its own in `rules.routes`, for example a factory whose label goes
+straight to implementation:
+
+```yaml
+  rules:
+    label: factory
+    routes: {mention: request, review_mention: request, label: implement}
+```
 
 ## Tools for agents and workflows
 

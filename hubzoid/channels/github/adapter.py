@@ -62,12 +62,33 @@ class Repository(BaseModel):
     full_name: str = Field(min_length=3, max_length=200)
 
 
+#: The work-item route each trigger asks for when the workflow declares it
+#: (otherwise the workflow's first route applies). A hub sets its own in
+#: `rules.routes`; a route is a ceiling the run can only narrow.
+DEFAULT_ROUTES = {"mention": "answer", "review_mention": "revise", "label": "triage", "pull_request": "summarize",
+                  "ci_failure": "revise"}
+ROUTE_RE = r"^[a-z][a-z0-9_-]{0,63}$"
+
+
 class Rules(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mentions: bool = True
     label: str | None = Field(default="factory", min_length=1, max_length=100)
     pr_opened: bool = True
     ci_failure: bool = True
+    routes: dict[Literal["mention", "review_mention", "label", "pull_request", "ci_failure"], str] = Field(
+        default_factory=dict)
+
+    @field_validator("routes")
+    @classmethod
+    def _route_names(cls, v):
+        for trigger, route in v.items():
+            if not re.match(ROUTE_RE, route):
+                raise ValueError(f"routes.{trigger}: a route name is lowercase letters, digits, - and _")
+        return v
+
+    def route(self, trigger: str) -> str:
+        return self.routes.get(trigger) or DEFAULT_ROUTES[trigger]
 
 
 class Hook(BaseModel):
@@ -236,7 +257,7 @@ class GitHubAdapter(Adapter):
                 kind="mention" if mentioned else "comment", origin=self._origin(conn, body, issue.get("number")),
                 actor=actor, text=_strip_mention(text, self.bot_login(conn)), trigger=bool(mentioned),
                 message_id=str(comment.get("id")),
-                data={"comment_id": comment.get("id"), "route": "answer", "provider_trusted": trusted,
+                data={"comment_id": comment.get("id"), "route": cfg.rules.route("mention"), "provider_trusted": trusted,
                       "association": comment.get("author_association"),
                       "is_pull_request": bool(issue.get("pull_request")), "title": issue.get("title")})
             if MARKER_RE.search(text):
@@ -258,7 +279,8 @@ class GitHubAdapter(Adapter):
                 origin=self._origin(conn, body, pr.get("number"), review_root=root), actor=actor,
                 text=_strip_mention(text, self.bot_login(conn)), trigger=bool(mentioned),
                 message_id=str(comment.get("id")),
-                data={"comment_id": comment.get("id"), "route": "revise", "provider_trusted": trusted,
+                data={"comment_id": comment.get("id"), "route": cfg.rules.route("review_mention"),
+                      "provider_trusted": trusted,
                       "path": comment.get("path"), "line": comment.get("line"), "head_sha": pr.get("head", {}).get("sha")})
             if MARKER_RE.search(text):
                 ev.ignore_reason = "own_reply"
@@ -276,7 +298,7 @@ class GitHubAdapter(Adapter):
                 kind="label", origin=self._origin(conn, body, issue.get("number")), actor=actor,
                 text=f"{issue.get('title') or ''}\n\n{issue.get('body') or ''}".strip(), trigger=True,
                 message_id=f"issue:{issue.get('number')}",
-                data={"route": "triage", "unattended": True, "labeler": actor.display, "label": label,
+                data={"route": cfg.rules.route("label"), "unattended": True, "labeler": actor.display, "label": label,
                       "needs_labeler_check": True, "title": issue.get("title")})
         if event == "pull_request" and action == "opened" and cfg.rules.pr_opened:
             pr = body.get("pull_request") or {}
@@ -287,7 +309,8 @@ class GitHubAdapter(Adapter):
                 origin=self._origin(conn, body, pr.get("number")), actor=actor,
                 text=f"{pr.get('title') or ''}\n\n{pr.get('body') or ''}".strip()[:4000], trigger=True,
                 message_id=f"pr:{pr.get('number')}",
-                data={"route": "summarize", "unattended": True, "head_sha": (pr.get("head") or {}).get("sha"),
+                data={"route": cfg.rules.route("pull_request"), "unattended": True,
+                      "head_sha": (pr.get("head") or {}).get("sha"),
                       "base_sha": (pr.get("base") or {}).get("sha"), "fork": bool(
                           ((pr.get("head") or {}).get("repo") or {}).get("fork")), "title": pr.get("title")})
         if event == "check_suite" and action == "completed" and cfg.rules.ci_failure:
@@ -303,7 +326,8 @@ class GitHubAdapter(Adapter):
                 origin=self._origin(conn, body, number), actor=actor,
                 text=f"Checks failed on {suite.get('head_branch')} at {suite.get('head_sha')}.", trigger=True,
                 message_id=f"suite:{suite.get('id')}",
-                data={"route": "revise", "unattended": True, "bot_allowed": True, "head_sha": suite.get("head_sha"),
+                data={"route": cfg.rules.route("ci_failure"), "unattended": True, "bot_allowed": True,
+                      "head_sha": suite.get("head_sha"),
                       "head_branch": suite.get("head_branch"), "check_suite_id": suite.get("id"),
                       "pull_requests": [p.get("number") for p in prs]})
         return None
