@@ -436,3 +436,25 @@ def test_the_edge_decides_the_client_address(monkeypatch, peer, sent, trusted, s
     out = edge._request_headers(req)
     assert [v for k, v in out if k == b"x-forwarded-for"] == [seen.encode()]
     assert not any(k in (b"x-real-ip", b"forwarded") for k, _ in out)
+
+
+def test_a_dropped_read_is_retried_for_get_and_502_otherwise(monkeypatch):
+    from starlette.testclient import TestClient
+
+    real_client = httpx.AsyncClient
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        if len(calls) == 1 or request.method == "POST":
+            raise httpx.ReadError("connection reset")
+        return httpx.Response(200, stream=httpx.ByteStream(b"chunk"))
+
+    monkeypatch.setattr(edge.httpx, "AsyncClient", lambda **kwargs: real_client(
+        **kwargs, transport=httpx.MockTransport(upstream)))
+    app = edge.build_edge_app(default_base="http://bridge1")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        got = client.get("/portal/assets/SchedulesScreen.js")
+        assert (got.status_code, got.content, calls) == (200, b"chunk", ["GET", "GET"])
+        sent = client.post("/api/chat", content=b"{}")
+        assert sent.status_code == 502 and calls[-1] == "POST" and calls.count("POST") == 1  # never sent twice

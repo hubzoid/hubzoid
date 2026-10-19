@@ -1,8 +1,9 @@
 // The Hubzoid chat app: boots from GET /api/auth/session, sends signed-out
 // people to /auth, and lays out the sidebar and the current page. Heavy pages
 // (the chat thread with assistant-ui and markdown) load on demand.
+import { lazyChunk } from "../lib/lazyChunk";
 import "./app.css";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, WifiOff } from "lucide-react";
 import { t } from "./i18n/en";
 import { get, setUnauthorizedHandler } from "./lib/api";
@@ -25,15 +26,15 @@ import { ShortcutsDialog, useShortcuts } from "./components/Shortcuts";
 
 applyTheme();
 
-const ChatPage = lazy(() => import("./chat/ChatPage"));
-const RequestsPage = lazy(() => import("./pages/RequestsPage"));
-const SharePage = lazy(() => import("./pages/SharePage"));
-const SignInPage = lazy(() => import("./pages/SignInPage"));
-const SetPasswordPage = lazy(() => import("./pages/SetPasswordPage"));
-const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
-const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
-const BrandPreviewPage = lazy(() => import("./pages/BrandPreviewPage"));
-const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const ChatPage = lazyChunk(() => import("./chat/ChatPage"));
+const RequestsPage = lazyChunk(() => import("./pages/RequestsPage"));
+const SharePage = lazyChunk(() => import("./pages/SharePage"));
+const SignInPage = lazyChunk(() => import("./pages/SignInPage"));
+const SetPasswordPage = lazyChunk(() => import("./pages/SetPasswordPage"));
+const ConnectionsPage = lazyChunk(() => import("./pages/ConnectionsPage"));
+const NotFoundPage = lazyChunk(() => import("./pages/NotFoundPage"));
+const BrandPreviewPage = lazyChunk(() => import("./pages/BrandPreviewPage"));
+const SettingsPage = lazyChunk(() => import("./pages/SettingsPage"));
 
 const PUBLIC_ROUTES: Route["name"][] = ["signin", "set-password", "share"];
 
