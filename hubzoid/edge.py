@@ -75,6 +75,15 @@ def _upstream_path(path: str) -> str:
     return quote(path, safe=_PATH_SAFE)
 
 
+def _path_and_query(request: Request) -> tuple[str, str]:
+    """The decoded path and the `?query` suffix as the server split them.
+    `request.url.path` is not that path: Starlette 1.9 re-escapes `?`, `#` and
+    `\\` in it, so `/a%3Fb` was encoded again and forwarded as `/a%253Fb`, and
+    earlier releases cut it at a decoded `?`."""
+    query = request.scope.get("query_string", b"").decode()
+    return request.scope["path"], "?" + query if query else ""
+
+
 async def _retry_body(request: Request):
     """(content, retryable) for a request that may be retried on a fallback.
 
@@ -120,9 +129,9 @@ def _is_bridge_internal(path: str) -> bool:
 _PERSONAL_KEY_PATHS = ("/v1/chat/completions", "/v1/models")
 
 
-def _personal_key_call(request) -> bool:
+def _personal_key_call(request, path: str) -> bool:
     auth = (request.headers.get("authorization") or "").strip()
-    return (_clean_path(request.url.path) in _PERSONAL_KEY_PATHS
+    return (_clean_path(path) in _PERSONAL_KEY_PATHS
             and auth[:7].lower() == "bearer " and auth[7:].strip().startswith("hzp_"))
 
 
@@ -297,19 +306,19 @@ def build_edge_app(
             await app.state.client.aclose()
 
     async def http_handler(request: Request) -> Response:
-        if request.url.path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
+        path, query = _path_and_query(request)
+        if path == '/healthz/workflows' and request.method in ('GET', 'HEAD'):
             from starlette.responses import JSONResponse
             states = getattr(request.app.state, 'workflow_health', {})
             healthy = bool(states) and all(states.values())
             return JSONResponse({'ok': healthy, 'checked': len(states)}, status_code=200 if healthy else 503)
-        if _has_dot_segment(request.url.path):
+        if _has_dot_segment(path):
             return Response("Bad request", status_code=400)
-        if _is_bridge_internal(request.url.path) and not _personal_key_call(request):
+        if _is_bridge_internal(path) and not _personal_key_call(request, path):
             return Response("Not found", status_code=404)
-        upstream, fwd_path = _forward_target(request.url.path, norm_routes, default_base)
-        matched = _match(request.url.path, norm_routes)
+        upstream, fwd_path = _forward_target(path, norm_routes, default_base)
+        matched = _match(path, norm_routes)
         bases = matched.upstreams() if matched is not None else default_bases
-        query = "?" + request.url.query if request.url.query else ""
         # Tell a bridge which /b/<slug> prefix was stripped (and never pass a
         # client's own claim on).
         prefix = matched.strip_prefix if matched is not None and matched.strip_prefix else ""

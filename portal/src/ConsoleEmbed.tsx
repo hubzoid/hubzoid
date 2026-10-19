@@ -31,6 +31,7 @@ export default function ConsoleEmbed({ personal }: { personal?: "schedules" }) {
     token: { ...base.token, fontSize: 13 * scale, fontSizeSM: 12 * scale, fontSizeHeading2: 19 * scale, fontSizeHeading3: 15 * scale, borderRadius: 8, controlHeight: view.density === "compact" ? 30 : 34 },
     components: {
       ...base.components,
+      Button: { ...(base.components?.Button ?? {}), colorPrimary: ink, colorPrimaryHover: v("--hz-secondary", "#b5b5b5"), colorPrimaryActive: ink, primaryColor: v("--hz-bg", "#151515"), primaryShadow: "none" },
       Tabs: { ...(base.components?.Tabs ?? {}), inkBarColor: ink, itemSelectedColor: ink, itemHoverColor: ink, itemActiveColor: ink, itemColor: mute, titleFontSize: 13 * scale },
       Breadcrumb: { ...(base.components?.Breadcrumb ?? {}), fontSize: 12 },
       Table: { ...(base.components?.Table ?? {}), cellPaddingBlockSM: 8, cellFontSize: 13 * scale },
