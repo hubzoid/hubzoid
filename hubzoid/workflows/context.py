@@ -540,7 +540,7 @@ def _hitl_create(payload: dict) -> dict:
 
     caller = service.Caller(account_id=payload.get("account_id") or payload["requester"],
                             email=payload["requester"], present=True, origin="workflow")
-    return service.create(Path(payload["hub_dir"]), payload["hub"], caller, kind=payload["kind"],
+    return service.create(Path(payload["hub_dir"]), Path(payload["hub_dir"]).name.lower(), caller, kind=payload["kind"],
                           title=payload["title"], arguments=payload.get("arguments"),
                           question=payload.get("question"), options=payload.get("options"),
                           subject=payload.get("subject"), approvers=tuple(payload["approvers"]),
@@ -550,7 +550,7 @@ def _hitl_create(payload: dict) -> dict:
 def _hitl_read(hub_dir: str, hub: str, request_id: str) -> dict:
     from ..hitl import service
 
-    return service.get(Path(hub_dir), hub, request_id)
+    return service.get(Path(hub_dir), Path(hub_dir).name.lower(), request_id)
 
 
 def _hitl_receive(request_id: str) -> bool:

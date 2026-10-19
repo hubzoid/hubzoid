@@ -48,6 +48,7 @@ const WorkspacePage = lazy(() => import("./WorkspacePage"));
 const SecurityPage = lazy(() => import("./SecurityPage"));
 const SignInSettings = lazy(() => import("./SignInSettings"));
 const ConsoleEmbed = lazy(() => import("../../ConsoleEmbed"));
+const WorkflowAccessPage = lazy(() => import("./WorkflowAccessPage"));
 
 type Key =
   | "profile"
@@ -68,7 +69,8 @@ type Key =
   | "brand"
   | "health"
   | "advanced"
-  | "parity";
+  | "parity"
+  | "workflow-access";
 
 /** `team`: for people who manage the deployment; `admin`: administrators only
  *  (the chat app's own section rather than a management screen). */
@@ -88,6 +90,7 @@ const ITEMS: Item[] = [
   { key: "people", label: S.people, icon: <UsersRound size={16} aria-hidden />, hash: "/people", team: true, keywords: "invite access roles members" },
   { key: "activity", label: S.activity, icon: <Activity size={16} aria-hidden />, hash: "/activity", team: true, keywords: "runs usage history" },
   { key: "schedules", label: S.schedules, icon: <CalendarClock size={16} aria-hidden />, hash: "/schedules", team: true, keywords: "reports timetable" },
+  { key: "workflow-access", label: t.workflowAccess.title, icon: <ShieldCheck size={16} aria-hidden />, hash: "/workflow-access", team: true, keywords: "workflow permissions run schedule edit approve results who" },
   { key: "chat", label: S.chat, icon: <MessageSquare size={16} aria-hidden />, hash: "/settings/chat", team: true, keywords: "defaults models web search" },
   { key: "signin", label: S.signIn, icon: <ShieldCheck size={16} aria-hidden />, hash: "/settings/sign-in", team: true, admin: true, keywords: "two-step mfa saml scim okta entra company directory single sign-on sso" },
   { key: "instructions", label: S.instructions, icon: <PencilRuler size={16} aria-hidden />, hash: "/workspace", team: true, admin: true, keywords: "workspace agents.md skills prompts openapi edit" },
@@ -106,6 +109,7 @@ function keyFor(hash: string): Key | null {
   if (a === "people" || a === "confirm") return "people";
   if (a === "activity" || a === "runs") return "activity";
   if (a === "schedules") return "schedules";
+  if (a === "workflow-access") return "workflow-access";
   if (a === "diagnostics") return "health";
   if (a === "workspace") return "instructions";
   if (a === "settings")
@@ -276,6 +280,12 @@ function SectionBody({ item }: { item: Item }) {
           <SignInSettings />
         </Suspense>
       </>
+    );
+  if (item.key === "workflow-access")
+    return (
+      <Suspense fallback={<PageSpinner />}>
+        <WorkflowAccessPage />
+      </Suspense>
     );
   if (item.team)
     return (

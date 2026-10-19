@@ -166,16 +166,33 @@ def _failure_cause(run_id: str) -> str:
     return outcomes.CAUSES["error"]
 
 
-async def _wait(run_id: str, seconds: float) -> str | None:
-    """Poll the run's status until it ends or `seconds` pass."""
+async def _wait(run_id: str, seconds: float, hub_dir: Path | None = None) -> str | None:
+    """Poll the run's status until it ends, `seconds` pass, or (with
+    ``hub_dir``) it stops to ask a person (``"ASKING"``)."""
     deadline = time.monotonic() + seconds
     status = None
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(_status, run_id)
         if status and status not in _ACTIVE:
             return status
+        if hub_dir is not None and await asyncio.to_thread(_asking, hub_dir, run_id):
+            return "ASKING"
         await asyncio.sleep(1.0)
     return status
+
+
+def _asking(hub_dir: Path, run_id: str) -> dict | None:
+    """The approval or question this run is waiting on (hubzoid.hitl), or None."""
+    import sqlalchemy as sa
+
+    from ..hitl import service, store
+
+    r = store.requests.c
+    with service.engine(hub_dir).connect() as conn:
+        row = conn.execute(sa.select(store.requests).where(
+            r.hub_id == _hub(hub_dir), r.workflow_id == run_id, r.status == "pending")
+            .order_by(r.created_at.desc()).limit(1)).first()
+    return store.row_dict(row) if row is not None else None
 
 
 def _links_for_run(hub_dir: Path, run_id: str, surface: str) -> list[str]:
@@ -311,7 +328,9 @@ def _run_tool(hub_dir: Path, wf):
     tool = FunctionTool(name=wf.name, description=description, params_json_schema=params,
                         on_invoke_tool=invoke, strict_json_schema=False)
     surfaces = frozenset(wf.surfaces) if wf.surfaces else TOOL_SURFACES
-    return guard_tool(tool, wf.permission, hub_dir, surfaces=surfaces)
+    from ..workflows import access as wf_access
+
+    return wf_access.guard_run(tool, hub_dir, wf.name, surfaces=surfaces)
 
 
 async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, shown: str) -> str:
@@ -337,7 +356,20 @@ async def _start_and_wait(hub_dir: Path, wf, actor: str, surface: str, data, sho
     except Exception:  # noqa: BLE001
         log.exception("report_tools: could not start %s", wf.name)
         return "The report could not be started right now. Try again shortly."
-    status = await _wait(run_id, wf.tool_wait)
+    status = await _wait(run_id, wf.tool_wait, hub_dir)
+    if status == "ASKING":
+        # The run stopped to ask this person: show its card here, in the chat.
+        import json as _json
+
+        from ..hitl import gate
+
+        req = await asyncio.to_thread(_asking, hub_dir, run_id)
+        if req is not None:
+            gate.note_waiting(wf.name, req)
+            return _json.dumps({"status": "waiting", "request_id": req["id"], "kind": req["kind"],
+                                "message": f"{wf.title} is waiting for the person's answer, shown to them now. Tell "
+                                           "them in one sentence and end your turn. The run continues once they "
+                                           "answer, and its result follows in their reports."})
     if status == "SUCCESS":
         refusal, answer = await asyncio.to_thread(_output, run_id)
         if refusal:
