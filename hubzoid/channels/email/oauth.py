@@ -153,7 +153,9 @@ def callback(conn, *, code: str, state: str) -> dict:
                            "saved.", status=409)
     _save(conn, tokens, actor=attempt.get("actor") or "email-connect")
     store.set_connection_state(conn.hub_dir, conn.hub, conn.id, email_scopes=str(tokens.get("scope") or "").split(),
-                               email_blocked=False)
+                               email_blocked=False,
+                               email_credential_generation=int((conn.state or {}).get(
+                                   "email_credential_generation") or 0) + 1)
     config_lib.audit(conn.hub_dir, attempt.get("actor") or "system", "email_connected", conn.id)
     return {"state": "connected", "mailbox": who, "scopes": str(tokens.get("scope") or "").split()}
 
@@ -189,6 +191,13 @@ def _tokens(conn) -> dict:
         raise ChannelError("auth_required", "The stored token set is unreadable. Connect again.", status=503) from None
 
 
+def _generation(conn) -> int:
+    """Bumped by every consent, so a refresh that started before a reconnect
+    never overwrites or blocks the newer grant."""
+    row = store.get_connection(conn.hub_dir, conn.hub, conn.id) or {}
+    return int((row.get("state_json") or {}).get("email_credential_generation") or 0)
+
+
 def current_token(conn) -> str | None:
     """The stored access token while it is still valid, without renewing it
     (doctor must not change credentials)."""
@@ -222,7 +231,11 @@ def access_token(conn) -> str:
             tokens = _tokens(conn)
             if float(tokens.get("expires_at") or 0) > time.time() + REFRESH_EARLY:
                 return tokens["access_token"]
-        return tokens["access_token"]
+        if float(tokens.get("expires_at") or 0) > time.time():
+            return tokens["access_token"]
+        # Never hand out an expired token: the caller waits and tries again.
+        raise ChannelError("auth_refreshing", "The mailbox token is being renewed. Try again shortly.", status=503)
+    generation = _generation(conn)
     try:
         tokens = _tokens(conn)       # another worker may have finished meanwhile
         if float(tokens.get("expires_at") or 0) > time.time() + REFRESH_EARLY:
@@ -237,11 +250,16 @@ def access_token(conn) -> str:
                                         "client_secret": _secret(conn, *ep["secret_field"])})
         except ChannelError as exc:
             if exc.code == "invalid_grant":
+                if _generation(conn) != generation:          # a reconnect replaced the refused grant
+                    return _tokens(conn)["access_token"]
                 store.set_connection_state(conn.hub_dir, conn.hub, conn.id, email_blocked=True)
                 raise ChannelError("auth_revoked", "The provider refused the refresh. Connect again.",
                                    status=503) from None
             raise
         fresh["expires_at"] = time.time() + int(fresh.get("expires_in") or 3600)
+        if _generation(conn) != generation:
+            # Someone reconnected the mailbox while this refresh ran: keep theirs.
+            return _tokens(conn)["access_token"]
         _save(conn, fresh, actor="email-refresh")
         return fresh["access_token"]
     finally:

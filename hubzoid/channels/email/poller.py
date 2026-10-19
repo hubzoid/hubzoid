@@ -85,8 +85,14 @@ def poll_once(conn, *, owner: str = "cli") -> dict:
     for m in messages:
         out = process(conn, m)
         seen.append(out)
+    extra = {}
+    if (new_cursor or {}).get("gap"):
+        # Recovery could not cover everything: say so, never pretend.
+        extra["email_gap"] = {"messages": new_cursor["gap"], "at": time.time()}
+        log.warning("channel %s: %s older messages were not re-read after a cursor reset", conn.id,
+                    new_cursor["gap"])
     store.set_connection_state(conn.hub_dir, conn.hub, conn.id, email_cursor=new_cursor, email_last_poll=time.time(),
-                               email_last_error=None)
+                               email_last_error=None, **extra)
     return {"state": "started" if cursor is None else "ok", "messages": len(messages), "deliveries": seen}
 
 
@@ -97,9 +103,10 @@ def _keep_source(conn, provider_id: str, raw: bytes) -> str | None:
         stored = intake.files_for(conn.hub_dir).register_bytes(
             f"intake:{conn.id}", f"{hashlib.sha256(provider_id.encode()).hexdigest()[:16]}.eml", "message/rfc822",
             raw, origin="intake", check_type=False)
-    except Exception:  # noqa: BLE001 - recorded on the event; attachments then fail visibly
+    except Exception as exc:  # noqa: BLE001 - nothing is admitted without its source
         log.warning("channel %s: could not keep the source of %s", conn.id, provider_id)
-        return None
+        raise ChannelError("source_not_stored", "The message source could not be stored (storage full or "
+                           "unavailable). It will be read again on the next pass.", status=503) from exc
     return stored["file_id"] if isinstance(stored, dict) else str(stored)
 
 

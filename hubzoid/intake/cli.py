@@ -68,8 +68,12 @@ def _decide(fn, hub, item, as_json, **kw):
     from ..channels.cli import _hub, _out, _run
     from . import service
 
+    from ..work_items.cli import _decider
+
     hub = _hub(hub, as_json)
-    out = _run(fn, as_json, hub, _find(hub, item, as_json), actor="cli", **kw)
+    # A release makes the decider the work's requester, so it must be a real
+    # account: the local owner in local mode. Elsewhere, decide in the Console.
+    out = _run(fn, as_json, hub, _find(hub, item, as_json), actor=_decider(hub, as_json), **kw)
     _out(service.view(out), as_json, lambda d: console.print(f"{d['id'][:8]} is now {d['state']}."
                                                              + (f" Work item {d['work_item_id'][:8]}."
                                                                 if d.get("work_item_id") else "")))

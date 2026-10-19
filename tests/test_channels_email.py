@@ -539,8 +539,10 @@ class FakeGoogle:
             return httpx.Response(200, json={"id": f"sent-{len(self.sent)}"})
         if path == "/gmail/v1/users/me/messages":
             q = request.url.params.get("q", "")
+            assert q.startswith("in:sent "), "reconciliation looks only at sent mail"
+            want = q.removeprefix("in:sent ").replace("rfc822msgid:", "").encode()
             hits = [{"id": f"sent-{n}"} for n, s in enumerate(self.sent, 1)
-                    if q.replace("rfc822msgid:", "").encode() in base64.urlsafe_b64decode(s["raw"] + "==")]
+                    if want in base64.urlsafe_b64decode(s["raw"] + "==")]
             return httpx.Response(200, json={"messages": hits})
         return httpx.Response(404, json={"error": {"message": f"not faked {path}"}})
 
@@ -692,3 +694,137 @@ def test_graph_reads_by_delta_and_replies_in_the_conversation(hub_dir, monkeypat
                            references=[], message_id="<r-9@desk.example>")
     t.send(conn, raw, to=CUSTOMER)
     assert t.find_sent(conn, "<r-9@desk.example>") == "s1" and t.find_sent(conn, "<none@desk.example>") is False
+
+
+
+# -- review fixes ------------------------------------------------------------------------------
+
+def test_a_named_action_cannot_skip_email_send(hub_dir, box, started):
+    conn, work = _released(hub_dir, box)
+    from hubzoid import db
+    from hubzoid.channels import thread
+    from hubzoid.workflows import context
+
+    with pytest.raises(Exception):
+        with context.run_scope(hub="desk", workflow="orders", hub_dir=hub_dir,
+                               engine=db.operational_engine(hub_dir), run_id="run-1",
+                               work={"item": work, "stage": None}):
+            thread.for_current_run().post("hi", key="x", kind="result", actions="channel.reply")
+    assert box.sent == []
+
+
+def test_a_second_subject_header_is_quarantined():
+    raw = message()
+    raw = raw.replace(b"Subject: Order for 40 units", b"Subject: Pay invoice 9 now\r\nSubject: Order for 40 units", 1)
+    p = mime.parse(raw)
+    trust = mime.sender_trust(raw, p, mailbox=MAILBOX, allowed=[CUSTOMER], authentication="aligned_dkim", dnsfunc=dns)
+    assert trust["reason"] == "header_duplicated" and trust["decision"] == "quarantined"
+
+
+def test_an_attached_email_is_an_attachment_not_text():
+    inner = EmailMessage()
+    inner["From"], inner["Subject"] = "x@y.example", "inner"
+    inner.set_content("SECRET INNER BODY")
+    outer = EmailMessage()
+    outer["From"], outer["Subject"], outer["Message-ID"] = CUSTOMER, "fwd", "<f@shop.example>"
+    outer.set_content("See attached.")
+    outer.add_attachment(inner)
+    p = mime.parse(bytes(outer))
+    assert "SECRET INNER BODY" not in p.text and p.attachments[0]["mimetype"] == "message/rfc822"
+    name, ctype, data = mime.attachment_bytes(bytes(outer), p.attachments[0]["part"])
+    assert ctype == "message/rfc822" and b"SECRET INNER BODY" in data
+
+
+def test_a_burst_drains_over_passes(hub_dir, box, started):
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    for n in range(25):
+        box.deliver(message(subject=f"order {n}", msgid=f"<b{n}@shop.example>"))
+    assert poller.poll_once(conn)["messages"] == 20
+    assert poller.poll_once(conn)["messages"] == 5
+    assert poller.poll_once(conn)["messages"] == 0
+    assert len(store.list_deliveries(hub_dir, "desk", conn.id, limit=100)["items"]) == 25
+
+
+def test_uidvalidity_recovery_reads_every_recent_message(hub_dir, box, started):
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    for n in range(30):
+        box.deliver(message(subject=f"order {n}", msgid=f"<r{n}@shop.example>"))
+    box.validity = 9
+    seen = sum(poller.poll_once(conn)["messages"] for _ in range(3))
+    assert seen == 30
+    assert len(store.list_deliveries(hub_dir, "desk", conn.id, limit=100)["items"]) == 30
+
+
+def test_a_lost_race_cannot_decide_twice(hub_dir, box, started):
+    from hubzoid.intake import service
+
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    box.deliver(message(sender="stranger@else.example"))
+    poller.poll_once(conn)
+    route_all(hub_dir)
+    [item] = items(hub_dir)
+    service.reject(hub_dir, item["id"], actor="a@desk.example", reason="spam", expected_revision=item["revision"])
+    with pytest.raises(ChannelError) as exc:
+        service._update(hub_dir, item["id"], expected_revision=item["revision"], state="ready")
+    assert exc.value.code == "revision_conflict"
+
+
+def test_bytes_must_match_the_declared_type(hub_dir, box, started):
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    box.deliver(message(attachments=[("po.pdf", "application/pdf", b"<html><script>x</script></html>")]))
+    poller.poll_once(conn)
+    route_all(hub_dir)
+    [item] = items(hub_dir)
+    assert item["state"] == "failed"
+    from hubzoid.intake import service
+
+    att = service.view(service.require(hub_dir, item["id"]), full=True, hub_dir=hub_dir)["attachments"][0]
+    assert att["state"] == "rejected" and att["error_code"] == "attachment_type_not_allowed"
+
+
+def test_nothing_is_admitted_without_its_source(hub_dir, box, started, monkeypatch):
+    from hubzoid.intake import service
+
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    box.deliver(message())
+    real = service.files_for
+
+    class Full:
+        def register_bytes(self, *a, **k):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(service, "files_for", lambda hub_dir: Full())
+    with pytest.raises(ChannelError) as exc:
+        poller.poll_once(conn)
+    assert exc.value.code == "source_not_stored"
+    assert store.list_deliveries(hub_dir, "desk", conn.id)["items"] == []
+    monkeypatch.setattr(service, "files_for", real)
+    assert poller.poll_once(conn)["messages"] == 1          # read again once storage is back
+
+
+def test_a_paused_release_goes_back_to_review(hub_dir, box, started, monkeypatch):
+    from hubzoid.intake import service
+    from hubzoid.work_items import service as wi
+    from hubzoid.work_items.errors import WorkItemError
+
+    conn = imap_conn(hub_dir)
+    poller.poll_once(conn)
+    box.deliver(message(sign=False))
+    poller.poll_once(conn)
+    route_all(hub_dir)
+    [item] = items(hub_dir)
+    _grant(hub_dir, "ops@desk.example", "workflows_manage")
+
+    def paused(*a, **k):
+        raise WorkItemError("admission_paused", "Paused for an upgrade.", status=503)
+
+    monkeypatch.setattr(wi, "admit_and_start", paused)
+    with pytest.raises(ChannelError):
+        service.release(hub_dir, item["id"], actor="ops@desk.example", reason="ok", expected_revision=item["revision"])
+    again = service.require(hub_dir, item["id"])
+    assert again["state"] == "quarantined" and not again["decided_by"]

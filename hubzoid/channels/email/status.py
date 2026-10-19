@@ -14,6 +14,7 @@ def status(conn) -> dict:
     return {"transport": conn.settings.transport, "mailbox": conn.settings.mailbox, "enabled": conn.enabled,
             "started": cursor is not None, "last_poll": state.get("email_last_poll"),
             "last_error": state.get("email_last_error"), "draft_verified": bool(state.get("email_draft_verified")),
+            "pending": len((cursor or {}).get("pending") or []), "gap": state.get("email_gap"),
             "connected": conn.settings.transport == "imap" or bool(state.get("email_scopes")),
             "senders_allowed": len(conn.settings.sender_policy.allowed),
             "authentication": conn.settings.sender_policy.authentication}

@@ -106,11 +106,16 @@ def _update(hub_dir, item_id: str, *, expected_revision: int | None = None, expe
         if expect_state is not None and cur[1] not in ((expect_state,) if isinstance(expect_state, str)
                                                          else tuple(expect_state)):
             raise ChannelError("invalid_state", f"This item is {cur[1]}.", status=409, current_revision=cur[0])
-        sets, params = ["revision=revision+1", "updated=:t"], {"i": item_id, "t": time.time()}
+        sets, params = ["revision=revision+1", "updated=:t"], {"i": item_id, "t": time.time(), "r": cur[0]}
         for k, v in fields.items():
             sets.append(f"{k}=:{k}")
             params[k] = json.dumps(v) if k in _JSON else v
-        c.execute(text(f"UPDATE hz_intake_items SET {', '.join(sets)} WHERE id=:i"), params)
+        # Conditional on the revision just read: of two concurrent decisions
+        # only one changes the row; the other sees a conflict.
+        done = c.execute(text(f"UPDATE hz_intake_items SET {', '.join(sets)} WHERE id=:i AND revision=:r"), params)
+        if done.rowcount != 1:
+            now = c.execute(text("SELECT revision FROM hz_intake_items WHERE id=:i"), {"i": item_id}).scalar()
+            raise revision_conflict(now)
         return _row(c.execute(text("SELECT * FROM hz_intake_items WHERE id=:i"), {"i": item_id}).mappings().first())
 
 
@@ -177,6 +182,14 @@ def _acquire(conn, item: dict, event) -> bool:
             if ref is None:
                 raise ChannelError("attachment_unavailable", "The attachment is no longer in the message.", status=422)
             name, mime, data = conn.adapter.fetch_file(conn, event, ref)
+            mime = (mime or a["media_type"]).split(";")[0].strip().lower()
+            if allowed and mime not in allowed:      # the provider's final type, not only the declared one
+                raise ChannelError("attachment_type_not_allowed", f"{name} is a {mime} file.", status=422)
+            from ..chat.file_service import content_problem
+
+            problem = content_problem(mime, data)
+            if problem:
+                raise ChannelError("attachment_type_not_allowed", f"{name}: {problem}", status=422)
             if len(data) > max_each or total + len(data) > max_total:
                 raise ChannelError("attachment_too_large", f"{name} is larger than this channel accepts.", status=413)
             if b"vbaProject.bin" in data[:4096 * 4] or name.lower().endswith((".docm", ".xlsm", ".pptm")):
@@ -284,7 +297,10 @@ def release(hub_dir, item_id: str, *, actor: str, reason: str, expected_revision
     try:
         out = dispatch(conn, item, released_by=actor)
     except ChannelError as exc:
-        if exc.status == 403:       # the person may not run this workflow: nothing changes
+        current = get(hub_dir, item_id)
+        if current and current["state"] == "ready":
+            # No work was admitted (no access to the workflow, admission paused,
+            # backlog full): put it back exactly as it was, to release later.
             _update(hub_dir, item_id, state="quarantined", decided_by=None, decision_reason=None)
         raise
     config_lib.audit(hub_dir, actor, "intake_release", item_id)
@@ -296,8 +312,9 @@ def reject(hub_dir, item_id: str, *, actor: str, reason: str, expected_revision:
     if item["state"] not in ("received", "quarantined", "failed", "ready"):
         raise ChannelError("invalid_state", f"A {item['state']} item cannot be rejected. Cancel its work item "
                            "instead.", status=409, current_revision=item["revision"])
-    out = _update(hub_dir, item_id, expected_revision=expected_revision, state="rejected", reason="rejected_by_person",
-                  decided_by=actor, decision_reason=(reason or "")[:500])
+    out = _update(hub_dir, item_id, expected_revision=expected_revision,
+                  expect_state=("received", "quarantined", "failed", "ready"), state="rejected",
+                  reason="rejected_by_person", decided_by=actor, decision_reason=(reason or "")[:500])
     config_lib.audit(hub_dir, actor, "intake_reject", item_id)
     return out
 
@@ -310,16 +327,16 @@ def retry(hub_dir, item_id: str, *, actor: str, expected_revision: int) -> dict:
     if item["state"] != "failed":
         raise ChannelError("invalid_state", "Only a failed item can be retried.", status=409,
                            current_revision=item["revision"])
-    if expected_revision != item["revision"]:
-        raise revision_conflict(item["revision"])
     conn = config_lib.active(hub_dir, item["channel_id"])
     delivery = channel_store.get_delivery(hub_dir, item["delivery_id"])
     event = admission.event_of(hub_dir, delivery)
+    item = _update(hub_dir, item_id, expected_revision=expected_revision, expect_state="failed", state="received",
+                   reason=None)      # only one retry wins
     with _engine(hub_dir).begin() as c:
         c.execute(text("UPDATE hz_intake_attachments SET state='pending' WHERE intake_id=:i AND state='failed'"),
                   {"i": item_id})
     config_lib.audit(hub_dir, actor, "intake_retry", item_id)
-    return decide(conn, _update(hub_dir, item_id, state="received", reason=None), event)
+    return decide(conn, item, event)
 
 
 # -- reading -------------------------------------------------------------------------------------

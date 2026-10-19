@@ -100,6 +100,9 @@ def parse(raw: bytes) -> Parsed:
     froms = getaddresses(msg.get_all("From", []))
     if len(froms) != 1 or not froms[0][1]:
         problems.append("from_not_single")
+    # A second copy of a signed header lets the unsigned one be read instead.
+    if any(len(msg.get_all(h, [])) > 1 for h in ("From", "Subject", "Date", "Message-ID", "To", "Reply-To")):
+        problems.append("header_duplicated")
     name, addr = froms[0] if froms else ("", "")
     msgid_raw = (msg.get("Message-ID") or "").strip()
     m = MSGID_RE.search(msgid_raw)
@@ -119,14 +122,21 @@ def parse(raw: bytes) -> Parsed:
         if count > MAX_PARTS or depth > MAX_DEPTH:
             problems.append("mime_too_complex")
             return
+        disp = (part.get_content_disposition() or "").lower()
+        ctype = part.get_content_type()
+        filename = part.get_filename()
+        # Classify before recursing: an attached email is multipart in Python,
+        # and its body must not become this message's text.
+        if ctype == "message/rfc822" or (part.is_multipart() and (disp == "attachment" or filename)):
+            payload = part.as_bytes() if ctype != "message/rfc822" else _rfc822_bytes(part)
+            safe = re.sub(r"[^A-Za-z0-9._ -]", "_", (filename or f"message-{count}.eml").rsplit("/", 1)[-1])[:200]
+            attachments.append({"part": str(count), "name": safe, "mimetype": "message/rfc822", "size": len(payload)})
+            return
         if part.is_multipart():
             for sub in part.iter_parts():
                 walk(sub, depth + 1)
             return
-        disp = (part.get_content_disposition() or "").lower()
-        ctype = part.get_content_type()
-        filename = part.get_filename()
-        if disp == "attachment" or filename or ctype == "message/rfc822" or not ctype.startswith("text/"):
+        if disp == "attachment" or filename or not ctype.startswith("text/"):
             payload = part.get_payload(decode=True) or b""
             safe = re.sub(r"[^A-Za-z0-9._ -]", "_", (filename or f"part-{count}").rsplit("/", 1)[-1])[:200]
             attachments.append({"part": str(count), "name": safe or f"part-{count}", "mimetype": ctype,
@@ -161,25 +171,42 @@ def attachment_bytes(raw: bytes, part: str) -> tuple[str, str, bytes]:
         count += 1
         if found is not None:
             return
-        if p.is_multipart():
-            for sub in p.iter_parts():
-                walk(sub)
+        disp = (p.get_content_disposition() or "").lower()
+        whole = p.get_content_type() == "message/rfc822" or (p.is_multipart() and (disp == "attachment"
+                                                                                     or p.get_filename()))
+        if whole or not p.is_multipart():
+            if str(count) == str(part):
+                found = p
             return
-        if str(count) == str(part):
-            found = p
+        for sub in p.iter_parts():
+            walk(sub)
 
     walk(msg)
     if found is None:
         raise KeyError(part)
+    if found.get_content_type() == "message/rfc822":
+        name = re.sub(r"[^A-Za-z0-9._ -]", "_", (found.get_filename() or f"message-{part}.eml"))[:200]
+        return name, "message/rfc822", _rfc822_bytes(found)
     name = re.sub(r"[^A-Za-z0-9._ -]", "_", (found.get_filename() or f"part-{part}").rsplit("/", 1)[-1])[:200]
     return name, found.get_content_type(), found.get_payload(decode=True) or b""
+
+
+def _rfc822_bytes(part) -> bytes:
+    inner = part.get_payload()
+    if isinstance(inner, list) and inner:
+        inner = inner[0]
+    try:
+        return inner.as_bytes() if hasattr(inner, "as_bytes") else bytes(str(inner), "utf-8")
+    except Exception:  # noqa: BLE001 - an unreadable attached email is still kept as text
+        return str(inner).encode("utf-8", "replace")
 
 
 def sender_trust(raw: bytes, parsed: Parsed, *, mailbox: str, allowed: list[str], authentication: str,
                  dnsfunc=None) -> dict:
     """{"decision": accepted | quarantined | rejected, "reason", "evidence"}."""
-    if parsed.problems and any(p in parsed.problems for p in ("from_not_single", "mime_too_complex",
-                                                              "message_too_large", "unsupported_encoding")):
+    if parsed.problems and any(p in parsed.problems for p in ("from_not_single", "header_duplicated",
+                                                              "mime_too_complex", "message_too_large",
+                                                              "unsupported_encoding")):
         return {"decision": "quarantined", "reason": parsed.problems[0], "evidence": {}}
     sender = parsed.from_addr or ""
     if sender == normalize_address(mailbox):

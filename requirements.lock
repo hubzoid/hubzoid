@@ -106,8 +106,12 @@ distro==1.9.0
     # via
     #   composio-client
     #   openai
+dkimpy==1.1.8
+    # via hubzoid (pyproject.toml)
 dnspython==2.8.0
-    # via email-validator
+    # via
+    #   dkimpy
+    #   email-validator
 docstring-parser==0.18.0
     # via cyclopts
 email-validator==2.3.0
@@ -180,6 +184,8 @@ idna==3.20
     #   httpx
     #   requests
     #   yarl
+imapclient==3.1.0
+    # via hubzoid (pyproject.toml)
 importlib-metadata==8.9.0
     # via litellm
 itsdangerous==2.2.0

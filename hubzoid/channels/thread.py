@@ -60,10 +60,12 @@ class Thread:
         conn = config_lib.active(self._hub_dir, self.channel)
         if kind == "progress" and (not conn.config.progress or conn.adapter.customer_facing):
             return []                   # customers get answers, never progress chatter
-        if conn.adapter.customer_facing:
+        send = getattr(conn.adapter, "send_action", None)
+        if conn.adapter.customer_facing and send:
             # A message to someone outside always performs the adapter's send
-            # action, so the hub's write mode for it applies.
-            actions = actions or getattr(conn.adapter, "send_action", None)
+            # action, whatever else the caller names, so its write mode applies.
+            named = [actions] if isinstance(actions, str) else list(actions or [])
+            actions = named + ([send] if send not in named else [])
         draft = getattr(conn.adapter, "draft", None)
         return replies.post(conn, self._thread, kind=kind, text=text, key=f"wf:{key}", actions=actions,
                             draft=draft)

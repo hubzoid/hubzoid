@@ -38,6 +38,7 @@ log = logging.getLogger("hubzoid.channels.email")
 
 MAX_RAW = 30 * 1024 * 1024
 BATCH = 20
+RECOVERY_MAX = 500
 OVERRIDES = ("HUBZOID_GMAIL_API_URL", "HUBZOID_GRAPH_API_URL", "HUBZOID_EMAIL_CA_FILE", "HUBZOID_GOOGLE_TOKEN_URL",
              "HUBZOID_MS_LOGIN_URL")
 
@@ -132,6 +133,9 @@ class ImapSmtp:
     name = "imap"
 
     def fetch_new(self, conn, cursor: dict | None):
+        """New mail after the cursor, at most BATCH per pass. Everything seen
+        but not yet read waits in the cursor's `pending` list, so a burst
+        drains over the next passes and nothing is skipped."""
         c = conn.settings.imap
         client = _imap_connect(conn)
         try:
@@ -139,28 +143,33 @@ class ImapSmtp:
             validity = int(_key(info, "UIDVALIDITY") or 0)
             uidnext = int(_key(info, "UIDNEXT") or 1)
             if cursor is None:
-                return [], {"uidvalidity": validity, "last_uid": uidnext - 1, "since": _today()}
+                return [], {"uidvalidity": validity, "last_uid": uidnext - 1, "since": _today(), "pending": []}
+            pending = [int(u) for u in cursor.get("pending") or []]
+            last, gap = int(cursor.get("last_uid") or 0), 0
             if int(cursor.get("uidvalidity") or 0) != validity:
                 # The server renumbered the folder. Read the recent days again;
                 # admission recognises every message already seen by its Message-ID.
                 log.warning("channel %s: UIDVALIDITY changed; re-reading since %s", conn.id, cursor.get("since"))
-                uids = sorted(client.search(["SINCE", _date(cursor.get("since"))]))[-BATCH:]
+                uids = sorted(client.search(["SINCE", _date(cursor.get("since"))]))
+                gap = max(0, len(uids) - RECOVERY_MAX)
+                pending, last = uids[-RECOVERY_MAX:], max([uidnext - 1] + uids)
             else:
-                last = int(cursor.get("last_uid") or 0)
-                uids = [u for u in client.search(["UID", f"{last + 1}:*"]) if u > last]
-                uids = sorted(uids)[:BATCH]
+                new = [u for u in client.search(["UID", f"{last + 1}:*"]) if u > last]
+                pending = sorted(set(pending) | set(new))
+                last = max([last] + new)
+            batch, rest = pending[:BATCH], pending[BATCH:]
             out = []
-            if uids:
-                sizes = client.fetch(uids, ["RFC822.SIZE"])
-                small = [u for u in uids if int(_key(sizes.get(u, {}), "RFC822.SIZE") or 0) <= MAX_RAW]
+            if batch:
+                sizes = client.fetch(batch, ["RFC822.SIZE"])
+                present = [u for u in batch if u in sizes]
+                small = [u for u in present if int(_key(sizes.get(u, {}), "RFC822.SIZE") or 0) <= MAX_RAW]
                 bodies = client.fetch(small, ["BODY.PEEK[]"]) if small else {}
-                for u in uids:
+                for u in present:
                     raw = _key(bodies.get(u, {}), "BODY[]") if u in small else None
                     out.append({"id": f"imap:{validity}:{u}", "raw": raw or b"", "too_large": u not in small,
                                 "thread_id": None})
-            last_uid = max([int(cursor.get("last_uid") or 0)] + list(uids)) if int(
-                cursor.get("uidvalidity") or 0) == validity else max([uidnext - 1] + list(uids))
-            return out, {"uidvalidity": validity, "last_uid": last_uid, "since": _today()}
+            return out, {"uidvalidity": validity, "last_uid": last, "since": _today(), "pending": rest,
+                         "gap": gap}
         finally:
             _logout(client)
 
@@ -341,14 +350,16 @@ class Gmail(_Api):
     base_env, base_default = "HUBZOID_GMAIL_API_URL", "https://gmail.googleapis.com"
 
     def fetch_new(self, conn, cursor: dict | None):
+        labels = conn.settings.gmail.label_ids
         if cursor is None:
             prof = self.call(conn, "GET", "/gmail/v1/users/me/profile")
             prof.raise_for_status()
-            return [], {"history_id": str(prof.json()["historyId"])}
-        ids, page, newest = [], None, cursor.get("history_id")
+            return [], {"history_id": str(prof.json()["historyId"]), "pending": []}
+        pending = list(cursor.get("pending") or [])
+        newest, page, gap, finished = cursor["history_id"], None, 0, False
         for _ in range(10):
             params = {"startHistoryId": cursor["history_id"], "historyTypes": "messageAdded",
-                      "labelId": conn.settings.gmail.label_ids[0], "maxResults": 100}
+                      "labelId": labels[0], "maxResults": 100}
             if page:
                 params["pageToken"] = page
             resp = self.call(conn, "GET", "/gmail/v1/users/me/history", params=params)
@@ -356,27 +367,37 @@ class Gmail(_Api):
                 # The history is too old. Read the last two days again; admission
                 # recognises each message already seen.
                 log.warning("channel %s: Gmail history expired; re-reading two days", conn.id)
-                lst = self.call(conn, "GET", "/gmail/v1/users/me/messages",
-                                params={"q": "newer_than:2d", "labelIds": conn.settings.gmail.label_ids,
-                                        "maxResults": BATCH})
-                lst.raise_for_status()
-                ids = [m["id"] for m in lst.json().get("messages") or []]
-                prof = self.call(conn, "GET", "/gmail/v1/users/me/profile")
-                newest = str(prof.json()["historyId"])
+                ids, token = [], None
+                while len(ids) < RECOVERY_MAX + 1:
+                    q = {"q": "newer_than:2d", "labelIds": labels, "maxResults": 100}
+                    if token:
+                        q["pageToken"] = token
+                    lst = self.call(conn, "GET", "/gmail/v1/users/me/messages", params=q)
+                    lst.raise_for_status()
+                    ids += [m["id"] for m in lst.json().get("messages") or []]
+                    token = lst.json().get("nextPageToken")
+                    if not token:
+                        break
+                gap = max(0, len(ids) - RECOVERY_MAX)
+                pending = list(dict.fromkeys(pending + list(reversed(ids[:RECOVERY_MAX]))))
+                newest = str(self.call(conn, "GET", "/gmail/v1/users/me/profile").json()["historyId"])
+                finished = True
                 break
             resp.raise_for_status()
             data = resp.json()
-            newest = str(data.get("historyId") or newest)
             for h in data.get("history") or []:
                 for added in h.get("messagesAdded") or []:
                     m = added.get("message") or {}
-                    if set(conn.settings.gmail.label_ids) & set(m.get("labelIds") or []) and m["id"] not in ids:
-                        ids.append(m["id"])
+                    if set(labels) & set(m.get("labelIds") or []) and m["id"] not in pending:
+                        pending.append(m["id"])
             page = data.get("nextPageToken")
             if not page:
+                newest, finished = str(data.get("historyId") or newest), True
                 break
+        if not finished:
+            newest = cursor["history_id"]     # more history than one pass reads: read it again next time
         out = []
-        for mid in ids[:BATCH]:
+        for mid in pending[:BATCH]:
             resp = self.call(conn, "GET", f"/gmail/v1/users/me/messages/{mid}", params={"format": "raw"})
             if resp.status_code == 404:
                 continue                      # deleted meanwhile
@@ -385,10 +406,7 @@ class Gmail(_Api):
             raw = _unb64url(data.get("raw") or "")
             out.append({"id": f"gmail:{mid}", "raw": raw if len(raw) <= MAX_RAW else b"",
                         "too_large": len(raw) > MAX_RAW, "thread_id": data.get("threadId")})
-        if len(ids) > BATCH:
-            # Keep the cursor where it was; the rest arrive on the next pass.
-            return out, cursor
-        return out, {"history_id": newest}
+        return out, {"history_id": newest, "pending": pending[BATCH:], "gap": gap}
 
     def send(self, conn, raw: bytes, *, to: str, thread_id=None) -> str:
         body = {"raw": _b64url(raw)}
@@ -407,7 +425,7 @@ class Gmail(_Api):
         return f"gmail-draft:{draft['id']}"
 
     def find_sent(self, conn, message_id: str):
-        resp = self.call(conn, "GET", "/gmail/v1/users/me/messages", params={"q": f"rfc822msgid:{message_id}",
+        resp = self.call(conn, "GET", "/gmail/v1/users/me/messages", params={"q": f"in:sent rfc822msgid:{message_id}",
                                                                               "maxResults": 5})
         if resp.status_code != 200:
             return None
@@ -453,28 +471,49 @@ class Graph(_Api):
                                         "Prefer": "odata.maxpagesize=50"})
 
     def fetch_new(self, conn, cursor: dict | None):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if cursor is None:
-            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             url = f"{self.base()}/me/mailFolders/inbox/messages/delta?$select=id&$filter=receivedDateTime+ge+{now}"
-        else:
-            url = cursor["delta_link"]
-        ids, delta = [], None
+            for _ in range(50):              # pages of mail from before now are passed over
+                data = self._get_url(conn, url)
+                data.raise_for_status()
+                body = data.json()
+                if body.get("@odata.deltaLink"):
+                    return [], {"delta_link": body["@odata.deltaLink"], "pending": [], "since": now}
+                url = body["@odata.nextLink"]
+            raise ChannelError("provider_unavailable", "Microsoft did not finish the first mailbox read.", status=503)
+        pending, gap = list(cursor.get("pending") or []), 0
+        url, delta = cursor["delta_link"], None
         for _ in range(50):
             resp = self._get_url(conn, url)
-            if resp.status_code == 410 and cursor is not None:
-                log.warning("channel %s: Graph delta expired; starting again from now", conn.id)
-                return self.fetch_new(conn, None)
+            if resp.status_code == 410:
+                # The delta expired. List what arrived since the last pass, then
+                # start a new delta from now.
+                log.warning("channel %s: Graph delta expired; listing mail since %s", conn.id, cursor.get("since"))
+                since = cursor.get("since") or now
+                lst_url = (f"{self.base()}/me/mailFolders/inbox/messages?$select=id&$top=50"
+                           f"&$filter=receivedDateTime+ge+{since}")
+                ids = []
+                while lst_url and len(ids) <= RECOVERY_MAX:
+                    lst = self._get_url(conn, lst_url)
+                    lst.raise_for_status()
+                    ids += [m["id"] for m in lst.json().get("value") or []]
+                    lst_url = lst.json().get("@odata.nextLink")
+                gap = max(0, len(ids) - RECOVERY_MAX)
+                pending = list(dict.fromkeys(pending + ids[:RECOVERY_MAX]))
+                _, fresh = self.fetch_new(conn, None)
+                delta = fresh["delta_link"]
+                break
             resp.raise_for_status()
             data = resp.json()
-            if cursor is not None:
-                ids += [m["id"] for m in data.get("value") or [] if "@removed" not in m]
+            pending += [m["id"] for m in data.get("value") or [] if "@removed" not in m and m["id"] not in pending]
             if data.get("@odata.nextLink"):
                 url = data["@odata.nextLink"]
                 continue
             delta = data.get("@odata.deltaLink")
             break
         out = []
-        for mid in ids[:BATCH]:
+        for mid in pending[:BATCH]:
             resp = self.call(conn, "GET", f"/me/messages/{mid}/$value")
             if resp.status_code == 404:
                 continue
@@ -484,9 +523,8 @@ class Graph(_Api):
             out.append({"id": f"graph:{mid}", "raw": raw if len(raw) <= MAX_RAW else b"",
                         "too_large": len(raw) > MAX_RAW,
                         "thread_id": meta.json().get("conversationId") if meta.status_code == 200 else None})
-        if len(ids) > BATCH or not delta:
-            return out, cursor if cursor is not None else {"delta_link": delta}
-        return out, {"delta_link": delta}
+        return out, {"delta_link": delta or cursor["delta_link"], "pending": pending[BATCH:], "since": now,
+                     "gap": gap}
 
     def send(self, conn, raw: bytes, *, to: str, thread_id=None) -> str:
         self.send_call(conn, "POST", "/me/sendMail", content=base64.b64encode(raw),

@@ -256,13 +256,16 @@ class EmailAdapter(Adapter):
 
 
 def _last_inbound(conn, origin: Origin) -> dict:
-    """The newest admitted message in the thread: what a reply answers."""
+    """The newest message in the thread that started work (admitted, or
+    released by a person): what a reply answers. A later message still in
+    review cannot change a reply's In-Reply-To or References."""
     from sqlalchemy import text
 
     from .. import admission, store
 
     with store.engine(conn.hub_dir).connect() as c:
         row = c.execute(text("SELECT d.* FROM hz_channel_deliveries d JOIN hz_channel_threads t ON t.id=d.thread_id "
+                             "JOIN hz_intake_items i ON i.delivery_id=d.id AND i.state='dispatched' "
                              "WHERE t.hub=:h AND t.connection_id=:c AND t.thread_key=:k AND d.event_enc IS NOT NULL "
                              "ORDER BY d.created DESC LIMIT 1"),
                         {"h": conn.hub, "c": conn.id, "k": origin.thread_key}).mappings().first()

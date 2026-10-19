@@ -80,11 +80,12 @@ def run(conn: Connection, inputs: dict | None = None) -> dict:
         checks.append(Check("groups", "warn", "allowed_groups is empty, so nobody can start work from this "
                             "channel.", "no_groups", "List the groups whose members may ask, then apply."))
     links = store.list_links(conn.hub_dir, conn.hub, conn.provider)
-    checks.append(Check("links", "ok" if links else "warn",
-                        f"{len(links)} linked {conn.provider} account(s)." if links else
-                        "No provider accounts are linked to Hubzoid accounts yet.",
-                        "" if links else "identity_unmapped",
-                        "" if links else "Link each person with hubzoid channels link."))
+    if not conn.adapter.customer_facing:     # outside senders are never linked to accounts
+        checks.append(Check("links", "ok" if links else "warn",
+                            f"{len(links)} linked {conn.provider} account(s)." if links else
+                            "No provider accounts are linked to Hubzoid accounts yet.",
+                            "" if links else "identity_unmapped",
+                            "" if links else "Link each person with hubzoid channels link."))
     last = store.counts(conn.hub_dir, conn.hub, conn.id).get("last_delivery_at")
     checks.append(Check("delivery", "ok" if last else "warn",
                         "A verified delivery has arrived." if last else
