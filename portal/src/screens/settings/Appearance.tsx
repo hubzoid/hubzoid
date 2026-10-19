@@ -404,9 +404,9 @@ function EditBrand({ active, onClose, onCreated }: { active: ActiveSource; onClo
   };
 
   return (
-    <Modal open title="Edit brand (creates a draft)" onCancel={onClose} onOk={() => void submit()} okText="Create draft" confirmLoading={busy} width={680}>
+    <Modal open title="Edit brand" onCancel={onClose} onOk={() => void submit()} okText="Create draft" confirmLoading={busy} width={680}>
       <Paragraph type="secondary">
-        Nothing changes for teammates until a draft is reviewed and activated. Language: English.
+        Create a draft, then review and publish it.
       </Paragraph>
       {error && <Alert type="error" showIcon title="Not saved" description={error.message} style={{ marginBottom: 12 }} />}
       <Form

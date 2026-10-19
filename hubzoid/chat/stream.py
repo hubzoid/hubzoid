@@ -11,7 +11,9 @@ from the same state, so a reloaded page shows what the stream showed.
     text is empty: the UI shows that the agent was thinking, not what.
   * A tool call becomes a ``tool-call`` part whose ``result`` is filled when the
     result arrives (``{"status": "ok"}`` or ``{"status": "error", "message"}``).
-    Arguments are kept small (long values are cut).
+    Arguments are kept small (long values are cut). A tool that shows a card
+    (``hubzoid.apps``) adds the MCP ``CallToolResult``: ``content`` (its text),
+    ``structuredContent`` and ``_meta["hubzoid/card"]`` (instance and resource).
   * The download footer (``Notice`` 'artifacts') is answer text: markdown links.
   * A run error (``Notice`` 'error') is an ``error`` chunk and the message's
     ``error``; it never becomes answer text. When the error is one of the plain
@@ -103,6 +105,9 @@ class MessageBuilder:
         self._calls: dict[str, int] = {}                # open call id -> part index
         self._runtime_ids: dict[str, str] = {}          # runtime call id -> stream id
         self._used_ids: set[str] = set()
+        # The run's session slot: tools that stopped to ask a person leave a
+        # note there (``hubzoid.hitl.gate``), shown as the call's waiting card.
+        self.waiting_source: Any = None
 
     def seed(self, parts: list[dict]) -> None:
         """Start from saved parts (continuing a stopped reply): they are kept
@@ -158,7 +163,11 @@ class MessageBuilder:
         chunks = self._close_blocks()
         for call_id, index in list(self._calls.items()):
             part = self.parts[index]
-            if status == "complete":
+            waiting = self._waiting_for(part.get("toolName") or "")
+            if waiting is not None:
+                part["result"] = waiting
+                chunks.append({"type": "tool-output-available", "toolCallId": call_id, "output": waiting})
+            elif status == "complete":
                 part["result"] = {"status": "ok"}
                 chunks.append({"type": "tool-output-available", "toolCallId": call_id,
                                "output": {"status": "ok"}})
@@ -261,13 +270,37 @@ class MessageBuilder:
         if call_id is None:
             return []
         part = self.parts[self._calls.pop(call_id)]
+        waiting = self._waiting_for(part.get("toolName") or item.name)
+        if waiting is not None:
+            part["result"] = waiting
+            return [{"type": "tool-output-available", "toolCallId": call_id, "output": waiting}]
         if item.ok:
-            part["result"] = {"status": "ok"}
+            result: dict = {"status": "ok"}
+            if item.card:
+                # A card: the MCP CallToolResult its frame receives, stored
+                # with the message so a reload shows it without re-running.
+                from ..apps.cards import call_tool_result
+
+                result.update(call_tool_result(item.card))
+            part["result"] = result
             return [{"type": "tool-output-available", "toolCallId": call_id,
-                     "output": {"status": "ok"}}]
+                     "output": copy.deepcopy(result)}]
         message = item.message or TOOL_FAILED
         part["result"] = {"status": "error", "message": message}
         return [{"type": "tool-output-error", "toolCallId": call_id, "errorText": message}]
+
+    def _waiting_for(self, name: str) -> dict | None:
+        """The approval or question this call is waiting on, if it stopped to ask."""
+        notes = getattr(self.waiting_source, "hitl_waiting", None) or []
+        for note in notes:
+            tool = note.get("tool") or ""
+            if note.get("shown") or not (tool == name or tool.endswith("__" + name) or name.endswith("__" + tool)):
+                continue
+            note["shown"] = True
+            if note.get("card"):  # a card the tool asked the chat to show (a hub change)
+                return dict(note["card"])
+            return {"status": "waiting", "request_id": note["request_id"], "kind": note.get("kind") or "approval"}
+        return None
 
     # -- errors ------------------------------------------------------------------
     def _error(self, message: str, *, kind: str = "") -> list[dict]:

@@ -72,18 +72,16 @@ def test_unsafe_settings_fail(hub, monkeypatch):
     c = _by_id(doc.run(hub))
     assert c["exposure.bind"].status == "warn" and c["exposure.local_mode"].status == "fail"
     assert c["auth.chat_signin"].status == "info"
-    monkeypatch.setenv("WEBUI_AUTH", "true")  # the 1.0 name turns Hubzoid sign-in on
+    monkeypatch.setenv("HUBZOID_AUTH", "true")
     c = _by_id(doc.run(hub))
     assert "exposure.local_mode" not in c and c["auth.chat_signin"].status == "warn"  # no first admin
-
-    # Open WebUI mode keeps its 1.0 checks.
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
-    monkeypatch.delenv("WEBUI_AUTH")
-    assert _by_id(doc.run(hub))["auth.chat_signin"].status == "fail"  # off and exposed
+    # Open WebUI's sign-in name never turns sign-in on; doctor names it as a blocker.
+    monkeypatch.delenv("HUBZOID_AUTH")
     monkeypatch.setenv("WEBUI_AUTH", "true")
-    assert _by_id(doc.run(hub))["auth.chat_signin"].status == "fail"  # no secret
-    monkeypatch.setenv("WEBUI_SECRET_KEY", "x" * 40)
-    assert _by_id(doc.run(hub))["auth.chat_signin"].status == "ok"
+    c = _by_id(doc.run(hub))
+    assert c["exposure.local_mode"].status == "fail"
+    assert c["ui.retired_setting"].status == "fail" and "HUBZOID_AUTH" in c["ui.retired_setting"].summary
+    monkeypatch.delenv("WEBUI_AUTH")
 
     monkeypatch.delenv("OPENROUTER_API_KEY")
     c = _by_id(doc.run(hub))["model.credentials"]

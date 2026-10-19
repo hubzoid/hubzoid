@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 FORMAT = 1
-_PACKAGES = ("hubzoid", "open-webui", "dbos", "litellm", "openai-agents", "claude-agent-sdk",
+_PACKAGES = ("hubzoid", "dbos", "litellm", "openai-agents", "claude-agent-sdk",
              "alembic", "sqlalchemy", "casbin", "fastmcp", "pwdlib", "authlib")
 _BACKUP_WARN_DAYS = 7
 
@@ -251,9 +251,6 @@ def _schema(hub: Path) -> list[Check]:
 
 
 def _auth(hub: Path | None = None) -> list[Check]:
-    from . import appmode
-    from .webui import _TRUTHY, _validate_auth_env
-
     out = []
     keys = [k.strip() for k in os.environ.get("BRIDGE_API_KEYS", "").split(",") if k.strip()]
     if not keys:
@@ -266,26 +263,12 @@ def _auth(hub: Path | None = None) -> list[Check]:
     else:
         out.append(Check("auth.bridge_keys", "ok", f"{len(keys)} bridge key(s) set"))
 
-    if not appmode.is_openwebui(hub):
-        out.append(_web_app_signin(hub))
-        return out
-    auth_on = os.environ.get("WEBUI_AUTH", "").strip().lower() in _TRUTHY
-    if auth_on:
-        try:
-            _validate_auth_env(dict(os.environ))
-            out.append(Check("auth.chat_signin", "ok", "Chat app sign-in is on"))
-        except RuntimeError as exc:
-            out.append(Check("auth.chat_signin", "fail", str(exc).splitlines()[0]))
-    else:
-        exposed = _exposed()
-        out.append(Check("auth.chat_signin", "fail" if exposed else "info",
-                         "Chat app sign-in is off and the port is exposed" if exposed
-                         else "Chat app sign-in is off (fine for local use only)"))
+    out.append(_web_app_signin(hub))
     return out
 
 
 def _web_app_signin(hub: Path | None) -> Check:
-    """Sign-in for the Hubzoid web app (HUBZOID_AUTH, or the 1.0 name WEBUI_AUTH).
+    """Sign-in for the Hubzoid web app (HUBZOID_AUTH).
     Exposure without sign-in is the `exposure.local_mode` check."""
     from . import appmode, upgrade
 
@@ -300,7 +283,7 @@ def _web_app_signin(hub: Path | None) -> Check:
                      f"Sign-in is on, but the Hubzoid accounts could not be read ({exc}). "
                      "See the db.operational check.", {"mode": "accounts", "accounts": None})
     bootstrap = any((os.environ.get(k) or "").strip()
-                    for k in ("HUBZOID_ADMIN_EMAIL", "WEBUI_ADMIN_EMAIL"))
+                    for k in ("HUBZOID_ADMIN_EMAIL",))
     detail = {"mode": "accounts", "accounts": accounts, "first_admin_configured": bootstrap}
     if not accounts and not bootstrap:
         return Check("auth.chat_signin", "warn",
@@ -325,39 +308,22 @@ def _exposure() -> Check:
 
 
 def _app_checks(hub: Path) -> list[Check]:
-    """The web experience: which one runs, what it needs, and what an upgrade
-    from Open WebUI still has to do. Read-only like every check."""
+    """The web experience, Open WebUI settings still present, and what an
+    upgrade from Open WebUI still has to do. Read-only like every check."""
     from . import appmode
 
     summary = appmode.mode_summary(hub)
-    owui = summary["ui_mode"] == appmode.UI_OPENWEBUI
-    source = ("HUBZOID_UI" if (os.environ.get("HUBZOID_UI") or "").strip()
-              else "deployment record" if owui else "default")
-    out = [Check("ui.mode", "info",
-                 "Chat UI: Open WebUI (Open WebUI mode)" if owui
-                 else "Chat UI: Hubzoid web app", {**summary, "source": source})]
-    if owui:
-        out.append(_openwebui_extra())
-    else:
-        found = _openwebui_data(hub, auth_on=summary["auth"])
-        if found:
-            out.append(found)
-        out.append(_local_mode_guard(auth_on=summary["auth"]))
+    out = [Check("ui.mode", "info", "Chat UI: Hubzoid web app", summary)]
+    out += [Check("ui.retired_setting", "fail" if r.fatal else "warn",
+                  f"{r.name} is an Open WebUI setting Hubzoid 2.0 no longer uses. {r.advice}",
+                  {"setting": r.name, "blocks_start": r.fatal})
+            for r in appmode.retired_settings(hub)]
+    found = _openwebui_data(hub, auth_on=summary["auth"])
+    if found:
+        out.append(found)
+    out.append(_local_mode_guard(auth_on=summary["auth"]))
     out.append(_deployment_key(hub))
     return [c for c in out if c is not None]
-
-
-def _openwebui_extra() -> Check:
-    import importlib.util
-
-    from . import webui
-
-    binary = webui._find_binary()
-    if binary and importlib.util.find_spec("open_webui") is not None:
-        return Check("ui.openwebui_extra", "ok", "The openwebui extra is installed", {"binary": binary})
-    return Check("ui.openwebui_extra", "fail",
-                 'HUBZOID_UI=openwebui needs the openwebui extra: pip install "hubzoid[openwebui]" '
-                 "(or remove HUBZOID_UI to use the Hubzoid web app)")
 
 
 def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
@@ -385,7 +351,7 @@ def _openwebui_data(hub: Path, *, auth_on: bool) -> Check | None:
     if auth_on:
         return Check("ui.openwebui_data", "fail",
                      f"Open WebUI has {people} account(s) ({where}) and Hubzoid has none: hubzoid run "
-                     "stops until you run `hubzoid migrate openwebui` or set HUBZOID_UI=openwebui", detail)
+                     "stops until you run `hubzoid migrate openwebui`, or stay on Hubzoid 1.x", detail)
     return Check("ui.openwebui_data", "info",
                  f"Chats from Open WebUI ({where}) can be imported with `hubzoid migrate openwebui`", detail)
 

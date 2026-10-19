@@ -21,10 +21,6 @@
 #
 # For PostgreSQL, add the override file (see docker-compose.postgres.yml).
 #
-# Permanently supported optional Open WebUI interface: set HUBZOID_UI=openwebui in
-# the hub's .env and build the image with the openwebui extra:
-#   HUBZOID_WITH_OPENWEBUI=true docker compose -f docker/docker-compose.yml up -d --build
-#
 # Only the edge port (3080: the web app, artifact downloads, MCP) is published.
 # The bridge stays on 127.0.0.1 inside the container.
 
@@ -34,8 +30,6 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-      args:
-        WITH_OPENWEBUI: ${HUBZOID_WITH_OPENWEBUI:-false}
     ports:
       - "${HUBZOID_PUBLISH:-3080}:3080"
     volumes:

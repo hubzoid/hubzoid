@@ -47,7 +47,7 @@ Save your analysis with save_handoff (kind analysis). Return a summary and the h
 | `tools` | The exact tools: the hub's own and pre-shipped tools by name, plus `save_handoff` and `read_handoff`. Empty or missing means none. |
 | `response_schema` | A JSON Schema file in the agent's folder, describing an object. |
 | `input` | `forward` (default) or `never`. |
-| `sandbox` | A sandbox profile for the agent's workspace. Sandboxes are not in this version yet: a station that names one is refused (`sandbox_unavailable`), never run on the host. |
+| `sandbox` | A sandbox profile (`sandboxes/<id>.yaml`) for the agent's own workspace, with the sandbox tools. See [sandbox.md](sandbox.md). Without it the agent has no shell or files. |
 | `timeout_seconds` | Optional limit on active time, across all attempts of a call. Off by default. |
 
 Changing a station's files gives it a new definition digest. A call keeps the

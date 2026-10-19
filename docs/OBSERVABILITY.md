@@ -41,7 +41,7 @@ backend opts in with `OTEL_METRICS_EXPORTER=otlp` / `OTEL_LOGS_EXPORTER=otlp`.
 
 Every turn emits trace spans (`interaction -> llm_request -> tool`) tagged with
 `hubzoid.user`, `hubzoid.hub`, `hubzoid.surface` (and `user.id` mirroring the
-OWUI email) as **resource attributes** — so traces and per-hub / per-surface
+signed-in person's email) as **resource attributes** — so traces and per-hub / per-surface
 filtering work on any OTLP backend, direct.
 
 Whether **cost** shows depends on the model path, because of attribute naming:
@@ -61,7 +61,7 @@ Whether **cost** shows depends on the model path, because of attribute naming:
 
   With it set, the bridge intercepts its own `claude` subprocess's OTLP
   **in-process**, renames those attrs to the semantic-convention names Langfuse
-  maps, promotes `user.id` from the OWUI identity (so Langfuse's Users tab shows
+  maps, promotes `user.id` from the signed-in identity (so Langfuse's Users tab shows
   the real person, not Claude Code's subscription-account hash), and forwards to
   `HUBZOID_OTEL_ENDPOINT`. **No separate collector process** — it runs inside the
   bridge you already start, on its existing loopback port, and does nothing until
@@ -121,7 +121,7 @@ configured at all — the terminal table, the run JSON under
 ## Transport and exposure
 
 Emission is **outbound push** over OTLP/HTTP (`http/protobuf`). Nothing is
-exposed on the public Open WebUI port. Keep the OTLP receiver and the Langfuse
+exposed on the public port. Keep the OTLP receiver and the Langfuse
 UI on a private network or loopback.
 
 ## Multi-hub gateway

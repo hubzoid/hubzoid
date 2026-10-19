@@ -120,11 +120,14 @@ def step_name(stage: str, revision: int, *, retry: bool = False) -> str:
     return f"hz_station{'_retry' if retry else ''}:{stage}:r{revision}"
 
 
-def call(agent: str, message: str, *, stage: str, revision: int = 1, response_model=None, timeout=None):
+def call(agent: str, message: str, *, stage: str, revision: int = 1, response_model=None, timeout=None,
+         checkout: dict | None = None):
     """Run station `agent` once for this work item's `stage`. Returns its
     validated output (a dict, or a `response_model` instance). Raises
     `StationOutputError` or `StationError` with the call id for the one retry.
-    `timeout` (seconds) may lower the station's time limit, never raise it."""
+    `timeout` (seconds) may lower the station's time limit, never raise it.
+    `checkout` ({url, ref}) copies a repository into the station's sandbox,
+    cloned with the host's credentials, which never enter the sandbox."""
     from ..work_items.facade import _step, _work
     from ..workflows import context
 
@@ -143,7 +146,7 @@ def call(agent: str, message: str, *, stage: str, revision: int = 1, response_mo
     # or were removed since: only a new call reads the current files.
     row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
     if row is None:
-        _create(ctx.hub_dir, item, agent, message, digest, stage, revision, response_model, timeout)
+        _create(ctx.hub_dir, item, agent, message, digest, stage, revision, response_model, timeout, checkout)
         row = _call_by_key(ctx.hub_dir, item["hub"], item["id"], item["generation"], stage, revision)
     if row["message_digest"] != digest or row["agent"] != agent:
         raise StationError("call_conflict", f"Stage {stage!r} already called {row['agent']} with a different "
@@ -155,17 +158,33 @@ def call(agent: str, message: str, *, stage: str, revision: int = 1, response_mo
     return response_model.model_validate(output) if response_model is not None else output
 
 
-def _create(hub_dir, item, agent, message, digest, stage, revision, response_model, timeout) -> None:
+def _create(hub_dir, item, agent, message, digest, stage, revision, response_model, timeout, checkout) -> None:
     from sqlalchemy.exc import IntegrityError
 
     from . import tools as station_tools
 
     station = definitions.load(hub_dir, agent)
+    profile = None
     if station.sandbox:
-        raise WorkItemError("sandbox_unavailable",
-                            f"{agent} names sandbox {station.sandbox!r}, and sandboxes are not available in "
-                            "this version. Remove the sandbox line or install a version with sandboxes. "
-                            "Hubzoid never falls back to the host shell.", status=503, retryable=False)
+        from ..sandbox import config as sandbox_config
+
+        try:
+            profile = sandbox_config.load_profile(hub_dir, station.sandbox)
+            sandbox_config.check_profile(hub_dir, profile)
+        except WorkItemError as exc:
+            raise WorkItemError("sandbox_unavailable", f"{agent}'s sandbox cannot be used: {exc.message} "
+                                "Hubzoid never falls back to the host shell.", status=503,
+                                retryable=False) from None
+    elif checkout:
+        raise WorkItemError("invalid_request", f"{agent} has no sandbox to check a repository out into.",
+                            status=422)
+    if checkout is not None and (not isinstance(checkout, dict) or not isinstance(checkout.get("url"), str)
+                                 or set(checkout) - {"url", "ref", "dest", "depth"}
+                                 or (checkout.get("depth") is not None
+                                     and (isinstance(checkout["depth"], bool) or not isinstance(checkout["depth"], int)
+                                          or not 1 <= checkout["depth"] <= 10000))):
+        raise WorkItemError("invalid_request", "checkout is {url, ref, depth} (ref and depth optional; depth 1 to "
+                            "10000 for a shallow clone).")
     schema = station.schema
     if response_model is not None:
         model_schema = response_model.model_json_schema()
@@ -178,7 +197,10 @@ def _create(hub_dir, item, agent, message, digest, stage, revision, response_mod
                                 or not 0 < timeout <= 86400):
         raise WorkItemError("invalid_request", "timeout is a number of seconds from 1 to 86400.")
     pinned = dict(station.to_json(), schema=schema, call_timeout=timeout,
-                  tools_digest=station_tools.digest(station_tools.for_station(hub_dir, station.tools)))
+                  sandbox_profile=profile.to_json() if profile else None,
+                  checkout=_clean_checkout(checkout),
+                  tools_digest=station_tools.digest(station_tools.for_station(hub_dir, station.tools,
+                                                                               sandbox=bool(profile))))
     t = time.time()
     try:
         with _engine(hub_dir).begin() as c:
@@ -192,6 +214,16 @@ def _create(hub_dir, item, agent, message, digest, stage, revision, response_mod
                  "dj": wi_store.dumps(pinned), "md": digest, "m": message, "t": t})
     except IntegrityError:
         pass   # created concurrently: the caller reads the existing row
+
+
+def _clean_checkout(checkout: dict | None) -> dict | None:
+    """The checkout as recorded: the URL without any credential in it. The
+    clone itself uses the host's Git credentials."""
+    if not checkout:
+        return None
+    from ..sandbox.service import plain_url
+
+    return dict(checkout, url=plain_url(checkout["url"]))
 
 
 def retry(call_id: str, clarification: str, *, response_model=None):
@@ -322,7 +354,8 @@ def _attempt(ctx, work, call_id: str, kind: str):
         _finish(hub_dir, call_id, "failed", error_code="station_timeout",
                 error=f"The station used its {limit:g} seconds of active time.")
         raise StationError("station_timeout", "The station used all of its active time.", call_id)
-    registry = station_tools.for_station(hub_dir, definition.get("tools") or ())
+    boxed = bool(definition.get("sandbox"))
+    registry = station_tools.for_station(hub_dir, definition.get("tools") or (), sandbox=boxed)
     if station_tools.digest(registry) != definition.get("tools_digest"):
         _finish(hub_dir, call_id, "failed", error_code="definition_changed",
                 error="A tool this station lists changed after the call started.")
@@ -332,6 +365,13 @@ def _attempt(ctx, work, call_id: str, kind: str):
     attempts.append({"n": len(attempts) + 1, "kind": kind, "status": "running", "started": time.time()})
     row = _update_call(hub_dir, call_id, expected_revision=row["revision"], attempts_json=attempts,
                        recovery_count=recovery, status="started")
+    sandbox_id = None
+    if boxed:
+        sandbox_id = _station_sandbox(hub_dir, work, row, kind)
+        attempts[-1]["sandbox_id"] = sandbox_id
+        row = _update_call(hub_dir, call_id, expected_revision=row["revision"], attempts_json=attempts)
+        registry = station_tools.for_station(hub_dir, definition.get("tools") or (), sandbox=True,
+                                             sandbox_id=sandbox_id)
     message = row["message"]
     if row.get("clarification") and row["retry_used"] and kind in ("retry", "recovery"):
         message += ("\n\nYour previous answer could not be used. " + row["clarification"])
@@ -342,17 +382,24 @@ def _attempt(ctx, work, call_id: str, kind: str):
         result = runtime_lib.run_station(hub_dir, definition, message, subject=identity.subject,
                                          timeout=None if limit is None else limit - spent,
                                          registry=station_tools.guarded(registry, ctx, work))
+    except WorkItemError as exc:       # refused before it ran, such as a usage limit
+        _finish(hub_dir, call_id, "failed", error_code=exc.code, error=exc.message[:4000])
+        _keep_or_release(hub_dir, sandbox_id, call_id)
+        raise StationError(exc.code, exc.message, call_id, retryable=False) from None
     except runtime_lib.StationTimeout as exc:
         _finish(hub_dir, call_id, "failed", error_code="station_timeout", error=redaction.scrub_error(exc))
+        _keep_or_release(hub_dir, sandbox_id, call_id)
         raise StationError("station_timeout", "The station ran out of time.", call_id) from None
     except runtime_lib.AgentRunError as exc:
         _finish(hub_dir, call_id, "failed", error_code="station_failed", error=redaction.scrub_error(exc))
+        _keep_or_release(hub_dir, sandbox_id, call_id)
         raise StationError("station_failed", redaction.scrub_text(str(exc)), call_id) from None
     finally:
         work["station_call"] = previous
     context._owned(ctx)      # a process that lost the hub commits nothing
     if _cancelled(hub_dir, work["item"]["id"]):
         _finish(hub_dir, call_id, "cancelled", error_code="cancelled", error="The work was cancelled.")
+        _keep_or_release(hub_dir, sandbox_id, call_id)
         raise StationError("cancelled", "The work was cancelled while the station ran.", call_id,
                            retryable=False)
     output = result.get("output")
@@ -364,12 +411,85 @@ def _attempt(ctx, work, call_id: str, kind: str):
         _finish(hub_dir, call_id, "failed", error_code="station_output_error",
                 error="; ".join(problems)[:4000], usage=result.get("usage"),
                 text=redaction.scrub_text(result.get("text") or "")[:4000])
+        _keep_or_release(hub_dir, sandbox_id, call_id)
         raise StationOutputError("station_output_error",
                                  "The station's answer does not match its schema: " + "; ".join(problems)[:1000],
                                  call_id, problems=problems[:20])
+    if sandbox_id is not None:
+        _export(hub_dir, sandbox_id, work["item"]["id"], call_id)
     _finish(hub_dir, call_id, "completed", output=output, usage=dict(result.get("usage") or {},
                                                                        model=result.get("model")))
+    if sandbox_id is not None:
+        from ..sandbox import service as sandbox_service
+        sandbox_service.release(hub_dir, sandbox_id, "completed")
     return output
+
+
+def _station_sandbox(hub_dir, work, row: dict, kind: str) -> str:
+    """The call's sandbox, ready. A crash recovery reattaches the same one; if
+    it is gone (disappeared, removed by an operator or expired) the call stops
+    with `sandbox_lost` instead of starting empty. Only an explicit retry gets
+    a fresh sandbox, from the same checkout, and only when the old one is gone.
+    A first allocation that never became ready (nothing ran in it) is simply
+    made again."""
+    from ..sandbox import service as sandbox_service
+
+    definition = row["definition_json"]
+    history = sandbox_service.list_rows(hub_dir, owner_kind="station_call", owner_id=row["id"], limit=10)
+    live = [b for b in history if b.get("live_key")]
+    try:
+        if live and live[0]["state"] in ("ready", "stopped"):
+            try:
+                return sandbox_service.attach(hub_dir, live[0]["id"])["id"]
+            except WorkItemError as exc:
+                if exc.code != "sandbox_lost" or kind != "retry":
+                    raise
+        elif not live and kind != "retry" and any(
+                b["state"] not in ("start_failed", "setup_failed") for b in history):
+            raise sandbox_service._lost(history[0])
+        box = sandbox_service.allocate(
+            hub_dir, owner_kind="station_call", owner_id=row["id"], profile_id=definition["sandbox"],
+            item_id=row["item_id"], actor=work["item"].get("requester") or "", checkout=definition.get("checkout"),
+            profile_json=definition.get("sandbox_profile"))
+    except WorkItemError as exc:
+        _finish(hub_dir, row["id"], "failed", error_code=exc.code, error=exc.message[:4000])
+        raise StationError(exc.code, exc.message, row["id"], retryable=exc.code != "sandbox_lost",
+                           sandbox_id=exc.fields.get("sandbox_id")) from None
+    return box["id"]
+
+
+def _keep_or_release(hub_dir, sandbox_id: str | None, call_id: str) -> None:
+    """After a failed attempt: keep the sandbox (stopped, files intact) while
+    the call's one retry is still possible, otherwise remove it."""
+    if sandbox_id is None:
+        return
+    from ..sandbox import service as sandbox_service
+
+    row = get_call(hub_dir, call_id)
+    try:
+        if row["status"] == "failed" and not row["retry_used"] and _settings(hub_dir)["orchestrator_retries"] > 0:
+            sandbox_service.stop(hub_dir, sandbox_id, reason="awaiting_retry")
+        else:
+            sandbox_service.release(hub_dir, sandbox_id, "failed" if row["status"] == "failed" else row["status"])
+    except WorkItemError:
+        pass   # the reaper finishes it
+
+
+def _export(hub_dir, sandbox_id: str, item_id: str, call_id: str) -> None:
+    """Each checkout's new commits as a patch in the hub's output."""
+    from ..sandbox import service as sandbox_service
+
+    box = sandbox_service.get(hub_dir, sandbox_id)
+    if not box or not box.get("checkouts_json"):
+        return
+    try:
+        sandbox_service.export_patches(hub_dir, sandbox_id, Path(hub_dir) / "output" / "work-items" / item_id
+                                       / call_id)
+    except WorkItemError as exc:
+        code = exc.code if exc.code == "sandbox_lost" else "export_failed"
+        _finish(hub_dir, call_id, "failed", error_code=code, error=exc.message[:4000])
+        _keep_or_release(hub_dir, sandbox_id, call_id)
+        raise StationError(code, exc.message, call_id) from None
 
 
 def _time_limit(definition: dict, settings: dict):
@@ -511,5 +631,15 @@ def view_for(hub_dir, item_id: str, viewer: str) -> dict:
     if not visible:
         raise not_found()
     handoffs = list_handoffs(hub_dir, item_id)
-    return {"calls": [call_view(r, full=full) for r in list_calls(hub_dir, item_id)],
+    calls = []
+    for r in list_calls(hub_dir, item_id):
+        out = call_view(r, full=full)
+        if (r.get("definition_json") or {}).get("sandbox"):
+            from ..sandbox import service as sandbox_service
+            boxes = [sandbox_service.view(b) for b in sandbox_service.list_rows(
+                hub_dir, owner_kind="station_call", owner_id=r["id"], limit=10)]
+            out["sandboxes"] = boxes if full else [{k: b[k] for k in ("id", "state", "end_reason", "profile_id")}
+                                                   for b in boxes]
+        calls.append(out)
+    return {"calls": calls,
             "handoffs": handoffs if full else [{k: h[k] for k in ("id", "kind", "created")} for h in handoffs]}

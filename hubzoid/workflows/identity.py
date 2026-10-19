@@ -94,13 +94,13 @@ def _truthy(v: str | None) -> bool:
 
 def local_quickstart(hub_dir: Path) -> bool:
     """Authentication off and no deployment: the single-account local mode."""
-    from .. import deployment
+    from .. import appmode, deployment
 
     try:
         registered = bool(deployment.read(Path(hub_dir)))
     except Exception:  # noqa: BLE001 — an unreadable manifest is not local mode
         registered = True
-    return not _truthy(os.environ.get("WEBUI_AUTH")) and not registered
+    return not appmode.auth_enabled(Path(hub_dir)) and not registered
 
 
 def configured(hub_dir: Path, *, hub: str | None = None,
@@ -142,6 +142,17 @@ def configured(hub_dir: Path, *, hub: str | None = None,
     if default:
         return normalize(default), "setup"
     if local_quickstart(hub_dir):
+        # Sign-in off: the local owner owns the hub from the first start. A run
+        # started before any bridge did (`hubzoid schedule run` on a new hub)
+        # gives it that access first, as the bridge's start would; every tool
+        # call is checked against it.
+        from ..auth.users import ensure_local_owner, provision_owner
+
+        try:
+            ensure_local_owner(hub_dir)  # the account its answers are delivered to
+            provision_owner(hub_dir, LOCAL_OWNER)
+        except Exception:  # noqa: BLE001 — access checks still fail closed
+            log.warning("workflows: the local owner could not be provisioned yet", exc_info=True)
         return LOCAL_OWNER, "local"
     return None, "none"
 
@@ -243,7 +254,9 @@ def check_person_run(hub_dir: Path, hub: str, email: str, workflow: str, *,
 
     ident = check(hub_dir, hub, email, source, account_id=account_id, what=what)
     try:
-        allowed = store_for(hub_dir).can(ident.subject, hub, tool_permission(workflow))
+        from .access import authorize
+
+        allowed = authorize(hub_dir, ident.subject, workflow, "run").allowed
     except Exception as exc:  # noqa: BLE001 — fail closed
         raise IdentityError(f"Access data is unavailable, so {what.lower()} did not run.") from exc
     if not allowed:

@@ -1,7 +1,7 @@
 """The authorization service: scope, the delegate ceiling and access changes.
 
 No model, no network: a two-hub deployment on SQLite and, where accounts are
-involved, a fake Open WebUI served through httpx.MockTransport. Helpers here
+involved, an in-memory account directory that takes passwords. Helpers here
 are reused by the account, change-request, portal and tool tests.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 
 from hubzoid import deployment
 import hubzoid.access as access
-from hubzoid.access.accounts import OwuiAccounts
+from hubzoid.access.accounts import AccountError
 from hubzoid.access.service import AccessService, Actor, Denied
 
 ROOT = "root@x.org"
@@ -24,16 +24,18 @@ SERVICE = "svc@x.org"
 
 
 class FakeOwui:
-    """Open WebUI's account admin API, in memory. Records every request body so
-    tests can assert what was sent (and that nothing leaks elsewhere)."""
+    """An account directory (``access.accounts.AccountDirectory``) that takes
+    passwords, in memory: the service's password path, which a directory
+    without one-time links uses. Records every call so tests can assert what
+    was sent. ``fail`` maps "add"|"update"|"delete" to an HTTP-like status that
+    makes that call fail; ``down`` makes every call fail as unreachable."""
 
     def __init__(self):
         self.users: dict[str, dict] = {}
         self.requests: list[tuple[str, str, dict]] = []
-        self.fail: dict[str, int] = {}  # "add"|"update"|"delete" -> HTTP status
+        self.fail: dict[str, int] = {}
         self.reject_password = False
         self.down = False
-        self.add_user(SERVICE, "Service", role="admin")
 
     def add_user(self, email, name, role="user"):
         uid = str(uuid.uuid4())
@@ -43,73 +45,71 @@ class FakeOwui:
     def by_email(self, email):
         return next((u for u in self.users.values() if u["email"] == email), None)
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    @staticmethod
+    def _view(user):
+        return {k: user.get(k) for k in ("id", "email", "name", "role")} if user else None
+
+    def _call(self, op, path, body=None):
+        from hubzoid.access.accounts import AccountsUnavailable
+
         if self.down:
-            raise httpx.ConnectError("down", request=request)
-        body = json.loads(request.content) if request.content else {}
-        path = request.url.path
-        self.requests.append((request.method, path, body))
-        if path == "/api/v1/auths/signin":
-            ok = body == {"email": SERVICE, "password": "svc-secret"}
-            return httpx.Response(200 if ok else 400, json={"token": "svc-token"} if ok else {})
-        if request.headers.get("authorization") != "Bearer svc-token":
-            return httpx.Response(401, json={"detail": "Not authenticated"})
-        if path == "/api/v1/auths/add":
-            if "add" in self.fail:
-                return httpx.Response(self.fail["add"], json={"detail": "boom"})
-            if self.by_email(body["email"]):
-                return httpx.Response(400, json={"detail": "Uh-oh! This email is already registered."})
-            if self.reject_password:
-                return httpx.Response(400, json={"detail": f"Invalid password {body['password']}"})
-            uid = self.add_user(body["email"], body["name"], role=body.get("role", "pending"))
-            return httpx.Response(200, json={**self.users[uid], "token": "new-user-token"})
-        parts = path.strip("/").split("/")
-        if parts == ["api", "v1", "users"] and request.method == "GET":
-            # The admin list: substring search on name and email, 30 per page.
-            query = (request.url.params.get("query") or "").lower()
-            page = int(request.url.params.get("page") or 1)
-            hits = [u for u in self.users.values()
-                    if query in u["email"].lower() or query in u["name"].lower()]
-            return httpx.Response(200, json={"users": hits[(page - 1) * 30:page * 30],
-                                             "total": len(hits)})
-        if parts[:3] == ["api", "v1", "users"] and len(parts) >= 4:
-            uid = parts[3]
-            user = self.users.get(uid)
-            if request.method == "GET":
-                return httpx.Response(200, json=user) if user else httpx.Response(
-                    400, json={"detail": "not found"})
-            if request.method == "DELETE":
-                if "delete" in self.fail:
-                    return httpx.Response(self.fail["delete"], json={"detail": "boom"})
-                if not user:
-                    return httpx.Response(400, json={"detail": "not found"})
-                del self.users[uid]
-                return httpx.Response(200, json=True)
-            if parts[4:] == ["update"]:
-                if "update" in self.fail:
-                    return httpx.Response(self.fail["update"], json={"detail": "boom"})
-                if not user:
-                    return httpx.Response(400, json={"detail": "not found"})
-                for k in ("role", "name"):
-                    if k in body:
-                        user[k] = body[k]
-                if "password" in body:
-                    user["password_changed"] = True
-                return httpx.Response(200, json=user)
-        return httpx.Response(404, json={"detail": "no route"})
+            raise AccountsUnavailable("The chat app could not be reached. Try again shortly.")
+        self.requests.append((op, path, dict(body or {})))
+        if op in self.fail:
+            if self.fail[op] < 500:  # a clear refusal: nothing happened
+                raise AccountError(422, "rejected", "The chat app rejected the change.")
+            raise AccountError(502, "chat_app_error", "The chat app failed. Try again shortly.",
+                               certain=False)
+
+    def create(self, *, email, name, password, role="user"):
+        self._call("add", "/add", dict(email=email, name=name, password=password, role=role))
+        if self.by_email(email):
+            raise AccountError(409, "account_exists", "An account with this email already exists.")
+        if self.reject_password:
+            raise AccountError(422, "rejected", "The chat app rejected this account.")
+        return self._view(self.users[self.add_user(email, name, role="user")])
+
+    def get(self, account_id):
+        self._call("get", f"/{account_id}")
+        return self._view(self.users.get(account_id))
+
+    def find(self, email):
+        self._call("find", "/find", dict(email=email))
+        return self._view(self.by_email((email or "").strip().lower()))
+
+    def admins(self):
+        self._call("admins", "/admins")
+        return [u["email"] for u in self.users.values() if u["role"] == "admin"]
+
+    def update(self, account_id, *, password=None, role=None, name=None):
+        body = {k: v for k, v in (("password", password), ("role", role), ("name", name)) if v is not None}
+        if not body:
+            return
+        self._call("update", f"/{account_id}/update", body)
+        user = self.users.get(account_id)
+        if not user:
+            raise AccountError(422, "rejected", "The chat app rejected the change.")
+        for k in ("role", "name"):
+            if k in body:
+                user[k] = body[k]
+        if "password" in body:
+            user["password_changed"] = True
+
+    def delete(self, account_id):
+        self._call("delete", f"/{account_id}")
+        if account_id not in self.users:
+            raise AccountError(409, "not_found", "The chat account no longer exists.")
+        del self.users[account_id]
 
 
 def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
     """finance (ledger, payroll) and ops (inventory), both managed. ROOT is the
     organization administrator; DELEGATE manages finance and holds ledger."""
     for key in ("HUBZOID_OPERATIONAL_DB", "DATABASE_URL", "HUBZOID_DEPLOYMENT",
-                "OWUI_INTERNAL_URL", "WEBUI_URL", "HUBZOID_PUBLIC_URL",
-                "HUBZOID_GATEWAY_ADMIN_EMAIL", "HUBZOID_GATEWAY_ADMIN_PASSWORD",
+                "HUBZOID_PUBLIC_URL", "HUBZOID_UI",
                 "HUBZOID_RESTRICTED_SURFACES", "HUBZOID_MANAGEMENT_TOOLS", "HUBZOID_ACCESS_TOOLS",
                 "HUBZOID_CHANGE_REQUEST_TTL", "HUBZOID_PORTAL_DEV", "HUBZOID_PORTAL_DEV_USER"):
         monkeypatch.delenv(key, raising=False)
-    # An Open WebUI deployment: the legacy UI mode (HUBZOID_UI=openwebui).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     access._stores.clear()
     dirs = {}
     for name, perms in (("finance", ("ledger", "payroll")), ("ops", ("inventory",))):
@@ -122,18 +122,13 @@ def make_deployment(tmp_path, monkeypatch, *, owui: FakeOwui | None = None):
         tmp_path / "gateway" / "deployment.json",
         hubs=[dict(key=n, name=n.title(), path=str(d), model_id=n) for n, d in dirs.items()],
         operational_url=f"sqlite:///{tmp_path}/ops.db",
-        owui_url="http://owui.internal",
-        owui_db=str(tmp_path / "owui.db"),
     )
     gs = access.store_for(dirs["finance"])
     gs.bootstrap([ROOT])
     gs.grant(DELEGATE, "finance", "manage_access", actor="test")
     gs.grant(DELEGATE, "finance", "ledger", actor="test")
     owui = owui or FakeOwui()
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_EMAIL", SERVICE)
-    monkeypatch.setenv("HUBZOID_GATEWAY_ADMIN_PASSWORD", "svc-secret")
-    directory = OwuiAccounts("http://owui.internal", SERVICE, "svc-secret",
-                             transport=httpx.MockTransport(owui))
+    directory = owui
     svc = AccessService(dirs["finance"], accounts=directory)
     return SimpleNamespace(dirs=dirs, gs=gs, svc=svc, owui=owui, directory=directory,
                            hub_dir=dirs["finance"])

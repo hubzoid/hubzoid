@@ -32,29 +32,6 @@ def test_run_host_defaults_to_loopback():
 # ---------------------------------------------------------------------------
 # Edge router wiring (#1): OWUI moves to a loopback internal port.
 # ---------------------------------------------------------------------------
-def test_owui_internal_port_default_offset(monkeypatch):
-    monkeypatch.delenv("HUBZOID_OWUI_PORT", raising=False)
-    assert cli._owui_internal_port(3080) == 43080
-
-
-def test_owui_internal_port_env_override(monkeypatch):
-    monkeypatch.setenv("HUBZOID_OWUI_PORT", "9999")
-    assert cli._owui_internal_port(3080) == 9999
-
-
-def test_owui_internal_port_high_port_falls_back(monkeypatch):
-    monkeypatch.delenv("HUBZOID_OWUI_PORT", raising=False)
-    # ui_port + 40000 would exceed the cap, so fall back near the ui_port.
-    assert cli._owui_internal_port(40000) == 40001
-
-
-# ---------------------------------------------------------------------------
-# The bridge subprocess must be told its REAL port via BRIDGE_PORT. Otherwise
-# settings.bridge_port (read inside the bridge process) defaults to 8000 even
-# when the bridge is bound to another port via --bridge-port — which makes the
-# OTel normalize intercept point the claude subprocess at the wrong port (the
-# HUBZOID_PUBLIC_URL artifact-link fallback is wrong for the same reason).
-# ---------------------------------------------------------------------------
 def test_run_propagates_bridge_port_to_bridge_env(monkeypatch):
     monkeypatch.delenv("BRIDGE_PORT", raising=False)
     captured: list[dict] = []

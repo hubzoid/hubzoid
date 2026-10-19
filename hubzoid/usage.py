@@ -89,8 +89,10 @@ def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
            chat_id: str | None = None, model: str | None = None,
            input_tokens: int | None = None, output_tokens: int | None = None,
            cost_usd: float | None = None, status: str = "ok",
-           duration_ms: int | None = None) -> None:
-    """Insert one usage row. Best effort: never raises into chat or a workflow."""
+           duration_ms: int | None = None, reservation: str | None = None) -> None:
+    """Insert one usage row. Best effort: never raises into chat or a workflow.
+    `reservation` (budgets.yaml) is settled in the same transaction; if the row
+    cannot be written, the hold stays as unknown usage."""
     chat_id = chat_id or _RUN_TAG.get()
     try:
         if cost_usd is None:
@@ -114,6 +116,9 @@ def record(hub_dir, *, hub: str, surface: str, kind: str, subject: str | None,
                     "cost": cost_usd, "status": status, "dur": duration_ms,
                 },
             )
+            if reservation:
+                from .budgets import settle_in
+                settle_in(conn, reservation)
     except Exception:  # noqa: BLE001 — usage is telemetry; it must never break work
         log.warning("usage: could not record a %s row for %s", kind, hub, exc_info=True)
 

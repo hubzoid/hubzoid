@@ -2,9 +2,7 @@
 start, the redirect to the connector's sign-in, verification that never reads
 callback parameters, and the success, failure, cancel and expiry pages.
 
-Open WebUI mode with Console connectors. The Open WebUI session is stubbed by a
-header in most tests; one test runs the real server-side session check
-(`access.session.verified_person`) against a mocked Open WebUI `/api/v1/auths/`.
+Console connectors with sign-in on. The session is stubbed by a header.
 The connector's own OAuth flow has its suite (tests/test_connectors_flow.py), so
 here its start is a stub that returns the provider's authorize URL.
 """
@@ -40,10 +38,8 @@ def hub(tmp_path, monkeypatch):
         {"id": "gmail", "name": "Gmail", "url": "https://gmail-mcp.example.org/mcp"}])
     h.owui_env(monkeypatch, db, SECRET)
     h.isolated_store(tmp_path, monkeypatch)
-    # Open WebUI sessions: Open WebUI mode (HUBZOID_UI=openwebui).
-    monkeypatch.setenv("HUBZOID_UI", "openwebui")
     monkeypatch.setenv("HUBZOID_CONNECT_JOURNEY", "true")
-    monkeypatch.setenv("WEBUI_URL", "https://hub.example.org")
+    monkeypatch.setenv("HUBZOID_PUBLIC_URL", "https://hub.example.org")
     monkeypatch.setenv("HUBZOID_RESTRICTED_SURFACES", "owui,web,api,mcp,whatsapp")
     h.grant(hub, ALICE, BOB)
     hub.db = db
@@ -217,7 +213,7 @@ def test_done_ignores_callback_parameters_and_verifies_the_stored_connection(cli
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).json()["state"] == "connected"
     r = client.get(f"/portal/connect/{jid}/done", headers=_as(ALICE))
     assert r.status_code == 200 and "Gmail connected" in r.text and "WhatsApp" in r.text
-    assert "/portal/connections" in r.text and "AT-a" not in r.text
+    assert "/account/connections" in r.text and "AT-a" not in r.text
 
 def test_the_finishing_page_polls_status_under_a_nonce(client, hub):
     jid = _link(hub)
@@ -276,24 +272,25 @@ def test_reconnect_ends_with_one_connection(client, hub):
 def test_a_new_account_with_the_same_email_cannot_use_the_link(client, hub):
     """The link is bound to the account that asked, not only its email."""
     from hubzoid.access import store_for
+    from hubzoid.auth import users
 
     jid = _link(hub)
-    store_for(hub).upsert_identity(email=ALICE, owui_id="ua-new")  # the email moved
+    accounts = users.store(hub)  # the email moved to a new account
+    accounts.delete("ua")
+    accounts.create(email=ALICE, name="Alice again", id="ua-new", source="admin")
+    store_for(hub).upsert_identity(email=ALICE, owui_id="ua-new")
     for path, method in ((f"/portal/connect/{jid}", "get"), (f"/portal/connect/{jid}/start", "post")):
         r = getattr(client, method)(path, headers={**_as(ALICE), **_SAME})
         assert r.status_code == 403 and "another account" in r.text, path
     assert client.get(f"/portal/connect/{jid}/status", headers=_as(ALICE)).status_code == 403
 
 
-def test_your_connections_address_opens_the_console_tab(client, hub):
-    # Signed out: sign in first, to an address without a fragment.
-    r = client.get("/portal/connections?connected=gmail")
-    assert r.status_code == 302
-    assert r.headers["location"] == "/auth?redirect=/portal/connections%3Fconnected%3Dgmail"
-    # Signed in: the Console tab, with the sign-in's result carried over.
-    r = client.get("/portal/connections?connector=gmail&error=access_denied", headers=_as(ALICE))
-    assert r.status_code == 302
-    assert r.headers["location"] == "/portal/#/connections?connector=gmail&error=access_denied"
+def test_the_old_connections_address_opens_settings_with_its_result(client, hub):
+    # Signed in or not, the web app's own page decides; the sign-in's result is carried over.
+    for headers in ({}, _as(ALICE)):
+        r = client.get("/portal/connections?connector=gmail&error=access_denied", headers=headers)
+        assert r.status_code == 302
+        assert r.headers["location"] == "/account/connections?connector=gmail&error=access_denied"
     assert client.post("/portal/connections/gmail/connect", headers={**_as(ALICE), **_SAME}).status_code in (404, 405)
 
 @pytest.mark.parametrize("surface, chat, href", [
@@ -324,55 +321,3 @@ def test_web_chat_journey_says_return_to_the_chat(client, hub):
 # ---------------------------------------------------------------------------
 # The real session check
 # ---------------------------------------------------------------------------
-def test_real_open_webui_session_check(hub, monkeypatch):
-    import httpx
-
-    monkeypatch.setenv("OWUI_INTERNAL_URL", "http://owui.internal")
-    users = {"tok-alice": {"id": "ua", "email": "Alice@Example.org", "role": "user", "name": "A"},
-             "tok-bob": {"id": "ub", "email": BOB, "role": "user", "name": "B"},
-             "tok-pending": {"id": "up", "email": ALICE, "role": "pending", "name": "P"}}
-    seen = []
-
-    def fake_get(url, headers=None, timeout=None):  # noqa: ARG001
-        seen.append(url)
-        token = (headers or {}).get("Authorization", "").removeprefix("Bearer ")
-        user = users.get(token)
-        return httpx.Response(200 if user else 401, json=user or {"detail": "no"},
-                              request=httpx.Request("GET", url))
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    app = FastAPI()
-    app.include_router(connect_journey.build_router(hub))
-    c = TestClient(app, base_url="https://hub.example.org", follow_redirects=False)
-    jid = _link(hub)
-    c.cookies.set("token", "tok-bob")
-    assert c.get(f"/portal/connect/{jid}").status_code == 403
-    signin = f"/auth?redirect=/portal/connect/{jid}"
-    c.cookies.set("token", "tok-pending")
-    assert c.get(f"/portal/connect/{jid}").headers["location"] == signin
-    c.cookies.set("token", "forged")
-    assert c.get(f"/portal/connect/{jid}").headers["location"] == signin
-    c.cookies.set("token", "tok-alice")
-    assert c.get(f"/portal/connect/{jid}").status_code == 200
-    assert all(u == "http://owui.internal/api/v1/auths/" for u in seen)
-    # A client-sent identity header is never trusted.
-    c.cookies.clear()
-    r = c.get(f"/portal/connect/{jid}", headers={"X-OpenWebUI-User-Email": ALICE})
-    assert r.status_code == 302 and r.headers["location"] == signin
-
-
-def test_owui_outage_is_a_retry_not_a_pass(hub, monkeypatch):
-    import httpx
-
-    monkeypatch.setenv("OWUI_INTERNAL_URL", "http://owui.internal")
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(
-        502, request=httpx.Request("GET", "http://owui.internal/api/v1/auths/")))
-    app = FastAPI()
-    app.include_router(connect_journey.build_router(hub))
-    c = TestClient(app, base_url="https://hub.example.org")
-    jid = _link(hub)
-    c.cookies.set("token", "tok")
-    r = c.get(f"/portal/connect/{jid}")
-    assert r.status_code == 503
-    assert json.loads(c.get(f"/portal/connect/{jid}/status").text)["state"] == "unavailable"
-

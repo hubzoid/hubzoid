@@ -2,7 +2,7 @@
 // renders itself and which go to the server, and the sign-in redirect rules.
 //   node --experimental-strip-types tests/app-router.test.mts
 import assert from "node:assert/strict";
-import { isAppPath, parseRoute, safeRedirect } from "../src/app/lib/router.ts";
+import { isAppPath, parseRoute, safeRedirect, signInHref } from "../src/app/lib/router.ts";
 
 // The chat app's own routes: the server answers them with the page shell.
 for (const path of ["/", "/new", "/new/finance", "/c/c_abc123", "/s/sh_abc123", "/auth", "/auth/set-password", "/account", "/account/connections"])
@@ -41,10 +41,13 @@ assert.deepEqual(parseRoute("/auth", new URLSearchParams("redirect=%2F%09%2Fevil
   name: "signin",
   redirect: "/",
   error: null,
+  step: null,
 });
 // What comes back is the normalised path on this site.
 assert.equal(safeRedirect("/c/../account"), "/account");
 assert.equal(safeRedirect("https://hub.example.com/account"), "/");
+// A Settings section lives in the fragment: sign-in brings the person back to it.
+assert.equal(signInHref("/settings#/confirm/cr_1"), `/auth?redirect=${encodeURIComponent("/settings#/confirm/cr_1")}`);
 assert.equal(safeRedirect("/c/a b"), "/c/a%20b");
 assert.equal(safeRedirect("/account", "/x"), "/account");
 assert.equal(safeRedirect("//evil.example", "/fallback"), "/fallback");
@@ -52,6 +55,9 @@ assert.deepEqual(parseRoute("/auth", new URLSearchParams("redirect=%2Fmcp%2Foaut
   name: "signin",
   redirect: "/mcp/oauth/consent?ticket=t",
   error: null,
+  step: null,
 });
+// The sign-in step (two-step sign-in) is carried in the address.
+assert.equal((parseRoute("/auth", new URLSearchParams("step=code")) as { step: string | null }).step, "code");
 
 console.log("router checks passed");
