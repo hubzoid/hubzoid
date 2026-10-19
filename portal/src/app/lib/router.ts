@@ -145,8 +145,9 @@ export function parseRoute(path: string, search: URLSearchParams): Route {
   return { name: "not-found" };
 }
 
-/** The sign-in URL that brings the person back here afterwards. */
-export function signInHref(current = location.pathname + location.search): string {
+/** The sign-in URL that brings the person back here afterwards, fragment
+ *  included: Settings sections (#/confirm/<id>, #/people) live there. */
+export function signInHref(current = location.pathname + location.search + location.hash): string {
   const redirect = safeRedirect(current);
   return redirect === "/" ? "/auth" : `/auth?redirect=${encodeURIComponent(redirect)}`;
 }

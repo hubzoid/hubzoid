@@ -23,7 +23,6 @@ import {
   type BlockResult,
   type Hub,
   type Me,
-  type Overview,
   type Person,
   type SignInLink,
   usesSignInLinks,
@@ -84,7 +83,6 @@ export function PeopleScreen({
     "/people" +
       query({ q: search, status, role, agent, offset: (page - 1) * PAGE, limit: PAGE }),
   );
-  const overview = useData<Overview>("/overview");
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
   const agentName = (key: string) => hubs.find((h) => h.key === key)?.name ?? key;
@@ -136,7 +134,6 @@ export function PeopleScreen({
           )}
         </div>
 
-        {overview.data && <SyncStatus overview={overview.data} me={me} onChanged={overview.reload} />}
 
         <div className="toolbar">
           <Input
@@ -313,75 +310,6 @@ export function PeopleScreen({
         />
       )}
     </>
-  );
-}
-
-/**
- * Chat-app visibility mirror. Enforcement never depends on it, but a failing
- * sync means people may not see (or still see) an agent in the chat list.
- */
-function SyncStatus({
-  overview,
-  me,
-  onChanged,
-}: {
-  overview: Overview;
-  me: Me;
-  onChanged: () => void;
-}) {
-  const { message } = App.useApp();
-  const [busy, setBusy] = useState(false);
-  const v = overview.visibility;
-  async function retry() {
-    setBusy(true);
-    try {
-      const r = await request<{ state: string; error?: string }>("/sync", {});
-      if (r.state === "error") message.warning(r.error || "Still not connected. Try again shortly.");
-      else message.success("Chat app visibility is in sync.");
-      onChanged();
-    } catch (e) {
-      message.error(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (v.state === "direct") return null;
-  if (v.state === "error")
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        title="Recent access changes haven’t reached the chat app yet"
-        description={
-          <>
-            Access is enforced regardless, but the agent list people see in the chat app may be out of date. Retry below after checking the chat connection.
-            {v.updated ? ` Last attempt ${relativeTime(v.updated)}.` : ""}
-          </>
-        }
-        action={
-          me.org_admin ? (
-            <Button size="small" loading={busy} onClick={() => void retry()}>
-              Try again now
-            </Button>
-          ) : undefined
-        }
-      />
-    );
-  if (v.state === "ok")
-    return (
-      <Text type="secondary" className="sync-note">
-        Chat app visibility in sync{v.updated ? ` (${relativeTime(v.updated)})` : ""}.
-      </Text>
-    );
-  return (
-    <Text type="secondary" className="sync-note">
-      Chat app visibility sync hasn’t run in this session{" "}
-      {me.org_admin && (
-        <Button type="link" size="small" loading={busy} onClick={() => void retry()}>
-          Run it now
-        </Button>
-      )}
-    </Text>
   );
 }
 

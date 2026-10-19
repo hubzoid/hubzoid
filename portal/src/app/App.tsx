@@ -111,7 +111,7 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
-    if (!authenticated && !isPublic) navigate(signInHref(location.href), { replace: true });
+    if (!authenticated && !isPublic) navigate(signInHref(location.href + window.location.hash), { replace: true });
     else if (authenticated && route.name === "signin") navigate(route.redirect, { replace: true });
   }, [session, authenticated, isPublic, route, location.href]);
 
