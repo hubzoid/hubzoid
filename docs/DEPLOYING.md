@@ -529,7 +529,9 @@ Pick whichever reverse proxy you already operate. Three common choices:
 Whatever you pick, the proxy must:
 
 - Pass the client's address in `X-Forwarded-For`. A proxy on the same box
-  or a private network is believed as it is. A proxy or CDN on public
+  is believed, and one on a private network too while
+  `HUBZOID_TRUSTED_PROXIES` is unset (setting it lists exactly which proxies
+  to believe). A proxy or CDN on public
   addresses (Cloudflare without a tunnel, for example) must be listed in
   `HUBZOID_TRUSTED_PROXIES`, or the sign-in limits count everyone as the
   proxy's address.

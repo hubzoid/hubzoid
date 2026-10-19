@@ -386,7 +386,10 @@ def check_workflow_failures(hub: Path) -> Result:
     from ..workflows import observe
 
     try:
-        failed = observe.runs(hub, statuses=["failed"], start=time.time() - 86400, limit=200, trusted=True)
+        from datetime import datetime, timezone
+
+        since = datetime.fromtimestamp(time.time() - 86400, timezone.utc).isoformat()
+        failed = observe.runs(hub, statuses=["failed"], start=since, limit=200, trusted=True)
     except Exception as exc:  # noqa: BLE001
         return Result("info", f"Workflow runs could not be read ({type(exc).__name__}).")
     if not failed:

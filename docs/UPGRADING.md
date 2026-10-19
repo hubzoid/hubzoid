@@ -33,7 +33,8 @@ describe those releases as they were.
 - **Administrators set up two-step sign-in** at their first 2.0 sign-in (an
   authenticator app), unless Settings → Security says otherwise.
 - **Behind a CDN, list it.** The public port believes `X-Forwarded-For` only
-  from loopback, private networks and `HUBZOID_TRUSTED_PROXIES`. With
+  from loopback and, while `HUBZOID_TRUSTED_PROXIES` is unset, private
+  networks; setting it lists exactly which proxies to believe. With
   Cloudflare (or another CDN) in front, set `HUBZOID_TRUSTED_PROXIES` to its
   address ranges, or to `*` if the port is reachable only through it.
   Otherwise everyone counts as one of the CDN's few addresses, and ten failed

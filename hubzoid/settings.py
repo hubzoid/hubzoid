@@ -117,9 +117,10 @@ Environment variables explicitly supported:
   HUBZOID_TRUSTED_PROXIES  Proxies in front of the public port whose
                          X-Forwarded-For is believed: addresses or networks,
                          comma-separated, or * when the port is reachable only
-                         through your proxy. Loopback and private networks are
-                         always trusted. List a CDN such as Cloudflare, or every
-                         person counts as one of its few addresses.
+                         through your proxy. Loopback is always trusted; private
+                         networks too while this is unset. List a CDN such as
+                         Cloudflare, or every person counts as one of its few
+                         addresses.
   PORT                   Public port (web app, downloads, MCP). Default: 3080.
   BRIDGE_PORT            FastAPI bridge port. Default: 8000.
   HUBZOID_PUBLIC_URL     Public base URL the bridge is reachable at, used to

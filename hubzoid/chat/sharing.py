@@ -25,6 +25,7 @@ runs, no queue and no authority; it survives a later revoke.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import secrets
@@ -32,7 +33,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import sqlalchemy as sa
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,13 +149,26 @@ def token_hash(token: str) -> str:
 
 # A download link the runtime signed for an agent-written file ("[Download
 # report.md](https://…/artifacts/web-<id>/report.md?t=…)"). It works without
-# signing in, so it never travels in a share.
-_SIGNED_LINK = re.compile(r"\[([^\]]*)\]\(\s*<?([^)\s>]*/artifacts/[^)\s>]*[?&]t=[^)\s>]*)>?\s*\)")
-_SIGNED_URL = re.compile(r"(?:https?://[^\s)\]]*)?/artifacts/[^\s)\]?]+\?(?:[^\s)\]]*&)?t=[^\s)\]]+")
+# signing in, so it never travels in a share, however it is spelt: percent-
+# encoded, HTML-escaped or bare.
+_MD_LINK = re.compile(r"\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+_URLISH = re.compile(r"(?:https?://|/|%2[fF])[^\s<>\"'()\[\]]+")
+
+
+def _decoded(url: str) -> str:
+    out = url
+    for _ in range(3):
+        out = unquote(html.unescape(out))
+    return out
+
+
+def _signed(url: str) -> bool:
+    parts = urlsplit(_decoded(url))
+    return "/artifacts/" in parts.path.lower() and "t" in parse_qs(parts.query)
 
 
 def _file_name(url: str) -> str:
-    return unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]) or "file"
+    return urlsplit(_decoded(url)).path.rstrip("/").rsplit("/", 1)[-1] or "file"
 
 
 def unlink(text: str) -> tuple[str, list[str]]:
@@ -162,12 +176,20 @@ def unlink(text: str) -> tuple[str, list[str]]:
     A link becomes its file name in plain text."""
     names: list[str] = []
 
-    def named(url: str) -> str:
-        names.append(_file_name(url))
+    def link(m: re.Match) -> str:
+        if not _signed(m.group(2)):
+            return m.group(0)
+        names.append(_file_name(m.group(2)))
         return names[-1]
 
-    text = _SIGNED_LINK.sub(lambda m: named(m.group(2)), text)
-    text = _SIGNED_URL.sub(lambda m: named(m.group(0)), text)
+    def bare(m: re.Match) -> str:
+        if not _signed(m.group(0)):
+            return m.group(0)
+        names.append(_file_name(m.group(0)))
+        return names[-1]
+
+    text = _MD_LINK.sub(link, text)
+    text = _URLISH.sub(bare, text)
     return text, names
 
 

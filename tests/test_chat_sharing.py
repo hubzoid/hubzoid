@@ -188,6 +188,10 @@ def test_signed_download_links_never_travel_in_a_share():
             "[the docs](https://example.com/docs?t=1)")
     clean, names = unlink(text)
     assert names == ["report.md", "my data.csv"]
+    for spelt in ("[r](/%61rtifacts/web-c/x.pdf?%74=TOK&e=1)", "<a href=\"/artifacts/web-c/x.pdf?e=1&amp;t=TOK\">r</a>",
+                  "see https://h/b/x/artifacts/web-c/x.pdf?t=TOK."):
+        out, found = unlink(spelt)
+        assert "TOK" not in out and found == ["x.pdf"], spelt
     assert "t=abc" not in clean and "t=def" not in clean and "/artifacts/" not in clean
     assert "report.md" in clean and "[the docs](https://example.com/docs?t=1)" in clean
     msgs, omitted = project([{"id": "m1", "role": "assistant", "content": [{"type": "text", "text": text}]}],

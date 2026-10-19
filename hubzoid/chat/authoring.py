@@ -437,9 +437,12 @@ class AuthoringService:
                    f"Hubzoid-Published-By: {who}\n")
         try:
             return hub_files.commit_files(self.hub_dir, [self._path(d.path)], message, trailer)
-        except Exception as exc:  # noqa: BLE001 — the file is published; say the commit is missing
-            log.warning("workspace: %s published but not committed (%s)", d.path, type(exc).__name__)
-            return None
+        except Exception as exc:  # noqa: BLE001
+            # The draft stays "publishing": publishing again finds the file
+            # already written and finishes (commit, then record).
+            log.warning("workspace: %s written but not committed (%s)", d.path, type(exc).__name__)
+            raise Err(503, "commit_failed", "The file is written but Git did not record it. Publish again to "
+                                            "finish; nothing else changes.") from exc
 
     def versions(self, rel: str) -> list[dict]:
         self._path(rel)

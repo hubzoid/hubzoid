@@ -618,7 +618,7 @@ class TargetState:
                 state.revision = conn.execute(text("SELECT version_num FROM hz_alembic_operational")).scalar()
             for r in rows("hz_meta", "SELECT k, v FROM hz_meta WHERE "
                                      "k LIKE 'suspended:%' OR k LIKE 'account_unavailable:%' "
-                                     "OR k LIKE 'openwebui_migration:%'"):
+                                     "OR k LIKE 'openwebui_migration:%' OR k LIKE 'account_deleted:%'"):
                 state.meta[r["k"]] = r["v"]
             for r in rows("hz_users", "SELECT id, email, name, role, status, password_hash, "
                                       "password_enabled, source, created_at, updated_at, last_login_at "
@@ -903,7 +903,10 @@ def plan_people(setup: Setup, users: dict[str, dict], auth: dict[str, dict], tar
                     "BYPASS_MODEL_ACCESS_CONTROL and groups give none. Grant access in Settings → "
                     "People & access before people move.")
     owner = _email(_setting(setup, "HUBZOID_ADMIN_EMAIL", setup.env))
-    if owner and owner not in set(people.email_of.values()) and owner not in target.users_by_email:
+    if owner and target.meta.get("account_deleted:" + owner):
+        report.note("The configured owner (HUBZOID_ADMIN_EMAIL) was deleted in Hubzoid, so it is not "
+                    "created again. Remove HUBZOID_ADMIN_EMAIL and HUBZOID_ADMIN_PASSWORD.")
+    elif owner and owner not in set(people.email_of.values()) and owner not in target.users_by_email:
         # The start creates the configured owner only while no account exists,
         # and after this migration accounts exist.
         people.owner_missing = True
@@ -2052,8 +2055,8 @@ def rehearsal_setup(setup: Setup, dest: Path) -> Setup:
 
 def _gateway_rehearsal(setup: Setup, dest: Path, op: URL) -> Setup:
     """A gateway's rehearsal: each hub folder copied to ``dest/<hub key>``, the
-    gateway's databases and uploads to ``dest/gateway-data``, and a manifest
-    there that names the copies, so the copy can be migrated again or started
+    gateway's databases, uploads and each bridge's workflow database to
+    ``dest/gateway-data/<kind>/``, and a manifest there that names the copies, so the copy can be migrated again or started
     (``hubzoid gateway`` with the copied folders and ``--data dest/gateway-data``)."""
     from . import deployment
 
@@ -2068,24 +2071,39 @@ def _gateway_rehearsal(setup: Setup, dest: Path, op: URL) -> Setup:
         _copy_tree(hub.path, copy)
         copies.append(replace(hub, path=copy))
 
-    def mapped(path: Path) -> Path:
+    def mapped(path: Path, label: str) -> Path:
+        """Where ``path`` lives in the copy: inside a copied hub, or under its
+        own label in gateway-data (two databases may share a file name)."""
         path = path.expanduser().resolve()
         for hub, copy in zip(setup.hubs, copies):
             if hub.path.resolve() in path.parents:
                 return copy.path / path.relative_to(hub.path.resolve())
-        target = data / path.name
+        target = data / label / path.name
         if path.is_file():
             _sqlite_copy(path, target)
+        elif path.is_dir():
+            shutil.copytree(path, target, dirs_exist_ok=True)
         return target
 
-    new_owui = mapped(Path(setup.source_url.database))
-    if setup.uploads_dir is not None and not any(
-            h.path.resolve() in setup.uploads_dir.resolve().parents for h in setup.hubs):
-        shutil.copytree(setup.uploads_dir, new_owui.parent / "uploads", dirs_exist_ok=True)
-    new_op = mapped(Path(op.database))
+    new_owui = mapped(Path(setup.source_url.database), "openwebui")
+    new_uploads = mapped(setup.uploads_dir, "uploads") if setup.uploads_dir is not None else None
+    new_op = mapped(Path(op.database), "operational")
     original = deployment.manifest_path(setup.entry, setup.env)
     manifest = json.loads(original.read_text()) if original and original.is_file() else dict(setup.manifest)
-    manifest["hubs"] = [{**h, "path": str(c.path)} for h, c in zip(manifest.get("hubs") or [], copies)]
+    hubs_out = []
+    for h, c in zip(manifest.get("hubs") or [], copies):
+        entry = {**h, "path": str(c.path)}
+        if h.get("dbos_url"):
+            # Each bridge's workflow database: copied too, never left pointing at
+            # the original (a copy's `schedule cancel` would cancel real runs).
+            dbos = make_url(h["dbos_url"])
+            if dbos.get_backend_name() != "sqlite":
+                raise MigrationBlocked(f"Hub {h.get('key')} keeps its workflow runs in PostgreSQL. For a "
+                                       "rehearsal, restore a dump into a scratch database and point "
+                                       "the copy's dbos_url at it.")
+            entry["dbos_url"] = f"sqlite:///{mapped(Path(dbos.database), 'workflows-' + str(h.get('key')))}"
+        hubs_out.append(entry)
+    manifest["hubs"] = hubs_out
     manifest["operational_url"] = f"sqlite:///{new_op}"
     for key in ("owui_db", "owui_database_url"):
         if manifest.get(key):
@@ -2099,10 +2117,9 @@ def _gateway_rehearsal(setup: Setup, dest: Path, op: URL) -> Setup:
     deployment._write(manifest_file, manifest)
     for copy in copies:
         deployment._write(copy.path / ".hubzoid" / "deployment.json", {"manifest": str(manifest_file)})
-    uploads = new_owui.parent / "uploads"
     return replace(setup, entry=copies[0].path, hubs=copies, manifest=manifest,
                    source_url=URL.create("sqlite", database=str(new_owui)),
-                   uploads_dir=uploads if uploads.is_dir() else None,
+                   uploads_dir=new_uploads if new_uploads is not None and new_uploads.is_dir() else None,
                    operational_url=f"sqlite:///{new_op}", write_root=dest)
 
 

@@ -427,6 +427,7 @@ def _peer_request(peer: str, headers: list[tuple[bytes, bytes]]) -> Request:
     ("104.16.0.1", b"34.120.0.7", "104.16.0.0/13", "34.120.0.7"),  # a listed CDN
     ("104.16.0.1", b"34.120.0.7", "", "104.16.0.1"),                  # an unlisted one is the client
     ("104.16.0.1", b"34.120.0.7", "*", "34.120.0.7"),
+    ("10.0.0.4", b"9.9.9.9", "104.16.0.0/13", "10.0.0.4"),            # a list narrows: a LAN client is a client
 ])
 def test_the_edge_decides_the_client_address(monkeypatch, peer, sent, trusted, seen):
     monkeypatch.setenv("HUBZOID_TRUSTED_PROXIES", trusted)

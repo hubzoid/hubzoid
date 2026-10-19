@@ -66,8 +66,9 @@ def _trusted_proxies() -> list:
     """Proxies whose ``X-Forwarded-For`` the edge believes:
     ``HUBZOID_TRUSTED_PROXIES`` (addresses or networks, comma-separated, or
     ``*`` when the public port is reachable only through your proxy), plus
-    loopback and private networks. A CDN in front (Cloudflare) must be listed,
-    or every person counts as one of its few addresses."""
+    loopback. Without the setting, private networks are trusted too (a proxy
+    on the same LAN); set it to narrow that. A CDN in front (Cloudflare) must
+    be listed, or every person counts as one of its few addresses."""
     raw = (os.environ.get("HUBZOID_TRUSTED_PROXIES") or "").strip()
     if raw == "*":
         return ["*"]
@@ -85,9 +86,11 @@ def _trusted(addr: str, nets: list) -> bool:
         ip = ipaddress.ip_address(addr)
     except ValueError:
         return False
-    if nets == ["*"] or ip.is_loopback or ip.is_private or ip.is_link_local:
+    if nets == ["*"] or ip.is_loopback:
         return True
-    return any(ip in n for n in nets)
+    if nets:  # an explicit list is the whole list (besides loopback)
+        return any(ip in n for n in nets)
+    return ip.is_private or ip.is_link_local
 
 
 def client_address(request: Request) -> str | None:

@@ -829,6 +829,12 @@ def create_configured_owner(hub_dir: Path, env: Mapping[str, str] | None = None)
     st = store(hub_dir)
     if st.find_by_email(email) is not None:
         return None
+    from ..access import store_for
+    from ..access.service import DELETED_PREFIX
+
+    if store_for(hub_dir).metadata(DELETED_PREFIX + email):
+        log.warning("auth: HUBZOID_ADMIN_EMAIL names an account that was deleted; not creating it again")
+        return None
     try:
         passwords.check(password)
     except passwords.PasswordRejected:

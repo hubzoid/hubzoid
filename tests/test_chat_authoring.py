@@ -242,3 +242,17 @@ def test_a_rebuilt_runtime_opens_and_closes_in_the_lifespan_task(monkeypatch, tm
     assert [e[1] for e in events if e[0] == "close"] == [1, 2]  # never the original
     assert {e[2] for e in events} == {task}
     assert ar._reload_runtime.__doc__ and asyncio.run(ar._reload_runtime(SimpleNamespace())) is False
+
+
+def test_a_failed_commit_is_finished_by_publishing_again(client, hub, monkeypatch):
+    from hubzoid.hub_changes import service as hub_files
+
+    real = hub_files.commit_files
+    monkeypatch.setattr(hub_files, "commit_files", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index.lock")))
+    d = _approve(client, "AGENTS.md", new=(hub / "AGENTS.md").read_text() + "\nOne more rule.\n")
+    first = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert first.status_code == 503 and first.json()["detail"]["code"] == "commit_failed"
+    monkeypatch.setattr(hub_files, "commit_files", real)
+    again = client.post(f"{A}/drafts/{d['id']}/publish", headers=ORIGIN, json={"digest": d["digest"]})
+    assert again.status_code == 200, again.text
+    assert client.get(f"{A}/drafts/{d['id']}").json()["state"] == "published"

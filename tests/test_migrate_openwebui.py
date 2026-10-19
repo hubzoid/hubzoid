@@ -702,6 +702,16 @@ def test_gateway_data_folder_is_accepted(gateway):
 
 
 def test_gateway_rehearsal_on_a_copy(gateway, tmp_path):
+    import sqlite3
+
+    # A bridge's own workflow database, outside the hub: the copy must not point at it.
+    wf = gateway.root / "wf" / "dbos.sqlite"
+    wf.parent.mkdir()
+    sqlite3.connect(wf).close()
+    manifest_file = gateway.owui.parent / "deployment.json"
+    manifest = json.loads(manifest_file.read_text())
+    manifest["hubs"][0]["dbos_url"] = f"sqlite:///{wf}"
+    manifest_file.write_text(json.dumps(manifest))
     original = _tree(gateway.root)
     scratch = tmp_path.parent / (tmp_path.name + "-rehearsal")
     result = CliRunner().invoke(mig.migrate_app, ["openwebui", str(gateway.owui.parent), "--rehearse",
@@ -711,7 +721,9 @@ def test_gateway_rehearsal_on_a_copy(gateway, tmp_path):
     assert _tree(gateway.root) == original and not gateway.op.exists()
     copied = json.loads((scratch / "gateway-data" / "deployment.json").read_text())
     assert [h["path"] for h in copied["hubs"]] == [str(scratch / "finance"), str(scratch / "ops")]
-    assert copied["operational_url"] == f"sqlite:///{scratch / 'gateway-data' / 'operational.db'}"
+    assert copied["operational_url"] == f"sqlite:///{scratch / 'gateway-data' / 'operational' / 'operational.db'}"
+    assert copied["owui_database_url"] == f"sqlite:///{scratch / 'gateway-data' / 'openwebui' / 'webui.db'}"
+    assert copied["hubs"][0]["dbos_url"].startswith(f"sqlite:///{scratch}")
     pointer = json.loads((scratch / "finance" / ".hubzoid" / "deployment.json").read_text())
     assert pointer["manifest"] == str(scratch / "gateway-data" / "deployment.json")
     # Both agents' conversations moved, in the copy's store.
@@ -1123,3 +1135,15 @@ def test_people_who_would_have_no_agent_access_are_named_before_the_move(gateway
         store.grant(f"{name}@example.com", "finance", "use_hub", actor="console")
     report = _run(gateway)
     assert "active_without_agent_access" not in report.counts["users"]
+
+
+def test_a_deleted_configured_owner_is_not_created_again(gateway, monkeypatch):
+    from hubzoid.access.service import DELETED_PREFIX
+    from hubzoid.auth import users
+
+    monkeypatch.setenv("HUBZOID_ADMIN_EMAIL", "owner@example.com")
+    monkeypatch.setenv("HUBZOID_ADMIN_PASSWORD", "the owner's long password")
+    gateway.store().set_metadata(DELETED_PREFIX + "owner@example.com", "old-id")
+    report = _run(gateway, apply=True)
+    assert users.find_by_email(gateway.entry, "owner@example.com") is None
+    assert any("was deleted in Hubzoid" in n for n in report.notes)
